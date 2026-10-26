@@ -114,7 +114,11 @@ function sessionFixture(ownershipEnabled = true, f = fixture()) {
   const receipt = JSON.parse(writes(handed)[0].result.contentItems[0].text), start = writes(handed).find((v) => v.method === "thread/start");
   const turn = writes(s.receive(JSON.stringify({ id: start.id, result: { thread: { id: "worker" } } }))).find((v) => v.method === "turn/start");
   s.receive(JSON.stringify({ id: turn.id, result: { turn: { id: "worker-turn" } } }));
-  const ask = (command: string, fields: any = {}) => s.receive(JSON.stringify({ id: "approval", method: "item/commandExecution/requestApproval", params: { command, cwd: f.repo, environmentId: "local", threadId: "worker", turnId: "worker-turn", ...fields } }));
+  let request = 0;
+  const ask = (command: string, fields: any = {}) => {
+    const rpcId = ++request === 1 ? "approval" : `approval-${request}`;
+    return s.receive(JSON.stringify({ id: rpcId, method: "item/commandExecution/requestApproval", params: { command, cwd: f.repo, environmentId: "local", threadId: "worker", turnId: "worker-turn", ...fields } }));
+  };
   return { ...f, s, ask, call, receipt };
 }
 describe("Codex single-request app approval path", () => {
@@ -128,13 +132,21 @@ describe("Codex single-request app approval path", () => {
     git(w, "add", "own.txt");
     expect(writes(f.ask("git commit -m owned", { cwd: w }))[0].result).toEqual({ decision: "accept" });
     git(w, "commit", "-m", "owned");
-    for (const fields of [{ threadId: "coordinator" }, { threadId: "unknown" }, { environmentId: "remote" }, { environmentId: null }, { availableDecisions: ["cancel"] }, { networkApprovalContext: {} }, { turnId: "stale" }, { turnId: null }, { cwd: "/private/tmp" }]) expect(items(f.ask(f.create, fields))).toMatchObject([{ kind: "permission", tool: "Bash" }]);
-    expect(items(f.ask("git push"))).toMatchObject([{ kind: "permission", tool: "Bash" }]); expect(writes(f.s.answer("approval", true))[0].result).toEqual({ decision: "accept" });
+    for (const fields of [{ threadId: "coordinator" }, { threadId: "unknown" }, { environmentId: "remote" }, { environmentId: null }, { availableDecisions: ["cancel"] }, { networkApprovalContext: {} }, { turnId: "stale" }, { turnId: null }, { cwd: "/private/tmp" }]) {
+      // Lifecycle handling may decline stale owners instead of emitting a manual card.
+      const out = f.ask(f.create, fields);
+      expect(writes(out).some((value) => value.result?.decision === "accept")).toBe(false);
+      expect(items(out).some((item) => item.kind === "permission") || writes(out).some((value) => value.result?.decision === "decline")).toBe(true);
+    }
+    const manual = items(f.ask("git push")).find((item) => item.kind === "permission");
+    expect(manual).toMatchObject({ kind: "permission", tool: "Bash" });
+    if (!manual || manual.kind !== "permission") throw new Error("Missing manual permission card");
+    expect(writes(f.s.answer(manual.requestId, true))[0].result).toEqual({ decision: "accept" });
   });
-  it("keeps legacy handoffs/manual grants and stopped workers on manual approval", () => {
+  it("keeps legacy grants manual and refuses automatic approval after stop", () => {
     const f = sessionFixture(false); expect(f.receipt.isolated_git_approval).toBe("manual");
     expect(items(f.ask(f.create))).toMatchObject([{ kind: "permission", tool: "Bash" }]);
-    const g = sessionFixture(); g.s.stop(); expect(writes(g.ask(g.create))).toEqual([]);
+    const g = sessionFixture(); g.s.stop(); expect(writes(g.ask(g.create)).some((value) => value.result?.decision === "accept")).toBe(false);
   });
   it("does not grant another bot session the same worker destination", () => {
     const f = sessionFixture(); const other = sessionFixture(true, f);

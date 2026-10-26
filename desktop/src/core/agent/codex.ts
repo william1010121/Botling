@@ -433,12 +433,15 @@ export class CodexSession {
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
-        const thread = typeof params.threadId === "string" ? params.threadId : null;
-        const worker = thread && thread !== this.threadId ? [...this.workers.values()].find((w) => w.thread === thread) : undefined;
+        // Keep the automatic path independent of manual-card correlation: lifecycle handling
+        // owns local permission.requestId; this immediate RPC answer preserves rpcId's type.
+        const workerThread = typeof params.threadId === "string" ? params.threadId : null;
+        const worker = workerThread && workerThread !== this.threadId ? [...this.workers.values()].find((w) => w.thread === workerThread) : undefined;
         const ownership = worker?.isolatedGit;
         const exclusive = ownership && ![...this.workers.values()].some((w) => w !== worker && w.isolatedGit
           && (w.isolatedGit.worktree === ownership.worktree || w.isolatedGit.branch === ownership.branch));
         if (!this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
+          && !worker.completedTurns.has(worker.turnId)
           && params.environmentId === "local" && !params.networkApprovalContext
           && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
           && exclusive && isolatedGitOwners.get(ownership.worktree) === worker.id
