@@ -44,6 +44,8 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const common = {
     cwd: profile.folder, sessionId: session.sessionId, resume: session.resume,
     allowedTools: allowedTools(localOnly ? profile.tools.filter((tool) => tool !== "Artifact") : profile.tools, session),
+    // Tools it does not get at all (`--disallowedTools`, as 1.x passes `profile.disallowedTools`).
+    disallowedTools: profile.disallowedTools ?? [],
     // Plugins' Claude parts (Maintainer's component editor among them) and their MCP servers' secrets.
     pluginDirs: session.pluginDirs ?? [], ...(Object.keys(env).length ? { env } : {}),
     model: process.env.BOTLING_MODEL ?? session.model ?? null,

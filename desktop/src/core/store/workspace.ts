@@ -51,6 +51,8 @@ export interface BotProfile {
   instructions?: string | null;
   /** The plugin that made this bot of its own (`Project.plugin`), if one did. */
   plugin?: string | null;
+  /** Tools it does not get at all, not even by asking (1.x's `BotProfile.disallowedTools`). */
+  disallowedTools?: string[];
 }
 
 export function mainProfile(root: string): BotProfile {
