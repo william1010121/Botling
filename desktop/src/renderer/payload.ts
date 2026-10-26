@@ -191,11 +191,15 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
   const face = avatarURL(bot.avatar);
   // A line another bot said here (called in with @): its name and face (`speaker`).
   const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
-  const guestFace = (other: BotView, engine?: string | null) => (look === "cute" ? faceURL(other, "cute", { engine: engine ?? other.heads[0] }) : avatarURL(other.avatar));
+  const guestFace = (other: BotView, engine?: string | null) => (look === "cute" ? faceURL(other, "cute", { engine: engine ?? "claude" }) : avatarURL(other.avatar));
   // Cute: each reply shows the character of the head that wrote it, with the bot's face as its hat.
-  const faceOf = (engine: string | null | undefined) => (look === "cute" ? faceURL(bot, "cute", { engine: engine ?? bot.heads?.[0] }) : face);
+  // Keep the legacy Claude default stable. Changing heads must not relabel that history.
+  const faceOf = (engine: string | null | undefined) => (look === "cute" ? faceURL(bot, "cute", { engine: engine ?? "claude" }) : face);
   const running = chat.running;
   const runs = chat.runs?.length ? chat.runs : running ? [{ ...running, live: chat.live }] : [];
+  // The typing bubble belongs to this turn, before its reply record (and first token) exists.
+  const activeRun = runs.find((run) => run.turnId === running?.turnId) ?? runs[0];
+  const activeHead = activeRun?.head ?? chat.messages.find((message) => message.id === activeRun?.messageId)?.engine;
   const two = (chat.heads?.engines.length ?? bot.heads?.length ?? 1) > 1;
   const engines = chat.heads?.engines ?? bot.heads ?? ["claude"];
   const extras: FrameExtras = { botId: bot.id, running: runs.length > 0, cards: {}, states: {} };
@@ -214,7 +218,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     const guest = guestOf(message);
     if (message.role === "bot" && message.sourceId && !guest) {
       // Said by a bot since removed.
-      return { id: message.id, role: message.role, text: message.text, stamp: stamp(shown, index, now), avatar: faceOf(null), choices, chosen: message.chosen ?? null, answer: message.answer ?? null,
+      return { id: message.id, role: message.role, text: message.text, stamp: stamp(shown, index, now), avatar: faceOf(message.engine), choices, chosen: message.chosen ?? null, answer: message.answer ?? null,
         open: false, attachments: null, replyTo: null, replyPreview: null, openable: false, speaker: "A removed bot", steps: steps?.length ? steps.map(step) : null };
     }
     return {
@@ -267,7 +271,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     working: runs.length > 0 || !!answering,
     waitingForWorkers: bot.role !== "group" && runs.length === 0 && !answering && bot.subagents > 0,
     avatar: answering ? (look === "cute" ? faceURL(answering, "cute", { working: true }) : avatarURL(answering.avatar, "open"))
-      : look === "cute" ? faceURL(bot, "cute", { working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
+      : look === "cute" ? faceURL(bot, "cute", { engine: activeHead, working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
     ...(bots.length ? mentionNames(bot, bots) : {}),
     placeholder: placeholder(bot),
     ...(lang ? { lang } : {}),

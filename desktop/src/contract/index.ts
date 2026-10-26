@@ -1171,7 +1171,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("message.removed"), botId, messageId: id }),
   z.strictObject({ type: z.literal("tasks.updated"), botId, tasks: z.array(TaskView).max(100) }),
   z.strictObject({ type: z.literal("subagent.updated"), botId, subagent: SubagentView }),
-  z.strictObject({ type: z.literal("turn.started"), botId, turnId: id, messageId: id }),
+  // Identity is available before the reply record exists; optional for older event producers.
+  z.strictObject({ type: z.literal("turn.started"), botId, turnId: id, messageId: id, head: Engine.optional() }),
   z.strictObject({ type: z.literal("turn.delta"), botId, turnId: id, messageId: id, text: z.string() }),
   /** What the turn is doing now: its steps so far. */
   z.strictObject({ type: z.literal("turn.steps"), botId, turnId: id, messageId: id, steps: z.array(StepView).max(500) }),

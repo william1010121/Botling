@@ -1977,7 +1977,7 @@ export class Bot {
     this.clearIdle();
     this.noteCompletionTurn(turn);
     if (turn.origin !== "tidy") {
-      this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId });
+      this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
       this.updated();
     }
     void this.deliver(turn, head);
@@ -2202,7 +2202,7 @@ export class Bot {
     this.turn = turn;
     this.clearIdle();
     if (turn.origin !== "tidy") {
-      this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId });
+      this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
       this.updated();
     }
     return turn;

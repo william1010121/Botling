@@ -7,7 +7,7 @@
 import type { SpecStateView, TeamRunView, WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
-export interface RunState { turnId: string; messageId: string; live: StepView[] }
+export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex"; live: StepView[] }
 
 export interface ChatView {
   botId: string;
@@ -115,7 +115,7 @@ export class WorkspaceStore {
       this.epoch = snapshot.epoch;
       this.seq = snapshot.seq;
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
-      const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ turnId: run.turnId, messageId: run.messageId, live: run.live })) } : null;
+      const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ ...run })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
       this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null });
     } finally {
@@ -200,7 +200,7 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       if (!chat.messages.some((message) => message.id === event.message.id)) return withChat({ ...chat, messages: [...chat.messages, event.message] });
       return withChat(update(event.message.id, () => event.message));
     case "turn.started": {
-      const runs = [...(chat.runs ?? []).filter((run) => run.turnId !== event.turnId), { turnId: event.turnId, messageId: event.messageId, live: [] }];
+      const runs = [...(chat.runs ?? []).filter((run) => run.turnId !== event.turnId), { turnId: event.turnId, messageId: event.messageId, head: event.head, live: [] }];
       return withChat({ ...chat, runs, ...(chat.running ? {} : { running: { turnId: event.turnId, messageId: event.messageId }, live: [] }) });
     }
     case "turn.delta":
