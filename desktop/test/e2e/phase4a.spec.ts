@@ -158,6 +158,8 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     await sheet.getByRole("switch", { name: "Summarize between your messages" }).click();
     await expect(sheet.getByRole("switch", { name: "Summarize between your messages" })).toBeChecked();
     await shot(page, "settings-general");
+    // Model choices are dropdowns; the summary judge runs on Codex, its saved model is selected.
+    await expect(sheet.getByLabel("Summary model")).toHaveValue("gpt-6-luna");
     await sheet.getByLabel("App language").selectOption("ja");
     // The page's own words follow (its input box is no longer called "Message").
     await expect(chat.getByRole("textbox", { name: "Message" })).toHaveCount(0);
@@ -169,7 +171,12 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     await sheet.getByRole("button", { name: /Engines and subagents/ }).click();
     await sheet.getByRole("switch", { name: "Follow Codex config file" }).click();
     await expect(sheet.getByRole("switch", { name: "Follow Codex config file" })).not.toBeChecked();
-    await sheet.getByRole("radiogroup", { name: "Workers' reasoning effort" }).getByRole("radio", { name: "High", exact: true }).click();
+    await sheet.getByLabel("Workers' reasoning effort").selectOption("high");
+    await expect(sheet.getByLabel("Workers' reasoning effort")).toHaveValue("high");
+    await expect(sheet.getByLabel("Workers' model")).toHaveValue("");
+    await expect(sheet.getByLabel("Verification model")).toBeDisabled();
+    await sheet.getByLabel("Subagents' model").selectOption("haiku");
+    await expect(sheet.getByLabel("Subagents' model")).toHaveValue("haiku");
     await shot(page, "settings-engines");
     expect(JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8"))).toMatchObject({ codexWorkersFollow: false, codexWorkerChoice: { effort: "high" } });
     await expect(sheet.getByRole("button", { name: "This bot" })).toHaveCount(0);
@@ -181,8 +188,8 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     // This bot's own settings: the right panel's slider button, one level in (1.x's DetailPanel).
     const panel = page.getByRole("complementary", { name: "Details" });
     await panel.getByRole("button", { name: "Bot settings" }).click();
-    await panel.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" }).click();
-    await expect(panel.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" })).toHaveAttribute("aria-checked", "true");
+    await panel.getByLabel("Claude's model").selectOption("opus");
+    await expect(panel.getByLabel("Claude's model")).toHaveValue("opus");
     expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8")).model).toBe("opus");
     await shot(page, "settings-bot");
     // Phase 5c: 1.x's "Engines in this bot". The only head cannot go; with both, turning off the one it runs on

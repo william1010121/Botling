@@ -183,6 +183,7 @@ button { font: inherit; color: inherit; }
   background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: 12.5px;
 }
 .settings-control input[type="text"] { width: 200px; }
+.settings-control select:disabled { opacity: 0.5; }
 .settings-control input[type="number"] { width: 70px; }
 .settings-control button, .settings-actions button { background: var(--chip); border: 0; border-radius: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
 .settings-actions { padding: 6px 0; }
