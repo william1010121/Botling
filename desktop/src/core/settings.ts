@@ -133,8 +133,9 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
  * Phase 4c the subagents' model and the Codex workers' choice are each bot's own (bot.json, seeded from
  * the app's defaults and changed with them, as 1.x); only the hour cache is the app's.
  */
-export function launchSettings(raw: RawSettings): { subagentHourCache: boolean } {
-  return { subagentHourCache: settingsView(raw).subagentHourCache };
+export function launchSettings(raw: RawSettings): { subagentHourCache: boolean; autoMode: boolean } {
+  // 1.x's `autoApprove` (AppSettings.autoApprovesSafeActions), on unless turned off; settings.json comes over from 1.x as it is.
+  return { subagentHourCache: settingsView(raw).subagentHourCache, autoMode: bool(raw.autoApprove, true) };
 }
 
 /** What Codex workers start on with the app's choice applied (`appliedCodexWorkerDefaults`): following
