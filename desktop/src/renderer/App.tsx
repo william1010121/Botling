@@ -251,11 +251,6 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         <div className="rail-settings">
           <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} settingsOpen={settingsOpen} onOpen={openSettings} />
         </div>
-        {view.imported && (
-          <div className="rail-note" title={view.imported.skipped.join("\n")}>
-            Imported {view.imported.bots} bot{view.imported.bots === 1 ? "" : "s"} and {view.imported.messages} message{view.imported.messages === 1 ? "" : "s"} from Botling 1.x (read-only).
-          </div>
-        )}
       </aside>
       )}
       <section className="chat-pane">

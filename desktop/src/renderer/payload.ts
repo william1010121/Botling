@@ -316,9 +316,7 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     steps: steps.length ? steps.map((s) => (subagent.status !== "running" && s.kind === "tool" ? { ...s, done: true } : s)) : null, time,
   });
   const messages: WebMessage[] = [];
-  const execution = subagent.execution;
-  const identity = [`Agent: ${subagent.id}`, ...(execution ? [`Run: ${execution.run}`, execution.threadId ? `Thread: ${execution.threadId}` : "", execution.turnId ? `Turn: ${execution.turnId}` : "", execution.ownerSessionId ? `Owner session: ${execution.ownerSessionId}` : ""] : [])].filter(Boolean).join("\n");
-  messages.push(line("task", "user", `${identity}\n\n${subagent.prompt}`, [], clock(subagent.startedAt)));
+  messages.push(line("task", "user", subagent.prompt, [], clock(subagent.startedAt)));
   let pending: WebStep[] = [];
   let said = "";
   for (const view of subagent.steps) {

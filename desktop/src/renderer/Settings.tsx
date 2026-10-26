@@ -122,21 +122,21 @@ function Usage({ client }: { client: Client }) {
   const available = usage?.spendingStatus === "available";
   return (
     <>
-      {loading && <p className="settings-note" role="status">{usage ? "Refreshing usage…" : "Loading usage…"}</p>}
+      {loading && !usage && <p className="settings-note" role="status">Loading usage…</p>}
       {failed && <div className="settings-note" role="alert">
-        Usage is unavailable. {usage ? "Showing the last successful reading." : "Try again to load recorded usage."}{" "}
+        Usage is unavailable.{" "}
         <button type="button" disabled={loading} onClick={() => setRetry(value => value + 1)}>Retry</button>
       </div>}
       {usage && <>
         <Group title="Usage today" note={available && tokens
-          ? `${usage.day} (local day). In ${tokenCount(tokens.input)} · out ${tokenCount(tokens.output)} · cache write ${tokenCount(tokens.cacheWrite)} · cache read ${tokenCount(tokens.cacheRead)}. Claude-reported cost; recorded tokens from both CLIs. This is local usage, not an account bill.`
-          : "No readable local spending record is available. Usage appears after a bot reports it; older usage may not have been imported."}>
+          ? `${usage.day === localDay(now) ? "" : `${usage.day} · `}In ${tokenCount(tokens.input)} · out ${tokenCount(tokens.output)} · cache write ${tokenCount(tokens.cacheWrite)} · cache read ${tokenCount(tokens.cacheRead)}`
+          : undefined}>
           {available && tokens ? <>
             <Row label="Cost"><span className="usage-number">{dollars(usage.spent)}</span></Row>
             <Row label="Tokens"><span className="usage-number">{tokenCount(tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead)}</span></Row>
           </> : <Row label="Recorded usage is unavailable." />}
         </Group>
-        <Group title="Subscription limits" note="Latest readings reported by each CLI during bot turns. No data means no reading; a reset needs a new reading, not a known zero.">
+        <Group title="Subscription limits">
           <LimitRow name="Claude" limits={usage.claude} now={now} />
           <LimitRow name="Codex" limits={usage.codex} now={now} />
         </Group>
@@ -151,6 +151,9 @@ function Usage({ client }: { client: Client }) {
     </>
   );
 }
+
+/** "2026-10-26": the local day, as the spending record names it. */
+const localDay = (ms: number) => { const date = new Date(ms); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
 
 function UsageRow({ name, spent, tokens }: { name: string; spent: number; tokens: number }) {
   return (
@@ -191,8 +194,8 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
     : state?.checkedAt ? `Botling ${state.current} is the newest (looked ${new Date(state.checkedAt).toLocaleString()}).`
     : `This is Botling ${state?.current ?? "2"}; not looked yet.`;
   return (
-    <Group title="Updates" note="Botling checks GitHub Releases every 6 hours by default and announces a newer version in the main bot's chat, where Install and restart installs it. Downloads must match an Ed25519-signed version, SHA-256 and size. The app changes only after Restart to update; the previous app may be removed after the new version commits and activates. User-data copies remain until you explicitly delete them below.">
-      <Toggle label="Check for updates" hint="GitHub Releases; installation requires your restart click" checked={settings.updateCheck} onChange={(value) => change({ key: "updateCheck", value })} />
+    <Group title="Updates">
+      <Toggle label="Check for updates" checked={settings.updateCheck} onChange={(value) => change({ key: "updateCheck", value })} />
       <Row label="Status" hint={line}>
         <span className="settings-actions">
           <button type="button" disabled={checking} onClick={() => check(true)}>Check now</button>
@@ -293,7 +296,7 @@ function Appearance({ settings, change }: { settings: SettingsView; change: (nex
   },[change,cancel]);
   useEffect(() => { const el=input.current;el?.addEventListener("change",commit);return()=>el?.removeEventListener("change",commit); },[commit]);
   const width=draft ?? settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
-  return <Group title="Message column" note="Applies to every chat and its input box. Drag either column edge to resize; double-click an edge to reset. Narrow windows fit automatically.">
+  return <Group title="Message column" note="Drag either column edge to resize; double-click it to reset.">
     <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null && draft===null ? " (default)" : ""}`}>
       <input ref={input} type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
         onInput={event=>{const value=Number(event.currentTarget.value);editing.current={before:editing.current?.before ?? latest.current,value};setDraft(value);previewWidth(value);}}
@@ -447,7 +450,7 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
             <Segmented label="Claude's model" options={[{ id: "default", label: "Default" }, ...MODELS] as const} value={view.model ?? "default"} onChange={(value) => configure({ model: value === "default" ? null : value })} />
           </Row>
         )}
-        <Row label="Reasoning effort" hint="Max is Codex's Extra high.">
+        <Row label="Reasoning effort">
           <Segmented label="Reasoning effort" options={[{ id: "default", label: "Default" }, ...EFFORTS] as const} value={view.effort ?? "default"} onChange={(value) => configure({ effort: value === "default" ? null : value })} />
         </Row>
         {hasClaude && (
@@ -456,7 +459,7 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           </Row>
         )}
         {hasCodex && (
-          <Row label="Codex's model" hint={models.length ? "What your Codex offers (model/list)." : undefined}>
+          <Row label="Codex's model">
             {models.length ? (
               <select aria-label="Codex's model" value={view.codexModel ?? ""} onChange={(event) => configure({ codexModel: event.target.value || null })}>
                 <option value="">Codex's default model</option>
@@ -473,7 +476,7 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
 
 function Results({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => void }) {
   return (
-    <Group title="Reports and results" note="What a bot does with a report or a page it made (its instructions say so).">
+    <Group title="Reports and results" note="What a bot does with a report or a page it made.">
       <Row label="Publish as">
         <select aria-label="Publish as" value={settings.resultPublishing} onChange={(event) => change({ key: "resultPublishing", value: event.target.value as SettingsView["resultPublishing"] })}>
           <option value="artifactUnlessSensitive">Artifact, sensitive ones local</option>

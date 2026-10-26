@@ -112,7 +112,7 @@ test("failed saves show an error and keep the saved state; permission policy has
     await expect(quick(page).getByRole("alert")).toContainText("Settings could not be saved");
     await expect(toggle).not.toBeChecked();
     expect(readSettings(file).developerMode).toBeUndefined();
-    await expect(quick(page)).toContainText("Auto-approve safe actions follows the current engine's permission rules");
+    await expect(quick(page)).not.toContainText("Auto-approve");
     await expect(quick(page).getByRole("switch")).toHaveCount(1);
     expect(commands).toContain("settings.set");
     await page.screenshot({ path: join(desktop, ".cache/sidebar-settings-error.png") });
