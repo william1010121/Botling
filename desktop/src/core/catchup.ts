@@ -11,6 +11,7 @@
 //   user config, tools or plugins), as 1.x's: 1–5 bullets citing their sources
 //   ([[source:UUID]], [[source:UUID|quote]], [[task:UUID]]), which the page links back.
 import { spawn } from "node:child_process";
+import { isSummaryReply } from "../contract/summary";
 import { childEnvironment } from "./agent/runner";
 import { resolveExecutable } from "./process/executable";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -70,8 +71,8 @@ export function intervalAfter(messages: ChatRecord[], userId: string): ChatRecor
   return out;
 }
 
-/** Top-level replies from any head; tools and workers are not messages. */
-export const replyCount = (messages: ChatRecord[]) => messages.filter((m) => m.role === "bot").length;
+/** Top-level replies and app notices; tools and workers are not messages. */
+export const replyCount = (messages: ChatRecord[]) => messages.filter(isSummaryReply).length;
 
 export function instructions(language: AppLanguage): string {
   const name = LANGUAGE_PROMPT_NAMES[language];
@@ -441,10 +442,10 @@ export class CatchUps {
       const ids = group.messageIds.filter((id) => byId.has(id));
       if (ids.length) {
         const lines = ids.map((id) => byId.get(id)!);
-        const counted = lines.filter((m) => m.role === "bot");
-        const heads = new Set(counted.map((m) => m.engine).filter(Boolean)).size;
+        const counted = lines.filter(isSummaryReply);
+        const heads = new Set(lines.filter((m) => m.role === "bot").map((m) => m.engine).filter(Boolean)).size;
         const last = counted.at(-1);
-        const who = last ? headName(last.engine) ?? catchUpName(last, chat.name) : null;
+        const who = last ? (last.role === "bot" ? headName(last.engine) : null) ?? catchUpName(last, chat.name) : null;
         catchUp = {
           key: group.key, ids, count: counted.length, heads: heads > 1 ? heads : null, state: group.phase, bullets: group.bullets, error: group.error, model: group.model,
           since: counted[0] ? shortTime(fromSwiftDate(counted[0].date), language) : null, until: last ? shortTime(fromSwiftDate(last.date), language) : null,
@@ -462,7 +463,7 @@ export class CatchUps {
       const speakerCounts: Record<string, number> = {};
       for (const reply of replies) { const key = reply.engine === "claude" || reply.engine === "codex" ? reply.engine : "unknown"; speakerCounts[key] = (speakerCounts[key] ?? 0) + 1; }
       intervalSummaries.push({
-        key: state.key, ids: source.map((m) => m.id), count: replies.length, heads: null, state: state.phase, bullets: state.bullets, error: state.error, model: state.model,
+        key: state.key, ids: source.map((m) => m.id), count: replyCount(source), heads: null, state: state.phase, bullets: state.bullets, error: state.error, model: state.model,
         since: null, until: null, latest: null, manual: true, automatic: state.automatic, speakerCounts, requestedBy: state.requestedBy, taskIds: tasksTouching(chat.tasks, source).map((t) => t.id),
       });
     }

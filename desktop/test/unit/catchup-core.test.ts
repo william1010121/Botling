@@ -25,6 +25,57 @@ async function reply(c: CoreHarness, text: string) {
 const settings = (dir: string, value: Record<string, unknown>) => { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "settings.json"), JSON.stringify(value)); };
 
 describe("Catch-up", () => {
+  function seedNotices(dir: string, roles: string[], unread = 0) {
+    const folder = join(dir, "main");
+    mkdirSync(folder, { recursive: true });
+    const lines = roles.map((role, i) => ({ id: `11111111-0000-4000-8000-${String(i + 1).padStart(12, "0")}`, role, text: `${role} ${i + 1}`, date: 800_000_000 + i }));
+    writeFileSync(join(folder, "chat.json"), JSON.stringify(lines));
+    writeFileSync(join(folder, "bot.json"), JSON.stringify({ unread }));
+    return lines;
+  }
+
+  it("manually summarizes a notice-only interval, with exact sources and no next-interval fallback", async () => {
+    const dir = tempDir("notice-summary");
+    const lines = seedNotices(dir, ["user", "notice", "divider", "notice", "user", "notice"]);
+    const c = core(dir);
+    expect(await c.call({ type: "catchup.interval", botId: MAIN, userMessageId: lines[0]!.id })).toEqual({ started: true });
+    const summary = await until(async () => (await c.chat()).intervalSummaries.find((s: any) => s.state === "ready"));
+    expect(summary).toMatchObject({ count: 2, ids: lines.slice(1, 4).map(m => m.id), speakerCounts: {}, requestedBy: "user" });
+    const prompt = execs(dir)[0]!.args.at(-1)!;
+    expect(prompt).toContain(`[source:${lines[1]!.id}] Botling: notice 2`);
+    expect(prompt).toContain(`[source:${lines[3]!.id}] Botling: notice 4`);
+    expect(prompt).not.toContain(lines[5]!.id);
+    expect(summary.bullets.join("\n")).toContain(`[[source:${lines[1]!.id}]]`);
+    expect((await c.chat()).messages.filter((m: any) => m.role === "notice")).toHaveLength(3);
+    expect(await c.call({ type: "catchup.interval", botId: MAIN, userMessageId: lines[1]!.id })).toEqual({ started: false });
+    expect(await c.call({ type: "catchup.interval", botId: MAIN, userMessageId: lines[0]!.id })).toEqual({ started: true });
+    expect(execs(dir)).toHaveLength(1);
+  });
+
+  it("summarizes unread notices even in a Main chat with no user boundary", async () => {
+    const dir = tempDir("notice-unread");
+    const lines = seedNotices(dir, ["notice", "notice", "notice", "notice"], 4);
+    const c = core(dir);
+    await c.call({ type: "chat.read", botId: MAIN });
+    // Check the loading/ready state immediately too: before the fix no call starts at all.
+    expect((await c.chat()).catchUp).not.toBeNull();
+    const summary = await until(async () => { const s = (await c.chat()).catchUp; return s?.state === "ready" && s; });
+    expect(summary).toMatchObject({ count: 4, ids: lines.map(m => m.id), heads: null, latest: "Botling: notice 4" });
+    expect(summary.since).toBeTruthy();
+    expect(summary.until).toBeTruthy();
+  });
+
+  it("counts notices toward the existing automatic interval threshold, without inventing a head", async () => {
+    const dir = tempDir("notice-automatic");
+    settings(dir, { intervalSummaryEnabledChoice: true, intervalSummaryThresholdChoice: 3 });
+    const lines = seedNotices(dir, ["user", "notice", "notice", "notice"]);
+    const c = core(dir);
+    await reply(c, "close the interval");
+    expect((await c.chat()).intervalSummaries).toHaveLength(1);
+    const summary = await until(async () => (await c.chat()).intervalSummaries.find((s: any) => s.state === "ready"));
+    expect(summary).toMatchObject({ automatic: true, count: 3, ids: lines.slice(1).map(m => m.id), speakerCounts: {} });
+  });
+
   it("folds more than 3 unread replies into a summary on your return, citing them; the same range is not summarized twice", async () => {
     const dir = tempDir("catchup");
     const c = core(dir);

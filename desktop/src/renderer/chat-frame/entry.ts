@@ -7,6 +7,7 @@ import { inputTrace } from "../input-trace";
 import "./shim";
 import "./component-frames";
 import { installInputRecovery } from "./input-focus";
+import "./notification-summary";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
