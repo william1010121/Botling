@@ -38,7 +38,7 @@ describe("Codex head: one coordinator thread", () => {
     const out = replay(session, recordings.helloAndApproval!.slice(0, 2));
     expect(out.methods).toEqual(["initialized", "thread/start", "turn/start"]);
     const thread = out.params("thread/start");
-    expect(thread).toMatchObject({ cwd: "/tmp/bot", approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "workspace-write", developerInstructions: "You are a test bot.", environments: [] });
+    expect(thread).toMatchObject({ cwd: "/tmp/bot", approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write", developerInstructions: "You are a test bot.", environments: [] });
     expect(thread.config).toEqual({ "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled" });
     expect(thread.dynamicTools.map((t: { name: string }) => t.name)).toEqual(["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"]);
     expect(out.all.find((o) => o.kind === "thread")).toEqual({ kind: "thread", id: "01a1640c-e2db-7742-998a-553a14d4336f" });

@@ -3782,7 +3782,7 @@ export class Bot {
     const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary), date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
     const expires = Date.now() + this.options.approvalTimeoutMs;
     const timer = setTimeout(() => this.expire(record.id), this.options.approvalTimeoutMs);
-    this.approvals.set(record.id, { lasting: !!item.workerId || item.requestId.startsWith("monitor:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
+    this.approvals.set(record.id, { lasting: !!item.workerId || item.requestId.startsWith("monitor:") || item.requestId.startsWith("codex-review:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
     this.add(record);
     this.log(`asks to use ${item.tool}`);
     this.updated();

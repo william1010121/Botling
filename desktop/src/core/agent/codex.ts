@@ -9,8 +9,11 @@
 // As in 1.x:
 // - The thread starts (or resumes) with the approval policy and sandbox said explicitly, so the
 //   user's own ~/.codex/config.toml does not decide what a bot may do: it asks (`on-request`) and
-//   writes only in its folder (`workspace-write`). The reviewer is the user; the app accepts only
-//   validated, explicitly owned isolated-worker Git requests automatically, one request at a time.
+//   writes only in its folder (`workspace-write`). In auto mode (default) Codex's own reviewer
+//   (`auto_review`) answers escalations for the head and its workers; its refusals become a card, and
+//   an Allow lets that call through with the next turn asking the app ("user") once. Without auto
+//   mode the reviewer is the user; the app accepts only validated, explicitly owned isolated-worker
+//   Git requests automatically, one request at a time.
 // - The head is a coordinator: shell and native subagents are off, and it hands execution to
 //   app-managed workers with the app's dynamic tools (app_handoff, app_send_message,
 //   app_task_checkpoint). Each worker is an independent Codex thread in the same app-server; its
@@ -23,7 +26,7 @@
 //   app's clock reads); `app_monitor_*` run one command after an Allow once card and wake the
 //   coordinator when it ends (`app_monitor_result`, monitors.ts), never replaying one after a restart.
 //
-// Not ported (2.0 gaps, see desktop/README.md): the component-editor role, Codex's reviewer (auto mode),
+// Not ported (2.0 gaps, see desktop/README.md): the component-editor role,
 // Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
 import { approveIsolatedGit, isolatedGitOwnership, type IsolatedGitOwnership } from "./isolated-git";
@@ -103,6 +106,8 @@ export interface CodexConfig {
   /** The bot session that owns its monitors. */
   ownerSession?: string;
   restoredMonitors?: CommandMonitor[];
+  /** Auto mode (default on): Codex's own reviewer (`auto_review`) answers escalations; only its refusals become a card. */
+  autoMode?: boolean;
 }
 
 type Call =
@@ -130,6 +135,8 @@ interface Worker {
   id: string; name: string; instructions: string; ownershipInstructions?: string; role?: string; isolatedGit?: IsolatedGitOwnership;
   thread?: string; turnId: string | null; run: number; active: boolean; loaded: boolean; cancelled: boolean;
   messages: string[]; said: { text: string; phase: string | null }[]; completedTurns: Set<string>;
+  /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
+  reviewerNext?: string;
   /** Its thread's tokens so far, and at the start of the run under way (Phase 5c). */
   tokens?: TokenUsage; tokensAtRunStart?: TokenUsage;
 }
@@ -197,6 +204,12 @@ export class CodexSession {
   private inbox: Input[] = [];
   private approvals = new Map<string, Approval>();
   private changedFiles = new Map<string, string[]>();
+  /** Commands the user allowed after Codex's reviewer refused them: asked again, they go through. */
+  private allowedCommands = new Set<string>();
+  /** The coordinator's next turn asks the app instead of the reviewer, once (1.x `reviewerNext`). */
+  private reviewerNext: string | null = null;
+  /** Reviewer refusals shown as cards: what was refused, and whose. */
+  private reviews = new Map<string, { command: string; task: string | null }>();
   private finishing = false;
   private stopped = false;
   private workers = new Map<string, Worker>();
@@ -269,6 +282,7 @@ export class CodexSession {
 
   answer(requestId: string, allow: boolean, why?: string): CodexOutput[] {
     if (requestId.startsWith("monitor:")) return this.approveMonitor(requestId.slice(8), allow);
+    if (requestId.startsWith("codex-review:")) return this.answerReview(requestId, allow);
     const approval = this.approvals.get(requestId);
     if (!approval) return [];
     this.approvals.delete(requestId);
@@ -405,6 +419,8 @@ export class CodexSession {
       return worker ? this.workerLine(method, params, worker) : [];
     }
     switch (method) {
+      case "item/autoApprovalReview/completed":
+        return this.reviewed(params, null);
       case "turn/started": {
         const id = params.turn?.id;
         return typeof id === "string" ? this.learnTurn(id) : [];
@@ -433,6 +449,11 @@ export class CodexSession {
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
+        // A call the user allowed after the reviewer refused it (1.x `allowedCommands`).
+        if (this.allowedCommands.size && (params.kind === undefined || params.kind === "command")
+          && [params.command, codexCommand(params)].some((c) => typeof c === "string" && this.allowedCommands.has(c))) {
+          return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
+        }
         // Keep the automatic path independent of manual-card correlation: lifecycle handling
         // owns local permission.requestId; this immediate RPC answer preserves rpcId's type.
         const workerThread = typeof params.threadId === "string" ? params.threadId : null;
@@ -473,6 +494,42 @@ export class CodexSession {
         // Bots ask in the chat (<choices>); anything else is not the app's to answer.
         return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, error: { code: -32601, message: "Not supported by Botling." } } }];
     }
+  }
+
+  private get reviewer(): string { return this.config.autoMode === false ? "user" : "auto_review"; }
+
+  private nextReviewer(params: Record<string, unknown>) {
+    if (!this.reviewerNext) return;
+    params.approvalsReviewer = this.reviewerNext;
+    this.reviewerNext = this.reviewerNext === "user" ? "auto_review" : null;
+  }
+
+  /** Codex's reviewer refused a call: a card with its reason (1.x `reviewed`). Allow lets it through next time. */
+  private reviewed(params: any, worker: Worker | null): CodexOutput[] {
+    const review = params.review;
+    if (!review || review.status !== "denied") return [];
+    const action = params.action && typeof params.action === "object" ? params.action : {};
+    const command = typeof action.command === "string" ? action.command
+      : Array.isArray(action.argv) ? action.argv.filter((a: unknown) => typeof a === "string").join(" ") : "";
+    const what = command || (typeof action.type === "string" ? action.type : "a call");
+    const risk = typeof review.riskLevel === "string" ? `[${review.riskLevel} risk] ` : "";
+    const why = typeof review.rationale === "string" ? review.rationale : "";
+    const requestId = `codex-review:${randomUUID()}`;
+    this.reviews.set(requestId, { command, task: worker?.id ?? null });
+    const summary = `${what}\n\nCodex's reviewer refused this: ${risk}${why}`.trim();
+    return [this.item({ kind: "permission", requestId, tool: action.type === "applyPatch" ? "Edit" : "Bash", summary, input: {}, ...(worker ? { workerId: worker.id } : {}) })];
+  }
+
+  private answerReview(requestId: string, allow: boolean): CodexOutput[] {
+    const review = this.reviews.get(requestId);
+    if (!review) return [];
+    this.reviews.delete(requestId);
+    if (!allow || this.stopped) return [];
+    if (review.command) this.allowedCommands.add(review.command);
+    const worker = review.task ? this.workers.get(review.task) : undefined;
+    // The next turn of the refused call's thread asks the app (which accepts the allowed call), once.
+    if (this.config.autoMode !== false) { if (worker) worker.reviewerNext = "user"; else this.reviewerNext = "user"; }
+    return [];
   }
 
   private approvalCurrent(approval: Approval): boolean {
@@ -528,7 +585,7 @@ export class CodexSession {
 
   private startThread(): CodexOutput {
     const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "workspace-write", developerInstructions: this.config.instructions,
+      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: this.reviewer, sandbox: "workspace-write", developerInstructions: this.config.instructions,
     };
     if (this.managed) {
       params.environments = [];
@@ -572,6 +629,7 @@ export class CodexSession {
     const params: Record<string, unknown> = { threadId: this.threadId, input: [{ type: "text", text: input.text }, ...(input.images ?? []).map((path) => ({ type: "localImage", path }))] };
     if (this.managed) params.environments = [];
     if (this.config.effort) params.effort = this.config.effort;
+    this.nextReviewer(params);
     return [this.request("turn/start", params, { kind: "turn" })];
   }
 
@@ -654,6 +712,7 @@ export class CodexSession {
         threadId: this.threadId, input: [], toolOutput: { name: "app_monitor_result", namespace: null, output: JSON.stringify(monitorPayload(waking), null, 2) }, environments: [],
       };
       if (this.config.effort) params.effort = this.config.effort;
+      this.nextReviewer(params);
       return [this.item({ kind: "backgroundTurn", taskId: null }), this.request("turn/start", params, { kind: "turn" }), ...this.pendingChanged()];
     }
     if (this.results.length && this.threadId && !this.stopped) {
@@ -666,6 +725,7 @@ export class CodexSession {
         environments: [],
       };
       if (this.config.effort) params.effort = this.config.effort;
+      this.nextReviewer(params);
       return [this.item({ kind: "backgroundTurn", taskId: result.task }), this.request("turn/start", params, { kind: "turn" }), ...this.pendingChanged()];
     }
     return this.finishing && !this.hasManagedWork ? [{ kind: "close" }] : [];
@@ -945,7 +1005,7 @@ export class CodexSession {
   private startWorkerThread(task: string): CodexOutput[] {
     const worker = this.workers.get(task)!;
     const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "workspace-write",
+      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: this.reviewer, sandbox: "workspace-write",
       developerInstructions: this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
       config: { "features.multi_agent": false, "agents.enabled": false },
     };
@@ -990,6 +1050,10 @@ export class CodexSession {
     const params: Record<string, unknown> = { threadId: worker.thread, input: [{ type: "text", text }] };
     const effort = this.config.workerEffort ?? this.config.effort;
     if (effort) params.effort = effort;
+    if (worker.reviewerNext) {
+      params.approvalsReviewer = worker.reviewerNext;
+      worker.reviewerNext = worker.reviewerNext === "user" ? "auto_review" : undefined;
+    }
     return [this.request("turn/start", params, { kind: "workerTurn", task, run: worker.run })];
   }
 
@@ -1087,6 +1151,8 @@ export class CodexSession {
         out.push(...this.pendingChanged());
         return out;
       }
+      case "item/autoApprovalReview/completed":
+        return this.reviewed(params, worker);
       case "serverRequest/resolved": {
         return this.resolveApproval(params);
       }
@@ -1313,6 +1379,8 @@ export interface CodexHeadConfig {
   workerFast?: boolean | null;
   /** The bot's scheduled-routines.json, for `app_routines` (null: none). */
   routinesFile?: string | null;
+  /** Codex's own reviewer answers escalations (default on). */
+  autoMode?: boolean;
 }
 
 /** One long-lived `codex app-server` for one bot session: `CodexSession` over its stdio. */
@@ -1349,6 +1417,7 @@ export class CodexHead {
       workerEffort: config.workerEffort ?? null, workerFast: config.workerFast ?? null,
       restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
+      autoMode: config.autoMode ?? true,
     });
     this.savedWorkers = JSON.stringify(this.session.workerRecords);
     this.savedMonitors = JSON.stringify(restoredMonitors);
