@@ -1,7 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {EventEmitter} from 'node:events';
 import {ipcMain} from 'electron';
-import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds,reloadNativeEditor} from '../../src/main/editor-host';
+import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds,reloadNativeEditor,nativeEditorLayer} from '../../src/main/editor-host';
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
 vi.mock('electron',async()=>{
  const {EventEmitter}=await import('node:events');
@@ -301,4 +301,15 @@ it('loads the editor preload from a chosen developer preload directory',async()=
  const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',Promise.resolve(),'/Volumes/My-SSD/synthetic/dev-preload');disposers.push(result.dispose);
  expect((result.view as any).options.webPreferences.preload).toBe('/Volumes/My-SSD/synthetic/dev-preload/editor-host.cjs');
  await result.ready;
+});
+it('offers the chat view to a window picture only while it is laid out and uncovered',async()=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents,owner=f.owner.webContents,event={sender:owner,senderFrame:owner.mainFrame},bounds={x:248,y:86,width:600,height:600};
+ expect(nativeEditorLayer(owner as any)).toBeNull();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});
+ const layer=nativeEditorLayer(owner as any)!;expect(layer.bounds).toEqual(bounds);
+ await layer.capture();expect((contents as any).capturePage).toHaveBeenLastCalledWith(undefined,{stayHidden:true,stayAwake:false});
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds,occluded:true});expect(nativeEditorLayer(owner as any)).toBeNull();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});expect(nativeEditorLayer(owner as any)).not.toBeNull();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds:null});expect(nativeEditorLayer(owner as any)).toBeNull();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});f.dispose();expect(nativeEditorLayer(owner as any)).toBeNull();
 });

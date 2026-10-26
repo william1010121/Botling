@@ -3,11 +3,14 @@ import {WebContentsView,ipcMain,type BrowserWindow,type WebContents,type IpcMain
 import {join} from 'node:path';
 import {EditorHostBoundary} from './editor-host-boundary';
 import {EDITOR_CHANNEL,EDITOR_URL} from '../editor-host-wire';
-const hosts=new Map<WebContents,{loaded:boolean}>(),owners=new Set<WebContents>(),reloaders=new Map<WebContents,()=>Promise<boolean>>();
+import type {ChatLayer} from './window-capture';
+const hosts=new Map<WebContents,{loaded:boolean}>(),owners=new Set<WebContents>(),reloaders=new Map<WebContents,()=>Promise<boolean>>(),layers=new Map<WebContents,()=>ChatLayer|null>();
 export const hasNativeEditorHost=(owner:WebContents)=>owners.has(owner);
 /** Reload Chat Page: a fresh chat document (new chat.js/css, new preload) in the same native view.
  * The shell sees unbound, then bound with a new document generation, and pushes state again. */
 export const reloadNativeEditor=(owner:WebContents):Promise<boolean>=>reloaders.get(owner)?.()??Promise.resolve(false);
+/** The native chat as drawn over its shell right now (window-capture.ts), or null when it is not showing. */
+export const nativeEditorLayer=(owner:WebContents):ChatLayer|null=>layers.get(owner)?.()??null;
 const card=(url:string,host:string)=>{try{const u=new URL(url);return u.protocol==='botling-card:'&&u.host===host&&!u.username&&!u.password;}catch{return false;}};
 export function nativeEditorNavigation(contents:WebContents,details:{isMainFrame:boolean;url:string;frame?:WebFrameMain|null;initiator?:WebFrameMain|null}):boolean|null {
  const host=hosts.get(contents);if(!host)return null;
@@ -106,7 +109,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  const ownerNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame){stopSnapshots();occluded=false;laidOut=false;initialized=false;view.setBounds({x:0,y:0,width:0,height:0});view.setVisible(false);if(owner.isVisible()&&contents.isFocused())owner.webContents.focus();invalidateOwner();}};
  const editorNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame&&host.loaded)dispose();};
  const ownerLoaded=()=>{if(host.loaded){try{bindOwner();}catch{dispose();}}};
- const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);hosts.delete(contents);owners.delete(ownerContents);reloaders.delete(ownerContents);ownerContents.removeListener('did-start-navigation',ownerNavigation);ownerContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
+ const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);hosts.delete(contents);owners.delete(ownerContents);reloaders.delete(ownerContents);layers.delete(ownerContents);ownerContents.removeListener('did-start-navigation',ownerNavigation);ownerContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
  owner.webContents.on('did-start-navigation',ownerNavigation);owner.webContents.on('did-finish-load',ownerLoaded);contents.on('did-start-navigation',editorNavigation);
  owner.once('closed',dispose);contents.once('render-process-gone',dispose);contents.once('destroyed',dispose);
  const ready=Promise.all([ownerReady,contents.loadURL(EDITOR_URL)]).then(()=>{if(closed||owner.isDestroyed())throw new Error('Editor owner closed before binding');host.loaded=true;return bindOwner()!;});
@@ -143,5 +146,8 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
   return reloading;
  };
  reloaders.set(ownerContents,reload);
+ // Only a laid-out, uncovered view is on screen; its bounds are window DIPs, as the shell's own capture.
+ layers.set(ownerContents,()=>closed||!laidOut||occluded||!lastBounds||contents.isDestroyed()?null
+  :{bounds:{...lastBounds},capture:()=>contents.capturePage(undefined,{stayHidden:true,stayAwake:false})});
  void ready.catch(dispose);return{view,ready,dispose,revealWhenReady,reload};
 }

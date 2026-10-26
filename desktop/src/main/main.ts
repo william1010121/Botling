@@ -1,6 +1,6 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
@@ -9,7 +9,8 @@ import { isRequested as isShotRequested, withProbe } from "../core/component-sho
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
-import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor} from "./editor-host";
+import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
+import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
@@ -183,7 +184,7 @@ const core: CoreClient = new CoreClient({
     // A picture of the main window as it is (no focus change, nothing shown).
     const window = mainWindow;
     if (!window || window.isDestroyed()) return { ok: false, error: "No window." };
-    const image = await window.webContents.capturePage();
+    const image = await windowPicture(window.webContents);
     if (image.isEmpty()) return { ok: false, error: "The window drew nothing." };
     const folder = join(dataDir, "core", "self-update", "screenshots");
     mkdirSync(folder, { recursive: true });
@@ -554,6 +555,24 @@ async function openLink(url: string, reveal = false): Promise<{opened:boolean}> 
 }
 
 /**
+ * The shell's window as the user sees it: the shell's pixels with the native chat view drawn in
+ * (window-capture.ts). The shell's capturePage alone has an empty chat column, since the chat lives
+ * in its own WebContentsView. `rect` (window DIPs) crops the result, as capturePage(rect) did.
+ */
+async function windowPicture(contents: WebContents, rect?: Electron.Rectangle): Promise<Electron.NativeImage> {
+  const owner = BrowserWindow.fromWebContents(contents);
+  const width = owner && !owner.isDestroyed() && owner.webContents === contents ? owner.getContentBounds().width : 0;
+  // Not a window's own page (no chat drawn over it): its capture is already the whole picture.
+  if (!width) return contents.capturePage(rect);
+  const shellImage = await contents.capturePage();
+  const picture = await composeWindow(shellImage, width, nativeEditorLayer(contents),
+    (bitmap) => nativeImage.createFromBitmap(bitmap.data, { width: bitmap.width, height: bitmap.height })) as Electron.NativeImage;
+  if (!rect) return picture;
+  const scale = captureScale(shellImage, width);
+  return picture.crop({ x: Math.round(rect.x * scale), y: Math.round(rect.y * scale), width: Math.round(rect.width * scale), height: Math.round(rect.height * scale) });
+}
+
+/**
  * A component card's report: the card as it looks now (1.x's `snapshot(of:in:)`), taken from the app's
  * window at `rect`, goes to the core with the user's words and pictures. A page cannot supply its own.
  */
@@ -563,7 +582,7 @@ async function reportComponent(cmd: Extract<Command, { type: "component.report" 
   if (cmd.rect) {
     try {
       const rect = { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) };
-      const image = await sender.capturePage(rect);
+      const image = await windowPicture(sender, rect);
       if (!image.isEmpty()) screenshot = image.toPNG().toString("base64");
     } catch (error) {
       note(`component report: no screenshot (${(error as Error).message})`);
@@ -578,7 +597,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
   let screenshot: string | undefined;
   try {
     const rect = cmd.rect ? { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) } : undefined;
-    const image = await sender.capturePage(rect);
+    const image = await windowPicture(sender, rect);
     if (!image.isEmpty()) screenshot = image.toPNG().toString("base64");
   } catch (error) {
     note(`feedback: no screenshot (${(error as Error).message})`);
@@ -983,6 +1002,10 @@ app.on("before-quit", (event) => {
 
 // For tests: which pid the core has.
 (globalThis as unknown as { __botlingCorePid: () => number | undefined }).__botlingCorePid = () => core.pid;
+(globalThis as unknown as { __botlingWindowPicture: () => Promise<string | null> }).__botlingWindowPicture = async () => {
+  const window = mainWindow;
+  return window && !window.isDestroyed() ? (await windowPicture(window.webContents)).toDataURL() : null;
+};
 (globalThis as unknown as { __botlingSwapCore: typeof coreSwap.swap }).__botlingSwapCore = coreSwap.swap;
 (globalThis as unknown as { __botlingShotCommand: string | undefined }).__botlingShotCommand = shotMode ? undefined : coreEnvironment().BOTLING_SHOT_COMMAND;
 (globalThis as unknown as { __botlingCheckCommand: string | undefined }).__botlingCheckCommand = shotMode ? undefined : coreEnvironment().BOTLING_CHECK_COMMAND;
