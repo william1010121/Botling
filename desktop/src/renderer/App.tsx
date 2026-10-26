@@ -14,7 +14,7 @@ import { chatState, subagentState } from "./payload";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
-import { SettingsSheet, type SettingsSection } from "./Settings";
+import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { RightPanel, RightToggle } from "./RightPanel";
 import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
@@ -167,6 +167,10 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   }, [client, chat, fail]);
 
   useEffect(() => { setSelectedTask(null); }, [chat?.botId]);
+  // The bot's settings, one level in in the right panel (1.x's DetailPanel `showingSettings`); a new bot shows its overview.
+  const [botSettings, setBotSettings] = useState(false);
+  useEffect(() => { setBotSettings(false); }, [bot?.id]);
+  const openBotSettings = useCallback(() => { if (collapsed) toggleRight(); setBotSettings(true); }, [collapsed, toggleRight]);
 
   // Reading a chat clears its unread count.
   useEffect(() => {
@@ -328,7 +332,10 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           onOpenResult={openResult}
           onOpenSubagent={(row) => openSubagent(bot.id, row)}
           onUnsettle={(row) => settleSubagent(bot.id, row, false)}
-          onSettings={() => openSettings()}
+          onSettings={openBotSettings}
+          showingSettings={botSettings}
+          settingsPage={botSettings ? <BotSettings client={client} bot={bot} /> : undefined}
+          onCloseSettings={() => setBotSettings(false)}
           onExpand={toggleRight}
         />
       )}
