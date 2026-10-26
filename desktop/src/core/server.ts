@@ -51,6 +51,7 @@ import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
+import { probeNetwork } from "./network-resume";
 import { Plugins, type BotInfo } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
@@ -96,6 +97,8 @@ export interface CoreOptions {
   watchMs?: number;
   /** How long one of Settings' reminder minutes is (tests shorten it; 60 s). */
   stallMinuteMs?: number;
+  /** Whether Claude's API answers again (1.x's `networkProbe`; tests replace it). */
+  networkProbe?: () => Promise<boolean>;
   /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
   summarizer?: Summarizer | null;
   /** The completion judge on Codex for a model (`completionClassifier`); null: none (the check stays off). */
@@ -588,7 +591,24 @@ export class Core {
   }
 
   private watchRuns() {
+    void this.checkNetwork();
     this.checkStalls();
+  }
+
+  private probing = false;
+
+  /** 1.x's `checkNetwork`: asks the probe only while a bot waits for the network; once it answers, they carry on. */
+  async checkNetwork(now?: number) {
+    const waiting = [...this.bots.values()].filter((bot) => bot.outage || bot.partner?.outage);
+    if (!waiting.length || this.probing) return;
+    this.probing = true;
+    try {
+      if (!(await (this.options.networkProbe ?? probeNetwork)())) return;
+    } finally {
+      this.probing = false;
+    }
+    const date = now ?? Date.now();
+    for (const bot of waiting) bot.networkRestored(date);
   }
 
   /** The project that is Botling's own source, while developer mode is on (`developerProject`). */

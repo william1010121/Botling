@@ -5,6 +5,7 @@
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
 import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../subagents";
+import { isConnectionLoss } from "../network-resume";
 
 export type StreamItem =
   | { kind: "init"; sessionId: string }
@@ -30,6 +31,10 @@ export type StreamItem =
    * `monitor_mcp`: `monitor` true). It ends with a `task_notification` (`subagentEnded` with this id).
    */
   | { kind: "backgroundStarted"; id: string; description: string; monitor: boolean }
+  /** claude retries the API with no answer from it (`api_retry` with no HTTP status): the network may be gone (1.x's `connectionTrouble`). */
+  | { kind: "connectionTrouble" }
+  /** claude gave up on the API with no answer from it (1.x's `connectionLost`); `parent`: a subagent's line. */
+  | { kind: "connectionLost"; parent: string | null }
   /** A subagent ended (`task_notification`): its status and report. */
   | { kind: "subagentEnded"; id: string; status: string; summary: string | null }
   /** A notification that is not a report: the subagent waits on its own background work. */
@@ -193,6 +198,12 @@ export function parseLine(line: string): StreamItem[] {
         const reason = given || (classifierReason(typeof message.message === "string" ? message.message : "") ?? "");
         return [{ kind: "permissionDenied", toolUseId: message.tool_use_id, tool: message.tool_name, reason, confirmed: false }];
       }
+      if (message.subtype === "api_retry") {
+        // An HTTP status means the API answered (overloaded, rate limit): not the network.
+        if (message.error_status !== undefined && message.error_status !== null) return [];
+        const error = message.error;
+        return error === undefined || error === null || error === "unknown" || error === "connection_error" ? [{ kind: "connectionTrouble" }] : [];
+      }
       if (message.subtype === "task_notification") {
         const id = typeof message.tool_use_id === "string" ? message.tool_use_id : typeof message.task_id === "string" ? message.task_id : null;
         if (!id) return [];
@@ -217,7 +228,7 @@ export function parseLine(line: string): StreamItem[] {
     case "assistant": {
       const parent = typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : null;
       const content: any[] = Array.isArray(message.message?.content) ? message.message.content : [];
-      const items: StreamItem[] = [];
+      const items: StreamItem[] = isConnectionLoss(message) ? [{ kind: "connectionLost", parent }] : [];
       if (parent) {
         const model = message.message?.model;
         if (typeof model === "string" && model && !model.startsWith("<")) items.push({ kind: "subagentRuntime", id: parent, runtime: { engine: "claude" }, model });

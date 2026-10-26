@@ -12,6 +12,7 @@
 //   stubborn — like slow, but ignores SIGTERM and interrupts, and so does a helper it starts
 //   card     — replies with a ccb-card block
 //   crash    — streams a little, then exits 3 without a result line
+//   netloss  — (long-lived) claude's API retries, then its connection error that ends the turn (no HTTP answer)
 //   tool     — (long-lived) asks to run a Bash command and reports whether it was allowed:
 //              "/tool <command>" asks for <command> (default "echo hi"); "/tool:WebFetch …" asks for another tool
 //   resume   — replies with how it was started: "session <id> resumed=<bool>"
@@ -102,7 +103,7 @@ function helper(ignoreTerm) {
 }
 
 function directive(prompt) {
-  const match = /^\/(normal|slow|stubborn|card|crash|tool|resume|choices|task|team|react|agent|bgagent)(?::([A-Za-z]+))?\s*/.exec(prompt);
+  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|team|react|agent|bgagent)(?::([A-Za-z]+))?\s*/.exec(prompt);
   return match ? { mode: match[1], tool: match[2] ?? "Bash", rest: prompt.slice(match[0].length) } : { mode: envMode, tool: "Bash", rest: prompt };
 }
 
@@ -428,6 +429,13 @@ async function turn(job) {
       await sleep(30);
     }
     result("", false);
+    return;
+  }
+  if (mode === "netloss") {
+    // claude's retries with no answer from the API, then its API error with no HTTP status (1.x's connectionLost).
+    out({ type: "system", subtype: "api_retry", attempt: 1, max_retries: 10, error_status: null, error: "unknown" });
+    out({ type: "assistant", parent_tool_use_id: null, is_api_error_message: true, error: "unknown", message: { role: "assistant", content: [{ type: "text", text: "API Error: Connection error." }] } });
+    result("API Error: Connection error.", false, "success");
     return;
   }
   if (mode === "crash") {

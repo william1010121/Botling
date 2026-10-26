@@ -17,6 +17,7 @@ import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
 import { codexSummarizer } from "./catchup";
+import { probeEndpoint, probeNetwork } from "./network-resume";
 import { PortSealer, testSealer, type Sealer } from "./plugins/secrets";
 import type { HostCommand } from "./plugins/host-client";
 import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
@@ -219,6 +220,8 @@ const core = new Core({
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   watchMs: number(process.env.BOTLING_WATCH_MS, 20_000),
   stallMinuteMs: number(process.env.BOTLING_STALL_MINUTE_MS, 60_000),
+  // Whether Claude's API answers again, while a bot waits for the network (BOTLING_NETWORK_PROBE_URL: another address, for tests).
+  networkProbe: () => probeNetwork(process.env.BOTLING_NETWORK_PROBE_URL || probeEndpoint()),
   summarizer: summarizer(),
   classifier: classifier(),
   codexModels: codexModels(),

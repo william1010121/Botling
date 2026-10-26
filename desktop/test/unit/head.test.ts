@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createServer } from "node:http";
 import { alive, sleep, tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
 
@@ -170,6 +171,32 @@ describe("a bot's head", () => {
     await c.call({ type: "settings.set", change: { key: "stallReminderMinutes", value: 0 } });
     expect((await turn(c, "/linger again")).event.status).toBe("done");
     expect((await c.chat()).messages.filter((m: { role: string; text: string }) => m.role === "notice" && m.text.includes("分鐘"))).toHaveLength(1);
+  });
+
+  it("a turn cut off by the network waits for it (no sleep), then carries on in the same session (1.x's NetworkResume)", async () => {
+    const dir = tempDir("head");
+    let online = false;
+    const probe = createServer((request, response) => { if (online) response.end("ok"); else request.socket.destroy(); });
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    try {
+      const port = (probe.address() as { port: number }).port;
+      const c = core(dir, { BOTLING_WATCH_MS: "100", BOTLING_IDLE_MS: "300", BOTLING_NETWORK_PROBE_URL: `http://127.0.0.1:${port}/`, FAKE_CLAUDE_INPUT: join(dir, "input.log") });
+      const { event, messageId } = await turn(c, "/netloss");
+      expect(event.status).toBe("failed");
+      const line = (await c.chat()).messages.find((m: { id: string }) => m.id === messageId);
+      expect(line.text).toBe("網路中斷：連不上 Claude（API Error: Connection error.）。網路恢復後會自動接著做。");
+      await sleep(800);
+      expect(alive(starts(dir)[0]!.pid)).toBe(true); // It did not go to sleep.
+      expect(c.stderr).not.toMatch(/tidying/);
+      online = true;
+      await until(async () => (await c.chat()).messages.some((m: { role: string; text: string }) => m.role === "divider" && m.text === "網路恢復 · 中斷約 1 分鐘 · 接著原本的工作"), { what: "the network back" });
+      await until(() => readFileSync(join(dir, "input.log"), "utf8").includes("is back now."), { what: "the resume note" });
+      const told = JSON.parse(readFileSync(join(dir, "input.log"), "utf8").trim().split("\n").at(-1)!).text as string;
+      expect(told).toBe("(App: 網路中斷: the network connection was lost about 1 minute ago and is back now.)\nCarry on with what you were doing when it dropped, from where you left off; do not start over or redo finished steps.");
+      expect(starts(dir)).toHaveLength(1);
+    } finally {
+      probe.close();
+    }
   });
 
   it("an idle head tidies its notes, then sleeps; the next message wakes a new session, briefed", async () => {

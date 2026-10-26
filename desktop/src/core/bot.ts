@@ -96,6 +96,10 @@ import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
 import { alwaysAllows } from "./permission-rules";
 import {
+  WARM_WINDOW_MS, connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, restoredText, resumeMode, resumeNote,
+  type CutOff, type Outage,
+} from "./network-resume";
+import {
   backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
 } from "./background-tasks";
@@ -242,6 +246,8 @@ interface Turn {
   ended: string[];
   /** Background work it started (1.x's `trace.takeTasks()`), kept in its reply. */
   tasks?: BackgroundTask[];
+  /** It ended on an API error with no answer from the API (1.x's `turnLostConnection`). */
+  lostConnection?: boolean;
   /** Work the other head handed over (its reply goes back), and the hand-off it is. */
   conducted: boolean;
   handoffId: string | null;
@@ -352,6 +358,10 @@ export class Bot {
   private rounds: RoundsProgress | null = null;
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
   private managedPending = false;
+  /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
+  outage: Outage | null = null;
+  /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
+  private cutOffByNetwork = new Set<string>();
   /** When the turn under way last showed a step (1.x's `lastProgress`, ms), and each subagent's (`subagentProgress`). */
   private lastProgress: number | null = null;
   private subagentProgress = new Map<string, number>();
@@ -2096,7 +2106,7 @@ export class Bot {
       this.restartForPluginsOnly = false;
       this.restartReason = null;
     }
-    if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending && !this.backgroundWorkRunning) {
+    if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending && !this.backgroundWorkRunning && !this.outage) {
       this.restartPending = false;
       this.restartForPluginsOnly = false;
       this.restarting = old;
@@ -2310,6 +2320,13 @@ export class Bot {
 
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
+    // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
+    if (item.kind === "connectionTrouble") return;
+    if (item.kind === "connectionLost") {
+      if (item.parent) this.cutOffByNetwork.add(item.parent);
+      else if (this.turn?.open && this.turn.head === head) this.turn.lostConnection = true;
+      return;
+    }
     if (item.kind !== "rateLimits") this.noteProgressOf(item);
     if (item.kind === "managedPending") {
       this.managedPending = item.pending;
@@ -2431,6 +2448,14 @@ export class Bot {
         return;
       }
       case "result":
+        // Its turn ended with claude's connection error: say so, and wait for the network instead of going to sleep (`showNetworkLoss`).
+        if (!item.ok && turn.lostConnection && turn.origin !== "tidy") {
+          turn.reply = new ReplyText();
+          this.recordOutage({ turnFailed: true });
+          this.finishTurn(turn, "failed", lostText(item.error || item.text));
+          this.bumpUnread();
+          return;
+        }
         if (item.ok) turn.reply.add(item);
         // The interrupt meant for the turn that was cut off stopped this one instead: send it again, once.
         if (!item.ok && turn.merged && this.mergeRaced && !turn.retried && !turn.reply.text && head.running) {
@@ -2520,6 +2545,8 @@ export class Bot {
         const wasRunning = this.subagents.get(item.id)?.status === "running";
         if (this.subagents.toolResult(item)) this.subagentChanged(this.subagents.get(item.parent ?? item.id));
         if (wasRunning && this.subagents.get(item.id)?.status !== "running") this.subagentEnded(item.id);
+        // The call that started it (not a SendMessage call's result) came back with claude's connection error.
+        if (this.subagents.get(item.id)?.id === item.id) this.noteSubagentEnd(item.id, item.output);
         return item.parent !== null;
       }
       case "subagentRuntime":
@@ -2545,7 +2572,12 @@ export class Bot {
         return true;
       case "subagentEnded": {
         this.endBackground(item.id, item.status, item.summary);
+        const known = this.subagents.get(item.id)?.id;
         const ended = this.subagents.ended(item);
+        // A notification says more than the error, so a failed one counts if any line is it.
+        if (known && (item.status.toLowerCase() === "failed" || item.status.toLowerCase() === "error" || this.cutOffByNetwork.has(known) || isConnectionError(item.summary ?? ""))) {
+          this.noteSubagentEnd(known, connectionErrorLine(item.summary ?? ""));
+        }
         if (ended) {
           this.subagentEnded(ended.id);
           this.subagentChanged(ended);
@@ -3085,6 +3117,11 @@ export class Bot {
     if (head.pid > 0) this.options.ledger.forget(head.pid);
     if (this.draining?.head === head) this.draining.resolve();
     if (head !== this.head) return;
+    // Gone because of the network (or gone while waiting for it): its session and the subagents still
+    // at work are picked up again when the network is back (1.x's `lostToNetwork`).
+    const lostToNetwork = !exit.expected && !this.shuttingDown && (this.outage !== null || (exit.code !== 0 && mentionsConnectionError(exit.stderr)));
+    const cutOff = lostToNetwork ? this.subagents.running.map((subagent) => subagent.id) : [];
+    const lostSession = this.session.started ? this.session.sessionId : null;
     this.head = null;
     this.clearIdle();
     this.ignoreResults = 0;
@@ -3133,13 +3170,72 @@ export class Bot {
       // its stderr, else "claude exited unexpectedly"); a failed turn already says it.
       this.newSession();
       this.store.saveHead(this.session);
-      if (exit.code !== 0 && !failedTurn) {
+      if (lostToNetwork) {
+        const shown = this.outage !== null;
+        this.recordOutage({ subagents: cutOff, lostSession });
+        if (!shown) {
+          this.add({ id: newId(), role: "error", text: lostText(connectionErrorLine(exit.stderr)), date: toSwiftDate() });
+          this.bumpUnread();
+        }
+      } else if (exit.code !== 0 && !failedTurn) {
         const stderr = exit.stderr.trim();
         this.add({ id: newId(), role: "error", text: stderr ? stderr.slice(-2_000) : `${this.engine === "codex" ? "codex" : "claude"} exited unexpectedly (${why})`, date: toSwiftDate() });
         this.bumpUnread();
       }
     }
     this.updated();
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // The network (1.x's NetworkResume: `recordOutage`, `noteSubagentEnd`, `networkRestored`)
+
+  /** A subagent's call returned or it ended with claude's connection error: then it waits for the network like the bot. */
+  private noteSubagentEnd(id: string, text: string) {
+    const subagent = this.subagents.get(id);
+    if (!subagent || subagent.status === "running" || !(this.cutOffByNetwork.has(id) || isConnectionError(text))) return;
+    this.cutOffByNetwork.delete(id);
+    this.recordOutage({ subagents: [id] });
+  }
+
+  private recordOutage({ turnFailed = false, subagents = [], lostSession = null }: { turnFailed?: boolean; subagents?: string[]; lostSession?: string | null }) {
+    const record: Outage = this.outage ? { ...this.outage, subagents: [...this.outage.subagents] } : { since: Date.now(), turnFailed: false, subagents: [], lostSession: null };
+    if (turnFailed) record.turnFailed = true;
+    for (const id of subagents) if (!record.subagents.includes(id)) record.subagents.push(id);
+    if (lostSession) record.lostSession = lostSession;
+    this.outage = record;
+    this.clearIdle();
+    this.updated();
+  }
+
+  /**
+   * The network is back (`now`: when that was seen). Within the warm window of the failure it goes on in the
+   * same session and continues its subagents; later, cut-off subagents start over as new ones in their
+   * worktree with their prompt and one added line. (A partner head's outage is looked at too.)
+   */
+  networkRestored(now = Date.now()) {
+    this.partner?.networkRestored(now);
+    const outage = this.outage;
+    if (!outage) return;
+    this.outage = null;
+    const elapsed = Math.max(0, now - outage.since);
+    const warm = elapsed <= WARM_WINDOW_MS;
+    const cut: CutOff[] = outage.subagents.flatMap((id) => {
+      const subagent = this.subagents.get(id);
+      return subagent ? [{ description: subagent.description, type: subagent.type ?? null, prompt: subagent.prompt, agentId: subagent.agentID ?? null }] : [];
+    });
+    const note = resumeNote(elapsed, outage.turnFailed || outage.lostSession !== null, cut);
+    const mode = resumeMode(elapsed, cut.length);
+    this.add({ id: newId(), role: "divider", text: restoredText(elapsed, mode), date: toSwiftDate() });
+    this.updated();
+    if (!this.head?.running && warm && outage.lostSession) {
+      // The process went away with it: the same session again, while its cache is warm.
+      this.session = { sessionId: outage.lostSession, started: true };
+      this.briefing = false;
+      this.store.saveHead(this.session);
+      this.deliverTo(this.engine, this.withSavedMemory(note), null, { origin: "app" });
+      return;
+    }
+    this.deliverTo(this.engine, note, null, { origin: "app" });
   }
 
   // ------------------------------------------------------------------------------------------
@@ -3236,9 +3332,9 @@ export class Bot {
     return lines;
   }
 
-  /** Waiting for the network (item a fills this in). */
+  /** Not while it waits for the network. */
   private outageBlocksStall(): boolean {
-    return false;
+    return this.outage !== null;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -3263,7 +3359,8 @@ export class Bot {
     if (!head?.running || this.turn || this.queue.length || this.approvals.size || this.tidying) return;
     // A subagent (or a Codex worker) at work in the background would end with the process: wait for it.
     // So would a command or Monitor it left running in the background (1.x's `hasBackgroundWorkRunning`).
-    if ((this.subagents.running.length || this.managedPending || this.backgroundWorkRunning) && !this.shuttingDown) { this.scheduleIdle(); return; }
+    // Cut off by the network, it keeps its session for when the network is back.
+    if ((this.subagents.running.length || this.managedPending || this.backgroundWorkRunning || this.outage) && !this.shuttingDown) { this.scheduleIdle(); return; }
     this.clearIdle();
     this.tidying = true;
     this.updated();
