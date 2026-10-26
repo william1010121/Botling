@@ -50,6 +50,7 @@ export function SubagentRows({ bot, look = "original", now, watching, onOpen, on
             <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
             <OwnerMark head={row.head} avatar={bot.avatar} look={look} />
             <span className="subagent-title">{row.title || "Subagent"}</span>
+            {row.waitingForNetwork && <span className="subagent-network">網路中斷</span>}
           </button>
           <button type="button" className="subagent-settle" onClick={() => onSettle(row)}
             title={row.status === "running" ? "Settle: move to Settled in the right column (it keeps working)" : "Settle: move to Settled in the right column"}

@@ -371,6 +371,8 @@ export const SubagentRowView = z.strictObject({
   unsettledAt: z.number().nullable(),
   /** You settled it: it is in the right panel's "Settled", not the left column. */
   settled: z.boolean(),
+  /** Cut off by a connection error; cleared once its owner resumes (1.x subagentIsWaitingForNetwork). */
+  waitingForNetwork: z.boolean().optional(),
   /** What it was asked (the row's tooltip). */
   prompt: z.string().max(1_000),
 });
@@ -422,6 +424,8 @@ export const BotView = z.strictObject({
   /** asleep: no agent process; starting; awake: its process is running; tidying: writing its notes before it sleeps; switching: writing a handoff before it runs on the other engine. */
   phase: z.enum(["asleep", "starting", "awake", "tidying", "switching"]),
   working: z.boolean(),
+  /** Engine API retries or an outage waiting for recovery (1.x retryingConnection / outage). */
+  connection: z.enum(["retrying", "disconnected"]).nullable().optional(),
   /** Tool approvals waiting for the user. */
   approvals: z.number().int().nonnegative(),
   unread: z.number().int().nonnegative(),

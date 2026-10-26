@@ -62,7 +62,7 @@ button { font: inherit; color: inherit; }
 .chat-title { font-weight: 600; }
 .chat-status { color: var(--faint); }
 .chat-status[data-status="working"] { color: var(--blue); }
-.chat-status[data-status="waiting"] { color: var(--orange); }
+.chat-status[data-status="waiting"], .chat-status[data-status="disconnected"] { color: var(--orange); }
 .board-switch-bar { display: flex; justify-content: center; flex-shrink: 0; padding: 10px 0 6px; }
 .board-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--chip); border-radius: 9px; background: var(--bubble); -webkit-app-region: no-drag; }
 .board-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; height: 24px; padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
@@ -239,6 +239,7 @@ button { font: inherit; color: inherit; }
 .subagent-row.running .subagent-open { color: var(--text); }
 .subagent-arrow { color: var(--faint); display: inline-flex; flex-shrink: 0; }
 .subagent-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subagent-network { flex-shrink: 0; font-size: 11px; color: var(--orange); }
 .subagent-owner {
   width: 24px; height: 24px; flex-shrink: 0; position: relative; display: inline-flex; align-items: center; justify-content: center;
 }
@@ -489,6 +490,8 @@ button { font: inherit; color: inherit; }
 .strip-bot.selected::before { content: ""; position: absolute; left: -8px; top: 10px; width: 3px; height: 20px; border-radius: 2px; background: var(--blue); }
 .strip-bot.asleep img { opacity: 0.55; }
 .strip-bot.working::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; border: 1.5px dashed var(--blue); }
+.strip-bot.disconnected::after { content: ""; position: absolute; inset: 3px; border-radius: 12px; border: 1.5px solid var(--orange); }
+.strip-disconnected { position: absolute; z-index: 1; right: 1px; bottom: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--orange); color: var(--side); box-shadow: 0 0 0 2px var(--side); font-size: 10px; font-weight: 900; line-height: 14px; text-align: center; }
 .strip-unread { position: absolute; right: 3px; top: 3px; width: 9px; height: 9px; border-radius: 50%; background: var(--blue); border: 2px solid var(--side); }
 .rail-tip {
   position: fixed; left: 60px; z-index: 40; transform: translateY(-50%); padding: 6px 10px; background: #2A2A31; border: 1px solid #3A3A42; border-radius: 8px;
