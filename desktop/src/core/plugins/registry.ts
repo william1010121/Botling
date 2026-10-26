@@ -7,8 +7,9 @@
 // 2.0 differences: no built-in plugins folder (ccb-latex is bundled into the chat page). Since Phase 4a
 // web parts run in the chat page again (it has an origin of its own), with 1.x's "last version that
 // worked" to fall back on when a new one breaks.
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, extname, join, normalize, relative, sep } from "node:path";
+import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { checkPlugin, loadPlugin, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
 import type { SecretStore } from "./secrets";
@@ -119,6 +120,8 @@ export class PluginRegistry {
 
   private state: State;
   private fingerprints: Record<string, string> = {};
+  /** Each Claude part's content hash, by the fingerprint it was taken at (`claudeContents`). */
+  private claudeContents = new Map<string, { fingerprint: string; hash: string }>();
   private reportedProblems: Record<string, string[]> = {};
   private crashes = new Map<string, number[]>();
   /** Web parts the chat page loaded without trouble (1.x's `lastGood`), and what was last handed to it. */
@@ -321,6 +324,33 @@ export class PluginRegistry {
 
   claudeDirectories(): string[] {
     return this.plugins.flatMap((plugin) => (plugin.enabled && !plugin.failure && plugin.manifest.ccb?.claude ? [join(plugin.folder, plugin.manifest.ccb.claude)] : []));
+  }
+
+  /**
+   * The Claude parts `claudeDirectories()` gives, each with a hash of what its files hold (1.x's
+   * `claudeStamp`): a session started with a different stamp has older skills, agents or MCP servers.
+   * A file written again with the same bytes, or a change outside the Claude part (package.json, the
+   * web part), leaves the stamp as it was: no bot restarts for it.
+   */
+  claudeStamp(): string[] {
+    return this.plugins.flatMap((plugin) => {
+      const claude = plugin.manifest.ccb?.claude;
+      if (!plugin.enabled || plugin.failure || !claude) return [];
+      const print = this.fingerprints[plugin.manifest.name] ?? "";
+      let known = this.claudeContents.get(plugin.manifest.name);
+      if (!known || known.fingerprint !== print) {
+        const folder = join(plugin.folder, claude);
+        const hasher = createHash("sha256");
+        for (const file of filesIn(folder)) {
+          hasher.update(`${claude}/${file}`).update("\0");
+          try { hasher.update(readFileSync(join(folder, file))); } catch { /* gone meanwhile */ }
+          hasher.update("\0");
+        }
+        known = { fingerprint: print, hash: hasher.digest("hex") };
+        this.claudeContents.set(plugin.manifest.name, known);
+      }
+      return [`${resolve(plugin.folder, claude)}#${known.hash}`];
+    });
   }
 
   /**

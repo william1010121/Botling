@@ -183,6 +183,8 @@ export interface BotOptions {
   replied?: (bot: Bot, record: ChatRecord) => void;
   /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
   plugins?: () => { dirs: string[]; env: Record<string, string>; tools?: string[] };
+  /** What the plugins' Claude parts are now (`PluginRegistry.claudeStamp`, 1.x's `pluginStamp`). */
+  pluginStamp?: () => string[];
   /** Said at each wake after the wake line (the main bot's project list: `wakeNote`). */
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
@@ -284,6 +286,8 @@ export const NO_LONGER_NEEDED = "No longer needed";
 const NO_ANSWER = "No answer in time";
 /** Tools whose "always" would be far broader than it sounds; they are asked every time (`Bot.neverAlways`). */
 const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command"]);
+/** 1.x's `RestartReason.plugins`. */
+const PLUGINS_RESTART = { told: "loading new plugins", shown: "loading new plugins" };
 const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
 
 export class Bot {
@@ -371,6 +375,10 @@ export class Bot {
   private restartPending = false;
   /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
   private restartReason: { told: string; shown: string } | null = null;
+  /** The restart waiting is only for plugins: when they changed back, it is not needed (1.x's `pendingRestartForPluginsOnly`). */
+  private restartForPluginsOnly = false;
+  /** The plugins' Claude parts its process started with (1.x's `loadedPluginStamp`). */
+  private loadedPluginStamp: string[] | null = null;
   /** A head ended for such a restart: its session carries on. */
   private restarting: AgentHead | null = null;
   /** What its process has cost so far (claude's `total_cost_usd`, a running total; 1.x's `sessionCost`). */
@@ -2026,9 +2034,33 @@ export class Bot {
 
   /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
   private restartFor(reason: { told: string; shown: string } | null) {
-    if (!this.head?.running) return;
+    this.restartForPluginsOnly = false;
+    if (!this.head?.running) { this.restartPending = false; return; }
     this.restartPending = true;
     if (reason) this.restartReason = reason;
+  }
+
+  /** Its process has the plugins' Claude parts as they are now. */
+  private hasCurrentPlugins(): boolean {
+    const stamp = this.options.pluginStamp?.();
+    return !!stamp && JSON.stringify(stamp) === JSON.stringify(this.loadedPluginStamp);
+  }
+
+  /**
+   * Plugins' Claude parts changed (1.x's `reloadPlugins`). Asleep: the next wake loads them. Awake: it
+   * restarts just before its next message, so the new skills and agents are there. Many changes make one
+   * restart, and changes that come back to what its session has make none. Its other head restarts too.
+   */
+  reloadPlugins() {
+    if (this.options.primary) return;
+    if (this.hasCurrentPlugins()) {
+      if (this.restartForPluginsOnly) { this.restartPending = false; this.restartReason = null; this.restartForPluginsOnly = false; }
+      return;
+    }
+    const waiting = this.restartPending;
+    this.partner?.restartFor(PLUGINS_RESTART);
+    this.restartFor(PLUGINS_RESTART);
+    if (!waiting && this.restartPending) this.restartForPluginsOnly = true;
   }
 
   /** Writes the turn's message to a head (starting one, in a new session, if the bot is asleep). */
@@ -2038,8 +2070,15 @@ export class Bot {
     if (this.turn !== turn || !turn.open) return;
     const old = this.head;
     let restarted: { told: string; shown: string } | null = null;
+    // The restart waiting was only for plugins, and they came back to what its session has (`restartWaiting`).
+    if (!given && this.restartPending && this.restartForPluginsOnly && this.hasCurrentPlugins()) {
+      this.restartPending = false;
+      this.restartForPluginsOnly = false;
+      this.restartReason = null;
+    }
     if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending) {
       this.restartPending = false;
+      this.restartForPluginsOnly = false;
       this.restarting = old;
       restarted = this.restartReason;
       this.restartReason = null;
@@ -2178,6 +2217,8 @@ export class Bot {
     // It fell asleep before its switch of engine was done: it wakes on the new one.
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
     this.restartPending = false;
+    this.restartForPluginsOnly = false;
+    this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
     const resume = this.session.started && !this.briefing;
     const prompts = this.prompts();
     const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };

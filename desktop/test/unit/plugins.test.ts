@@ -96,6 +96,30 @@ describe("the plugin registry", () => {
     expect(registry.claudeTools()).toEqual([]);
   });
 
+  it("the Claude parts' stamp changes with their files' bytes, not their dates or other parts (1.x's claudeStamp)", () => {
+    const dir = tempDir("plugins");
+    const library = join(dir, "plugins");
+    const folder = plugin(library, "gh", { ccb: { claude: "claude" }, web: null });
+    mkdirSync(join(folder, "claude", "skills"), { recursive: true });
+    mkdirSync(join(folder, "claude", ".claude-plugin"), { recursive: true });
+    writeFileSync(join(folder, "claude", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "gh", version: "1.0.0" }));
+    writeFileSync(join(folder, "claude", "skills", "a.md"), "one");
+    plugin(library, "plain");
+    const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore());
+    const first = registry.claudeStamp();
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatch(new RegExp(`^${join(folder, "claude").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}#[0-9a-f]{64}$`));
+    // The same bytes written again: the same stamp.
+    writeFileSync(join(folder, "claude", "skills", "a.md"), "one");
+    registry.rescan();
+    expect(registry.claudeStamp()).toEqual(first);
+    writeFileSync(join(folder, "claude", "skills", "a.md"), "two");
+    registry.rescan();
+    expect(registry.claudeStamp()).not.toEqual(first);
+    registry.setEnabled("gh", false);
+    expect(registry.claudeStamp()).toEqual([]);
+  });
+
   it("a broken plugin is off until its files change, said once; three crashes in ten minutes turn one off", () => {
     const dir = tempDir("plugins");
     const library = join(dir, "plugins");

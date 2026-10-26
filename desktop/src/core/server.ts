@@ -167,6 +167,8 @@ export class Core {
   /** Components made from replies (Phase 5a, 1.x's Workspace+Specs). */
   readonly specs: SpecDesk;
   private lastPlugins = "";
+  /** The plugins' Claude parts as bots last heard of them (`followClaudeParts`). */
+  private loadedClaudeParts = "[]";
   /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
   private snapshotHeld = false;
   /** The web AIs' conversations and their saved text (<data>/web). */
@@ -289,6 +291,7 @@ export class Core {
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
         plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment(), tools: this.plugins.registry.claudeTools() }),
+        pluginStamp: () => this.plugins.registry.claudeStamp(),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
@@ -400,6 +403,7 @@ export class Core {
           return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
         },
         changed: (view) => {
+          this.followClaudeParts();
           const text = JSON.stringify(view);
           if (text === this.lastPlugins) return;
           this.lastPlugins = text;
@@ -426,6 +430,7 @@ export class Core {
     });
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.lastPlugins = JSON.stringify(this.plugins.view());
+    this.loadedClaudeParts = JSON.stringify(this.plugins.registry.claudeStamp());
     const app = options.app ?? null;
     const running = app?.bundle ? readBuild(app.bundle) : null;
     this.devBuilds = new DevBuilds({
@@ -552,6 +557,17 @@ export class Core {
       case "cancel": this.specs.cancel(spec.id, chat); break;
     }
     return true;
+  }
+
+  /**
+   * Plugins' Claude parts changed (1.x's `followClaudeParts`): awake bots restart (once they are free: no
+   * turn and no subagent at work) so they get the new skills, agents and MCP servers.
+   */
+  private followClaudeParts() {
+    const now = JSON.stringify(this.plugins.registry.claudeStamp());
+    if (now === this.loadedClaudeParts) return;
+    this.loadedClaudeParts = now;
+    for (const bot of this.bots.values()) bot.reloadPlugins();
   }
 
   /** The project that is Botling's own source, while developer mode is on (`developerProject`). */

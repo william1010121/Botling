@@ -2,7 +2,7 @@
 // one process across turns, approvals (allow once, always, deny, no answer), Stop by interrupt,
 // a crash (the bot sleeps, as in 1.x), sleeping when idle, and resuming the session after a core restart.
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { alive, sleep, tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
@@ -135,6 +135,28 @@ describe("a bot's head", () => {
     expect(next).toMatch(/resumed=false/);
     expect(starts(dir)).toHaveLength(2);
     expect(starts(dir)[1]!.session).not.toBe(starts(dir)[0]!.session);
+  });
+
+  it("plugins' Claude parts that change restart an awake head in its session before its next message (1.x)", async () => {
+    const dir = tempDir("head");
+    const c = core(dir, { BOTLING_COMPONENT_SCAN_MS: "100" });
+    expect((await turn(c, "first")).event.status).toBe("done");
+    const folder = join(dir, "plugins", "skills-pack");
+    mkdirSync(join(folder, "claude", "skills"), { recursive: true });
+    mkdirSync(join(folder, "claude", ".claude-plugin"), { recursive: true });
+    writeFileSync(join(folder, "claude", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "skills-pack", version: "1.0.0" }));
+    writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "skills-pack", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { claude: "claude" } }));
+    writeFileSync(join(folder, "claude", "skills", "a.md"), "a skill");
+    await until(async () => (await c.call({ type: "plugins.list" })).plugins.some((p: { name: string }) => p.name === "skills-pack"), { what: "the plugin" });
+    expect(starts(dir)).toHaveLength(1); // An idle bot is not restarted until it has something to do.
+    expect((await turn(c, "second")).event.status).toBe("done");
+    expect(starts(dir)).toHaveLength(2);
+    expect(starts(dir)[1]).toMatchObject({ resume: true, session: starts(dir)[0]!.session });
+    expect(starts(dir)[1]!.args.join(" ")).toContain(`--plugin-dir ${join(folder, "claude")}`);
+    expect((await c.chat()).messages.map((m: { text: string }) => m.text)).toContain("Restarted → loading new plugins");
+    // Nothing changed since: no more restarts.
+    expect((await turn(c, "third")).event.status).toBe("done");
+    expect(starts(dir)).toHaveLength(2);
   });
 
   it("an idle head tidies its notes, then sleeps; the next message wakes a new session, briefed", async () => {
