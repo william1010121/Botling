@@ -1,0 +1,277 @@
+<!doctype html><html data-size="1x1" data-surface="board" data-fill><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+<style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}
+#ccb-root{container-type:inline-size;container-name:ccb}
+html[data-surface="board"] #ccb-root{height:100%}
+html[data-fill],html[data-fill] body,html[data-fill] #ccb-root{height:100%}html[data-fill] #ccb-root{container-type:size}
+html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::-webkit-scrollbar{display:none}</style>
+<script>
+
+window.addEventListener('message', (event) => {
+  if (event.source !== parent || !event.data || typeof event.data.ccbSourceSnapshot !== 'string') return;
+  const copy = document.documentElement.cloneNode(true);
+  const originalControls = document.querySelectorAll('input,textarea,select');
+  copy.querySelectorAll('input,textarea,select').forEach((control, i) => {
+    const original = originalControls[i];
+    if (control.tagName === 'INPUT') {
+      control.setAttribute('value', original.value);
+      if (original.checked) control.setAttribute('checked',''); else control.removeAttribute('checked');
+    } else if (control.tagName === 'TEXTAREA') control.textContent = original.value;
+    else [...control.options].forEach((option, index) => {
+      if (original.options[index].selected) option.setAttribute('selected',''); else option.removeAttribute('selected');
+    });
+  });
+  const canvases = document.querySelectorAll('canvas');
+  copy.querySelectorAll('canvas').forEach((canvas, i) => {
+    try { const image = document.createElement('img'); image.src = canvases[i].toDataURL(); image.style.cssText = canvas.style.cssText; image.width = canvases[i].width; image.height = canvases[i].height; canvas.replaceWith(image); } catch { canvas.remove(); }
+  });
+  copy.querySelectorAll('script,iframe,object,embed,base,meta[http-equiv],link[rel="preload"],link[rel="modulepreload"]').forEach(node => node.remove());
+  copy.querySelectorAll('*').forEach(node => {
+    for (const attr of [...node.attributes]) if (/^on/i.test(attr.name) || ['href','action','formaction','srcdoc','autofocus','contenteditable'].includes(attr.name)) node.removeAttribute(attr.name);
+    if (node.matches('input,button,textarea,select')) node.setAttribute('disabled','');
+    if (node.matches('video,audio')) { node.removeAttribute('autoplay'); node.removeAttribute('src'); }
+  });
+  parent.postMessage({ccb:'sourceSnapshot', request:event.data.ccbSourceSnapshot, html:'<!doctype html>'+copy.outerHTML, height:Math.ceil(document.documentElement.scrollHeight)}, '*');
+});
+// First of all: an input method's Return (Zhuyin, Pinyin) never reaches the template's handlers.
+(function installImeGuard(win, grace = compositionGrace) {
+	const w = win;
+	if (w.__ccbIme) return;
+	const state = {
+		composing: false,
+		endedAt: -Infinity
+	};
+	w.__ccbIme = state;
+	// The element composing: WebKit sends its compositionend (and blur) there, so one that left the
+	// page mid-composition (a card's box redrawn, a panel closed) never tells the window it ended.
+	let composer = null;
+	w.addEventListener("compositionstart", (event) => {
+		state.composing = true;
+		composer = event.target;
+	}, true);
+	w.addEventListener("compositionend", () => {
+		state.composing = false;
+		composer = null;
+		state.endedAt = Date.now();
+	}, true);
+	// A blur ends any composition; a missed compositionend must not swallow Enter for good.
+	w.addEventListener("blur", () => {
+		state.composing = false;
+		composer = null;
+	}, true);
+	const stop = (event) => {
+		// A key the input method does not own (WebKit and Chrome mark every key it takes: isComposing,
+		// keyCode 229) means none is choosing, whatever the flag says: a stale flag would cancel every
+		// key in the input box. A Return in the box still composing may be the input method's own,
+		// ahead of its compositionend: it counts as just after one.
+		if (event.type === "keydown" && state.composing && !event.isComposing && event.keyCode !== 229) {
+			const active = w.document.activeElement;
+			const here = !!composer && composer.isConnected && !!active && (composer === active || composer.contains(active));
+			state.composing = false;
+			composer = null;
+			if (here) state.endedAt = Date.now();
+		};
+		const enter = event.key === "Enter" || event.keyCode === 13 || event.code === "Enter" || event.code === "NumpadEnter";
+		if (!enter) return;
+		const during = event.isComposing || event.keyCode === 229 || state.composing;
+		const justAfter = Date.now() - state.endedAt < grace;
+		if (!during && !justAfter) return;
+		// Page handlers never see it. Its default (a newline, a form's submit) is cancelled only when
+		// the input method is already done with it: during composition the default is the commit.
+		event.stopImmediatePropagation();
+		if (!during || event.type === "keypress") event.preventDefault();
+	};
+	w.addEventListener("keydown", stop, true);
+	w.addEventListener("keypress", stop, true);
+})(window, 100);
+(() => {
+  const images = {"/tmp/a.png":"botling-card://image/1"};
+  // Whether ccb.save keeps anything here.
+  const canSave = true;
+  const read = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataURL = String(reader.result || '');
+      const type = file.type || (dataURL.match(/^data:([^;,]+)/) || [])[1] || 'image/png';
+      resolve({name: file.name || ('Pasted image.' + (type.split('/')[1] || 'png')), type, base64: dataURL.slice(dataURL.indexOf(',') + 1), dataURL});
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  // Any way a template holds a picture, as {name, base64}.
+  const picture = async (item, index) => {
+    if (item instanceof Blob) item = await read(item);
+    else if (typeof item === 'string') item = {dataURL: item};
+    if (!item || typeof item !== 'object') return null;
+    let base64 = typeof item.base64 === 'string' ? item.base64 : '';
+    let type = item.type || '';
+    if (!base64 && typeof item.dataURL === 'string' && item.dataURL.startsWith('data:')) {
+      base64 = item.dataURL.slice(item.dataURL.indexOf(',') + 1);
+      type = type || (item.dataURL.match(/^data:([^;,]+)/) || [])[1] || '';
+    }
+    if (!base64) return null;
+    const name = typeof item.name === 'string' && item.name ? item.name : 'Picture ' + (index + 1) + '.' + ((type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg'));
+    return {name, base64};
+  };
+  // runDetail calls waiting for the page's answer, by number.
+  const details = new Map();
+  let detailCount = 0;
+  // Who wants to hear when its card is resized.
+  const sizeWatchers = new Set();
+  // The frame's own width and height: what a responsive layout has to fit.
+  const pixels = () => Object.freeze({width: Math.round(Number(window.innerWidth) || 0), height: Math.round(Number(window.innerHeight) || 0)});
+  const sized = (cells, px) => Object.freeze({w: cells.w, h: cells.h, name: String(cells.name), px});
+  const tell = () => {
+    for (const watcher of [...sizeWatchers]) {
+      try { watcher(window.ccb.size); } catch (error) { console.error(error); }
+    }
+  };
+  // New cells from the page (the user resized its card).
+  const resized = (next) => {
+    if (typeof next.w !== 'number' || typeof next.h !== 'number') return;
+    const now = window.ccb.size;
+    const px = pixels();
+    if (next.w === now.w && next.h === now.h && px.width === now.px.width && px.height === now.px.height) return;
+    window.ccb.size = sized(next, px);
+    document.documentElement.dataset.size = next.w + 'x' + next.h;
+    tell();
+  };
+  // New pixels: a drag, a narrower window, the panel dragged taller.
+  const measured = () => {
+    const now = window.ccb.size;
+    const px = pixels();
+    if (px.width === now.px.width && px.height === now.px.height) return;
+    window.ccb.size = sized(now, px);
+    tell();
+  };
+  window.addEventListener('resize', measured);
+  window.addEventListener('load', measured);
+  window.addEventListener('message', (event) => {
+    const message = event.data;
+    if (event.source !== parent || !message) return;
+    if (message.ccbSize && typeof message.ccbSize === 'object') return resized(message.ccbSize);
+    // New data for a frame kept on screen (ccb.onData): its command ran again, or the bot updated it.
+    if (typeof message.ccbData === 'string') {
+      let next;
+      try { next = JSON.parse(message.ccbData); } catch (error) { return; }
+      window.ccb.data = next;
+      for (const watcher of [...dataWatchers]) {
+        try { watcher(next); } catch (error) { console.error(error); }
+      }
+      return;
+    }
+    if (typeof message.ccbDetail !== 'number') return;
+    const call = details.get(message.ccbDetail);
+    if (!call) return;
+    details.delete(message.ccbDetail);
+    if (message.ok) call.resolve(message.value);
+    else call.reject(new Error(String(message.error || 'The Detail command failed.')));
+  });
+  const dataWatchers = new Set();
+  window.ccb = {
+    data: {"a":1},
+    size: sized({"w":1,"h":1,"name":"small"}, pixels()),
+    surface: "board",
+    onSize(fn) {
+      if (typeof fn !== 'function') return () => {};
+      sizeWatchers.add(fn);
+      return () => sizeWatchers.delete(fn);
+    },
+    answer(value) {
+      if (typeof value === 'number') {
+        parent.postMessage({ccb: 'answer', index: value}, '*');
+        return Promise.resolve();
+      }
+      if (value && typeof value === 'object' && !(value instanceof String)) {
+        const text = value.text == null ? '' : String(value.text);
+        return Promise.all([...(value.images || [])].map(picture)).then((list) => {
+          parent.postMessage({ccb: 'answer', ...(Number.isInteger(value.index) && value.index >= 0 ? {index: value.index} : {}), text, images: list.filter(Boolean)}, '*');
+        });
+      }
+      parent.postMessage({ccb: 'answer', text: String(value)}, '*');
+      return Promise.resolve();
+    },
+    onData(fn) {
+      if (typeof fn !== 'function') return () => {};
+      dataWatchers.add(fn);
+      // The page keeps this frame from now on and sends it each new data instead of drawing it anew.
+      parent.postMessage({ccb: 'live'}, '*');
+      return () => dataWatchers.delete(fn);
+    },
+    load() { return Promise.resolve(window.ccb.data); },
+    save(value) {
+      if (!canSave) return Promise.reject(new Error('This component cannot save here: its data comes from a command, or it is a preview.'));
+      let json;
+      try { json = JSON.stringify(value); } catch (error) { return Promise.reject(new Error('ccb.save takes data JSON can hold: ' + error.message)); }
+      if (json === undefined || json === 'null') return Promise.reject(new Error('ccb.save needs data (not null or undefined).'));
+      if (json.length > 262144) return Promise.reject(new Error('The data is too big to save (at most 262144 characters of JSON).'));
+      window.ccb.data = JSON.parse(json);
+      parent.postMessage({ccb: 'save', data: json}, '*');
+      return Promise.resolve();
+    },
+    choose(index) { return this.answer(Number(index)); },
+    send(text) { return this.answer(String(text)); },
+    pickImage(options) {
+      return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = !!(options && options.multiple);
+        input.style.display = 'none';
+        let settled = false;
+        const done = (files) => {
+          if (settled) return;
+          settled = true;
+          input.remove();
+          Promise.all(files.filter((file) => file.type.startsWith('image/')).map(read)).then(resolve, () => resolve([]));
+        };
+        input.addEventListener('change', () => done([...(input.files || [])]));
+        input.addEventListener('cancel', () => done([]));
+        document.body.append(input);
+        input.click();
+      });
+    },
+    readImage(file) { return read(file); },
+    image(path) {
+      if (path == null) return '';
+      const text = String(path);
+      if (images[text]) return images[text];
+      if (images[text.trim()]) return images[text.trim()];
+      return /^(data:|blob:|ccb-preview:)/.test(text) ? text : '';
+    },
+    open(url, label) { parent.postMessage({ccb: 'open', url: String(url), label: label == null ? '' : String(label)}, '*'); },
+    setStatus(status) {
+      if (status == null) parent.postMessage({ccb: 'status', clear: true}, '*');
+      else if (typeof status === 'object') parent.postMessage({ccb: 'status', text: status.text == null ? '' : String(status.text), tone: status.tone == null ? null : String(status.tone)}, '*');
+      else parent.postMessage({ccb: 'status', text: String(status), tone: null}, '*');
+      return Promise.resolve();
+    },
+    runDetail(values, options) {
+      const save = !!(options && typeof options === 'object' && options.save);
+      return new Promise((resolve, reject) => {
+        const id = ++detailCount;
+        details.set(id, {resolve, reject});
+        let given = {};
+        if (values && typeof values === 'object') {
+          for (const key of Object.keys(values)) {
+            const value = values[key];
+            given[key] = typeof value === 'number' || typeof value === 'string' ? value : String(value);
+          }
+        }
+        parent.postMessage(save ? {ccb: 'runDetail', id, values: given, save} : {ccb: 'runDetail', id, values: given}, '*');
+      });
+    }
+  };
+  // Templates written while the app was called Deck call deck.answer(...).
+  window.deck = window.ccb;
+})();
+</script></head><body><div id="ccb-root">
+<style>.x{color:red}</style><img src="">
+</div><script>
+const ccbRoot = document.getElementById('ccb-root');
+const ccbSize = () => parent.postMessage({ccb: 'size', height: Math.ceil(ccbRoot.getBoundingClientRect().height)}, '*');
+new ResizeObserver(ccbSize).observe(ccbRoot);
+window.addEventListener('load', ccbSize);
+// The pointer over it, for the Board tile's controls (a parent page cannot always see it).
+document.documentElement.addEventListener('mouseenter', () => parent.postMessage({ccb: 'hover', on: true}, '*'));
+document.documentElement.addEventListener('mouseleave', () => parent.postMessage({ccb: 'hover', on: false}, '*'));
+</script></body></html>
