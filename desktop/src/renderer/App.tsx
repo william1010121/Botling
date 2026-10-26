@@ -800,6 +800,16 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
         case "selectTask":
           if (typeof action.id === "string") onSelectTask(action.id);
           return;
+        case "taskOutput": {
+          if (!chat || typeof action.messageID !== "string" || typeof action.taskID !== "string") return;
+          const botId = chat.botId, messageId = action.messageID, taskId = action.taskID;
+          void client.request({ type: "task.output", botId, messageId, taskId }).then((result) => {
+            if (latest.current.chat?.botId !== botId) return;
+            const response: ShellMessage = { botling: "taskOutput", botID: botId, messageID: messageId, taskID: taskId, text: result.text };
+            frame.current?.contentWindow?.postMessage(response, CHAT_ORIGIN);
+          }).catch(onError);
+          return;
+        }
         case "openSubagent": {
           if (!chat || typeof action.id !== "string") return;
           const botId = chat.botId;

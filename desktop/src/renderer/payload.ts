@@ -1,7 +1,6 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
-// page runs unchanged. What 2.0 has no data for yet (components, pins, heads, tasks, Catch-up) is
-// left out, which the page treats as "none".
+// page runs unchanged; optional fields it does not receive are treated as absent.
 import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SpecStateView, SubagentView, TaskView } from "../contract";
 import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
@@ -210,6 +209,13 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
   const shown = chat.messages.filter((message) => !(runningIds.has(message.id) && !message.text && !message.cards?.length));
   const runningShown = !!running && shown.some((message) => message.id === running.messageId);
   const chips = taskChips(chat.tasks ?? [], chat.messages, !!running, now);
+  // ChatPayload.shownBackgroundTasks/backgroundRowIndex: one row at the latest bot reply/notice, with
+  // source ids. Finished work clears with your next line; an older task finishing after it still appears.
+  const lastUser = chat.messages.findLastIndex((message) => message.role === "user");
+  const background = chat.messages.flatMap((message, index) => (message.backgroundTasks ?? []).filter((task) =>
+    task.status === "running" || lastUser < 0 || index >= lastUser || (task.ended ?? -Infinity) > new Date(chat.messages[lastUser]!.time).getTime()
+  ).map((task) => ({ ...task, message: message.id })));
+  const backgroundRow = shown.findLast((message) => message.role === "bot" || message.role === "notice")?.id;
   const lastYours = shown.findLastIndex((message) => message.role === "user");
   const messages: WebMessage[] = shown.map((message, index) => {
     if (message.cards?.length) extras.cards[message.id] = message.cards;
@@ -251,6 +257,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       decisionID: message.decisionId ?? null,
       reactionEnabled: message.role !== "divider",
       reactions: reactions(message),
+      tasks: message.id === backgroundRow && background.length ? background : null,
       taskCards: message.role === "bot" && !guest ? chips.get(message.id) ?? null : null,
       // Replies before your latest line fold their finished subagents away (still in their steps).
       earlier: index < lastYours && !!steps?.length ? true : null,

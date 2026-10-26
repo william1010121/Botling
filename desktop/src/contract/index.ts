@@ -253,6 +253,16 @@ export const SpecChipView = z.strictObject({
 });
 export type SpecChipView = z.infer<typeof SpecChipView>;
 
+/** Background work attached to its originating reply; times are epoch milliseconds. No file paths. */
+export const BackgroundTaskView = z.strictObject({
+  id: z.string().min(1).max(200), kind: z.enum(["command", "agent", "monitor", "wakeup", "cron"]),
+  title: z.string(), status: z.enum(["running", "completed", "failed", "killed", "stopped", "interrupted"]),
+  started: z.number(), ended: z.number().nullable(), detail: z.string().nullable(),
+  fires: z.number().nullable(), schedule: z.string().nullable(), recurring: z.boolean().nullable(),
+  summary: z.string().nullable().optional(),
+});
+export type BackgroundTaskView = z.infer<typeof BackgroundTaskView>;
+
 export const MessageView = z.strictObject({
   id,
   role: z.enum(["user", "bot", "divider", "error", "relay", "notice"]),
@@ -268,6 +278,7 @@ export const MessageView = z.strictObject({
   answer: z.string().max(4_000).nullable().optional(),
   /** A tool approval: which tool it asks for, and when it counts as "no" if nobody answers (ISO). */
   approval: z.strictObject({ tool: z.string().max(200), expires: z.string().nullable() }).optional(),
+  backgroundTasks: z.array(BackgroundTaskView).optional(),
   steps: z.array(StepView).max(500).optional(),
   /** Cut off before it finished (stopped, the agent went away, the app quit). */
   interrupted: z.boolean().optional(),
@@ -769,6 +780,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("boot.commit") }),
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
+  /** Read only the output of a stored background task (never a renderer-supplied path). */
+  z.strictObject({ type: z.literal("task.output"), botId, messageId: id, taskId: z.string().min(1).max(200) }),
   /** A message; while a reply is being written it joins or follows that turn (as 1.x steers). `replyTo`: a line it answers. */
   /** Your words and the files waiting in the input box (either may be empty, not both). */
   z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().max(MESSAGE_TEXT_LIMIT), replyTo: id.optional(), to: AnswerTarget.optional() }),
@@ -990,7 +1003,7 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "task.complete", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
@@ -1077,6 +1090,7 @@ export interface Results {
   "chat.choose": { accepted: boolean };
   "chat.answer": { accepted: boolean };
   "chat.react": { changed: boolean };
+  "task.output": { text: string };
   "subagent.view": { subagent: SubagentView };
   "chat.read": { read: true };
   "turn.stop": { stopped: boolean; killed: number[]; forced: boolean };

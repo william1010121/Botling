@@ -4,7 +4,8 @@
 // after the turn, or the app, is long gone, and so the bot can be told at its next wake what went
 // away with its process before it reported (`interruptedNote`).
 //
-// 1.x also keeps scheduled work here (ScheduleWakeup, CronCreate); 2.0 does not track those yet.
+// Session-local scheduled work uses the same persisted format and interruption lifecycle as 1.x.
+import { holdsScheduleAwake, isScheduled } from "./session-schedules";
 import type { ChatRecord } from "./store/records";
 import { fromSwiftDate, toSwiftDate } from "./store/records";
 
@@ -26,7 +27,10 @@ export interface BackgroundTask {
   detail?: string;
   /** Cut off (stopped or interrupted), and its bot has been told so. */
   told?: boolean;
+  fireAt?: number;
   schedule?: string;
+  recurring?: boolean;
+  jobID?: string;
   [key: string]: unknown;
 }
 
@@ -91,7 +95,7 @@ export function stopBackgroundTasks(records: ChatRecord[], status: "stopped" | "
 
 /** Background work still going that its bot started not too long ago (sleeping would end it). */
 export function hasBackgroundWorkRunning(records: ChatRecord[], now = Date.now()): boolean {
-  return records.some((record) => tasksOf(record)?.some((task) => task.status === "running" && now - fromSwiftDate(task.startedAt) < HOLDS_BOT_AWAKE_MS));
+  return records.some((record) => tasksOf(record)?.some((task) => task.status === "running" && (isScheduled(task) ? holdsScheduleAwake(task, now) : now - fromSwiftDate(task.startedAt) < HOLDS_BOT_AWAKE_MS)));
 }
 
 const twoDigits = (value: number) => String(value).padStart(2, "0");

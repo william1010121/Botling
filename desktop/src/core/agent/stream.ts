@@ -5,9 +5,11 @@
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
 import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../subagents";
+import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
 
 export type StreamItem =
+  | { kind: "scheduleResult"; id: string; result: ScheduleResult }
   | { kind: "init"; sessionId: string }
   /** A piece of the reply's text (`--include-partial-messages`). */
   | { kind: "delta"; text: string }
@@ -60,7 +62,7 @@ export type StreamItem =
   | { kind: "rateLimits"; engine: "claude" | "codex"; limits: RateLimits };
 
 /** An Agent call's structured result (`LaunchResult`): its agentId, and whether it went on in the background. */
-export interface Launch { agentId: string | null; background: boolean }
+export interface Launch { agentId: string | null; background: boolean; outputFile?: string }
 
 function launchOf(value: unknown): Launch | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -68,7 +70,8 @@ function launchOf(value: unknown): Launch | null {
   const text = (key: string) => (typeof object[key] === "string" && object[key] ? (object[key] as string) : null);
   const agentId = text("agentId");
   const background = object.status === "async_launched" || object.isAsync === true || text("backgroundTaskId") !== null;
-  return agentId || background ? { agentId, background } : null;
+  const outputFile = text("outputFile") ?? text("output_file") ?? text("outputPath");
+  return agentId || background || outputFile ? { agentId, background, ...(outputFile ? { outputFile } : {}) } : null;
 }
 
 /** `StreamEvent.isStillWaiting`: claude's words for a subagent that has not reported yet. */
@@ -258,6 +261,8 @@ export function parseLine(line: string): StreamItem[] {
           const failed = part.is_error === true;
           const output = resultText(part.content);
           const items: StreamItem[] = [{ kind: "toolResult" as const, id: part.tool_use_id, output: cut(output), failed, parent, launch: failed ? null : launchOf(message.tool_use_result) }];
+          const schedule = !parent && !failed ? scheduleResult(message.tool_use_result) : null;
+          if (schedule) items.unshift({ kind: "scheduleResult", id: part.tool_use_id, result: schedule });
           const denial = failed ? classifierDenial(part.tool_use_id, output, parent, message.tool_result_meta) : null;
           if (denial) items.push(denial);
           return items;
