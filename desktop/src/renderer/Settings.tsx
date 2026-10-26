@@ -360,7 +360,7 @@ function General({ settings, change, bot }: { settings: SettingsView; change: (n
           <div className="settings-actions"><button type="button" disabled={!settings.summaryPrompt} onClick={() => change({ key: "summaryPrompt", value: null })}>Restore default prompt</button></div>
         </div>
       </Group>
-      <Group title="Reminders" note="2.0 keeps this choice; the reminder itself is not in 2.0 yet.">
+      <Group title="Reminders" note="When a running bot or subagent shows no new step for this long, you get a reminder in its chat. Never turns it off.">
         <Row label="Remind after no new step for">
           <select aria-label="Remind after no new step for" value={settings.stallReminderMinutes} onChange={(event) => change({ key: "stallReminderMinutes", value: Number(event.target.value) })}>
             {[...new Set([...STALL, settings.stallReminderMinutes])].map((minutes) => <option key={minutes} value={minutes}>{minutes === 0 ? "Never" : `${minutes} min`}</option>)}

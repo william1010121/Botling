@@ -92,6 +92,10 @@ export interface CoreOptions {
   oneX?: OneXCheck;
   /** How often routines are checked (1.x: every 30 s); 0: never (tests drive `checkRoutines`). */
   routineTickMs?: number;
+  /** How often quiet runs (and, in 1.x, the network) are looked at (1.x: 20 s; 0: never). */
+  watchMs?: number;
+  /** How long one of Settings' reminder minutes is (tests shorten it; 60 s). */
+  stallMinuteMs?: number;
   /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
   summarizer?: Summarizer | null;
   /** The completion judge on Codex for a model (`completionClassifier`); null: none (the check stays off). */
@@ -142,6 +146,7 @@ export class Core {
   private readonly usage: UsageBook;
   private imported: ImportView | null = null;
   private routineClock: NodeJS.Timeout | null = null;
+  private watchClock: NodeJS.Timeout | null = null;
   private readonly catchUps: CatchUps;
   private readonly components: ComponentsContext;
   private componentStamp = 0;
@@ -483,6 +488,12 @@ export class Core {
       this.routineClock = setInterval(() => this.checkRoutines(), tick);
       this.routineClock.unref?.();
     }
+    // Every 20 s (1.x's `startWatching`): runs that went quiet for Settings' "Remind after no new step for" get a reminder.
+    const watch = options.watchMs ?? 20_000;
+    if (watch > 0) {
+      this.watchClock = setInterval(() => this.watchRuns(), watch);
+      this.watchClock.unref?.();
+    }
     // Memory files change under the bots' hands (a manager's "Waiting on you", "In progress"): looked at every few seconds.
     this.lastWaiting = JSON.stringify(this.waiting());
     const look = options.waitingScanMs ?? 5_000;
@@ -568,6 +579,16 @@ export class Core {
     if (now === this.loadedClaudeParts) return;
     this.loadedClaudeParts = now;
     for (const bot of this.bots.values()) bot.reloadPlugins();
+  }
+
+  /** 1.x's `checkStalls`: each bot (not a partner head) is reminded of a quiet run once per quiet spell. */
+  checkStalls(now = Date.now()) {
+    const minutes = settingsView(readSettings(Layout.settings(this.options.dataDir))).stallReminderMinutes;
+    for (const bot of this.bots.values()) bot.checkStall(now, minutes * (this.options.stallMinuteMs ?? 60_000));
+  }
+
+  private watchRuns() {
+    this.checkStalls();
   }
 
   /** The project that is Botling's own source, while developer mode is on (`developerProject`). */
@@ -1594,6 +1615,7 @@ First write a test that shows this, then fix it.`;
   /** Ends every turn and head (with their trees) and writes everything out; for quitting. */
   async shutdown() {
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
+    if (this.watchClock) { clearInterval(this.watchClock); this.watchClock = null; }
     if (this.componentClock) { clearInterval(this.componentClock); this.componentClock = null; }
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     if (this.waitingClock) { clearInterval(this.waitingClock); this.waitingClock = null; }

@@ -346,6 +346,11 @@ export class Bot {
   private rounds: RoundsProgress | null = null;
   /** Codex: workers at work or their reports waiting (the bot stays awake). */
   private managedPending = false;
+  /** When the turn under way last showed a step (1.x's `lastProgress`, ms), and each subagent's (`subagentProgress`). */
+  private lastProgress: number | null = null;
+  private subagentProgress = new Map<string, number>();
+  /** Quiet spells already reminded of ("": its own turn; else a subagent's id), once each (`stallReminded`). */
+  private stallReminded = new Set<string>();
   /** Tidying memory.md before it sleeps. */
   private tidying = false;
   private turn: Turn | null = null;
@@ -2118,6 +2123,7 @@ export class Bot {
     const brief = waking && this.briefing;
     if (brief) this.briefing = false;
     head.send(this.compose(turn, brief), turn.userId ?? turn.messageId, this.turnImages(turn));
+    this.noteProgress();
     // With two heads: what reached this head (`markSeen`).
     const seen = [...turn.about, ...(turn.userId ? [turn.userId] : [])];
     if (brief) seen.push(...this.chat.slice(-20).filter((record) => record.id !== turn.userId).map((record) => record.id));
@@ -2295,6 +2301,7 @@ export class Bot {
 
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
+    if (item.kind !== "rateLimits") this.noteProgressOf(item);
     if (item.kind === "managedPending") {
       this.managedPending = item.pending;
       if (!item.pending && !this.turn && !this.queue.length) this.scheduleIdle();
@@ -3112,6 +3119,55 @@ export class Bot {
       }
     }
     this.updated();
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Quiet runs (1.x's `checkStall`, `noteProgress`)
+
+  /** Something happened in the turn under way (or one starts). */
+  private noteProgress() {
+    this.lastProgress = Date.now();
+    this.stallReminded.delete("");
+  }
+
+  private noteProgressOf(item: CodexItem) {
+    const id = subagentOf(item);
+    if (id) { this.subagentProgress.set(id, Date.now()); this.stallReminded.delete(id); }
+    this.noteProgress();
+  }
+
+  /**
+   * Reminds you once per quiet spell when the turn under way, or a subagent at work, has shown no new step
+   * for `intervalMs` (0 or less: never). Not while it waits for you (1.x: or for the network). Its lines: who is quiet.
+   */
+  checkStall(now: number, intervalMs: number): string[] {
+    if (intervalMs <= 0 || !this.head?.running || this.approvals.size || this.outageBlocksStall()) return [];
+    const minutes = Math.max(1, Math.round(intervalMs / 60_000));
+    const lines: string[] = [];
+    let quietForeground = false;
+    for (const subagent of this.subagents.running) {
+      if (this.stallReminded.has(subagent.id)) continue;
+      const last = this.subagentProgress.get(subagent.id) ?? fromSwiftDateMs(subagent.startedAt);
+      if (now - last < intervalMs) continue;
+      this.stallReminded.add(subagent.id);
+      if (!subagent.background) quietForeground = true;
+      lines.push(`子代理「${subagent.description || "Subagent"}」已經 ${minutes} 分鐘沒有新的步驟了。`);
+    }
+    const working = !!this.turn?.open && !this.tidying;
+    if (working && this.lastProgress !== null && now - this.lastProgress >= intervalMs && !this.stallReminded.has("")) {
+      this.stallReminded.add("");
+      // Waiting on a quiet subagent is that subagent's quiet spell, already said.
+      if (!quietForeground) lines.unshift(`${this.profile.name} 已經 ${minutes} 分鐘沒有新的步驟了。`);
+    }
+    if (!lines.length) return [];
+    this.add({ id: newId(), role: "notice", text: `${lines.join("\n")}\n可能卡住了：可以再等等，或傳訊息問它在做什麼。`, date: toSwiftDate() });
+    this.bumpUnread();
+    return lines;
+  }
+
+  /** Waiting for the network (item a fills this in). */
+  private outageBlocksStall(): boolean {
+    return false;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -4338,6 +4394,16 @@ export function streamingText(raw: string): string {
   const tail = /<[a-z/-]*$/i.exec(outside);
   if (tail && (cut < 0 || tail.index < cut)) cut = tail.index;
   return parseReply(cut >= 0 ? raw.slice(0, cut) : raw).body;
+}
+
+/** The subagent an item is a step of (1.x's `Bot.subagentID(of:)`), or null. */
+function subagentOf(item: CodexItem): string | null {
+  switch (item.kind) {
+    case "toolUse": case "toolResult": return item.parent;
+    case "subagentText": return item.parent;
+    case "subagentStarted": case "subagentWaiting": case "subagentOutput": return item.id;
+    default: return null;
+  }
 }
 
 /** A card for a call Codex's reviewer (auto mode) refused (`CodexSession.reviewed`). */

@@ -217,6 +217,8 @@ const core = new Core({
   // Quitting waits for awake bots to tidy their notes, with no time limit, as in 1.x (`putEveryoneToSleep`).
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, Number.POSITIVE_INFINITY),
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
+  watchMs: number(process.env.BOTLING_WATCH_MS, 20_000),
+  stallMinuteMs: number(process.env.BOTLING_STALL_MINUTE_MS, 60_000),
   summarizer: summarizer(),
   classifier: classifier(),
   codexModels: codexModels(),

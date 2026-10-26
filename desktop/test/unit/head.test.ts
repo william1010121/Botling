@@ -159,6 +159,19 @@ describe("a bot's head", () => {
     expect(starts(dir)).toHaveLength(2);
   });
 
+  it("a turn that shows no new step for the reminder's time gets one reminder in its chat (1.x's checkStall)", async () => {
+    const dir = tempDir("head");
+    const c = core(dir, { BOTLING_WATCH_MS: "100", BOTLING_STALL_MINUTE_MS: "400", FAKE_CLAUDE_LINGER_MS: "1500" });
+    await c.call({ type: "settings.set", change: { key: "stallReminderMinutes", value: 1 } });
+    expect((await turn(c, "/linger quiet")).event.status).toBe("done");
+    const notices = (await c.chat()).messages.filter((m: { role: string; text: string }) => m.role === "notice" && m.text.includes("分鐘")).map((m: { text: string }) => m.text);
+    expect(notices).toEqual(["Main bot 已經 1 分鐘沒有新的步驟了。\n可能卡住了：可以再等等，或傳訊息問它在做什麼。"]);
+    // Never: no reminder.
+    await c.call({ type: "settings.set", change: { key: "stallReminderMinutes", value: 0 } });
+    expect((await turn(c, "/linger again")).event.status).toBe("done");
+    expect((await c.chat()).messages.filter((m: { role: string; text: string }) => m.role === "notice" && m.text.includes("分鐘"))).toHaveLength(1);
+  });
+
   it("an idle head tidies its notes, then sleeps; the next message wakes a new session, briefed", async () => {
     const dir = tempDir("head");
     const c = core(dir, { BOTLING_IDLE_MS: "300", FAKE_CLAUDE_INPUT: join(dir, "input.log") });
