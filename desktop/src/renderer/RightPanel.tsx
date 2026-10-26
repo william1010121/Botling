@@ -46,7 +46,7 @@ export interface RightPanelProps {
   onSelect: (botId: string) => void;
   onIgnore: (item: WaitingItemView) => void;
   onOpenResult: (result: ResultView) => void;
-  onOpenSubagent: (row: SubagentRowView) => void;
+  onOpenSubagent: (row: Pick<SubagentRowView, "id">) => void;
   onUnsettle: (row: SubagentRowView) => void;
   onSettings: () => void;
   onExpand: () => void;
@@ -124,7 +124,7 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
   const finished = finishedTasks(tasks);
   const card = (task: TaskView) => (
     <TaskCard key={task.id} task={task} now={now} stale={isStale(task, bot.working, now)} messages={messages} folded={isFoldedIntoSummary(task, messages, summarized)}
-      onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} onComplete={onCompleteTask} />
+      onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} onComplete={onCompleteTask} onOpenSubagent={onOpenSubagent} />
   );
   return (
     <aside className="detail-panel" aria-label="Details">
@@ -282,10 +282,11 @@ export function isFoldedIntoSummary(task: TaskView, messages: MessageView[], sum
 }
 
 /** The open task: what it does now, what comes next and what blocks it, when it started, the way to its latest line (`TaskCardView`). */
-function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onReport, onComplete }: {
+function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onReport, onComplete, onOpenSubagent }: {
   task: TaskView; now: number; stale: boolean; folded: boolean; messages: MessageView[];
   onSelect: (id: string) => void; onJump: (messageId: string, taskId: string) => void; onReport: (task: TaskView, replyTo: string | null) => void;
   onComplete: (id: string) => void;
+  onOpenSubagent: (row: Pick<SubagentRowView, "id">) => void;
 }) {
   const mine = new Set(task.messageIds);
   const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id ?? null;
@@ -302,6 +303,17 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
       {field("Next", task.next)}
       {field("Blocked", task.blocked, task.state === "waiting")}
       {(task.helps ?? []).map((help, index) => <div key={index} className="task-help">{headName(help.head)} helping: {help.text}</div>)}
+      <div className="task-agents" aria-label="Related subagents">
+        <div className="task-field-label">Related subagents{task.relatedAgents?.some((agent) => agent.status === "running") ? ` · ${task.relatedAgents.filter((agent) => agent.status === "running").length} active` : ""}</div>
+        {task.agentLinks !== "recorded" && <div className="task-agent-note">Historical subagent links may be incomplete.</div>}
+        {!task.relatedAgents?.length && <div className="task-agent-note">{task.agentLinks === "recorded" ? "No related subagents recorded." : "Subagent relationship data unavailable."}</div>}
+        {(task.relatedAgents ?? []).map((agent) => {
+          const content = <><span className="task-agent-title">{agent.title}</span><span className="task-agent-meta">{agent.engine ? headName(agent.engine) : "Engine unknown"} · {agent.status ?? "Record unavailable"}{agent.run ? ` · run ${agent.run}` : ""}</span><span className="task-agent-id">{agent.id}</span></>;
+          return agent.available
+            ? <button key={agent.id} type="button" className="task-agent" data-status={agent.status} data-agent={agent.id} aria-label={`Open subagent ${agent.title}, ${agent.status}`} onClick={() => onOpenSubagent({ id: agent.id })}>{content}<span className="task-agent-open" aria-hidden="true">↗</span></button>
+            : <div key={agent.id} className="task-agent unavailable" data-agent={agent.id}>{content}</div>;
+        })}
+      </div>
       {(stale || folded) && (
         <div className="task-stale">
           {folded && <span className="task-summary-tag">In the summary</span>}

@@ -76,7 +76,8 @@ import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
 import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest } from "./reply";
-import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord } from "./subagents";
+import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
+import { relatedTaskAgents, taskAgentIds } from "./task-agents";
 import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
 import type { CatchUpChat } from "./catchup";
 import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
@@ -400,7 +401,7 @@ export class Bot {
     this.alwaysAllowed = (primary ?? this).storeAlwaysAllowed();
     this.unread = primary ? 0 : this.store.loadUnread();
     this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard));
-    this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent));
+    this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set(this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }]))));
     if (!primary) {
       this.pins = this.readList("pins.json", readPin);
       this.specList = this.readList("specs.json", readSpec);
@@ -1093,8 +1094,13 @@ export class Bot {
   }
 
   taskViews(): TaskView[] {
-    const running = new Set(this.subagents.running.map((subagent) => subagent.id));
-    return this.tasks.tasks.slice(-100).map((card) => taskView(card, running));
+    const sources = [{ engine: this.engine, list: this.subagents.list }, ...(this.partner ? [{ engine: this.partner.engine, list: this.partner.subagents.list }] : [])];
+    return this.tasks.tasks.slice(-100).map((card) => {
+      const relatedAgents = relatedTaskAgents(card, this.records, sources);
+      return { ...taskView(card, new Set(relatedAgents.filter((agent) => agent.status === "running").map((agent) => agent.id))),
+        atWork: relatedAgents.some((agent) => agent.status === "running"), relatedAgents,
+        agentLinks: Array.isArray(card.subagentIDs) && !card.agentLinkHistoryIncomplete ? "recorded" as const : "unknown" as const };
+    });
   }
 
   private get shownTurn(): Turn | null {
@@ -2190,6 +2196,8 @@ export class Bot {
       // A Codex worker's report: the app's own turn on the coordinator, which claude-style turns start on their first line.
       if (!this.turn && !this.ignoreResults) {
         const turn = this.backgroundTurn(head);
+        // The app's worker id is authoritative even when the report is not a hand-off.
+        if (item.taskId) turn.ended.push(item.taskId);
         // The report of a worker that owns a hand-off goes back as that hand-off's reply (`managedWorkerReportStarted`).
         const handoff = item.taskId ? this.managedTaskHandoffs.get(item.taskId) : undefined;
         if (item.taskId && handoff) {
@@ -2359,7 +2367,7 @@ export class Bot {
   }
 
   private linkSubagent(turn: Turn, subagentId: string) {
-    const base = this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null, reporting: turn.ended });
+    const base = this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null, handoffID: turn.handoffId, reporting: turn.ended });
     if (!base) return;
     this.tasks.link(subagentId, base.id);
     this.saveTasks();
@@ -2383,10 +2391,14 @@ export class Bot {
       case "subagentOutput":
         if (this.subagents.output(item.id, item.counter, item.tokens)) this.subagentChanged(this.subagents.get(item.id));
         return true;
+      case "subagentExecution":
+        if (this.subagents.execution(item.id, item.execution)) this.subagentChanged(this.subagents.get(item.id));
+        return true;
       case "subagentText":
         if (this.subagents.text(item.parent, item.text)) this.subagentChanged(this.subagents.get(item.parent));
         return true;
       case "subagentStarted":
+        // Initial ownership comes from the Agent call, never from whichever turn is now visible.
         if (this.subagents.started(item)) this.subagentChanged(this.subagents.get(item.id));
         // A worker for handed-over work: its report carries the hand-back.
         if (this.engine === "codex" && this.turn?.conducted && this.turn.handoffId && (item.type === "codex-worker" || item.type === "ccb-core:component-editor")) {
@@ -2414,6 +2426,8 @@ export class Bot {
     this.saveSubagents();
     this.rowsChanged();
     this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) });
+    // Status/metadata are stored in subagents.json; publish the task projection without rewriting cards.
+    this.emit({ type: "tasks.updated", botId: this.id, tasks: this.owner.taskViews() });
     const top = subagent.parentID ? this.subagents.get(subagent.parentID) ?? subagent : subagent;
     if (this.turn?.steps.some((step) => step.id === top.id)) this.emitSteps(this.turn);
     for (let i = this.records.length - 1, seen = 0; i >= 0 && seen < 80; i--, seen++) {
@@ -4115,6 +4129,10 @@ export function taskView(card: TaskCard, running: Set<string>): TaskView {
 }
 
 /** `ChatPayload.make(subagent:)`'s data: its task, steps, words and report. */
+function executionText(id: string, execution: SubagentExecution | undefined): string {
+  return [`Agent: ${id}`, ...(execution ? [`Run: ${execution.run}`, execution.threadId ? `Thread: ${execution.threadId}` : "", execution.turnId ? `Turn: ${execution.turnId}` : "", execution.ownerSessionId ? `Owner session: ${execution.ownerSessionId}` : ""] : [])].filter(Boolean).join("\n");
+}
+
 export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook, ownerEngine?: "claude" | "codex"): SubagentView {
   const raw = subagent.runtime;
   const runtime = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
@@ -4130,8 +4148,18 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
       : subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : ownerEngine ?? "claude",
     runtime: runtime ? { reasoningEffort: text(runtime.reasoningEffort), serviceTier: text(runtime.serviceTier) } : null,
     outputTokens: reportedOutputTokens(subagent),
+    execution: subagent.execution ?? null,
     prompt: clip(subagent.prompt, 20_000) ?? "",
-    steps: subagent.steps.slice(-500).map((step) => stepView(step, book)),
+    steps: [
+      ...(subagent.previousRuns ?? []).flatMap((run, index) => [
+        { id: `history:${index}`, kind: "message" as const, title: `Previous run${run.execution ? ` ${run.execution.run}` : ""} · ${run.status}\n${executionText(subagent.id, run.execution)}\n\n${run.prompt}`, failed: false, done: true },
+        // Agent steps must keep their real drill-through id in history too.
+        ...run.steps.map((step) => ({ ...step, id: step.kind === "subagent" ? step.id : `history:${index}:${step.id}`, done: true })),
+        { id: `history:${index}:result`, kind: "text" as const, title: run.result || `Run ${run.status}.`, failed: run.status === "failed", done: true },
+      ]),
+      ...(subagent.previousRuns?.length ? [{ id: "current-run", kind: "message" as const, title: `Current run${subagent.execution ? ` ${subagent.execution.run}` : ""}\n${executionText(subagent.id, subagent.execution)}\n\n${subagent.prompt}`, failed: false, done: true }] : []),
+      ...subagent.steps,
+    ].slice(-500).map((step) => stepView(step, book)),
     result: clip(subagent.result, 20_000),
     startedAt: iso(subagent.startedAt),
     endedAt: subagent.endedAt != null ? iso(subagent.endedAt) : null,

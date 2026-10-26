@@ -219,6 +219,15 @@ button { font: inherit; color: inherit; }
 /* A bot and its subagent rows (SubagentRows / SubagentRow: 30 pt rows, 26 pt in, 13 pt titles). */
 .bot-entry { display: flex; flex-direction: column; gap: 2px; }
 .subagent-rows { display: flex; flex-direction: column; }
+.task-agents { margin: 10px 0; display: flex; flex-direction: column; gap: 5px; }
+.task-agent { position: relative; display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; color: var(--text); background: var(--hover); border: 1px solid transparent; border-radius: 8px; padding: 8px 24px 8px 8px; font: inherit; cursor: pointer; }
+.task-agent:hover, .task-agent:focus-visible { border-color: var(--muted); }
+.task-agent[data-status="running"] { border-left-color: var(--green); }
+.task-agent.unavailable { cursor: default; opacity: .7; }
+.task-agent-title { overflow-wrap: anywhere; }
+.task-agent-meta, .task-agent-note { color: var(--muted); font-size: 11px; }
+.task-agent-id { color: var(--faint); font-size: 10px; overflow-wrap: anywhere; }
+.task-agent-open { position: absolute; right: 8px; top: 8px; color: var(--muted); }
 .subagent-row { display: flex; align-items: center; border-radius: 10px; -webkit-app-region: no-drag; }
 .subagent-row:hover { background: var(--hover); }
 .subagent-row.selected, .subagent-row.selected:hover { background: var(--selected); }

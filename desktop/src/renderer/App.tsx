@@ -117,7 +117,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   }, [client, store, fail]);
 
   // A subagent's row (left column or Settled): its conversation in the chat's place (its bot's chat first).
-  const openSubagent = useCallback((botId: string, row: SubagentRowView) => {
+  const openSubagent = useCallback((botId: string, row: Pick<SubagentRowView, "id">) => {
     setError(null);
     const show = () => client.request({ type: "subagent.view", botId, subagentId: row.id })
       .then((result) => { if (store.getView().chat?.botId === botId) store.watch(result.subagent); }, fail);

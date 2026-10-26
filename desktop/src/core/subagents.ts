@@ -21,6 +21,25 @@ export interface SubagentRuntime {
   serviceTier?: string | null;
 }
 
+export interface SubagentExecution {
+  run: number;
+  ownerSessionId: string | null;
+  threadId: string | null;
+  turnId: string | null;
+}
+
+export interface PreviousRunEnd { status: SubagentStatus; result: string }
+
+export interface SubagentRun {
+  execution?: SubagentExecution;
+  prompt: string;
+  status: SubagentStatus;
+  startedAt: number;
+  endedAt?: number;
+  result?: string;
+  steps: StepRecord[];
+}
+
 /** Swift's absolute output counters: malformed/missing is unknown, never parent usage. */
 export function reportedOutputTokens(subagent: SubagentRecord): number | null {
   const counters = subagent.outputTokenCounters;
@@ -46,6 +65,9 @@ export interface SubagentRecord {
   name?: string;
   agentID?: string;
   model?: string;
+  execution?: SubagentExecution;
+  previousRuns?: SubagentRun[];
+  runStartedAt?: number;
   [key: string]: unknown;
 }
 
@@ -75,7 +97,7 @@ export function readSubagent(value: unknown): SubagentRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   if (typeof raw.id !== "string" || typeof raw.startedAt !== "number") return null;
-  return {
+  const record: SubagentRecord = {
     ...raw,
     id: raw.id,
     description: typeof raw.description === "string" ? raw.description : "",
@@ -85,13 +107,30 @@ export function readSubagent(value: unknown): SubagentRecord | null {
     startedAt: raw.startedAt,
     steps: Array.isArray(raw.steps) ? (raw.steps as StepRecord[]).filter((step) => step && typeof step.id === "string") : [],
   };
+  const execution = readExecution(raw.execution);
+  if (execution) record.execution = execution;
+  else delete record.execution;
+  if (Array.isArray(raw.previousRuns)) record.previousRuns = raw.previousRuns.flatMap((run) => {
+    const saved = run && typeof run === "object" ? readSubagent({ ...run, id: raw.id, previousRuns: undefined }) : null;
+    return saved ? [{ prompt: saved.prompt, status: saved.status, startedAt: saved.startedAt, endedAt: saved.endedAt, result: saved.result, steps: saved.steps, execution: saved.execution }] : [];
+  });
+  else delete record.previousRuns;
+  return record;
+}
+
+function readExecution(value: unknown): SubagentExecution | undefined {
+  if (!value || typeof value !== "object") return;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.run !== "number" || !Number.isSafeInteger(raw.run) || raw.run < 1) return;
+  const text = (key: string) => typeof raw[key] === "string" ? (raw[key] as string).slice(0, 200) : null;
+  return { run: raw.run, ownerSessionId: text("ownerSessionId"), threadId: text("threadId"), turnId: text("turnId") };
 }
 
 /** Its tool calls so far (`Subagent.toolCount`). */
 export const toolCount = (subagent: SubagentRecord) => subagent.steps.filter((step) => step.kind === "tool" || step.kind === "subagent").length;
 
 export class SubagentBook {
-  constructor(public list: SubagentRecord[] = []) {}
+  constructor(public list: SubagentRecord[] = [], private retained: () => ReadonlySet<string> = () => new Set()) {}
 
   get(id: string) { return this.list.find((subagent) => subagent.id === id); }
   /** By its call's id, or by the agentId/name claude reaches it by. */
@@ -158,20 +197,40 @@ export class SubagentBook {
     return true;
   }
 
-  started(item: { id: string; description: string; type: string | null; prompt: string; background: boolean }, now = toSwiftDate()): boolean {
+  started(item: { id: string; description: string; type: string | null; prompt: string; background: boolean; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }, now = toSwiftDate()): boolean {
     const existing = this.get(item.id);
     if (existing) {
+      if (existing.status !== "running" || (item.execution && existing.execution && item.execution.run !== existing.execution.run)) {
+        existing.previousRuns = [...(existing.previousRuns ?? []), {
+          execution: existing.execution, prompt: existing.prompt, status: item.previousRunEnd?.status ?? existing.status,
+          startedAt: existing.runStartedAt ?? existing.startedAt, endedAt: item.previousRunEnd ? now : existing.endedAt, result: item.previousRunEnd?.result ?? existing.result, steps: existing.steps,
+        }];
+        existing.steps = [];
+        existing.runStartedAt = now;
+        delete existing.result;
+        delete existing.endedAt;
+      }
       if (existing.status !== "running") { existing.status = "running"; delete existing.endedAt; }
       if (item.description) existing.description = item.description;
       if (item.prompt) existing.prompt = item.prompt;
       if (item.type) existing.type = item.type;
       existing.background = item.background;
+      if (item.execution) existing.execution = item.execution;
       return true;
     }
     const record: SubagentRecord = { id: item.id, description: item.description, prompt: item.prompt, status: "running", background: item.background, startedAt: now, steps: [] };
     if (item.type) record.type = item.type;
+    if (item.execution) record.execution = item.execution;
+    if (item.execution) record.runStartedAt = now;
     this.list.push(record);
     this.trim();
+    return true;
+  }
+
+  execution(id: string, execution: SubagentExecution): boolean {
+    const child = this.get(id);
+    if (!child || (child.execution && child.execution.run > execution.run)) return false;
+    child.execution = execution;
     return true;
   }
 
@@ -259,7 +318,8 @@ export class SubagentBook {
   }
 
   private trim() {
-    const done = this.list.filter((subagent) => subagent.status !== "running");
+    const retained = this.retained();
+    const done = this.list.filter((subagent) => subagent.status !== "running" && !retained.has(subagent.id));
     if (done.length <= KEPT) return;
     const drop = new Set(done.slice(0, done.length - KEPT).map((subagent) => subagent.id));
     this.list = this.list.filter((subagent) => !drop.has(subagent.id));

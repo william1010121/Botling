@@ -61,6 +61,12 @@ export function readTaskCard(value: unknown): TaskCard | null {
     kept: raw.kept === true,
   };
   if (raw.owner !== "claude" && raw.owner !== "codex") delete card.owner;
+  if (Array.isArray(raw.subagentIDs)) {
+    const valid = raw.subagentIDs.filter((id): id is string => typeof id === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(id));
+    card.subagentIDs = [...new Set(valid)];
+    if (valid.length !== raw.subagentIDs.length) card.agentLinkHistoryIncomplete = true;
+  }
+  else delete card.subagentIDs;
   if (raw.stateFromTag !== undefined && !STATES.has(raw.stateFromTag as TaskState)) delete card.stateFromTag;
   if (typeof raw.manuallyCompletedAt !== "number" || !Number.isFinite(raw.manuallyCompletedAt)) delete card.manuallyCompletedAt;
   else { card.state = "done"; card.kept = true; }
@@ -115,7 +121,7 @@ export class TaskBook {
         return existing.id;
       }
     }
-    const card: TaskCard = { id: newId(), name: provisionalName(text), state: "pending", createdAt: at, updatedAt: at, messageIDs: [message], startedByMessageID: message, kept: false };
+    const card: TaskCard = { id: newId(), name: provisionalName(text), state: "pending", createdAt: at, updatedAt: at, messageIDs: [message], startedByMessageID: message, kept: false, subagentIDs: [] };
     if (owner) card.owner = owner;
     this.tasks.push(card);
     this.trim();
@@ -162,6 +168,7 @@ export class TaskBook {
   link(subagent: string, taskId: string) {
     const card = this.task(taskId);
     if (!card || card.subagentIDs?.includes(subagent)) return;
+    if (!Array.isArray(card.subagentIDs)) card.agentLinkHistoryIncomplete = true;
     card.subagentIDs = [...(card.subagentIDs ?? []), subagent];
     card.kept = true;
   }
@@ -221,7 +228,7 @@ export class TaskBook {
       }
       if (!target) {
         const name = tag.name ?? tag.continues ?? (turn.userText != null ? provisionalName(turn.userText) : "New task");
-        const card: TaskCard = { id: newId(), name, owner: turn.head, state: "running", createdAt: at, updatedAt: at, messageIDs: [], kept: false };
+        const card: TaskCard = { id: newId(), name, owner: turn.head, state: "running", createdAt: at, updatedAt: at, messageIDs: [], kept: false, subagentIDs: [] };
         if (turn.userMessage) card.startedByMessageID = turn.userMessage;
         if (number === 0 && turn.userMessage) card.messageIDs = [turn.userMessage];
         this.tasks.push(card);
@@ -277,6 +284,8 @@ export class TaskBook {
     const [card] = this.tasks.splice(from, 1);
     const target = this.task(into);
     if (!card || !target) return;
+    // A legacy card merged into a new one still has incomplete historical coverage.
+    if (!Array.isArray(card.subagentIDs) || !Array.isArray(target.subagentIDs) || card.agentLinkHistoryIncomplete) target.agentLinkHistoryIncomplete = true;
     for (const message of card.messageIDs) if (!target.messageIDs.includes(message)) target.messageIDs.push(message);
     for (const help of card.helps ?? []) {
       if (!target.helps?.some((h) => h.handoffID === help.handoffID)) target.helps = [...(target.helps ?? []), help];

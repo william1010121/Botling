@@ -71,7 +71,8 @@ describe("task book: the Swift TaskBook's cards", () => {
         op: step.op, result: step.result,
         tasks: step.tasks.map((card) => {
           if (!ids.has(card.id)) ids.set(card.id, `card-${ids.size}`);
-          return Object.fromEntries(Object.entries({ ...card, id: ids.get(card.id) }).sort(([a], [b]) => (a < b ? -1 : 1)));
+          // 2.x explicitly records empty agent links; Swift omitted that optional empty array.
+          return Object.fromEntries(Object.entries({ ...card, subagentIDs: card.subagentIDs ?? [], id: ids.get(card.id) }).sort(([a], [b]) => (a < b ? -1 : 1)));
         }),
       }));
     };

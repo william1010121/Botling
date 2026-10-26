@@ -83,6 +83,17 @@ export type StepView = z.infer<typeof StepView>;
 /** An emoji on a line, and who put it there ("user", "head:claude"). */
 export const ReactionView = z.strictObject({ emoji: z.string().max(16), actor: z.string().max(200) });
 
+/** An exact stored Agent call / managed worker id; missing records remain visible, never guessed. */
+export const TaskAgentView = z.strictObject({
+  id: z.string().min(1).max(200),
+  title: z.string().max(400),
+  engine: z.enum(["claude", "codex"]).nullable(),
+  status: z.enum(["running", "completed", "failed", "stopped"]).nullable(),
+  available: z.boolean(),
+  run: z.number().int().positive().nullable(),
+});
+export type TaskAgentView = z.infer<typeof TaskAgentView>;
+
 /** A task card (1.20's TaskCard): one piece of work, kept current by the bot's <task> lines. */
 export const TaskView = z.strictObject({
   id,
@@ -100,6 +111,9 @@ export const TaskView = z.strictObject({
   atWork: z.boolean(),
   /** The user closed this card; this does not assert execution succeeded. ISO-8601. */
   manuallyCompletedAt: z.string().optional(),
+  relatedAgents: z.array(TaskAgentView).optional(),
+  /** Old cards without captured links cannot establish that there were zero agents. */
+  agentLinks: z.enum(["recorded", "unknown"]).optional(),
   /** The other head's hand-offs for it: "Codex helping: …" lines (`TaskCard.helps`). Phase 5a. */
   helps: z.array(z.strictObject({ head: z.enum(["claude", "codex"]), text: z.string().max(400) })).max(20).optional(),
 });
@@ -121,6 +135,12 @@ export const SubagentView = z.strictObject({
     serviceTier: z.string().max(200).nullable(),
   }).nullable().optional(),
   outputTokens: z.number().nonnegative().nullable().optional(),
+  execution: z.strictObject({
+    run: z.number().int().positive(),
+    ownerSessionId: z.string().max(200).nullable(),
+    threadId: z.string().max(200).nullable(),
+    turnId: z.string().max(200).nullable(),
+  }).nullable().optional(),
   /** The task it was given. */
   prompt: z.string().max(20_000),
   steps: z.array(StepView).max(500),

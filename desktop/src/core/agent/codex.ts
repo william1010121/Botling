@@ -26,6 +26,7 @@
 // Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
 import type { WorkerDependency } from "../promise-check";
+import type { SubagentExecution } from "../subagents";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -822,7 +823,7 @@ export class CodexSession {
       this.workers.set(task, { id: task, name, instructions: args.instructions, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
       out.push(
         this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: "codex-worker", run_in_background: true } }),
-        this.item({ kind: "subagentStarted", id: task, description: name, type: "codex-worker", prompt: args.instructions, background: true }),
+        this.item({ kind: "subagentStarted", id: task, description: name, type: "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
         ...this.startWorkerThread(task),
       );
       response = reply({ task_id: task, status: "accepted", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
@@ -876,6 +877,10 @@ export class CodexSession {
     return [this.request("thread/start", params, { kind: "workerThread", task })];
   }
 
+  private workerExecution(worker: Worker): SubagentExecution {
+    return { run: worker.run, ownerSessionId: this.config.ownerSession ?? null, threadId: worker.thread ?? null, turnId: worker.turnId };
+  }
+
   private workerThreadReady(task: string, result: any, error: any): CodexOutput[] {
     const worker = this.workers.get(task);
     if (!worker?.active || worker.cancelled || this.stopped) return [];
@@ -888,8 +893,9 @@ export class CodexSession {
     worker.runtime = { engine: "codex", reasoningEffort: text(result.reasoningEffort), serviceTier: text(result.serviceTier) };
     const model = text(result.model);
     const metadata = this.item({ kind: "subagentRuntime", id: task, runtime: worker.runtime, ...(model ? { model } : {}) });
-    if (resumed) return [metadata, this.refreshInstructions(this.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate.", thread, { kind: "workerInstructions", task })];
-    return [metadata, ...this.startWorkerTurn(task, worker.instructions)];
+    const execution = this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) });
+    if (resumed) return [metadata, execution, this.refreshInstructions(this.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate.", thread, { kind: "workerInstructions", task })];
+    return [metadata, execution, ...this.startWorkerTurn(task, worker.instructions)];
   }
 
   private startWorkerTurn(task: string, text: string): CodexOutput[] {
@@ -909,7 +915,7 @@ export class CodexSession {
     worker.turnId = id;
     const messages = worker.messages;
     worker.messages = [];
-    return messages.map((text) => this.workerSteerCall(worker, text, id));
+    return [this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) }), ...messages.map((text) => this.workerSteerCall(worker, text, id))];
   }
 
   private workerSteerCall(worker: Worker, text: string, turnId: string): CodexOutput {
@@ -932,7 +938,7 @@ export class CodexSession {
     worker.instructions = text;
     delete worker.ownershipInstructions;
     worker.turnId = null;
-    const out: CodexOutput[] = [this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true })];
+    const out: CodexOutput[] = [this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true, execution: this.workerExecution(worker) })];
     out.push(...(worker.loaded ? this.startWorkerTurn(task, text) : this.startWorkerThread(task)));
     out.push(...this.pendingChanged());
     return out;
@@ -982,7 +988,9 @@ export class CodexSession {
           const text = worker.messages.join("\n\n");
           worker.messages = [];
           worker.run += 1;
-          return [...usage, ...this.startWorkerTurn(task, text)];
+          worker.instructions = text;
+          return [...usage, this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true,
+            execution: { ...this.workerExecution(worker), turnId: null }, previousRunEnd: { status: status === "completed" ? "completed" : status === "failed" ? "failed" : "stopped", result: report } }), ...this.startWorkerTurn(task, text)];
         }
         worker.active = false;
         this.results.push({ task, name: worker.name, thread: worker.thread, turn: id, run: worker.run, status, report, reconciliationAttempt: 0, reconciled: false });
