@@ -8,6 +8,13 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Component kit.** A component template that starts with `<meta name="ccb-kit" content="1">`
+  gets ready-made blocks drawn like the app (Card, Stat, Ring, Bar, Spark, List, Chips, Button,
+  Choices, Empty), written React-style with Preact, hooks and htm and no build step
+  (`Web/kit/README.md`). The kit ships with the app and goes inline into the card's page: no
+  network, same sandbox. A component that throws or has malformed markup shows an error card and
+  sets its pin's status. Templates without the meta are unchanged. The app shell, the chat and the
+  kit now share one set of colours (`Web/src/tokens.css`, with a light set for later).
 - **Task cards.** Every piece of work in a chat gets a card: your message opens a provisional
   one, the head that starts on it owns it, follow-ups join it, two pieces of work in one
   message split into two cards, and quick answers leave none. Heads keep a card current with a

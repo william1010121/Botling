@@ -175,3 +175,22 @@ render(html\`<\${Choices} options=\${["Plan A", { label: "Plan B", description: 
     expect([...doc.querySelectorAll("button.ccb-choice")].every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
   });
 });
+
+describe("the example to copy (Web/kit/examples/system-load)", () => {
+  it("draws without an error at each size, from its about.md's data", async () => {
+    const { readFileSync } = await import("node:fs");
+    const dir = `${__dirname}/../kit/examples/system-load`;
+    const template = readFileSync(`${dir}/template.html`, "utf8");
+    const about = readFileSync(`${dir}/about.md`, "utf8");
+    const data = JSON.parse(about.match(/```json\n([\s\S]*?)```/)![1]);
+    for (const size of ["1x1", "2x1", "2x2", "4x2"] as const) {
+      const { doc, posted } = await page(template, data, size, "board");
+      expect(doc.querySelector(".ccb-error"), size).toBeNull();
+      expect(doc.querySelector(".ccb-ring"), size).not.toBeNull();
+      expect(posted, size).toContainEqual({ ccb: "status", text: "CPU 72%", tone: "warning" });
+      expect(!!doc.querySelector(".ccb-list"), size).toBe(size === "2x2" || size === "4x2");
+    }
+    const empty = await page(template, {}, "2x2", "board");
+    expect(empty.doc.querySelector(".ccb-empty__title")!.textContent).toBe("No reading yet");
+  });
+});

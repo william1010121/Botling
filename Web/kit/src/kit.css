@@ -56,7 +56,8 @@ html[data-theme] body {
 .ccb-card { display: flex; flex-direction: column; gap: var(--ccb-gap); min-width: 0; padding: var(--ccb-pad); border: 0; border-radius: 0; background: none; color: var(--text); overflow-wrap: anywhere; }
 .ccb-card .ccb-card { padding: 0; }
 .ccb-card .ccb-card.ccb-card--framed, .ccb-card--framed { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--ccb-radius); background: var(--ccb-surface); }
-html[data-surface="board"] #ccb-root > .ccb-card, html[data-surface="board"] #app > .ccb-card { height: 100%; overflow: hidden; }
+/* On the Board the card is the whole tile: at least its height; more scrolls (the page hides its scrollbar). */
+html[data-surface="board"] #ccb-root > .ccb-card, html[data-surface="board"] #app > .ccb-card { min-height: 100%; }
 .ccb-card__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ccb-card__icon { width: 24px; height: 24px; border-radius: 8px; font-size: 13px; color: var(--ccb-c); background: color-mix(in srgb, var(--ccb-c) 16%, transparent); }
 .ccb-card__titles { flex: 1; min-width: 0; }
@@ -150,7 +151,7 @@ html[data-size="1x1"] .ccb-bar--columns { gap: 2px; }
 .ccb-list__more { padding: 6px 0 0; font-size: 12px; color: var(--faint); border-top: 1px solid var(--line); }
 .ccb-list.ccb-compact .ccb-list__row, .ccb-list.ccb-size-s .ccb-list__row { padding: 4px 0; font-size: 12.5px; }
 @container ccb (max-width: 239px) { .ccb-list__detail { display: none; } .ccb-list__row { gap: 8px; } }
-@container ccb (max-height: 179px) { .ccb-list__row:nth-child(n+4) { display: none; } }
+@container ccb (max-height: 179px) { .ccb-list__row:nth-child(n+3) { display: none; } .ccb-list__row { padding: 5px 0; } }
 
 /* ---- Chips ----------------------------------------------------------------------------- */
 .ccb-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
@@ -212,6 +213,11 @@ button.ccb-chip:hover { background: var(--selected); }
 .ccb-choices__answer-label { color: var(--muted); font-size: 12px; }
 .ccb-choices.ccb-compact .ccb-choice, .ccb-choices.ccb-compact .ccb-choices__input, .ccb-choices.ccb-compact .ccb-choices__send { min-height: 34px; padding-top: 5px; padding-bottom: 5px; }
 @container ccb (max-width: 239px) { .ccb-choice__detail { display: none; } .ccb-choice { min-height: 36px; padding: 6px 10px; } }
+@container ccb (max-height: 179px) {
+  .ccb-choices { gap: 4px; }
+  .ccb-choice, .ccb-choices__input, .ccb-choices__send { min-height: 30px; padding-top: 4px; padding-bottom: 4px; }
+  .ccb-choice__label { font-size: 13px; }
+}
 
 /* ---- Empty ----------------------------------------------------------------------------- */
 .ccb-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 18px 10px; text-align: center; color: var(--muted); min-width: 0; flex: 1; }
@@ -222,6 +228,7 @@ button.ccb-chip:hover { background: var(--selected); }
 .ccb-empty.ccb-compact { padding: 8px; gap: 2px; }
 .ccb-empty.ccb-compact .ccb-empty__title { font-size: 13px; font-weight: 500; color: var(--muted); }
 @container ccb (max-width: 239px) { .ccb-empty { padding: 8px 6px; } .ccb-empty__icon { width: 32px; height: 32px; font-size: 18px; } }
+@container ccb (max-height: 179px) { .ccb-empty { padding: 4px 6px; gap: 2px; } .ccb-empty__icon { width: 28px; height: 28px; font-size: 15px; margin-bottom: 2px; } .ccb-empty > .ccb-button { margin-top: 4px; } }
 
 /* ---- The error card (errors.js) -------------------------------------------------------- */
 .ccb-error { margin: 0 0 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--error) 50%, transparent); border-radius: var(--ccb-radius-s); background: color-mix(in srgb, var(--error) 9%, transparent); color: var(--text); font-size: 13px; }

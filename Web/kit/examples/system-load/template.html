@@ -1,0 +1,63 @@
+<meta name="ccb-kit" content="1">
+<style>
+  /* Only what the blocks do not do already: how this card arranges them. */
+  .top { display: flex; align-items: center; gap: 14px; }
+  .top .ccb-grid { flex: 1; --ccb-min: 96px; }
+  .tiny { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+</style>
+<div id="app"></div>
+<script>
+const { html, render, useData, useSize, useEffect, toneFor, Card, Stat, Ring, Bar, Spark, List, Chips, Button, Empty } = ccb.kit;
+
+const round = (n) => Math.round(n * 10) / 10;
+
+function SystemLoad() {
+  const d = useData();
+  const size = useSize();
+  const cpu = typeof d.cpu === "number" ? d.cpu : null;
+  const mem = d.memory || {};
+  const memPercent = mem.total ? (mem.used / mem.total) * 100 : null;
+
+  // The pin's chip above the input box: the CPU figure and its tone.
+  useEffect(() => {
+    if (cpu == null) ccb.setStatus(null);
+    else ccb.setStatus({ text: "CPU " + Math.round(cpu) + "%", tone: { ok: "good", warn: "warning", bad: "bad" }[toneFor(cpu)] });
+  }, [cpu]);
+
+  if (cpu == null) {
+    return html`<${Card} title="System load" icon="⚙">
+      <${Empty} icon="⏳" title="No reading yet" detail="The card fills in when its command first runs." />
+    </${Card}>`;
+  }
+
+  // One cell: just the gauge.
+  if (size.w === 1 && size.h <= 1) {
+    return html`<div class="tiny">
+      <${Ring} value=${cpu} tone="auto" caption="CPU" />
+      <span class="ccb-label">${d.host || "This Mac"}</span>
+    </div>`;
+  }
+
+  const tall = size.h >= 2;
+  return html`<${Card} title=${d.host || "System load"} subtitle=${d.updated ? "Updated " + d.updated : null} icon="⚙"
+      actions=${html`<${Chips} size="s" items=${[{ label: (d.cores || []).length + " cores", tone: "neutral" }]} />`}>
+    <div class="top">
+      <${Ring} value=${cpu} tone="auto" caption="CPU" size=${tall ? "m" : "s"} />
+      <div class="ccb-grid">
+        <${Stat} label="Memory" value=${round(mem.used)} unit=${" / " + mem.total + " GB"} tone=${toneFor(memPercent)} />
+        <${Stat} label="Load (1 min)" value=${d.load} delta=${d.loadDelta} invert class="ccb-hide-narrow" />
+      </div>
+    </div>
+    ${tall && html`
+      <${Bar} items=${d.cores || []} tone="auto" height=${40} label="Each core" />
+      <${Spark} values=${d.history || []} height=${36} label="CPU, last hour" />
+      <${List} max=${3} items=${(d.processes || []).map((p) => ({ title: p.name, detail: p.note, value: round(p.cpu) + "%", tone: toneFor(p.cpu) }))} />
+      <div class="ccb-row">
+        <span class="ccb-spacer"></span>
+        <${Button} size="s" tone="ghost" onClick=${() => ccb.answer("Why is " + (d.processes && d.processes[0] ? d.processes[0].name : "the CPU") + " so busy?")}>Ask why</${Button}>
+      </div>`}
+  </${Card}>`;
+}
+
+render(html`<${SystemLoad} />`, document.getElementById("app"));
+</script>
