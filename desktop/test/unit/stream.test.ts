@@ -34,8 +34,8 @@ describe("stream-json lines", () => {
       .toEqual([{ kind: "toolResult", id: "toolu_A", output: "Async agent launched successfully. agentId: a1", failed: false, parent: null, launch: { agentId: "a1", background: true } }]);
     expect(parseLine(`{"type":"system","subtype":"task_started","tool_use_id":"toolu_A","task_type":"local_agent","description":"Research","subagent_type":"general-purpose","prompt":"Go","is_backgrounded":true}`))
       .toEqual([{ kind: "subagentStarted", id: "toolu_A", description: "Research", type: "general-purpose", prompt: "Go", background: true }]);
-    // A background shell command starts a task too: not a subagent.
-    expect(parseLine(`{"type":"system","subtype":"task_started","tool_use_id":"toolu_B","task_type":"local_bash","is_backgrounded":true}`)).toEqual([]);
+    // A background shell command starts a task too: not a subagent, but background work (1.x's backgroundCommandStarted).
+    expect(parseLine(`{"type":"system","subtype":"task_started","tool_use_id":"toolu_B","task_type":"local_bash","is_backgrounded":true}`)).toEqual([{ kind: "backgroundStarted", id: "toolu_B", description: "", monitor: false }]);
     expect(parseLine(`{"type":"system","subtype":"task_notification","task_id":"k","tool_use_id":"toolu_A","status":"completed","summary":"Done: 3 hits"}`))
       .toEqual([{ kind: "subagentEnded", id: "toolu_A", status: "completed", summary: "Done: 3 hits" }]);
     expect(parseLine(`{"type":"system","subtype":"task_notification","task_id":"k","status":"completed","summary":"x","handback_report":{"text":"The full report"}}`))

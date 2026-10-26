@@ -96,6 +96,10 @@ import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
 import { alwaysAllows } from "./permission-rules";
 import {
+  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
+  type BackgroundKind, type BackgroundTask,
+} from "./background-tasks";
+import {
   HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, isUUID, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
@@ -236,6 +240,8 @@ interface Turn {
   claimed: boolean;
   /** Subagents that ended while it ran (a silent turn has to report them). */
   ended: string[];
+  /** Background work it started (1.x's `trace.takeTasks()`), kept in its reply. */
+  tasks?: BackgroundTask[];
   /** Work the other head handed over (its reply goes back), and the hand-off it is. */
   conducted: boolean;
   handoffId: string | null;
@@ -636,6 +642,8 @@ export class Bot {
       return;
     }
     let changed = false;
+    // Background work that ran when the app went away went with it (`stopBackgroundTasks(as: .interrupted)`).
+    if (stopBackgroundTasks(records, "interrupted").length) changed = true;
     for (const record of records) {
       // A turn that was streaming when the core died is not resumed or re-sent: it is marked.
       if (record.state === "streaming") {
@@ -2088,7 +2096,7 @@ export class Bot {
       this.restartForPluginsOnly = false;
       this.restartReason = null;
     }
-    if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending) {
+    if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending && !this.backgroundWorkRunning) {
       this.restartPending = false;
       this.restartForPluginsOnly = false;
       this.restarting = old;
@@ -2171,7 +2179,7 @@ export class Bot {
     if (turn.guest && brief) {
       // Woken for a turn in another chat (1.x's `wake(with:)`): its wake briefing first.
       const recent = recentChat(this.chat, { archive: this.paths.archive, leavingOut: null, head: this.sharesChat ? this.engine : null });
-      return [this.wakeLine(turn, () => recent), this.wakeNote(), this.componentNote(), this.engine === "claude" ? recent : "", words].filter(Boolean).join("\n\n");
+      return [this.wakeLine(turn, () => recent), this.wakeNote(), this.componentNote(), this.takeInterruptedNote(), this.engine === "claude" ? recent : "", words].filter(Boolean).join("\n\n");
     }
     if (turn.origin === "tidy") return words;
     if (this.queuedNote && !brief) {
@@ -2188,11 +2196,12 @@ export class Bot {
     const parts: string[] = [];
     if (brief && turn.origin === "app") {
       // Woken by the app (work the other head handed over): its wake briefing, then the note.
-      parts.push(this.wakeLine(turn, recent), this.wakeNote(), this.componentNote(), words);
+      parts.push(this.wakeLine(turn, recent), this.wakeNote(), this.componentNote(), this.takeInterruptedNote(), words);
     } else if (turn.origin === "app") {
       return words;
     } else if (brief) {
-      parts.push(this.wakeLine(turn, recent), this.wakeNote(), this.componentNote());
+      // 1.x's order: wake line, note, components, the background work cut off, the recent chat.
+      parts.push(this.wakeLine(turn, recent), this.wakeNote(), this.componentNote(), this.takeInterruptedNote());
       if (this.engine === "claude") parts.push(recent(turn.userId));
       parts.push(reactionIntro(chat, turn.userId), words);
     } else {
@@ -2360,6 +2369,12 @@ export class Bot {
     // A managed worker owns its own turn. Its approval must neither create a phantom
     // coordinator turn nor be denied by an unrelated coordinator's cleanup/drain/tidy.
     if (item.kind === "permission" && item.workerId) return this.ask(head, item, null);
+    if (item.kind === "backgroundStarted") {
+      // A Monitor running a command is a background shell task too.
+      const monitor = item.monitor || this.turn?.steps.findLast((step) => step.id === item.id)?.tool === "Monitor";
+      this.addBackgroundTask(item.id, monitor ? "monitor" : "command", item.description);
+      return;
+    }
     // Subagents are followed whoever's turn it is; their own lines stop here.
     if (this.onSubagentItem(item)) return;
     // The tail of a turn that was cut off: it belongs to nobody.
@@ -2522,12 +2537,14 @@ export class Bot {
       case "subagentStarted":
         // Initial ownership comes from the Agent call, never from whichever turn is now visible.
         if (this.subagents.started(item)) this.subagentChanged(this.subagents.get(item.id));
+        if (item.background) this.addBackgroundTask(item.id, "agent", item.description);
         // A worker for handed-over work: its report carries the hand-back.
         if (this.engine === "codex" && this.turn?.conducted && this.turn.handoffId && (item.type === "codex-worker" || item.type === "ccb-core:component-editor")) {
           this.managedTaskHandoffs.set(item.id, this.turn.handoffId);
         }
         return true;
       case "subagentEnded": {
+        this.endBackground(item.id, item.status, item.summary);
         const ended = this.subagents.ended(item);
         if (ended) {
           this.subagentEnded(ended.id);
@@ -2615,6 +2632,7 @@ export class Bot {
       || ((turn.origin === "app" || this.sharesChat) && nothing && saysNoReply(raw)));
     if (silent) {
       if (turn.record) this.remove(turn.record);
+      this.keepTasks(turn, null);
       this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
       this.finished.set(turn.id, status);
       turn.resolve(status);
@@ -2634,6 +2652,7 @@ export class Bot {
     const record: ChatRecord = turn.record ?? { id: turn.messageId, role: "bot", text: "", date: toSwiftDate(), turnID: turn.id, engine: this.engine };
     if (this.sharesChat) record.seenBy = union(record.seenBy, [this.engine]);
     turn.record = record;
+    this.keepTasks(turn, record);
     let text = tags.body;
     let cards: CardView[] | null = null;
     if (status === "done") {
@@ -3099,6 +3118,8 @@ export class Bot {
     const deferred = this.deferred;
     this.deferred = null;
     if (deferred?.open) this.finishTurn(deferred, "failed", `The agent exited (${why}) before it began this message.`);
+    // What it left running in the background went with its process.
+    this.stopTasks();
     this.log(`head exited (${why})${exit.expected ? "" : " unexpectedly"}`);
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
@@ -3119,6 +3140,56 @@ export class Bot {
       }
     }
     this.updated();
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Background work (1.x's BackgroundTask: a chip in the reply, and what a wake is told was cut off)
+
+  /** Background work the bot itself started in the turn under way (not one of its subagents'), once (`addTask`). */
+  private addBackgroundTask(id: string, kind: BackgroundKind, title: string) {
+    const turn = this.turn;
+    const step = turn?.open ? turn.steps.findLast((candidate) => candidate.id === id) : undefined;
+    if (!turn || !step || turn.tasks?.some((task) => task.id === id)) return;
+    (turn.tasks ??= []).push(backgroundTask(id, kind, title || this.subagents.get(id)?.description || step.title, step.detail));
+  }
+
+  /** A background task reported back (`endBackgroundTask`): in the turn under way, or in the reply it belongs to. */
+  private endBackground(id: string, status: string, summary: string | null) {
+    const pending = this.turn?.tasks?.find((task) => task.id === id && task.status === "running");
+    if (pending) { endTask(pending, status, summary); return; }
+    const record = endBackgroundTask(this.records, id, status, summary);
+    if (record) this.changed(record);
+  }
+
+  /** The turn's background work goes in its reply (`message.backgroundTasks = trace.takeTasks()`). */
+  private keepTasks(turn: Turn, record: ChatRecord | null) {
+    const tasks = turn.tasks;
+    if (!tasks?.length) return;
+    turn.tasks = [];
+    // A silent turn keeps them in this head's latest reply.
+    const target = record ?? this.records.findLast((candidate) => candidate.role === "bot" && !candidate.permissionTool && (candidate.engine ?? "claude") === this.engine);
+    if (!target) return;
+    target.backgroundTasks = [...(Array.isArray(target.backgroundTasks) ? target.backgroundTasks as BackgroundTask[] : []), ...tasks];
+    if (!record) this.changed(target);
+  }
+
+  /** Its process went away: whatever had not reported never will (`stopBackgroundTasks(as: .stopped)`). */
+  private stopTasks() {
+    const changed = stopBackgroundTasks(this.records, "stopped");
+    for (const record of changed) this.changed(record);
+  }
+
+  /** Background work still going that it started not too long ago (sleeping or a restart would end it). */
+  private get backgroundWorkRunning(): boolean {
+    return hasBackgroundWorkRunning(this.records);
+  }
+
+  /** The interrupted-work note for a wake, once: those tasks count as told from now on (`takeInterruptedNote`). */
+  private takeInterruptedNote(): string {
+    const note = interruptedNote(this.records);
+    if (!note) return "";
+    for (const record of markCutOffTasksTold(this.records)) this.changed(record);
+    return note;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -3191,7 +3262,8 @@ export class Bot {
     const head = this.head;
     if (!head?.running || this.turn || this.queue.length || this.approvals.size || this.tidying) return;
     // A subagent (or a Codex worker) at work in the background would end with the process: wait for it.
-    if ((this.subagents.running.length || this.managedPending) && !this.shuttingDown) { this.scheduleIdle(); return; }
+    // So would a command or Monitor it left running in the background (1.x's `hasBackgroundWorkRunning`).
+    if ((this.subagents.running.length || this.managedPending || this.backgroundWorkRunning) && !this.shuttingDown) { this.scheduleIdle(); return; }
     this.clearIdle();
     this.tidying = true;
     this.updated();

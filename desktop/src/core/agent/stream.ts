@@ -24,6 +24,12 @@ export type StreamItem =
   | { kind: "subagentExecution"; id: string; execution: SubagentExecution }
   | { kind: "subagentRuntime"; id: string; runtime: SubagentRuntime; model?: string }
   | { kind: "subagentOutput"; id: string; counter: string; tokens: number }
+  /**
+   * A shell command went on in the background (`task_started`, `local_bash`, backgrounded; a Monitor running
+   * a command is one too, told apart by its call's tool), or a Monitor on a socket or MCP server (`monitor_ws`,
+   * `monitor_mcp`: `monitor` true). It ends with a `task_notification` (`subagentEnded` with this id).
+   */
+  | { kind: "backgroundStarted"; id: string; description: string; monitor: boolean }
   /** A subagent ended (`task_notification`): its status and report. */
   | { kind: "subagentEnded"; id: string; status: string; summary: string | null }
   /** A notification that is not a report: the subagent waits on its own background work. */
@@ -163,6 +169,14 @@ export function parseLine(line: string): StreamItem[] {
       if (message.subtype === "task_started") {
         // Background shell commands and Monitors start tasks too; only agents are subagents.
         const type = typeof message.task_type === "string" ? message.task_type : null;
+        const description = typeof message.description === "string" ? message.description : "";
+        if (type === "local_bash" && message.is_backgrounded === true && typeof message.tool_use_id === "string") {
+          return [{ kind: "backgroundStarted", id: message.tool_use_id, description, monitor: false }];
+        }
+        // A Monitor on a socket or an MCP server (not claude's own ambient sockets).
+        if ((type === "monitor_ws" || type === "monitor_mcp") && message.ambient !== true && typeof message.tool_use_id === "string") {
+          return [{ kind: "backgroundStarted", id: message.tool_use_id, description, monitor: true }];
+        }
         if (typeof message.tool_use_id !== "string" || !(type === "local_agent" || (type === null && message.subagent_type != null))) return [];
         return [{
           kind: "subagentStarted", id: message.tool_use_id,
