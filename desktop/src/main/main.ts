@@ -9,9 +9,9 @@ import { isRequested as isShotRequested, withProbe } from "../core/component-sho
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
-import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost} from "./editor-host";
+import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor} from "./editor-host";
 import {appMenuTemplate} from "./app-menu";
-import {rendererFiles,rendererResponse} from "./renderer-loading";
+import {preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
@@ -52,9 +52,11 @@ if (checkAt >= 0) {
   if (report.stderr) writeSync(2, report.stderr);
   process.exit(report.code);
 }
-const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv);
+const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
 const rendererDir = renderer.directory;
-if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell only`);
+if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell, Alt+Cmd+R the chat page`);
+// Preloads re-run on each page reload; a developer build dir (--botling-preload-dir) can supply them.
+const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
 const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
@@ -531,6 +533,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true);
     case "doctor.copy": return copyDoctorFix(cmd.tool, await core.call({ type: "doctor.view" }), text => clipboard.writeText(text));
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
+    case "chat.reloadPage": return { reloaded: await reloadNativeEditor(sender) };
     case "updates.check": return announce(await updater.check(cmd.manual));
     case "updates.copies": return retainedUpdateCopies(dataDir,installedApp,await runningAppBundles());
     case "updates.deleteCopy": {
@@ -637,7 +640,7 @@ function createWindow() {
     title: "Botling", backgroundColor: "#0E0E10", show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
-      preload: join(root, "out", "preload", "preload.cjs"),
+      preload: join(preloadDir, "preload.cjs"),
       additionalArguments:["--botling-editor-shell=1",...(traceWriter?[TEST_TRACE_ARGUMENT]:[])],
       sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
       webSecurity: true, allowRunningInsecureContent: false, navigateOnDragDrop: false, spellcheck: false,
@@ -654,7 +657,7 @@ function createWindow() {
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
   window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);
-  const editor=prepareNativeEditorHost(window,root,ownerReady);
+  const editor=prepareNativeEditorHost(window,root,ownerReady,preloadDir);
   const opening=editor.revealWhenReady(hidden);
   openingWindows.set(window,opening);
   void opening.catch(error=>note(`native editor initialization failed: ${String(error)}`));
@@ -758,7 +761,7 @@ function serveApp() {
 function shotWindow(size: { width: number; height: number }): BrowserWindow {
   const window = new BrowserWindow({
     width: size.width, height: size.height, useContentSize: true, show: false, paintWhenInitiallyHidden: true, backgroundColor: "#0E0E10",
-    webPreferences: { preload: join(root, "out", "preload", "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true },
+    webPreferences: { preload: join(preloadDir, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true },
   });
   appContents.add(window.webContents.id);
   const id = window.webContents.id;
@@ -768,7 +771,7 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  Menu.setApplicationMenu(Menu.buildFromTemplate([...appMenuTemplate(), ...coreSwap.menu]));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([...appMenuTemplate(process.platform,{reloadChat:reloadNativeEditor}), ...coreSwap.menu]));
   // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
   // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
   nativeTheme.themeSource = "dark";

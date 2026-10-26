@@ -998,6 +998,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({type:z.literal("updates.copies")}),
   z.strictObject({type:z.literal("updates.deleteCopy"),id:z.string().regex(/^[a-f0-9]{64}$/)}),
   z.strictObject({ type: z.literal("updates.dismiss"), id:z.string().min(1).max(200) }),
+  /** Main: reload this window's native chat page in place (new chat assets/preload; state comes back from the core). */
+  z.strictObject({ type: z.literal("chat.reloadPage") }),
   /** A bot's own choices (bot.json). */
   z.strictObject({ type: z.literal("bot.settings"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
@@ -1064,10 +1066,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "doctor.view", "doctor.run", "doctor.copy",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "chat.reloadPage"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1195,6 +1197,7 @@ export interface Results {
   "updates.stage": UpdateView;
   "updates.restart": { restarting: boolean };
   "updates.dismiss": {dismissed:boolean};
+  "chat.reloadPage": { reloaded: boolean };
   "updates.copies": RetainedUpdateCopy[];
   "updates.deleteCopy": {deleted:boolean};
   "boot.commit": Record<string, never>;

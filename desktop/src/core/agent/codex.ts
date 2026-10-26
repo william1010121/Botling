@@ -26,7 +26,8 @@
 //   app's clock reads); `app_monitor_*` run one command after an Allow once card and wake the
 //   coordinator when it ends (`app_monitor_result`, monitors.ts), never replaying one after a restart.
 //
-// Not ported (2.0 gaps, see desktop/README.md): the component-editor role,
+// The Maintainer-only component-editor role uses the existing Claude definition/transport.
+// Not ported (2.0 gaps, see desktop/README.md):
 // Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
 import { approveIsolatedGit, isolatedGitOwnership, type IsolatedGitOwnership } from "./isolated-git";
@@ -41,7 +42,8 @@ import { childEnvironment } from "./runner";
 import { codexLogsFile, codexRetryAt } from "./codex-retry-log";
 import { cliStartError, resolveExecutable } from "../process/executable";
 import { activity, type StreamItem } from "./stream";
-import type { HeadExit, HeadHandlers } from "./head";
+import { ClaudeHead, type HeadExit, type HeadHandlers } from "./head";
+import type { ComponentEditorAction, ComponentEditorRoute } from "./component-editor";
 import tools from "./codex-tools.json";
 import { RoutineError, ScheduledRoutineStore } from "../routines";
 import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
@@ -73,6 +75,7 @@ export type CodexOutput =
   | { kind: "item"; item: CodexItem }
   | { kind: "thread"; id: string }
   | { kind: "close" }
+  | { kind: "componentEditor"; action: ComponentEditorAction }
   | { kind: "failed"; message: string };
 
 /** A worker as codex-threads/<session>.workers.json keeps it (`CodexManagedWorkerRecord`, 1.x's keys). */
@@ -108,6 +111,8 @@ export interface CodexConfig {
   workerEffort?: string | null;
   workerFast?: boolean | null;
   restoredWorkers: WorkerRecord[];
+  /** Core binds this only for its own Maintainer; tool arguments cannot supply it. */
+  componentEditor?: ComponentEditorRoute | null;
   /** scheduled-routines.json for `app_routines` (null: none here). */
   routinesFile?: string | null;
   /** The bot session that owns its monitors. */
@@ -153,6 +158,7 @@ interface Worker {
   reviewerNext?: string;
   /** Its thread's tokens so far, and at the start of the run under way (Phase 5c). */
   tokens?: TokenUsage; tokensAtRunStart?: TokenUsage;
+  editorCost?: number;
 }
 
 interface Result {
@@ -233,6 +239,8 @@ export class CodexSession {
   private pending = false;
   private monitors = new Map<string, CommandMonitor>();
   private activeMonitor: string | null = null;
+  private editorApprovals = new Map<string, { task: string; run: number; requestId: string; input: Record<string, unknown> }>();
+  private editorCost = 0;
 
   constructor(readonly config: CodexConfig) {
     for (const record of config.restoredMonitors ?? []) {
@@ -295,6 +303,13 @@ export class CodexSession {
   }
 
   answer(requestId: string, allow: boolean, why?: string): CodexOutput[] {
+    const editor = this.editorApprovals.get(requestId);
+    if (editor) {
+      this.editorApprovals.delete(requestId);
+      const worker = this.workers.get(editor.task);
+      if (this.stopped || !worker?.active || worker.cancelled || worker.run !== editor.run) return [this.item({ kind: "permissionCancelled", requestId })];
+      return [{ kind: "componentEditor", action: { kind: "answer", ...editor, allow, message: why } }];
+    }
     if (requestId.startsWith("monitor:")) return this.approveMonitor(requestId.slice(8), allow);
     if (requestId.startsWith("codex-review:")) return this.answerReview(requestId, allow);
     const approval = this.approvals.get(requestId);
@@ -429,7 +444,7 @@ export class CodexSession {
     }
     const thread = typeof params.threadId === "string" ? params.threadId : null;
     if (thread && this.threadId && thread !== this.threadId) {
-      const worker = [...this.workers.values()].find((w) => w.thread === thread);
+      const worker = [...this.workers.values()].find((w) => !w.role && w.thread === thread);
       return worker ? this.workerLine(method, params, worker) : [];
     }
     switch (method) {
@@ -487,7 +502,7 @@ export class CodexSession {
         // Keep the automatic path independent of manual-card correlation: lifecycle handling
         // owns local permission.requestId; this immediate RPC answer preserves rpcId's type.
         const workerThread = typeof params.threadId === "string" ? params.threadId : null;
-        const worker = workerThread && workerThread !== this.threadId ? [...this.workers.values()].find((w) => w.thread === workerThread) : undefined;
+        const worker = workerThread && workerThread !== this.threadId ? [...this.workers.values()].find((w) => !w.role && w.thread === workerThread) : undefined;
         const ownership = worker?.isolatedGit;
         const exclusive = ownership && ![...this.workers.values()].some((w) => w !== worker && w.isolatedGit
           && (w.isolatedGit.worktree === ownership.worktree || w.isolatedGit.branch === ownership.branch));
@@ -578,7 +593,7 @@ export class CodexSession {
 
   private askApproval(rpcId: unknown, kind: Approval["kind"], params: any, tool: string, summary: string): CodexOutput[] {
     const thread = typeof params.threadId === "string" ? params.threadId : "";
-    const worker = [...this.workers.values()].find((candidate) => candidate.thread === thread);
+    const worker = [...this.workers.values()].find((candidate) => !candidate.role && candidate.thread === thread);
     const turn = typeof params.turnId === "string" ? params.turnId : (worker ? worker.turnId : this.turn?.id ?? null);
     const approval: Approval = { rpcId, kind, thread, turn, ...(worker ? { worker: { task: worker.id, run: worker.run } } : {}) };
     if (!this.approvalCurrent(approval)) return [this.declineApproval(approval)];
@@ -982,14 +997,14 @@ export class CodexSession {
       response = reply(handled.payload, handled.success);
       out.push(...handled.out);
     } else if (tool === "app_handoff" && typeof args.instructions === "string" && args.instructions.trim()) {
-      if (args.role !== undefined) {
-        const denied = reply({ error: "The requested component-editor role is unavailable to this coordinator. Only the app-created Maintainer can use it; no generic worker was launched." }, false);
+      if (args.role !== undefined && (args.role !== "component-editor" || !this.config.componentEditor?.launch)) {
+        const denied = reply({ error: this.config.componentEditor?.error ?? "The requested component-editor role is unavailable to this coordinator. Only the app-created Maintainer can use it; no generic worker was launched." }, false);
         this.toolReplies.set(id, denied);
         return [{ kind: "write", value: denied }];
       }
       const task = randomUUID().toLowerCase();
       const name = typeof args.name === "string" && args.name ? args.name : firstLine(args.instructions);
-      let isolatedGit = isolatedGitOwnership(args.isolated_git, this.config.cwd,
+      let isolatedGit = args.role === "component-editor" ? undefined : isolatedGitOwnership(args.isolated_git, this.config.cwd,
         [...this.workers.values()].flatMap((w) => w.isolatedGit ? [w.isolatedGit] : []));
       if (isolatedGit) {
         if (isolatedGitOwners.has(isolatedGit.worktree)) isolatedGit = undefined;
@@ -997,10 +1012,10 @@ export class CodexSession {
       }
       // An invalid/missing grant still launches the task, with the existing approval cards.
       const instructions = isolatedGit ? `${args.instructions}\n\nApp-validated isolated Git ownership (only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Other operations still require normal approval.` : args.instructions;
-      this.workers.set(task, { id: task, name, instructions, isolatedGit, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
+      this.workers.set(task, { id: task, name, instructions, role: args.role, isolatedGit, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
       out.push(
-        this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: "codex-worker", run_in_background: true } }),
-        this.item({ kind: "subagentStarted", id: task, description: name, type: "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
+        this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", run_in_background: true } }),
+        this.item({ kind: "subagentStarted", id: task, description: name, type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
         ...this.startWorkerThread(task),
       );
       response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
@@ -1037,6 +1052,16 @@ export class CodexSession {
 
   private startWorkerThread(task: string): CodexOutput[] {
     const worker = this.workers.get(task)!;
+    if (worker.role === "component-editor") {
+      const launch = this.config.componentEditor?.launch;
+      if (!launch) return this.failWorker(task, this.config.componentEditor?.error ?? "The existing component-editor definition is unavailable; no generic worker was substituted.");
+      const resume = !!worker.thread;
+      worker.thread ??= randomUUID();
+      return [this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) }),
+        this.item({ kind: "subagentRuntime", id: task, runtime: { engine: "claude", reasoningEffort: launch.effort ?? null, serviceTier: null }, model: launch.model ?? undefined }),
+        { kind: "componentEditor", action: { kind: "start", task, run: worker.run, config: { ...launch, sessionId: worker.thread, resume }, text: worker.instructions } }];
+    }
+    if (worker.role !== undefined) return this.failWorker(task, "Unknown persisted worker role; no generic worker was substituted.");
     const params: Record<string, unknown> = {
       cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: this.reviewer, sandbox: "workspace-write",
       developerInstructions: this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
@@ -1054,6 +1079,68 @@ export class CodexSession {
       return [this.request("thread/resume", params, { kind: "workerThread", task })];
     }
     return [this.request("thread/start", params, { kind: "workerThread", task })];
+  }
+
+  private clearEditorApprovals(task: string): CodexOutput[] {
+    const out: CodexOutput[] = [];
+    for (const [requestId, approval] of this.editorApprovals) {
+      if (approval.task !== task) continue;
+      this.editorApprovals.delete(requestId);
+      out.push(this.item({ kind: "permissionCancelled", requestId }));
+    }
+    return out;
+  }
+
+  componentEditorStarted(task: string, run: number) {
+    const worker = this.workers.get(task);
+    if (worker?.role === "component-editor" && worker.run === run) worker.editorCost = 0;
+  }
+
+  /** Claude child's events belong to this task/run, never to the coordinator's reply. */
+  componentEditorItem(task: string, run: number, item: StreamItem): CodexOutput[] {
+    const worker = this.workers.get(task);
+    if (!worker || worker.role !== "component-editor" || worker.run !== run || worker.cancelled || this.stopped) return [];
+    if (item.kind === "usage") {
+      this.editorCost += Math.max(0, item.totalCost - (worker.editorCost ?? 0));
+      worker.editorCost = Math.max(worker.editorCost ?? 0, item.totalCost);
+      return [this.item({ ...item, totalCost: this.editorCost })];
+    }
+    if (!worker.active) return [];
+    switch (item.kind) {
+      case "permission": {
+        const requestId = `component-editor:${task}:${run}:${item.requestId}`;
+        this.editorApprovals.set(requestId, { task, run, requestId: item.requestId, input: item.input });
+        return [this.item({ ...item, requestId, workerId: task })];
+      }
+      case "permissionCancelled": {
+        const requestId = `component-editor:${task}:${run}:${item.requestId}`;
+        this.editorApprovals.delete(requestId);
+        return [this.item({ kind: "permissionCancelled", requestId })];
+      }
+      case "toolUse": case "toolResult": return [this.item({ ...item, parent: task, id: `${task}:${item.id}` })];
+      case "permissionDenied": return [this.item({ ...item, toolUseId: `${task}:${item.toolUseId}` })];
+      case "delta": case "assistantText": return [this.item({ kind: "subagentText", parent: task, text: item.text })];
+      case "connectionLost": return [this.item({ ...item, parent: task })];
+      case "rateLimits": return [this.item(item)];
+      case "result": {
+        const report = (item.ok ? item.text : item.error || item.text).trim();
+        const status = item.ok && report ? "completed" : "failed";
+        const evidence = report || "Component-editor ended without an evidence report.";
+        worker.active = false;
+        this.results.push({ task, name: worker.name, thread: worker.thread, run, status, report: evidence, reconciliationAttempt: 0, reconciled: false });
+        const out = [...this.clearEditorApprovals(task), this.item({ kind: "subagentEnded", id: task, status, summary: evidence })];
+        if (!this.turn) out.push(...this.next());
+        return [...out, ...this.pendingChanged()];
+      }
+      default: return [];
+    }
+  }
+
+  componentEditorFailed(task: string, run: number, reason: string, fresh = false): CodexOutput[] {
+    const worker = this.workers.get(task);
+    if (!worker?.active || worker.role !== "component-editor" || worker.run !== run || worker.cancelled || this.stopped) return [];
+    if (fresh) delete worker.thread;
+    return [...this.clearEditorApprovals(task), ...this.failWorker(task, `Claude component-editor failed: ${reason}`)];
   }
 
   private workerExecution(worker: Worker): SubagentExecution {
@@ -1108,9 +1195,21 @@ export class CodexSession {
   private messageWorker(task: string, text: string): CodexOutput[] {
     const worker = this.workers.get(task);
     if (!worker || this.stopped) return [];
+    if (worker.role === "component-editor" && !this.config.componentEditor?.launch) {
+      if (!worker.active) {
+        this.results = this.results.filter(result => result.task !== task);
+        worker.run += 1;
+        worker.instructions = text;
+      }
+      worker.active = true;
+      worker.cancelled = false;
+      return [...this.clearEditorApprovals(task), { kind: "componentEditor", action: { kind: "stop", task } } as CodexOutput,
+        ...this.failWorker(task, "Cannot resume component-editor: its existing definition is unavailable. No generic worker was substituted.")];
+    }
     if (worker.active) {
       delete worker.isolatedGit;
       worker.ownershipInstructions = `${worker.ownershipInstructions ?? worker.instructions}\nFollow-up: ${text}`;
+      if (worker.role === "component-editor") return [{ kind: "componentEditor", action: { kind: "send", task, run: worker.run, text } }];
       if (worker.turnId) return [this.workerSteerCall(worker, text, worker.turnId)];
       worker.messages.push(text);
       return [];
@@ -1123,8 +1222,8 @@ export class CodexSession {
     worker.instructions = text;
     delete worker.ownershipInstructions;
     worker.turnId = null;
-    const out: CodexOutput[] = [this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true, execution: this.workerExecution(worker) })];
-    out.push(...(worker.loaded ? this.startWorkerTurn(task, text) : this.startWorkerThread(task)));
+    const out: CodexOutput[] = [this.item({ kind: "subagentStarted", id: task, description: worker.name, type: worker.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: text, background: true, execution: this.workerExecution(worker) })];
+    out.push(...(worker.loaded && !worker.role ? this.startWorkerTurn(task, text) : this.startWorkerThread(task)));
     out.push(...this.pendingChanged());
     return out;
   }
@@ -1240,8 +1339,9 @@ export class CodexSession {
       if (worker.turnId) worker.completedTurns.add(worker.turnId);
       worker.cancelled = true;
       worker.messages = [];
-      out.push(...this.closeApprovals((approval) => approval.worker?.task === worker.id, true));
-      if (worker.thread && worker.turnId) out.push(this.request("turn/interrupt", { threadId: worker.thread, turnId: worker.turnId }, { kind: "interrupt" }));
+      out.push(...this.closeApprovals((approval) => approval.worker?.task === worker.id, true), ...this.clearEditorApprovals(worker.id));
+      if (worker.role === "component-editor") out.push({ kind: "componentEditor", action: { kind: "stop", task: worker.id } });
+      else if (worker.thread && worker.turnId) out.push(this.request("turn/interrupt", { threadId: worker.thread, turnId: worker.turnId }, { kind: "interrupt" }));
       out.push(this.item({ kind: "subagentEnded", id: worker.id, status: "killed", summary: "Stopped by the app." }));
     }
     out.push(...this.pendingChanged());
@@ -1418,6 +1518,9 @@ export interface CodexHeadConfig {
   autoMode?: boolean;
   /** More folders it may write (its `--add-dir` folders; 1.x's `writableRoots`). */
   writableRoots?: string[];
+  componentEditor?: ComponentEditorRoute | null;
+  /** Register the separate Claude process with the app's existing process ledger. */
+  editorStarted?: (pid: number) => void;
   /** Codex's log, read for when a retry goes (undefined: CODEX_HOME's logs_2.sqlite; null: never read). */
   retryLog?: string | null;
 }
@@ -1425,6 +1528,9 @@ export interface CodexHeadConfig {
 /** One long-lived `codex app-server` for one bot session: `CodexSession` over its stdio. */
 export class CodexHead {
   readonly engine = "codex" as const;
+  private editors = new Map<string, { head: ClaudeHead; run: number; messages: string[] }>();
+  private editorCleanup = new Set<Promise<TerminateResult>>();
+  private editorStops = new Map<string, Promise<TerminateResult>>();
   private process: ManagedProcess | null = null;
   private buffer = "";
   private stderrTail = "";
@@ -1460,6 +1566,7 @@ export class CodexHead {
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
       autoMode: config.autoMode ?? true,
       writableRoots: config.writableRoots ?? [],
+      componentEditor: config.componentEditor,
     });
     this.savedWorkers = JSON.stringify(this.session.workerRecords);
     this.savedMonitors = JSON.stringify(restoredMonitors);
@@ -1488,6 +1595,7 @@ export class CodexHead {
       this.closed = true;
       if (this.buffer.trim()) this.line(this.buffer.trim());
       this.buffer = "";
+      this.stopEditors();
       this.exitedResolve();
       const why = [this.failure, this.stderrTail.trim(), extra].filter(Boolean).join("\n");
       this.handlers.onExit({ code: this.failure ? 1 : code, signal, stderr: why, expected: this.expected, silent: !this.printed });
@@ -1566,16 +1674,104 @@ export class CodexHead {
           if (this.config.workerInstructions) this.config.threads.markManaged(output.id, this.config.sessionId);
           this.handlers.onItem({ kind: "init", sessionId: this.config.sessionId });
           break;
+        case "componentEditor":
+          this.performEditor(output.action);
+          break;
         case "close":
+          this.stopEditors();
           this.closeInput();
           break;
         case "failed":
           this.failure = output.message;
+          this.stopEditors();
           this.closeInput();
           void this.process?.terminate({ graceMs: 1_000 });
           break;
       }
     }
+  }
+
+  private retireEditor(task: string, head: ClaudeHead) {
+    if (head.pid < 0) { void head.terminate(); return; }
+    const ending = head.terminate(1_000);
+    this.editorCleanup.add(ending);
+    this.editorStops.set(task, ending);
+    const clean = () => {
+      this.editorCleanup.delete(ending);
+      if (this.editorStops.get(task) === ending) this.editorStops.delete(task);
+    };
+    void ending.then(clean, clean);
+  }
+
+  private stopEditors() {
+    for (const [task, { head }] of this.editors) this.retireEditor(task, head);
+    this.editors.clear();
+  }
+
+  private performEditor(action: ComponentEditorAction) {
+    const current = this.editors.get(action.task);
+    if (action.kind === "stop") {
+      if (current) { this.editors.delete(action.task); this.retireEditor(action.task, current.head); }
+      return;
+    }
+    if (action.kind === "send") {
+      if (current?.run === action.run) {
+        if (current.head.running) current.head.send(action.text, randomUUID());
+        else current.messages.push(action.text);
+      }
+      return;
+    }
+    if (action.kind === "answer") {
+      if (current?.run === action.run) current.head.answer(action.requestId, action.allow, action.input, action.message);
+      return;
+    }
+    // As in Swift's transport, a finished editor stays alive for corrections in its same session.
+    if (current?.head.running && current.head.config.sessionId === action.config.sessionId) {
+      current.run = action.run;
+      current.head.send(action.text, randomUUID());
+      return;
+    }
+    if (current) { this.editors.delete(action.task); this.retireEditor(action.task, current.head); }
+    const head = new ClaudeHead(action.config, {
+      onItem: item => {
+        const live = this.editors.get(action.task);
+        if (live?.head !== head) return;
+        this.perform(this.session.componentEditorItem(action.task, live.run, item));
+      },
+      onExit: exit => {
+        const live = this.editors.get(action.task);
+        if (live?.head !== head) return;
+        this.editors.delete(action.task);
+        this.retireEditor(action.task, head);
+        this.perform(this.session.componentEditorFailed(action.task, live.run, exit.stderr || `exited (${exit.code})`, !action.config.resume && exit.silent));
+      },
+    }, this.adapter);
+    this.editors.set(action.task, { head, run: action.run, messages: [] });
+    const start = () => {
+      // Cancellation or replacement while the prior process was ending revokes this launch.
+      if (this.editors.get(action.task)?.head !== head) return;
+      try {
+        this.session.componentEditorStarted(action.task, action.run);
+        head.start();
+        this.config.editorStarted?.(head.pid);
+        head.send(action.text, randomUUID());
+        const pending = this.editors.get(action.task)?.messages ?? [];
+        for (const text of pending) head.send(text, randomUUID());
+        pending.length = 0;
+      } catch (error) {
+        this.editors.delete(action.task);
+        this.retireEditor(action.task, head);
+        this.perform(this.session.componentEditorFailed(action.task, action.run, (error as Error).message, !action.config.resume));
+      }
+    };
+    // Never open the same Claude transcript while its old process is still shutting down.
+    const ending = this.editorStops.get(action.task);
+    if (ending) void ending.then(start, error => {
+      if (this.editors.get(action.task)?.head !== head) return;
+      this.editors.delete(action.task);
+      this.perform(this.session.componentEditorFailed(action.task, action.run, `Could not stop the prior editor: ${String(error)}`));
+    });
+    else start();
   }
 
   private closeInput() {
@@ -1597,6 +1793,17 @@ export class CodexHead {
 
   answer(requestId: string, allow: boolean, _input: Record<string, unknown>, message?: string) {
     this.perform(this.session.answer(requestId, allow, allow ? undefined : message));
+  }
+
+  /** Forward only the rules the app has already approved to its existing Claude children. */
+  allow(rules: string[]) {
+    const launch = this.config.componentEditor?.launch;
+    if (!launch) return;
+    launch.allowRules = [...rules];
+    for (const { head } of this.editors.values()) {
+      head.config.allowRules = [...rules];
+      if (head.running) head.allow(rules);
+    }
   }
 
   interrupt(): string {
@@ -1627,9 +1834,10 @@ export class CodexHead {
   async terminate(graceMs = 1_500): Promise<TerminateResult> {
     this.expected = true;
     this.perform(this.session.stop());
+    this.stopEditors();
     this.closeInput();
-    if (!this.process) return { killed: [], forced: false };
-    return this.process.terminate({ graceMs });
+    const results = await Promise.all([...this.editorCleanup, ...(this.process ? [this.process.terminate({ graceMs })] : [])]);
+    return { killed: [...new Set(results.flatMap(result => result.killed))], forced: results.some(result => result.forced) };
   }
 }
 

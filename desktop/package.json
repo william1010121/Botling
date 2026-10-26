@@ -11,6 +11,8 @@
     "start": "electron .",
     "renderer:build": "node scripts/renderer-dev.mjs",
     "renderer:watch": "node scripts/renderer-dev.mjs --watch",
+    "renderer:configure": "node scripts/renderer-configure.mjs",
+    "preload:build": "node scripts/preload-dev.mjs",
     "core:build": "node scripts/core-dev.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:changed": "node scripts/test-changed.mjs",

@@ -4,7 +4,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDir, until } from "../helpers";
+import { alive, tempDir, until } from "../helpers";
+import { MAINTAINER_ID } from "../../src/core/store/records";
 import { CoreHarness, MAIN } from "../core-harness";
 import { CONTINUE_NOTE, SWAP_FILE } from "../../src/core/hot-swap";
 
@@ -137,6 +138,29 @@ describe("core hot swap", () => {
     expect((await turn(b, "two")).status).toBe("done");
     const resumed = lines(join(dir, "codex.log")).filter((line) => line.kind === "resume");
     expect(resumed.map((line) => line.thread)).toContain(started.thread);
+  });
+
+  it("Maintainer's component editor still at work is waited for, then ended with the old core; the next core resumes the coordinator", async () => {
+    const dir = tempDir("swap-editor");
+    const env = { FAKE_CODEX_INPUT: join(dir, "codex.log") };
+    const a = core(dir, env);
+    await a.call({ type: "heads.set", botId: MAINTAINER_ID, engines: ["codex"] });
+    const { turnId } = await a.call({ type: "chat.send", botId: MAINTAINER_ID, text: "/component-editor /slow" });
+    const editor = await until(() => starts(dir).find((start) => start.pid), { what: "the editor's Claude process" });
+    await finished(a, turnId);
+    // The coordinator's turn is over but its editor works on: the drain waits for it, then stops what is under way.
+    const answer = await drain(a, 400, 300);
+    expect(answer.ok).toBe(true);
+    expect(alive(editor.pid)).toBe(true);
+    const entry = JSON.parse(readFileSync(join(dir, SWAP_FILE), "utf8")).entries.find((item: any) => item.botId === MAINTAINER_ID);
+    expect(entry).toMatchObject({ engine: "codex", continue: true });
+    await a.kill("SIGTERM");
+    await until(() => !alive(editor.pid), { what: "the editor ending with the old core" });
+
+    const b = core(dir, env);
+    await until(() => lines(join(dir, "codex.log")).some((line) => line.kind === "resume"), { what: "the coordinator's thread resumed" });
+    await until(() => lines(join(dir, "codex.log")).some((line) => String(line.text).includes(CONTINUE_NOTE)), { what: "the carry-on note" });
+    void b;
   });
 
   it("a swap called off leaves the core as it was", async () => {

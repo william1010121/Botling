@@ -30,6 +30,8 @@ export interface HeadConfig {
   effort?: string | null;
   /** Tools it uses without asking (`--allowedTools`); anything else is asked about. */
   allowedTools: string[];
+  /** Explicit tool inventory for an app execution role; omitted for ordinary heads. */
+  tools?: string[];
   /** Appended to claude's system prompt. */
   systemPrompt?: string | null;
   /**
@@ -74,6 +76,7 @@ export function headArguments(config: HeadConfig): string[] {
   if (disallowed.length) args.push("--disallowedTools", disallowed.join(","));
   const allowed = config.harmless ? [] : config.allowedTools;
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
+  if (config.tools && !config.harmless) args.push("--tools", config.tools.join(","));
   if (config.model) args.push("--model", config.model);
   if (config.effort) args.push("--effort", config.effort);
   // In `--settings`, as a command may hold commas (AgentProcess.swift's `settingsJSON`).
