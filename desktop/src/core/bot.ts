@@ -249,7 +249,7 @@ interface Turn {
 export type GuestAnswer = { kind: "busy" } | { kind: "failed"; why: string } | { kind: "reply"; text: string; steps: StepRecord[]; engine: string };
 
 interface Approval {
-  /** A monitored command's Allow once card: it outlives the turn that asked (Codex ends its turn at once). */
+  /** Monitors and managed workers outlive the coordinator turn; their owner closes their cards. */
   lasting: boolean;
   requestId: string;
   tool: string;
@@ -2260,9 +2260,12 @@ export class Bot {
       return;
     }
     if (item.kind === "permissionCancelled") {
-      for (const [id, approval] of this.approvals) if (approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
+      for (const [id, approval] of this.approvals) if (approval.head === head && approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
       return;
     }
+    // A managed worker owns its own turn. Its approval must neither create a phantom
+    // coordinator turn nor be denied by an unrelated coordinator's cleanup/drain/tidy.
+    if (item.kind === "permission" && item.workerId) return this.ask(head, item, null);
     // Subagents are followed whoever's turn it is; their own lines stop here.
     if (this.onSubagentItem(item)) return;
     // The tail of a turn that was cut off: it belongs to nobody.
@@ -3763,13 +3766,13 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Approvals
 
-  private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn) {
+  private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
     if (item.tool !== "Monitored command" && this.alwaysAllowed.includes(item.tool)) {
       head.answer(item.requestId, true, item.input);
       return;
     }
     // Tidying: nobody is reading this turn, and it only touches memory.md.
-    if (turn.origin === "tidy" && !turn.guest) {
+    if (turn?.origin === "tidy" && !turn.guest) {
       head.answer(item.requestId, false, item.input, "Not now: this turn only updates your memory file.");
       return;
     }
@@ -3779,13 +3782,13 @@ export class Bot {
     const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary), date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
     const expires = Date.now() + this.options.approvalTimeoutMs;
     const timer = setTimeout(() => this.expire(record.id), this.options.approvalTimeoutMs);
-    this.approvals.set(record.id, { lasting: item.requestId.startsWith("monitor:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
+    this.approvals.set(record.id, { lasting: !!item.workerId || item.requestId.startsWith("monitor:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
     this.add(record);
     this.log(`asks to use ${item.tool}`);
     this.updated();
   }
 
-  /** The turn ended (or stopped): its questions go; a monitored command's Allow once card stays. */
+  /** The coordinator turn ended/stopped; a monitor or managed worker may still be waiting. */
   private settleTurnApprovals() {
     for (const [id, approval] of [...this.approvals]) if (!approval.lasting) this.settle(id, NO_LONGER_NEEDED, true);
   }

@@ -114,7 +114,13 @@ type Call =
 
 interface Input { text: string; token: string; images?: string[] }
 interface Turn { id: string | null; waitingSteers: Input[]; interruptAsked: boolean; interruptSent: boolean; said: { text: string; phase: string | null }[] }
-interface Approval { rpcId: unknown; kind: "command" | "fileChange" | { permissions: Record<string, unknown> }; thread: string | null }
+interface Approval {
+  rpcId: unknown;
+  kind: "command" | "fileChange" | { permissions: Record<string, unknown> };
+  thread: string;
+  turn: string | null;
+  worker?: { task: string; run: number };
+}
 
 interface Worker {
   runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
@@ -178,6 +184,7 @@ export class CodexSession {
   private calls = new Map<number, Call>();
   threadId: string | null = null;
   private turn: Turn | null = null;
+  private completedTurns = new Set<string>();
   /** The coordinator thread's tokens so far, and when the last turn ended (Phase 5c, 1.x's `tokensTotal`). */
   private tokensTotal: TokenUsage = noTokens();
   private tokensAtTurnStart: TokenUsage = noTokens();
@@ -259,13 +266,14 @@ export class CodexSession {
     const approval = this.approvals.get(requestId);
     if (!approval) return [];
     this.approvals.delete(requestId);
+    if (!this.approvalCurrent(approval)) return [this.item({ kind: "permissionCancelled", requestId })];
     const result = approval.kind === "command" || approval.kind === "fileChange"
       ? { decision: allow ? "accept" : "decline" }
       : allow ? { permissions: approval.kind.permissions, scope: "turn" } : { permissions: {} };
     const out: CodexOutput[] = [{ kind: "write", value: { jsonrpc: "2.0", id: approval.rpcId, result } }];
     // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
     if (!allow && why) {
-      const worker = approval.thread && approval.thread !== this.threadId ? [...this.workers.values()].find((w) => w.thread === approval.thread) : undefined;
+      const worker = approval.worker ? this.workers.get(approval.worker.task) : undefined;
       if (worker) out.push(...this.messageWorker(worker.id, `(App: ${why})`));
       else if (this.turn?.id) out.push(this.steerCall({ text: `(App: ${why})`, token: randomUUID() }, this.turn.id));
     }
@@ -283,7 +291,7 @@ export class CodexSession {
     const monitors = this.cancelMonitors();
     this.stopped = true;
     this.inbox = [];
-    return [...this.cancelWorkers(), ...monitors];
+    return [...this.cancelWorkers(), ...this.closeApprovals(() => true, true), ...monitors];
   }
 
   // ------------------------------------------------------------------------------------------
@@ -369,7 +377,7 @@ export class CodexSession {
       }
       case "workerSteer": {
         const worker = this.workers.get(call.task);
-        if (!error || !worker || worker.cancelled) return [];
+        if (!error || !worker || worker.run !== call.run || worker.cancelled || this.stopped) return [];
         if (worker.active) { worker.messages.push(call.text); return []; }
         return this.messageWorker(call.task, call.text);
       }
@@ -402,9 +410,7 @@ export class CodexSession {
       case "item/completed":
         return this.completed(params.item).map((item) => this.item(item));
       case "serverRequest/resolved": {
-        const id = params.requestId === undefined ? null : key(params.requestId);
-        if (!id || !this.approvals.delete(id)) return [];
-        return [this.item({ kind: "permissionCancelled", requestId: id })];
+        return this.resolveApproval(params);
       }
       case "turn/completed":
         return params.turn ? this.turnCompleted(params.turn) : [];
@@ -417,30 +423,25 @@ export class CodexSession {
   }
 
   private serverRequest(method: string, rpcId: unknown, params: any): CodexOutput[] {
-    const id = key(rpcId);
     if (method === "item/tool/call") return this.managedTool(rpcId, params);
-    const thread = typeof params.threadId === "string" ? params.threadId : null;
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
-        this.approvals.set(id, { rpcId, kind: "command", thread });
         let summary = typeof params.command === "string" ? params.command : "";
         if (reason) summary += (summary ? "\n\n" : "") + reason;
-        return [this.item({ kind: "permission", requestId: id, tool: "Bash", summary, input: {} })];
+        return this.askApproval(rpcId, "command", params, "Bash", summary);
       }
       case "item/fileChange/requestApproval": {
-        this.approvals.set(id, { rpcId, kind: "fileChange", thread });
         const files = typeof params.itemId === "string" ? this.changedFiles.get(params.itemId) ?? [] : [];
         let summary = files.join("\n");
         if (typeof params.grantRoot === "string" && params.grantRoot) summary += (summary ? "\n" : "") + params.grantRoot;
         if (reason) summary += (summary ? "\n\n" : "") + reason;
-        return [this.item({ kind: "permission", requestId: id, tool: "Edit", summary, input: {} })];
+        return this.askApproval(rpcId, "fileChange", params, "Edit", summary);
       }
       case "item/permissions/requestApproval": {
         const asked = params.permissions && typeof params.permissions === "object" ? params.permissions : {};
-        this.approvals.set(id, { rpcId, kind: { permissions: asked }, thread });
         const summary = [reason, JSON.stringify(asked, Object.keys(asked).sort())].filter(Boolean).join("\n\n");
-        return [this.item({ kind: "permission", requestId: id, tool: "Permissions", summary, input: {} })];
+        return this.askApproval(rpcId, { permissions: asked }, params, "Permissions", summary);
       }
       case "mcpServer/elicitation/request":
         // A form the app cannot show: declined, so nothing waits on it.
@@ -449,6 +450,54 @@ export class CodexSession {
         // Bots ask in the chat (<choices>); anything else is not the app's to answer.
         return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, error: { code: -32601, message: "Not supported by Botling." } } }];
     }
+  }
+
+  private approvalCurrent(approval: Approval): boolean {
+    if (this.stopped) return false;
+    if (approval.worker) {
+      const worker = this.workers.get(approval.worker.task);
+      return !!worker?.active && !worker.cancelled && worker.run === approval.worker.run
+        && (!approval.turn || !worker.completedTurns.has(approval.turn))
+        && worker.thread === approval.thread && (!worker.turnId || !approval.turn || worker.turnId === approval.turn);
+    }
+    return approval.thread === this.threadId && !!this.turn
+      && (!approval.turn || !this.completedTurns.has(approval.turn))
+      && !this.turn.interruptAsked && (!this.turn.id || !approval.turn || this.turn.id === approval.turn);
+  }
+
+  private askApproval(rpcId: unknown, kind: Approval["kind"], params: any, tool: string, summary: string): CodexOutput[] {
+    const thread = typeof params.threadId === "string" ? params.threadId : "";
+    const worker = [...this.workers.values()].find((candidate) => candidate.thread === thread);
+    const turn = typeof params.turnId === "string" ? params.turnId : (worker ? worker.turnId : this.turn?.id ?? null);
+    const approval: Approval = { rpcId, kind, thread, turn, ...(worker ? { worker: { task: worker.id, run: worker.run } } : {}) };
+    if (!this.approvalCurrent(approval)) return [this.declineApproval(approval)];
+    if ([...this.approvals.values()].some((pending) => pending.rpcId === rpcId && pending.thread === thread && pending.turn === turn)) return [];
+    // UI decisions use a fresh local identity, never a reusable/string-coerced RPC id.
+    const requestId = `codex-approval:${randomUUID()}`;
+    this.approvals.set(requestId, approval);
+    return [this.item({ kind: "permission", requestId, tool, summary, input: {}, ...(worker ? { workerId: worker.id } : {}) })];
+  }
+
+  private declineApproval(approval: Approval): CodexOutput {
+    return { kind: "write", value: { jsonrpc: "2.0", id: approval.rpcId,
+      result: typeof approval.kind === "string" ? { decision: "decline" } : { permissions: {} } } };
+  }
+
+  /** Terminal owner cleanup removes unanswered requests only; accepted decisions are already gone. */
+  private closeApprovals(matches: (approval: Approval) => boolean, deny = false): CodexOutput[] {
+    const out: CodexOutput[] = [];
+    for (const [requestId, approval] of this.approvals) {
+      if (!matches(approval)) continue;
+      this.approvals.delete(requestId);
+      if (deny) out.push(this.declineApproval(approval));
+      out.push(this.item({ kind: "permissionCancelled", requestId }));
+    }
+    return out;
+  }
+
+  private resolveApproval(params: any): CodexOutput[] {
+    return this.closeApprovals((approval) => approval.rpcId === params.requestId && approval.thread === params.threadId
+      && (typeof params.turnId !== "string" || approval.turn === params.turnId));
   }
 
   // ------------------------------------------------------------------------------------------
@@ -505,7 +554,7 @@ export class CodexSession {
 
   private learnTurn(id: string): CodexOutput[] {
     const turn = this.turn;
-    if (!turn || turn.id) return [];
+    if (!turn || turn.id || this.completedTurns.has(id)) return [];
     turn.id = id;
     const out = turn.waitingSteers.map((input) => this.steerCall(input, id));
     turn.waitingSteers = [];
@@ -519,13 +568,16 @@ export class CodexSession {
   private turnCompleted(finished: any): CodexOutput[] {
     const current = this.turn;
     if (!current) return [];
+    if (typeof finished.id === "string" && this.completedTurns.has(finished.id)) return [];
     if (current.id && typeof finished.id === "string" && finished.id !== current.id) return [];
+    if (typeof finished.id === "string") this.completedTurns.add(finished.id);
     this.turn = null;
     const handback = this.active;
     this.active = null;
     const monitor = this.activeMonitor ? this.monitors.get(this.activeMonitor) ?? null : null;
     this.activeMonitor = null;
-    const out: CodexOutput[] = [];
+    const out: CodexOutput[] = this.closeApprovals((approval) => !approval.worker && approval.thread === this.threadId
+      && (!approval.turn || approval.turn === finished.id));
     // What this turn used: the thread's tokens since the last turn ended (`tokensAtTurnStart`).
     const used = minusTokens(this.tokensTotal, this.tokensAtTurnStart);
     this.tokensAtTurnStart = this.tokensTotal;
@@ -974,6 +1026,8 @@ export class CodexSession {
         const id = ended?.id;
         if (!worker.active || worker.cancelled || typeof id !== "string" || worker.completedTurns.has(id) || (worker.turnId && worker.turnId !== id)) return [];
         worker.completedTurns.add(id);
+        const closed = this.closeApprovals((approval) => approval.worker?.task === task && approval.worker.run === worker.run
+          && (!approval.turn || approval.turn === id));
         worker.turnId = null;
         const usage = this.workerUsage(worker);
         let status: string = typeof ended.status === "string" ? ended.status : "failed";
@@ -989,20 +1043,18 @@ export class CodexSession {
           worker.messages = [];
           worker.run += 1;
           worker.instructions = text;
-          return [...usage, this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true,
+          return [...closed, ...usage, this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true,
             execution: { ...this.workerExecution(worker), turnId: null }, previousRunEnd: { status: status === "completed" ? "completed" : status === "failed" ? "failed" : "stopped", result: report } }), ...this.startWorkerTurn(task, text)];
         }
         worker.active = false;
         this.results.push({ task, name: worker.name, thread: worker.thread, turn: id, run: worker.run, status, report, reconciliationAttempt: 0, reconciled: false });
-        const out: CodexOutput[] = [...usage, this.item({ kind: "subagentEnded", id: task, status: status === "interrupted" ? "killed" : status, summary: report })];
+        const out: CodexOutput[] = [...closed, ...usage, this.item({ kind: "subagentEnded", id: task, status: status === "interrupted" ? "killed" : status, summary: report })];
         if (!this.turn) out.push(...this.next());
         out.push(...this.pendingChanged());
         return out;
       }
       case "serverRequest/resolved": {
-        const id = params.requestId === undefined ? null : key(params.requestId);
-        if (!id || !this.approvals.delete(id)) return [];
-        return [this.item({ kind: "permissionCancelled", requestId: id })];
+        return this.resolveApproval(params);
       }
       case "thread/tokenUsage/updated": {
         if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") worker.tokens = codexTokens(params.tokenUsage.total);
@@ -1027,10 +1079,11 @@ export class CodexSession {
     const worker = this.workers.get(task);
     if (!worker?.active) return [];
     worker.active = false;
+    if (worker.turnId) worker.completedTurns.add(worker.turnId);
     worker.turnId = null;
     worker.messages = [];
     this.results.push({ task, name: worker.name, thread: worker.thread, run: worker.run, status: "failed", report, reconciliationAttempt: 0, reconciled: false });
-    const out: CodexOutput[] = [this.item({ kind: "subagentEnded", id: task, status: "failed", summary: report })];
+    const out: CodexOutput[] = [...this.closeApprovals((approval) => approval.worker?.task === task), this.item({ kind: "subagentEnded", id: task, status: "failed", summary: report })];
     if (!this.turn) out.push(...this.next());
     out.push(...this.pendingChanged());
     return out;
@@ -1049,8 +1102,10 @@ export class CodexSession {
     for (const worker of this.workers.values()) {
       if (!worker.active || (ids && !ids.has(worker.id))) continue;
       worker.active = false;
+      if (worker.turnId) worker.completedTurns.add(worker.turnId);
       worker.cancelled = true;
       worker.messages = [];
+      out.push(...this.closeApprovals((approval) => approval.worker?.task === worker.id, true));
       if (worker.thread && worker.turnId) out.push(this.request("turn/interrupt", { threadId: worker.thread, turnId: worker.turnId }, { kind: "interrupt" }));
       out.push(this.item({ kind: "subagentEnded", id: worker.id, status: "killed", summary: "Stopped by the app." }));
     }

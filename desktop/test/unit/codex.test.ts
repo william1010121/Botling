@@ -57,9 +57,9 @@ describe("Codex head: one coordinator thread", () => {
     expect(asked.of("stepText")).toEqual([{ kind: "stepText", text: "I’ll run it with the required approval request." }]);
     expect(asked.of("toolUse")).toMatchObject([{ tool: "Bash", title: "Run echo hi > note.txt", detail: "echo hi > note.txt" }]);
     const [permission] = asked.of("permission");
-    expect(permission).toMatchObject({ requestId: "0", tool: "Bash" });
+    expect(permission).toMatchObject({ requestId: expect.stringMatching(/^codex-approval:/), tool: "Bash" });
     expect(permission.summary.startsWith("/bin/zsh -lc 'echo hi > note.txt'\n\nAllow writing hi")).toBe(true);
-    const answer = new Out(session.answer("0", true));
+    const answer = new Out(session.answer(permission.requestId, true));
     expect(answer.writes).toEqual([{ jsonrpc: "2.0", id: 0, result: { decision: "accept" } }]);
     const rest = replay(session, lines.slice(ask + 1));
     expect(rest.of("permissionCancelled")).toEqual([]);
@@ -74,10 +74,10 @@ describe("Codex head: one coordinator thread", () => {
     session.send("Run it");
     const lines = recordings.helloAndApproval!;
     const ask = lines.findIndex((line) => line.includes("requestApproval"));
-    replay(session, lines.slice(0, ask + 1));
+    const [permission] = replay(session, lines.slice(0, ask + 1)).of("permission");
     const resolved = replay(session, [lines.find((line) => line.includes("serverRequest/resolved"))!]);
-    expect(resolved.of("permissionCancelled")).toEqual([{ kind: "permissionCancelled", requestId: "0" }]);
-    expect(new Out(session.answer("0", true)).writes).toEqual([]);
+    expect(resolved.of("permissionCancelled")).toEqual([{ kind: "permissionCancelled", requestId: permission.requestId }]);
+    expect(new Out(session.answer(permission.requestId, true)).writes).toEqual([]);
   });
 
   it("a refusal's reason joins the turn as an app note", () => {
@@ -86,8 +86,8 @@ describe("Codex head: one coordinator thread", () => {
     session.send("Reply with the single word: hello");
     session.send("Run it");
     const lines = recordings.helloAndApproval!;
-    replay(session, lines.slice(0, lines.findIndex((line) => line.includes("requestApproval")) + 1));
-    const answer = new Out(session.answer("0", false, "The user did not allow it."));
+    const [permission] = replay(session, lines.slice(0, lines.findIndex((line) => line.includes("requestApproval")) + 1)).of("permission");
+    const answer = new Out(session.answer(permission.requestId, false, "The user did not allow it."));
     expect(answer.writes[0]).toEqual({ jsonrpc: "2.0", id: 0, result: { decision: "decline" } });
     expect(answer.params("turn/steer")).toMatchObject({ input: [{ type: "text", text: "(App: The user did not allow it.)" }] });
   });

@@ -28,8 +28,8 @@ export type StreamItem =
   | { kind: "subagentEnded"; id: string; status: string; summary: string | null }
   /** A notification that is not a report: the subagent waits on its own background work. */
   | { kind: "subagentWaiting"; id: string }
-  /** claude asks to use a tool (`--permission-prompt-tool stdio`). */
-  | { kind: "permission"; requestId: string; tool: string; summary: string; input: Record<string, unknown> }
+  /** A tool approval. Codex's workerId makes its lifetime independent of the coordinator turn. */
+  | { kind: "permission"; requestId: string; tool: string; summary: string; input: Record<string, unknown>; workerId?: string }
   | { kind: "permissionCancelled"; requestId: string }
   /** A control request the app does not handle: answer it with an error so claude does not wait. */
   | { kind: "unsupportedRequest"; requestId: string; subtype: string }
