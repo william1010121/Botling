@@ -15,6 +15,7 @@ const paths: Record<string, string> = {
   safari: "M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM10.4 5.6L9 9 5.6 10.4 7 7z",
   checkCircle: "M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM5.6 8.1l1.6 1.6 3.2-3.4",
   sliders: "M3 5h4M10 5h3M3 11h2M8 11h5M7 3.5v3M5 9.5v3",
+  chevronLeft: "M10 3.5L5.5 8l4.5 4.5",
   check: "M4 8.4l2.6 2.6L12 5.4",
   xmark: "M4.5 4.5l7 7M11.5 4.5l-7 7",
   sidebarLeft: "M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1zM6 3.5v9M3 6h1.4M3 8h1.4",

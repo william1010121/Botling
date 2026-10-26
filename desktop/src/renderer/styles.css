@@ -605,3 +605,13 @@ button { font: inherit; color: inherit; }
 .quick-usage-card small { display: block; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .quick-usage-note { margin: 6px 0 0; font-size: 11px; color: var(--faint); }
 .quick-usage-note button { border: 0; background: none; color: var(--blue); font: inherit; cursor: pointer; }
+
+/* The bot's settings in the right panel (1.x's DetailPanel slider button and SettingsPage). */
+.detail-settings, .panel-back { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.detail-settings:hover, .panel-back:hover { background: var(--hover); color: var(--text); }
+.settings-panel-head { gap: 4px; }
+.panel-settings { display: flex; flex-direction: column; }
+.panel-settings .settings-group:first-child { margin-top: 0; }
+.panel-settings .settings-row { flex-wrap: wrap; gap: 6px 16px; }
+.panel-settings .settings-control { flex-wrap: wrap; max-width: 100%; }
+.panel-settings .settings-problem { margin: 0 0 8px; }

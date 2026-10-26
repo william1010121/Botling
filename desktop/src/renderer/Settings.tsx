@@ -1,7 +1,7 @@
 import { UpdateActions,RecoveryCopies } from "./Updates";
 // The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
-// and words, for what 2.0's core does. Everything here is global (settings.json) except "This bot",
-// which is the shown bot's own bot.json (1.x keeps those on the bot's page beside the chat). Each
+// and words, for what 2.0's core does. Everything here is global (settings.json); the shown bot's own
+// choices (its bot.json) are `BotSettings`, in the right panel one level in, as in 1.x. Each
 // control shows what the core saved: a change goes out, the answer (or `settings.updated`) comes back.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView, UsageView } from "../contract";
@@ -13,13 +13,12 @@ import { faceURL } from "./avatars";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-export type SettingsSection = "general" | "appearance" | "engines" | "bot" | "usage" | "permissions" | "plugins" | "updates" | "developer";
+export type SettingsSection = "general" | "appearance" | "engines" | "usage" | "permissions" | "plugins" | "updates" | "developer";
 type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
   { id: "engines", title: "Engines and subagents", terms: "claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
-  { id: "bot", title: "This bot", terms: "engine heads claude codex model effort subagents" },
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
@@ -53,8 +52,8 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
   }, [onClose]);
   const sections = useMemo(() => {
     const words = search.trim().toLowerCase();
-    return SECTIONS.filter((entry) => (entry.id !== "bot" || bot) && (!words || `${entry.title} ${entry.terms}`.toLowerCase().includes(words)));
-  }, [search, bot]);
+    return SECTIONS.filter((entry) => (!words || `${entry.title} ${entry.terms}`.toLowerCase().includes(words)));
+  }, [search]);
   const current = sections.find((entry) => entry.id === section) ?? sections[0];
   return (
     <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -77,7 +76,6 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
             {shown && current?.id === "engines" && <Engines settings={shown} change={change} />}
-            {current?.id === "bot" && bot && <ThisBot client={client} bot={bot} onProblem={setProblem} />}
             {current?.id === "usage" && <Usage client={client} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
@@ -412,7 +410,17 @@ function Engines({ settings, change }: { settings: SettingsView; change: (next: 
   );
 }
 
-/** The shown bot's own choices (1.x: the bot's settings beside its chat). */
+/** The shown bot's own choices, for the right panel's settings page (1.x's SettingsPage in DetailPanel). */
+export function BotSettings({ client, bot }: { client: Client; bot: BotView }) {
+  const [problem, setProblem] = useState<string | null>(null);
+  return (
+    <>
+      {problem && <p className="settings-problem" role="alert">{problem}</p>}
+      <ThisBot client={client} bot={bot} onProblem={setProblem} />
+    </>
+  );
+}
+
 function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onProblem: (problem: string | null) => void }) {
   const [view, setView] = useState<BotSettingsView | null>(null);
   const [models, setModels] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);

@@ -171,29 +171,34 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     await expect(sheet.getByRole("switch", { name: "Follow Codex config file" })).not.toBeChecked();
     await sheet.getByRole("radiogroup", { name: "Workers' reasoning effort" }).getByRole("radio", { name: "High", exact: true }).click();
     await shot(page, "settings-engines");
-    await sheet.getByRole("button", { name: "This bot" }).click();
-    await sheet.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" }).click();
-    await expect(sheet.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" })).toHaveAttribute("aria-checked", "true");
-    expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8")).model).toBe("opus");
     expect(JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8"))).toMatchObject({ codexWorkersFollow: false, codexWorkerChoice: { effort: "high" } });
-    await shot(page, "settings-bot");
-    // Phase 5c: 1.x's "Engines in this bot". The only head cannot go; with both, turning off the one it runs on
-    // runs it on the other (asleep here: "Switched to Codex", the next wake is a Codex head).
-    await expect(sheet.getByRole("switch", { name: "Claude", exact: true })).toBeDisabled();
-    await sheet.getByRole("switch", { name: "Codex", exact: true }).click();
-    await expect(sheet.getByRole("switch", { name: "Codex", exact: true })).toBeChecked();
-    await expect(sheet.getByRole("switch", { name: "Claude", exact: true })).toBeEnabled();
-    await sheet.getByRole("switch", { name: "Claude", exact: true }).click();
-    await expect(sheet.getByRole("switch", { name: "Claude", exact: true })).not.toBeChecked();
-    await expect(sheet.getByRole("switch", { name: "Codex", exact: true })).toBeDisabled();
-    await expect(chat.getByText("Switched to Codex")).toBeVisible();
-    expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8"))).toMatchObject({ engine: "codex", heads: { engines: ["codex"] } });
-    await shot(page, "phase5c-engines");
+    await expect(sheet.getByRole("button", { name: "This bot" })).toHaveCount(0);
     // The plugin library is a section too; Done closes.
     await sheet.getByRole("button", { name: "Plugins" }).click();
     await expect(sheet.getByRole("region", { name: "Plugins" })).toBeVisible();
     await sheet.getByRole("button", { name: "Done" }).click();
     await expect(sheet).toHaveCount(0);
+    // This bot's own settings: the right panel's slider button, one level in (1.x's DetailPanel).
+    const panel = page.getByRole("complementary", { name: "Details" });
+    await panel.getByRole("button", { name: "Bot settings" }).click();
+    await panel.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" }).click();
+    await expect(panel.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" })).toHaveAttribute("aria-checked", "true");
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8")).model).toBe("opus");
+    await shot(page, "settings-bot");
+    // Phase 5c: 1.x's "Engines in this bot". The only head cannot go; with both, turning off the one it runs on
+    // runs it on the other (asleep here: "Switched to Codex", the next wake is a Codex head).
+    await expect(panel.getByRole("switch", { name: "Claude", exact: true })).toBeDisabled();
+    await panel.getByRole("switch", { name: "Codex", exact: true }).click();
+    await expect(panel.getByRole("switch", { name: "Codex", exact: true })).toBeChecked();
+    await expect(panel.getByRole("switch", { name: "Claude", exact: true })).toBeEnabled();
+    await panel.getByRole("switch", { name: "Claude", exact: true }).click();
+    await expect(panel.getByRole("switch", { name: "Claude", exact: true })).not.toBeChecked();
+    await expect(panel.getByRole("switch", { name: "Codex", exact: true })).toBeDisabled();
+    await expect(chat.getByText("Switched to Codex")).toBeVisible();
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8"))).toMatchObject({ engine: "codex", heads: { engines: ["codex"] } });
+    await shot(page, "phase5c-engines");
+    await panel.getByRole("button", { name: "Back" }).click();
+    await expect(panel.getByRole("button", { name: "Bot settings" })).toBeVisible();
   } finally {
     await app.close();
   }

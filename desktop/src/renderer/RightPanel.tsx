@@ -5,8 +5,10 @@
 // bot: the links handed over in the chat, the newest three) and Settled (the subagents you settled
 // out of the left column). Folded (⌃⌘I, the button at the window's top right), it is 1.x's RightStrip:
 // the face with its status dot (hover for the Now card), an icon per section with a count, each
-// opening that section beside the strip, and the bot's settings at the bottom.
-import { useEffect, useState } from "react";
+// opening that section beside the strip, and the bot's settings at the bottom. The bot's settings
+// live one level in (1.x's DetailPanel `showingSettings`): the slider button on the name row, or the
+// strip's bottom one, shows them in the overview's place, with Back.
+import { useEffect, useState, type ReactNode } from "react";
 import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type TeamRunView, type WaitingItemView, type WaitingView } from "../contract";
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
@@ -48,7 +50,12 @@ export interface RightPanelProps {
   onOpenResult: (result: ResultView) => void;
   onOpenSubagent: (row: Pick<SubagentRowView, "id">) => void;
   onUnsettle: (row: SubagentRowView) => void;
+  /** Open the bot's settings in the panel (the strip's button also opens the panel). */
   onSettings: () => void;
+  /** The bot's settings shown in the overview's place, and their page (1.x's SettingsPage). */
+  showingSettings?: boolean;
+  settingsPage?: ReactNode;
+  onCloseSettings?: () => void;
   onExpand: () => void;
 }
 
@@ -113,7 +120,25 @@ function GroupMembers({ group, members, look, onSelect }: { group: BotView; memb
   );
 }
 
-function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask }: RightPanelProps) {
+/** The bot's settings in the overview's place (1.x's SettingsPage): Back, "Settings", then the page. */
+function SettingsPanel({ settingsPage, onCloseSettings }: RightPanelProps) {
+  return (
+    <aside className="detail-panel" aria-label="Details">
+      <div className="detail-head settings-panel-head">
+        <button type="button" className="panel-back" aria-label="Back" onClick={onCloseSettings}><Icon name="chevronLeft" size={14} /></button>
+        <span className="detail-name">Settings</span>
+      </div>
+      <div className="panel-settings">{settingsPage}</div>
+    </aside>
+  );
+}
+
+function OpenPanel(props: RightPanelProps) {
+  if (props.showingSettings && props.settingsPage) return <SettingsPanel {...props} />;
+  return <Overview {...props} />;
+}
+
+function Overview({ bot, bots, waiting, look, status, results, teams, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask, onSettings }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
@@ -135,6 +160,8 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
       <div className="detail-head">
         <img className="detail-avatar" src={faceURL(bot, look, { asleep: bot.phase === "asleep" && !bot.working, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className="detail-name">{bot.name}</span>
+        <span className="bot-gap" />
+        <button type="button" className="detail-settings" title={`${bot.name}'s settings`} aria-label="Bot settings" onClick={onSettings}><Icon name="sliders" size={15} /></button>
       </div>
       <section className="detail-section tasks-section">
         <h3>Tasks</h3>
