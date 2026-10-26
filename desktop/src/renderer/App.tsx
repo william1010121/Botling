@@ -347,6 +347,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
 }
 
 function status(bot: BotView): string {
+  if (bot.working && bot.codexRetry && !bot.approvals) return "retrying";
   if (bot.working) return "working";
   if (bot.approvals) return "waiting";
   return bot.phase;
@@ -355,6 +356,8 @@ function status(bot: BotView): string {
 function statusText(bot: BotView): string {
   if (bot.role === "group") return `${bot.members?.length ?? 0} bot${bot.members?.length === 1 ? "" : "s"}`;
   if (bot.working && bot.approvals) return "Waiting for your answer";
+  // Codex waiting to try a refused request again (the chat's typing bubble says when).
+  if (bot.working && bot.codexRetry) return bot.codexRetry.reason === "rateLimited" ? "Codex rate limited, retrying…" : "Codex reconnecting…";
   if (bot.working) return "Writing…";
   if (bot.phase === "tidying") return "Tidying its notes…";
   if (bot.phase === "switching") return "Writing handoff";

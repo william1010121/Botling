@@ -10,7 +10,7 @@ import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
 import { taskCardChips } from "./task-cards";
-import type { ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
+import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
 import { escapeHTML } from "./util";
 import { characterAvatar } from "./animated-avatar";
 
@@ -765,18 +765,36 @@ export function jumpTo(id: string): void {
 }
 
 /** The bot at work: what it is doing right now, if it has started on tools, then the dots. */
-export function typingElement(avatarSrc: string, live: StepView[] = []): HTMLElement {
+export function typingElement(avatarSrc: string, live: StepView[] = [], retry: RetryView | null = null): HTMLElement {
   const row = document.createElement("div");
   row.className = "row bot typing";
   row.dataset.avatar = avatarSrc;
   row.append(avatar(avatarSrc));
-  updateTypingElement(row, live);
+  updateTypingElement(row, live, retry);
   return row;
 }
 
+export type RetryView = NonNullable<ChatState["retrying"]>;
+
+/** "Codex is rate limited · retrying in about 40 s (attempt 1/5)": once its time is past or unknown, "retrying (attempt 1/5)". */
+export function retryText(retry: RetryView, now = Date.now()): string {
+  const left = retry.retryAt === null ? 0 : Math.ceil((retry.retryAt - now) / 1000);
+  const values = { attempt: retry.attempt, max: retry.max };
+  const limited = retry.reason === "rateLimited";
+  if (left <= 0) return t(limited ? "messages.retryLimited" : "messages.retryConnection", values);
+  const wait = left < 60 ? t("messages.retrySeconds", { n: left }) : t("messages.retryMinutes", { n: Math.round(left / 60) });
+  return t(limited ? "messages.retryLimitedIn" : "messages.retryConnectionIn", { ...values, wait });
+}
+
+/** The retry note's words now (they count down while it waits). */
+export function refreshRetryNote(row: HTMLElement | null, retry: RetryView | null | undefined, now = Date.now()): void {
+  const note = row?.querySelector<HTMLElement>(".retry-note");
+  if (note && retry) note.textContent = retryText(retry, now);
+}
+
 /** Updates the live content while keeping the active avatar's animation and DOM node. */
-export function updateTypingElement(row: HTMLElement, live: StepView[] = []): void {
-  const key = JSON.stringify(live);
+export function updateTypingElement(row: HTMLElement, live: StepView[] = [], retry: RetryView | null = null): void {
+  const key = JSON.stringify([live, retry]);
   if (row.dataset.live === key) return;
   row.dataset.live = key;
   while (row.children.length > 1) row.lastElementChild!.remove();
@@ -784,13 +802,22 @@ export function updateTypingElement(row: HTMLElement, live: StepView[] = []): vo
   dots.className = "dots";
   dots.setAttribute("aria-label", t("messages.working"));
   dots.innerHTML = "<span></span><span></span><span></span>";
-  if (!live.length) {
+  if (!live.length && !retry) {
     dots.classList.add("bubble", "bot-bubble");
     row.append(dots);
     return;
   }
   const bubble = document.createElement("div");
   bubble.className = "bubble bot-bubble working";
-  bubble.append(liveElement(live), dots);
+  if (live.length) bubble.append(liveElement(live));
+  if (retry) {
+    // Codex waiting on a refused request: why the dots go on so long.
+    const note = document.createElement("div");
+    note.className = "retry-note";
+    note.setAttribute("role", "status");
+    note.textContent = retryText(retry);
+    bubble.append(note);
+  }
+  bubble.append(dots);
   row.append(bubble);
 }

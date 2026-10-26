@@ -422,6 +422,16 @@ export const BotView = z.strictObject({
   /** asleep: no agent process; starting; awake: its process is running; tidying: writing its notes before it sleeps; switching: writing a handoff before it runs on the other engine. */
   phase: z.enum(["asleep", "starting", "awake", "tidying", "switching"]),
   working: z.boolean(),
+  /**
+   * Its Codex head waits to try a refused request again (codex's `error` with willRetry): which
+   * attempt of how many, why (rateLimited: HTTP 429), and when it goes (ms since 1970; null: not
+   * known). Null or absent: not waiting. Codex's own counterpart of bot/sidebar-offline-label's
+   * `connection: "retrying"` (claude's api_retry); the two can merge once both land.
+   */
+  codexRetry: z.strictObject({
+    attempt: z.number().int().nonnegative(), max: z.number().int().nonnegative(),
+    reason: z.enum(["rateLimited", "connection"]), retryAt: z.number().nullable(),
+  }).nullable().optional(),
   /** Tool approvals waiting for the user. */
   approvals: z.number().int().nonnegative(),
   unread: z.number().int().nonnegative(),

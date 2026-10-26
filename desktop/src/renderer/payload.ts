@@ -271,6 +271,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     botName: bot.name,
     messages,
     working: runs.length > 0 || !!answering,
+    // Codex waiting to try a refused request again: the typing bubble says so (`retry-note`).
+    retrying: runs.length > 0 && bot.codexRetry ? { ...bot.codexRetry } : null,
     waitingForWorkers: bot.role !== "group" && runs.length === 0 && !answering && bot.subagents > 0,
     avatar: answering ? (look === "cute" ? faceURL(answering, "cute", { working: true }) : avatarURL(answering.avatar, "open"))
       : look === "cute" ? faceURL(bot, "cute", { engine: activeHead, working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
