@@ -1,5 +1,7 @@
 # Botling 2.0 desktop (React + TypeScript + Electron)
 
+Developer shell updates: [renderer build/watch and Cmd+R workflow](docs/renderer-development.md).
+
 Status: **Phase 0 spikes done on macOS; Phase 1b done: several bots with 1.x-compatible storage, a
 read-only 1.x import, a long-lived claude head per bot with approvals, and a React shell hosting the
 reused Web/src chat page. Phase 2a done: 1.x's generated instructions (checked string for string

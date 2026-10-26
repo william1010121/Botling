@@ -9,6 +9,8 @@
     "dev": "node build.mjs && BOTLING_AGENT=claude electron .",
     "dev:fake": "node build.mjs && BOTLING_AGENT=fake electron .",
     "start": "electron .",
+    "renderer:build": "node scripts/renderer-dev.mjs",
+    "renderer:watch": "node scripts/renderer-dev.mjs --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:changed": "node scripts/test-changed.mjs",
     "link-deps": "sh scripts/link-deps.sh",

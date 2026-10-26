@@ -11,6 +11,7 @@ import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost} from "./editor-host";
 import {appMenuTemplate} from "./app-menu";
+import {rendererFiles,rendererResponse} from "./renderer-loading";
 import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
@@ -50,7 +51,9 @@ if (checkAt >= 0) {
   if (report.stderr) writeSync(2, report.stderr);
   process.exit(report.code);
 }
-const rendererDir = join(root, "out", "renderer");
+const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv);
+const rendererDir = renderer.directory;
+if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell only`);
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
 const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
@@ -663,9 +666,7 @@ async function chatFile(url: URL, request: Request): Promise<Response | null> {
   const path = url.pathname;
   if (CHAT_FILES.test(path)) {
     const response = await net.fetch(pathToFileURL(join(rendererDir, path)).toString());
-    const headers = new Headers(response.headers);
-    if (path === "/chat.html") headers.set("Content-Security-Policy", CHAT_CSP);
-    return new Response(response.body, { status: response.status, headers });
+    return rendererResponse(response, renderer.development, path === "/chat.html" ? CHAT_CSP : undefined);
   }
   // A plugin's stylesheet or a font beside it (only files the core says the plugin ships for its web part).
   const style = /^\/plugin-files\/([a-z0-9][a-z0-9._-]*)\/(.+)$/.exec(path);
@@ -701,9 +702,7 @@ function serveApp() {
     // The chat page and its files are the chat origin's, not the app's.
     if (!file.startsWith(rendererDir + sep) || CHAT_FILES.test(url.pathname)) return new Response("Not found", { status: 404 });
     const response = await net.fetch(pathToFileURL(file).toString());
-    const headers = new Headers(response.headers);
-    if (file.endsWith(".html")) headers.set("Content-Security-Policy", APP_CSP);
-    return new Response(response.body, { status: response.status, headers });
+    return rendererResponse(response, renderer.development, file.endsWith(".html") ? APP_CSP : undefined);
   });
   protocol.handle("botling-chat", async (request) => {
     const url = new URL(request.url);
