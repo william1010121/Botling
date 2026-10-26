@@ -4,11 +4,13 @@
 //   - a changed test file itself;
 //   - a unit test that imports a changed file, directly or not (vitest's module graph);
 //   - a unit test named after a changed source file (src/core/teams.ts → test/unit/teams*.test.ts),
-//     which catches the tests that drive the built core over core-harness.ts instead of importing it.
+//     which catches the tests that drive the built core over core-harness.ts instead of importing it;
+//   - a unit test whose text names a changed file (electron-builder.config.cjs, build.mjs, …), for
+//     files that tests read or run rather than import.
 // out/ is rebuilt first (well under a second) because many unit tests run the built core.
 // The full suite (`npm test`) is for a release candidate, not for every change.
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,7 +29,7 @@ const changed = [...new Set([
 // What the desktop app is built from: its own sources and tests, and Web/'s chat page, host and plugins.
 const sources = changed.filter((path) => {
   const rel = relative(root, path);
-  return /\.(ts|tsx|mts|mjs|cjs|js)$/.test(rel) && /^(desktop\/(src|test|scripts)\/|desktop\/build\.mjs$|Web\/(src|host|plugins)\/)/.test(rel);
+  return /\.(ts|tsx|mts|mjs|cjs|js)$/.test(rel) && /^(desktop\/(src|test|scripts)\/|desktop\/(build\.mjs|electron-builder\.config\.cjs)$|Web\/(src|host|plugins)\/)/.test(rel);
 });
 
 const step = (label, command, args) => {
@@ -45,12 +47,14 @@ let ok = step("typecheck", bin("tsc"), ["--noEmit", "-p", "tsconfig.json"]);
 if (sources.length) {
   const unit = join(desktop, "test", "unit");
   const tests = readdirSync(unit).filter((name) => name.endsWith(".test.ts"));
+  const texts = new Map(tests.map((name) => [name, readFileSync(join(unit, name), "utf8")]));
   const named = new Set();
   for (const path of sources) {
     if (path.startsWith(unit + "/")) { named.add(path); continue; }
     const stem = basename(path).replace(/\.(ts|tsx|mts|mjs|cjs|js)$/, "");
     if (stem === "main" || stem === "index" || stem.length < 3) continue; // too common to name a test after
     for (const name of tests) if (name === `${stem}.test.ts` || name.startsWith(`${stem}-`)) named.add(join(unit, name));
+    for (const name of tests) if (texts.get(name).includes(basename(path))) named.add(join(unit, name));
   }
   ok = step("build out/", process.execPath, [join(desktop, "build.mjs")]) && ok;
   // `vitest related` takes source files and runs the tests that depend on them; a test file passed
