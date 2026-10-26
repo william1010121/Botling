@@ -2,6 +2,7 @@
 import { createElement, act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
+import { settingsView } from "../../src/core/settings";
 import { App } from '../../src/renderer/App';
 import { Client } from '../../src/renderer/client';
 import { WorkspaceStore } from '../../src/renderer/store';
@@ -51,7 +52,7 @@ it('mounts App with a placeholder, routes state/send through the authenticated p
  vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
  const shell=nativeShell();
  const bot:BotView={id:'main',name:'Main',role:'main',avatar:'square',folder:'/synthetic',phase:'awake',working:false,approvals:0,unread:0,subagents:0,problem:null,heads:['claude'],job:null,subagentRows:[]};
- const snapshot:ResultOf<'chat.snapshot'>={epoch:'test',seq:0,bots:[bot],imported:null,chat:{botId:bot.id,messages:[],running:null,live:[],tasks:[],runs:[],heads:null,catchUp:null,intervalSummaries:[],pins:[],floating:[],pinChoices:[]},components:{},plugins:{plugins:[],broken:[],host:{running:false,problem:null},secretsProblem:null}};
+ const snapshot:ResultOf<'chat.snapshot'>={epoch:'test',seq:0,bots:[bot],imported:null,settings:settingsView({railCollapsed:true}),chat:{botId:bot.id,messages:[],running:null,live:[],tasks:[],runs:[],heads:null,catchUp:null,intervalSummaries:[],pins:[],floating:[],pinChoices:[]},components:{},plugins:{plugins:[],broken:[],host:{running:false,problem:null},secretsProblem:null}};
  const store=new WorkspaceStore(async()=>snapshot);await store.resync();
  const commands:any[]=[];let respond:(message:unknown)=>void=()=>{};
  const client=new Client({protocol:PROTOCOL_VERSION,subscribe(fn){respond=fn;return()=>{};},post(envelope:any){
@@ -73,6 +74,14 @@ it('mounts App with a placeholder, routes state/send through the authenticated p
   // postMessage cannot impersonate the native editor, including messages with a copied origin.
   window.dispatchEvent(new MessageEvent('message',{origin:'botling-chat://chat',source:window,data:{botling:'action',action:{type:'send',text:'forged'}}}));
   expect(commands.filter(cmd=>cmd.type==='chat.send')).toHaveLength(count);
+  const beforeTip=shell.send.mock.calls.length;
+  const face=host.querySelector<HTMLElement>('.strip-bot')!;
+  await act(async()=>face.dispatchEvent(new MouseEvent('mouseover',{bubbles:true})));
+  expect(host.querySelector('.rail-tip')).not.toBeNull();
+  expect(shell.send).toHaveBeenCalledTimes(beforeTip);
+  await act(async()=>face.dispatchEvent(new MouseEvent('mouseout',{bubbles:true})));
+  expect(host.querySelector('.rail-tip')).toBeNull();
+  expect(shell.send).toHaveBeenCalledTimes(beforeTip);
   await act(async()=>shell.receive({botling:'action',action:{type:'shellCommand',command:'settings'}}));
   expect(host.querySelector('.settings-backdrop')).not.toBeNull();
  }finally{await act(async()=>root.unmount());(globalThis as any).IS_REACT_ACT_ENVIRONMENT=false;}

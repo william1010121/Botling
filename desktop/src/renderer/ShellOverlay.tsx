@@ -1,8 +1,9 @@
 import { useLayoutEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-// All shell overlays share this lifetime contract, including body portals and pointer-transparent
-// tooltips. No class names, roles or individual feature selectors participate in native stacking.
+// Shell surfaces that cover chat share this lifetime contract, including body portals and task
+// timelines. Brief rail/status tips stay outside it to avoid snapshot work and input handoff on hover.
+// No class names, roles or individual feature selectors participate in native stacking.
 const overlays = new Set<symbol>();
 const listeners = new Set<() => void>();
 export const shellOverlayActive = () => overlays.size > 0;

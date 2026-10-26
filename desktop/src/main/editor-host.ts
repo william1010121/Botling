@@ -27,6 +27,8 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  const view=new WebContentsView({webPreferences:{preload:join(desktopRoot,'out/preload/editor-host.cjs'),additionalArguments:['--botling-editor-host=1'],sandbox:true,contextIsolation:true,nodeIntegration:false,nodeIntegrationInSubFrames:false,nodeIntegrationInWorker:false,webSecurity:true,allowRunningInsecureContent:false,navigateOnDragDrop:false,spellcheck:false}});
  let laidOut=false,initialized=false,closed=false,occluded=false,snapshotRevision=0;
  let snapshotTimer:ReturnType<typeof setTimeout>|undefined;
+ let snapshotDirty=false,captureInFlight=false,lastCaptureAt=-Infinity;
+ let lastBounds:Electron.Rectangle|undefined;
  let settleInitial!:(ready:boolean)=>void;
  const initial=new Promise<boolean>(resolve=>{settleInitial=resolve;});
  const checkInitial=()=>{if(laidOut&&initialized)settleInitial(true);};
@@ -34,7 +36,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  contents.setWindowOpenHandler(()=>({action:'deny'}));contents.on('will-attach-webview',event=>event.preventDefault());
  const up=(event:IpcMainEvent,packet:unknown)=>{const route=boundary.route('up',event,packet);if(!route)return;
   const message=route.packet.message as {botling?:string;chatId?:unknown;revision?:number};
-  if(message.botling==='hostObservation'&&message.chatId!==null&&(message.revision ?? 0)>0){initialized=true;checkInitial();}
+  if(message.botling==='hostObservation'&&message.chatId!==null&&(message.revision ?? 0)>0){initialized=true;checkInitial();if(occluded)invalidateSnapshot();}
   owner.webContents.send(EDITOR_CHANNEL.shell,route.packet);
  };
  const down=(event:IpcMainEvent,packet:unknown)=>{const route=boundary.route('down',event,packet);if(!route)return;
@@ -45,14 +47,27 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  const snapshot=(image:string|null)=>{
   if(lastStamp&&!owner.webContents.isDestroyed())owner.webContents.send(EDITOR_CHANNEL.snapshot,{stamp:lastStamp,image,revision:snapshotRevision});
  };
- const stopSnapshots=()=>{clearTimeout(snapshotTimer);snapshotRevision++;};
- const captureSnapshot=async(revision:number)=>{
+ const stopSnapshots=()=>{clearTimeout(snapshotTimer);snapshotTimer=undefined;snapshotDirty=false;snapshotRevision++;};
+ // Capture once on cover, then only after applied chat state or changed bounds. Coalesce bursts
+ // without postponing the next capture, never overlap captures, and keep the 1s cap across covers.
+ const scheduleSnapshot=()=>{
+  if(closed||!occluded||!snapshotDirty||captureInFlight||snapshotTimer!==undefined)return;
+  const delay=Math.max(0,1000-(Date.now()-lastCaptureAt));
+  if(delay===0)void captureSnapshot();
+  else snapshotTimer=setTimeout(()=>{snapshotTimer=undefined;void captureSnapshot();},delay);
+ };
+ // Revision belongs to the cover lifetime. Streaming state may dirty the next capture while
+ // the current one is in flight; it must still be displayable so active streams cannot starve it.
+ const invalidateSnapshot=()=>{snapshotDirty=true;scheduleSnapshot();};
+ const captureSnapshot=async()=>{
+  if(closed||!occluded||!snapshotDirty||captureInFlight)return;
+  snapshotDirty=false;captureInFlight=true;lastCaptureAt=Date.now();
+  const revision=snapshotRevision;
   try{
    const image=await contents.capturePage(undefined,{stayHidden:true,stayAwake:false});
-   if(closed||!occluded||revision!==snapshotRevision)return;
-   if(!image.isEmpty())snapshot(image.toDataURL());
+   if(!closed&&occluded&&revision===snapshotRevision&&!image.isEmpty())snapshot(image.toDataURL());
   }catch{/* A crash may have disposed this view; shell reveal must remain independent. */}
-  if(!closed&&occluded&&revision===snapshotRevision)snapshotTimer=setTimeout(()=>void captureSnapshot(revision),250);
+  finally{captureInFlight=false;scheduleSnapshot();}
  };
  const layout=(event:IpcMainEvent,value:any)=>{
   if(boundary.receiver('down',event,value?.stamp)!==contents)return;
@@ -67,9 +82,11 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
    if(owner.isVisible()&&contents.isFocused())owner.webContents.focus();return;
   }
   const bounds=editorBounds(value.bounds,owner.getContentBounds());if(!bounds)return;
-  view.setBounds(bounds);
+  const boundsChanged=!lastBounds||(['x','y','width','height'] as const).some(key=>lastBounds![key]!==bounds[key]);
+  lastBounds=bounds;view.setBounds(bounds);
   if(value.occluded===true){
-   if(!occluded){occluded=true;laidOut=false;stopSnapshots();void captureSnapshot(snapshotRevision);}
+   if(!occluded){occluded=true;laidOut=false;stopSnapshots();invalidateSnapshot();}
+   else if(boundsChanged)invalidateSnapshot();
   }else{
    stopSnapshots();occluded=false;view.setVisible(true);snapshot(null);laidOut=true;checkInitial();
   }

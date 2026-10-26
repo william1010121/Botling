@@ -6,6 +6,7 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RightPanel, taskTimeline, type RightPanelProps } from "../../src/renderer/RightPanel";
+import { shellOverlayActive } from "../../src/renderer/ShellOverlay";
 import type { BotView, TaskView } from "../../src/contract";
 
 const bot: BotView = { id: "main", name: "Main", role: "main", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
@@ -118,10 +119,12 @@ describe("grouped task list", () => {
     vi.useFakeTimers();
     const { host } = await mount();
     const row = group(host, "running")!.querySelector<HTMLElement>(".task-row")!;
+    expect(shellOverlayActive()).toBe(false);
     await act(async () => { row.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); });
     await act(async () => { vi.advanceTimersByTime(400); });
     const pop = document.querySelector<HTMLElement>(".task-timeline[role=tooltip]")!;
     expect(pop).not.toBeNull();
+    expect(shellOverlayActive()).toBe(true);
     expect(pop.querySelector(".task-timeline-name")!.textContent).toBe("Fix CLI launch");
     const events = [...pop.querySelectorAll<HTMLElement>(".task-event")].map((event) => [event.dataset.kind, event.querySelector(".task-event-text")!.textContent]);
     expect(events).toEqual([
@@ -129,6 +132,7 @@ describe("grouped task list", () => {
     ]);
     await act(async () => { row.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })); });
     expect(document.querySelector(".task-timeline")).toBeNull();
+    expect(shellOverlayActive()).toBe(false);
   });
 });
 
@@ -145,4 +149,20 @@ describe("taskTimeline", () => {
       relatedAgents: [{ id: "w1", title: "Expiry tests", engine: "codex", status: "running", available: true, run: 1 }] }));
     expect(events.map((event) => [event.label, event.text])).toEqual([["Started", null], ["Worker", "Expiry tests"]]);
   });
+});
+
+
+it("registers folded-panel floating cards for their lifetime while brief status tips stay excluded", async () => {
+  const { host } = await mount(null, { collapsed: true, results: [{ label: "Result", url: "https://example.invalid/result" }] });
+  const face = host.querySelector<HTMLElement>(".strip-face")!;
+  await act(async () => face.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+  expect(host.querySelector(".strip-tip")).not.toBeNull();
+  expect(shellOverlayActive()).toBe(false);
+  const open = host.querySelector<HTMLButtonElement>('.strip-icon[data-section="results"]')!;
+  await act(async () => open.click());
+  expect(host.querySelector('.strip-flyout[role="dialog"]')).not.toBeNull();
+  expect(shellOverlayActive()).toBe(true);
+  await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+  expect(host.querySelector(".strip-flyout")).toBeNull();
+  expect(shellOverlayActive()).toBe(false);
 });

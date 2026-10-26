@@ -139,3 +139,104 @@ it('keeps chat pixels underneath any registered overlay and rejects late or forg
  expect(visibility).toHaveBeenCalledTimes(calls);
  expect(contents.loadURL).toHaveBeenCalledTimes(1);
 });
+
+function snapshotFixture(){
+ const pending=fixture();
+ return pending.ready.then(stamp=>{
+  const contents=pending.view.webContents;
+  const event={sender:pending.owner.webContents,senderFrame:pending.owner.webContents.mainFrame};
+  const bounds={x:200,y:60,width:600,height:600};
+  const layout=(extra:object={})=>ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds,occluded:true,...extra});
+  const observe=(revision:number)=>ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',intentEpoch:0,revision}});
+  return{...pending,stamp,event,bounds,layout,observe,capture:vi.mocked(contents.capturePage),
+   snapshots:()=>pending.owner.webContents.send.mock.calls.filter(c=>c[0]===EDITOR_CHANNEL.snapshot&&c[1].image)};
+ });
+}
+
+it('captures a static covered chat only once, ignoring duplicate layout and unauthenticated invalidations',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.layout();await vi.advanceTimersByTimeAsync(10_000);
+  expect(f.capture).toHaveBeenCalledTimes(1);
+  f.layout();
+  ipcMain.emit(EDITOR_CHANNEL.up,f.event,{stamp:f.stamp,message:{botling:'hostObservation',chatId:'main',intentEpoch:0,revision:2}});
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(f.capture).toHaveBeenCalledTimes(1);expect(f.snapshots()).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+
+it('coalesces applied chat state and changed layout at most once per second, including rapid covers',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.layout();await vi.advanceTimersByTimeAsync(100);
+  for(let revision=1;revision<=20;revision++)f.observe(revision);
+  const changed={...f.bounds,width:590};f.layout({bounds:changed});
+  await vi.advanceTimersByTimeAsync(899);expect(f.capture).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);expect(f.capture).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(100);f.layout({bounds:changed,occluded:false});f.layout({bounds:changed});
+  await vi.advanceTimersByTimeAsync(899);expect(f.capture).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);expect(f.capture).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(5000);expect(f.capture).toHaveBeenCalledTimes(3);
+  f.layout({bounds:{...changed,x:210}});await vi.advanceTimersByTimeAsync(0);
+  expect(f.capture).toHaveBeenCalledTimes(4);
+ }finally{vi.useRealTimers();}
+});
+
+it('never overlaps captures and drops stale in-flight pixels before capturing the latest state',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();let finish!:(image:any)=>void;
+  f.capture.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  f.layout();f.observe(1);f.layout({bounds:{...f.bounds,width:590}});
+  f.layout({occluded:false});f.layout(); // A fresh cover must not accept the old capture.
+  await vi.advanceTimersByTimeAsync(1500);expect(f.capture).toHaveBeenCalledTimes(1);
+  finish({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,stale'});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.capture).toHaveBeenCalledTimes(2);
+  expect(f.snapshots().map(c=>c[1].image)).toEqual(['data:image/png;base64,AA==']);
+  await vi.advanceTimersByTimeAsync(5000);expect(f.capture).toHaveBeenCalledTimes(2);
+ }finally{vi.useRealTimers();}
+});
+
+it.each(['restore','reload','dispose'])('cancels deferred snapshot work on %s',async mode=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.layout();await vi.advanceTimersByTimeAsync(100);f.observe(1);
+  if(mode==='restore')f.layout({occluded:false});
+  if(mode==='reload')f.owner.webContents.emit('did-start-navigation',{isMainFrame:true});
+  if(mode==='dispose')f.dispose();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(f.capture).toHaveBeenCalledTimes(1);expect(f.snapshots()).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+
+it('does not poll after capture failure, and retries only on a later state change',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.capture.mockRejectedValueOnce(new Error('capture unavailable'));
+  f.layout();await vi.advanceTimersByTimeAsync(5000);
+  expect(f.capture).toHaveBeenCalledTimes(1);expect(f.snapshots()).toHaveLength(0);
+  f.observe(1);await vi.advanceTimersByTimeAsync(0);
+  expect(f.capture).toHaveBeenCalledTimes(2);expect(f.snapshots()).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+
+
+it('shows captured pixels during continuous state updates while scheduling the next bounded refresh',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();let finish!:(image:any)=>void;
+  f.capture.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  f.layout();
+  for(let revision=1;revision<=5;revision++){await vi.advanceTimersByTimeAsync(100);f.observe(revision);}
+  finish({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,stream'});
+  await vi.advanceTimersByTimeAsync(0);
+  const captured=f.snapshots()[0][1];
+  expect(captured.image).toBe('data:image/png;base64,stream');
+  f.observe(6);
+  ipcMain.emit(EDITOR_CHANNEL.layout,f.event,{stamp:f.stamp,snapshotReady:captured.revision});
+  expect(f.view.setVisible).toHaveBeenLastCalledWith(false);
+  await vi.advanceTimersByTimeAsync(499);expect(f.capture).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);expect(f.capture).toHaveBeenCalledTimes(2);
+ }finally{vi.useRealTimers();}
+});
