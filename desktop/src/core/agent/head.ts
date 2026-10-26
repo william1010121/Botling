@@ -48,6 +48,14 @@ export interface HeadConfig {
   persistSession?: boolean;
   /** Tools it may not use at all (`--disallowedTools`, beside AskUserQuestion when it asks). */
   disallowedTools?: string[];
+  /**
+   * Claude Code's auto mode (`--permission-mode auto`, 1.x's `autoMode`): its classifier approves safe
+   * actions itself and blocks risky ones; only what it still asks about comes as a permission request.
+   * Off: `acceptEdits`, and every tool not allowed is asked about.
+   */
+  autoMode?: boolean;
+  /** Permission rules let through without asking ("Bash(rm -rf build)"): calls the user allowed after auto mode blocked them (`--settings`). */
+  allowRules?: string[];
 }
 
 /** claude's arguments for a long-lived head (cf. `ClaudeAgentProcess.arguments`). */
@@ -55,7 +63,7 @@ export function headArguments(config: HeadConfig): string[] {
   const args = [
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     config.resume ? "--resume" : "--session-id", config.sessionId,
-    "--permission-mode", config.harmless ? "default" : "acceptEdits",
+    "--permission-mode", config.harmless ? "default" : config.autoMode ? "auto" : "acceptEdits",
   ];
   if (config.forkSession && config.resume) args.push("--fork-session");
   if (config.persistSession === false && !config.harmless) args.push("--no-session-persistence");
@@ -68,6 +76,8 @@ export function headArguments(config: HeadConfig): string[] {
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   if (config.model) args.push("--model", config.model);
   if (config.effort) args.push("--effort", config.effort);
+  // In `--settings`, as a command may hold commas (AgentProcess.swift's `settingsJSON`).
+  if (config.allowRules?.length && !config.harmless) args.push("--settings", allowSettings(config.allowRules));
   // The app's own instructions (Prompts.swift's). Not in harmless mode: they rely on Read/Write/Edit
   // (memory.md, routines), and a live run with no tools but these instructions wrote fake tool calls
   // as text for minutes instead of answering (Phase 2a).
@@ -78,6 +88,11 @@ export function headArguments(config: HeadConfig): string[] {
     args.push("--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--tools", (config.harmlessTools ?? []).join(","));
   }
   return args;
+}
+
+/** `{"permissions":{"allow":[…]}}`: the flag settings layer's allow rules; the user's own settings files stay as they are. */
+export function allowSettings(rules: string[]): string {
+  return JSON.stringify(rules.length ? { permissions: { allow: rules } } : {});
 }
 
 export interface HeadExit {
@@ -190,6 +205,11 @@ export class ClaudeHead {
   answer(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string) {
     const decision = allow ? { behavior: "allow", updatedInput: input } : { behavior: "deny", message: message ?? "The user did not allow this." };
     this.write({ type: "control_response", response: { subtype: "success", request_id: requestId, response: decision } });
+  }
+
+  /** Lets these permission rules through from now on in the running session (`apply_flag_settings`, 1.x's `allow(rules:)`). */
+  allow(rules: string[]) {
+    this.write({ type: "control_request", request_id: `allow-${randomUUID()}`, request: { subtype: "apply_flag_settings", settings: { permissions: { allow: rules } } } });
   }
 
   /** Stops the turn under way; claude ends it with an error result and the session goes on. */

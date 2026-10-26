@@ -31,6 +31,11 @@ export type StreamItem =
   /** A tool approval. Codex's workerId makes its lifetime independent of the coordinator turn. */
   | { kind: "permission"; requestId: string; tool: string; summary: string; input: Record<string, unknown>; workerId?: string }
   | { kind: "permissionCancelled"; requestId: string }
+  /**
+   * Auto mode's classifier blocked a call (1.x's `PermissionDenial`): the `permission_denied` frame
+   * (`confirmed` false: it names the tool and reason) or the failed tool result that says it was a block.
+   */
+  | { kind: "permissionDenied"; toolUseId: string; tool: string | null; reason: string; confirmed: boolean }
   /** A control request the app does not handle: answer it with an error so claude does not wait. */
   | { kind: "unsupportedRequest"; requestId: string; subtype: string }
   | { kind: "controlResponse"; requestId: string }
@@ -106,6 +111,35 @@ function detail(tool: string, input: Record<string, unknown>): string {
   return cut(JSON.stringify(input));
 }
 
+const CLASSIFIER_PREFIX = "Permission for this action was denied by the Claude Code auto mode classifier.";
+
+/** The classifier's reason ("[Irreversible Local Destruction] …"), "" when it gives none, null when the text is not its block (`ClassifierDenialText`). */
+export function classifierReason(text: string): string | null {
+  const message = text.startsWith("Error: ") ? text.slice(7) : text;
+  if (!message.startsWith(CLASSIFIER_PREFIX)) return null;
+  let rest = message.slice(CLASSIFIER_PREFIX.length).trimStart();
+  if (!rest.startsWith("Reason: ")) return "";
+  rest = rest.slice(8);
+  const end = [rest.indexOf(" If you have other tasks"), rest.indexOf("\n")].filter((i) => i >= 0);
+  if (end.length) rest = rest.slice(0, Math.min(...end));
+  rest = rest.trim();
+  return rest.endsWith(".") ? rest.slice(0, -1) : rest;
+}
+
+/**
+ * A failed tool result that is the classifier's block (`StreamEvent.classifierDenial`): claude says so in
+ * `tool_result_meta` (`non_execution_kind` "automode-blocked") on the bot's own results; a subagent's
+ * carry no kind, and older claude no meta: only the words tell then.
+ */
+function classifierDenial(id: string, output: string, parent: string | null, meta: unknown): StreamItem | null {
+  const reason = classifierReason(output);
+  if (parent === null && Array.isArray(meta)) {
+    const kind = meta.find((entry) => entry && typeof entry === "object" && entry.id === id)?.non_execution_kind;
+    return kind === "automode-blocked" ? { kind: "permissionDenied", toolUseId: id, tool: null, reason: reason ?? "", confirmed: true } : null;
+  }
+  return reason === null ? null : { kind: "permissionDenied", toolUseId: id, tool: null, reason, confirmed: true };
+}
+
 function resultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -137,6 +171,13 @@ export function parseLine(line: string): StreamItem[] {
           prompt: typeof message.prompt === "string" ? message.prompt : "",
           background: message.is_backgrounded === true,
         }];
+      }
+      if (message.subtype === "permission_denied") {
+        // Only the classifier's; deny rules, modes and safety checks stand. The tool result after it says whether it was a block.
+        if (message.decision_reason_type !== "classifier" || typeof message.tool_use_id !== "string" || typeof message.tool_name !== "string") return [];
+        const given = typeof message.decision_reason === "string" ? message.decision_reason.trim() : "";
+        const reason = given || (classifierReason(typeof message.message === "string" ? message.message : "") ?? "");
+        return [{ kind: "permissionDenied", toolUseId: message.tool_use_id, tool: message.tool_name, reason, confirmed: false }];
       }
       if (message.subtype === "task_notification") {
         const id = typeof message.tool_use_id === "string" ? message.tool_use_id : typeof message.task_id === "string" ? message.task_id : null;
@@ -188,9 +229,13 @@ export function parseLine(line: string): StreamItem[] {
       const content: any[] = Array.isArray(message.message?.content) ? message.message.content : [];
       return content
         .filter((part) => part?.type === "tool_result" && typeof part.tool_use_id === "string")
-        .map((part) => {
+        .flatMap((part): StreamItem[] => {
           const failed = part.is_error === true;
-          return { kind: "toolResult" as const, id: part.tool_use_id, output: cut(resultText(part.content)), failed, parent, launch: failed ? null : launchOf(message.tool_use_result) };
+          const output = resultText(part.content);
+          const items: StreamItem[] = [{ kind: "toolResult" as const, id: part.tool_use_id, output: cut(output), failed, parent, launch: failed ? null : launchOf(message.tool_use_result) }];
+          const denial = failed ? classifierDenial(part.tool_use_id, output, parent, message.tool_result_meta) : null;
+          if (denial) items.push(denial);
+          return items;
         });
     }
     case "control_request": {

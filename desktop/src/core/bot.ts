@@ -116,6 +116,9 @@ export interface SessionStart {
   subagentHourCache?: boolean;
   /** More folders it may use (`--add-dir`). */
   addDirs?: string[];
+  /** Claude only: Claude Code's auto mode (`--permission-mode auto`), and rules for blocked calls the user allowed (`--settings`). */
+  autoMode?: boolean;
+  allowRules?: string[];
   /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
   codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null;
 }
@@ -192,7 +195,7 @@ export interface BotOptions {
   /** The completion judge when Settings has it on (1.x's `promiseCheck`), with its model; null: off. */
   promiseCheck?: () => { check: Check; model: string } | null;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean };
+  launch?: () => { subagentHourCache: boolean; autoMode?: boolean };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -258,6 +261,21 @@ interface Approval {
   timer: NodeJS.Timeout;
   expires: number;
 }
+
+/** A call auto mode blocked, waiting on its card (`Bot.Denial`). */
+interface Denial {
+  tool: string;
+  summary: string;
+  /** What lets that call through: "Bash(rm -rf build)". */
+  rule: string;
+  /** One of its subagents made the call: which one, in the bot's words. */
+  subagent: string | null;
+  /** The user allowed it before and claude blocked it anyway: allowing again cannot help. */
+  allowedBefore: boolean;
+}
+
+/** How many recent tool calls are kept (`recentToolCalls`). */
+const RECENT_TOOL_CALLS = 500;
 
 export const NO_LONGER_NEEDED = "No longer needed";
 const NO_ANSWER = "No answer in time";
@@ -363,6 +381,17 @@ export class Bot {
   private switching = false;
   private idleTimer: NodeJS.Timeout | null = null;
   private alwaysAllowed: string[];
+  /** Calls auto mode blocked that wait in the chat for your Allow, by message id (1.x's `denialAsks`). Nothing waits on them. */
+  private denialAsks = new Map<string, Denial>();
+  /** Blocked calls allowed once: rules for this run of the app. */
+  private sessionRules: string[] = [];
+  /** Rules given to claude while it runs, with the last call it had made then: a block of a call up to that one is no news. */
+  private rulesGivenAfter = new Map<string, string | null>();
+  /** Recent tool calls by id, oldest first: to show and allow a blocked one. */
+  private toolCalls = new Map<string, { tool: string; detail: string; parent: string | null }>();
+  /** `permission_denied` frames waiting for their tool result; blocked calls already shown. */
+  private deniedFrames = new Map<string, { tool: string | null; reason: string }>();
+  private deniedCalls = new Set<string>();
   private unread: number;
   private shuttingDown = false;
   /** What this head's session has been told of the chat's reactions (null: tell it from scratch). */
@@ -2153,6 +2182,8 @@ export class Bot {
       model: choices.model, effort: choices.effort, subagentModel: choices.subagentModel,
       subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
       addDirs: this.owner.options.addDirs?.() ?? [],
+      // 1.x's "Auto-approve safe actions": on unless turned off.
+      autoMode: launch.autoMode !== false, allowRules: this.allowRules,
     };
     let head: AgentHead;
     if (this.engine === "codex") {
@@ -2263,6 +2294,8 @@ export class Bot {
       for (const [id, approval] of this.approvals) if (approval.head === head && approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
       return;
     }
+    if (item.kind === "toolUse") this.noteToolCall(item);
+    if (item.kind === "permissionDenied") { this.showDenial(item); return; }
     // A managed worker owns its own turn. Its approval must neither create a phantom
     // coordinator turn nor be denied by an unrelated coordinator's cleanup/drain/tidy.
     if (item.kind === "permission" && item.workerId) return this.ask(head, item, null);
@@ -3788,6 +3821,117 @@ export class Bot {
     this.updated();
   }
 
+  // ------------------------------------------------------------------------------------------
+  // Calls auto mode blocked (1.x's `showDenial` / `decideDenial`)
+
+  private noteToolCall(item: Extract<StreamItem, { kind: "toolUse" }>) {
+    const value = item.tool === "Bash" ? item.input.command : item.tool === "WebFetch" ? item.input.url : item.input.file_path ?? item.input.notebook_path;
+    this.toolCalls.delete(item.id);
+    this.toolCalls.set(item.id, { tool: item.tool, detail: typeof value === "string" ? value : "", parent: item.parent });
+    if (this.toolCalls.size > RECENT_TOOL_CALLS) this.toolCalls.delete(this.toolCalls.keys().next().value!);
+  }
+
+  /** Rules for calls you allowed after auto mode blocked them: always, then this run's. */
+  private get allowRules(): string[] {
+    const always = this.alwaysAllowed.filter(isRule);
+    return [...always, ...this.sessionRules.filter((rule) => !always.includes(rule))];
+  }
+
+  /**
+   * Auto mode's classifier refused a call: the same card as a tool question, for that very call and the
+   * classifier's reason. Allowing it adds a rule that lets exactly that through, then tells claude to retry.
+   */
+  private showDenial(denial: Extract<StreamItem, { kind: "permissionDenied" }>) {
+    // The frame comes first; the tool result says whether it was a block.
+    if (!denial.confirmed) {
+      if (this.deniedFrames.size > 100) this.deniedFrames.clear();
+      this.deniedFrames.set(denial.toolUseId, { tool: denial.tool, reason: denial.reason });
+      return;
+    }
+    const frame = this.deniedFrames.get(denial.toolUseId);
+    this.deniedFrames.delete(denial.toolUseId);
+    const reasonText = frame?.reason || denial.reason;
+    if (this.turn?.origin === "tidy" || this.deniedCalls.has(denial.toolUseId)) return;
+    this.deniedCalls.add(denial.toolUseId);
+    const call = this.toolCalls.get(denial.toolUseId);
+    const tool = denial.tool ?? frame?.tool ?? call?.tool;
+    if (!tool) return;
+    const rule = allowRule(tool, call?.detail ?? "");
+    if (!rule) return;
+    const summary = call?.detail || tool;
+    const allowedBefore = this.allowRules.includes(rule);
+    // Allowed already, for a call made before claude had the rule: its retry is covered.
+    if (allowedBefore && this.rulesGivenAfter.has(rule)) {
+      const ids = [...this.toolCalls.keys()];
+      const given = this.rulesGivenAfter.get(rule);
+      const callIndex = ids.indexOf(denial.toolUseId);
+      const givenIndex = given ? ids.indexOf(given) : -1;
+      if (callIndex >= 0 && givenIndex >= 0 && callIndex <= givenIndex) return;
+    }
+    const always = tool === "Bash" ? "Always allow this command"
+      : ["Write", "Edit", "MultiEdit", "NotebookEdit"].includes(tool) ? "Always allow editing this file"
+      : tool === "WebFetch" ? "Always allow this site" : `Always allow ${tool}`;
+    const choices: ChoiceRecord[] = allowedBefore ? [
+      { label: "I'll run it myself", recommended: true, action: "deny" },
+      { label: "Don't allow", recommended: false, action: "deny" },
+    ] : [
+      { label: "Allow once", recommended: true, action: "allowOnce" },
+      { label: always, detail: `For ${this.profile.name}, from now on`, recommended: false, action: "alwaysAllow" },
+      { label: "Don't allow", recommended: false, action: "deny" },
+    ];
+    let reason = reasonText ? `\n\nReason: ${reasonText.replaceAll("\n", " ")}` : "";
+    if (allowedBefore) reason += "\n\nYou already allowed this, but Claude Code blocked it again: it does not apply that allow to this command (made of several parts, or reaching outside the bot's folders, for example). Allowing it again would not help.";
+    // A subagent's call: the card says which subagent asked.
+    const agent = call?.parent ? this.subagents.get(call.parent) : undefined;
+    const title = call?.parent ? (agent?.description || agent?.name || "Subagent") : null;
+    const lead = title ? `Subagent “${title}”: auto mode blocked` : "Auto mode blocked";
+    const text = permissionText(tool, summary).replace(/^Wants to use/, lead) + reason;
+    const record: ChatRecord = { id: newId(), role: "bot", text, date: toSwiftDate(), choices, permissionTool: tool, engine: this.engine };
+    const subagent = call?.parent ? `your subagent "${title}"${agent?.name ? ` (named \`${agent.name}\`)` : ""}` : null;
+    this.denialAsks.set(record.id, { tool, summary, rule, subagent, allowedBefore });
+    this.add(record);
+    this.log(`auto mode blocked ${tool}`);
+    this.updated();
+  }
+
+  /** Your pick on a blocked call: allowed, the rule goes to claude and it is told to retry; not, it is told so. */
+  private decideDenial(record: ChatRecord, index: number): boolean {
+    const denial = this.denialAsks.get(record.id);
+    const choice = record.choices?.[index];
+    if (!denial || !choice) return false;
+    this.denialAsks.delete(record.id);
+    record.chosen = index;
+    this.changed(record);
+    const allowed = choice.action === "allowOnce" || choice.action === "alwaysAllow";
+    const on = denial.subagent ? ` for ${denial.subagent}` : "";
+    const what = `\`${denial.summary}\` (${denial.tool})`;
+    this.log(`${denial.tool} blocked by auto mode: ${allowed ? (choice.action === "alwaysAllow" ? "always allowed" : "allowed once") : "not allowed"}`);
+    if (denial.allowedBefore && index === 0) {
+      this.tellClaude(`(App: Auto mode blocked ${what} again${on}, although the user had allowed it: Claude Code does not apply that allow to this command, so allowing it cannot help. Do not try it again as it was. The user will run it themselves: tell them exactly what to run and what to send back, then wait.)`);
+    } else if (!allowed) {
+      this.tellClaude(`(App: The user did not allow ${what}, which auto mode blocked${on}. Do not try it again; carry on without it, or ask the user what to do instead.)`);
+    } else {
+      if (choice.action === "alwaysAllow") {
+        if (!this.alwaysAllowed.includes(denial.rule)) {
+          this.alwaysAllowed.push(denial.rule);
+          this.store.saveSetting("alwaysAllowed", this.alwaysAllowed);
+        }
+      } else if (!this.sessionRules.includes(denial.rule)) this.sessionRules.push(denial.rule);
+      this.rulesGivenAfter.set(denial.rule, [...this.toolCalls.keys()].at(-1) ?? null);
+      if (this.head instanceof ClaudeHead && this.head.running) this.head.allow(this.allowRules);
+      this.tellClaude(denial.subagent
+        ? `(App: The user allowed ${what}, which auto mode blocked for ${denial.subagent}. It is allowed now. It was the subagent's call, not yours: do not run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on.)`
+        : `(App: The user allowed ${what}, which auto mode blocked. It is allowed now: run it again as it was, then carry on.)`);
+    }
+    this.updated();
+    return true;
+  }
+
+  /** Something only the app says, to this (claude) head: wakes it like a message (`Bot.appMessage`). */
+  private tellClaude(text: string) {
+    this.owner.deliverTo(this.engine, text, null, { origin: "app" });
+  }
+
   /** The coordinator turn ended/stopped; a monitor or managed worker may still be waiting. */
   private settleTurnApprovals() {
     for (const [id, approval] of [...this.approvals]) if (!approval.lasting) this.settle(id, NO_LONGER_NEEDED, true);
@@ -3848,6 +3992,7 @@ export class Bot {
     const choice = record.choices[index];
     if (!choice) throw new ContractError("bad_request", "No such button.");
     if (!isOpenQuestion(record)) return { accepted: false };
+    if (this.denialAsks.has(messageId)) return { accepted: this.decideDenial(record, index) };
     if (!record.permissionTool) {
       // A bot's own question: the pick goes to it as your next message, as a reply to the question.
       this.refuseIfClosed();
@@ -3917,6 +4062,16 @@ export class Bot {
     if (!record?.choices?.length) throw new ContractError("not_found", "No such question.");
     const shown = answerLabel(words, files.length);
     if (!shown || !isOpenQuestion(record)) return { accepted: false };
+    const denial = this.denialAsks.get(messageId);
+    if (denial) {
+      // Words instead of a button on a blocked call: not allowed, and claude hears what the user said.
+      this.denialAsks.delete(messageId);
+      record.answer = words;
+      this.changed(record);
+      this.tellClaude(`(App: The user did not allow \`${denial.summary}\` (${denial.tool}), which auto mode blocked${denial.subagent ? ` for ${denial.subagent}` : ""}, and said: ${shown})`);
+      this.updated();
+      return { accepted: true };
+    }
     if (record.permissionTool) {
       // Words instead of a button: not allowed, and claude hears why.
       const approval = this.approvals.get(messageId);
@@ -4091,6 +4246,27 @@ export function streamingText(raw: string): string {
   const tail = /<[a-z/-]*$/i.exec(outside);
   if (tail && (cut < 0 || tail.index < cut)) cut = tail.index;
   return parseReply(cut >= 0 ? raw.slice(0, cut) : raw).body;
+}
+
+/** An always-allowed entry that is a permission rule ("Bash(npm test)"), not a tool name. */
+export function isRule(entry: string): boolean {
+  return entry.includes("(") && entry.endsWith(")");
+}
+
+/**
+ * The permission rule that lets exactly this call through (`Bot.allowRule`): the command, the file (as
+ * `//absolute/path`; Edit rules cover every file tool), the site. Null when there is nothing narrow to allow.
+ */
+export function allowRule(tool: string, detail: string): string | null {
+  const value = detail.trim();
+  switch (tool) {
+    case "Bash": return value ? `Bash(${value})` : null;
+    case "Write": case "Edit": case "MultiEdit": case "NotebookEdit": return value.startsWith("/") ? `Edit(/${value})` : null;
+    case "WebFetch": {
+      try { const host = new URL(value).hostname; return host ? `WebFetch(domain:${host})` : null; } catch { return null; }
+    }
+    default: return NEVER_ALWAYS.has(tool) ? null : tool;
+  }
 }
 
 /** The question, with what would run shown as code so nothing in it renders as a link or formatting (`Bot.permissionText`). */

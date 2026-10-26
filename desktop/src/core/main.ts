@@ -36,6 +36,8 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
     model: process.env.BOTLING_MODEL ?? session.model ?? null,
     addDirs: session.addDirs ?? [],
     effort: session.effort ?? null,
+    // Claude Code's auto mode and the rules for blocked calls the user allowed (AgentProcess.swift).
+    autoMode: session.autoMode ?? false, allowRules: session.allowRules ?? [],
   };
   if (kind === "claude") {
     return {
