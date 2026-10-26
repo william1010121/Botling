@@ -631,8 +631,8 @@ only, deleted afterwards.
   bot (the project lock only adds a notice). The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
   (2.0 has none of them yet).
 - **No auto mode yet**, so a monitored command always asks (Allow once), as 1.x does without it.
-- **Component commands**: 1.x's approvals model (per folder and command, remembered), but 2.0 starts
-  with none: 1.x's approved-commands.json is not imported (a trust decision the user makes again).
+- **Component commands**: 1.x's approvals model (per folder and command, remembered); 1.x's
+  approved-commands.json is imported (the user's call), a folder in 1.x's data folder moved to 2.0's.
 - ~~**A bot with no component list that drew none gets the library (up to 20)**~~ (superseded in Phase 3b: as 1.x, with Maintainer): 2.0 has no Maintainer
   to give it any, so without this a fresh bot would only know one line of each.
 - **Components' pictures** go to frames by token (`botling-card://image/<token>`) for paths the data
@@ -830,8 +830,8 @@ CCB_DESKTOP_GROUPS_EXPORT=$PWD/desktop/test/fixtures/groups-golden.json TZ=UTC \
   model or workers' choice; a new bot is seeded and an app-wide change is written to every bot. A
   running head keeps what it started with until it next wakes (as with a bot's own settings; 1.x
   restarts it before the next message).
-- **Allowed folders are not imported** from 1.x (folders.json): Maintainer asks again, as for
-  component commands.
+- ~~**Allowed folders are not imported**~~ 1.x's folders.json is imported, as are approved commands
+  and each bot's always-allow rules (bot.json).
 - **A group chat is deleted with its folder** (1.x does), the one place 2.0 deletes chat files; the
   bots' own chats and notes stay.
 - **The `/` component mention note is not added** to guests' prompts (2.0 has no `/` menu yet); the
