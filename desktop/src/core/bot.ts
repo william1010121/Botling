@@ -78,7 +78,7 @@ import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, RESUME_NOTE, profilePa
 import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
-import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
+import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
 import type { CatchUpChat } from "./catchup";
 import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
@@ -997,7 +997,7 @@ export class Bot {
     if (!this.readOnly) this.store.saveList("tasks.json", this.tasks.tasks);
     this.emit({ type: "tasks.updated", botId: this.id, tasks: this.taskViews() });
     // Its row's "N tasks" follows.
-    const open = this.tasks.tasks.filter((card) => card.state === "running" || card.state === "waiting").length;
+    const open = shownTasks(this.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length;
     if (open !== this.lastOpenTasks) { this.lastOpenTasks = open; this.updated(); }
   }
   private lastOpenTasks = 0;
@@ -1055,7 +1055,7 @@ export class Bot {
       job: this.profile.job?.slice(0, 4_000) ?? null,
       subagentRows: this.subagentRows(),
       guest: this.options.guest?.() ?? null,
-      openTasks: this.owner.tasks.tasks.filter((card) => card.state === "running" || card.state === "waiting").length,
+      openTasks: shownTasks(this.owner.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length,
       components: this.components,
       lastActivity: this.records.length ? iso(this.records.at(-1)!.date) : null,
       ...(this.options.viewExtras?.() ?? {}),
@@ -1095,7 +1095,8 @@ export class Bot {
 
   taskViews(): TaskView[] {
     const sources = [{ engine: this.engine, list: this.subagents.list }, ...(this.partner ? [{ engine: this.partner.engine, list: this.partner.subagents.list }] : [])];
-    return this.tasks.tasks.slice(-100).map((card) => {
+    // Only declared work is a task in the panel; a plain message's provisional card is not.
+    return shownTasks(this.tasks.tasks).slice(-100).map((card) => {
       const relatedAgents = relatedTaskAgents(card, this.records, sources);
       return { ...taskView(card, new Set(relatedAgents.filter((agent) => agent.status === "running").map((agent) => agent.id))),
         atWork: relatedAgents.some((agent) => agent.status === "running"), relatedAgents,
@@ -1251,13 +1252,37 @@ export class Bot {
   }
 
   private newTurn(origin: Origin, words: string, userId: string | null): Turn {
-    let resolve!: Turn["resolve"];
-    const done = new Promise<Status>((r) => (resolve = r));
-    return {
+    let settle!: Turn["resolve"];
+    const done = new Promise<Status>((r) => (settle = r));
+    let ended = false;
+    // However a user's turn ends (answered, failed, stopped, taken back, merged), its card does not
+    // stay "Claiming…". Checked after the code that ended it, so a turn it was merged into counts.
+    const resolve: Turn["resolve"] = (status) => {
+      settle(status);
+      if (ended || origin !== "user" || !userId) return;
+      ended = true;
+      queueMicrotask(() => this.endTaskTurn(turn, status));
+    };
+    const turn: Turn = {
       id: `t-${randomUUID()}`, messageId: newId(), userId, origin, words, reply: new ReplyText(), steps: [], record: null,
       open: true, sent: false, head: null, retried: false, merged: false, started: toSwiftDate(), usedTools: false, claimed: false,
       ended: [], conducted: false, handoffId: null, about: [], peer: new Set(), told: 0, done, resolve,
     };
+    return turn;
+  }
+
+  /** Settles the card of a user's turn that ended, unless another open turn still answers its message. */
+  private endTaskTurn(turn: Turn, status: Status) {
+    if (!turn.userId) return;
+    const book = this.tasks;
+    const card = book.containing(turn.userId);
+    if (!card) return;
+    const mine = new Set(card.messageIDs);
+    const bots = [this.owner, this.owner.partner].filter((bot): bot is Bot => !!bot);
+    const still = bots.flatMap((bot) => [bot.turn, ...bot.queue, bot.deferred, bot.claimHold?.turn ?? null])
+      .some((other) => !!other && other !== turn && other.open && ((!!other.userId && mine.has(other.userId)) || other.about.some((id) => mine.has(id))));
+    if (still) return;
+    if (book.unanswered(turn.userId, this.engine, status, toSwiftDate())) this.saveTasks();
   }
 
   // ------------------------------------------------------------------------------------------

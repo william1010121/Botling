@@ -72,7 +72,9 @@ describe("task book: the Swift TaskBook's cards", () => {
         tasks: step.tasks.map((card) => {
           if (!ids.has(card.id)) ids.set(card.id, `card-${ids.size}`);
           // 2.x explicitly records empty agent links; Swift omitted that optional empty array.
-          return Object.fromEntries(Object.entries({ ...card, subagentIDs: card.subagentIDs ?? [], id: ids.get(card.id) }).sort(([a], [b]) => (a < b ? -1 : 1)));
+          // 2.x also marks cards a <task> line declared (`declared`, what the panel shows); Swift has no such key.
+          const { declared: _declared, ...rest } = card;
+          return Object.fromEntries(Object.entries({ ...rest, subagentIDs: card.subagentIDs ?? [], id: ids.get(card.id) }).sort(([a], [b]) => (a < b ? -1 : 1)));
         }),
       }));
     };

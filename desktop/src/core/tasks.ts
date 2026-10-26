@@ -32,6 +32,8 @@ export interface TaskCard {
   stateFromTag?: TaskState;
   /** The user's card closure, independent of the owner's execution outcome (Swift date). */
   manuallyCompletedAt?: number;
+  /** A head named it with a `<task>` line: real work, shown in the panel (2.x; 1.x cards infer it). */
+  declared?: boolean;
   [key: string]: unknown;
 }
 
@@ -68,9 +70,30 @@ export function readTaskCard(value: unknown): TaskCard | null {
   }
   else delete card.subagentIDs;
   if (raw.stateFromTag !== undefined && !STATES.has(raw.stateFromTag as TaskState)) delete card.stateFromTag;
+  if (typeof raw.declared !== "boolean") delete card.declared;
   if (typeof raw.manuallyCompletedAt !== "number" || !Number.isFinite(raw.manuallyCompletedAt)) delete card.manuallyCompletedAt;
   else { card.state = "done"; card.kept = true; }
   return card;
+}
+
+/**
+ * A head declared the card's work with a `<task>` line. A card 1.x (or 2.x before `declared`)
+ * saved counts when it carries what only a tag gives: a tag's state, or Now/Next/Blocked.
+ */
+export function isDeclared(card: TaskCard): boolean {
+  if (card.declared !== undefined) return card.declared;
+  return card.stateFromTag !== undefined || !!card.now || !!card.next || !!card.blocked;
+}
+
+/** Visible evidence of work besides a tag: subagents or hand-offs started for it. */
+const hasWork = (card: TaskCard) => !!card.subagentIDs?.length || !!card.helps?.length;
+
+/**
+ * The cards the panel shows: work a head declared (or that has subagents or hand-offs of its own)
+ * and has a name. A plain message's provisional card is bookkeeping only.
+ */
+export function shownTasks(cards: TaskCard[]): TaskCard[] {
+  return cards.filter((card) => card.name.trim().length > 0 && (isDeclared(card) || hasWork(card)));
 }
 
 /** `TaskBook.Turn`: what a finished turn was about. */
@@ -195,6 +218,7 @@ export class TaskBook {
         base = this.task(id);
       }
       if (!base) return [];
+      // As 1.x keeps it; without a <task> line it is bookkeeping only and `shownTasks` leaves it out.
       const at_ = this.index(base.id)!;
       if (quick && !base.kept && (base.state === "pending" || base.state === "running") && !base.subagentIDs?.length) {
         this.tasks.splice(at_, 1);
@@ -221,7 +245,15 @@ export class TaskBook {
         }
         target = this.task(earlier.id);
       } else if (number === 0 && base) {
-        target = base;
+        // The same task named again from a new message: that message joins the card it has.
+        const same = tag.name ? this.named(tag.name) : undefined;
+        if (same && same.id !== base.id && isDeclared(same) && isActive(same.state) && same.manuallyCompletedAt === undefined
+          && !isDeclared(base) && base.manuallyCompletedAt === undefined && (!same.owner || same.owner === turn.head)) {
+          const from = this.index(base.id);
+          if (from !== null) this.merge(from, same.id);
+          base = undefined;
+          target = this.task(same.id);
+        } else target = base;
       } else {
         const name = tag.name ?? tag.continues;
         if (name) target = this.named(name);
@@ -254,6 +286,7 @@ export class TaskBook {
 
   private apply(tag: TaskTag, card: TaskCard, head: Head, message: string, asks: boolean, at: number) {
     if (!card.messageIDs.includes(message)) card.messageIDs.push(message);
+    card.declared = true;
     if (card.manuallyCompletedAt !== undefined) return;
     card.kept = true;
     if (!card.owner) card.owner = head;
@@ -278,6 +311,34 @@ export class TaskBook {
     if (card.helps?.some((help) => turn.runningHandoffs?.has(help.handoffID))) return;
     card.state = "done";
     card.updatedAt = at;
+  }
+
+  /** Removes a provisional card `head` may settle (not declared, nothing at work, not closed by you). */
+  private drop(card: TaskCard, head: Head): boolean {
+    if (isDeclared(card) || hasWork(card) || card.manuallyCompletedAt !== undefined) return false;
+    if (card.owner && card.owner !== head) return false;
+    const at = this.index(card.id);
+    if (at === null) return false;
+    this.tasks.splice(at, 1);
+    return true;
+  }
+
+  /**
+   * `head`'s turn on the user's `message` ended. When no reply settled its card (it failed, was
+   * stopped or taken back, or said nothing), a provisional card goes and a declared one still
+   * waiting for a head is stopped: nothing stays "Claiming…". True when a card changed.
+   */
+  unanswered(message: string, head: Head, status: "done" | "failed" | "stopped", at: number): boolean {
+    const card = this.containing(message);
+    if (!card || card.manuallyCompletedAt !== undefined) return false;
+    if (card.owner && card.owner !== head) return false;
+    // `replied` already settled a card it answered (it is no longer pending).
+    if (status === "done" && card.state !== "pending") return false;
+    if (this.drop(card, head)) return true;
+    if (card.state !== "pending") return false;
+    card.state = "stopped";
+    card.updatedAt = at;
+    return true;
   }
 
   private merge(from: number, into: string) {

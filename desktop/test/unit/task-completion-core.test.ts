@@ -14,7 +14,7 @@ afterEach(async () => { for (const c of clients.splice(0)) await c.kill("SIGKILL
 const seed = (dir: string, state = "pending") => {
   mkdirSync(join(dir, "main"), { recursive: true });
   writeFileSync(join(dir, "main", "chat.json"), JSON.stringify([{ id: "user", role: "user", text: "helo", date: 1 }]));
-  writeFileSync(join(dir, "main", "tasks.json"), JSON.stringify([{ id: "task", name: "helo", state, createdAt: 1, updatedAt: 1, messageIDs: ["user"], kept: false }]));
+  writeFileSync(join(dir, "main", "tasks.json"), JSON.stringify([{ id: "task", name: "helo", state, createdAt: 1, updatedAt: 1, messageIDs: ["user"], kept: false, declared: true }]));
 };
 const complete = (c: CoreHarness, taskId = "task", botId = MAIN) => c.call({ type: "task.complete", botId, taskId });
 

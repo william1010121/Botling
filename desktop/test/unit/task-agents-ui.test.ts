@@ -23,8 +23,8 @@ function owner() {
   writeFileSync(join(profile.storeDir, "tasks.json"), JSON.stringify([
     { id: "task-card", name: "Parser task", state: "running", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true, subagentIDs: ["claude-call", "worker-id", "missing-record"] },
     { id: "other-card", name: "Other task", state: "done", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true, subagentIDs: ["unrelated"] },
-    { id: "legacy-card", name: "Old task", state: "done", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true },
-    { id: "empty-card", name: "No agents yet", state: "done", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true, subagentIDs: [] },
+    { id: "legacy-card", name: "Old task", state: "done", stateFromTag: "done", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true },
+    { id: "empty-card", name: "No agents yet", state: "done", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true, subagentIDs: [], declared: true },
   ]));
   const bot = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });
   bot.subagents.list.push(
@@ -89,7 +89,7 @@ describe("task card to actual subagent details", () => {
     for (const id of ["legacy-card", "empty-card"]) {
       const markup = renderToStaticMarkup(createElement(RightPanel, {
         bot: bot.view(), bots: [bot.view()], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], teams: [], watching: null, tasks: bot.taskViews(), messages: [], selectedTask: id, collapsed: false,
-        onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+        onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
       }));
       expect(markup).toContain(id === "legacy-card" ? "Subagent relationship data unavailable." : "No related subagents recorded.");
       if (id === "legacy-card") expect(markup).not.toContain("No related subagents recorded.");

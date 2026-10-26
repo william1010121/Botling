@@ -113,12 +113,16 @@ function GroupMembers({ group, members, look, onSelect }: { group: BotView; memb
   );
 }
 
-function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, tasks, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask }: RightPanelProps) {
+function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
   const now = useMinuteClock();
+  // A card with no name has nothing to show yet (its head names it with a <task> line).
+  const tasks = all.filter((task) => task.name.trim().length > 0);
   const active = activeTasks(tasks);
+  // While a task is under way its card says what the bot does; the bot's own line would be a bare "Writing…" card.
+  const showNow = active.length === 0 || (bot.role === "main" && teams.length > 0);
   const open = openTask(tasks, selectedTask);
   const waitingTasks = tasks.filter((task) => task.state === "waiting");
   const finished = finishedTasks(tasks);
@@ -134,7 +138,7 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
       </div>
       <section className="detail-section tasks-section">
         <h3>Tasks</h3>
-        <div className="now-card">
+        {showNow && <div className="now-card">
           <div className="now-line"><span className="now-dot" data-status={status.key} aria-hidden="true" />{status.text}</div>
           {bot.role === "main" && teams.map((run) => (
             <div key={run.id} className="team-run" title={run.task} data-team={run.name}>
@@ -143,13 +147,13 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
               <span className="team-time">{Math.max(1, Math.floor((now - run.startedAt) / 60_000))} min</span>
             </div>
           ))}
-        </div>
+        </div>}
         <div className="task-list">
           {/* A finished task pressed (in Just done, on a chip) shows open on top. */}
           {open && !active.some((task) => task.id === open.id) && card(open)}
           {active.slice(0, 6).map((task) => (task.id === open?.id ? card(task)
             : <TaskRow key={task.id} task={task} now={now} stale={isStale(task, bot.working, now)} onSelect={onSelectTask} />))}
-          {active.length === 0 && (doing ? <div className="now-doing">{doing}</div> : <div className="task-none">Nothing under way</div>)}
+          {active.length === 0 && (doing ? <div className="now-doing">{doing}</div> : !bot.working && <div className="task-none">Nothing under way</div>)}
         </div>
       </section>
       {(items.length > 0 || waitingTasks.length > 0) && (
@@ -292,14 +296,15 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
   const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id ?? null;
   const started = messages.find((message) => mine.has(message.id))?.time ?? task.updatedAt;
   const active = task.state === "pending" || task.state === "running" || task.state === "waiting";
-  const field = (label: string, value: string | null, waiting = false) => (
-    <div className="task-field"><span className="task-field-label">{label}</span><span className={`task-field-value${value ? "" : " empty"}${waiting ? " waiting" : ""}`}>{value ?? "—"}</span></div>
-  );
+  // Only the rows that say something: an empty Now, Next or Blocked is left out.
+  const field = (label: string, value: string | null | undefined, waiting = false) => (value?.trim()
+    ? <div className="task-field"><span className="task-field-label">{label}</span><span className={`task-field-value${waiting ? " waiting" : ""}`}>{value}</span></div>
+    : null);
   return (
     <div className="task-card" data-task={task.id} data-state={stale ? "stale" : task.state} data-active={active ? "1" : "0"}>
       <button type="button" className="task-card-head" title="Close" onClick={() => onSelect(task.id)}><TaskHeader task={task} stale={stale} bold /></button>
       {task.manuallyCompletedAt && <div className="task-manual-completion">Marked complete by you · background work may still be running.</div>}
-      {field("Now", task.now ?? (task.state === "pending" ? "New message · waiting for a head" : null))}
+      {field("Now", task.now)}
       {field("Next", task.next)}
       {field("Blocked", task.blocked, task.state === "waiting")}
       {(task.helps ?? []).map((help, index) => <div key={index} className="task-help">{headName(help.head)} helping: {help.text}</div>)}

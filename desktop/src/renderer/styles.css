@@ -531,7 +531,6 @@ button { font: inherit; color: inherit; }
 .task-field { display: grid; grid-template-columns: 48px 1fr; gap: 8px; font-size: 12.5px; }
 .task-field-label { color: var(--faint); }
 .task-field-value { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
-.task-field-value.empty { color: var(--faint); }
 .task-field-value.waiting { color: #F7C27F; }
 .task-stale { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #FF8A80; }
 .task-stale .task-report { margin-left: auto; }
