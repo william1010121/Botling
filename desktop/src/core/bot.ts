@@ -94,6 +94,7 @@ import { PAGE_COMPONENT, previewCards } from "./page-preview";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
+import { alwaysAllows } from "./permission-rules";
 import {
   HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, isUUID, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
 } from "./store/records";
@@ -3769,7 +3770,8 @@ export class Bot {
   // Approvals
 
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
-    if (item.tool !== "Monitored command" && this.alwaysAllowed.includes(item.tool)) {
+    // A bare tool name or a 1.x rule ("Bash(npm test)", "Edit(//…)", "WebFetch(domain:…)"): permission-rules.ts.
+    if (item.tool !== "Monitored command" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
       head.answer(item.requestId, true, item.input);
       return;
     }
