@@ -318,3 +318,19 @@ export const RESUME_NOTE = "(App: Now carry on with what you were doing before t
 export const PARTS_NOTE = "(I sent this in parts before you answered; here is all of it:)\n\n";
 /** `Bot.withoutPartsNote`: a third part joins the first two, not a message that already says "in parts". */
 export const withoutPartsNote = (text: string) => (text.startsWith(PARTS_NOTE) ? text.slice(PARTS_NOTE.length) : text);
+
+/**
+ * 2.0 only (kept out of `botPrompts`, whose strings match the Swift app's): how a bot gives its card
+ * on the main bot's whiteboard a small picture of its own. Told to every bot but the main bot.
+ */
+export const WHITEBOARD_PICTURE_LINE = "  To give your card on the main bot's whiteboard a small picture: add <whiteboard name=\"component name\" size=\"1x1\">JSON</whiteboard> to a reply (or command=\"…\" instead of JSON; size 1x1 or 2x1). The app draws it on your card and shows nothing in the chat; a later one replaces it and <whiteboard clear/> removes it. Pick a component that reads well tiny (a key number, a trend) and send a new one when it changes.";
+const SHOW_LINE = "  To show data with a component: add <show name=\"component name\">JSON matching its format</show> to your reply.";
+
+/** The instructions as 2.0 gives them: `botPrompts`, plus the whiteboard picture line (after the <show> line) for every bot but the main bot. */
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role">): BotPrompts {
+  if (profile.role === "main") return prompts;
+  const system = prompts.system.includes(SHOW_LINE)
+    ? prompts.system.replace(SHOW_LINE, `${SHOW_LINE}\n${WHITEBOARD_PICTURE_LINE}`)
+    : `${prompts.system}\n${WHITEBOARD_PICTURE_LINE}`;
+  return { ...prompts, system };
+}

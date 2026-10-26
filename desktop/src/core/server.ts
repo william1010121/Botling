@@ -21,12 +21,12 @@ import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
 import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
-import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
+import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItems, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
 import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
-  type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
+  type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView, type WhiteboardView,
   type SettingsChange, type SettingsView, type WebStateView, type TeamRunView, type SpecAction,
 } from "../contract";
 import { filePath, pageInCard } from "./specs";
@@ -35,7 +35,7 @@ import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import type { Engine, Heads } from "./heads";
-import { botPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
+import { botPrompts, desktopPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
@@ -1007,6 +1007,31 @@ First write a test that shows this, then fix it.`;
     return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing };
   }
 
+  /**
+   * The main bot's whiteboard: for every bot but the main bot (groups are its sections, drawn from
+   * their members), its memory.md's "Current status", "In progress" and "Decided" (its "Waiting on you" is in `waiting()`), its task cards and its chat's results. Read when
+   * asked; the page asks every few seconds while the whiteboard is shown.
+   */
+  whiteboard(): WhiteboardView {
+    const out: WhiteboardView["bots"] = [];
+    for (const profile of this.profiles) {
+      if (profile.role === "main") continue;
+      const bot = this.bots.get(profile.id);
+      if (!bot) continue;
+      let text = "";
+      if (!profile.problem) { try { text = readFileSync(join(profile.folder, profile.memoryPath), "utf8"); } catch { text = ""; } }
+      const items = (section: "currentStatus" | "inProgress" | "decided") => memoryItems(text, section).slice(0, 20).map((item) => item.slice(0, 400));
+      out.push({
+        botId: profile.id, currentStatus: items("currentStatus"), inProgress: items("inProgress"), decided: items("decided"),
+        tasks: bot.taskViews().slice(-100), results: bot.results().slice(0, 12).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) })),
+        picture: bot.whiteboardPicture(),
+      });
+      // Shown now: a picture whose command the user allowed runs again (at most every 30 s), as a pin "when shown".
+      bot.whiteboardShown();
+    }
+    return { bots: out.slice(0, 500) };
+  }
+
   /** Tells the windows when what waits on you changed (1.x's `refreshWaiting`, after anything that may change it). */
   refreshWaiting() {
     let view: WaitingView;
@@ -1324,13 +1349,13 @@ First write a test that shows this, then fix it.`;
   prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null): BotPrompts {
     const settings = this.settings();
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
-    return botPrompts({
+    return desktopPrompts(botPrompts({
       profile: { ...profile, instructions: profile.instructions ?? null },
       language: isAppLanguage(settings.language) ? settings.language : preferredLanguage(languages),
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
       engine,
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
-    });
+    }), profile);
   }
 
   private event(event: Event) {
@@ -1524,6 +1549,8 @@ First write a test that shows this, then fix it.`;
       }
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();
+      case "whiteboard.view": return this.whiteboard();
+      case "whiteboard.allow": return this.bot(cmd.botId).whiteboardAllow({ command: cmd.command, folder: cmd.folder });
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);
       case "bot.settings": return this.bot(cmd.botId).settingsView();

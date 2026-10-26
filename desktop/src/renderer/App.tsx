@@ -21,6 +21,7 @@ import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm,
 import { Icon } from "./icons";
 import { WebPane, WebPanel, WebRail } from "./Web";
 import { SpecFrame } from "./SpecFrame";
+import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
@@ -43,6 +44,8 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const selectTask = useCallback((id: string) => setSelectedTask((current) => (current === id ? null : id)), []);
   const now = useMinuteClock();
+  /** The main bot's main view: its chat, or the whiteboard of every bot (kept for the next start). */
+  const [whiteboardOn, setWhiteboardOn] = useWhiteboardChoice();
   const collapsed = view.settings?.rightPanelCollapsed ?? false;
   const toggleRight = useCallback(() => {
     void client.request({ type: "settings.set", change: { key: "rightPanelCollapsed", value: !(store.getView().settings?.rightPanelCollapsed ?? false) } }).catch(() => {});
@@ -86,6 +89,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
+  const whiteboard = whiteboardOn && bot?.role === "main" && !watching && !site;
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -264,7 +268,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             <WebPane client={client} site={site} onError={fail} />
           </>
         )}
-        <div className="chat-column" hidden={!!site}>
+        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}`} hidden={!!site}>
         <header className="chat-header drag">
           {bot && <span className="chat-title">{bot.name}</span>}
           {bot && (bot.heads.length > 1 || bot.heads[0] === "codex") && (
@@ -281,8 +285,9 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
           <div className="board-switch-bar">
             <div className="board-switch" role="group" aria-label="Chat or Board">
-              <button type="button" aria-pressed={!view.board} onClick={() => store.showBoard(false)}><Icon name="bubble" size={13} />Chat</button>
-              <button type="button" aria-pressed={view.board} onClick={() => store.showBoard(true)}><Icon name="grid" size={13} />Board</button>
+              <button type="button" aria-pressed={!view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
+              <button type="button" aria-pressed={view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
+              {bot.role === "main" && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => setWhiteboardOn(true)}><Icon name="people" size={13} />Whiteboard</button>}
             </div>
           </div>
         )}
@@ -296,6 +301,13 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
           </div>
         )}
+        {whiteboard && bot && (
+          <Whiteboard client={client} bots={view.bots} waiting={view.waiting} components={view.components} look={view.settings?.botLook ?? "original"} now={now}
+            mainMessages={chat?.botId === bot.id ? chat.messages : []} mainBotId={bot.id}
+            statusOf={(candidate) => ({ key: status(candidate), text: statusText(candidate) })}
+            onOpenChat={(botId) => { setWhiteboardOn(false); selectBot(botId); }} onError={fail} />
+        )}
+        {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} />
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}

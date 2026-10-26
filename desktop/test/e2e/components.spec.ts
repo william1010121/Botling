@@ -78,7 +78,7 @@ test("a command card asks first, runs after Allow and run, and its runDetail ans
     await until(() => {
       try { return JSON.parse(readFileSync(join(dataDir, "core", "main", "pins.json"), "utf8")).length === 1; } catch { return false; }
     }, { what: "pins.json" });
-    await page.getByRole("button", { name: "Board" }).click();
+    await page.getByRole("button", { name: "Board", exact: true }).click();
     await expect(chat.locator("#board .board-card")).toHaveCount(1);
     const tile = chat.frameLocator(".board-card iframe.component-frame").first();
     await expect(tile.locator("#items li")).toHaveText(["milk", "tea"], { timeout: 10_000 });

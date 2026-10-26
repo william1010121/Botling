@@ -34,6 +34,8 @@ async function launch(collapsed = false, failSave = false) {
     if (route.request().url() === "http://sidebar.test/") return route.fulfill({ contentType: "text/html", body: `<html><head><style>${inlineTokens(readFileSync(join(desktop, "src/renderer/styles.css"), "utf8"), join(desktop, "src/renderer/styles.css"))}</style></head><body><div id="root"></div><script>${script.replace(/<\/script/gi, "<\\/script")}</script></body></html>` });
     return route.abort();
   });
+  // The main bot opens on its whiteboard; these checks use the chat area, so they start on Chat.
+  await page.addInitScript(() => { try { localStorage.setItem("botling.mainWhiteboard", "0"); } catch { /* none */ } });
   await page.goto("http://sidebar.test/");
   await page.locator('.shell[data-ready="1"]').waitFor();
   return { page, file, commands };
