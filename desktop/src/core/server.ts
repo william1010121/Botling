@@ -288,7 +288,7 @@ export class Core {
         specsChanged: (bot) => this.specs?.specsChanged(bot),
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
-        plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment() }),
+        plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment(), tools: this.plugins.registry.claudeTools() }),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
@@ -414,7 +414,7 @@ export class Core {
       // A team's head runs as bots' heads do (the real CLI, or the fake one), in its own folder, asking nothing.
       config: (folder, spec, tools, session) => options.headConfig(
         { id: "team", name: spec.title, role: "bot", avatar: "cloud", folder, memoryPath: ".bot/memory.md", storeDir: folder, tools, job: null, problem: null },
-        { sessionId: session.sessionId, resume: false, systemPrompt: session.systemPrompt, model: session.model, pluginDirs: this.plugins.registry.claudeDirectories(), pluginEnv: this.plugins.registry.secretEnvironment() },
+        { sessionId: session.sessionId, resume: false, systemPrompt: session.systemPrompt, model: session.model, pluginDirs: this.plugins.registry.claudeDirectories(), pluginEnv: this.plugins.registry.secretEnvironment(), pluginTools: this.plugins.registry.claudeTools() },
       ),
       language: () => this.language(),
       results: () => { const chosen = this.settings().results; return isResultPublishing(chosen) ? chosen : "artifactUnlessSensitive"; },

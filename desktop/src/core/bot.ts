@@ -110,6 +110,8 @@ export interface SessionStart {
   /** Plugins' Claude parts (`--plugin-dir`), and the environment their MCP servers need. */
   pluginDirs?: string[];
   pluginEnv?: Record<string, string>;
+  /** The plugins' MCP tools, used without asking (`pluginTools`). */
+  pluginTools?: string[];
   /** The bot's model and effort (bot.json; null: the default), its subagents' model, their 1-hour cache. */
   model?: string | null;
   effort?: string | null;
@@ -177,7 +179,7 @@ export interface BotOptions {
   /** A reply showed (plugins' `bots.onReply`; Maintainer's requests settle). */
   replied?: (bot: Bot, record: ChatRecord) => void;
   /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
-  plugins?: () => { dirs: string[]; env: Record<string, string> };
+  plugins?: () => { dirs: string[]; env: Record<string, string>; tools?: string[] };
   /** Said at each wake after the wake line (the main bot's project list: `wakeNote`). */
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
@@ -2153,7 +2155,7 @@ export class Bot {
     const choices = this.owner.choices();
     const launch = this.options.launch?.() ?? { subagentHourCache: false };
     const start: SessionStart = {
-      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env,
+      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env, pluginTools: plugins.tools ?? [],
       model: choices.model, effort: choices.effort, subagentModel: choices.subagentModel,
       subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
       addDirs: this.owner.options.addDirs?.() ?? [],

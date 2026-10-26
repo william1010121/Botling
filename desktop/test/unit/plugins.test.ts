@@ -82,6 +82,20 @@ describe("the plugin registry", () => {
     ]);
   });
 
+  it("the Claude parts' MCP servers are tools bots use without asking (1.x's claudeTools)", () => {
+    const dir = tempDir("plugins");
+    const library = join(dir, "plugins");
+    const folder = plugin(library, "gh", { ccb: { claude: "claude" }, web: null });
+    mkdirSync(join(folder, "claude", ".claude-plugin"), { recursive: true });
+    writeFileSync(join(folder, "claude", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "github-tools", version: "1.0.0" }));
+    writeFileSync(join(folder, "claude", ".mcp.json"), JSON.stringify({ mcpServers: { issues: {}, actions: {} } }));
+    plugin(library, "plain");
+    const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore());
+    expect(registry.claudeTools()).toEqual(["mcp__plugin_github-tools_actions", "mcp__plugin_github-tools_issues"]);
+    registry.setEnabled("gh", false);
+    expect(registry.claudeTools()).toEqual([]);
+  });
+
   it("a broken plugin is off until its files change, said once; three crashes in ten minutes turn one off", () => {
     const dir = tempDir("plugins");
     const library = join(dir, "plugins");

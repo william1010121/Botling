@@ -24,6 +24,12 @@ import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
 
+/** `--allowedTools` as 1.x gives it: its tools, Skill when it has plugins (their skills), and the plugins' MCP tools. */
+function allowedTools(tools: string[], session: SessionStart): string[] {
+  const skill = session.pluginDirs?.length && !tools.includes("Skill") ? ["Skill"] : [];
+  return [...new Set([...tools, ...skill, ...(session.pluginTools ?? [])])];
+}
+
 function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const kind = process.env.BOTLING_AGENT ?? "fake";
   // The subagents' model and their 1-hour prompt cache (AgentProcess.swift's `launchEnvironment`); one the
@@ -37,7 +43,7 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const localOnly = readSettings(Layout.settings(dataDir)).resultPublishingChoice === "localOnly";
   const common = {
     cwd: profile.folder, sessionId: session.sessionId, resume: session.resume,
-    allowedTools: localOnly ? profile.tools.filter((tool) => tool !== "Artifact") : profile.tools,
+    allowedTools: allowedTools(localOnly ? profile.tools.filter((tool) => tool !== "Artifact") : profile.tools, session),
     // Plugins' Claude parts (Maintainer's component editor among them) and their MCP servers' secrets.
     pluginDirs: session.pluginDirs ?? [], ...(Object.keys(env).length ? { env } : {}),
     model: process.env.BOTLING_MODEL ?? session.model ?? null,

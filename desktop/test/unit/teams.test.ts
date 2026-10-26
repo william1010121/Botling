@@ -136,7 +136,7 @@ describe("teams, bots and settling through the core", () => {
     const team = logged(join(dir, "args.log")).find((line) => line.args.some((arg: string) => arg.startsWith("You are a research team")));
     expect(team).toBeTruthy();
     expect(team.args).not.toContain("--permission-prompt-tool");
-    expect(team.args[team.args.indexOf("--allowedTools") + 1]).toBe("Read,Write,Edit,WebSearch,WebFetch,Artifact");
+    expect(team.args[team.args.indexOf("--allowedTools") + 1]).toBe("Read,Write,Edit,WebSearch,WebFetch,Artifact,Skill"); // Skill: the plugins' skills (1.x's arguments)
     // Claude Code offers Artifact in -p sessions only when asked (1.x's `launchEnvironment`).
     expect(team.artifact).toBe("1");
     expect(team.args[team.args.indexOf("--model") + 1]).toBe("sonnet");
