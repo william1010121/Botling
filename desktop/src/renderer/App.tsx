@@ -303,6 +303,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           </div>
         )}
         <UpdateBanner client={client} enabled={view.settings?.updateCheck} />
+        {view.coreSwap && <div className="core-swap" role="status" data-phase={view.coreSwap}>{view.coreSwap === "draining" ? "Updating Botling's core: finishing replies under way…" : "Updating Botling's core…"}</div>}
         {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
         {bot && chat?.heads?.rounds && (
           // The rounds line over the input box (1.x: "Review round 1 of 2 · Stop now"). The chat page

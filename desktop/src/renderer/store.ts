@@ -57,6 +57,8 @@ export interface WorkspaceView {
   spec?: SpecStateView | null;
   /** The temporary teams at work (the main bot's Now card). */
   teams: TeamRunView[];
+  /** The core is being replaced by a newer build (a fresh snapshot from the new core clears it). */
+  coreSwap?: "draining" | "updating" | null;
 }
 
 type Snapshot = ResultOf<"chat.snapshot">;
@@ -118,7 +120,7 @@ export class WorkspaceStore {
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ ...run })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null });
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null, coreSwap: null });
     } finally {
       this.syncing = false;
     }
@@ -170,6 +172,7 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "spec.updated") return { ...view, spec: event.spec };
   if (event.type === "web.updated") return { ...view, web: event.web };
   if (event.type === "teams.updated") return { ...view, teams: event.teams };
+  if (event.type === "core.swap") return { ...view, coreSwap: event.phase };
   if (event.type === "bot.removed") return { ...view, bots: view.bots.filter((bot) => bot.id !== event.botId) };
   if (event.type === "bot.updated") {
     const bots = view.bots.some((bot) => bot.id === event.bot.id)

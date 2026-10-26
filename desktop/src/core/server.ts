@@ -65,6 +65,7 @@ import { EXTRACTORS_PLUGIN, WebShelf, askAboutWebText, decodeReading, extractorC
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
 import { DevBuilds, readBuild, spawnInstaller } from "./self-update";
+import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
 
 export interface CoreOptions {
   /** Read-only CLI self-check; production starts it offline after activation. */
@@ -481,6 +482,8 @@ export class Core {
     this.activated = true;
     if (this.options.doctor) void this.doctor.run(false).catch(() => this.log("Doctor check failed."));
     for (const bot of this.bots.values()) bot.activateStartup();
+    // Started by a core hot swap: the old core's sessions go on, and what waited there is delivered.
+    this.adoptSwap();
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
     try { this.devBuilds.check(); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
@@ -1772,6 +1775,50 @@ First write a test that shows this, then fix it.`;
     return view;
   }
 
+  // ------------------------------------------------------------------------------------------
+  // Core hot swap (hot-swap.ts; main/core-swap.ts runs it)
+
+  /** Drained for a swap: quitting now hands over instead of tidying. */
+  private swapping = false;
+
+  /** Stops beginning turns, lets those under way finish (or stops them at a tool-call boundary), and writes the handover. */
+  async drainForSwap(timeoutMs: number, boundaryMs: number): Promise<{ entries: number; interrupted: string[] }> {
+    if (this.swapping) throw new ContractError("conflict", "A core swap is already under way.");
+    this.swapping = true;
+    this.event({ type: "core.swap", phase: "draining" });
+    try {
+      const result = await drainBots([...this.bots.values()], { timeoutMs, boundaryMs, log: (line) => this.log(line) });
+      writeHandover(this.options.dataDir, result.entries);
+      this.log(`core swap: drained; ${result.entries.length} head(s) handed over, ${result.interrupted.length} stopped mid-turn`);
+      this.event({ type: "core.swap", phase: "updating" });
+      return { entries: result.entries.length, interrupted: result.interrupted };
+    } catch (error) {
+      this.cancelSwap();
+      throw error;
+    }
+  }
+
+  /** The swap was called off (the new core did not start): this core goes on as before. */
+  cancelSwap() {
+    discardHandover(this.options.dataDir);
+    this.swapping = false;
+    for (const bot of this.bots.values()) bot.holdForSwap(false);
+    this.event({ type: "core.swap", phase: null });
+  }
+
+  private adoptSwap() {
+    let handover;
+    try { handover = takeHandover(this.options.dataDir); } catch (error) { this.log(`core swap: handover unreadable: ${(error as Error).message}`); return; }
+    if (!handover) return;
+    this.log(`core swap: taking over ${handover.entries.length} head(s) from the previous core`);
+    for (const botId of new Set(handover.entries.map((entry) => entry.botId))) {
+      const entries = handover.entries.filter((entry) => entry.botId === botId);
+      const bot = this.bots.get(botId);
+      if (!bot) continue;
+      try { bot.adoptSwap(entries); } catch (error) { this.log(`core swap: ${botId}: ${(error as Error).message}`); }
+    }
+  }
+
   /** Ends every turn and head (with their trees) and writes everything out; for quitting. */
   async shutdown() {
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
@@ -1780,6 +1827,8 @@ First write a test that shows this, then fix it.`;
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     if (this.waitingClock) { clearInterval(this.waitingClock); this.waitingClock = null; }
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
-    await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()).concat(this.plugins.shutdown(), this.teams.shutdown()));
+    // After a swap's drain the heads end without the tidy (it would end their sessions): the new core resumes them.
+    const tidy = !this.swapping;
+    await Promise.all([...this.bots.values()].map((bot) => bot.shutdown({ tidy })).concat(this.plugins.shutdown(), this.teams.shutdown()));
   }
 }

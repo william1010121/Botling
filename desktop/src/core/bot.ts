@@ -102,6 +102,7 @@ import {
   WARM_WINDOW_MS, connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, restoredText, resumeMode, resumeNote,
   type CutOff, type Outage,
 } from "./network-resume";
+import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
 import {
   backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
@@ -839,6 +840,8 @@ export class Bot {
   // Turns in other chats (1.x's `groupTurn`, `post`, `keepCallIn`)
 
   private guestTurn = false;
+  /** The core is being swapped: no turn begins (hot-swap.ts). */
+  private swapHold = false;
 
   /**
    * Says `text` (its turn in a group chat, or in a chat it was called into) and returns the reply,
@@ -1901,6 +1904,8 @@ export class Bot {
   /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
   private route(turn: Turn): Turn {
     const current = this.turn;
+    // The core is being swapped (hot-swap.ts): nothing new begins; it waits and is handed over.
+    if (this.swapHold) { this.queue.push(turn); return turn; }
     // A switch of engine waits for this message: the handoff first, then the message (`restartsBeforeMessage`).
     if (!current && this.switchReady) { this.queue.push(turn); void this.handOver(); return turn; }
     if (!current && !this.tidying && !this.switching) { this.begin(turn); return turn; }
@@ -3003,6 +3008,7 @@ export class Bot {
       // Stopped meanwhile: what claude does with it belongs to nobody.
       if (!deferred.open && deferred.head === this.head && this.head?.running) { this.ignoreResults += 1; this.head.interrupt(); }
     }
+    if (this.swapHold) return;
     if (this.resumePaused()) return;
     if (this.queue.some((turn) => turn.open) && this.switchReady) { void this.handOver(); return; }
     const waiting = this.queue.shift();
@@ -4642,6 +4648,80 @@ export class Bot {
     this.emit({ type: "card.acted", botId: this.id, messageId, cardId, name, value });
     this.notice(`A card says: ${value}`);
     return { accepted: true };
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Core hot swap (hot-swap.ts, docs/core-hot-swap.md): this bot and its partner head as one.
+
+  holdForSwap(hold: boolean) {
+    this.swapHold = hold;
+    this.partner?.holdForSwap(hold);
+    // Let go again (the swap was called off): what waited begins now.
+    if (!hold) { this.next(); this.partner?.next(); }
+  }
+
+  get swapBusy(): boolean {
+    const own = !!this.turn || this.tidying || this.switching || this.guestTurn || !!this.deferred || !!this.claimHold || !!this.paused
+      || this.subagents.running.length > 0 || this.managedPending;
+    return own || !!this.partner?.swapBusy;
+  }
+
+  get swapToolInFlight(): boolean {
+    const own = !!this.turn?.steps.some((step) => step.kind === "tool" && !step.done);
+    return own || !!this.partner?.swapToolInFlight;
+  }
+
+  /** Stops what is under way for a swap; the session goes on (the new core resumes it). */
+  async swapInterrupt(): Promise<void> {
+    this.paused = null;
+    const stops: Promise<unknown>[] = [];
+    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) {
+      if (bot.turn && bot.turn.origin !== "tidy") stops.push(bot.stop(bot.turn.id));
+      if (bot.deferred) stops.push(bot.stop(bot.deferred.id));
+    }
+    await Promise.all(stops);
+  }
+
+  /** Its heads' sessions and the turns that wait, for the new core. */
+  swapEntries(cutOff: boolean): SwapEntry[] {
+    const entries: SwapEntry[] = [];
+    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) {
+      const queued = bot.queue.filter((turn) => turn.open && turn.origin !== "tidy").map((turn) => ({ words: turn.words, userId: turn.userId, origin: turn.origin }));
+      const sessionId = bot.session.started ? bot.session.sessionId : null;
+      if (!sessionId && !queued.length) continue;
+      // Only a head that was at work is told to carry on.
+      entries.push({ botId: this.owner.id, engine: bot.engine, sessionId, continue: cutOff && !!sessionId && (bot.engine === this.engine || !!bot.head?.running), queued });
+    }
+    return entries;
+  }
+
+  flushForSwap() {
+    this.persist();
+    this.partner?.persist();
+    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) if (bot.session.started) bot.store.saveHead(bot.session);
+  }
+
+  /** At the new core's start: go on in the sessions the old core handed over (`--resume`), then what waited. */
+  adoptSwap(entries: SwapEntry[]) {
+    for (const entry of entries) {
+      const bot = this.botFor(entry.engine);
+      if (!bot) continue;
+      if (entry.sessionId) {
+        bot.session = { sessionId: entry.sessionId, started: true };
+        // The same conversation: no wake briefing (what was cut off in the background is said with its next message).
+        bot.briefing = false;
+        bot.store.saveHead(bot.session);
+        const cut = bot.takeInterruptedNote();
+        if (cut) bot.queuedNote = cut;
+        this.log(`core swap: ${entry.engine} resumes session ${entry.sessionId}${entry.continue ? " and carries on" : ""}`);
+      }
+      if (entry.continue && entry.sessionId) this.deliverTo(entry.engine, CONTINUE_NOTE, null, { origin: "app" });
+      for (const turn of entry.queued) {
+        const origin = (["user", "app", "background"] as string[]).includes(turn.origin) ? turn.origin as Origin : "app";
+        const userId = turn.userId && this.owner.records.some((record) => record.id === turn.userId) ? turn.userId : null;
+        this.deliverTo(entry.engine, turn.words, userId, { origin: userId ? origin : origin === "user" ? "app" : origin });
+      }
+    }
   }
 
   /** Ends the turn and the head (with its tree) and writes everything out; for quitting. An idle awake bot tidies first (1.x). */

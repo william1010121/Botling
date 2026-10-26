@@ -198,7 +198,8 @@ function groupTiming(text: string | undefined) {
 }
 
 const core = new Core({
-  ...(process.env.BOTLING_AGENT === "claude" ? { doctor: new Doctor() } : {}),
+  // A swap's self-check (BOTLING_CORE_PROBE, main/core-swap.ts) runs on a scratch folder and checks no CLI.
+  ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor() } : {}),
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   headConfig,
@@ -252,10 +253,26 @@ const core = new Core({
 });
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
 
+/**
+ * A core hot swap (main/core-swap.ts): `{botling: "drain", id, timeoutMs, boundaryMs}` stops beginning turns and
+ * waits for those under way, then answers `{botling: "drained", id, ok, …}`; `{botling: "undrain"}` calls it off.
+ */
+function swapControl(data: { botling?: unknown; id?: unknown; timeoutMs?: unknown; boundaryMs?: unknown }, reply: (message: unknown) => void): boolean {
+  if (data.botling === "undrain") { core.cancelSwap(); return true; }
+  if (data.botling !== "drain") return false;
+  const ms = (value: unknown, fallback: number) => (typeof value === "number" && Number.isFinite(value) ? Math.min(Math.max(value, 0), 30 * 60_000) : fallback);
+  void core.drainForSwap(ms(data.timeoutMs, 120_000), ms(data.boundaryMs, 30_000)).then(
+    (result) => reply({ botling: "drained", id: data.id, ok: true, ...result }),
+    (error) => reply({ botling: "drained", id: data.id, ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) }),
+  );
+  return true;
+}
+
 if (parentPort) {
   parentPort.on("message", (event) => {
     // Main's answer to a seal/open request (safeStorage), never a contract message.
     const data = event.data as { botling?: unknown } | null;
+    if (data && typeof data === "object" && swapControl(data, (message) => parentPort.postMessage(message))) return;
     if (data && typeof data === "object" && data.botling === "sealed") portSealer?.answer(data as Parameters<PortSealer["answer"]>[0]);
     else if (data && typeof data === "object" && data.botling === "appDone") {
       const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown };
@@ -288,6 +305,7 @@ if (parentPort) {
       log("refused: a line that is not JSON");
       return;
     }
+    if (value && typeof value === "object" && swapControl(value as { botling?: unknown }, (message) => process.stdout.write(JSON.stringify(message) + "\n"))) return;
     core.receive(value);
   });
   lines.on("close", () => void core.shutdown().then(() => process.exit(0)));

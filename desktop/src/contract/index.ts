@@ -1281,6 +1281,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bot.removed"), botId }),
   /** The temporary teams at work changed (one started or finished). */
   z.strictObject({ type: z.literal("teams.updated"), teams: z.array(TeamRunView).max(50) }),
+  /** The core is being replaced by a newer build (docs/core-hot-swap.md): draining, updating; null: called off. */
+  z.strictObject({ type: z.literal("core.swap"), phase: z.enum(["draining", "updating"]).nullable() }),
 ]);
 export type Event = z.infer<typeof Event>;
 

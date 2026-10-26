@@ -24,6 +24,7 @@ import {directoryDefaults,packagedDataName} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
+import { installCoreSwap } from "./core-swap-main";
 import { copyDoctorFix } from "./doctor-copy";
 import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
@@ -182,6 +183,8 @@ const core = new CoreClient({
 });
 
 let lastEpoch: string | null = null;
+// Core hot swap (docs/core-hot-swap.md): a newer core build replaces the running one without an app restart.
+const coreSwap = installCoreSwap({ core, root, dataDir, packaged: app.isPackaged, devTrial, argv: process.argv, note });
 
 /**
  * GitHub Releases discovery, enabled by default. Installation is verified and requires a click.
@@ -765,7 +768,7 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate()));
+  Menu.setApplicationMenu(Menu.buildFromTemplate([...appMenuTemplate(), ...coreSwap.menu]));
   // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
   // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
   nativeTheme.themeSource = "dark";
@@ -918,6 +921,7 @@ app.on("before-quit", (event) => {
 
 // For tests: which pid the core has.
 (globalThis as unknown as { __botlingCorePid: () => number | undefined }).__botlingCorePid = () => core.pid;
+(globalThis as unknown as { __botlingSwapCore: typeof coreSwap.swap }).__botlingSwapCore = coreSwap.swap;
 (globalThis as unknown as { __botlingShotCommand: string | undefined }).__botlingShotCommand = shotMode ? undefined : coreEnvironment().BOTLING_SHOT_COMMAND;
 (globalThis as unknown as { __botlingCheckCommand: string | undefined }).__botlingCheckCommand = shotMode ? undefined : coreEnvironment().BOTLING_CHECK_COMMAND;
 (globalThis as unknown as { __botlingHostPids: () => number[] }).__botlingHostPids = () => core.hostPids;

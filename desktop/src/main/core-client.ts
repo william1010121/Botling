@@ -3,6 +3,9 @@
 // renderer sees a new epoch and takes a fresh snapshot. Nothing is re-sent automatically.
 import { MessageChannelMain, utilityProcess, type UtilityProcess } from "electron";
 import { PluginChildren } from "./plugin-children";
+import { PASS_WHILE_DRAINING, type HoldMode, type SwapPorts } from "./core-swap";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   EventEnvelope, PROTOCOL_VERSION, ResponseEnvelope, describeIssues,
   type Command, type EventEnvelope as EventEnvelopeT, type ResponseEnvelope as ResponseEnvelopeT, type ResultOf, type CommandType,
@@ -24,6 +27,7 @@ export interface CoreClientOptions {
 }
 
 interface Pending { resolve: (response: ResponseEnvelopeT) => void }
+interface Held { cmd: Command; id: string; resolve: (response: ResponseEnvelopeT) => void }
 
 export class CoreClient {
   private child: UtilityProcess | null = null;
@@ -31,6 +35,14 @@ export class CoreClient {
   private counter = 0;
   private restarts = 0;
   private quitting = false;
+  /** Cores ended by a hot swap: their exit is no crash (no restart). */
+  private retired = new WeakSet<UtilityProcess>();
+  /** During a hot swap: requests held for the new core (main/core-swap.ts). */
+  private holdMode: HoldMode = "none";
+  private held: Held[] = [];
+  /** Answers to `drain`, by id. */
+  private drains = new Map<number, (answer: { ok: boolean; entries?: unknown; interrupted?: unknown; error?: unknown }) => void>();
+  private drainCount = 0;
   pid: number | undefined;
   /** Plugin hosts main runs for the core (utility processes), by the core's id for each. */
   private hosts = new Map<number, UtilityProcess>();
@@ -136,12 +148,14 @@ export class CoreClient {
     child.on("exit", (code) => {
       if (this.child !== child) return;
       this.child = null;
+      for (const answer of this.drains.values()) answer({ ok: false, error: "The core process stopped." });
+      this.drains.clear();
       void this.endHosts();
       for (const [id, pending] of this.pending) {
         pending.resolve({ v: PROTOCOL_VERSION, id, ok: false, error: { code: "core_unavailable", message: "The core process stopped." } });
       }
       this.pending.clear();
-      if (this.quitting) return;
+      if (this.quitting || this.retired.has(child)) return;
       this.options.audit(`core exited with ${code}; restarting`);
       const delay = Math.min(250 * 2 ** this.restarts++, 10_000);
       setTimeout(() => this.start(), delay);
@@ -152,6 +166,10 @@ export class CoreClient {
     const raw = message as { botling?: unknown; id?: unknown; op?: unknown; text?: unknown } | null;
     if (raw && typeof raw === "object" && raw.botling === "host") {
       this.host(raw as Parameters<CoreClient["host"]>[0]);
+      return;
+    }
+    if (raw && typeof raw === "object" && raw.botling === "drained") {
+      if (typeof raw.id === "number") this.drains.get(raw.id)?.(raw as { ok: boolean });
       return;
     }
     if (raw && typeof raw === "object" && raw.botling === "app") {
@@ -193,6 +211,13 @@ export class CoreClient {
 
   /** Sends a command; resolves with the response (never rejects). */
   request(cmd: Command, id = `main.${++this.counter}`): Promise<ResponseEnvelopeT> {
+    if (this.holdMode === "all" || (this.holdMode === "drain" && !PASS_WHILE_DRAINING.has(cmd.type))) {
+      return new Promise((resolve) => this.held.push({ cmd, id, resolve }));
+    }
+    return this.send(cmd, id);
+  }
+
+  private send(cmd: Command, id: string): Promise<ResponseEnvelopeT> {
     return new Promise((resolve) => {
       if (!this.child) {
         resolve({ v: PROTOCOL_VERSION, id, ok: false, error: { code: "core_unavailable", message: "The core process is not running." } });
@@ -211,7 +236,129 @@ export class CoreClient {
   }
 
   cancel(id: string) {
+    const held = this.held.findIndex((request) => request.id === id);
+    if (held >= 0) {
+      const [request] = this.held.splice(held, 1);
+      request!.resolve({ v: PROTOCOL_VERSION, id, ok: false, error: { code: "cancelled", message: "The request was cancelled." } });
+      return;
+    }
     this.child?.postMessage({ v: PROTOCOL_VERSION, cancel: id });
+  }
+
+  /**
+   * The real ports of a core hot swap (main/core-swap.ts). `handoverFile` is the core's
+   * swap-handover.json; self-checks run on scratch folders under `scratch`.
+   */
+  swapPorts(handoverFile: string, scratch: string): SwapPorts {
+    const options = this.options;
+    return {
+      get script() { return options.script; },
+      probe: (script) => this.probe(script, scratch),
+      hold: (mode) => {
+        this.holdMode = mode;
+        // Let go: what was held goes to the core running now, in order.
+        if (mode === "none") for (const request of this.held.splice(0)) void this.request(request.cmd, request.id).then(request.resolve);
+      },
+      drain: (timeoutMs, boundaryMs) => new Promise((resolve) => {
+        const child = this.child;
+        if (!child) { resolve({ ok: false, error: "The core process is not running." }); return; }
+        const id = ++this.drainCount;
+        const timer = setTimeout(() => { this.drains.delete(id); resolve({ ok: false, error: "The core did not finish draining." }); }, timeoutMs + boundaryMs + 30_000);
+        this.drains.set(id, (answer) => {
+          clearTimeout(timer);
+          this.drains.delete(id);
+          if (answer.ok) resolve({ ok: true, entries: Number(answer.entries) || 0, interrupted: Array.isArray(answer.interrupted) ? answer.interrupted.map(String) : [] });
+          else resolve({ ok: false, error: String(answer.error ?? "Draining failed.") });
+        });
+        child.postMessage({ botling: "drain", id, timeoutMs, boundaryMs });
+      }),
+      undrain: () => this.child?.postMessage({ botling: "undrain" }),
+      stop: () => this.retire(),
+      start: async (script) => {
+        this.options.script = script;
+        this.restarts = 0;
+        this.start();
+        const deadline = Date.now() + 30_000;
+        let last = "no answer";
+        while (Date.now() < deadline) {
+          if (!this.child) return `it exited (${last})`;
+          const response = await Promise.race([
+            this.send({ type: "settings.get" }, `main.swap.${++this.counter}`),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 2_000)),
+          ]);
+          if (response?.ok) return null;
+          last = response ? `${response.error.code}: ${response.error.message}` : "no answer in 2 s";
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return last;
+      },
+      readHandover: () => { try { return readFileSync(handoverFile, "utf8"); } catch { return null; } },
+      writeHandover: (text) => writeFileSync(handoverFile, text),
+      log: (line) => this.options.audit(line),
+    };
+  }
+
+  /** Ends the running core without a restart (its heads end without the tidy after a drain). */
+  private retire(): Promise<void> {
+    const child = this.child;
+    if (!child) return Promise.resolve();
+    this.retired.add(child);
+    return new Promise((resolve) => {
+      const kill = setTimeout(() => { if (child.pid) { try { process.kill(child.pid, "SIGKILL"); } catch { /* gone */ } } }, 30_000);
+      child.once("exit", () => { clearTimeout(kill); void this.endHosts().then(resolve); });
+      child.kill();
+    });
+  }
+
+  /**
+   * A swap's self-check: `script` on a scratch data folder (nothing imported, no clocks, no CLI check) must
+   * answer settings.get and chat.snapshot in this protocol version. Null: it did; else why not.
+   */
+  private probe(script: string, scratch: string): Promise<string | null> {
+    let dir: string;
+    try { dir = mkdtempSync(join(scratch, "core-probe-")); } catch (error) { return Promise.resolve(`no scratch folder: ${(error as Error).message}`); }
+    const env: Record<string, string> = {
+      ...this.options.env, BOTLING_DATA_DIR: dir, BOTLING_CORE_PROBE: "1", BOTLING_IMPORT_FROM: "", BOTLING_1X_DIR: "", BOTLING_UPDATE_PENDING: "0",
+      BOTLING_ROUTINE_TICK_MS: "0", BOTLING_WATCH_MS: "0", BOTLING_COMPONENT_SCAN_MS: "0", BOTLING_WAITING_SCAN_MS: "0",
+    };
+    return new Promise((resolve) => {
+      let child: UtilityProcess;
+      let stderr = "";
+      let settled = false;
+      const done = (problem: string | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { child.kill(); } catch { /* gone */ }
+        setTimeout(() => rmSync(dir, { recursive: true, force: true }), 2_000).unref();
+        resolve(problem);
+      };
+      const timer = setTimeout(() => done(`it did not answer within 20 s${stderr ? `: ${stderr.slice(-500)}` : ""}`), 20_000);
+      try {
+        child = utilityProcess.fork(script, [], { serviceName: "Botling Core (self-check)", stdio: "pipe", env });
+      } catch (error) {
+        clearTimeout(timer);
+        resolve(`it could not start: ${(error as Error).message}`);
+        return;
+      }
+      child.stdout?.on("data", () => {});
+      child.stderr?.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4_000); });
+      child.once("exit", (code) => done(`it exited (${code})${stderr ? `: ${stderr.slice(-500)}` : ""}`));
+      const answered = new Set<string>();
+      child.on("message", (message: unknown) => {
+        const raw = message as { botling?: unknown; id?: unknown; v?: unknown } | null;
+        if (raw && typeof raw === "object" && raw.botling === "host") { child.postMessage({ botling: "hostFailed", id: raw.id, error: "Self-check." }); return; }
+        if (raw && typeof raw === "object" && typeof raw.botling === "string") return;
+        if (raw && typeof raw === "object" && "v" in raw && raw.v !== PROTOCOL_VERSION) { done(`it speaks protocol ${String(raw.v)}, this app ${PROTOCOL_VERSION}`); return; }
+        const response = ResponseEnvelope.safeParse(message);
+        if (!response.success) return;
+        if (!response.data.ok) { done(`${response.data.id}: ${response.data.error.code}: ${response.data.error.message}`); return; }
+        answered.add(response.data.id);
+        if (answered.has("probe.settings") && answered.has("probe.snapshot")) done(null);
+      });
+      child.postMessage({ v: PROTOCOL_VERSION, id: "probe.settings", cmd: { type: "settings.get" } });
+      child.postMessage({ v: PROTOCOL_VERSION, id: "probe.snapshot", cmd: { type: "chat.snapshot" } });
+    });
   }
 
   /** Asks the core to stop its work and exit (it tidies idle bots, then ends running agent trees on SIGTERM). */
