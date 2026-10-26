@@ -368,7 +368,7 @@ function statusText(bot: BotView): string {
   return "Asleep";
 }
 
-function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned, onTogglePin }: {
+export function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned, onTogglePin }: {
   bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
   /** Undefined for a row that cannot be pinned (the main bot, Maintainer). */
   pinned?: boolean; onTogglePin?: () => void;
@@ -387,7 +387,6 @@ function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned, onTogg
         {tasks > 0 && <span className="task-count" aria-hidden="true">{tasks} task{tasks === 1 ? "" : "s"}</span>}
         {bot.working && <span className="bot-dot working" aria-hidden="true" />}
         {bot.approvals > 0 && <span className="badge waiting" aria-hidden="true">{bot.approvals}</span>}
-        {!bot.approvals && waiting && !bot.working && <span className="bot-dot waiting" aria-hidden="true" />}
         {bot.unread > 0 && !selected && <span className="badge" aria-hidden="true">{bot.unread}</span>}
       </button>
       {pinned !== undefined && onTogglePin && (

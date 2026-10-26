@@ -225,18 +225,20 @@ test("projects: Add project picks a folder and shows its chat; the right panel g
     // Its memory says what it is doing and what waits on you.
     writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\nok\n## In progress\n- planting tulips\n## Waiting on you\n- Which colour of tulips?\n## Decided\n");
     await expect(panel.locator(".now-doing")).toHaveText("planting tulips");
-    await expect(row.locator(".bot-dot.waiting")).toBeVisible();
+    // No orange dot on the row (1.x); the row's label says it.
+    await expect(row).toHaveAttribute("aria-label", /waiting on you/);
+    await expect(row.locator(".bot-dot.waiting")).toHaveCount(0);
     await page.locator(".bot-row", { hasText: "Main bot" }).click();
     const item = panel.locator(".waiting-item");
     await expect(item).toHaveText(/Which colour of tulips\?/);
     await shot(page, "waiting-on-you");
-    // Opening it shows that bot's chat; ignoring it takes it off the list and the dot away.
+    // Opening it shows that bot's chat; ignoring it takes it off the list and the row's label.
     await item.locator(".waiting-open").click();
     await expect(row).toHaveAttribute("aria-current", "page");
     await page.locator(".bot-row", { hasText: "Main bot" }).click();
     await panel.getByRole("button", { name: "Ignore" }).click();
     await expect(item).toHaveCount(0);
-    await expect(row.locator(".bot-dot.waiting")).toHaveCount(0);
+    await expect(row).not.toHaveAttribute("aria-label", /waiting on you/);
     expect(JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8")).ignoredWaiting).toHaveLength(1);
     await expect(chat.locator(".composer")).toBeVisible();
   } finally {
