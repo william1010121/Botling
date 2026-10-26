@@ -24,13 +24,20 @@ const git = (...args) => {
 const root = git("rev-parse", "--show-toplevel")[0];
 const changed = [...new Set([
   ...git("diff", "--name-only", "--no-renames", base, "--"),
-  ...git("ls-files", "--others", "--exclude-standard"),
+  // ls-files lists relative to the current directory (desktop/) by default; --full-name and the
+  // top-level pathspec give whole-repo paths from the root, as diff does (Web/ included).
+  ...git("ls-files", "--others", "--exclude-standard", "--full-name", ":/"),
 ].map((path) => (path.startsWith("/") ? path : join(root, path))))].filter(existsSync);
 // What the desktop app is built from: its own sources and tests, and Web/'s chat page, host and plugins.
 const sources = changed.filter((path) => {
   const rel = relative(root, path);
   return /\.(ts|tsx|mts|mjs|cjs|js)$/.test(rel) && /^(desktop\/(src|test|scripts)\/|desktop\/(build\.mjs|electron-builder\.config\.cjs)$|Web\/(src|host|plugins)\/)/.test(rel);
 });
+
+if (process.env.BOTLING_TEST_CHANGED_LIST) { // print the selection only (for test/unit/test-changed.test.ts)
+  for (const path of sources) console.log(`  ${relative(root, path)}`);
+  process.exit(0);
+}
 
 const step = (label, command, args) => {
   const started = Date.now();
