@@ -53,6 +53,8 @@ describe("task card to actual subagent details", () => {
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     try {
       await act(async () => root.render(createElement(App, { client, store })));
+      // The list is one row per task; pressed, the row opens as its card.
+      await act(async () => host.querySelector<HTMLButtonElement>('[data-task="task-card"].task-row .task-row-open')!.click());
       const card = host.querySelector('[data-task="task-card"].task-card')!;
       expect(card.textContent).toContain("1 active");
       expect(card.querySelectorAll("button.task-agent")).toHaveLength(2);

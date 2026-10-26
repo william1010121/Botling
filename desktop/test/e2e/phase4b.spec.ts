@@ -52,8 +52,8 @@ test("New bot, subagent rows and Settled, Results, the folded strip, removing a 
     await page.locator(`.bot-row[data-bot="${MAIN}"]`).click();
     await say(chat, "/say Here it is: [Weekly report](https://example.com/report) and [Notes](https://example.com/notes)");
     const results = page.locator(".results-section");
-    // Its finished tasks are "Just done" since Phase 4c, so the links are "Results" (1.x: "Just done" only without them).
-    await expect(page.locator(".done-section h3")).toHaveText("Just done");
+    // Its finished tasks are in the task list's Done group, so the links are "Results" (1.x: "Just done" only without them).
+    await expect(page.locator('.task-group[data-group="done"] h3')).toHaveText("Done");
     await expect(results.locator("h3")).toHaveText("Results");
     await expect(results.locator(".result-row")).toHaveText(["Weekly report", "Notes"]);
     await results.locator(".result-row", { hasText: "Weekly report" }).click();

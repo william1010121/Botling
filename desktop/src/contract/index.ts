@@ -107,6 +107,14 @@ export const TaskView = z.strictObject({
   messageIds: z.array(id).max(1_000),
   /** ISO-8601. */
   updatedAt: z.string(),
+  /** When the card was opened, ISO-8601. */
+  createdAt: z.string().optional(),
+  /** Its timeline, oldest first (2.x; older cards have none): a subagent's text is its id. */
+  history: z.array(z.strictObject({
+    kind: z.enum(["start", "now", "waiting", "you", "subagent", "done", "stopped", "complete"]),
+    at: z.string(),
+    text: z.string().max(2_000).nullable(),
+  })).max(50).optional(),
   /** A subagent started for it is still at work. */
   atWork: z.boolean(),
   /** The user closed this card; this does not assert execution succeeded. ISO-8601. */

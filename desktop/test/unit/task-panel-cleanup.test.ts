@@ -161,7 +161,7 @@ describe("4. no bare card without a name", () => {
     const { host, done } = await panel([view({ now: "writing" })], null);
     try {
       expect(host.querySelector(".now-card")).toBeNull();
-      expect(host.querySelector(".task-card .task-name")!.textContent).toBe("Docs");
+      expect(host.querySelector('.task-group[data-group="running"] .task-row .task-row-name')!.textContent).toBe("Docs");
     } finally { await done(); }
   });
 
