@@ -188,7 +188,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
           onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
           onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }} onNewGroup={() => setEditingGroup({ group: null })}
-          settingsControl={<SidebarSettings compact client={client} settings={view.settings} plugins={view.plugins} settingsOpen={settingsOpen} onOpen={openSettings} />} />
+          settingsControl={<SidebarSettings compact client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />} />
       ) : (
       <aside className="rail">
         <div className="rail-top drag"><RailToggle collapsed={false} onToggle={() => toggleRail(true)} /></div>
@@ -257,7 +257,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         </div>
         <PluginsButton client={client} plugins={view.plugins} />
         <div className="rail-settings">
-          <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} settingsOpen={settingsOpen} onOpen={openSettings} />
+          <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />
         </div>
       </aside>
       )}

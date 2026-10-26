@@ -1,3 +1,4 @@
+import { DoctorSection } from "./Doctor";
 import { UpdateActions,RecoveryCopies } from "./Updates";
 // The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
 // and words, for what 2.0's core does. Everything here is global (settings.json); the shown bot's own
@@ -13,7 +14,7 @@ import { faceURL } from "./avatars";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-export type SettingsSection = "general" | "appearance" | "engines" | "usage" | "permissions" | "plugins" | "updates" | "developer";
+export type SettingsSection = "general" | "appearance" | "engines" | "usage" | "permissions" | "plugins" | "doctor" | "updates" | "developer";
 type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
@@ -22,6 +23,7 @@ const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
+  { id: "doctor", title: "Doctor", terms: "command-line tools claude codex install version login sign in check health" },
   { id: "updates", title: "Updates", terms: "updates version release github check new" },
   { id: "developer", title: "Developer", terms: "developer mode source project feedback not right" },
 ];
@@ -79,6 +81,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {current?.id === "usage" && <Usage client={client} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
+            {current?.id === "doctor" && <DoctorSection client={client} />}
             {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
             {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
           </div>

@@ -1,14 +1,14 @@
 // The 1.x sidebar gear's quick controls and shortcuts. Permissions remain the engine's own.
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { PluginsView, SettingsView } from "../contract";
+import type { DoctorView, PluginsView, SettingsView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import type { SettingsSection } from "./Settings";
 import { Icon } from "./icons";
 import { QuickSettingsUsage } from "./QuickSettingsUsage";
 
-export function SidebarSettings({ client, settings, plugins, compact = false, settingsOpen, onOpen }: {
+export function SidebarSettings({ client, settings, plugins, doctor, compact = false, settingsOpen, onOpen }: {
   client: Client; settings: SettingsView | null; plugins: PluginsView | null; compact?: boolean;
-  settingsOpen: boolean; onOpen: (section?: SettingsSection) => void;
+  doctor?: DoctorView | null; settingsOpen: boolean; onOpen: (section?: SettingsSection) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [shown, setShown] = useState(settings);
@@ -67,9 +67,10 @@ export function SidebarSettings({ client, settings, plugins, compact = false, se
   return (
     <div className={`sidebar-settings${compact ? " compact" : ""}`} ref={root}>
       {!compact && <button type="button" className={`rail-button${settingsOpen ? " on" : ""}`} onClick={() => openSection()}>Settings</button>}
-      <button ref={trigger} type="button" className={`strip-gear${open ? " on" : ""}`} title="Quick settings: developer mode, plugins, all settings"
+      <button ref={trigger} type="button" className={`strip-gear${open ? " on" : ""}`} style={{ position: "relative" }} title="Quick settings: developer mode, plugins, all settings"
         aria-label="Quick settings" aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen(!open)}>
         <Icon name="gear" size={14} />
+        {doctor?.needsAttention && <span className="doctor-dot" role="img" aria-label="Claude Code needs attention" style={{ position: "absolute", right: 2, top: 2, width: 7, height: 7, borderRadius: "50%", background: "var(--error)", pointerEvents: "none" }} />}
       </button>
       {open && <div ref={panel} id={id} className="sidebar-settings-popover" role="dialog" aria-label="Quick settings" style={position}>
         <header><strong>Quick settings</strong><button type="button" aria-label="Close quick settings" onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button></header>
@@ -81,6 +82,7 @@ export function SidebarSettings({ client, settings, plugins, compact = false, se
         </label>
         {problem && <p className="settings-problem" role="alert">{problem}</p>}
         <div className="sidebar-settings-links">
+          {doctor?.needsAttention && <button type="button" style={{ color: "var(--error)" }} onClick={() => openSection("doctor")}>Claude Code needs attention<span>Doctor ›</span></button>}
           <button type="button" aria-label="Plugins" onClick={() => openSection("plugins")}><span>Plugins</span><span aria-hidden="true">{plugins ? `${plugins.plugins.filter(plugin => plugin.enabled).length} on` : "›"}</span></button>
           <button type="button" onClick={() => openSection("usage")}>Usage by bot<span aria-hidden="true">›</span></button>
           <button type="button" onClick={() => openSection("developer")}>Developer settings…<span aria-hidden="true">›</span></button>

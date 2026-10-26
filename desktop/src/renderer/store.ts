@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { SpecStateView, TeamRunView, WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { DoctorView, SpecStateView, TeamRunView, WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex"; live: StepView[] }
@@ -48,6 +48,7 @@ export interface WorkspaceView {
   plugins: PluginsView | null;
   /** The app's settings (language, avatar size, look…). */
   settings: SettingsView | null;
+  doctor?: DoctorView | null;
   /** What waits on you across the bots, and managers' "In progress" (the right panel). */
   waiting: WaitingView;
   /** The web AIs: their sites, conversations and what their pages show. */
@@ -117,7 +118,7 @@ export class WorkspaceStore {
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ ...run })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null });
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null });
     } finally {
       this.syncing = false;
     }
@@ -163,6 +164,7 @@ export class WorkspaceStore {
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
+  if (event.type === "doctor.updated") return { ...view, doctor: event.doctor };
   if (event.type === "settings.updated") return { ...view, settings: event.settings };
   if (event.type === "waiting.updated") return { ...view, waiting: event.waiting };
   if (event.type === "spec.updated") return { ...view, spec: event.spec };

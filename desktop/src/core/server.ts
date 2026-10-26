@@ -40,6 +40,7 @@ import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
 import { briefConfig, writeBrief } from "./component-brief";
+import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
@@ -66,6 +67,8 @@ import type { ChatRecord } from "./store/records";
 import { DevBuilds, readBuild, spawnInstaller } from "./self-update";
 
 export interface CoreOptions {
+  /** Read-only CLI self-check; production starts it offline after activation. */
+  doctor?: Doctor;
   dataDir: string;
   /** Update candidate: startup writes are snapshotted; external work waits for commit. */
   deferStartup?: boolean;
@@ -144,6 +147,7 @@ export interface CoreOptions {
 export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; botId: string } | { kind: "empty" } | { kind: "taken" } | { kind: "removedByUser" };
 
 export class Core {
+  readonly doctor: DoctorModel;
   readonly epoch = randomUUID().slice(0, 18);
   private seq = 0;
   private activated = false;
@@ -203,6 +207,7 @@ export class Core {
   private copies = new Map<string, { botId: string; questionId: string }>();
 
   constructor(private options: CoreOptions) {
+    this.doctor = new DoctorModel(options.doctor, doctor => this.event({ type: "doctor.updated", doctor }));
     mkdirSync(options.dataDir, { recursive: true });
     this.pending = new PendingFiles(join(options.dataDir, "incoming"), (botId, files) => this.event({ type: "files.updated", botId, files }));
     this.catchUps = new CatchUps({
@@ -474,6 +479,7 @@ export class Core {
   private activate() {
     if (this.activated) return;
     this.activated = true;
+    if (this.options.doctor) void this.doctor.run(false).catch(() => this.log("Doctor check failed."));
     for (const bot of this.bots.values()) bot.activateStartup();
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
@@ -1458,7 +1464,7 @@ First write a test that shows this, then fix it.`;
   }
 
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
-    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "attachment.file", "card.image", "web.state", "link.authorize"]).has(cmd.type)) {
+    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "web.state", "link.authorize"]).has(cmd.type)) {
       throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
     }
     switch (cmd.type) {
@@ -1571,6 +1577,8 @@ First write a test that shows this, then fix it.`;
       case "plugins.file": return this.plugins.webFile(cmd.name, cmd.path);
       case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
       case "usage.view": return usageView(this.usage.view());
+      case "doctor.view": return this.doctor.view();
+      case "doctor.run": return this.doctor.run(cmd.includeLatest);
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
       case "rounds.stop": return this.bot(cmd.botId).stopRounds();
@@ -1663,6 +1671,7 @@ First write a test that shows this, then fix it.`;
       components: this.componentInfos(),
       plugins: this.plugins.view(),
       settings: this.settingsNow(),
+      doctor: this.doctor.view(),
       waiting: this.waiting(),
       web: this.webView(),
       teams: this.teamViews(),

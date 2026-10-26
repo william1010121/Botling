@@ -8,6 +8,7 @@ import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core } from "./server";
+import { Doctor } from "./doctor";
 import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
 import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
@@ -197,6 +198,7 @@ function groupTiming(text: string | undefined) {
 }
 
 const core = new Core({
+  ...(process.env.BOTLING_AGENT === "claude" ? { doctor: new Doctor() } : {}),
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   headConfig,
