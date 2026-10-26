@@ -240,3 +240,8 @@ it('shows captured pixels during continuous state updates while scheduling the n
   await vi.advanceTimersByTimeAsync(1);expect(f.capture).toHaveBeenCalledTimes(2);
  }finally{vi.useRealTimers();}
 });
+it('disposes without touching a destroyed owner window when it closes',async()=>{
+ const f=fixture(),stamp=await f.ready,ownerContents=f.owner.webContents;
+ f.owner.isDestroyed=()=>true;Object.defineProperty(f.owner,'webContents',{get(){throw new TypeError('Object has been destroyed');}});
+ expect(()=>f.owner.emit('closed')).not.toThrow();expect(ownerContents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.unbound,stamp);expect(ownerContents.listenerCount('did-start-navigation')).toBe(0);expect(f.view.webContents.isDestroyed()).toBe(true);
+});

@@ -32,7 +32,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  let settleInitial!:(ready:boolean)=>void;
  const initial=new Promise<boolean>(resolve=>{settleInitial=resolve;});
  const checkInitial=()=>{if(laidOut&&initialized)settleInitial(true);};
- const contents=view.webContents,boundary=new EditorHostBoundary(),host={loaded:false};hosts.set(contents,host);owners.add(owner.webContents);view.setBounds({x:0,y:0,width:0,height:0});owner.contentView.addChildView(view);
+ const contents=view.webContents,ownerContents=owner.webContents,boundary=new EditorHostBoundary(),host={loaded:false};hosts.set(contents,host);owners.add(ownerContents);view.setBounds({x:0,y:0,width:0,height:0});owner.contentView.addChildView(view);
  contents.setWindowOpenHandler(()=>({action:'deny'}));contents.on('will-attach-webview',event=>event.preventDefault());
  const up=(event:IpcMainEvent,packet:unknown)=>{const route=boundary.route('up',event,packet);if(!route)return;
   const message=route.packet.message as {botling?:string;chatId?:unknown;revision?:number};
@@ -99,7 +99,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  const ownerNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame){stopSnapshots();occluded=false;laidOut=false;initialized=false;view.setBounds({x:0,y:0,width:0,height:0});view.setVisible(false);if(owner.isVisible()&&contents.isFocused())owner.webContents.focus();invalidateOwner();}};
  const editorNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame&&host.loaded)dispose();};
  const ownerLoaded=()=>{if(host.loaded){try{bindOwner();}catch{dispose();}}};
- const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!owner.webContents.isDestroyed())owner.webContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);hosts.delete(contents);owners.delete(owner.webContents);owner.webContents.removeListener('did-start-navigation',ownerNavigation);owner.webContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
+ const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);hosts.delete(contents);owners.delete(ownerContents);ownerContents.removeListener('did-start-navigation',ownerNavigation);ownerContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
  owner.webContents.on('did-start-navigation',ownerNavigation);owner.webContents.on('did-finish-load',ownerLoaded);contents.on('did-start-navigation',editorNavigation);
  owner.once('closed',dispose);contents.once('render-process-gone',dispose);contents.once('destroyed',dispose);
  const ready=Promise.all([ownerReady,contents.loadURL(EDITOR_URL)]).then(()=>{if(closed||owner.isDestroyed())throw new Error('Editor owner closed before binding');host.loaded=true;return bindOwner()!;});
