@@ -52,3 +52,15 @@ it('F6 legacy pins inherit their pin bot author without borrowing guest links',a
  const data=tempDir('legacy-pin'),pin=randomUUID().toUpperCase();mkdirSync(join(data,'main'));writeFileSync(join(data,'main/pins.json'),JSON.stringify([{id:pin,name:'todo',data:'{}',refresh:'manual',minutes:15,size:'2x2',makingLive:false}]));writeFileSync(join(data,'main/chat.json'),JSON.stringify([swiftLine({id:randomUUID(),role:'bot',text:'[own](https://example.org/pin-own)'}),swiftLine({id:randomUUID(),role:'bot',sourceID:GUEST,text:'[guest](https://example.org/pin-guest)'})]));const c=new CoreHarness(data);running.push(c);
  expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-own'})).linked).toBe(true);expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-guest'})).linked).toBe(false);
 });
+
+it('chat attachments (a relay line, your own line) open for a user click, never for a component or a file the chat does not name',async()=>{
+ // A Catch-up summary's "Links & artifacts" lists a line's attachments, not only the links in its words.
+ const data=tempDir('link-attachments');mkdirSync(join(data,'main'));
+ const relayed='file:///synthetic/attachments/20261026-162932-20261026-162932-BF1F37-agent-activity.png',mine='file:///synthetic/attachments/20261026-170000-notes.txt';
+ writeFileSync(join(data,'main/chat.json'),JSON.stringify([swiftLine({id:randomUUID(),role:'relay',text:'A component report',attachments:[{url:relayed,kind:'image'}]}),swiftLine({id:randomUUID(),role:'user',text:'see this',attachments:[{url:mine,kind:'file'}]})]));
+ const c=new CoreHarness(data);running.push(c);
+ expect((await c.call({type:'link.authorize',source:'user',botId:MAIN,url:relayed})).linked).toBe(true);
+ expect((await c.call({type:'link.authorize',source:'user',botId:MAIN,url:mine})).linked).toBe(true);
+ expect((await c.call({type:'link.authorize',source:'user',botId:MAIN,url:'file:///synthetic/attachments/other.png'})).linked).toBe(false);
+ expect((await c.call({type:'link.authorize',source:'component',botId:MAIN,url:mine})).linked).toBe(false);
+});

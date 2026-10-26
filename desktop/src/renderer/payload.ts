@@ -5,6 +5,7 @@
 import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SpecStateView, SubagentView, TaskView } from "../contract";
 import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
+import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
 
 /** What the chat frame needs besides the page's own state: Phase 0 cards and turn states. */
@@ -19,17 +20,8 @@ export interface FrameExtras {
 
 const MINUTE = 60_000;
 
-/**
- * Where the chat origin serves a bot's file: an attachment of one of its lines (its file:// URL) or
- * one waiting in the input box (`pending:<id>`). Main asks the core, which serves only those.
- */
-export function attachmentURL(botId: string, ref: string): string {
-  const bytes = new TextEncoder().encode(ref);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const encoded = btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-  return `botling-chat://chat/attachment/${encodeURIComponent(botId)}/${encoded}`;
-}
+/** Where the chat origin serves a bot's file (`attachment-url.ts`). */
+export { attachmentURL };
 
 function timeOfDay(date: Date): string {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });

@@ -25,6 +25,7 @@ import { CoreClient } from "./core-client";
 import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
+import { attachmentFile, attachmentTarget } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
 import {
   AccountView, MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
@@ -450,14 +451,19 @@ async function openResult(botId: string, url: string): Promise<{ opened: boolean
   if (!access.result) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
   return openLink(url);
 }
-async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string): Promise<{opened:boolean}> {
+async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string,reveal=false): Promise<{opened:boolean}> {
+  // A file attached in this chat, as the chat page shows it (served by the chat origin): the file it
+  // names, which the core accepts only when a line of this chat has it (1.x opens it like any link).
+  url = attachmentFile(url, botId) ?? url;
   const access = await core.call({type:"link.authorize",source,botId,url,...(messageId?{messageId}:{}),...(pinId?{pinId}:{})});
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
-  return openLink(url);
+  return openLink(url, reveal);
 }
-async function openLink(url: string): Promise<{opened:boolean}> {
+/** `reveal`: the lightbox's "Show in Finder" (a local file only, shown in Finder rather than opened). */
+async function openLink(url: string, reveal = false): Promise<{opened:boolean}> {
   const external = process.env.BOTLING_NO_EXTERNAL === "1";
   if (/^(https?|mailto):/i.test(url)) {
+    if (reveal) throw Object.assign(new Error("Only a file can be shown in Finder."), { code: "not_found" });
     openedResults.push(url);
     if (!external) await shell.openExternal(url);
     return { opened: true };
@@ -468,7 +474,7 @@ async function openLink(url: string): Promise<{opened:boolean}> {
   openedResults.push(url);
   if (external) return { opened: true };
   const dot = path.lastIndexOf(".");
-  if (RESULT_TYPES.has(dot >= 0 ? path.slice(dot).toLowerCase() : "")) {
+  if (!reveal && RESULT_TYPES.has(dot >= 0 ? path.slice(dot).toLowerCase() : "")) {
     const problem = await shell.openPath(path);
     if (problem) throw new Error(problem);
   } else {
@@ -513,7 +519,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
-    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId);
+    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true);
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "updates.check": return announce(await updater.check(cmd.manual));
     case "updates.copies": return retainedUpdateCopies(dataDir,installedApp,await runningAppBundles());
@@ -663,9 +669,9 @@ async function chatFile(url: URL): Promise<Response | null> {
     try { return new Response(readFileSync(file), { headers: { "Content-Type": type, ...NO_SNIFF, "Cache-Control": "no-store" } }); } catch { return null; }
   }
   // A file a message (or the input box) in this bot's chat has attached; never any other path.
-  const attached = /^\/attachment\/([A-Za-z0-9_.:-]{1,64})\/([A-Za-z0-9_-]{1,8000})$/.exec(path);
+  const attached = attachmentTarget(path);
   if (attached) {
-    const answer = await core.request({ type: "attachment.file", botId: attached[1]!, ref: Buffer.from(attached[2]!, "base64url").toString("utf8") });
+    const answer = await core.request({ type: "attachment.file", botId: attached.botId, ref: attached.ref });
     if (!answer.ok) return null;
     const { path: file, type } = answer.result as { path: string; type: string };
     try {
