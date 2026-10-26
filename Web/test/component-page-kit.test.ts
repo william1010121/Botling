@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { componentPage } from "../src/components";
-import { kitV1 } from "../kit/dist/kit-v1";
+import { kitV1 } from "../kit/generated/kit-v1";
 
 // A template that asks for the kit (<meta name="ccb-kit" content="1">) gets it inline, right
 // after the page's ccb runtime, and <html data-theme="dark">; nothing else on its page changes.

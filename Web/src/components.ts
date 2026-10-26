@@ -8,7 +8,7 @@ import { acceptPictures } from "./pictures";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { onScreen, whenShownAgain } from "./visible";
 import { escapeHTML } from "./util";
-import { kitV1 } from "../kit/dist/kit-v1";
+import { kitV1 } from "../kit/generated/kit-v1";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
 /**

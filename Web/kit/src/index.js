@@ -1,4 +1,4 @@
-// The component kit, version 1 (README.md). Built into dist/kit.v1.js and put into a component's
+// The component kit, version 1 (README.md). Built into generated/kit.v1.js and put into a component's
 // page when its template has <meta name="ccb-kit" content="1">: it runs after the page's `ccb`
 // runtime and before the template, adds its stylesheet (the design tokens, then the blocks) at the
 // top of <head>, and gives the template `ccb.kit` (also `window.ccbKit`).

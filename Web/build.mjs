@@ -14,7 +14,7 @@ const resources = join(here, "../Sources/ClaudeCodeBot/Resources");
 const out = join(resources, "web");
 const pluginsOut = join(resources, "plugins");
 
-// The component kit first (kit/dist, committed): chat.js puts its text into component pages.
+// The component kit first (kit/generated, committed): chat.js puts its text into component pages.
 await buildKit({ write: true });
 rmSync(out, { recursive: true, force: true });
 rmSync(pluginsOut, { recursive: true, force: true });
