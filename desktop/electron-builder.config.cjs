@@ -63,6 +63,10 @@ module.exports = {
     darkModeSupport: true,
     minimumSystemVersion: "13.0",
     identity: macCertificate ? undefined : "-",
+    // Ad-hoc only: Electron Framework's Resources hold ~225 .pak/.dat/.bin data files and no code. The
+    // framework's own seal covers them, so signing each one separately (twice, through Versions/A and
+    // Versions/Current) only added ~40 s to every local package. Certificate builds are unchanged.
+    signIgnore: macCertificate ? undefined : ["/Electron Framework\\.framework/(Versions/[^/]+/)?Resources/"],
     hardenedRuntime: macCertificate,
     entitlements: macCertificate ? join(__dirname, "build", "entitlements.mac.plist") : undefined,
     entitlementsInherit: macCertificate ? join(__dirname, "build", "entitlements.mac.plist") : undefined,

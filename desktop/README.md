@@ -97,7 +97,8 @@ npm install
 | `npm run dev:fake` | Build and open the app with the fake CLI (no usage). |
 | `npm run dev` | Same with the real `claude` CLI in harmless mode — `--safe-mode`, no tools, no MCP, no saved session (`BOTLING_HARMLESS=0` makes it a real bot that asks before tools). |
 | `npm run build` | Bundle main, preload, core and renderer into `out/` (not committed). |
-| `npm test` | Unit tests (vitest, real processes) then Electron end-to-end tests (Playwright). |
+| `npm run test:changed` | The default check while working: typecheck, then only the unit tests related to files changed since `HEAD` (or `npm run test:changed -- <base-ref>`). |
+| `npm test` | Unit tests (vitest, real processes) then Electron end-to-end tests (Playwright). The full suite, run before a release. |
 | `npm run test:live` | Three short real `claude` turns through the long-lived head (spends a little usage). |
 | `npm run test:live:codex` | One real Codex turn and one real two-head claim (three turns; Codex gets a throwaway `CODEX_HOME` with a copy of `auth.json` only). |
 | `npm run test:live:3a` | Phase 3a's real checks: claude hearing a message mid-turn, a monitored command through `codex app-server`'s `command/exec`, a Catch-up summary by `codex exec` (same throwaway `CODEX_HOME`). |
