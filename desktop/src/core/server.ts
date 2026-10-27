@@ -65,7 +65,7 @@ import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAI
 import { EXTRACTORS_PLUGIN, WebShelf, askAboutWebText, decodeReading, extractorCall, extractorFor, installExtractors, webBriefing, webSites, type WebSite } from "./web";
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
-import { DevBuilds, readBuild, spawnInstaller } from "./self-update";
+import { DevBuilds, devWorkRoot, installTarget, readBuild, spawnInstaller } from "./self-update";
 import { parsePlan } from "../hot-install-plan";
 
 /** What the core asks of main (self-update.ts); planBuild and installBuild carry a build's path. */
@@ -474,6 +474,9 @@ export class Core {
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
       appPid: app?.pid ?? null,
       appDataDir: app?.dataDir ?? null,
+      // The app the user runs lives on this Mac's disk; only development work goes on the work drive.
+      installTarget: (running) => installTarget(running, homedir()),
+      devWork: () => devWorkRoot(),
       launchInstaller: (command, log) => {
         spawnInstaller(command, log);
         // Bots write their notes as the app quits; the script waits for that.

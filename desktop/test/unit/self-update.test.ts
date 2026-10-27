@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { join } from "node:path";
 import { tempDir } from "../helpers";
 import {
-  DevBuilds, FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, failures, installOutcome, prepareInstall, readBuild, sensitiveChanges, setFailures,
+  DevBuilds, FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, devWorkRoot, failures, installOutcome, installTarget, prepareInstall, readBuild, sensitiveChanges, setFailures,
   type BuildInfo, type DeskBot,
 } from "../../src/core/self-update";
 
@@ -81,7 +81,7 @@ describe("a build", () => {
     const to = readBuild(fakeApp(join(dir, "b"), "Botling 2"))!;
     const command = prepareInstall(join(dir, "core"), from, to, "DEV", "faster", 4242, "/data");
     expect(command.slice(0, 3)).toEqual(["/usr/bin/nohup", "/bin/bash", join(dir, "core", "self-update", "install.sh")]);
-    expect(command.slice(3)).toEqual(["4242", from.path, to.path, expect.stringMatching(/backups\/Botling-2-2\.0\.1-.*\.app$/), join(dir, "core", "self-update", "healthy"), join(dir, "core", "self-update", "rolled-back"), "90", "/data"]);
+    expect(command.slice(3)).toEqual(["4242", from.path, to.path, expect.stringMatching(/backups\/Botling-2-2\.0\.1-.*\.app$/), join(dir, "core", "self-update", "healthy"), join(dir, "core", "self-update", "rolled-back"), "90", "/data", from.path]);
     expect(readFileSync(command[2]!, "utf8")).toBe(INSTALL_SCRIPT);
     expect(spawnSync("/bin/bash", ["-n", command[2]!]).status).toBe(0);
     expect(installOutcome(join(dir, "core"))).toMatchObject({ kind: "installed", state: { requesterID: "DEV", note: "faster" } });
@@ -151,7 +151,7 @@ describe("<install-build>", () => {
     main.notices.at(-1)!.onPick!(0);
     expect(launched).toHaveLength(1);
     expect(launched[0]!.slice(3, 6)).toEqual(["4242", join(root, "Applications", "Botling 2.app"), join(root, "dist", "Botling 2.app")]);
-    expect(launched[0]!.at(-1)).toBe(join(root, "data"));
+    expect(launched[0]!.slice(-2)).toEqual([join(root, "data"), join(root, "Applications", "Botling 2.app")]);
   });
 
   it("after the restart: up counts as up after a while, and the asker hears it; a roll-back is told and counted", () => {
@@ -183,6 +183,108 @@ describe("<install-build>", () => {
     expect(installOutcome(join(root, "core"))).toBeNull();
     builds.developerModeOn();
     expect(failures(join(root, "core"))).toBe(0);
+  });
+});
+
+describe("where a build is installed", () => {
+  it("on this Mac's disk: in place when the running app is local, ~/Applications when it runs from an external volume", () => {
+    expect(installTarget("/Volumes/My-SSD/botling-work/installed/trial/Botling 2.app", "/Users/me")).toBe("/Users/me/Applications/Botling 2.app");
+    expect(installTarget("/Volumes/Other Disk/Botling 2.app", "/Users/me")).toBe("/Users/me/Applications/Botling 2.app");
+    expect(installTarget("/Users/me/Applications/Botling 2.app", "/Users/me")).toBe("/Users/me/Applications/Botling 2.app");
+    expect(installTarget("/Applications/Botling 2.app", "/Users/me")).toBe("/Applications/Botling 2.app");
+  });
+
+  it("a build replacing one on an external volume always restarts into ~/Applications; the drive's copy is the one reopened on failure", async () => {
+    const root = tempDir("self-update");
+    const local = join(root, "home", "Applications", "Botling 2.app");
+    let planned = 0;
+    const { builds, main, dev, running, launched } = desk(root, {
+      installTarget: () => local,
+      planBuild: async () => { planned++; return { mode: "hot", parts: ["core"] }; },
+    });
+    const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
+    await builds.propose(built, "", dev);
+    const card = main.notices.at(-1)!;
+    expect(planned).toBe(0);
+    expect(card.text).toContain("wants to install a new Botling build and restart.");
+    expect(card.text).toContain(`- Installed to: ${local} (this Mac's own disk).`);
+    await card.onPick!(0);
+    expect(launched).toHaveLength(1);
+    const command = launched[0]!;
+    expect(command[4]).toBe(local);
+    expect(command[5]).toBe(built);
+    expect(command.at(-1)).toBe(running.path);
+  });
+
+  it("the script installs to the new place and leaves the running copy; a build that does not come up is set aside and the old copy reopened", () => {
+    const dir = tempDir("self-update-script");
+    const running = readBuild(fakeApp(join(dir, "drive"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }))!;
+    const build = readBuild(fakeApp(join(dir, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" }))!;
+    const target = join(dir, "home", "Applications", "Botling 2.app");
+    const opened = join(dir, "opened.log");
+    const fakeOpen = join(dir, "open.sh");
+    writeFileSync(fakeOpen, `#!/bin/sh\necho "$2" >> "${opened}"\n[ -n "$MAKE_HEALTHY" ] && touch "$MAKE_HEALTHY"\nexit 0\n`);
+    chmodSync(fakeOpen, 0o755);
+    const gone = spawnSync("/usr/bin/true").pid!;
+    const run = (healthy: boolean) => {
+      const command = prepareInstall(join(dir, "core"), running, build, "DEV", "", gone, "/data", new Date(), undefined, target);
+      const args = command.slice(3);
+      args[6] = "1"; // seconds to come up
+      return spawnSync("/bin/bash", [command[2]!, ...args], { encoding: "utf8", env: { ...process.env, BOTLING_TEST_OPEN: fakeOpen, ...(healthy ? { MAKE_HEALTHY: args[4]! } : {}) } });
+    };
+
+    expect(run(true).status).toBe(0);
+    expect(readBuild(target)?.commit).toBe("bbbbbbb2222");
+    expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
+    expect(readFileSync(opened, "utf8").trim().split("\n")).toEqual([target]);
+    expect(installOutcome(join(dir, "core"))).toMatchObject({ kind: "installed" });
+
+    // Again with nothing at the target (it was put aside), and the new build never says it is up.
+    execFileSync("/bin/rm", ["-rf", target, opened]);
+    expect(run(false).status).toBe(1);
+    expect(existsSync(target)).toBe(false);
+    expect(readFileSync(join(`${target}.failed`, "Contents", "Info.plist"), "utf8")).toContain("bbbbbbb2222");
+    expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
+    expect(readFileSync(opened, "utf8").trim().split("\n")).toEqual([target, running.path]);
+    expect(installOutcome(join(dir, "core"))).toMatchObject({ kind: "rolledBack", reason: "the new build did not come up in 1 seconds" });
+  });
+
+  it("an existing build at the target is backed up and put back if the new one does not come up", () => {
+    const dir = tempDir("self-update-script");
+    const running = readBuild(fakeApp(join(dir, "home", "Applications"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }))!;
+    const build = readBuild(fakeApp(join(dir, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" }))!;
+    const fakeOpen = join(dir, "open.sh");
+    writeFileSync(fakeOpen, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeOpen, 0o755);
+    const command = prepareInstall(join(dir, "core"), running, build, "DEV", "", spawnSync("/usr/bin/true").pid!, "/data");
+    const args = command.slice(3);
+    args[6] = "1";
+    expect(spawnSync("/bin/bash", [command[2]!, ...args], { env: { ...process.env, BOTLING_TEST_OPEN: fakeOpen } }).status).toBe(1);
+    expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
+    expect(readFileSync(join(`${running.path}.failed`, "Contents", "Info.plist"), "utf8")).toContain("bbbbbbb2222");
+  });
+});
+
+describe("developer work", () => {
+  it("goes on the work drive when it is there, else beside the project", () => {
+    const dir = tempDir("self-update");
+    expect(devWorkRoot({ BOTLING_DEV_WORK_DIR: dir })).toBe(dir);
+    expect(devWorkRoot({ BOTLING_DEV_WORK_DIR: join(dir, "missing") })).toBeNull();
+    expect(devWorkRoot({ BOTLING_DEV_WORK_DIR: "/Volumes/No-Such-Drive-Botling/work" })).toBeNull();
+    expect(devWorkRoot({}, () => false)).toBeNull();
+    expect(devWorkRoot({}, () => true)).toBe("/Volumes/My-SSD/botling-work");
+  });
+
+  it("the developer briefing names the work drive's folders, or the project's own when the drive is away", () => {
+    const root = tempDir("self-update");
+    const onDrive = desk(root, { devWork: () => "/Volumes/Work/botling-work" });
+    const text = onDrive.builds.briefing(onDrive.dev);
+    expect(text).toContain("git worktree add /Volumes/Work/botling-work/<short-task> -b bot/<short-task>");
+    expect(text).toContain("cd desktop && BOTLING_DIST_DIR=/Volumes/Work/botling-work/builds/dist npm run dist:dir; it is written to /Volumes/Work/botling-work/builds/dist/mac-arm64/Botling 2.app");
+    const away = desk(root, { devWork: () => null });
+    const local = away.builds.briefing(away.dev);
+    expect(local).toContain(`git worktree add ${join(root, "repo", ".bot", "worktrees")}/<short-task>`);
+    expect(local).toContain("cd desktop && npm run dist:dir; it is written to desktop/dist/mac-arm64/Botling 2.app");
   });
 });
 

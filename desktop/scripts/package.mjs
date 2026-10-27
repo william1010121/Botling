@@ -4,8 +4,10 @@
 //
 // Caches stay beside the checkout unless set: electron-builder's (ELECTRON_BUILDER_CACHE) and
 // Electron's downloads (electron_config_cache) default to desktop/.cache/, never ~/Library/Caches.
+// When the development work drive is mounted (BOTLING_DEV_WORK_DIR, else /Volumes/My-SSD/botling-work;
+// core/self-update.ts's devWorkRoot) they go to its cache/ instead; unmounted, beside the checkout as before.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,8 +19,17 @@ if (!args.includes("--dir") && !publicKey && !args.includes("--unsigned-updates"
   process.exit(1);
 }
 process.env.BOTLING_UNSIGNED_UPDATES = publicKey ? "0" : "1";
-process.env.ELECTRON_BUILDER_CACHE ||= join(desktop, ".cache", "electron-builder");
-process.env.electron_config_cache ||= join(desktop, ".cache", "electron");
+const workDrive = (() => {
+  const dir = process.env.BOTLING_DEV_WORK_DIR?.trim() || "/Volumes/My-SSD/botling-work";
+  const volume = /^\/Volumes\/[^/]+/.exec(dir)?.[0];
+  try {
+    if (volume && statSync(volume).dev === statSync("/Volumes").dev) return null; // an empty mount point
+    return dir.startsWith("/") && statSync(dir).isDirectory() ? dir : null;
+  } catch { return null; }
+})();
+const caches = workDrive ? join(workDrive, "cache") : join(desktop, ".cache");
+process.env.ELECTRON_BUILDER_CACHE ||= join(caches, "electron-builder");
+process.env.electron_config_cache ||= join(caches, "electron");
 // Never sign with some certificate that happens to be in the keychain: only one named by CSC_LINK/CSC_NAME.
 if (!process.env.CSC_LINK && !process.env.CSC_NAME) process.env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
 for (const dir of [process.env.ELECTRON_BUILDER_CACHE, process.env.electron_config_cache]) mkdirSync(dir, { recursive: true });

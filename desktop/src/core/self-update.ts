@@ -12,7 +12,7 @@
 // pick there (`announceRelease`).
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { writeFileAtomic } from "./durable/atomic";
 import { planText, PART_NAMES, type HotReport, type InstallPlan } from "../hot-install-plan";
 
@@ -72,6 +72,40 @@ export function readBuild(bundle: string): BuildInfo | null {
   return { path, bundleID: id, version: info.CFBundleShortVersionString || "?", commit, dirty };
 }
 
+/** The external volume a path is on (`/Volumes/<name>`), or null when it is on this Mac's own disk. */
+export function externalVolume(path: string): string | null {
+  const match = /^\/Volumes\/([^/]+)(?:\/|$)/.exec(resolve(path));
+  return match ? join("/Volumes", match[1]!) : null;
+}
+
+/**
+ * Where a developer build is installed: in place of the running one when that is on this Mac's own disk;
+ * else (running from an external volume) as ~/Applications/<same name>.app. Only development work lives on
+ * the external drive; the app the user runs does not. The copy on the drive is left as it is and is the one
+ * opened again if the new build does not come up.
+ */
+export function installTarget(running: string, home: string): string {
+  return externalVolume(running) && home.startsWith("/") ? join(home, "Applications", basename(running)) : resolve(running);
+}
+
+/** Whether a folder is there: on an external volume only when that volume is mounted (not an empty /Volumes stub). */
+export function folderAvailable(path: string): boolean {
+  const volume = externalVolume(path);
+  try {
+    if (volume && statSync(volume).dev === statSync("/Volumes").dev) return false;
+    return statSync(path).isDirectory();
+  } catch { return false; }
+}
+
+/** The external work drive's folder for development (BOTLING_DEV_WORK_DIR; Botling's maintainers use /Volumes/My-SSD/botling-work). */
+export const DEV_WORK_DIR = "/Volumes/My-SSD/botling-work";
+
+/** Where developer work (worktrees, builds) goes: the work drive's folder when it is there, else null (beside the project). */
+export function devWorkRoot(env: Record<string, string | undefined> = process.env, available = folderAvailable): string | null {
+  const dir = env.BOTLING_DEV_WORK_DIR?.trim() || DEV_WORK_DIR;
+  return dir.startsWith("/") && available(dir) ? resolve(dir) : null;
+}
+
 /** What is under way, in `<root>/self-update/state.json`. */
 export interface InstallState {
   from: BuildInfo;
@@ -117,25 +151,35 @@ export function setFailures(root: string, count: number) {
 }
 
 /**
- * The script, run as: install.sh pid target new backup healthy rolled-back seconds data-dir.
- * (1.x's, with the new build opened with the data folder this one uses.)
+ * The script, run as: install.sh pid target new backup healthy rolled-back seconds data-dir previous.
+ * (1.x's, with the new build opened with the data folder this one uses.) `previous` is the running build,
+ * opened again when the new one fails; it differs from `target` when the build moves off an external volume
+ * (`installTarget`), and is then left untouched. A target that is not there yet needs no backup.
  */
 export const INSTALL_SCRIPT = `#!/bin/bash
 # Installs a new Botling 2 build while the old one quits; puts the old one back if the
 # new one does not come up. Written by Botling 2 (core/self-update.ts, after 1.x's SelfUpdate.swift).
-PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"; DATA="$8"
+PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"; DATA="$8"; PREVIOUS="\${9:-$2}"
+OPEN="\${BOTLING_TEST_OPEN:-/usr/bin/open}"
 say() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
 reopen() {
-  if [ -n "$DATA" ]; then /usr/bin/open -n "$1" --env "BOTLING_DATA_DIR=$DATA"; else /usr/bin/open -n "$1"; fi
+  if [ -n "$DATA" ]; then "$OPEN" -n "$1" --env "BOTLING_DATA_DIR=$DATA"; else "$OPEN" -n "$1"; fi
 }
+putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
 say "waiting for Botling 2 ($PID) to quit"
 for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
 if kill -0 "$PID" 2>/dev/null; then say "it did not quit; nothing changed"; echo "did not quit" > "$ROLLED"; exit 1; fi
-say "moving $TARGET to $BACKUP"
-mv "$TARGET" "$BACKUP" || { say "could not move the old build"; echo "could not move the old build" > "$ROLLED"; reopen "$TARGET"; exit 1; }
+if [ -e "$TARGET" ]; then
+  say "moving $TARGET to $BACKUP"
+  mv "$TARGET" "$BACKUP" || { say "could not move the old build"; echo "could not move the old build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1; }
+else
+  BACKUP=""
+  say "installing to $TARGET (the running build stays at $PREVIOUS)"
+  mkdir -p "$(dirname "$TARGET")" || { say "could not make $(dirname "$TARGET")"; echo "could not make the folder for the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1; }
+fi
 if ! /usr/bin/ditto "$NEW" "$TARGET"; then
   say "could not copy the new build; putting the old one back"
-  rm -rf "$TARGET"; mv "$BACKUP" "$TARGET"; echo "could not copy the new build" > "$ROLLED"; reopen "$TARGET"; exit 1
+  rm -rf "$TARGET"; putback; echo "could not copy the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1
 fi
 say "opening the new build"
 reopen "$TARGET"
@@ -146,14 +190,14 @@ done
 say "the new build did not come up in $WAIT seconds; putting the old one back"
 pkill -f "$TARGET/Contents/MacOS/" ; sleep 2
 rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null
-mv "$BACKUP" "$TARGET"
+putback
 echo "the new build did not come up in $WAIT seconds" > "$ROLLED"
-reopen "$TARGET"
+reopen "$PREVIOUS"
 exit 1
 `;
 
 /** Writes the state and the script; returns the command that runs the script (detached; the app quits right after). */
-export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), mode?: string): string[] {
+export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), mode?: string, target = from.path): string[] {
   const folder = updateFolder(root);
   mkdirSync(join(folder, "backups"), { recursive: true });
   for (const marker of [healthyFile(root), rolledBackFile(root)]) rmSync(marker, { force: true });
@@ -162,7 +206,7 @@ export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, req
   const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup, ...(mode ? { mode } : {}) };
   writeFileAtomic(stateFile(root), JSON.stringify(state, null, 2));
   writeFileSync(scriptFile(root), INSTALL_SCRIPT, { mode: 0o700 });
-  return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), from.path, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir];
+  return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), target, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir, from.path];
 }
 
 /** How the last install went, read at start: null when none was under way. */
@@ -242,6 +286,10 @@ export interface DevBuildDeps {
   /** Main's pid (the script waits for it to quit) and its data folder (the new build opens with it). */
   appPid: number | null;
   appDataDir: string | null;
+  /** Where a build replacing `running` is installed (`installTarget`); absent: in its place. */
+  installTarget?: (running: string) => string;
+  /** Where developer work goes (`devWorkRoot`); absent or null: beside the project. */
+  devWork?: () => string | null;
   /** Starts the script detached, then asks main to quit. */
   launchInstaller: (command: string[], log: string) => void;
   /** A PNG of the app's window, or null. */
@@ -281,14 +329,22 @@ function bundlePath(raw: string): string | null {
 export class DevBuilds {
   constructor(private deps: DevBuildDeps) {}
 
+  /** Where a build replacing `running` goes (`installTarget`). */
+  private target(running: BuildInfo): string { return this.deps.installTarget?.(running.path) ?? running.path; }
+  /** Whether it goes somewhere else than the running build (off an external volume). */
+  private moves(running: BuildInfo): boolean { return resolve(this.target(running)) !== resolve(running.path); }
+
   /** What the developer project's manager is told on top of a manager's usual instructions (`developerBriefing`). */
   briefing(bot: DeskBot): string {
     if (this.deps.developer()?.id !== bot.id) return "";
-    const worktrees = join(bot.profile.folder, ".bot", "worktrees");
+    // Development work goes on the work drive when it is there (`devWorkRoot`), else beside the project.
+    const work = this.deps.devWork?.() ?? null;
+    const worktrees = work ?? join(bot.profile.folder, ".bot", "worktrees");
+    const dist = work ? join(work, "builds", "dist") : null;
     return `(App: Developer mode. This folder is Botling's own source, the app you are running in (Botling 2 is in desktop/), and you develop it.
 - One writer at a time. Do each task in a git worktree of its own: git worktree add ${worktrees}/<short-task> -b bot/<short-task>. Edit, build and test there; when the tests pass, merge it into the main branch and remove the worktree. If git status in the main folder shows changes you did not make, someone else is working: stop and ask the user.
 - Feedback from the user ("not right" on a reply) comes to you with the chat around it. First write a test that shows the problem, then fix it, then say in one sentence what was wrong.
-- To try your work: from the main folder, after merging, build the app with cd desktop && npm run dist:dir; it is written to desktop/dist/mac-arm64/Botling 2.app (mac-x64 on Intel).
+- To try your work: from the main folder, after merging, build the app with cd desktop && ${dist ? `BOTLING_DIST_DIR=${dist} ` : ""}npm run dist:dir; it is written to ${dist ?? "desktop/dist"}/mac-arm64/Botling 2.app (mac-x64 on Intel).
 - To install it: write where you are into your memory file first (you are restarted too), then end your reply with <install-build path="full path of that Botling 2.app">what changed, in a sentence or two</install-build>. The user confirms; the app restarts on the new build and tells you whether it came up. A build that does not come up is rolled back by itself.
 - To see the running app: end your reply with <app-screenshot/>; a picture of its window comes back to you.
 - Never change what bots may do (tools, permissions, the prompts' rules) unless the user asked for it; the install card shows such changes to the user.)`;
@@ -317,7 +373,8 @@ export class DevBuilds {
     if (!build) return refuse(`there is no app bundle at ${path}.`);
     if (build.bundleID !== running.bundleID) return refuse(`${path} is not Botling 2 (${build.bundleID}).`);
     if (build.path === running.path) return refuse("that is the build running now; build into desktop/dist/ and point at that.");
-    if (!this.deps.planBuild) return this.card(build, running, note, from, null);
+    // A build that moves off an external volume is a new bundle on this Mac's disk: always a restart.
+    if (!this.deps.planBuild || this.moves(running)) return this.card(build, running, note, from, null);
     // Main compares the builds first, so the card can say whether the app restarts.
     return this.deps.planBuild(build.path).then(
       (plan) => this.card(build, running, note, from, plan),
@@ -331,6 +388,7 @@ export class DevBuilds {
     const hot = plan?.mode === "hot";
     const lines = [hot ? `**${from.profile.name}** wants to install a new Botling build without restarting.` : `**${from.profile.name}** wants to install a new Botling build and restart.`, "", `- New: ${buildLabel(build)}`, `- Running: ${buildLabel(running)}`];
     if (plan) lines.push(`- Expected: ${planText(plan)}`);
+    if (this.moves(running)) lines.push(`- Installed to: ${this.target(running)} (this Mac's own disk). The copy running from ${externalVolume(running.path)} is left as it is.`);
     const what = note.trim();
     if (what) lines.push("", what);
     if (build.dirty) lines.push("", "It was built from uncommitted changes.");
@@ -370,7 +428,7 @@ export class DevBuilds {
     }
     const running = this.deps.runningBuild();
     if (!running || !this.deps.appPid) return;
-    if (!shown || !this.deps.planBuild) return this.restart(running, build, requester, note, shown);
+    if (!shown || !this.deps.planBuild || this.moves(running)) return this.restart(running, build, requester, note, shown);
     return this.deps.planBuild(build.path).then(async (plan) => {
       if (plan.mode !== shown.mode) {
         const why = `${buildLabel(build)} changed since the card was shown (it now means ${planText(plan)}), so nothing was installed.`;
@@ -390,7 +448,7 @@ export class DevBuilds {
   /** The restart path (1.x's): the script outside the app swaps the bundle once the app has quit. */
   private restart(running: BuildInfo, build: BuildInfo, requester: string, note: string, plan: InstallPlan | null) {
     try {
-      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid!, this.deps.appDataDir ?? "", new Date(), plan ? planText(plan) : undefined);
+      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid!, this.deps.appDataDir ?? "", new Date(), plan ? planText(plan) : undefined, this.target(running));
       this.deps.log(`installing ${buildLabel(build)} for ${requester}`);
       this.deps.launchInstaller(command, installLog(this.deps.root));
     } catch (error) {
