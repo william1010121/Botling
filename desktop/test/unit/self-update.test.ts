@@ -3,11 +3,12 @@
 // Nothing here runs the install script (it would open an app); its syntax is checked with bash -n.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
+import { packagedDataDir } from "../../src/main/main-environment";
 import {
-  DevBuilds, FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, devWorkRoot, failures, installOutcome, installTarget, prepareInstall, readBuild, sensitiveChanges, setFailures,
+  DevBuilds, FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, devWorkRoot, failures, installOutcome, installTarget, localDataMove, prepareInstall, readBuild, sensitiveChanges, setFailures,
   type BuildInfo, type DeskBot,
 } from "../../src/core/self-update";
 
@@ -262,6 +263,126 @@ describe("where a build is installed", () => {
     expect(spawnSync("/bin/bash", [command[2]!, ...args], { env: { ...process.env, BOTLING_TEST_OPEN: fakeOpen } }).status).toBe(1);
     expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
     expect(readFileSync(join(`${running.path}.failed`, "Contents", "Info.plist"), "utf8")).toContain("bbbbbbb2222");
+  });
+});
+
+describe("the data moves with a build that moves off an external volume", () => {
+  const drive = "/Volumes/My-SSD/botling-work/installed/trial";
+  const local = "/Users/me/Library/Application Support/Botling 2 Dev Trial";
+
+  it("goes to the folder the app opens with from Finder, only when the data is on an external volume and the build moves", () => {
+    // What main hands the core is what it opens with when no BOTLING_DATA_DIR is set.
+    expect(packagedDataDir("/Users/me/Library/Application Support", true)).toBe(local);
+    const running = `${drive}/Botling 2.app`, target = "/Users/me/Applications/Botling 2.app";
+    expect(localDataMove(`${drive}/development-data`, running, target, local)).toBe(local);
+    expect(localDataMove(`${drive}/development-data`, target, target, local)).toBeNull(); // installed in place
+    expect(localDataMove("/Users/me/data", running, target, local)).toBeNull(); // already on this disk
+    expect(localDataMove(`${drive}/development-data`, running, target, null)).toBeNull(); // not packaged
+    expect(localDataMove(`${drive}/development-data`, running, target, "/Volumes/Other/data")).toBeNull();
+    expect(localDataMove(`${drive}/development-data`, running, "/Volumes/X/Botling 2.app", local)).toBeNull();
+    expect(localDataMove(null, running, target, local)).toBeNull();
+  });
+
+  it("the card says where the data goes, and the script is handed that folder", async () => {
+    const root = tempDir("self-update");
+    const target = "/Users/me/Applications/Botling 2.app"; // this Mac's own disk (the test folder may be on a drive)
+    const { builds, main, dev, launched } = desk(root, {
+      installTarget: () => target, appDataDir: `${drive}/development-data`, localDataDir: local,
+      // The running build is on the drive.
+      runningBuild: () => ({ path: `${drive}/Botling 2.app`, bundleID: BUNDLE_ID, version: "2.0.1", commit: "aaaaaaa1111", dirty: false }),
+    });
+    const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
+    await builds.propose(built, "", dev);
+    const card = main.notices.at(-1)!;
+    expect(card.text).toContain(`- Data: copied to ${local} if this Mac's disk has room for it (else it stays on the drive). The data on /Volumes/My-SSD is left as it is`);
+    await card.onPick!(0);
+    const command = launched[0]!;
+    expect(command.slice(-3)).toEqual([`${drive}/development-data`, `${drive}/Botling 2.app`, local]);
+  });
+
+  /** A data folder on "the drive", an install of a build to "this Mac's disk", and a fake `open` (no app is opened). */
+  function moving(dir: string) {
+    const running = readBuild(fakeApp(join(dir, "drive"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }))!;
+    const build = readBuild(fakeApp(join(dir, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" }))!;
+    const target = join(dir, "home", "Applications", "Botling 2.app");
+    const data = join(dir, "drive", "development-data");
+    const localData = join(dir, "home", "Library", "Application Support", "Botling 2 Dev Trial");
+    const core = join(data, "core");
+    mkdirSync(join(core, "codex-threads"), { recursive: true });
+    mkdirSync(join(core, "self-update", "backups", "Botling-2-old.app"), { recursive: true });
+    writeFileSync(join(core, "self-update", "backups", "Botling-2-old.app", "big"), "x".repeat(4096));
+    mkdirSync(join(data, "electron"), { recursive: true });
+    symlinkSync("host-123", join(data, "electron", "SingletonLock"));
+    writeFileSync(join(core, "approved-commands.json"), JSON.stringify({ main: [`cat ${core}/main/memory.md`] }));
+    writeFileSync(join(core, "codex-threads", "t.workers.json"), JSON.stringify({ instructions: `Update only ${core}/main/memory.md` }));
+    writeFileSync(join(core, "binary.bin"), Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from(core)]));
+    const opened = join(dir, "opened.log");
+    const fakeOpen = join(dir, "open.sh");
+    // Logs what it was asked to open; MAKE_HEALTHY: the new build comes up, saying so where its data is.
+    writeFileSync(fakeOpen, `#!/bin/sh\necho "$*" >> "${opened}"\ncase "$2" in "${target}") [ -n "$MAKE_HEALTHY" ] && mkdir -p "$(dirname "$MAKE_HEALTHY")" && touch "$MAKE_HEALTHY";; esac\nexit 0\n`);
+    chmodSync(fakeOpen, 0o755);
+    const run = (healthyAt: string | null, freeKb?: number) => {
+      const command = prepareInstall(core, running, build, "DEV", "", spawnSync("/usr/bin/true").pid!, data, new Date(), undefined, target, localData);
+      const args = command.slice(3);
+      args[6] = "1";
+      const env: Record<string, string | undefined> = { ...process.env, BOTLING_TEST_OPEN: fakeOpen, ...(healthyAt ? { MAKE_HEALTHY: healthyAt } : {}), ...(freeKb !== undefined ? { BOTLING_TEST_FREE_KB: String(freeKb) } : {}) };
+      return spawnSync("/bin/bash", [command[2]!, ...args], { encoding: "utf8", env });
+    };
+    const openedLines = () => readFileSync(opened, "utf8").trim().split("\n");
+    return { running, target, data, core, localData, run, openedLines };
+  }
+
+  it("copies the data to this Mac's disk without old builds, rewrites its path, and opens the new build with no data folder named", () => {
+    const dir = tempDir("self-update-data");
+    const { running, target, data, core, localData, run, openedLines } = moving(dir);
+    const result = run(join(localData, "core", "self-update", "healthy"));
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    // Opened as from Finder: no BOTLING_DATA_DIR, so the build finds the copy at its own default.
+    expect(openedLines()).toEqual([`-n ${target}`]);
+    const newCore = join(localData, "core");
+    expect(JSON.parse(readFileSync(join(newCore, "approved-commands.json"), "utf8"))).toEqual({ main: [`cat ${newCore}/main/memory.md`] });
+    expect(readFileSync(join(newCore, "codex-threads", "t.workers.json"), "utf8")).toContain(`Update only ${newCore}/main/memory.md`);
+    expect(readFileSync(join(newCore, "binary.bin")).includes(Buffer.from(core))).toBe(true); // binary files are left alone
+    expect(existsSync(join(newCore, "self-update", "backups"))).toBe(false);
+    expect(existsSync(join(localData, "electron", "SingletonLock"))).toBe(false);
+    expect(existsSync(`${localData}.partial`)).toBe(false);
+    // The new build reads the install's state from the copy.
+    expect(installOutcome(newCore)).toMatchObject({ kind: "installed", state: { backup: expect.stringContaining(newCore) } });
+    // The drive's data is as it was (but for its finished install state and a note), and the build there too.
+    expect(readFileSync(join(core, "approved-commands.json"), "utf8")).toContain(`cat ${core}/main/memory.md`);
+    expect(existsSync(join(core, "self-update", "backups", "Botling-2-old.app", "big"))).toBe(true);
+    expect(installOutcome(core)).toBeNull();
+    expect(readFileSync(join(data, "MOVED-TO-LOCAL-DISK.txt"), "utf8")).toContain(localData);
+    expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
+    expect(result.stdout).toContain("rewrote the data folder's path in core/approved-commands.json");
+  });
+
+  it("without room on this Mac's disk the data stays on the drive and the new build opens with it", () => {
+    const dir = tempDir("self-update-data");
+    const { target, data, core, localData, run, openedLines } = moving(dir);
+    const result = run(join(core, "self-update", "healthy"), 1024);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("not enough room for the data");
+    expect(openedLines()).toEqual([`-n ${target} --env BOTLING_DATA_DIR=${data}`]);
+    expect(existsSync(localData)).toBe(false);
+    expect(existsSync(join(data, "MOVED-TO-LOCAL-DISK.txt"))).toBe(false);
+  });
+
+  it("a new build that does not come up: the copy is set aside, data already there put back, and the drive's build reopened with the drive's data", () => {
+    const dir = tempDir("self-update-data");
+    const { running, target, data, core, localData, run, openedLines } = moving(dir);
+    mkdirSync(localData, { recursive: true });
+    writeFileSync(join(localData, "earlier.txt"), "an earlier profile");
+    const result = run(null);
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(openedLines()).toEqual([`-n ${target}`, `-n ${running.path} --env BOTLING_DATA_DIR=${data}`]);
+    expect(readFileSync(join(localData, "earlier.txt"), "utf8")).toBe("an earlier profile");
+    const parent = join(localData, "..");
+    expect(readdirSync(parent).filter((name) => name.startsWith("Botling 2 Dev Trial.failed-"))).toHaveLength(1);
+    expect(readdirSync(parent).filter((name) => name.startsWith("Botling 2 Dev Trial.before-"))).toHaveLength(0);
+    expect(installOutcome(core)).toMatchObject({ kind: "rolledBack" });
+    expect(readFileSync(join(core, "approved-commands.json"), "utf8")).toContain(`cat ${core}/main/memory.md`);
+    expect(existsSync(join(data, "MOVED-TO-LOCAL-DISK.txt"))).toBe(false);
   });
 });
 

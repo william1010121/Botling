@@ -10,3 +10,5 @@ export function directoryDefaults(env:Record<string,string>,home:string,packaged
 
 /** Trial data never shares the normal packaged profile. Explicit data overrides still work. */
 export function packagedDataName(devTrial:boolean):string{return devTrial?"Botling 2 Dev Trial":"Botling 2";}
+/** The data folder a packaged build opens with no BOTLING_DATA_DIR (as from Finder): ~/Library/Application Support/<name>. */
+export function packagedDataDir(appData:string,devTrial:boolean):string{return join(appData,packagedDataName(devTrial));}

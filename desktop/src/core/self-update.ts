@@ -88,6 +88,22 @@ export function installTarget(running: string, home: string): string {
   return externalVolume(running) && home.startsWith("/") ? join(home, "Applications", basename(running)) : resolve(running);
 }
 
+/**
+ * Where the app's data goes with a build that moves off an external volume (`installTarget`): the data folder
+ * it opens with when nothing names one (`localDataDir`, ~/Library/Application Support/Botling 2 Dev Trial for
+ * a dev trial build), when the data is on an external volume now. Null: it stays where it is. The script
+ * copies it there (leaving the copy on the drive as it is) only if this Mac's disk has room.
+ */
+export function localDataMove(dataDir: string | null, running: string, target: string, localDataDir: string | null | undefined): string | null {
+  if (!dataDir || !localDataDir || !localDataDir.startsWith("/") || !dataDir.startsWith("/")) return null;
+  if (!externalVolume(dataDir) || externalVolume(localDataDir) || externalVolume(target) || resolve(target) === resolve(running)) return null;
+  const local = resolve(localDataDir);
+  return local === resolve(dataDir) || local.startsWith(`${resolve(dataDir)}/`) ? null : local;
+}
+
+/** Room the data's copy must leave free on this Mac's disk, beyond its own size (KiB; the script's MARGIN). */
+export const DATA_MARGIN_KB = 2 * 1024 * 1024;
+
 /** Whether a folder is there: on an external volume only when that volume is mounted (not an empty /Volumes stub). */
 export function folderAvailable(path: string): boolean {
   const volume = externalVolume(path);
@@ -151,21 +167,62 @@ export function setFailures(root: string, count: number) {
 }
 
 /**
- * The script, run as: install.sh pid target new backup healthy rolled-back seconds data-dir previous.
+ * The script, run as: install.sh pid target new backup healthy rolled-back seconds data-dir previous [local-data].
  * (1.x's, with the new build opened with the data folder this one uses.) `previous` is the running build,
  * opened again when the new one fails; it differs from `target` when the build moves off an external volume
  * (`installTarget`), and is then left untouched. A target that is not there yet needs no backup.
+ *
+ * `local-data` (`localDataMove`): the data folder moves with the build. Once the app has quit, the data is
+ * copied there (without the old builds kept in self-update/backups, or Electron's single-instance lock) if the disk has room for it plus
+ * DATA_MARGIN_KB, the old folder's path is rewritten to the new one in the copy's text files, and the new
+ * build opens with no BOTLING_DATA_DIR, as it does from Finder, so it must find the copy on its own (it says
+ * it is up in the copy's self-update/healthy). The data on the drive is never changed but for its finished
+ * install state; it is what the old build reopens with if the new one does not come up, and the copy is then
+ * set aside. Without room, the data stays on the drive and the new build opens with it, as before.
  */
 export const INSTALL_SCRIPT = `#!/bin/bash
 # Installs a new Botling 2 build while the old one quits; puts the old one back if the
 # new one does not come up. Written by Botling 2 (core/self-update.ts, after 1.x's SelfUpdate.swift).
-PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"; DATA="$8"; PREVIOUS="\${9:-$2}"
+PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"; DATA="$8"; PREVIOUS="\${9:-$2}"; LOCAL="\${10:-}"
 OPEN="\${BOTLING_TEST_OPEN:-/usr/bin/open}"
+MARGIN=${DATA_MARGIN_KB}
+NEWDATA="$DATA"; MOVED=""; ASIDE=""
 say() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
-reopen() {
-  if [ -n "$DATA" ]; then "$OPEN" -n "$1" --env "BOTLING_DATA_DIR=$DATA"; else "$OPEN" -n "$1"; fi
+launch() {
+  if [ -n "$2" ]; then "$OPEN" -n "$1" --env "BOTLING_DATA_DIR=$2"; else "$OPEN" -n "$1"; fi
 }
+reopen() { launch "$1" "$DATA"; }
 putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
+kib() { if [ -e "$1" ]; then du -sk "$1" 2>/dev/null | awk '{print $1}'; else echo 0; fi; }
+movedata() {
+  case "$HEALTHY" in "$DATA"/*) ;; *) say "the install state is not in $DATA; the data stays there"; return 1;; esac
+  local skip parent need free part
+  skip="$(dirname "$HEALTHY")/backups"
+  need=$(( $(kib "$DATA") - $(kib "$skip") + MARGIN ))
+  parent="$(dirname "$LOCAL")"
+  mkdir -p "$parent" || { say "could not make $parent; the data stays in $DATA"; return 1; }
+  free="\${BOTLING_TEST_FREE_KB:-$(df -Pk "$parent" | awk 'NR==2 {print $4}')}"
+  if [ -z "$free" ] || [ "$free" -lt "$need" ]; then
+    say "not enough room for the data on this disk ($free KiB free, $need KiB needed with the margin); it stays in $DATA"; return 1
+  fi
+  part="$LOCAL.partial"
+  rm -rf "$part"
+  say "copying the data from $DATA to $LOCAL (without \${skip#"$DATA"/})"
+  if ! /usr/bin/rsync -a --exclude "/\${skip#"$DATA"/}/" --exclude "/electron/Singleton*" "$DATA/" "$part/"; then
+    say "could not copy the data; it stays in $DATA"; rm -rf "$part"; return 1
+  fi
+  find "$part" -type f -print0 | xargs -0 grep -lIF -- "$DATA" 2>/dev/null | while IFS= read -r file; do
+    OLDDIR="$DATA" NEWDIR="$LOCAL" /usr/bin/perl -pi -e 's/\\Q$ENV{OLDDIR}\\E/$ENV{NEWDIR}/g' "$file" && say "rewrote the data folder's path in \${file#"$part"/}"
+  done
+  if [ -e "$LOCAL" ]; then
+    ASIDE="$LOCAL.before-$(date '+%Y%m%d-%H%M%S')"
+    say "moving the data already at $LOCAL to $ASIDE"
+    mv "$LOCAL" "$ASIDE" || { say "could not; the data stays in $DATA"; ASIDE=""; rm -rf "$part"; return 1; }
+  fi
+  mv "$part" "$LOCAL" || { say "could not put the copy in place; the data stays in $DATA"; rm -rf "$part"; if [ -n "$ASIDE" ]; then mv "$ASIDE" "$LOCAL"; fi; return 1; }
+  HEALTHY="$LOCAL/\${HEALTHY#"$DATA"/}"; NEWDATA=""; MOVED=1
+  return 0
+}
 say "waiting for Botling 2 ($PID) to quit"
 for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
 if kill -0 "$PID" 2>/dev/null; then say "it did not quit; nothing changed"; echo "did not quit" > "$ROLLED"; exit 1; fi
@@ -181,23 +238,38 @@ if ! /usr/bin/ditto "$NEW" "$TARGET"; then
   say "could not copy the new build; putting the old one back"
   rm -rf "$TARGET"; putback; echo "could not copy the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1
 fi
-say "opening the new build"
-reopen "$TARGET"
+if [ -n "$LOCAL" ] && [ -n "$DATA" ]; then movedata; fi
+say "opening the new build\${MOVED:+ with the data in $LOCAL}"
+launch "$TARGET" "$NEWDATA"
 for i in $(seq 1 "$WAIT"); do
-  if [ -f "$HEALTHY" ]; then say "the new build is up"; exit 0; fi
+  if [ -f "$HEALTHY" ]; then
+    say "the new build is up"
+    if [ -n "$MOVED" ]; then
+      OLDSTATE="$(dirname "$ROLLED")/state.json"
+      mv "$OLDSTATE" "$OLDSTATE.moved" 2>/dev/null
+      printf 'Botling 2 now keeps its data in %s (copied %s by the install of %s).\\nThis folder is left as it was; the build on the drive opens with it.\\n' "$LOCAL" "$(date '+%Y-%m-%d %H:%M:%S')" "$TARGET" > "$DATA/MOVED-TO-LOCAL-DISK.txt"
+    fi
+    exit 0
+  fi
   sleep 1
 done
 say "the new build did not come up in $WAIT seconds; putting the old one back"
 pkill -f "$TARGET/Contents/MacOS/" ; sleep 2
 rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null
 putback
+if [ -n "$MOVED" ]; then
+  FAILED="$LOCAL.failed-$(date '+%Y%m%d-%H%M%S')"
+  say "setting the data copy aside as $FAILED; the build on the drive opens with $DATA"
+  mv "$LOCAL" "$FAILED"
+  if [ -n "$ASIDE" ]; then mv "$ASIDE" "$LOCAL"; fi
+fi
 echo "the new build did not come up in $WAIT seconds" > "$ROLLED"
 reopen "$PREVIOUS"
 exit 1
 `;
 
 /** Writes the state and the script; returns the command that runs the script (detached; the app quits right after). */
-export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), mode?: string, target = from.path): string[] {
+export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), mode?: string, target = from.path, localData = ""): string[] {
   const folder = updateFolder(root);
   mkdirSync(join(folder, "backups"), { recursive: true });
   for (const marker of [healthyFile(root), rolledBackFile(root)]) rmSync(marker, { force: true });
@@ -206,7 +278,7 @@ export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, req
   const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup, ...(mode ? { mode } : {}) };
   writeFileAtomic(stateFile(root), JSON.stringify(state, null, 2));
   writeFileSync(scriptFile(root), INSTALL_SCRIPT, { mode: 0o700 });
-  return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), target, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir, from.path];
+  return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), target, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir, from.path, ...(localData ? [localData] : [])];
 }
 
 /** How the last install went, read at start: null when none was under way. */
@@ -288,6 +360,8 @@ export interface DevBuildDeps {
   appDataDir: string | null;
   /** Where a build replacing `running` is installed (`installTarget`); absent: in its place. */
   installTarget?: (running: string) => string;
+  /** The data folder the app opens with when nothing names one (packaged: ~/Library/Application Support/…); the data moves there with a build that moves off an external volume (`localDataMove`). */
+  localDataDir?: string | null;
   /** Where developer work goes (`devWorkRoot`); absent or null: beside the project. */
   devWork?: () => string | null;
   /** Starts the script detached, then asks main to quit. */
@@ -333,6 +407,8 @@ export class DevBuilds {
   private target(running: BuildInfo): string { return this.deps.installTarget?.(running.path) ?? running.path; }
   /** Whether it goes somewhere else than the running build (off an external volume). */
   private moves(running: BuildInfo): boolean { return resolve(this.target(running)) !== resolve(running.path); }
+  /** Where the data goes with this install (`localDataMove`); null: it stays. */
+  private dataMove(running: BuildInfo): string | null { return localDataMove(this.deps.appDataDir, running.path, this.target(running), this.deps.localDataDir); }
 
   /** What the developer project's manager is told on top of a manager's usual instructions (`developerBriefing`). */
   briefing(bot: DeskBot): string {
@@ -389,6 +465,8 @@ export class DevBuilds {
     const lines = [hot ? `**${from.profile.name}** wants to install a new Botling build without restarting.` : `**${from.profile.name}** wants to install a new Botling build and restart.`, "", `- New: ${buildLabel(build)}`, `- Running: ${buildLabel(running)}`];
     if (plan) lines.push(`- Expected: ${planText(plan)}`);
     if (this.moves(running)) lines.push(`- Installed to: ${this.target(running)} (this Mac's own disk). The copy running from ${externalVolume(running.path)} is left as it is.`);
+    const data = this.dataMove(running);
+    if (data) lines.push(`- Data: copied to ${data} if this Mac's disk has room for it (else it stays on the drive). The data on ${externalVolume(this.deps.appDataDir!)} is left as it is and is used again if the new build does not come up.`);
     const what = note.trim();
     if (what) lines.push("", what);
     if (build.dirty) lines.push("", "It was built from uncommitted changes.");
@@ -448,7 +526,7 @@ export class DevBuilds {
   /** The restart path (1.x's): the script outside the app swaps the bundle once the app has quit. */
   private restart(running: BuildInfo, build: BuildInfo, requester: string, note: string, plan: InstallPlan | null) {
     try {
-      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid!, this.deps.appDataDir ?? "", new Date(), plan ? planText(plan) : undefined, this.target(running));
+      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid!, this.deps.appDataDir ?? "", new Date(), plan ? planText(plan) : undefined, this.target(running), this.dataMove(running) ?? "");
       this.deps.log(`installing ${buildLabel(build)} for ${requester}`);
       this.deps.launchInstaller(command, installLog(this.deps.root));
     } catch (error) {

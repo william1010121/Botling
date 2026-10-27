@@ -21,7 +21,7 @@ import {RecoveryWindowHost} from "./recovery-window";
 import {retainedUpdateCopies,deleteRetainedUpdateCopy} from "./update-copies";
 import {InputTraceWriter,syntheticTraceContext,acceptTraceIPC} from "./input-trace";
 import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
-import {directoryDefaults,packagedDataName} from "./main-environment";
+import {directoryDefaults,packagedDataDir} from "./main-environment";
 import { StartupMarks } from "../startup-marks";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
@@ -72,7 +72,7 @@ const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).di
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
 const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
-  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), packagedDataName(devTrial)) : join(root, ".data")));
+  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? packagedDataDir(app.getPath("appData"), devTrial) : join(root, ".data")));
 const installedApp = dirname(dirname(dirname(process.execPath)));
 const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
 const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
@@ -327,6 +327,10 @@ function coreEnvironment(): Record<string, string> {
   // The core adds its own milestone (its bots loaded) to main's startup log.
   if (!shotMode) env.BOTLING_STARTUP_LOG = join(profileDir, "logs", "startup.log");
   env.BOTLING_APP_DATA_DIR = dataDir;
+  // The folder this build opens with when nothing names one (from Finder): a developer build moved off an
+  // external volume takes its data there too (core/self-update.ts, `localDataMove`).
+  if (app.isPackaged) env.BOTLING_APP_LOCAL_DATA_DIR = packagedDataDir(app.getPath("appData"), devTrial);
+  else delete env.BOTLING_APP_LOCAL_DATA_DIR;
   if (app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app")) env.BOTLING_APP_BUNDLE = installedApp;
   else delete env.BOTLING_APP_BUNDLE;
   env.BOTLING_UPDATE_PENDING = process.argv.some(arg => arg.startsWith("--botling-update-token=")) ? "1" : "0";

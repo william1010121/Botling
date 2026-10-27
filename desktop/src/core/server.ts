@@ -149,6 +149,8 @@ export interface CoreOptions {
   app?: {
     pid: number | null;
     dataDir: string | null;
+    /** The data folder the app opens with when nothing names one (packaged builds; ~/Library/Application Support/…). */
+    localDataDir?: string | null;
     bundle: string | null;
     request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
   } | null;
@@ -485,6 +487,7 @@ export class Core {
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
       appPid: app?.pid ?? null,
       appDataDir: app?.dataDir ?? null,
+      localDataDir: app?.localDataDir ?? null,
       // The app the user runs lives on this Mac's disk; only development work goes on the work drive.
       installTarget: (running) => installTarget(running, homedir()),
       devWork: () => devWorkRoot(),

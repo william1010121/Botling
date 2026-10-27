@@ -173,6 +173,7 @@ let appAsks = 0;
 const appBridge = parentPort ? {
   pid: Number(process.env.BOTLING_MAIN_PID) || null,
   dataDir: process.env.BOTLING_APP_DATA_DIR || null,
+  localDataDir: process.env.BOTLING_APP_LOCAL_DATA_DIR || null,
   bundle: process.env.BOTLING_APP_BUNDLE || null,
   request: (op: AppOp, args?: Record<string, string>) => new Promise<AppAnswer>((resolve) => {
     const id = ++appAsks;
