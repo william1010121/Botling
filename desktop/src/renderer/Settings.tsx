@@ -477,25 +477,28 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           );
         })}
       </Group>
-      <Group title={bot.name} note="A head already awake goes on in the same conversation on the new choice just before its next message.">
-        {hasClaude && (
-          <Row label="Claude's model">
+      {hasClaude && (
+        <Group title="Claude">
+          <Row label="Model">
             <SelectSetting label="Claude's model" blank="Default" options={MODELS} value={view.model} onChange={(value) => configure({ model: value as BotSettingsView["model"] })} />
           </Row>
-        )}
-        <Row label="Reasoning effort">
-          <SelectSetting label="Reasoning effort" blank="Default" options={EFFORTS} value={view.effort} onChange={(value) => configure({ effort: value as BotSettingsView["effort"] })} />
-        </Row>
-        {hasClaude && (
           <Row label="Subagents' model">
-            <SelectSetting label="This bot's subagents' model" blank="As in Settings" options={MODELS} value={view.subagentModel} onChange={(value) => configure({ subagentModel: value as BotSettingsView["subagentModel"] })} />
+            <SelectSetting label="Claude subagents' model" blank="As in Settings" options={MODELS} value={view.subagentModel} onChange={(value) => configure({ subagentModel: value as BotSettingsView["subagentModel"] })} />
           </Row>
-        )}
-        {hasCodex && (
-          <Row label="Codex's model">
+        </Group>
+      )}
+      {hasCodex && (
+        <Group title="Codex">
+          <Row label="Model">
             <SelectSetting label="Codex's model" blank="Codex's default model" options={codexOptions(models)} value={view.codexModel} onChange={(value) => configure({ codexModel: value })} />
           </Row>
-        )}
+        </Group>
+      )}
+      {/* Both heads use the bot's effort; keep this outside either engine's group. */}
+      <Group title="Shared settings" note="A head already awake goes on in the same conversation on the new choice just before its next message.">
+        <Row label="Reasoning effort" hint="Applies to every enabled engine.">
+          <SelectSetting label="Reasoning effort" blank="Default" options={EFFORTS} value={view.effort} onChange={(value) => configure({ effort: value as BotSettingsView["effort"] })} />
+        </Row>
       </Group>
     </>
   );

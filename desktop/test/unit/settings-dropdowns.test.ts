@@ -24,6 +24,7 @@ function fakeClient(raw: Record<string, unknown>, sent: unknown[], botView?: Bot
       if (cmd.type === "settings.get") return settingsView(settings);
       if (cmd.type === "settings.set") { settings = applySetting(settings, cmd.change as SettingsChange); return settingsView(settings); }
       if (cmd.type === "bot.settings") return bot;
+      if (cmd.type === "heads.set") { bot = { ...bot!, engines: cmd.engines }; return {}; }
       if (cmd.type === "bot.configure") { const { type: _type, botId: _id, ...change } = cmd; bot = { ...bot!, ...change }; return bot; }
       throw new Error(`unexpected ${cmd.type}`);
     },
@@ -105,14 +106,76 @@ describe("Settings' model and effort choices are dropdowns", () => {
     const { host, done } = await render(createElement(BotSettings, { client: fakeClient({}, sent, view), bot }));
     try {
       expect(host.querySelectorAll(".segmented")).toHaveLength(0);
+      expect([...host.querySelectorAll(".settings-group > h3")].map((heading) => heading.textContent))
+        .toEqual(["Engines in this bot", "Claude", "Codex", "Shared settings"]);
+      expect(select(host, "Claude's model").closest("section")?.getAttribute("aria-label")).toBe("Claude");
+      expect(select(host, "Claude subagents' model").closest("section")?.getAttribute("aria-label")).toBe("Claude");
+      expect(select(host, "Codex's model").closest("section")?.getAttribute("aria-label")).toBe("Codex");
+      expect(select(host, "Reasoning effort").closest("section")?.textContent).toContain("Applies to every enabled engine.");
+      expect(select(host, "Reasoning effort").closest("section")?.getAttribute("aria-label")).toBe("Shared settings");
       expect(options(select(host, "Claude's model"))).toEqual(["", "haiku", "sonnet", "opus"]);
       expect(select(host, "Reasoning effort").value).toBe("high");
-      expect(options(select(host, "This bot's subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(options(select(host, "Claude subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
       expect(options(select(host, "Codex's model"))).toEqual(["", "gpt-6-luna", "gpt-6-sol", "gpt-5-old"]);
       await choose(select(host, "Claude's model"), "opus");
       expect(sent.at(-1)).toMatchObject({ type: "bot.configure", model: "opus" });
+      await choose(select(host, "Claude subagents' model"), "sonnet");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentModel: "sonnet" });
+      await choose(select(host, "Claude subagents' model"), "");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentModel: null });
+      await choose(select(host, "Codex's model"), "gpt-6-sol");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexModel: "gpt-6-sol" });
+      await choose(select(host, "Codex's model"), "");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexModel: null });
       await choose(select(host, "Reasoning effort"), "");
-      expect(sent.at(-1)).toMatchObject({ type: "bot.configure", effort: null });
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", effort: null });
+    } finally { await done(); }
+  });
+
+  it.each(["claude", "codex"] as const)("a %s-only bot shows its own settings and can enable the other engine", async (engine) => {
+    const other = engine === "claude" ? "codex" : "claude";
+    const name = (value: string) => value === "claude" ? "Claude" : "Codex";
+    const sent: any[] = [];
+    const bot = { id: "main", name: "Main bot", heads: [engine], phase: "asleep" } as unknown as BotView;
+    const view: BotSettingsView = { botId: "main", engines: [engine], model: "opus", effort: "medium", subagentModel: null, codexModel: null };
+    const { host, done } = await render(createElement(BotSettings, { client: fakeClient({}, sent, view), bot }));
+    try {
+      expect([...host.querySelectorAll(".settings-group > h3")].map((heading) => heading.textContent))
+        .toEqual(["Engines in this bot", name(engine), "Shared settings"]);
+      const active = host.querySelector<HTMLInputElement>(`input[aria-label="${name(engine)}"]`)!;
+      const inactive = host.querySelector<HTMLInputElement>(`input[aria-label="${name(other)}"]`)!;
+      expect(active.checked).toBe(true);
+      expect(active.disabled).toBe(true);
+      expect(inactive.checked).toBe(false);
+      expect(inactive.disabled).toBe(false);
+      await choose(select(host, "Reasoning effort"), "high");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", effort: "high" });
+      await act(async () => inactive.click());
+      expect(sent).toContainEqual({ type: "heads.set", botId: "main", engines: [engine, other] });
+      expect(host.querySelector('section[aria-label="Claude"]')).not.toBeNull();
+      expect(host.querySelector('section[aria-label="Codex"]')).not.toBeNull();
+    } finally { await done(); }
+  });
+
+  it.each(["asleep", "switching"] as const)("dual-engine toggles retain their guards while %s", async (phase) => {
+    const sent: any[] = [];
+    const bot = { id: "main", name: "Main bot", heads: ["claude", "codex"], phase } as unknown as BotView;
+    const view: BotSettingsView = { botId: "main", engines: ["claude", "codex"], model: null, effort: null, subagentModel: null, codexModel: null };
+    const { host, done } = await render(createElement(BotSettings, { client: fakeClient({}, sent, view), bot }));
+    try {
+      const claude = host.querySelector<HTMLInputElement>('input[aria-label="Claude"]')!;
+      const codex = host.querySelector<HTMLInputElement>('input[aria-label="Codex"]')!;
+      expect(claude.disabled).toBe(phase === "switching");
+      expect(codex.disabled).toBe(phase === "switching");
+      await act(async () => claude.click());
+      if (phase === "switching") {
+        expect(sent.filter((cmd) => cmd.type === "heads.set")).toEqual([]);
+      } else {
+        expect(sent).toContainEqual({ type: "heads.set", botId: "main", engines: ["codex"] });
+        expect(host.querySelector('section[aria-label="Claude"]')).toBeNull();
+        expect(host.querySelector('section[aria-label="Codex"]')).not.toBeNull();
+        expect(host.querySelector('section[aria-label="Shared settings"]')).not.toBeNull();
+      }
     } finally { await done(); }
   });
 });
