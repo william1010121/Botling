@@ -426,6 +426,7 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
       }
     }
     show(opened());
+    if (lines.some((item) => item.classList.contains("running"))) taskLinesDrawn();
   }
   draw();
   return strip;
@@ -461,11 +462,49 @@ export function tickTaskChips(now: number = clock()): void {
   }
 }
 
-let ticking = false;
+let listening = false;
+let ticker: number | null = null;
 
-/** Starts the once-a-second tick (once). */
+/** Whether the once-a-second tick runs now (tests). */
+export function taskTicking(): boolean {
+  return ticker !== null;
+}
+
+const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+const anyRunning = () => typeof document !== "undefined" && !!document.querySelector(".task-item.running");
+
+/**
+ * The once-a-second tick runs only while a running task's line is on the page and the page is shown: an
+ * idle chat has no timer. Times come from the wall clock (each line's start), so a tick after a pause
+ * shows the right time at once. Called when lines are drawn and when the page is shown or hidden.
+ */
+export function syncTaskTicks(): void {
+  if (typeof window === "undefined") return;
+  const want = !hidden() && anyRunning();
+  // The last running line went (finished, redrawn away): no more ticks until one is drawn again.
+  if (want && ticker === null) taskLinesDrawn();
+  else if (!want && ticker !== null) {
+    window.clearInterval(ticker);
+    ticker = null;
+  }
+}
+
+/** Running lines were just drawn: the tick starts (unless the page is hidden). Their strip may not be on the page yet; the tick stops itself if no running line is there by then. */
+function taskLinesDrawn(): void {
+  if (ticker !== null || typeof window === "undefined" || hidden()) return;
+  ticker = window.setInterval(() => {
+    tickTaskChips();
+    if (!anyRunning() || hidden()) syncTaskTicks();
+  }, 1000);
+}
+
+/** Follows the page being shown or hidden (once): hidden stops the tick, shown brings every time up to date and starts it again. */
 export function startTaskTicks(): void {
-  if (ticking || typeof window === "undefined") return;
-  ticking = true;
-  window.setInterval(() => tickTaskChips(), 1000);
+  if (listening || typeof document === "undefined") return;
+  listening = true;
+  document.addEventListener("visibilitychange", () => {
+    if (!hidden()) tickTaskChips();
+    syncTaskTicks();
+  });
+  syncTaskTicks();
 }
