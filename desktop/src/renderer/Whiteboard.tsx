@@ -196,16 +196,23 @@ function shortTime(iso: string | null | undefined, now: number): string | null {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** Asks the core for the board's data now and every few seconds while it is shown; an answer like the last one changes nothing. */
+/**
+ * Asks the core for the board's data now and every few seconds while it is shown. Each ask carries the
+ * stamp of the board it has, and the core answers `same` (no bots) while nothing changed: the page then
+ * neither compares nor redraws. A core without stamps is still compared by its text.
+ */
 function useWhiteboardData(client: Client, refreshMs: number): WhiteboardView | null {
   const [data, setData] = useState<WhiteboardView | null>(null);
   const last = useRef("");
+  const stamp = useRef<string | undefined>(undefined);
   useEffect(() => {
     let live = true;
     const load = () => {
-      void client.request({ type: "whiteboard.view" }).then((view) => {
-        const text = JSON.stringify(view);
-        if (!live || text === last.current) return;
+      void client.request({ type: "whiteboard.view", ...(stamp.current ? { since: stamp.current } : {}) }).then((view) => {
+        if (!live || view.same) return;
+        stamp.current = view.stamp;
+        const text = view.stamp ? `stamp:${view.stamp}` : JSON.stringify(view);
+        if (text === last.current) return;
         last.current = text;
         setData(view);
       }, () => {});

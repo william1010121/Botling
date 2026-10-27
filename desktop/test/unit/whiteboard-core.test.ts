@@ -40,3 +40,28 @@ describe("whiteboard.view", () => {
     expect(maintainer).toMatchObject({ currentStatus: [], inProgress: [], decided: [] });
   });
 });
+
+describe("whiteboard.view stamps", () => {
+  it("answers `same` with no bots while nothing changed, and the new board once a memory.md changes", async () => {
+    const dir = tempDir("whiteboard-stamp");
+    const folder = join(tempDir("wb-stamp-proj"), "Site");
+    mkdirSync(join(folder, ".bot"), { recursive: true });
+    writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\n- One\n");
+    saveProjectRow(dir, { id: PROJECT, name: "Site", folder, avatar: "triangle" });
+    const c = new CoreHarness(dir, { BOTLING_ROUTINE_TICK_MS: "0", BOTLING_COMPONENT_SCAN_MS: "0", BOTLING_WAITING_SCAN_MS: "0" });
+    harnesses.push(c);
+    const first = await c.call({ type: "whiteboard.view" });
+    expect(first.stamp).toEqual(expect.any(String));
+    expect(first.bots.find((entry: any) => entry.botId === PROJECT).currentStatus).toEqual(["One"]);
+    const again = await c.call({ type: "whiteboard.view", since: first.stamp });
+    expect(again).toEqual({ bots: [], stamp: first.stamp, same: true });
+    expect(WhiteboardView.safeParse(again).success).toBe(true);
+    writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\n- Two, now\n");
+    const changed = await c.call({ type: "whiteboard.view", since: first.stamp });
+    expect(changed.same).toBeUndefined();
+    expect(changed.stamp).not.toBe(first.stamp);
+    expect(changed.bots.find((entry: any) => entry.botId === PROJECT).currentStatus).toEqual(["Two, now"]);
+    // An old or foreign stamp gets the whole board.
+    expect((await c.call({ type: "whiteboard.view", since: "other:1" })).bots.length).toBeGreaterThan(0);
+  });
+});

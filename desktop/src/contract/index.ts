@@ -225,7 +225,12 @@ export const WhiteboardBotView = z.strictObject({
   picture: WhiteboardPictureView.nullable(),
 });
 export type WhiteboardBotView = z.infer<typeof WhiteboardBotView>;
-export const WhiteboardView = z.strictObject({ bots: z.array(WhiteboardBotView).max(500) });
+export const WhiteboardView = z.strictObject({
+  bots: z.array(WhiteboardBotView).max(500),
+  /** Moves when the board changed; asking again with it (`since`) answers `same` (and no bots) when it has not. */
+  stamp: z.string().max(80).optional(),
+  same: z.boolean().optional(),
+});
 export type WhiteboardView = z.infer<typeof WhiteboardView>;
 
 /** A library component as the page needs it to draw one (`ChatPayload.Component`). */
@@ -1014,7 +1019,7 @@ export const Command = z.discriminatedUnion("type", [
   /** What waits on you across the bots (the main bot's right panel). */
   z.strictObject({ type: z.literal("waiting.list") }),
   /** Every bot's memory sections, tasks and results, for the main bot's whiteboard. */
-  z.strictObject({ type: z.literal("whiteboard.view") }),
+  z.strictObject({ type: z.literal("whiteboard.view"), since: z.string().max(80).optional() }),
   /** Allows the command of a bot's whiteboard picture, as its card showed it (that command, in that folder), and runs it. */
   z.strictObject({ type: z.literal("whiteboard.allow"), botId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000) }),
   /** Takes one off that list without answering it. */

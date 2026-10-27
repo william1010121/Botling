@@ -235,8 +235,9 @@ const core = new Core({
   summarizer: summarizer(),
   classifier: classifier(),
   codexModels: codexModels(),
-  componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 1_500),
-  waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 5_000),
+  // The library and memory files are watched; these are the slow looks that catch what a watcher missed.
+  componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 60_000),
+  waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 60_000),
   plugins: { node, hostScript, sealer },
   checkCommand,
   shotCommand: process.env.BOTLING_SHOT_COMMAND || null,

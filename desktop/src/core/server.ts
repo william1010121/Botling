@@ -21,7 +21,7 @@ import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
 import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
-import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItems, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
+import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
 import { answerLabel } from "./attachments";
 import {
@@ -52,7 +52,8 @@ import { GroupChats } from "./group-chats";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
-import { readdirSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { FolderWatch, type WatchTarget } from "./folder-watch";
 import { probeNetwork } from "./network-resume";
 import {
   checklist, checklistCard, features as shareFeatures, labelCreation, listCard, LABEL, owner as forkOwner, pullRequest, runShare, shareBase,
@@ -121,9 +122,12 @@ export interface CoreOptions {
   classifier?: ((model: string) => Classifier) | null;
   /** The models the local Codex offers (`model/list`); null: none known. */
   codexModels?: (() => Promise<CodexModel[]>) | null;
-  /** How often the component library is looked at for changes on disk (0: never; 1.x: 1.5 s). */
+  /**
+   * The component and plugin library is watched for changes on disk (folder-watch.ts); this is how often it is
+   * looked at anyway, to catch what a watcher missed (0: neither watched nor looked at; default 60 s; 1.x polled every 1.5 s).
+   */
   componentScanMs?: number;
-  /** How often memory files are looked at for what waits on you (0: never; chat changes always look). */
+  /** Bots' memory files are watched for what waits on you; this is how often they are looked at anyway (0: never; chat changes always look; default 60 s). */
   waitingScanMs?: number;
   /** The plugin host (null: plugins' program parts do not run) and how secrets are sealed. */
   plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming } | null;
@@ -172,7 +176,15 @@ export class Core {
   private componentStamp = 0;
   /** Developer mode's builds and screenshots (1.x's Workspace+Developer.swift). */
   readonly devBuilds: DevBuilds;
-  private componentClock: NodeJS.Timeout | null = null;
+  /** The plugin and component library, watched (`scanComponents` on a change, and every `componentScanMs`). */
+  private libraryWatch: FolderWatch | null = null;
+  /** Bots' memory files, watched (`refreshWaiting` on a change, and every `waitingScanMs`). */
+  private memoryWatch: FolderWatch | null = null;
+  /** memory.md files, read again only when they change (what waits on you, the whiteboard). */
+  private readonly memoryFiles = new MemoryFiles();
+  /** The whiteboard as last answered, and a number that moves when it changes (`whiteboardView`). */
+  private whiteboardText = "";
+  private whiteboardStamp = 0;
   private pinClock: NodeJS.Timeout | null = null;
   /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
   private visiblePins: { botId: string; ids: string[] } | null = null;
@@ -185,7 +197,6 @@ export class Core {
   /** What waits on you as the windows were last told, and the timers that look again. */
   private lastWaiting = "";
   private waitingTimer: NodeJS.Timeout | null = null;
-  private waitingClock: NodeJS.Timeout | null = null;
   /** Files waiting in each bot's input box. */
   readonly pending: PendingFiles;
   readonly maintainer: MaintainerDesk;
@@ -510,10 +521,15 @@ export class Core {
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
     // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
-    const scan = options.componentScanMs ?? 1_500;
+    // The library on disk (a template edited by hand, a plugin dropped in) is watched rather than polled;
+    // a slow look still runs, which also re-arms watchers after an external disk comes back.
+    const scan = options.componentScanMs ?? 60_000;
     if (scan > 0) {
-      this.componentClock = setInterval(() => this.scanComponents(), scan);
-      this.componentClock.unref?.();
+      this.libraryWatch = new FolderWatch({
+        targets: () => this.libraryTargets(), changed: () => this.scanComponents(),
+        reconcileMs: scan, fallbackMs: Math.min(scan, 1_500), log: (line) => this.log(line),
+      });
+      this.libraryWatch.start();
     }
     // Pins refreshed every so often that the user can see run when their time comes (1.x: each second).
     this.pinClock = setInterval(() => {
@@ -533,13 +549,38 @@ export class Core {
       this.watchClock = setInterval(() => this.watchRuns(), watch);
       this.watchClock.unref?.();
     }
-    // Memory files change under the bots' hands (a manager's "Waiting on you", "In progress"): looked at every few seconds.
+    // Memory files change under the bots' hands (a manager's "Waiting on you", "In progress"): watched, and looked at
+    // every so often in case a change was missed (a project on an external disk that went away and came back).
     this.lastWaiting = JSON.stringify(this.waiting());
-    const look = options.waitingScanMs ?? 5_000;
+    const look = options.waitingScanMs ?? 60_000;
     if (look > 0) {
-      this.waitingClock = setInterval(() => this.refreshWaiting(), look);
-      this.waitingClock.unref?.();
+      this.memoryWatch = new FolderWatch({
+        targets: () => this.memoryTargets(), changed: () => this.refreshWaiting(),
+        reconcileMs: look, fallbackMs: Math.min(look, 5_000), log: (line) => this.log(line),
+      });
+      this.memoryWatch.start();
     }
+  }
+
+  /** What the library watch looks at: the plugin library (with every plugin's components), and plugins linked in from elsewhere. */
+  private libraryTargets(): WatchTarget[] {
+    const plugins = join(this.options.dataDir, "plugins");
+    const targets: WatchTarget[] = [{ path: plugins, recursive: true }];
+    let names: string[] = [];
+    try { names = readdirSync(plugins); } catch { return targets; }
+    for (const name of names) {
+      if (name.startsWith(".")) continue;
+      try {
+        // A recursive watch does not follow a symbolic link: its target is watched on its own.
+        if (lstatSync(join(plugins, name)).isSymbolicLink()) targets.push({ path: realpathSync(join(plugins, name)), recursive: true });
+      } catch { /* a dangling link: nothing to watch */ }
+    }
+    return targets;
+  }
+
+  /** What the memory watch looks at: each bot's memory.md (not the main bot's: its memory is not on the list). */
+  private memoryTargets(): WatchTarget[] {
+    return this.profiles.filter((profile) => profile.role !== "main" && !profile.problem).map((profile) => ({ path: join(profile.folder, profile.memoryPath), file: true }));
   }
 
   /** The library's state changed in the app (being worked on, reverted): the page hears it now. */
@@ -1019,12 +1060,12 @@ First write a test that shows this, then fix it.`;
       if (profile.role === "main") continue;
       // A manager's Now card: the first thing under "In progress" in its memory.md.
       if (profile.role === "manager" && !profile.problem) {
-        const first = memoryItemsAt(join(profile.folder, profile.memoryPath), "inProgress")[0];
+        const first = this.memoryFiles.items(join(profile.folder, profile.memoryPath), "inProgress")[0];
         if (first) doing[profile.id] = first.slice(0, 400);
       }
       const question = this.bots.get(profile.id)?.openQuestion();
       if (question) out.push({ botId: profile.id, text: firstLine(question.text).slice(0, 400), messageId: question.id });
-      else for (const item of memoryItemsAt(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
+      else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
     for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) out.push({ botId: MAIN_BOT_ID, text: firstLine(question.text).slice(0, 400), messageId: question.id });
     // Questions in group chats: the member that asked (else the group), and the group (1.x's `inGroups`).
@@ -1047,9 +1088,9 @@ First write a test that shows this, then fix it.`;
       if (profile.role === "main") continue;
       const bot = this.bots.get(profile.id);
       if (!bot) continue;
-      let text = "";
-      if (!profile.problem) { try { text = readFileSync(join(profile.folder, profile.memoryPath), "utf8"); } catch { text = ""; } }
-      const items = (section: "currentStatus" | "inProgress" | "decided") => memoryItems(text, section).slice(0, 20).map((item) => item.slice(0, 400));
+      // Read and parsed once per change of the file (MemoryFiles), not on every ask.
+      const file = join(profile.folder, profile.memoryPath);
+      const items = (section: "currentStatus" | "inProgress" | "decided") => (profile.problem ? [] : this.memoryFiles.items(file, section).slice(0, 20).map((item) => item.slice(0, 400)));
       out.push({
         botId: profile.id, currentStatus: items("currentStatus"), inProgress: items("inProgress"), decided: items("decided"),
         tasks: bot.taskViews().slice(-100), results: bot.results().slice(0, 12).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) })),
@@ -1061,8 +1102,23 @@ First write a test that shows this, then fix it.`;
     return { bots: out.slice(0, 500) };
   }
 
+  /**
+   * The whiteboard for `whiteboard.view`: `stamp` moves only when what it shows changed, and an ask with the
+   * stamp it has (`since`) gets `same` and no bots, so an unchanged board is not sent or compared on the page.
+   * The board is still built on each ask: being asked is what shows it (`whiteboardShown`).
+   */
+  whiteboardView(since?: string): WhiteboardView {
+    const view = this.whiteboard();
+    const text = JSON.stringify(view.bots);
+    if (text !== this.whiteboardText) { this.whiteboardText = text; this.whiteboardStamp++; }
+    const stamp = `${this.epoch}:${this.whiteboardStamp}`;
+    return since === stamp ? { bots: [], stamp, same: true } : { ...view, stamp };
+  }
+
   /** Tells the windows when what waits on you changed (1.x's `refreshWaiting`, after anything that may change it). */
   refreshWaiting() {
+    // Bots added or removed since: their memory files watched (or no longer).
+    if (this.memoryWatch) { this.memoryWatch.sync(); this.memoryFiles.keepOnly(this.memoryTargets().map((target) => target.path)); }
     let view: WaitingView;
     try { view = this.waiting(); } catch (error) { this.log(`waiting: ${(error as Error).message}`); return; }
     const text = JSON.stringify(view);
@@ -1581,7 +1637,7 @@ First write a test that shows this, then fix it.`;
       }
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();
-      case "whiteboard.view": return this.whiteboard();
+      case "whiteboard.view": return this.whiteboardView(cmd.since);
       case "whiteboard.allow": return this.bot(cmd.botId).whiteboardAllow({ command: cmd.command, folder: cmd.folder });
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);
@@ -1843,9 +1899,9 @@ First write a test that shows this, then fix it.`;
   async shutdown() {
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
     if (this.watchClock) { clearInterval(this.watchClock); this.watchClock = null; }
-    if (this.componentClock) { clearInterval(this.componentClock); this.componentClock = null; }
+    this.libraryWatch?.stop(); this.libraryWatch = null;
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
-    if (this.waitingClock) { clearInterval(this.waitingClock); this.waitingClock = null; }
+    this.memoryWatch?.stop(); this.memoryWatch = null;
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
     // After a swap's drain the heads end without the tidy (it would end their sessions): the new core resumes them.
     const tidy = !this.swapping;

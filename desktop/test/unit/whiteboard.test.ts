@@ -335,3 +335,37 @@ describe("whiteboard page", () => {
     expect(localStorage.getItem("botling.mainWhiteboard")).toBe("1");
   });
 });
+
+describe("whiteboard page: asks with the stamp it has", () => {
+  it("sends `since`, keeps the board on a `same` answer, and draws a changed one", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    const asked: any[] = [];
+    let board: WhiteboardView & { stamp: string } = { ...data, stamp: "e:1" };
+    let receive: (value: unknown) => void = () => {};
+    const client = new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
+      if (envelope.cmd.type === "whiteboard.view") asked.push(envelope.cmd);
+      const result = envelope.cmd.type !== "whiteboard.view" ? {} : envelope.cmd.since === board.stamp ? { bots: [], stamp: board.stamp, same: true } : board;
+      queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result }));
+    } });
+    await act(async () => root.render(createElement(Whiteboard, {
+      client, bots, waiting, components, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 40,
+      statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
+    })));
+    const highlight = () => host.querySelector(`.wb-card[data-bot="${site.id}"] .wb-highlight`)?.textContent;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+    expect(asked[0]).toEqual({ type: "whiteboard.view" });
+    expect(asked.slice(1).length).toBeGreaterThan(0);
+    expect(asked.slice(1).every((cmd) => cmd.since === "e:1")).toBe(true);
+    expect(highlight()).toBe("The theme is live.");
+    board = { bots: [{ ...data.bots[0]!, currentStatus: ["Moved to the new host."] }, ...data.bots.slice(1)], stamp: "e:2" };
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+    expect(highlight()).toBe("Moved to the new host.");
+    expect(asked.at(-1)).toEqual({ type: "whiteboard.view", since: "e:2" });
+    await act(async () => root.unmount());
+    host.remove();
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+});

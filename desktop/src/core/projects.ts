@@ -172,6 +172,51 @@ export function memoryItemsAt(file: string, section: MemorySection): string[] {
   try { return memoryItems(readFileSync(file, "utf8"), section); } catch { return []; }
 }
 
+/**
+ * memory.md files read once per change: each file's text and sections are kept with its stat (mtime,
+ * ctime, size, inode, in nanoseconds), so looking again at a file nobody wrote is one stat, not a read
+ * and a parse. Used by what waits on you and the whiteboard, which look at every bot's memory often.
+ */
+export class MemoryFiles {
+  private cache = new Map<string, { key: string; text: string; items: Partial<Record<MemorySection, string[]>> }>();
+
+  private entry(file: string) {
+    let key: string;
+    try {
+      const stat = statSync(file, { bigint: true });
+      key = `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}:${stat.ino}`;
+    } catch {
+      this.cache.delete(file);
+      return null;
+    }
+    const known = this.cache.get(file);
+    if (known && known.key === key) return known;
+    let text: string;
+    try { text = readFileSync(file, "utf8"); } catch { this.cache.delete(file); return null; }
+    const fresh = { key, text, items: {} as Partial<Record<MemorySection, string[]>> };
+    this.cache.set(file, fresh);
+    return fresh;
+  }
+
+  /** The file's text ("" when it cannot be read). */
+  text(file: string): string {
+    return this.entry(file)?.text ?? "";
+  }
+
+  /** `memoryItemsAt`, parsed once per change of the file. The list is shared: callers do not change it. */
+  items(file: string, section: MemorySection): readonly string[] {
+    const entry = this.entry(file);
+    if (!entry) return [];
+    return (entry.items[section] ??= memoryItems(entry.text, section));
+  }
+
+  /** Forgets files no longer asked about (removed bots). */
+  keepOnly(files: Iterable<string>) {
+    const keep = new Set(files);
+    for (const file of this.cache.keys()) if (!keep.has(file)) this.cache.delete(file);
+  }
+}
+
 /** A row of the main bot's project list: its name, what goes in brackets, its memory and inbox files, an open question's first line. */
 export interface BriefingRow { name: string; about: string; memory: string; inbox: string; question: string | null }
 
