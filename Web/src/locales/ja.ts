@@ -2,6 +2,7 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Japanese (keys as in `en.ts`). */
 export const ja: Dictionary = {
+  "messages.loadEarlier": "以前のメッセージを {n} 件読み込む",
   "source.unknown": "不明な参照元",
   "source.showChat": "チャットで表示",
   "source.you": "あなた",

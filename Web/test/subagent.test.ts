@@ -129,10 +129,14 @@ describe("a subagent's view", () => {
       "Review the diff of PR #7.",
       "Also check the sign-in store is per site.",
     ]);
+    // Folded runs defer their tool rows until opened; unfolding restores the transcript order.
+    expect(document.querySelectorAll("#messages .step.tool")).toHaveLength(0);
+    for (const toggle of document.querySelectorAll<HTMLButtonElement>("#messages .steps-toggle")) toggle.click();
     // The second came after the first two calls, before the last one.
     const order = [...document.querySelectorAll<HTMLElement>("#messages .sub-from, #messages .step.tool")]
       .map((element) => element.classList.contains("sub-from") ? "from" : element.querySelector(".step-title")!.textContent);
     expect(order).toEqual(["from", "Run git diff main...HEAD --stat", "Read WebBotView.swift", "from", "Run swift test --filter WebBot"]);
+    for (const toggle of document.querySelectorAll<HTMLButtonElement>("#messages .steps-toggle")) toggle.click();
     // No bubbles or faces: compact boxes.
     expect(document.querySelector("#messages .user-bubble")).toBeNull();
     expect(document.querySelector("#messages .avatar")).toBeNull();

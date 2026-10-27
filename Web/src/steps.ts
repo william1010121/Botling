@@ -62,11 +62,15 @@ function workedElement(listID: string, steps: StepView[], earlier: boolean): HTM
   ].join(" · ");
   const body = document.createElement("div");
   body.className = "steps-body";
-  parts.forEach((part, index) => body.append(part.text ? prose(part.text) : foldedRun(`${listID}#${index}`, part.steps, false, earlier)));
+  let built = false;
   const setOpen = (open: boolean) => {
     wrap.classList.toggle("open", open);
     toggle.setAttribute("aria-expanded", String(open));
     body.hidden = !open;
+    if (open && !built) {
+      built = true;
+      parts.forEach((part, index) => body.append(part.text ? prose(part.text) : foldedRun(`${listID}#${index}`, part.steps, false, earlier)));
+    }
     if (open) openLists.add(listID);
     else openLists.delete(listID);
   };
@@ -154,7 +158,10 @@ export function foldedRun(listID: string, steps: StepView[], worked: boolean, ea
   if (subagents.length) label.push(t("steps.subagents", { n: subagents.length }) + (running ? t("steps.subagentsRunning", { running }) : ""));
   toggle.innerHTML = `${chevron}<span></span>`;
   toggle.querySelector("span")!.textContent = label.join(" · ");
-  const list = stepList(steps);
+  const list = document.createElement("div");
+  list.className = "step-list";
+  // The empty shell keeps disclosure/layout state; tool rows are built only on demand.
+  let built = false;
   // Subagents stay in sight while folded, so you can open one without unfolding everything.
   const inSight = earlier ? subagents.filter((step) => step.status === "running") : subagents;
   const cards = document.createElement("div");
@@ -164,6 +171,10 @@ export function foldedRun(listID: string, steps: StepView[], worked: boolean, ea
     wrap.classList.toggle("open", open);
     toggle.setAttribute("aria-expanded", String(open));
     list.hidden = !open;
+    if (open && !built) {
+      built = true;
+      list.append(...stepList(steps).childNodes);
+    }
     cards.hidden = open || inSight.length === 0;
     if (open) openLists.add(listID);
     else openLists.delete(listID);
@@ -197,9 +208,13 @@ function toolLine(step: StepView): HTMLElement {
   if (!step.detail && !step.output && !images.length) return line;
   const body = document.createElement("div");
   body.className = "step-body";
-  if (step.detail) body.append(block(t("steps.in"), step.detail));
-  if (step.output || images.length) body.append(block(step.failed ? t("steps.error") : t("steps.out"), (step.output ?? "").trim(), images));
+  let built = false;
   const setOpen = (open: boolean) => {
+    if (open && !built) {
+      built = true;
+      if (step.detail) body.append(block(t("steps.in"), step.detail));
+      if (step.output || images.length) body.append(block(step.failed ? t("steps.error") : t("steps.out"), (step.output ?? "").trim(), images));
+    }
     // Pictures load once their step is first opened (a long chat has dozens of screenshots).
     if (open) for (const image of body.querySelectorAll<HTMLImageElement>("img[data-src]")) {
       image.src = image.dataset.src!;

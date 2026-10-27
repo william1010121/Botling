@@ -2,6 +2,7 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Korean (keys as in `en.ts`). */
 export const ko: Dictionary = {
+  "messages.loadEarlier": "이전 메시지 {n}개 불러오기",
   "source.unknown": "알 수 없는 출처",
   "source.showChat": "채팅에서 보기",
   "source.you": "나",

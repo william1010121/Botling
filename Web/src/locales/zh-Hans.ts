@@ -2,6 +2,7 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Simplified Chinese (keys as in `en.ts`). */
 export const zhHans: Dictionary = {
+  "messages.loadEarlier": "加载更早的 {n} 条消息",
   "source.unknown": "未知来源",
   "source.showChat": "在聊天中显示",
   "source.you": "你",

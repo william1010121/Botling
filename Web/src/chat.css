@@ -1378,6 +1378,8 @@ body.spec-mode .float-layer { display: none; }
 .catchup-links li + li { margin-top: 6px; }
 .catchup-button:disabled { opacity: .55; cursor: default; }
 
+/* Before the mounted message window, using the same quiet action as summary cards. */
+.history-more { display: flex; margin: 16px auto 0; max-width: calc(100% - 32px); }
 .catchup-button[hidden] { display: none; }
 
 /* Interval summaries share the Catch-up card above. */

@@ -3,6 +3,7 @@
 export type Word = string | readonly [one: string, other: string];
 
 export const en = {
+  "messages.loadEarlier": "Load {n} earlier messages",
   "source.unknown": "Unknown source",
   "source.showChat": "Show in chat",
   "source.you": "You",

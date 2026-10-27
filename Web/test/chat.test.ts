@@ -737,7 +737,7 @@ describe("messages", () => {
     const first = messageElement(message({ id: "fold-a", text: "Done.", steps }), {});
     const second = messageElement(message({ id: "fold-b", text: "Done.", steps }), {});
     expect(first.querySelector(".steps-toggle")?.textContent).toBe("Worked · 1 note · 1 step");
-    expect(first.querySelector(".step-prose")?.closest<HTMLElement>(".steps-body")?.hidden).toBe(true);
+    expect(first.querySelector(".step-prose")).toBeNull();
     first.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
     expect(messageElement(message({ id: "fold-a", text: "Done.", steps }), {}).querySelector<HTMLElement>(".steps-body")!.hidden).toBe(false);
     expect(second.querySelector<HTMLElement>(".steps-body")!.hidden).toBe(true);
@@ -775,7 +775,7 @@ describe("messages", () => {
     ] }), {});
     document.body.append(row);
     // Nothing loads while the step is closed.
-    expect(row.querySelector("img.step-image")!.hasAttribute("src")).toBe(false);
+    expect(row.querySelector("img.step-image")).toBeNull();
     row.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
     row.querySelector<HTMLButtonElement>(".step-head")!.click();
     const blocks = row.querySelectorAll<HTMLElement>(".step-block");

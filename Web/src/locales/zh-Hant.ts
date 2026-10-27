@@ -2,6 +2,7 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Traditional Chinese, as used in Taiwan (keys as in `en.ts`). */
 export const zhHant: Dictionary = {
+  "messages.loadEarlier": "載入更早的 {n} 則訊息",
   "source.unknown": "未知來源",
   "source.showChat": "在聊天中顯示",
   "source.you": "你",

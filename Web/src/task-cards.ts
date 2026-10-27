@@ -1,3 +1,4 @@
+import { findMessageRow } from "./message-navigation";
 // Task cards in the chat: a chip under each reply that belongs to a task (its state's color,
 // its name, and on the latest one how it stands), the same chip beside a summary's bullet, and
 // "Jump to chat" from the task's card in the right panel. Pressing a chip opens its task there
@@ -43,7 +44,7 @@ export function taskCardChips(cards: TaskCardView[]): HTMLElement {
  * whole card); "Show N messages" still opens the originals.
  */
 export function jumpToTask(messageID: string, taskID: string): void {
-  const row = document.querySelector<HTMLElement>(`.row[data-id="${CSS.escape(messageID)}"]`);
+  const row = findMessageRow(messageID);
   if (!row) return;
   document.dispatchEvent(new CustomEvent("ccb-read-back"));
   const folded = row.closest(".catchup-folded");

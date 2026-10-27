@@ -1,3 +1,4 @@
+import { findMessageRow } from "./message-navigation";
 import { artifactCard } from "./artifacts";
 import { summaryCountable } from "./summary-countable";
 import { post } from "./bridge";
@@ -756,7 +757,7 @@ export function attachmentStrip(files: FileView[]): HTMLElement {
 
 /** Scrolls to a message and flashes it, for a reply's quote. */
 export function jumpTo(id: string): void {
-  const target = document.querySelector<HTMLElement>(`.row[data-id="${CSS.escape(id)}"]`);
+  const target = findMessageRow(id);
   if (!target) return;
   // Reading back: the chat stops following the bottom.
   document.dispatchEvent(new CustomEvent("ccb-read-back"));

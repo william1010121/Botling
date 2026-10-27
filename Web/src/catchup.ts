@@ -1,3 +1,4 @@
+import { findMessageRow } from "./message-navigation";
 import { post } from "./bridge";
 import { summaryCountable } from "./summary-countable";
 export { setSummaryCountable } from "./summary-countable";
@@ -142,7 +143,7 @@ export class CatchUpGroup {
     if (!this.view?.ids.includes(id)) return;
     this.revealed.add(id);
     onToggle?.();
-    const row=this.element(id);if(!row)return;
+    const row=this.element(id)??findMessageRow(id);if(!row)return;
     row.classList.remove("catchup-folded");row.classList.add("source-live-flash");
     row.scrollIntoView?.({block:"center"});
     const focus=row.querySelector<HTMLElement>('button:not([disabled]),iframe,input,textarea')??row;
