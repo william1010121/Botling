@@ -77,3 +77,40 @@ describe("WorkspaceStore", () => {
     expect(store.getView().chat).toMatchObject({ running: null, live: [], messages: [{ text: "so far", state: "stopped" }] });
   });
 });
+
+
+describe("selected chat subscriptions", () => {
+  it("ignores other bots' activity while keeping the sidebar current and mention metadata fresh", async () => {
+    const store = new WorkspaceStore(async () => snap("e1", 1));
+    await store.resync();
+    const changed = vi.fn(), sidebar = vi.fn();
+    store.subscribeChat(changed); store.subscribe(sidebar);
+    const first = store.getChatView();
+    store.receive({ v: 10, epoch: "e1", seq: 2, event: { type: "bot.updated", bot: { ...botB, unread: 2, working: true } } });
+    store.receive(delta("e1", 3, "background", "B"));
+    expect(changed).not.toHaveBeenCalled();
+    expect(store.getChatView()).toBe(first);
+    expect(store.getView().bots[1].unread).toBe(2);
+    expect(sidebar).toHaveBeenCalledTimes(1);
+    store.receive({ v: 10, epoch: "e1", seq: 4, event: { type: "bot.updated", bot: { ...botB, name: "New name" } } });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.getChatView().bots[1].name).toBe("New name");
+    store.receive(delta("e1", 5, "visible"));
+    expect(changed).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps library identity/version for equivalent snapshots and invalidates changed templates or flags", async () => {
+    const components = { demo: { template: "<p>one</p>", version: 1, updated: false, working: false, hasPrevious: false, sizes: ["2x2"], icon: null, title: null } };
+    const store = new WorkspaceStore(async () => ({ ...snap("e1", 1), components: structuredClone(components) }));
+    await store.resync();
+    const first = store.getChatView();
+    await store.resync();
+    expect(store.getChatView().libraryVersion).toBe(first.libraryVersion);
+    expect(store.getChatView().components).toBe(first.components);
+    expect(store.getChatView().resyncs).toBe(first.resyncs + 1);
+    store.receive({ v: 10, epoch: "e1", seq: 2, event: { type: "components.updated", components: { demo: { ...components.demo, template: "<p>two</p>", version: 2 } } } });
+    expect(store.getChatView().libraryVersion).toBe(first.libraryVersion + 1);
+    store.receive({ v: 10, epoch: "e1", seq: 3, event: { type: "components.updated", components: { demo: { ...components.demo, working: true } } } });
+    expect(store.getChatView().libraryVersion).toBe(first.libraryVersion + 2);
+  });
+});

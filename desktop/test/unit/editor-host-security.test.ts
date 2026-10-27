@@ -79,3 +79,17 @@ it('delivers decoded snapshot metadata only to the authenticated shell bridge, w
  expect(editor.snapshotReady(1)).toBe(false);
  expect(send).toHaveBeenCalledTimes(1);
 });
+
+it('routes state deltas only down the authenticated pair and rejects stale stamps or upward injection',()=>{
+ const boundary=new EditorHostBoundary(),a=shell(),b=editor(),stamp=boundary.bind(a,b);
+ const delta={botling:'stateDelta',botID:'B',baseRevision:1,revision:2,patch:{order:['m'],changed:[]},extras:{botId:'B',running:false,cards:{},states:{}}};
+ const shellEvent={sender:a,senderFrame:a.mainFrame};
+ expect(boundary.route('down',shellEvent,{stamp,message:delta})?.recipient).toBe(b);
+ expect(boundary.route('up',{sender:b,senderFrame:b.mainFrame},{stamp,message:delta})).toBeNull();
+ expect(boundary.route('down',shellEvent,{stamp:{...stamp,documentGeneration:'stale'},message:delta})).toBeNull();
+ const callbacks=new Map<string,Function>(),send=vi.fn(),bridge=editorBridge({on:(channel,fn)=>callbacks.set(channel,fn),send},'shell');
+ expect(bridge.post(delta)).toBe(false);
+ callbacks.get(EDITOR_CHANNEL.bound)!({},stamp);
+ expect(bridge.post(delta)).toBe(true);
+ expect(send).toHaveBeenCalledExactlyOnceWith(EDITOR_CHANNEL.down,{stamp,message:delta});
+});

@@ -61,6 +61,9 @@ export interface WorkspaceView {
   coreSwap?: "draining" | "updating" | null;
 }
 
+/** Only inputs used by the selected chat page; sidebar activity is deliberately excluded. */
+export type ChatRenderView = Pick<WorkspaceView, "chat" | "subagent" | "board" | "settings" | "components" | "resyncs" | "bots"> & { libraryVersion: number };
+
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
@@ -80,8 +83,41 @@ export class WorkspaceStore {
     return () => { this.listeners.delete(listener); };
   };
   getView = () => this.view;
+  private libraryVersion = 0;
+  private chatView: ChatRenderView | undefined;
+
+  getChatView = (): ChatRenderView => {
+    const view = this.view, previous = this.chatView;
+    // Other bots still supply mention names and guest faces. Their working/unread/task counters
+    // only affect the sidebar, and must not invalidate this chat's payload.
+    const bots = previous && previous.bots.length === view.bots.length && previous.bots.every((old, index) => {
+      const bot = view.bots[index];
+      return old.id === bot.id && (bot.id === view.chat?.botId ? old === bot
+        : old.name === bot.name && old.avatar === bot.avatar && old.role === bot.role);
+    }) ? previous.bots : view.bots;
+    if (previous && previous.chat === view.chat && previous.subagent === view.subagent && previous.board === view.board
+      && previous.settings === view.settings && previous.libraryVersion === this.libraryVersion
+      && previous.resyncs === view.resyncs && previous.bots === bots) return previous;
+    return this.chatView = { chat: view.chat, subagent: view.subagent, board: view.board, settings: view.settings,
+      components: view.components, libraryVersion: this.libraryVersion, resyncs: view.resyncs, bots };
+  };
+
+  subscribeChat = (listener: () => void) => {
+    let previous = this.getChatView();
+    return this.subscribe(() => {
+      const next = this.getChatView();
+      if (next !== previous) { previous = next; listener(); }
+    });
+  };
 
   private set(view: WorkspaceView) {
+    if (view === this.view) return;
+    if (view.components !== this.view.components) {
+      // Snapshots can contain a new object for the same library. Compare only on library events
+      // or snapshots, never on streamed tokens; retain the object so templates can be cached.
+      if (JSON.stringify(view.components) === JSON.stringify(this.view.components)) view = { ...view, components: this.view.components };
+      else this.libraryVersion++;
+    }
     this.view = view;
     for (const listener of this.listeners) listener();
   }

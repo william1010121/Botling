@@ -140,11 +140,16 @@ export function specState(view: SpecStateView, lang: string | null = null): Spec
 }
 
 /** The library as the page needs it: being changed by Maintainer now, an earlier version to go back to. */
+const componentCache = new WeakMap<Record<string, ComponentInfoView>, Record<string, ComponentInfo>>();
 export function componentInfos(components: Record<string, ComponentInfoView>): Record<string, ComponentInfo> {
-  return Object.fromEntries(Object.entries(components).map(([name, info]) => [name, {
+  const cached = componentCache.get(components);
+  if (cached) return cached;
+  const result = Object.fromEntries(Object.entries(components).map(([name, info]) => [name, {
     template: info.template, version: info.version, working: !!info.working, updated: info.updated, hasPrevious: !!info.hasPrevious,
     sizes: info.sizes as PinSize[], icon: info.icon, title: info.title,
   } satisfies ComponentInfo]));
+  componentCache.set(components, result);
+  return result;
 }
 
 /** What the app's settings change in the page: its language, the avatars' size and look. */

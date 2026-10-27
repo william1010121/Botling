@@ -24,7 +24,7 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(!object(value))return false;
  const file=direction==='up'?fileData(value):null;
  if(!bounded(file??value,direction==='up'?1024*1024:16*1024*1024))return false;
- if(direction==='down')return ['widthRejected','widthPreview','state','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
+ if(direction==='down')return ['widthRejected','widthPreview','state','stateDelta','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);
   case 'request':{const parsed=Command.safeParse(value.cmd);return Number.isSafeInteger(value.id)&&value.id>=0&&parsed.success&&['card.save','card.action'].includes(parsed.data.type);}

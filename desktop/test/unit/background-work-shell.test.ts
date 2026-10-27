@@ -13,7 +13,7 @@ it("requests core output for every chip kind and drops a reply after changing ch
   const defaults = new WorkspaceStore(async () => { throw new Error("Unexpected snapshot"); }).getView();
   let view: WorkspaceView = { ...defaults, ready: true, bots: [bot], chat: { botId: bot.id, messages: [], running: null, live: [], tasks: [] } };
   const listeners = new Set<() => void>();
-  const store = { getView: () => view, subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); } } as unknown as WorkspaceStore;
+  const store = { getView: () => view, getChatView: () => view, subscribeChat: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); }, subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); } } as unknown as WorkspaceStore;
   const pending: ((value: { text: string }) => void)[] = [];
   const request = vi.fn((cmd: { type: string }) => cmd.type === "task.output"
     ? new Promise<{ text: string }>((resolve) => pending.push(resolve)) : Promise.resolve({ specs: [] }));

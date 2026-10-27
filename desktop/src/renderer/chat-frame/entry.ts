@@ -18,6 +18,8 @@ import { type FrameMessage } from "./protocol";
 import { toShell, fromShell, nativeChat, installNativeShellCommands } from "./transport";
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
+import { applyPatch } from "../../../../Web/src/patch";
+import type { ChatState } from "../../../../Web/src/types";
 import { keepDraft, keptDrafts, pageDraftStore } from "./draft-keep";
 
 declare const __LATEX_SOURCE__: string;
@@ -142,30 +144,39 @@ function decorate(extras: FrameExtras) {
 // ---------------------------------------------------------------------------------------------
 
 let stateRevision = 0;
+let receivedRevision = 0;
+let receivedState: ChatState | null = null;
 fromShell(message => {
   if (!message || typeof message !== "object") return;
-  if (message.botling === "state") {
+  if (message.botling === "state" || message.botling === "stateDelta") {
+    // Validate the base before touching the editor, local media source or card decorations.
+    const state = message.botling === "state" ? message.state
+      : receivedState?.botID === message.botID && message.baseRevision === receivedRevision
+        ? applyPatch(receivedState, message.patch) : null;
+    if (!state) { toShell({ botling: "action", action: { type: "resync" } }); return; }
+    receivedState = state;
+    receivedRevision = message.revision ?? 0;
     // Words typed before the first state (the first second after the window opens) would be replaced
     // by that chat's draft (empty) when the box switches to it: they are put back.
-    inputTrace()?.mark("frame.state.receive", () => ({ traceId: message.traceId, chat: message.state.botID,
+    inputTrace()?.mark("frame.state.receive", () => ({ traceId: message.traceId, chat: state.botID,
       previousChat: document.documentElement.dataset.chat, ...inputTrace()!.snapshot() }));
     const early = !nativeChat && document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
     inputTrace()?.mark("frame.early.snapshot", () => ({ early, ...inputTrace()!.snapshot() }));
-    column.set(message.messageColumnWidth ?? null, message.state.botID);
+    column.set(message.messageColumnWidth ?? null, state.botID);
     // The chat the page draws, before it draws it (its local pictures are asked for as this bot's).
-    shownChat = message.state.botID;
-    window.ccb.setState(message.state);
+    shownChat = state.botID;
+    window.ccb.setState(state);
     inputTrace()?.mark("frame.state.applied", () => inputTrace()!.snapshot());
     if (early) keepTyped(early);
     // Which chat the page shows (the input box keeps a draft per chat, so typing before the first
     // state would be replaced by that chat's draft); tests wait for it.
-    document.documentElement.dataset.chat = message.state.botID;
+    document.documentElement.dataset.chat = state.botID;
     inputTrace()?.mark("frame.state.complete", () => inputTrace()!.snapshot());
     decorate(message.extras);
     if (nativeChat) {
       // Initial focus is set in this root document before main reveals its native surface.
       if (stateRevision === 0) window.ccb.focus();
-      toShell({ botling: "hostObservation", chatId: message.state.botID, intentEpoch: 0, revision: ++stateRevision });
+      toShell({ botling: "hostObservation", chatId: state.botID, intentEpoch: 0, revision: ++stateRevision });
     }
   } else if (message.botling === "widthRejected") {
     column.rejected(message.value, message.actual);

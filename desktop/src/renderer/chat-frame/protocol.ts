@@ -2,7 +2,7 @@
 // each other with postMessage. Both are the app's own code on distinct origins; each side still
 // checks who sent a message (`event.source`) and its origin, so a card frame inside the chat frame
 // cannot pass for either.
-import type { ChatState, SpecState } from "../../../../Web/src/types";
+import type { ChatState, SpecState, StatePatch } from "../../../../Web/src/types";
 import type { Command, WebPluginSpecView } from "../../contract";
 import type { FrameExtras } from "../payload";
 
@@ -35,7 +35,9 @@ export type ShellMessage =
   | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }
   | { botling: "widthRejected"; value: number | null; actual: number | null }
   | { botling: "widthPreview"; value: number | null | undefined }
-  | { botling: "state"; state: ChatState; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  | { botling: "state"; state: ChatState; revision?: number; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  /** Sequenced delta against the last full snapshot or delta in this page. */
+  | { botling: "stateDelta"; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
   | { botling: "response"; id: number; ok: boolean; error?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }

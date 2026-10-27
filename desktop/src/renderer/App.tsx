@@ -13,6 +13,7 @@ import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type Resul
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
+import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
@@ -552,20 +553,18 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
   }, []);
   const ready = useRef(false);
   const widthDragging = useRef(false);
-  const view = useSyncExternalStore(store.subscribe, store.getView);
-  const latest = useRef(view);
-  latest.current = view;
+  const view = useSyncExternalStore(store.subscribeChat, store.getChatView);
   // The line the next message answers (the page's Reply), per chat.
   const [replying, setReplying] = useState<{ botId: string; id: string } | null>(null);
   const replyingRef = useRef(replying);
   replyingRef.current = replying;
 
-  const push = useCallback(() => {
+  const channel = useMemo(() => new ChatStateChannel(() => {
     const target = frame.current?.contentWindow;
-    const current = latest.current;
+    const current = store.getChatView();
     const chat = current.chat;
     const bot = current.bots.find((candidate) => candidate.id === chat?.botId);
-    if ((!nativeEditor() && !target) || !ready.current || !chat || !bot) return;
+    if ((!nativeEditor() && !target) || !ready.current || !chat || !bot) return null;
     let quoted: { id: string; who: string; preview: string } | null = null;
     const reply = replyingRef.current;
     if (reply?.botId === chat.botId) {
@@ -581,12 +580,12 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       share: !!current.settings?.developerMode && bot.id === current.settings?.developerProject && bot.role === "manager",
     });
     const traceId = inputTrace()?.mark("shell.state.send", () => ({ chat: state.botID, ...inputTrace()!.snapshot() }));
-    const message: ShellMessage = { botling: "state", state, extras, messageColumnWidth: current.settings?.messageColumnWidth ?? null,
-      ...(traceId ? { traceId } : {}) };
-    postToChat(message);
-  }, []);
-
-  useEffect(push, [push, view, replying]);
+    return { state, extras, libraryVersion: current.libraryVersion, resyncs: current.resyncs,
+      messageColumnWidth: current.settings?.messageColumnWidth ?? null, ...(traceId ? { traceId } : {}) };
+  }, postToChat), [store]);
+  const push = useCallback(() => channel.flush(true), [channel]);
+  useEffect(() => { channel.schedule(); }, [channel, view, replying]);
+  useEffect(() => channel.reset, [channel]);
 
   useEffect(() => {
     // Chromium can deliver pointerup to the shell after a captured pointer leaves its iframe.
@@ -613,6 +612,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
   }, []);
 
   // Plugins' web parts, asked for again whenever the library changes (only what changed reloads in the page).
+  const plugins = useSyncExternalStore(store.subscribe, () => store.getView().plugins);
   const lastSpecs = useRef("");
   const pushPlugins = useCallback(() => {
     void client.request({ type: "plugins.web" }).then((result) => {
@@ -624,7 +624,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       postToChat(message);
     }, () => {});
   }, [client]);
-  useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, view.plugins]);
+  useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, plugins]);
 
   // The frame owns loss detection and text input. The shell only restores its window before
   // typing, never serializes a key, and keeps explicit shell targets authoritative.
@@ -726,12 +726,12 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     };
     const flags = (action: Record<string, unknown>, names: string[]) => Object.fromEntries(names.filter((name) => typeof action[name] === "boolean").map((name) => [name, action[name]]));
     const pinChange = (id: unknown, change: Extract<import("../contract").Command, { type: "pin.change" }>["change"]) => {
-      const chat = latest.current.chat;
+      const chat = store.getView().chat;
       if (chat && typeof id === "string") void client.request({ type: "pin.change", botId: chat.botId, id, change }).catch(onError);
     };
     const receive = (message: FrameMessage | null) => {
       if (!message || typeof message !== "object") return;
-      const chat = latest.current.chat;
+      const chat = store.getView().chat;
       if (message.botling === "messageWidthDrag") {
         widthDragging.current = message.active === true;
         return;
@@ -855,7 +855,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           if (!chat || typeof action.messageID !== "string" || typeof action.taskID !== "string") return;
           const botId = chat.botId, messageId = action.messageID, taskId = action.taskID;
           void client.request({ type: "task.output", botId, messageId, taskId }).then((result) => {
-            if (latest.current.chat?.botId !== botId) return;
+            if (store.getView().chat?.botId !== botId) return;
             const response: ShellMessage = { botling: "taskOutput", botID: botId, messageID: messageId, taskID: taskId, text: result.text };
             frame.current?.contentWindow?.postMessage(response, CHAT_ORIGIN);
           }).catch(onError);
@@ -865,7 +865,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           if (!chat || typeof action.id !== "string") return;
           const botId = chat.botId;
           void client.request({ type: "subagent.view", botId, subagentId: action.id })
-            .then((result) => { if (latest.current.chat?.botId === botId) store.watch(result.subagent); })
+            .then((result) => { if (store.getView().chat?.botId === botId) store.watch(result.subagent); })
             .catch(onError);
           return;
         }
@@ -1055,7 +1055,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     };
     const bridge = nativeEditor();
     if (bridge) return bridge.subscribe(packet => {
-      if ("unbound" in packet) { ready.current = false; lastSpecs.current = ""; }
+      if ("unbound" in packet) { ready.current = false; lastSpecs.current = ""; channel.reset(); }
       else if ("bound" in packet) { ready.current = true; lastSpecs.current = ""; push(); pushPlugins(); }
       else if ("snapshot" in packet) setSnapshot(packet.snapshot ? {image:packet.snapshot,revision:packet.revision} : null);
       else receive(packet.message as FrameMessage);
@@ -1065,7 +1065,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, onSent, onSelectTask, push, pushPlugins, store]);
+  }, [client, onError, onSent, onSelectTask, push, pushPlugins, store, channel]);
 
   if (nativeEditor()) return <div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
     {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
