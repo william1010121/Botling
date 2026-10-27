@@ -24,6 +24,7 @@ import { probeEndpoint, probeNetwork } from "./network-resume";
 import { PortSealer, testSealer, type Sealer } from "./plugins/secrets";
 import type { HostCommand } from "./plugins/host-client";
 import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
+import { StartupMarks } from "../startup-marks";
 
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -254,6 +255,8 @@ const core = new Core({
   },
 });
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
+// Main's startup log (src/startup-marks.ts): how long after this process began its bots and chats were loaded.
+if (process.env.BOTLING_STARTUP_LOG) new StartupMarks({ file: process.env.BOTLING_STARTUP_LOG }).mark("core.loaded");
 
 /**
  * A core hot swap (main/core-swap.ts): `{botling: "drain", id, timeoutMs, boundaryMs}` stops beginning turns and

@@ -22,6 +22,7 @@ import {retainedUpdateCopies,deleteRetainedUpdateCopy} from "./update-copies";
 import {InputTraceWriter,syntheticTraceContext,acceptTraceIPC} from "./input-trace";
 import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
 import {directoryDefaults,packagedDataName} from "./main-environment";
+import { StartupMarks } from "../startup-marks";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
@@ -41,6 +42,9 @@ import {
   type Command, type EventEnvelope, type ResponseEnvelope, type UpdateView,
 } from "../contract";
 
+// Startup milestones (startup-marks.ts), written to <logs>/startup.log once the log folder is known.
+const startup = new StartupMarks({ file: null });
+startup.mark("process.entry");
 configureHiddenApp(app);
 const root = resolve(__dirname, "..", ".."); // desktop/ (packaged: Resources/app.asar)
 // Embedded artifact profile, not a runtime test switch. No new editor host is activated.
@@ -82,6 +86,7 @@ app.setPath("userData", profileDir);
 app.setPath("sessionData", profileDir);
 app.setPath("crashDumps", join(profileDir, "crashes"));
 app.setPath("logs", join(profileDir, "logs"));
+if (!shotMode) startup.setFile(join(profileDir, "logs", "startup.log"));
 // Tests: safeStorage seals with Chromium's mock keychain instead of the user's login keychain.
 if (process.env.BOTLING_MOCK_KEYCHAIN === "1") app.commandLine.appendSwitch("use-mock-keychain");
 
@@ -150,6 +155,7 @@ const core: CoreClient = new CoreClient({
     broadcast(event);
   },
   audit: note,
+  milestone: (name) => startup.mark(name),
   app: async (op, args): Promise<{ ok: boolean; file?: string; error?: string; plan?: unknown }> => {
     if (op === "planBuild") {
       // A developer build's card (core/self-update.ts): would it install without a restart?
@@ -318,6 +324,8 @@ function coreEnvironment(): Record<string, string> {
   // Developer mode's builds (core/self-update.ts): main's pid (the install script waits for it to quit), the
   // data folder the new build opens with, and the bundle this is (macOS app bundles only).
   env.BOTLING_MAIN_PID = String(process.pid);
+  // The core adds its own milestone (its bots loaded) to main's startup log.
+  if (!shotMode) env.BOTLING_STARTUP_LOG = join(profileDir, "logs", "startup.log");
   env.BOTLING_APP_DATA_DIR = dataDir;
   if (app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app")) env.BOTLING_APP_BUNDLE = installedApp;
   else delete env.BOTLING_APP_BUNDLE;
@@ -448,7 +456,10 @@ ipcMain.on("botling:post", (event, raw: unknown) => {
     );
     return;
   }
-  void core.request(cmd, scoped(id)).then((response) => reply({ ...response, id }));
+  void core.request(cmd, scoped(id)).then((response) => {
+    if (cmd.type === "chat.snapshot") startup.mark("snapshot.first", { ok: response.ok });
+    reply({ ...response, id });
+  });
 });
 
 /**
@@ -734,9 +745,12 @@ function createWindow() {
   window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
   window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
+  window.webContents.once('did-finish-load',()=>startup.mark('window.loaded'));
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);
   const editor=prepareNativeEditorHost(window,root,ownerReady,preloadDir);
   const opening=editor.revealWhenReady(hidden);
+  // First paint: the window revealed (with the chat's input ready, or after the reveal gate's timeout).
+  void opening.then(shown=>{if(shown)startup.mark('window.shown');},()=>{});
   openingWindows.set(window,opening);
   void opening.catch(error=>note(`native editor initialization failed: ${String(error)}`));
   mainWindow = window;
@@ -849,6 +863,7 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  startup.mark("app.ready");
   Menu.setApplicationMenu(Menu.buildFromTemplate([...appMenuTemplate(process.platform,{reloadChat:reloadNativeEditor}), ...coreSwap.menu]));
   // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
   // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
@@ -932,9 +947,11 @@ app.whenReady().then(async () => {
   await recoverUpdates(dataDir, installedApp, false);
   const blocked=blockingRecovery(dataDir,installedApp);
   if(blocked){showRecovery(blocked);return;}
+  startup.mark("recovery.done");
   if(traceContext){try{traceWriter=await InputTraceWriter.open(traceContext);}catch(error){note('Synthetic trace disabled: '+String(error));}}
   const collect=()=>void recoverUpdates(dataDir,installedApp).catch(error=>note('Update cleanup: '+String(error)));
   const sweep=setInterval(collect,30_000);sweep.unref();
+  startup.mark("core.start");
   core.start();
   createWindow();
   collect();

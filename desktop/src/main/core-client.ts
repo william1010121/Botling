@@ -28,6 +28,8 @@ export interface CoreClientOptions {
   env: Record<string, string>;
   onEvent: (event: EventEnvelopeT) => void;
   audit: (entry: string) => void;
+  /** Startup milestones: "core.spawn" (the process is up) and "core.ready" (its first message). Each call may repeat. */
+  milestone?: (name: "core.spawn" | "core.ready") => void;
   /** Seals or opens a plugin secret (safeStorage); throws when it cannot. */
   seal?: (op: "seal" | "open", text: string) => string;
   /** The plugin host's utility-process entry (out/host/host-utility.mjs); main never runs another file for it. */
@@ -166,7 +168,7 @@ export class CoreClient {
     this.child = child;
     child.stdout?.on("data", (chunk) => process.stdout.write(`[core:out] ${chunk}`));
     child.stderr?.on("data", (chunk) => process.stderr.write(String(chunk)));
-    child.on("spawn", () => { this.pid = child.pid; });
+    child.on("spawn", () => { this.pid = child.pid; this.options.milestone?.("core.spawn"); });
     child.on("message", (message) => this.receive(message));
     child.on("exit", (code) => {
       if (this.child !== child) return;
@@ -186,6 +188,7 @@ export class CoreClient {
   }
 
   private receive(message: unknown) {
+    this.options.milestone?.("core.ready");
     const raw = message as { botling?: unknown; id?: unknown; op?: unknown; text?: unknown } | null;
     if (raw && typeof raw === "object" && raw.botling === "host") {
       this.host(raw as Parameters<CoreClient["host"]>[0]);
