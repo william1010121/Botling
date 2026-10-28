@@ -462,7 +462,7 @@ Sequence diagram: 2–5 actors as columns, numbered messages between them (call,
 
 A compact table; cells can carry a status or tone dot. Numeric columns align right.
 
-**When:** Exact values the reader will look up, or a few rows × few attributes. ≤8 rows in the body of a report; larger data goes to an appendix file.
+**When:** Exact values the reader will look up, or a few rows × few attributes. ≤8 rows in the body of a report; larger data goes to an appendix file. Strings never imply status, regardless of wording or column heading. Supply cell objects with explicit status or tone; status="skipped" strikes the text. strong controls bold text.
 
 - `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
 - `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.

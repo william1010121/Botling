@@ -267,35 +267,36 @@ test('the bundled command ships a licence notice for every package in the bundle
 });
 
 
-test('table status hints require a status column and exact labels; feature names remain plain', async () => {
-  const ambiguous = ['已在調查，尚未修復', 'Password reset', 'fixed-width layout', '取消按鈕', 'done later', 'passenger', '已完成部分', '未包含', '已包含', '停工'];
-  for (const mode of ['doc', 'slide']) {
-    const r = await api.renderBlock({ type: 'table', columns: ['Feature', 'Status'], rows: ambiguous.map(text => [text, text]) }, { mode });
+test('table strings never infer status from wording or column headings', async () => {
+  const texts = ['已在調查，尚未修復', 'Password reset', 'fixed-width layout', '取消按鈕', 'done', 'pass', '已完成', 'cancelled', 'pending', 'risk', 'unverified'];
+  for (const mode of ['doc', 'slide']) for (const heading of ['Status', '狀態', '交付狀態', 'Feature']) {
+    const r = await api.renderBlock({ type: 'table', columns: [heading, heading], rows: texts.map(text => [text, { text }]) }, { mode });
+    assert.deepEqual(r.errors, []);
     const d = dom(r.html);
     assert.equal(d.querySelectorAll('.cell-s, s, .sr-only').length, 0);
-    const cells = [...d.querySelectorAll('tbody th, tbody td')];
-    assert.deepEqual(cells.map(c => c.textContent), ambiguous.flatMap(s => [s, s]));
-    const exact = dom((await api.renderBlock({ type: 'table', columns: ['Feature', 'Status'], rows: [
-      ['Done', 'done'], ['Cancelled', 'cancelled'], ['Review', 'pending'],
-      ['Failed', 'failed'], ['Fixed', { text: 'Still investigating', status: 'active' }],
-    ] }, { mode })).html);
-    assert.equal(exact.querySelectorAll('tbody th .cell-s').length, 0);
-    assert.equal(exact.querySelectorAll('tbody td .cell-s').length, 5);
-    assert.equal(exact.querySelector('s').textContent, 'cancelled');
-    assert.equal(exact.querySelectorAll('tbody td .sr-only').length, 5);
-    const explicit = dom((await api.renderBlock({ type: 'table', columns: ['Feature', 'Status'], rows: [
-      [{ text: 'Feature', status: 'active' }, 'risk'],
-      [{ text: 'Done', tone: 'warn' }, 'unverified'],
-      [{ text: 'Done', strong: true }, { text: 'Done', status: 'blocked' }],
-    ] }, { mode, lang: 'en' })).html);
-    assert.deepEqual([...explicit.querySelectorAll('tbody td .sr-only')].map(c => c.textContent), ['（At risk）', '（Unverified）', '（Blocked）']);
-    assert.ok(explicit.querySelector('tbody th .t-info'));
-    assert.ok(explicit.querySelector('tbody th .t-warn'));
-    assert.equal(explicit.querySelector('tbody th b').textContent, 'Done');
-    const localized = dom((await api.renderBlock({ type: 'table', columns: ['狀態', '功能'], rows: [['已完成', '已完成']] }, { mode })).html);
-    assert.equal(localized.querySelectorAll('tbody th .cell-s').length, 1);
-    assert.equal(localized.querySelectorAll('tbody td .cell-s').length, 0);
+    assert.deepEqual([...d.querySelectorAll('tbody th, tbody td')].map(c => c.textContent), texts.flatMap(s => [s, s]));
   }
+});
+
+test('table explicit metadata controls status, strike and accessibility independently of text', async () => {
+  const statuses = ['done', 'active', 'pending', 'blocked', 'risk', 'unverified', 'skipped'];
+  const labels = ['Done', 'In progress', 'Pending', 'Blocked', 'At risk', 'Unverified', 'Skipped'];
+  for (const mode of ['doc', 'slide']) {
+    const r = await api.renderBlock({ type: 'table', columns: ['Feature', 'Details'], rows: statuses.map(status => ['done', { text: 'Password reset', status }]) }, { mode, lang: 'en' });
+    assert.deepEqual(r.errors, []);
+    const d = dom(r.html);
+    assert.equal(d.querySelectorAll('tbody th .cell-s').length, 0);
+    assert.equal(d.querySelectorAll('tbody td .cell-s').length, statuses.length);
+    assert.deepEqual([...d.querySelectorAll('tbody td .sr-only')].map(c => c.textContent), labels.map(label => `（${label}）`));
+    assert.equal(d.querySelectorAll('s').length, 1);
+    assert.equal(d.querySelector('tbody tr:last-child s').textContent, 'Password reset');
+    const styled = dom((await api.renderBlock({ type: 'table', columns: ['A', 'B'], rows: [[{ text: 'done', tone: 'warn' }, { text: 'cancelled', strong: true }]] }, { mode })).html);
+    assert.ok(styled.querySelector('.t-warn'));
+    assert.equal(styled.querySelector('b').textContent, 'cancelled');
+    assert.equal(styled.querySelectorAll('s, .sr-only').length, 0);
+  }
+  const table = api.blocks.find(b => b.type === 'table');
+  assert.equal(table.schema.safeParse({ type: 'table', columns: ['A', 'B'], rows: [['x', { text: 'done', status: 'pass' }]] }).success, false);
 });
 
 test('results lint suggests evidence without claiming mandatory comparisons or inventing measurements', () => {
