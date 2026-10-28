@@ -4,7 +4,7 @@
 //   <command> spec.json /abs/…/artifacts/report.html [--force] [--slides]   render, print one JSON line
 //   <command> --check spec.json                                             validate + lint only
 // Output JSON: {"ok", "errors": [{path, message, example?}], "warnings": [{path, message}], "htmlPath"?, "link"?, "slides"?}
-import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { renderAny } from './render';
@@ -25,6 +25,31 @@ function inlineImages(spec: any, base: string): void {
   }
 }
 
+const REJECT = 'Output must be an .html file inside an artifacts folder.';
+/**
+ * Where the page may go, decided without touching the disk: an .html file whose folder, after
+ * resolving `..` and symlinks, is an `artifacts` folder named in the path or inside it. A missing
+ * folder is allowed only when it is that artifacts folder itself and its parent exists (`create`).
+ */
+export function checkDestination(output: string): { destination: string; create?: string } {
+  const destination = resolve(output);
+  if (extname(destination).toLowerCase() !== '.html') throw Error(REJECT);
+  const folder = dirname(destination);
+  const parts = folder.split(sep);
+  const at = parts.lastIndexOf('artifacts');
+  if (at < 0) throw Error(REJECT);
+  const artifacts = parts.slice(0, at + 1).join(sep) || sep;
+  if (!existsSync(artifacts)) {
+    if (folder !== artifacts || !existsSync(dirname(artifacts)) || !statSync(dirname(artifacts)).isDirectory()) throw Error(REJECT);
+    return { destination, create: artifacts };
+  }
+  if (!existsSync(folder)) throw Error(REJECT);
+  const root = realpathSync(artifacts), real = realpathSync(folder);
+  if (real !== root && !real.startsWith(root + sep)) throw Error(REJECT);
+  if (!root.split(sep).includes('artifacts')) throw Error(REJECT);
+  return { destination };
+}
+
 export interface CliIO { stdout(text: string): void; stderr(text: string): void }
 const defaultIO: CliIO = { stdout: t => writeSync(1, t), stderr: t => writeSync(2, t) };
 
@@ -41,11 +66,9 @@ export function runCli(args: string[], io: CliIO = defaultIO): number {
     const result = renderAny(data, { mode });
     const report = { ok: result.ok, errors: result.errors, warnings: result.warnings };
     if (flags.has('--check') || !result.html) { print(report); return result.ok ? 0 : 1; }
-    const destination = resolve(output);
-    // A bot's artifacts folder may not exist yet: create it, but only when the path names one.
-    if (!existsSync(dirname(destination)) && dirname(destination).split(sep).includes('artifacts')) mkdirSync(dirname(destination), { recursive: true });
-    const parent = realpathSync(dirname(destination));
-    if (!parent.split(sep).includes('artifacts') || extname(destination).toLowerCase() !== '.html') throw Error('Output must be an .html file inside an artifacts folder.');
+    // Everything is checked before anything is created; only a missing artifacts folder itself is made.
+    const { destination, create } = checkDestination(output);
+    if (create) { mkdirSync(create); if (realpathSync(create) !== realpathSync(dirname(create)) + sep + 'artifacts') throw Error('Output must be an .html file inside an artifacts folder.'); }
     // Explicit replacement only; never follow a pre-existing output symlink.
     const fd = openSync(destination, constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW | (flags.has('--force') ? constants.O_TRUNC : constants.O_EXCL), 0o600);
     try { writeSync(fd, result.html); } finally { closeSync(fd); }

@@ -330,6 +330,8 @@ const SHOW_LINE = "  To show data with a component: add <show name=\"component n
 export const TASK_STAGE_SENTENCE = "stage (optional) is built, reviewed, installed or verified, for work that must still be installed or checked before it is really done.";
 const TASK_STATES_SENTENCE = "state is running, waiting (the user must act), done or stopped.";
 
+/** A POSIX shell single-quoted word (paths with spaces or quotes stay one argument). */
+export const shellQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 /** The app's report command and its guide (core/main.ts: `Botling --render-report`, docs/report-blocks.md as shipped). */
 export interface ReportTool { command: string; docs: string }
 
@@ -338,7 +340,7 @@ export interface ReportTool { command: string; docs: string }
  * change where results go or how they are published; that stays the results rule's.
  */
 export function reportPageLine(tool: ReportTool, artifacts: string): string {
-  return `- Build every report page (status, decision, investigation, comparison, plan, results, explainer) from a ReportSpec v2 JSON, never hand-written HTML: read ${tool.docs} for the format, the blocks and the writing rules; write the spec; run ${tool.command} spec.json ${artifacts}/<english-name>.html (add --slides for a 16:9 deck, --force to replace). It prints one JSON line {ok, errors, warnings, htmlPath, link}: fix each error (it gives a path and a valid example) and the warnings you can, run it again (at most twice), then deliver the page at htmlPath as the results rule says.`;
+  return `- Build every report page (status, decision, investigation, comparison, plan, results, explainer) from a ReportSpec v2 JSON, never hand-written HTML: read ${shellQuote(tool.docs)} for the format, the blocks and the writing rules; write the spec; run ${tool.command} spec.json ${shellQuote(`${artifacts}/<english-name>.html`)} exactly as quoted (add --slides for a 16:9 deck, --force to replace). It prints one JSON line {ok, errors, warnings, htmlPath, link}: fix each error (it gives a path and a valid example) and the warnings you can, run it again (at most twice), then deliver the page at htmlPath as the results rule says.`;
 }
 
 /** Puts `line` after the first line of `text` that contains `anchor` (at the end when none does). */

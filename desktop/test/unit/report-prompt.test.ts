@@ -22,8 +22,8 @@ describe("the report page rule", () => {
         // Nothing else moves: removing the line gives the prompts without it.
         expect(lines.filter((l) => l !== line).join("\n")).toBe(desktopPrompts(plain, profile(role)).system);
         expect(ours.codexWorkerSystem.split("\n")).toContain(line);
-        expect(line).toContain(`${tool.command} spec.json ${artifacts}/<english-name>.html`);
-        expect(line).toContain(tool.docs);
+        expect(line).toContain(`${tool.command} spec.json '${artifacts}/<english-name>.html' exactly as quoted`);
+        expect(line).toContain(`read '${tool.docs}'`);
       });
     }
   }
@@ -39,5 +39,27 @@ describe("the report page rule", () => {
   it("adds nothing when the app has no report command", () => {
     const plain = botPrompts({ profile: profile("bot") });
     expect(desktopPrompts(plain, profile("bot"), null).system).toBe(desktopPrompts(plain, profile("bot")).system);
+  });
+});
+
+describe("the report page line as a shell command", () => {
+  it("keeps a spaced command path and a spaced artifacts path one argument each under zsh", async () => {
+    const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { execFileSync } = await import("node:child_process");
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "report line ")));
+    const app = join(base, "Botling 2.app", "Contents", "MacOS");
+    mkdirSync(app, { recursive: true });
+    const binary = join(app, "Botling 2");
+    writeFileSync(binary, `#!/bin/sh\n${process.execPath.replaceAll(" ", "\\ ")} -e 'console.log(JSON.stringify(process.argv.slice(1)))' -- "$@"\n`);
+    chmodSync(binary, 0o755);
+    const quoted = `'${binary.replaceAll("'", "'\\''")}'`;
+    const artifacts = join(base, "My Project's", ".bot", "artifacts");
+    const line = reportPageLine({ command: `${quoted} --render-report`, docs: join(base, "Botling 2.app", "Contents", "Resources", "report", "report-blocks.md") }, artifacts);
+    const command = /; run (.*) exactly as quoted/.exec(line)![1].replace("<english-name>", "a b");
+    const argv = JSON.parse(execFileSync("zsh", ["-f", "-c", command], { encoding: "utf8" }));
+    expect(argv).toEqual(["--render-report", "spec.json", join(artifacts, "a b.html")]);
+    expect(line).toContain(`read '${join(base, "Botling 2.app", "Contents", "Resources", "report", "report-blocks.md")}'`);
   });
 });

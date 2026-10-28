@@ -200,3 +200,68 @@ test('CLI prints JSON results, writes slides with --slides, and still writes HTM
   assert.equal(b.ok, false); assert.equal(b.errors[0].path, 'sections[0].blocks[1].parts'); assert.equal(b.errors[0].example.type, 'donut');
   assert.equal(dom(await readFile(out2, 'utf8')).querySelectorAll('.blk-error').length, 1);
 });
+
+test('CLI accepts spaced paths and creates only a missing artifacts folder itself', async () => {
+  const { realpathSync, existsSync } = await import('node:fs');
+  const base = realpathSync(temp);
+  const project = join(base, 'My Project'), spec = join(project, 'spec with space.json');
+  await mkdir(project);
+  await writeFile(spec, await readFile(join(exDir, 'results-performance.json')));
+  const out = join(project, '.bot', 'artifacts', 'a b.html');
+  await mkdir(join(project, '.bot'));
+  const r = spawnSync(process.execPath, [join(root, 'scripts/report.mjs'), spec, out], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(JSON.parse(r.stdout).htmlPath, out);
+  assert.ok(existsSync(out));
+});
+
+test('rejected output paths change nothing on disk (no folders, no files)', async () => {
+  const { realpathSync, existsSync, symlinkSync, readdirSync } = await import('node:fs');
+  const base = join(realpathSync(temp), 'reject');
+  const proj = join(base, 'proj'), outside = join(base, 'outside');
+  await mkdir(join(proj, 'artifacts'), { recursive: true }); await mkdir(outside);
+  symlinkSync(outside, join(proj, 'artifacts', 'outside'));
+  await mkdir(join(base, 'proj2'));
+  symlinkSync(outside, join(base, 'proj2', 'artifacts'));
+  const spec = join(base, 'spec.json');
+  await writeFile(spec, await readFile(join(exDir, 'results-performance.json')));
+  const snapshot = () => {
+    const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() && !e.isSymbolicLink() ? [join(dir, e.name), ...walk(join(dir, e.name))] : [join(dir, e.name)]);
+    return walk(base).sort();
+  };
+  const before = snapshot();
+  for (const out of [
+    join(base, 'nope', 'artifacts', 'x.html'),                 // missing parent of the artifacts folder
+    join(proj, 'artifacts', 'sub', 'x.html'),                  // nested folder that does not exist
+    join(proj, 'artifacts', '..', 'escape', 'x.html'),         // traversal out of artifacts
+    join(proj, 'artifacts', 'outside', 'newdir', 'report.html'), // symlink escape, new folder below it
+    join(proj, 'artifacts', 'outside', 'report.html'),         // symlink escape, existing folder
+    join(base, 'proj2', 'artifacts', 'report.html'),           // artifacts itself is a symlink elsewhere
+    join(base, 'proj3', 'artifacts', 'x.txt'),                 // wrong extension, folder missing
+    join(base, 'plain', 'x.html'),                             // no artifacts folder at all
+  ]) {
+    const r = spawnSync(process.execPath, [join(root, 'scripts/report.mjs'), spec, out], { encoding: 'utf8' });
+    assert.equal(r.status, 1, out);
+    assert.equal(JSON.parse(r.stdout).ok, false, out);
+    assert.deepEqual(snapshot(), before, `side effect for ${out}`);
+  }
+  assert.equal(existsSync(join(outside, 'newdir')), false);
+  assert.equal(existsSync(join(outside, 'report.html')), false);
+});
+
+test('the bundled command ships a licence notice for every package in the bundle', async () => {
+  const { build } = await import('esbuild');
+  const { thirdPartyNotices, bundledPackages, NOTICES_FILE } = await import('./licenses.mjs');
+  const r = await build({ entryPoints: [join(root, 'reports/cli-main.ts')], bundle: true, write: false, platform: 'node', format: 'cjs', outfile: join(temp, 'x.cjs'), metafile: true, jsx: 'automatic', loader: { '.css': 'text' }, tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } }, logLevel: 'silent' });
+  const packages = [...bundledPackages(r.metafile, root).keys()];
+  for (const p of ['d3-scale', 'd3-shape', 'd3-array', 'd3-path', 'internmap', 'elkjs', 'react', 'react-dom', 'zod', 'markdown-it']) assert.ok(packages.includes(p), p);
+  const notices = thirdPartyNotices(r.metafile, root);
+  assert.deepEqual(notices.missing, []);
+  for (const p of packages) assert.match(notices.text, new RegExp(`^${p.replace(/[.]/g, '\\.')} \\d+\\.\\d+\\.\\d+ — `, 'm'), p);
+  assert.match(notices.text, /Permission to use, copy, modify, and\/or distribute this software for any/); // ISC (d3)
+  assert.match(notices.text, /Eclipse Public License - v 2\.0/);
+  assert.match(notices.text, /Permission is hereby granted, free of charge/); // MIT
+  // build.mjs writes it next to report.cjs and packaging copies it out of app.asar with the guide.
+  assert.match(await readFile(join(root, 'build.mjs'), 'utf8'), /writeFileSync\(join\(out, "report", NOTICES_FILE\), notices\.text\)/);
+  assert.match(await readFile(join(root, 'electron-builder.config.cjs'), 'utf8'), new RegExp(`from: "out/report", to: "report", filter: \\[[^\\]]*"${NOTICES_FILE}"`));
+});
