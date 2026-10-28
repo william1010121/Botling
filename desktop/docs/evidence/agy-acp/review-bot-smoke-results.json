@@ -1,0 +1,49 @@
+{
+  "cards": [
+    {
+      "tool": "other",
+      "choices": [
+        "Allow once",
+        "Don't allow"
+      ]
+    },
+    {
+      "tool": "other",
+      "choices": [
+        "Allow once",
+        "Don't allow"
+      ]
+    }
+  ],
+  "turns": [
+    {
+      "turnId": "t-052e3aa2-9107-4007-b530-78ec22da86fc",
+      "terminal": {
+        "type": "turn.finished",
+        "botId": "6A0B0000-0000-4000-8000-000000000002",
+        "turnId": "t-052e3aa2-9107-4007-b530-78ec22da86fc",
+        "messageId": "3A563EE9-9F83-4717-AA5B-9858A3CBFD4E",
+        "status": "failed",
+        "text": "Permission was denied when attempting to create `denied-core.txt`:\n\n> `denied by pre-tool hook: Denied by user (*)`\n\nAs instructed, stopping immediately without retrying.",
+        "error": "Antigravity stopped: permission_denied"
+      }
+    },
+    {
+      "turnId": "t-4a5ebfe4-cff9-40bb-93b7-55fe938cbe4a",
+      "terminal": {
+        "type": "turn.finished",
+        "botId": "6A0B0000-0000-4000-8000-000000000002",
+        "turnId": "t-4a5ebfe4-cff9-40bb-93b7-55fe938cbe4a",
+        "messageId": "633EAB99-BE7C-4166-B7E1-3AC5304CA3A1",
+        "status": "done",
+        "text": "BOTLING_ACP_CORE_RESUMED"
+      }
+    }
+  ],
+  "selection": [
+    "agy"
+  ],
+  "sameConversationAfterRestart": true,
+  "markerAbsent": true,
+  "passed": true
+}
