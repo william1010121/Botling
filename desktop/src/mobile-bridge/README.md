@@ -47,11 +47,12 @@ live token issued, app installed/restarted or public route deployed by this chan
 
 1. Integrate the mobile frontend commits `32da511` / `f595687` and bridge only after Claude review.
    Build `desktop/mobile/dist` in the assigned validation slot. Its absolute path is `assets` below.
-2. Choose the computer's specific LAN/VPN IPv4 (10/8, 172.16/12, 192.168/16 or 100.64/10), a
-   port, and an HTTPS hostname reachable privately from the phone. Loopback works only on the
-   computer. Do not port-forward to the internet. The certificate SAN must match the hostname,
-   and its issuing CA must be trusted by both devices. Provision certs using your existing local
-   certificate workflow; this bridge never creates a CA or changes device trust settings.
+2. Use public origin `https://botling-bridge.driseam.com` with the Mac's private HTTPS listener
+   `127.0.0.1:8443` and local Cloudflare Tunnel connector. The upstream certificate SAN must match
+   the public hostname, and its issuer must be trusted by the connector; the phone separately
+   verifies the public edge certificate. Wait for flux-k8s to confirm the connector/trust scheme
+   before creating production credentials/config. Flux owns edge Access/rate-limit policy;
+   app bearer/bot checks remain unchanged. No router port-forward, CA or device trust change.
 3. In a user-owned private directory (`chmod 700`), run the local setup command:
 
    ```sh
@@ -67,8 +68,8 @@ live token issued, app installed/restarted or public route deployed by this chan
 
    ```json
    {
-     "origin": "https://botling.home.arpa:8443",
-     "host": "192.168.1.20",
+     "origin": "https://botling-bridge.driseam.com",
+     "host": "127.0.0.1",
      "port": 8443,
      "certFile": "/absolute/private/server-cert.pem",
      "keyFile": "/absolute/private/server-key.pem",
@@ -85,7 +86,7 @@ live token issued, app installed/restarted or public route deployed by this chan
    Discovery never exports its path into the environment, so another selected profile does not
    inherit it. Probe cores always skip mobile. No settings.json or global environment changes.
    A future Rust migration must preserve this profile-local opt-in and override precedence.
-5. On the phone, open `https://botling.home.arpa:8443/mobile/`, enter the token, check the expected
+5. On the phone, open `https://botling-bridge.driseam.com/mobile/`, enter the token, check the expected
    Main/project content, then test a harmless send and a question response. Verify desktop unread
    is unchanged by snapshots, and desktop queued attachments block sending. Verify revocation.
    Actual phone DNS/firewall/TLS trust and Safari keyboard/home-screen behavior remain unverified.

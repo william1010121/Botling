@@ -49,7 +49,7 @@ try {
   }
   console.log('PASS: local configuration, bind address, TLS material, Main grant and assets. No listener started.');
   console.log('UNVERIFIED: phone DNS/reachability, CA trust/chain, available port, live core, token possession and device interaction.');
-  if (a === 127) console.log('LOCAL ONLY: loopback cannot be reached by a separate phone.');
+  if (a === 127) console.log('LOCAL BACKEND: phone access requires a local connector and configured edge route; loopback alone is not remotely reachable.');
 } catch {
   // Do not print exception bodies: malformed config/PEM errors can contain private input.
   console.error(`FAIL: ${stage}. See LOCAL-SETUP.md; no service or configuration was changed.`);

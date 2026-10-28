@@ -28,7 +28,9 @@ mobile_private="/REPLACE/verified-app-profile/core/mobile"
 ```
 
 Replace every example value with the agreed private endpoint and absolute paths. On this macOS
-installation `assets` is `/Users/guoshengwei/Applications/Botling 2.app/Contents/Resources/mobile`.
+installation the shell path for `assets` is "$HOME/Applications/Botling 2.app/Contents/Resources/mobile".
+Expand `$HOME` to the actual absolute home-directory path before writing JSON: JSON does not
+expand shell variables, and a literal `$HOME` value is invalid for this absolute-path field.
 Do not change permissions of existing shared certificate files blindly: use an account-owned
 private key with no group/world permissions. Config and client policy must also be owner-only.
 Do not commit private files. The template contains no credential and cannot activate a service.
@@ -53,7 +55,7 @@ shared logs, or this repository. This preparation run has NOT issued a live toke
 Preflight checks exact config fields, specific local private IPv4, HTTPS origin and independent valid listener port, key
 permissions, certificate time/SAN and key pairing, client schema/current Main grant, and the five
 nonempty assets. It does not verify certificate chain trust, phone DNS/firewall, free port, token
-possession, or actual core behavior. A loopback PASS is computer-local only. Failures print only a
+possession, or actual core behavior. A loopback PASS checks the local backend only; phone access additionally requires the local connector and edge route. Failures print only a
 stage; inspect that local input without copying secrets into chat. Encrypted keys cannot work
 with the current bridge configuration (there is no passphrase field).
 
@@ -103,8 +105,12 @@ node desktop/src/mobile-bridge/setup.mjs revoke "$mobile_private/clients.json" p
 ```
 
 Revocation does not cancel a command already dispatched. Test live core handover only in its
-allocated acceptance window: probe must not bind; old core must release the port within the
-15.75-second retry wait window, new core must serve again, and uncertain mutations must not duplicate.
+allocated acceptance window: with no explicit environment override, verify the new core rediscovers
+only the selected profile's private config; a different unconfigured profile stays disabled.
+Probe must not bind; old core must release the port within the 15.75-second retry wait window,
+new core must serve again, and uncertain mutations must not duplicate. These are runtime acceptance
+checks, not established by the unit tests. Flux owns edge Access/rate-limit policy; app bearer
+verification remains required.
 On the physical phone check certificate trust, keyboard/composer layout, and Add to Home Screen.
 Viewport screenshots and synthetic browser fixtures cannot establish these device behaviors.
 Rich cards, attachments, offline chat, push delivery, and reload-persistent drafts are outside the
