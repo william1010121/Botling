@@ -28,8 +28,8 @@ describe("auto mode: arguments and setting", () => {
 
   it("passes allowed blocked calls as --settings rules", () => {
     const args = headArguments({ ...base, autoMode: true, allowRules: ["Bash(rm -rf build, now)"] });
-    expect(JSON.parse(args[args.indexOf("--settings") + 1]!)).toEqual({ permissions: { allow: ["Bash(rm -rf build, now)"] } });
-    expect(headArguments({ ...base, autoMode: true })).not.toContain("--settings");
+    expect(JSON.parse(args[args.indexOf("--settings") + 1]!)).toMatchObject({ permissions: { allow: ["Bash(rm -rf build, now)"] } });
+    expect(headArguments({ ...base, autoMode: false })).not.toContain("--settings");
   });
 
   it("is on by default and follows 1.x's autoApprove setting", () => {

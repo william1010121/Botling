@@ -133,6 +133,8 @@ export interface SessionStart {
   addDirs?: string[];
   /** Auto mode: Claude Code's (`--permission-mode auto`) or Codex's reviewer (`auto_review`); Claude only: rules for blocked calls the user allowed (`--settings`). */
   autoMode?: boolean;
+  claudeBypassPermissions?: boolean;
+  codexBypassPermissions?: boolean;
   allowRules?: string[];
   /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
   codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null;
@@ -212,7 +214,7 @@ export interface BotOptions {
   /** The completion judge when Settings has it on (1.x's `promiseCheck`), with its model; null: off. */
   promiseCheck?: () => { check: Check; model: string } | null;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; autoMode?: boolean };
+  launch?: () => { subagentHourCache: boolean; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -2301,6 +2303,8 @@ export class Bot {
       addDirs: this.owner.options.addDirs?.() ?? [],
       // 1.x's "Auto-approve safe actions": on unless turned off.
       autoMode: launch.autoMode !== false, allowRules: this.allowRules,
+      claudeBypassPermissions: launch.claudeBypassPermissions === true,
+      codexBypassPermissions: launch.codexBypassPermissions === true,
     };
     let head: AgentHead;
     if (this.engine === "codex") {

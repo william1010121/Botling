@@ -2,15 +2,15 @@
 // head and its workers; only its refusals become a card; Allow lets that command through and the
 // refused thread's next turn asks the app ("user") once, then the reviewer again.
 import { describe, expect, it } from "vitest";
-import { CodexSession, type CodexOutput } from "../../src/core/agent/codex";
+import { CodexSession, type CodexConfig, type CodexOutput } from "../../src/core/agent/codex";
 
 const writes = (out: CodexOutput[]) => out.filter((o) => o.kind === "write").map((o) => o.value as any);
 const items = (out: CodexOutput[]) => out.filter((o) => o.kind === "item").map((o) => (o as { item: any }).item);
 
-function session(autoMode?: boolean) {
-  const s = new CodexSession({ cwd: "/tmp/bot", instructions: "Coordinator", workerInstructions: "Worker", resumeThread: null, model: null, workerModel: null, effort: null, restoredWorkers: [], ...(autoMode === undefined ? {} : { autoMode }) });
+function session(autoMode?: boolean, overrides: Partial<CodexConfig> = {}) {
+  const s = new CodexSession({ cwd: "/tmp/bot", instructions: "Coordinator", workerInstructions: "Worker", resumeThread: null, model: null, workerModel: null, effort: null, restoredWorkers: [], ...(autoMode === undefined ? {} : { autoMode }), ...overrides });
   const started = writes([...s.start(), ...s.receive(JSON.stringify({ id: 1, result: {} }))]);
-  const thread = started.find((w) => w.method === "thread/start");
+  const thread = started.find((w) => w.method === "thread/start" || w.method === "thread/resume");
   s.receive(JSON.stringify({ id: thread.id, result: { thread: { id: "coordinator" } } }));
   const line = (value: unknown) => s.receive(JSON.stringify(value));
   const denied = (threadId: string, command = "rm -rf build") => line({ method: "item/autoApprovalReview/completed", params: {
@@ -89,5 +89,71 @@ describe("Codex auto mode (auto_review)", () => {
     const follow = writes(f.line({ id: "m", method: "item/tool/call", params: { threadId: "coordinator", tool: "app_send_message", arguments: { task_id: task, message: "Try again" } } }));
     const next = follow.find((w) => w.method === "turn/start" && w.params.threadId === "worker");
     expect(next?.params.approvalsReviewer).toBe("user");
+  });
+});
+
+
+describe("explicit Codex permission bypass", () => {
+  it.each([false, true])("maps new heads and workers with bypass=%s", (bypassPermissions) => {
+    const f = session(true, { bypassPermissions });
+    const expected = bypassPermissions
+      ? { approvalPolicy: "never", approvalsReviewer: "user", sandbox: "danger-full-access" }
+      : { approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" };
+    expect(f.thread.params).toMatchObject(expected);
+    expect(worker(f).start.params).toMatchObject(expected);
+  });
+
+  it.each([false, true])("overrides persisted coordinator and worker permissions on resume: bypass=%s", (bypassPermissions) => {
+    const f = session(true, { bypassPermissions, resumeThread: "coordinator", restoredWorkers: [
+      { id: "task-1", name: "Worker", instructions: "Build", thread: "old-worker", run: 1, wasActive: false, reportPending: false, status: "completed" },
+    ] });
+    const expected = bypassPermissions
+      ? { approvalPolicy: "never", approvalsReviewer: "user", sandbox: "danger-full-access" }
+      : { approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write" };
+    expect(f.thread.method).toBe("thread/resume");
+    expect(f.thread.params).toMatchObject(expected);
+    const resumed = writes(f.line({ id: "resume-worker", method: "item/tool/call", params: {
+      threadId: "coordinator", tool: "app_send_message", arguments: { task_id: "task-1", message: "Continue" },
+    } })).find(w => w.method === "thread/resume");
+    expect(resumed?.params).toMatchObject({ ...expected, threadId: "old-worker" });
+  });
+});
+
+
+describe("auto risk policy reaches heads and app-managed workers", () => {
+  it.each(["low", "medium", "high", "critical", "unknown"])("passes the %s rule to both reviewers without removing the sandbox", (risk) => {
+    const f = session();
+    const w = worker(f);
+    for (const start of [f.thread, w.start]) {
+      const policy = start.params.config["auto_review.extra_policy"];
+      expect(policy).toContain(`Botling ${risk} risk (${risk === "low" || risk === "medium" ? "allow" : risk === "critical" ? "block" : "ask"})`);
+      expect(start.params.sandbox).toBe("workspace-write");
+      expect(start.params.approvalPolicy).toBe("on-request");
+    }
+  });
+
+  it.each(["low", "medium", "high", "critical", null, "future-risk"])("does not override external denied verdicts, including risk=%s", (riskLevel) => {
+    const f = session();
+    const card = items(f.line({ method: "item/autoApprovalReview/completed", params: { threadId: "coordinator", review: { status: "denied", riskLevel }, action: { type: "command", command: "test-command" } } }));
+    expect(card).toMatchObject([{ kind: "permission" }]);
+    // Policy is supplied BEFORE review. A refusal is never silently converted to approval/retry.
+    expect(writes(f.s.send("continue")).find(w => w.method === "turn/start")?.params.approvalsReviewer).toBeUndefined();
+  });
+
+  it.each(["timedOut", "aborted", "future-status", undefined])("surfaces failed/unknown reviewer status %s for both head and worker", (status) => {
+    const f = session();
+    const w = worker(f);
+    for (const threadId of ["coordinator", "worker"]) {
+      const out = f.line({ method: "item/autoApprovalReview/completed", params: { threadId, review: { status }, action: { type: "command", command: "test-command" } } });
+      expect(writes(out)).toEqual([]);
+      expect(items(out)).toMatchObject([{ kind: "permission", input: { reason: expect.stringContaining("No automatic approval") }, ...(threadId === "worker" ? { workerId: w.task } : {}) }]);
+    }
+  });
+
+  it("bypass and manual modes do not install the auto reviewer policy", () => {
+    for (const f of [session(false), session(true, { bypassPermissions: true })]) {
+      expect(f.thread.params.config["auto_review.extra_policy"]).toBeUndefined();
+      expect(worker(f).start.params.config["auto_review.extra_policy"]).toBeUndefined();
+    }
   });
 });

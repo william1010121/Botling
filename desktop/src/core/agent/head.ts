@@ -1,3 +1,4 @@
+import { claudeAutoRiskSettings } from "./auto-risk-policy";
 // A bot's head: one long-lived `claude -p --input-format stream-json` process (as the Swift app's
 // `ClaudeAgentProcess`). Messages go in as JSON lines on stdin; replies, tool calls and permission
 // requests come out as stream-json lines. It runs in its own process group (see process/tree.ts)
@@ -56,6 +57,8 @@ export interface HeadConfig {
    * Off: `acceptEdits`, and every tool not allowed is asked about.
    */
   autoMode?: boolean;
+  /** Explicit app opt-in; harmless test sessions still retain their restrictions. */
+  bypassPermissions?: boolean;
   /** Permission rules let through without asking ("Bash(rm -rf build)"): calls the user allowed after auto mode blocked them (`--settings`). */
   allowRules?: string[];
 }
@@ -65,7 +68,7 @@ export function headArguments(config: HeadConfig): string[] {
   const args = [
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     config.resume ? "--resume" : "--session-id", config.sessionId,
-    "--permission-mode", config.harmless ? "default" : config.autoMode ? "auto" : "acceptEdits",
+    "--permission-mode", config.harmless ? "default" : config.bypassPermissions ? "bypassPermissions" : config.autoMode ? "auto" : "acceptEdits",
   ];
   if (config.forkSession && config.resume) args.push("--fork-session");
   if (config.persistSession === false && !config.harmless) args.push("--no-session-persistence");
@@ -80,7 +83,10 @@ export function headArguments(config: HeadConfig): string[] {
   if (config.model) args.push("--model", config.model);
   if (config.effort) args.push("--effort", config.effort);
   // In `--settings`, as a command may hold commas (AgentProcess.swift's `settingsJSON`).
-  if (config.allowRules?.length && !config.harmless) args.push("--settings", allowSettings(config.allowRules));
+  if (!config.harmless) {
+    const settings = { ...JSON.parse(allowSettings(config.allowRules ?? [])), ...claudeAutoRiskSettings(config.autoMode, config.bypassPermissions) };
+    if (Object.keys(settings).length) args.push("--settings", JSON.stringify(settings));
+  }
   // The app's own instructions (Prompts.swift's). Not in harmless mode: they rely on Read/Write/Edit
   // (memory.md, routines), and a live run with no tools but these instructions wrote fake tool calls
   // as text for minutes instead of answering (Phase 2a).
@@ -212,7 +218,7 @@ export class ClaudeHead {
 
   /** Lets these permission rules through from now on in the running session (`apply_flag_settings`, 1.x's `allow(rules:)`). */
   allow(rules: string[]) {
-    this.write({ type: "control_request", request_id: `allow-${randomUUID()}`, request: { subtype: "apply_flag_settings", settings: { permissions: { allow: rules } } } });
+    this.write({ type: "control_request", request_id: `allow-${randomUUID()}`, request: { subtype: "apply_flag_settings", settings: { permissions: { allow: rules }, ...(!this.config.harmless ? claudeAutoRiskSettings(this.config.autoMode, this.config.bypassPermissions) : {}) } } });
   }
 
   /** Stops the turn under way; claude ends it with an error result and the session goes on. */

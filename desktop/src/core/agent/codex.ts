@@ -1,3 +1,4 @@
+import { codexAutoRiskConfig } from "./auto-risk-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
 // stdio), ported from the Swift app's CodexAgentProcess.swift (checked against codex-cli 0.163.0).
 //
@@ -120,6 +121,8 @@ export interface CodexConfig {
   restoredMonitors?: CommandMonitor[];
   /** Auto mode (default on): Codex's own reviewer (`auto_review`) answers escalations; only its refusals become a card. */
   autoMode?: boolean;
+  /** Explicit opt-in: no approval prompts and no Codex sandbox. */
+  bypassPermissions?: boolean;
   /** More folders it may write besides `cwd` (1.x's `writableRoots`: the bot's `--add-dir` folders). */
   writableRoots?: string[];
 }
@@ -541,7 +544,7 @@ export class CodexSession {
     }
   }
 
-  private get reviewer(): string { return this.config.autoMode === false ? "user" : "auto_review"; }
+  private get reviewer(): string { return this.config.bypassPermissions || this.config.autoMode === false ? "user" : "auto_review"; }
 
   private nextReviewer(params: Record<string, unknown>) {
     if (!this.reviewerNext) return;
@@ -551,14 +554,16 @@ export class CodexSession {
 
   /** Codex's reviewer refused a call: a card with its reason (1.x `reviewed`). Allow lets it through next time. */
   private reviewed(params: any, worker: Worker | null): CodexOutput[] {
-    const review = params.review;
-    if (!review || review.status !== "denied") return [];
+    const review = params.review && typeof params.review === "object" ? params.review : {};
+    if (review.status === "approved") return [];
     const action = params.action && typeof params.action === "object" ? params.action : {};
     const command = typeof action.command === "string" ? action.command
       : Array.isArray(action.argv) ? action.argv.filter((a: unknown) => typeof a === "string").join(" ") : "";
     const what = command || (typeof action.type === "string" ? action.type : "a call");
     const risk = typeof review.riskLevel === "string" ? `[${review.riskLevel} risk] ` : "";
-    const why = typeof review.rationale === "string" ? review.rationale : "";
+    const why = typeof review.rationale === "string" && review.rationale ? review.rationale
+      : review.status === "denied" ? "Auto review denied this action."
+      : `Auto review did not approve this action (${typeof review.status === "string" ? review.status : "unknown result"}). No automatic approval was granted.`;
     const requestId = `codex-review:${randomUUID()}`;
     this.reviews.set(requestId, { command, task: worker?.id ?? null });
     // The bot shows it as auto mode's blocked-call card (the reason apart from the call) and tells the head after the pick.
@@ -631,12 +636,13 @@ export class CodexSession {
 
   private startThread(): CodexOutput {
     const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: this.reviewer, sandbox: "workspace-write", developerInstructions: this.config.instructions,
+      cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write", developerInstructions: this.config.instructions,
     };
+    params.config = codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions);
     if (this.managed) {
       params.environments = [];
       params.dynamicTools = MANAGED_TOOLS;
-      params.config = COORDINATOR_CONFIG;
+      params.config = { ...COORDINATOR_CONFIG, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) };
     }
     if (this.config.model) params.model = this.config.model;
     // Its other folders are writable too, as in 1.x (`sandbox_workspace_write.writable_roots`).
@@ -1063,9 +1069,9 @@ export class CodexSession {
     }
     if (worker.role !== undefined) return this.failWorker(task, "Unknown persisted worker role; no generic worker was substituted.");
     const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: this.reviewer, sandbox: "workspace-write",
+      cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write",
       developerInstructions: this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
-      config: { "features.multi_agent": false, "agents.enabled": false },
+      config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) },
     };
     // The workers write where the coordinator may, as in 1.x (`writable_roots`).
     params.config = { ...(params.config as Record<string, unknown>), ...writableRootsConfig(this.config.writableRoots) };
@@ -1516,6 +1522,8 @@ export interface CodexHeadConfig {
   routinesFile?: string | null;
   /** Codex's own reviewer answers escalations (default on). */
   autoMode?: boolean;
+  /** Explicit opt-in: no approval prompts and no Codex sandbox. */
+  bypassPermissions?: boolean;
   /** More folders it may write (its `--add-dir` folders; 1.x's `writableRoots`). */
   writableRoots?: string[];
   componentEditor?: ComponentEditorRoute | null;
@@ -1565,6 +1573,7 @@ export class CodexHead {
       restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
       autoMode: config.autoMode ?? true,
+      bypassPermissions: config.bypassPermissions === true,
       writableRoots: config.writableRoots ?? [],
       componentEditor: config.componentEditor,
     });

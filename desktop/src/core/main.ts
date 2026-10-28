@@ -60,6 +60,7 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
     effort: session.effort ?? null,
     // Claude Code's auto mode and the rules for blocked calls the user allowed (AgentProcess.swift).
     autoMode: session.autoMode ?? false, allowRules: session.allowRules ?? [],
+    bypassPermissions: session.claudeBypassPermissions ?? (readSettings(Layout.settings(dataDir)).claudeBypassPermissions === true),
   };
   if (kind === "claude") {
     return {
@@ -103,6 +104,7 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     routinesFile: session.routinesFile,
     // Auto mode: Codex's own reviewer answers escalations (settings.json `autoApprove`, as for Claude).
     autoMode: session.autoMode !== false,
+    bypassPermissions: session.codexBypassPermissions === true,
     // Its other folders (the main bot: every bot's inbox; Maintainer: folders you let it use) are writable, as in 1.x.
     writableRoots: session.addDirs ?? [],
   };
