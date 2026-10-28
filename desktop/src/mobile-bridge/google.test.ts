@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { MAIN_BOT_ID } from '../core/store/records';
+import { ALL_BOTS } from './scope';
 import { credentials, fixture, instant, request } from './google-fixture';
 import { GoogleAuth } from './google';
 it('uses code + S256 PKCE + nonce, exact callback and only openid/email; issues an opaque secure session', async () => {
@@ -10,8 +10,8 @@ it('uses code + S256 PKCE + nonce, exact callback and only openid/email; issues 
   expect(flow.begin.cookie).toContain('__Host-botling-oauth='); expect(flow.begin.cookie).toContain('Secure; HttpOnly; SameSite=Lax');
   const cookie = await f.auth.callback(flow.req, flow.params), req = request({ cookie: cookie.split(';')[0] });
   expect(cookie).toContain('__Host-botling-mobile='); expect(cookie).toContain('Secure; HttpOnly; SameSite=Lax');
-  const body = f.auth.bootstrap(req); expect(body.botIds).toEqual([MAIN_BOT_ID]);
-  expect(f.auth.authorize(request({ ...req.headers as Record<string, string>, 'x-botling-csrf': body.csrf })).botIds).toEqual([MAIN_BOT_ID]);
+  const body = f.auth.bootstrap(req); expect(body.botIds).toEqual([ALL_BOTS]);
+  expect(f.auth.authorize(request({ ...req.headers as Record<string, string>, 'x-botling-csrf': body.csrf })).botIds).toEqual([ALL_BOTS]);
   await expect(f.auth.callback(flow.req, flow.params)).rejects.toMatchObject({ status: 401 });
   expect(f.fetcher.mock.calls.map(([url]) => url)).toEqual(['https://oauth2.googleapis.com/token', 'https://www.googleapis.com/oauth2/v3/certs']);
 });
@@ -94,7 +94,7 @@ it.each(['before callback', 'during exchange'])('rejects sibling-browser login s
   expect(() => f.auth.bootstrap(b.req)).toThrow('auth_required');
   release();
   await expect(pending ?? f.auth.callback(browserB, flow.params)).rejects.toMatchObject({ status: 401 });
-  const fresh = await f.login(); expect(f.auth.authorize(fresh.req).botIds).toEqual([MAIN_BOT_ID]);
+  const fresh = await f.login(); expect(f.auth.authorize(fresh.req).botIds).toEqual([ALL_BOTS]);
 });
 it('allows a fresh browser to start and finish despite sustained no-cookie login-start flooding', async () => {
   const f = fixture();
@@ -102,7 +102,7 @@ it('allows a fresh browser to start and finish despite sustained no-cookie login
   const flow = f.start();
   for (let i = 0; i < 1024; i++) f.auth.begin(request({ 'x-forwarded-for': `untrusted-${i}`, cookie: '__Host-botling-oauth=' + 'x'.repeat(43) }));
   const cookie = await f.auth.callback(flow.req, flow.params);
-  expect(f.auth.bootstrap(request({ cookie: cookie.split(';')[0] })).botIds).toEqual([MAIN_BOT_ID]);
+  expect(f.auth.bootstrap(request({ cookie: cookie.split(';')[0] })).botIds).toEqual([ALL_BOTS]);
   await expect(f.auth.callback(flow.req, flow.params)).rejects.toMatchObject({ status: 401 });
 });
 it('rejects tampered, duplicate, swapped and pre-restart transaction cookies without token exchange', async () => {
@@ -116,7 +116,7 @@ it('rejects tampered, duplicate, swapped and pre-restart transaction cookies wit
   await expect(restarted.callback(a.req, a.params)).rejects.toMatchObject({ status: 401 });
   expect(f.fetcher).not.toHaveBeenCalled();
   const result = await f.auth.callback(a.req, a.params);
-  expect(f.auth.bootstrap(request({ cookie: result.split(';')[0] })).botIds).toEqual([MAIN_BOT_ID]);
+  expect(f.auth.bootstrap(request({ cookie: result.split(';')[0] })).botIds).toEqual([ALL_BOTS]);
 });
 it('never makes an evicted consumed flow replayable and admits fresh login under callback-ledger pressure', async () => {
   const f = fixture(), first = f.start(), pending = f.start();
@@ -131,7 +131,7 @@ it('never makes an evicted consumed flow replayable and admits fresh login under
   // Pressure sacrifices oldest pending logins instead of accepting old/replayed cookies.
   await expect(f.auth.callback(pending.req, pending.params)).rejects.toMatchObject({ status: 401 });
   expect(f.fetcher).not.toHaveBeenCalled();
-  const fresh = await f.login(); expect(f.auth.authorize(fresh.req).botIds).toEqual([MAIN_BOT_ID]);
+  const fresh = await f.login(); expect(f.auth.authorize(fresh.req).botIds).toEqual([ALL_BOTS]);
 });
 it('bounds concurrent exchanges without blocking login starts or existing sessions, and releases admission on completion', async () => {
   const f = fixture(), session = await f.login();
@@ -139,17 +139,17 @@ it('bounds concurrent exchanges without blocking login starts or existing sessio
   const pending = Array.from({ length: 8 }, () => { const flow = f.start(); return f.auth.callback(flow.req, flow.params); });
   const overflow = f.start();
   await expect(f.auth.callback(overflow.req, overflow.params)).rejects.toMatchObject({ status: 503 });
-  expect(f.auth.authorize(session.req).botIds).toEqual([MAIN_BOT_ID]);
+  expect(f.auth.authorize(session.req).botIds).toEqual([ALL_BOTS]);
   const next = f.start(); // Starting another browser's login is still available.
   release(); expect(await Promise.all(pending)).toHaveLength(8);
   const cookie = await f.auth.callback(next.req, next.params);
-  expect(f.auth.bootstrap(request({ cookie: cookie.split(';')[0] })).botIds).toEqual([MAIN_BOT_ID]);
+  expect(f.auth.bootstrap(request({ cookie: cookie.split(';')[0] })).botIds).toEqual([ALL_BOTS]);
   for (let i = 0; i < 9; i++) {
     f.fetcher.mockRejectedValueOnce(new Error('synthetic exchange outage'));
     const failed = f.start();
     await expect(f.auth.callback(failed.req, failed.params)).rejects.toMatchObject({ status: 503 });
   }
-  const recovered = await f.login(); expect(f.auth.authorize(recovered.req).botIds).toEqual([MAIN_BOT_ID]);
+  const recovered = await f.login(); expect(f.auth.authorize(recovered.req).botIds).toEqual([ALL_BOTS]);
 });
 it('starting a replacement login cancels that browser’s prior in-flight exchange', async () => {
   const f = fixture(), flow = f.start();
@@ -159,5 +159,5 @@ it('starting a replacement login cancels that browser’s prior in-flight exchan
   release(); await expect(pending).rejects.toMatchObject({ status: 401 });
   const next = f.prepare(replacement.location, replacement.cookie);
   const cookie = await f.auth.callback(next.req, next.params);
-  expect(f.auth.bootstrap(request({ cookie: cookie.split(';')[0] })).botIds).toEqual([MAIN_BOT_ID]);
+  expect(f.auth.bootstrap(request({ cookie: cookie.split(';')[0] })).botIds).toEqual([ALL_BOTS]);
 });

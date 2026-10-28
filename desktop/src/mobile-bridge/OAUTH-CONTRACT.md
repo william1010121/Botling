@@ -22,7 +22,8 @@ single-account allowlist. Both the origin and callback must match the selected b
 
 The server requires Google's signed `email_verified: true` and exact membership in this local
 allowlist. Google's consent-screen **Testing** audience is not the server allowlist.
-All Google browser sessions grant **Main only**; the policy is reread on each session operation,
+All Google browser sessions grant **every bot the desktop app lists** (`ALL_BOTS`, resolved by the core on each
+request) through the same four commands (snapshot, send, choose, answer); the policy is reread on each session operation,
 including after a command body has arrived. An invalid configuration fails closed.
 The existing bearer clients retain their own bot ACL and expiration; they do not require Google login.
 Omitting `google` leaves automation working and browser auth unavailable (503).

@@ -10,9 +10,11 @@ import { MAIN_BOT_ID } from '../core/store/records';
 import { MutationLedger } from './ledger';
 import { listenWithHandover } from './lifecycle';
 import { GoogleAuth, GoogleAuthError, CALLBACK } from './google';
+import { ALL_BOTS, botAllowed } from './scope';
+export { ALL_BOTS, botAllowed };
 
 export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
-  botIds: z.array(z.string().min(1)).min(1), expiresAt: z.number().int().positive() });
+  botIds: z.array(z.string().min(1).refine(id => id !== ALL_BOTS, 'Bearer clients need explicit bot ids.')).min(1), expiresAt: z.number().int().positive() });
 export type Client = z.infer<typeof Client>;
 export const Clients = z.array(Client);
 export const mobileTypes = new Set(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer']);
@@ -34,8 +36,17 @@ function authenticate(req: IncomingMessage, clients: Client[]): Client | undefin
   const digest = Buffer.from(tokenHash(match[1]), 'hex');
   return clients.find(c => c.expiresAt > Date.now() && timingSafeEqual(digest, Buffer.from(c.tokenHash, 'hex')));
 }
-const assets: Record<string, string> = { 'index.html': 'text/html; charset=utf-8', 'mobile.js': 'text/javascript; charset=utf-8',
-  'mobile.css': 'text/css; charset=utf-8', 'manifest.webmanifest': 'application/manifest+json', 'icon.svg': 'image/svg+xml' };
+const assets: Record<string, string> = { 'index.html': 'text/html; charset=utf-8', 'web.js': 'text/javascript; charset=utf-8',
+  'styles.css': 'text/css; charset=utf-8', 'web.css': 'text/css; charset=utf-8', 'chat.html': 'text/html; charset=utf-8',
+  'chat.js': 'text/javascript; charset=utf-8', 'chat.css': 'text/css; charset=utf-8', 'frame.css': 'text/css; charset=utf-8',
+  'plugins/ccb-latex/katex.min.css': 'text/css; charset=utf-8', 'manifest.webmanifest': 'application/manifest+json', 'icon.svg': 'image/svg+xml' };
+const FONT = /^plugins\/ccb-latex\/fonts\/[A-Za-z0-9_-]{1,80}\.woff2$/;
+/** The desktop's chat-page CSP (src/main/main.ts CHAT_CSP). The page runs in a sandboxed, opaque-origin
+ * frame of the shell (no cookies, no storage, no bridge); only the shell may frame it. */
+export const WEB_CHAT_CSP = [
+  "default-src 'none'", "script-src 'self' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
+  "media-src 'self' data: blob:", "frame-src 'none'", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'", "frame-ancestors 'self'",
+].join('; ');
 function json(res: ServerResponse, status: number, value: unknown) { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); }
 export function handler(options: BridgeOptions) {
   const origin = new URL(options.origin);
@@ -54,12 +65,19 @@ export function handler(options: BridgeOptions) {
     const forbidden = () => api ? json(res, 403, { error: { code: 'access_denied' } }) : refuse(403);
     // Public shell and OAuth top-level GETs may cross sites (including the Google redirect chain).
     // Data/session operations still require same-origin requests; never trust forwarded headers.
-    if (req.headers.host !== origin.host || (req.headers.origin && req.headers.origin !== origin.origin)
+    // The sandboxed chat frame's CORS loads (KaTeX fonts) say `Origin: null`; only public assets accept it.
+    if (req.headers.host !== origin.host || (req.headers.origin && req.headers.origin !== origin.origin && !(publicAsset && req.headers.origin === 'null'))
       || (req.headers['sec-fetch-site'] === 'cross-site' && !login && !callback && !publicAsset)) return forbidden();
     if (publicAsset) {
       const name = url.pathname.slice('/mobile/'.length) || 'index.html';
-      if (!Object.hasOwn(assets, name)) return refuse(404);
-      try { const body = readFileSync(join(options.assets, name)); res.writeHead(200, { 'Content-Type': assets[name] }); res.end(body); }
+      const font = FONT.test(name);
+      if (!Object.hasOwn(assets, name) && !font) return refuse(404);
+      try {
+        const body = readFileSync(join(options.assets, name));
+        if (name === 'chat.html') res.setHeader('Content-Security-Policy', WEB_CHAT_CSP);
+        if (font) res.setHeader('Access-Control-Allow-Origin', '*');
+        res.writeHead(200, { 'Content-Type': font ? 'font/woff2' : assets[name] }); res.end(body);
+      }
       catch { refuse(404); }
       return;
     }
@@ -128,7 +146,7 @@ export function handler(options: BridgeOptions) {
     try { client = await resolveClient(); } catch (error) { return authFailure(error); }
     if (!client) return json(res, 401, { error: { code: 'auth_required' } });
     if (!mobileTypes.has(cmd.type) || !('botId' in cmd) && cmd.type !== 'chat.snapshot'
-      || !client.botIds.includes(('botId' in cmd ? cmd.botId : undefined) ?? MAIN_BOT_ID)
+      || !botAllowed(client.botIds, ('botId' in cmd ? cmd.botId : undefined) ?? MAIN_BOT_ID)
       || (cmd.type === 'chat.answer' && cmd.images?.length)) {
       return json(res, 403, errorResponse(request.id, { code: 'forbidden', message: 'Command or bot not authorized.' }));
     }

@@ -11,7 +11,7 @@ import { MutationLedger } from './ledger';
 import { MAIN_BOT_ID } from '../core/store/records';
 import { okResponse } from '../contract';
 
-it('enforces OAuth login, origin, session, CSRF and Main grants; preserves independent bearer ACL and mutation replay', async () => {
+it('enforces OAuth login, origin, session, CSRF and the all-bots browser grant; preserves independent bearer ACL and mutation replay', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'mobile-access-'));
   writeFileSync(join(dir, 'index.html'), '{}');
   const f = fixture(), token = 'b'.repeat(43), now = Date.now();
@@ -45,14 +45,17 @@ it('enforces OAuth login, origin, session, CSRF and Main grants; preserves indep
     expect((await call('/api/mobile/browser/command', {}, command())).status).toBe(401);
     expect((await call('/api/mobile/browser/command', { ...browser, 'x-botling-csrf': 'wrong' }, command())).status).toBe(403);
     expect((await call('/api/mobile/browser/command', { ...browser, Origin: '' }, command())).status).toBe(403);
-    expect((await call('/api/mobile/browser/command', browser, command('forbidden', 'ungranted'))).status).toBe(403);
+    // The owner's Google session may use every bot, but still only the four mobile commands.
+    expect((await call('/api/mobile/browser/command', browser, { v: 10, id: 'not-mobile', cmd: { type: 'chat.read', botId: 'any-project' } })).status).toBe(403);
+    expect((await call('/api/mobile/browser/command', browser, { v: 10, id: 'settings', cmd: { type: 'settings.set', change: { key: 'railCollapsed', value: true } } })).status).toBe(403);
     expect(dispatched).toBe(0);
+    expect((await call('/api/mobile/browser/command', browser, command('project', 'any-project'))).status).toBe(200); expect(dispatched).toBe(1);
     expect((await call('/api/mobile/browser/command', browser, command())).status).toBe(200);
-    expect((await call('/api/mobile/browser/command', browser, command())).status).toBe(200); expect(dispatched).toBe(1);
+    expect((await call('/api/mobile/browser/command', browser, command())).status).toBe(200); expect(dispatched).toBe(2);
     expect((await call('/api/mobile/command', { Authorization: 'Bearer ' + 'x'.repeat(43) }, command('bearer'))).status).toBe(401);
     expect((await call('/api/mobile/command', {}, command('bearer'))).status).toBe(401);
     expect((await call('/api/mobile/command', { Authorization: `Bearer ${token}` }, command('bearer', 'ungranted'))).status).toBe(403);
-    expect((await call('/api/mobile/command', { Authorization: `Bearer ${token}` }, command('bearer'))).status).toBe(200); expect(dispatched).toBe(2);
+    expect((await call('/api/mobile/command', { Authorization: `Bearer ${token}` }, command('bearer'))).status).toBe(200); expect(dispatched).toBe(3);
     expect((await call('/api/mobile/logout', { ...browser, 'x-botling-csrf': '' })).status).toBe(403);
     expect((await call('/api/mobile/logout', browser)).status).toBe(200);
     expect((await call('/api/mobile/browser/command', browser, command('after-logout'))).status).toBe(401);
@@ -68,6 +71,6 @@ it('enforces OAuth login, origin, session, CSRF and Main grants; preserves indep
     const cancellation = f.prepare(canceled.headers.location!, canceled.headers['set-cookie']![0]);
     const error = await call(CALLBACK + '?error=access_denied&state=' + cancellation.params.get('state'), { cookie: cancellation.req.headers.cookie! }, undefined, 'GET');
     expect(error.headers.location).toBe('/mobile/?auth_error=auth_required');
-    f.advance(3600000); expect((await call('/api/mobile/session')).status).toBe(401); expect(dispatched).toBe(2);
+    f.advance(3600000); expect((await call('/api/mobile/session')).status).toBe(401); expect(dispatched).toBe(3);
   } finally { server.close(); await once(server, 'close'); rmSync(dir, { recursive: true, force: true }); }
 });

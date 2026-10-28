@@ -1,0 +1,50 @@
+/* Botling Web: only what the browser needs beyond the desktop's own styles.css (loaded first, unchanged):
+   the full-height page, the sign-in page, and the phone width, where the left column becomes a drawer. */
+html, body { height: 100%; height: 100dvh; }
+.web-root { height: 100%; }
+.web-root .chat-header { position: relative; }
+.web-nav-button { display: none; }
+.web-scrim { display: none; }
+.web-rail-footer { padding-top: 8px; border-top: 1px solid var(--line); }
+.web-sign-out { width: 100%; }
+.web-banner { pointer-events: auto; }
+.web-banner button { margin-left: 8px; border: 0; background: none; color: inherit; cursor: pointer; }
+/* Adding bots, groups and projects is the desktop's (no web command): the folded column's + too. */
+.web-root .strip-add { display: none; }
+
+/* Sign in: the app's own colours (tokens.css) and type. */
+.web-signin { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: var(--ground); }
+.web-signin-card { width: min(380px, 100%); padding: 32px 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--side); text-align: center; }
+.web-signin-icon { width: 56px; height: 56px; }
+.web-signin h1 { margin: 12px 0 4px; font-size: 22px; font-weight: 600; }
+.web-signin-lead { margin: 0 0 20px; color: var(--muted); font-size: 14px; }
+.web-signin-message { margin: 0 0 16px; color: var(--error); font-size: 13px; }
+.web-signin-muted { margin: 16px 0 0; color: var(--faint); font-size: 12.5px; }
+.web-signin-actions { display: flex; flex-direction: column; gap: 8px; }
+.web-primary, .web-secondary { height: 40px; border-radius: 10px; font-size: 14px; cursor: pointer; }
+.web-primary { border: 0; background: var(--text); color: var(--ground); font-weight: 600; }
+.web-secondary { border: 1px solid var(--border); background: transparent; color: var(--text); }
+
+/* Phone width: one column. The chat fills the page; the left column (expanded or folded) slides over it
+   from the button at the header's start; picking a bot closes it. The right panel is already hidden
+   below 860px by styles.css, so its toggle goes too. */
+@media (max-width: 700px) {
+  .web-nav-button {
+    display: inline-flex; position: absolute; left: 10px; top: 8px; width: 32px; height: 24px; align-items: center; justify-content: center;
+    border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .web-nav-button[aria-expanded="true"] { background: var(--selected); color: var(--text); }
+  .web-root .chat-header { padding: 0 48px; overflow: hidden; white-space: nowrap; }
+  .web-root .chat-title { overflow: hidden; text-overflow: ellipsis; }
+  .web-root .chat-status { display: none; }
+  .web-root .rail, .web-root .rail-strip {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 40; width: min(320px, 86vw);
+    transform: translateX(-102%); transition: transform 180ms ease; box-shadow: 0 0 40px #0009;
+  }
+  .web-root[data-nav="open"] .rail, .web-root[data-nav="open"] .rail-strip { transform: none; }
+  .web-root[data-nav="open"] .web-scrim { display: block; position: fixed; inset: 0; z-index: 35; background: #0008; }
+  .web-root .right-toggle { display: none; }
+  .web-root .chat-pane { width: 100%; }
+  .web-root .banner.bottom { bottom: 120px; padding: 6px 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .web-root .rail, .web-root .rail-strip { transition: none; } }

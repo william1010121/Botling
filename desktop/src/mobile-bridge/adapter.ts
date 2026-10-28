@@ -1,5 +1,6 @@
 import { ContractError, RequestEnvelope, errorResponse, okResponse, type Command, type ResponseEnvelope, type ResultOf } from '../contract';
 import { MAIN_BOT_ID } from '../core/store/records';
+import { ALL_BOTS, botAllowed } from './scope';
 type MobileCommand = Extract<Command, { type: 'chat.snapshot' | 'chat.send' | 'chat.choose' | 'chat.answer' }>;
 export interface MobileAccess {
   pending(botId: string): readonly unknown[];
@@ -16,11 +17,12 @@ export async function mobileCommand(access: MobileAccess, raw: unknown, allowedB
     if (cmd.type !== 'chat.snapshot' && cmd.type !== 'chat.send' && cmd.type !== 'chat.choose' && cmd.type !== 'chat.answer')
       throw new ContractError('forbidden', 'Command not available on mobile.');
     const botId = cmd.botId ?? MAIN_BOT_ID;
-    if (!allowedBots.includes(botId)) throw new ContractError('forbidden', 'Bot not authorized.');
+    if (!botAllowed(allowedBots, botId)) throw new ContractError('forbidden', 'Bot not authorized.');
     if (cmd.type === 'chat.answer' && cmd.images?.length) throw new ContractError('forbidden', 'Mobile answers are text only.');
     if (cmd.type === 'chat.snapshot') {
       // snapshot() is read-only; chat.read would clear unread/catch-up state.
       const snapshot = access.snapshot(botId);
+      if (allowedBots.includes(ALL_BOTS)) return okResponse(id, webSnapshot(snapshot));
       return okResponse(id, { epoch: snapshot.epoch, seq: snapshot.seq,
         bots: snapshot.bots.filter(bot => allowedBots.includes(bot.id)).map(({ id, name, role, working, approvals, unread, problem, heads }) => ({ id, name, role, working, approvals, unread, problem, heads })),
         chat: snapshot.chat ? { botId: snapshot.chat.botId, messages: snapshot.chat.messages, tasks: snapshot.chat.tasks,
@@ -34,4 +36,23 @@ export async function mobileCommand(access: MobileAccess, raw: unknown, allowedB
   } catch (error) {
     return errorResponse(id, error instanceof ContractError ? error.toWire() : { code: 'internal', message: 'Mobile command failed. Check chat before sending again.' });
   }
+}
+
+/** What the desktop renderer draws, for the owner's all-bots browser session (Botling Web): the left
+ * column (every bot), the chat on screen and the right panel. Only display settings go out, project
+ * folders as their last path segment, and nothing of plugins, the doctor, web AIs, imports or specs. */
+export function webSnapshot(snapshot: ResultOf<'chat.snapshot'>) {
+  const settings = snapshot.settings;
+  return {
+    epoch: snapshot.epoch, seq: snapshot.seq,
+    bots: snapshot.bots.map(bot => ({ ...bot, folder: bot.folder.split(/[\\/]/).filter(Boolean).pop() ?? '' })),
+    imported: null,
+    chat: snapshot.chat,
+    components: snapshot.components,
+    settings: settings ? { language: settings.language, effectiveLanguage: settings.effectiveLanguage, botLook: settings.botLook,
+      chatAvatarSize: settings.chatAvatarSize, messageColumnWidth: settings.messageColumnWidth, rightPanelCollapsed: settings.rightPanelCollapsed,
+      railCollapsed: settings.railCollapsed, pinnedBots: settings.pinnedBots } : undefined,
+    waiting: snapshot.waiting,
+    teams: snapshot.teams,
+  };
 }

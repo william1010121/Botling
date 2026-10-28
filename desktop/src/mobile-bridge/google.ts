@@ -2,7 +2,7 @@
 import { createHash, createPublicKey, createCipheriv, createDecipheriv, randomBytes, verify, type KeyObject } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
-import { MAIN_BOT_ID } from '../core/store/records';
+import { ALL_BOTS } from './scope';
 export const CALLBACK = '/api/mobile/auth/google/callback';
 export const GoogleConfig = z.strictObject({ credentialsFile: z.string().min(1) });
 // The private server allowlist is independent of Google's consent-screen Testing users.
@@ -211,12 +211,12 @@ export class GoogleAuth {
   }
   bootstrap(req: IncomingMessage) {
     const session = this.session(req);
-    return { principal: session.principal, csrf: session.csrf, expiresAt: session.expires, botIds: [MAIN_BOT_ID] };
+    return { principal: session.principal, csrf: session.csrf, expiresAt: session.expires, botIds: [ALL_BOTS] };
   }
   authorize(req: IncomingMessage) {
     const session = this.session(req);
     if (req.headers['x-botling-csrf'] !== session.csrf) throw new GoogleAuthError(403, 'access_denied');
-    return { id: `google:${session.principal}`, botIds: [MAIN_BOT_ID], expiresAt: session.expires };
+    return { id: `google:${session.principal}`, botIds: [ALL_BOTS], expiresAt: session.expires };
   }
   logout(req: IncomingMessage) {
     this.authorize(req); const session = this.session(req);

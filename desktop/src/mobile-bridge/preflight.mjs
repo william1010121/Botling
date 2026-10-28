@@ -54,8 +54,8 @@ try {
     requireValue(Array.isArray(g.allowed_emails) && g.allowed_emails.length === 1 && typeof g.allowed_emails[0] === 'string'
       && g.allowed_emails[0] === g.allowed_emails[0].toLowerCase() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(g.allowed_emails[0]));
   }
-  stage = 'five packaged assets';
-  for (const name of ['index.html', 'mobile.js', 'mobile.css', 'manifest.webmanifest', 'icon.svg']) {
+  stage = 'packaged web assets';
+  for (const name of ['index.html', 'web.js', 'styles.css', 'web.css', 'chat.html', 'chat.js', 'chat.css', 'frame.css', 'manifest.webmanifest', 'icon.svg']) {
     requireValue(statSync(join(c.assets, name)).isFile() && readFileSync(join(c.assets, name)).length > 0);
   }
   console.log('PASS: local configuration, bind address, TLS material, Main grant and assets. No listener started.');

@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 import { inlineTokens } from "../Web/kit/build.mjs";
 
 export const desktopRoot = dirname(fileURLToPath(import.meta.url));
-export async function buildRenderer({ root = desktopRoot, outdir = join(root, "out/renderer"), development = false } = {}) {
+/** `web: true` builds Botling Web (desktop/mobile/): the same renderer and chat page, with
+ * desktop/mobile/main.tsx as the shell's entry (web.js) and __BOTLING_WEB__ set for both pages. */
+export async function buildRenderer({ root = desktopRoot, outdir = join(root, "out/renderer"), development = false, web: webBuild = false } = {}) {
   outdir = resolve(outdir);
   const web = join(root, "../Web"), nodePaths = [join(root, "node_modules")];
   const latex = await build({ entryPoints: [join(web, "plugins/ccb-latex/src/web.ts")], bundle: true,
@@ -22,16 +24,18 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   const browser = { bundle: true, format: "iife", target: "chrome130", minify: !development,
     sourcemap: "linked", legalComments: "eof", write: false, nodePaths };
   const bundles = await Promise.all([
-    build({ ...browser, entryPoints: [join(root, "src/renderer/main.tsx")], outfile: join(outdir, "renderer.js"),
-      jsx: "automatic", define: { "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(characters) } }),
+    build({ ...browser, entryPoints: [join(root, webBuild ? "mobile/main.tsx" : "src/renderer/main.tsx")], outfile: join(outdir, webBuild ? "web.js" : "renderer.js"),
+      jsx: "automatic", define: { "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(characters), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
     build({ ...browser, entryPoints: [join(root, "src/renderer/chat-frame/entry.ts")], outfile: join(outdir, "chat.js"),
-      define: { __LATEX_SOURCE__: JSON.stringify(latex.outputFiles[0].text) } }),
+      define: { __LATEX_SOURCE__: JSON.stringify(latex.outputFiles[0].text), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
   ]);
   // Read every input before publication. A syntax/missing-asset error keeps the last successful build.
   const files = new Map(bundles.flatMap(result => result.outputFiles.map(file => [file.path, file.contents])));
   const asset = (from, to, tokens = false) => files.set(join(outdir, to), tokens
     ? inlineTokens(readFileSync(from, "utf8"), from) : readFileSync(from));
-  asset(join(root, "src/renderer/index.html"), "index.html");
+  if (webBuild) {
+    for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg"]) asset(join(root, "mobile", name), name);
+  } else asset(join(root, "src/renderer/index.html"), "index.html");
   asset(join(root, "src/renderer/styles.css"), "styles.css", true);
   asset(join(root, "src/renderer/chat-frame/chat.html"), "chat.html");
   asset(join(root, "src/renderer/chat-frame/frame.css"), "frame.css");

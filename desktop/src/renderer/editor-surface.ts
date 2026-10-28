@@ -1,7 +1,7 @@
 import { packChatAvatars } from "./chat-avatar-wire";
 import { shellOverlayActive, shellOverlayRevealImmediately, subscribeShellOverlays } from "./ShellOverlay";
 import type { editorBridge } from "../preload/editor-bridge";
-import { CHAT_ORIGIN, type ShellMessage } from "./chat-frame/protocol";
+import { CHAT_TARGET, type ShellMessage } from "./chat-frame/protocol";
 
 export type EditorBridge = ReturnType<typeof editorBridge>;
 export const nativeEditor = (): EditorBridge | undefined =>
@@ -11,7 +11,7 @@ export const nativeEditor = (): EditorBridge | undefined =>
 export function postToChat(message: ShellMessage): void {
   const bridge = nativeEditor();
   if (bridge) { bridge.post(packChatAvatars(message)); return; }
-  (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow?.postMessage(message, CHAT_ORIGIN);
+  (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow?.postMessage(message, CHAT_TARGET);
 }
 
 /** The placeholder occupies exactly the former iframe's layout; it never contains an editor. */

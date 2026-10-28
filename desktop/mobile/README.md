@@ -4,11 +4,19 @@ Google sign-in candidate: see [OAuth deployment contract](../src/mobile-bridge/O
 App-owned Google OAuth sessions; the bearer setup below applies only to automation. This candidate
 requires the private Google credentials opt-in before deployment; Cloudflare Access is not used.
 
-Responsive browser client, isolated from Electron and the desktop app composer. Provides chat/project
-navigation, text chat with refreshing replies, per-chat drafts, reply-to, engine selection,
-question choices/free-text answers, task status, and an Add-to-Home-Screen manifest.
-Rich cards, local files and attachments still require the desktop app. No service worker stores private
-conversations or credentials. Drafts are retained per tab and verified principal, including across a page reload when storage is available.
+Botling Web runs the desktop app's own renderer (`src/renderer`: left column, the Web/src chat page,
+composer, right panel, `styles.css`/`chat.css`) unchanged. `web-bridge.ts` stands in for the Electron
+preload: it carries the renderer's envelopes over `/api/mobile/browser/command`, and `WebApp.tsx`
+adds Google sign-in, Sign out and polling (the bridge has no event stream). The chat page runs in a
+sandboxed, opaque-origin frame (`allow-scripts` only) served with the desktop's chat CSP.
+At 700px and below the left column is a drawer over the chat (`web.css`); the right panel already
+hides below 860px as on the desktop.
+
+What the web cannot do (the bridge has no command for it): add/remove bots, groups or projects,
+settings, plugins, routines, the whiteboard, attachments, stopping a turn, component cards' own
+saves/actions and subagent views. Those controls are hidden or answer "Not available in Botling Web".
+Layout toggles (rail/right panel folded, pinned bots, message width) are kept in this browser only.
+No service worker stores private conversations or credentials.
 
 ## Build and checks
 
@@ -29,7 +37,8 @@ The application is not deployed, and this directory does not start any productio
 
 The desktop `npm run dist:dir`, `dist:mac`, `dist:win` and `dist:linux` routes run
 `mobile/build.mjs` after the desktop build and stop if either build fails. electron-builder
-copies only `index.html`, `mobile.js`, `mobile.css`, `manifest.webmanifest` and `icon.svg`
+copies only the built pages, scripts and styles (`index.html`, `web.js`, `chat.html`, `chat.js`, the CSS files,
+KaTeX CSS/fonts), `manifest.webmanifest` and `icon.svg`
 from `mobile/dist/` into `mobile/` under the packaged resources directory, outside `app.asar`.
 No frontend source, fixtures or source maps are included by this resource rule.
 
@@ -53,10 +62,9 @@ following API redirects. No bearer/token field is rendered. Automation still has
 `/api/mobile/command` endpoint and its existing bearer/bot policy.
 
 Session/CSRF/identity checks and deployment inputs are in the
-[OAuth contract](../src/mobile-bridge/OAUTH-CONTRACT.md). Bot grants remain explicit and Main-only.
-Draft text survives reload/login in tab-scoped sessionStorage for the same verified principal;
-credentials and chat snapshots never go into storage. Explicit sign-out clears drafts.
-Storage-disabled browsers can retain drafts only in memory.
+[OAuth contract](../src/mobile-bridge/OAUTH-CONTRACT.md). The owner's Google session sees every bot the desktop lists (still only snapshot/send/choose/answer);
+bearer clients keep their explicit bot lists.
+Credentials and chat snapshots never go into storage; only the layout toggles above use localStorage.
 
 ## Isolated responsive acceptance
 
