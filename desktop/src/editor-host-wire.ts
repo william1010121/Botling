@@ -1,5 +1,5 @@
 // Native-editor transport. Never a core-command or editing-event bridge.
-import {Command,FILE_DATA_LIMIT} from './contract';
+import {EditorCardCommand,FILE_DATA_LIMIT} from './contract/editor-card';
 export const EDITOR_URL='botling-chat://chat/chat.html?nativeHost=1';
 export const EDITOR_ARGUMENT='--botling-editor-host=1';
 export const EDITOR_CHANNEL={up:'botling:editor:up',down:'botling:editor:down',bound:'botling:editor:bound',unbound:'botling:editor:unbound',shell:'botling:editor:shell',layout:'botling:editor:layout',snapshot:'botling:editor:snapshot'} as const;
@@ -30,7 +30,7 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(direction==='down')return ['widthRejected','widthPreview','state','stateDelta','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);
-  case 'request':{const parsed=Command.safeParse(value.cmd);return Number.isSafeInteger(value.id)&&value.id>=0&&parsed.success&&['card.save','card.action'].includes(parsed.data.type);}
+  case 'request':{const parsed=EditorCardCommand.safeParse(value.cmd);return Number.isSafeInteger(value.id)&&value.id>=0&&parsed.success;}
   case 'stop':return true;
   case 'messageWidth':return value.value===null||typeof value.value==='number'&&Number.isFinite(value.value);
   case 'messageWidthDrag':return typeof value.active==='boolean';

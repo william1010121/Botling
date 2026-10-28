@@ -13,7 +13,8 @@
 import { z } from "zod";
 import { DoctorView } from "./doctor";
 export { DoctorCheck, DoctorView } from "./doctor";
-import shared from "../../../Web/src/contract.json";
+import { ContractId, CARD_SAVE_LIMIT, FILE_DATA_LIMIT, CardSaveCommand, CardActionCommand } from "./editor-card";
+export { CARD_SAVE_LIMIT, FILE_DATA_LIMIT, CardSaveCommand, CardActionCommand } from "./editor-card";
 
 /**
  * Bumped on any incompatible change to a command, response or event shape.
@@ -34,11 +35,9 @@ import shared from "../../../Web/src/contract.json";
  */
 export const PROTOCOL_VERSION = 10 as const;
 
-/** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
-export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
 export const MESSAGE_TEXT_LIMIT = 100_000;
 
-const id = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]+$/);
+const id = ContractId;
 export const RequestId = id;
 /** A bot: the Swift app's ids (UUIDs, upper case) are kept, so imported chats keep theirs. */
 export const BotId = id;
@@ -184,8 +183,6 @@ export const WaitingView = z.strictObject({
 });
 export type WaitingView = z.infer<typeof WaitingView>;
 export type PendingFileView = z.infer<typeof PendingFileView>;
-/** The most a pasted or dropped file may be, as base64 text (about 30 MB of file). */
-export const FILE_DATA_LIMIT = 40_000_000;
 
 /** A component drawn in a line (`<show>`), with its command's run when its data comes from one (`ChatPayload.Display`). */
 export const DisplayView = z.strictObject({
@@ -941,11 +938,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
   z.strictObject({ type: z.literal("turn.await"), botId, turnId: id }),
-  z.strictObject({ type: z.literal("card.save"), botId, messageId: id, cardId: id, data: z.string().max(CARD_SAVE_LIMIT) }),
-  z.strictObject({
-    type: z.literal("card.action"), botId, messageId: id, cardId: id,
-    name: z.string().min(1).max(64).regex(/^[a-z][a-zA-Z0-9.]*$/), value: z.string().max(4_000),
-  }),
+  CardSaveCommand,
+  CardActionCommand,
   /** Main only: the card's HTML for the botling-card: protocol. */
   z.strictObject({ type: z.literal("card.html"), botId, messageId: id, cardId: id }),
   /** The bot's routines (routines.cron and scheduled-routines.json), and why they cannot be read, if so. */
