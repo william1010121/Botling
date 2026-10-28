@@ -89,6 +89,45 @@ describe("ignore question as notification", () => {
       expect(restored.answer).toBeUndefined(); expect(restored.chosen).toBeUndefined();
     } finally { await core.shutdown(); }
   });
+  it("restart before Ignore synchronizes an invalidated copy and persists notification semantics", async () => {
+    const h = fixture(); let core = h.open();
+    try {
+      (core as any).showOpenQuestion("botling");
+      const copyId = (core as any).bot(MAIN_BOT_ID).openCopies(PROJECT)[0].id;
+      await core.shutdown(); core = h.open();
+      const main = (core as any).bot(MAIN_BOT_ID), send = vi.spyOn(main, "send");
+      expect(isOpenQuestion(main.line(copyId))).toBe(false);
+      expect(ignore(core)).toEqual({ accepted: true });
+      const original = botOf(core).line(QUESTION), copy = main.line(copyId);
+      expect(copy.ignoredAt).toBe(original.ignoredAt);
+      expect(copy.answer).toBeUndefined(); expect(copy.chosen).toBeUndefined();
+      expect(copy.questionInvalidatedAt).toEqual(expect.any(String));
+      expect(main.snapshot().messages.find((m: any) => m.id === copyId)).toMatchObject({ ignoredAt: original.ignoredAt, answer: null, chosen: null });
+      expect(main.choose(copyId, 0)).toEqual({ accepted: false });
+      expect(main.answer(copyId, "Yes")).toEqual({ accepted: false });
+      expect(send).not.toHaveBeenCalled();
+      expect(ignore(core)).toEqual({ accepted: false });
+      expect(core.waiting().items.some(item => item.messageId === QUESTION)).toBe(false);
+      await core.shutdown(); core = h.open();
+      expect((core as any).bot(MAIN_BOT_ID).line(copyId)).toMatchObject({ ignoredAt: original.ignoredAt, questionInvalidatedAt: copy.questionInvalidatedAt });
+    } finally { await core.shutdown(); }
+  });
+  it("does not overwrite answered copies, even answers identical to old system status words", async () => {
+    const h = fixture(); let core = h.open();
+    try {
+      const main = (core as any).bot(MAIN_BOT_ID);
+      const protectedCopies: any[] = [];
+      for (const outcome of [{ answer: "No longer needed" }, { answer: "stop" }, { answer: "finish" }, { chosen: 0 }]) {
+        (core as any).showOpenQuestion("botling");
+        const copy = main.openCopies(PROJECT)[0];
+        main.settleAppQuestion(copy.id, outcome);
+        protectedCopies.push({ ...copy });
+      }
+      await core.shutdown(); core = h.open();
+      expect(ignore(core)).toEqual({ accepted: true });
+      for (const copy of protectedCopies) expect((core as any).bot(MAIN_BOT_ID).line(copy.id)).toEqual(copy);
+    } finally { await core.shutdown(); }
+  });
   it("does not invoke app question callbacks", async () => {
     const h = fixture(), core = h.open();
     try {

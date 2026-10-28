@@ -66,6 +66,8 @@ export interface ChatRecord {
   answer?: string;
   /** Explicit user dismissal: notification only, never an answer or authorization. ISO audit time. */
   ignoredAt?: string;
+  /** Startup invalidated a copied app question; not a user answer. Retained as provenance after Ignore. */
+  questionInvalidatedAt?: string;
   attachments?: { url: string; kind: string }[];
   replyTo?: string;
   replyPreview?: string;
@@ -105,7 +107,7 @@ export function isChatRecord(value: unknown): value is ChatRecord {
 
 /** An open question: it has buttons and neither a pick nor an answer yet (`isOpenQuestion`). */
 export const isOpenQuestion = (record: ChatRecord): boolean =>
-  !!record.choices?.length && record.chosen == null && record.answer == null && record.ignoredAt == null;
+  !!record.choices?.length && record.chosen == null && record.answer == null && record.ignoredAt == null && record.questionInvalidatedAt == null;
 
 /** `Workspace.Project`: a row of projects.json. `folder` is a file URL. */
 export interface ProjectRecord {

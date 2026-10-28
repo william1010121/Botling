@@ -1056,11 +1056,8 @@ First write a test that shows this, then fix it.`;
     const original = this.bots.get(botId)?.line(messageId) ?? this.groups.chat(botId)?.line(messageId);
     if (original?.ignoredAt) {
       const chats = [...this.bots.values(), ...this.groups.groups.flatMap(group => this.groups.chat(group.id) ?? [])];
-      for (const chat of chats) for (const copy of chat.openCopies(botId)) {
-        if (copy.sourceMessageID !== messageId) continue;
-        this.copies.delete(copy.id);
-        chat.ignoreQuestion(copy.id, original.ignoredAt);
-      }
+      for (const [copy, source] of this.copies) if (source.botId === botId && source.questionId === messageId) this.copies.delete(copy);
+      for (const chat of chats) chat.syncIgnoredCopies(botId, messageId, original.ignoredAt);
       return;
     }
     for (const [copy, source] of [...this.copies]) {

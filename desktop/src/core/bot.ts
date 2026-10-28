@@ -613,6 +613,7 @@ export class Bot {
         if (kept.seenBy) record.seenBy = union(kept.seenBy, record.seenBy);
         if (kept.reactions) record.reactions = kept.reactions;
         if (kept.ignoredAt) record.ignoredAt = kept.ignoredAt;
+        if (kept.questionInvalidatedAt) record.questionInvalidatedAt = kept.questionInvalidatedAt;
         if (kept.decisionID && !isOpenQuestion(kept)) { record.decisionID = kept.decisionID; record.choices = kept.choices; record.chosen = kept.chosen; record.answer = kept.answer; }
         this.records[at] = record;
       }
@@ -738,7 +739,10 @@ export class Bot {
       }
       // A tool question (or the app's own question) from before a restart has nobody waiting for it any more.
       if ((record.permissionTool || record.appQuestion) && isOpenQuestion(record)) {
-        record.answer = NO_LONGER_NEEDED;
+        // A copied question can later inherit its source's Ignore. Keep this system transition
+        // separate from answer: user words (even "No longer needed") must never be reclassified.
+        if (!record.permissionTool && record.appQuestion && record.sourceID && record.sourceMessageID) record.questionInvalidatedAt = new Date().toISOString();
+        else record.answer = NO_LONGER_NEEDED;
         changed = true;
       }
     }
@@ -1035,6 +1039,25 @@ export class Bot {
     this.log(`Question ${source.id} ignored by user at ${at}; no answer or authorization.`);
     this.updated();
     return { accepted: true };
+  }
+
+  /** The original was ignored: synchronize open or explicitly startup-invalidated copies only. */
+  syncIgnoredCopies(sourceID: string, sourceMessageID: string, at: string): void {
+    if (this.options.primary) { this.options.primary.syncIgnoredCopies(sourceID, sourceMessageID, at); return; }
+    for (const record of this.records) {
+      if (record.role !== "notice" || record.sourceID !== sourceID || record.sourceMessageID !== sourceMessageID
+        || record.chosen != null || record.answer != null || record.ignoredAt != null
+        || !(isOpenQuestion(record) || record.questionInvalidatedAt != null)
+        || record.permissionTool || this.approvals.has(record.id) || this.partner?.approvals.has(record.id)
+        || this.denialAsks.has(record.id) || this.partner?.denialAsks.has(record.id)) continue;
+      this.refuseIfClosed();
+      record.ignoredAt = at;
+      this.appQuestions.delete(record.id);
+      this.appAnswers.delete(record.id);
+      this.cardPicks.delete(record.id);
+      this.changed(record);
+      this.log(`Question copy ${record.id} inherited Ignore from ${sourceID}/${sourceMessageID} at ${at}; no answer or authorization.`);
+    }
   }
 
   /** Closes one of the app's own questions in this chat without a pick going anywhere: shows `chosen` or `answer` (1.x's `markChosen` / `markAnswered`). */
@@ -5261,7 +5284,8 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
   if (record.choices?.length) {
     view.choices = record.choices.slice(0, 20).map(choiceView);
     view.chosen = typeof record.chosen === "number" && record.chosen >= 0 ? record.chosen : null;
-    view.answer = typeof record.answer === "string" ? record.answer.slice(0, 4_000) : null;
+    // The legacy status label is presentation only; the persisted record holds system provenance.
+    view.answer = typeof record.answer === "string" ? record.answer.slice(0, 4_000) : record.questionInvalidatedAt && !record.ignoredAt ? NO_LONGER_NEEDED : null;
     if (record.ignoredAt) view.ignoredAt = record.ignoredAt;
   }
   if (record.permissionTool) view.approval = { tool: record.permissionTool.slice(0, 200), expires: approval ? new Date(approval.expires).toISOString() : null };
