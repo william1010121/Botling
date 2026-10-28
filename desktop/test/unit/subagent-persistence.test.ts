@@ -4,6 +4,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Bot } from "../../src/core/bot";
+import { drainBots } from "../../src/core/hot-swap";
+import { ProjectLock } from "../../src/core/store/lock";
 import type { CodexItem } from "../../src/core/agent/codex";
 import { BotStore } from "../../src/core/store/bot-store";
 import { mainProfile } from "../../src/core/store/workspace";
@@ -24,10 +26,12 @@ function fixture(primary?: Bot) {
   const profile = mainProfile(root);
   const events: unknown[] = [];
   const log = vi.fn();
+  const lock = new ProjectLock(root, root, { folder: null, process: /never-match-test/ });
+  const release = vi.spyOn(lock, "release");
   const bot = new Bot({ profile, primary, engine: primary ? "codex" : "claude", deferStartup: true, welcome: false,
     headConfig() { throw new Error("No CLI in persistence tests"); }, prompts() { throw new Error("No turn"); },
     ledger: new ProcessLedger(join(root, "ledger.json")), emit: event => events.push(event), log,
-    approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100,
+    approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100, lock,
   });
   bots.push(bot);
   const folder = primary ? join(primary.profile.storeDir, "partner-codex") : profile.storeDir;
@@ -36,7 +40,7 @@ function fixture(primary?: Bot) {
   const send = (item: CodexItem) => (bot as unknown as { onSubagentItem(item: CodexItem): boolean }).onSubagentItem(item);
   const start = () => send({ kind: "subagentStarted", id: "worker", description: "Worker", type: "codex-worker", prompt: "Work", background: false });
   const text = (value: string) => send({ kind: "subagentText", parent: "worker", text: value });
-  return { bot, file, disk, send, start, text, log, events };
+  return { bot, file, disk, send, start, text, log, events, release };
 }
 function writes() {
   const original = BotStore.prototype.saveList;
@@ -115,7 +119,7 @@ it("retains dirty progress after a failed timer write and retries the latest sta
   expect(f.disk()[0]!.steps.map(step => step.title)).toEqual(["first", "latest"]);
   expect(spy).toHaveBeenCalledTimes(2);
 });
-it("surfaces terminal and handover write failures and preserves the dirty state for recovery", () => {
+it("surfaces terminal write failures but logs handover failures and preserves dirty state for recovery", () => {
   const f = fixture(); f.start(); f.text("pending");
   const original = BotStore.prototype.saveList;
   const spy = vi.spyOn(BotStore.prototype, "saveList").mockImplementation(function (this: BotStore, name, list) {
@@ -124,7 +128,8 @@ it("surfaces terminal and handover write failures and preserves the dirty state 
   });
   expect(() => f.send({ kind: "subagentEnded", id: "worker", status: "completed", summary: "done" })).toThrow("disk unavailable");
   expect(f.disk()[0]!.status).toBe("running");
-  expect(() => f.bot.flushForSwap()).toThrow("disk unavailable");
+  expect(() => f.bot.flushForSwap()).not.toThrow();
+  expect(f.log).toHaveBeenCalledWith(expect.stringContaining("save failed during core swap"));
   spy.mockRestore(); f.bot.flushForSwap();
   expect(f.disk()[0]).toMatchObject({ status: "completed", result: "done", steps: [{ title: "pending" }] });
 });
@@ -139,12 +144,78 @@ it("bounds failed retries and flushes dirty progress after shutdown failure", as
   for (let i = 0; i < 50; i++) f.text(`delta-${i}`);
   await vi.advanceTimersByTimeAsync(30_500);
   expect(spy).toHaveBeenCalledTimes(5);
-  await expect(f.bot.shutdown({ tidy: false })).rejects.toThrow("disk unavailable");
+  await expect(f.bot.shutdown({ tidy: false })).resolves.toBeUndefined();
+  expect(f.log).toHaveBeenCalledWith(expect.stringContaining("save failed during shutdown"));
   const attempts = spy.mock.calls.length;
   await vi.advanceTimersByTimeAsync(60_000);
   expect(spy).toHaveBeenCalledTimes(attempts);
   spy.mockRestore(); await f.bot.shutdown({ tidy: false });
   expect(f.disk()[0]!.steps).toHaveLength(50);
+});
+
+it("shutdown boundary preserves chat persistence and lock release after subagent write failure", async () => {
+  const f = fixture(); const p = fixture(f.bot); f.bot.partner = p.bot;
+  f.start(); p.start(); f.text("primary pending"); p.text("partner pending");
+  const messages = vi.spyOn(BotStore.prototype, "saveMessages");
+  const original = BotStore.prototype.saveList;
+  const failed = vi.spyOn(BotStore.prototype, "saveList").mockImplementation(function (this: BotStore, name, list) {
+    if (name === "subagents.json") throw new Error("disk unavailable");
+    original.call(this, name, list);
+  });
+  await expect(f.bot.shutdown({ tidy: false })).resolves.toBeUndefined();
+  for (const current of [f, p]) {
+    expect(messages.mock.contexts.some(store => store instanceof BotStore && store.directory === join(current.file, ".."))).toBe(true);
+    expect(JSON.parse(readFileSync(join(current.file, "..", "chat.json"), "utf8"))).toEqual(current.bot.catchUpChat().records);
+    expect(current.release).toHaveBeenCalledTimes(1);
+    expect(current.log).toHaveBeenCalledWith(expect.stringContaining("save failed during shutdown"));
+    expect(current.disk()[0]!.steps).toHaveLength(0);
+  }
+  const attempts = failed.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(failed).toHaveBeenCalledTimes(attempts);
+  failed.mockRestore(); await f.bot.shutdown({ tidy: false });
+  expect(f.disk()[0]!.steps[0]!.title).toBe("primary pending");
+  expect(p.disk()[0]!.steps[0]!.title).toBe("partner pending");
+});
+
+it("shutdown boundary releases the lock while preserving chat write errors", async () => {
+  const f = fixture();
+  vi.spyOn(BotStore.prototype, "saveMessages").mockImplementation(() => { throw new Error("chat unavailable"); });
+  await expect(f.bot.shutdown({ tidy: false })).rejects.toThrow("chat unavailable");
+  expect(f.release).toHaveBeenCalledTimes(1);
+});
+
+it("swap boundary saves both heads and continues draining later bots after subagent write failure", async () => {
+  const f = fixture(); const p = fixture(f.bot); f.bot.partner = p.bot;
+  const next = fixture();
+  for (const [index, current] of [f, p, next].entries()) {
+    // Session state without starting a CLI; exercise the actual head.json write during drain.
+    (current.bot as unknown as { session: { sessionId: string; started: boolean } }).session = {
+      sessionId: `session-${index}`, started: true,
+    };
+    current.start(); current.text(`pending-${index}`);
+  }
+  const original = BotStore.prototype.saveList;
+  const failed = vi.spyOn(BotStore.prototype, "saveList").mockImplementation(function (this: BotStore, name, list) {
+    if (name === "subagents.json" && this.directory === join(f.file, "..")) throw new Error("disk unavailable");
+    original.call(this, name, list);
+  });
+  const draining = drainBots([f.bot, next.bot], { timeoutMs: 0, boundaryMs: 0 });
+  await expect(draining).resolves.toBeDefined();
+  const result = await draining;
+  expect(result.entries.map(entry => entry.sessionId)).toEqual(["session-0", "session-1", "session-2"]);
+  for (const [index, current] of [f, p, next].entries()) {
+    expect(JSON.parse(readFileSync(join(current.file, "..", "head.json"), "utf8"))).toEqual({
+      sessionId: `session-${index}`, started: true,
+    });
+  }
+  expect(p.disk()[0]!.steps[0]!.title).toBe("pending-1");
+  expect(next.disk()[0]!.steps[0]!.title).toBe("pending-2");
+  expect(f.disk()[0]!.steps).toHaveLength(0);
+  expect(f.log).toHaveBeenCalledWith(expect.stringContaining("save failed during core swap"));
+  failed.mockRestore();
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(f.disk()[0]!.steps[0]!.title).toBe("pending-0");
 });
 
 // Opt-in single-job comparison: 81 generated records ~25 MB, six text deltas over 300 ms.

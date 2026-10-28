@@ -4733,7 +4733,8 @@ export class Bot {
     this.persist();
     this.partner?.persist();
     for (const bot of [this, ...(this.partner ? [this.partner] : [])]) {
-      bot.flushSubagents();
+      try { bot.flushSubagents(); }
+      catch (error) { bot.log(`subagents save failed during core swap: ${String(error)}`); }
       if (bot.session.started) bot.store.saveHead(bot.session);
     }
   }
@@ -4785,9 +4786,13 @@ export class Bot {
       if (!ended) await last.terminate(1_000);
     }
     await partner;
-    this.flushSubagents();
-    this.persist();
-    this.options.lock?.release();
+    try {
+      try { this.flushSubagents(); }
+      catch (error) { this.log(`subagents save failed during shutdown: ${String(error)}`); }
+      this.persist();
+    } finally {
+      this.options.lock?.release();
+    }
   }
 }
 
