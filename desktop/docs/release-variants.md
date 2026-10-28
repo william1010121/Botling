@@ -52,7 +52,17 @@ ZIP/DMG names. When requested, each ZIP has its own verified Ed25519 manifest. T
 package metadata is written before electron-builder computes AppInfo or creates ASAR; the
 native full prerelease version is set before signing. afterPack verifies actual ASAR/native
 version, profile, update auth, package/core storage and every shipped out/ file hash; afterSign
-verifies the app seal. No signed app is patched. Public DMG uses Applications; local DMG contains
+verifies the app seal. Before signing, the actual `Contents/Resources/mobile` and `report`
+trees are also checked against the frozen inventory through the official extraResources
+`from`/`to`/`filter` mappings. This includes token-flow.css, KaTeX fonts and all three external
+report documents. Exact relative file lists, sizes, SHA-256 and permission bits (including
+special bits) must match; missing/extra files, extra empty directories and symlinks at any
+component from appOutDir through each mapped tree are rejected. Mapping traversal, overlapping
+destinations, missing approved filter matches and unsupported glob syntax fail closed. Only
+explicit filters and basename `*` used by the current config are supported; there are no
+volatile-file exclusions inside mapped resource trees. Electron-owned resources outside those
+mapping roots remain covered by the normal native package/signature checks, not this compiled
+resource inventory. No signed app is patched. Public DMG uses Applications; local DMG contains
 only app and LOCAL-UPGRADE.md, with no sibling trial-data launcher.
 
 One compilation is possible because main reads trial metadata from packaged package.json and

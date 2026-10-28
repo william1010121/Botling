@@ -22,7 +22,7 @@ export function inventory(root) {
       const path = join(dir, name), stat = lstatSync(path);
       if (stat.isSymbolicLink()) throw new Error(`Symlink forbidden in compiled output: ${path}`);
       if (stat.isDirectory()) walk(path);
-      else if (stat.isFile()) files.push({ path: relative(root, path), size: stat.size, mode: stat.mode & 0o777, sha256: digest(readFileSync(path)) });
+      else if (stat.isFile()) files.push({ path: relative(root, path), size: stat.size, mode: stat.mode & 0o7777, sha256: digest(readFileSync(path)) });
       else throw new Error(`Non-file output: ${path}`);
     }
   }
@@ -63,6 +63,65 @@ export function checkPackagedMetadata(pkg, nativeVersion, coreContract, variant,
   equal(pkg.botlingStorageContract, contract, 'ASAR storage contract');
   equal(coreContract, contract, 'Packaged core storage contract');
 }
+// Only the mapping/filter grammar used by the reviewed release config is accepted.
+// New glob semantics need an explicit implementation/review, never a permissive fallback.
+function resourcePath(path) {
+  if (typeof path !== 'string' || !path || /[\\\x00-\x1f]/.test(path)
+    || path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error(`Unsafe extra resource path: ${path}`);
+  return path;
+}
+function resourceFilter(pattern) {
+  resourcePath(pattern);
+  if (/[?![\]{}()]/.test(pattern) || pattern.includes('**') || pattern.split('/').slice(0, -1).some(part => part.includes('*')))
+    throw new Error(`Unsupported extra resource filter: ${pattern}`);
+  return new RegExp('^' + pattern.split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*') + '$');
+}
+function directoryChain(root, path) {
+  let current = root;
+  for (const part of ['', ...resourcePath(path).split('/')]) {
+    if (part) current = join(current, part);
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Symlink/non-directory extra resource path: ${current}`);
+  }
+}
+export function checkExtraResources(appOutDir, mappings, provenance) {
+  const resources = join(appOutDir, 'Botling 2.app/Contents/Resources');
+  directoryChain(appOutDir, 'Botling 2.app/Contents/Resources');
+  const destinations = [];
+  for (const mapping of mappings) {
+    const from = resourcePath(mapping.from), to = resourcePath(mapping.to);
+    if (destinations.some(prior => to === prior || to.startsWith(prior + '/') || prior.startsWith(to + '/')))
+      throw new Error('Overlapping extra resource destinations');
+    destinations.push(to);
+    const filters = mapping.filter === undefined ? null : mapping.filter;
+    if (filters !== null && (!Array.isArray(filters) || !filters.length)) throw new Error('Invalid extra resource filters');
+    const candidates = provenance.files.filter(file => resourcePath(file.path).startsWith(from + '/'))
+      .map(file => ({ ...file, path: file.path.slice(from.length + 1) }));
+    const matchers = filters?.map(resourceFilter);
+    for (const matcher of matchers ?? []) if (!candidates.some(file => matcher.test(file.path)))
+      throw new Error(`Missing approved extra resource source for ${from}: ${matcher}`);
+    const expected = candidates.filter(file => !matchers || matchers.some(matcher => matcher.test(file.path)));
+    if (!expected.length) throw new Error(`Empty approved extra resource mapping: ${from}`);
+    directoryChain(resources, to);
+    const target = join(resources, to), actual = inventory(target);
+    const order = (a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+    equal(actual.sort(order), expected.sort(order), `Packaged extra resource ${to} inventory/bytes/mode`);
+    // Reject extra empty directories too; no volatile-file or directory exceptions.
+    const directories = new Set(expected.flatMap(file => {
+      const parts = file.path.split('/'); return parts.slice(0, -1).map((_, i) => parts.slice(0, i + 1).join('/'));
+    }));
+    function walk(dir) {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (lstatSync(path).isDirectory()) {
+          if (!directories.has(relative(target, path))) throw new Error(`Unexpected extra resource directory: ${path}`);
+          walk(path);
+        }
+      }
+    }
+    walk(target);
+  }
+}
 export function assemblyConfig(base, desktop, stage, output, variant, provenance) {
   if (!Object.values(variants).includes(variant)) throw new Error('Unknown release variant');
   return { ...base,
@@ -70,6 +129,7 @@ export function assemblyConfig(base, desktop, stage, output, variant, provenance
     afterPack: async context => {
       const { extractFile } = await import('@electron/asar');
       const app = join(context.appOutDir, 'Botling 2.app');
+      checkExtraResources(context.appOutDir, base.extraResources, provenance);
       const archive = join(app, 'Contents/Resources/app.asar');
       const nativeVersion = execFileSync('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', join(app, 'Contents/Info.plist')], { encoding: 'utf8' }).trim();
       checkPackagedMetadata(JSON.parse(extractFile(archive, 'package.json')), nativeVersion,

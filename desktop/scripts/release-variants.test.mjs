@@ -1,9 +1,10 @@
 import { test } from 'node:test';
+import { finished } from 'node:stream/promises';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, cpSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assemble, assemblyConfig, compileOnce, inventory, variants, verifyFrozen } from './release-variants.mjs';
+import { assemble, assemblyConfig, checkExtraResources, compileOnce, inventory, variants, verifyFrozen } from './release-variants.mjs';
 import { checkMetadata } from './release-check.mjs';
 
 function fixture(t) {
@@ -22,9 +23,15 @@ function fixture(t) {
       mkdirSync(join(desktop, 'out/core'), { recursive: true });
       writeFileSync(join(desktop, 'out/core/storage-contract.json'), JSON.stringify(contract));
       writeFileSync(join(desktop, 'out/core/main.cjs'), 'compiled core');
+      mkdirSync(join(desktop, 'out/report'), { recursive: true });
+      for (const name of ['report-blocks.md', 'NOTICE', 'THIRD_PARTY_LICENSES.txt']) writeFileSync(join(desktop, 'out/report', name), `approved ${name}`);
     } else if (args[0].endsWith('/mobile/build.mjs')) {
       mkdirSync(join(desktop, 'mobile/dist'), { recursive: true });
       writeFileSync(join(desktop, 'mobile/dist/web.js'), 'compiled mobile');
+      for (const name of ['index.html', 'styles.css', 'token-flow.css', 'web.css', 'chat.html', 'chat.js', 'chat.css', 'frame.css', 'frame-host.html', 'frame-host.js', 'manifest.webmanifest', 'icon.svg', 'plugins/ccb-latex/katex.min.css', 'plugins/ccb-latex/fonts/fixture.woff2']) {
+        mkdirSync(join(desktop, 'mobile/dist', name, '..'), { recursive: true });
+        writeFileSync(join(desktop, 'mobile/dist', name), `approved ${name}`);
+      }
     }
   };
   const base = { directories: {}, extraMetadata: { main: 'out/main/main.cjs' }, mac: { extendInfo: {} }, dmg: {},
@@ -120,7 +127,9 @@ test('pre-sign hook reads real temporary ASAR and native plist, rejects wrong lo
     botlingDevTrial: true, botlingUpdates: 'verified-updates', botlingStorageContract: f.expected.storageContract }));
   const output = join(f.root, 'fake-app-output'), contents = join(output, 'Botling 2.app/Contents');
   mkdirSync(join(contents, 'Resources'), { recursive: true });
-  await createPackage(stage, join(contents, 'Resources/app.asar'));
+  cpSync(join(stage, 'mobile/dist'), join(contents, 'Resources/mobile'), { recursive: true });
+  cpSync(join(stage, 'out/report'), join(contents, 'Resources/report'), { recursive: true });
+  await finished(await createPackage(stage, join(contents, 'Resources/app.asar')));
   const plist = version => writeFileSync(join(contents, 'Info.plist'), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`);
   plist(variant.version);
   const config = assemblyConfig(f.base, f.desktop, stage, output, variant, JSON.parse(readFileSync(join(f.root, 'COMPILED_PROVENANCE.json'))));
@@ -136,4 +145,69 @@ test('both complete variant configs satisfy installed electron-builder schema wi
     const config = assemblyConfig(base, f.desktop, '/temporary-stage', '/temporary-output', variant, { source: f.expected });
     await validateConfiguration(config, { isEnabled: false });
   }
+});
+
+for (const mutation of ['tamper-mobile', 'missing-mobile', 'symlink-mobile', 'tamper-report', 'extra-report', 'mode-mobile', 'mode-special', 'symlink-parent', 'missing-report', 'symlink-root', 'extra-mobile', 'extra-directory', 'tamper-font']) {
+  test(`pre-sign hook rejects external resource ${mutation} with unchanged frozen sources`, async t => {
+    const f = fixture(t);
+    await compileOnce(f.desktop, f.root, f.expected, f.runner, () => f.expected);
+    const stage = join(f.root, 'compiled'), provenance = verifyFrozen(f.root, f.expected);
+    const variant = variants.local, output = join(f.root, 'app-output'), contents = join(output, 'Botling 2.app/Contents');
+    mkdirSync(join(contents, 'Resources'), { recursive: true });
+    writeFileSync(join(stage, 'package.json'), JSON.stringify({ version: variant.version, botlingDevTrial: true,
+      botlingUpdates: 'verified-updates', botlingStorageContract: f.expected.storageContract }));
+    const { createPackage } = await import('@electron/asar');
+    await finished(await createPackage(stage, join(contents, 'Resources/app.asar')));
+    writeFileSync(join(contents, 'Info.plist'), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>${variant.version}</string></dict></plist>`);
+    cpSync(join(stage, 'mobile/dist'), join(contents, 'Resources/mobile'), { recursive: true });
+    cpSync(join(stage, 'out/report'), join(contents, 'Resources/report'), { recursive: true });
+    const { default: base } = await import('../electron-builder.config.cjs');
+    const config = assemblyConfig(base, f.desktop, stage, output, variant, provenance);
+    await config.afterPack({ appOutDir: output });
+    const mobile = join(contents, 'Resources/mobile/web.js');
+    if (mutation === 'tamper-mobile') writeFileSync(mobile, 'tampered');
+    if (mutation === 'missing-mobile') rmSync(join(contents, 'Resources/mobile/token-flow.css'));
+    if (mutation === 'symlink-mobile') { rmSync(mobile); symlinkSync(join(stage, 'mobile/dist/web.js'), mobile); }
+    if (mutation === 'tamper-report') writeFileSync(join(contents, 'Resources/report/NOTICE'), 'tampered');
+    if (mutation === 'extra-report') writeFileSync(join(contents, 'Resources/report/extra.txt'), 'unexpected');
+    if (mutation === 'mode-mobile') chmodSync(mobile, 0o777);
+    if (mutation === 'mode-special') chmodSync(mobile, 0o4644);
+    if (mutation === 'missing-report') rmSync(join(contents, 'Resources/report/THIRD_PARTY_LICENSES.txt'));
+    if (mutation === 'symlink-root') {
+      rmSync(join(contents, 'Resources/mobile'), { recursive: true });
+      symlinkSync(join(stage, 'mobile/dist'), join(contents, 'Resources/mobile'));
+    }
+    if (mutation === 'extra-mobile') writeFileSync(join(contents, 'Resources/mobile/web.js.map'), 'not shipped by approved filter');
+    if (mutation === 'extra-directory') mkdirSync(join(contents, 'Resources/report/unexpected-empty'));
+    if (mutation === 'tamper-font') writeFileSync(join(contents, 'Resources/mobile/plugins/ccb-latex/fonts/fixture.woff2'), 'tampered');
+    if (mutation === 'symlink-parent') {
+      cpSync(join(contents, 'Resources'), join(f.root, 'redirected'), { recursive: true });
+      rmSync(join(contents, 'Resources'), { recursive: true }); symlinkSync(join(f.root, 'redirected'), join(contents, 'Resources'));
+    }
+    await assert.rejects(config.afterPack({ appOutDir: output }), /resource|Symlink|ENOENT/);
+    // The expected hashes did not change with the actual packaged payload.
+    assert.equal(readFileSync(join(stage, 'mobile/dist/web.js'), 'utf8'), 'compiled mobile');
+  });
+}
+
+test('external resource mapping rejects traversal, unsupported filters, missing approved sources and overlapping destinations', async t => {
+  const f = fixture(t);
+  await compileOnce(f.desktop, f.root, f.expected, f.runner, () => f.expected);
+  const provenance = verifyFrozen(f.root, f.expected), output = join(f.root, 'actual');
+  const resources = join(output, 'Botling 2.app/Contents/Resources');
+  mkdirSync(resources, { recursive: true });
+  cpSync(join(f.root, 'compiled/mobile/dist'), join(resources, 'mobile'), { recursive: true });
+  const good = { from: 'mobile/dist', to: 'mobile' };
+  checkExtraResources(output, [good], provenance);
+  for (const path of ['/absolute', '../escape', 'mobile/../escape', 'mobile\\escape', 'mobile//nested']) {
+    assert.throws(() => checkExtraResources(output, [{ ...good, to: path }], provenance), /Unsafe/);
+    assert.throws(() => checkExtraResources(output, [{ ...good, from: path }], provenance), /Unsafe/);
+  }
+  assert.throws(() => checkExtraResources(output, [{ ...good, filter: ['**/*'] }], provenance), /Unsupported/);
+  assert.throws(() => checkExtraResources(output, [{ ...good, filter: ['missing.js'] }], provenance), /Missing approved/);
+  assert.throws(() => checkExtraResources(output, [good, { ...good, to: 'mobile/nested' }], provenance), /Overlapping/);
+  // Frozen files excluded by the exact official mapping do not become packaged expectations.
+  const excluded = { ...provenance.files.find(file => file.path === 'mobile/dist/web.js'), path: 'mobile/dist/web.js.map' };
+  const { default: base } = await import('../electron-builder.config.cjs');
+  checkExtraResources(output, [base.extraResources[0]], { ...provenance, files: [...provenance.files, excluded] });
 });
