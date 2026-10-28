@@ -1,94 +1,152 @@
-# Review proposal: resume local assembly without recompiling
+# Reviewed local-only recovery, without another compilation
 
-Status: proposal only. This document is not approval, an executable recovery manifest or an
-implemented cross-SHA bypass. The normal `verifyFrozen` exact-SHA check remains unchanged.
-Do not run the corrected head against the old frozen root with ordinary `--reuse-built` and
-expect it to pass. Reviewer a16f55c6 must approve the exact recovery contract and manifest before
-local resume. Any recovery verifier/layout implementation needs focused review before execution.
+Implemented by `scripts/release-recovery.mjs`. Execution still requires review of the FULL
+integrated correction and externally approved manifest/attestation bytes. Approval of the
+config isolation commit alone does not approve the recovery verifier or a local assembly.
+The normal package/reuse commands retain their exact-SHA gate. This standalone recovery entry
+has no compile branch, public variant switch, base-SHA override or automatic cleanup/retry.
 
-## Existing evidence to preserve
+The only supported production compiled base is
+`f7860bc9af7211788c74a9fa553abcc767eb81b2`. Do not edit or relabel its
+COMPILED_PROVENANCE.json or compiled/ tree. The existing public-production, stage-local and
+local-trial-preserving directories remain intact, including failure evidence.
 
-The packaging evidence records one desktop and one mobile compilation from clean source
-`f7860bc9af7211788c74a9fa553abcc767eb81b2`, successful public assembly/signing/verification, and
-local failure in electron-builder's second config normalization before native output.
-Build root: `/Volumes/My-SSD/botling-work/builds/release-2.0.0-20261029`.
+## Fixed records and external approval
 
-Do not edit COMPILED_PROVENANCE.json, compiled/, the public ASSEMBLY_PLAN or public provenance,
-checksums, ZIP, manifest, DMG, unpacked app or acceptance evidence. Preserve the failed local
-stage/output too. The correction does not change any version, profile, signing or runtime input.
+After integrating the complete correction into a clean checkout, select its final 40-character
+assembly SHA. Prepare a new manifest OUTSIDE both checkout and frozen root. Then obtain an
+external approval record for the exact manifest bytes and final assembly SHA. Both files must
+be canonical regular files owned by the invoking UID, mode 0600, under canonical owned parents
+not writable by group/others. Symlink paths are refused. The caller passes BOTH file SHA-256
+pins through the trusted operator/reviewer channel; do not derive trust from a record's own
+`approved` field or a self-authored reference. The code never creates approval records.
 
-## Proposed explicit recovery manifest
+The manifest has exactly these fields (unknown fields, including self-hashes, are rejected):
 
-Store a new operator-owned manifest outside the source checkout and frozen tree. Bind all of:
+| Field | Value / computation |
+| --- | --- |
+| schema | 1 |
+| scope | `local-only-packager-recovery` |
+| variant | `local` |
+| compiledSourceSHA | Full fixed f7860bc9 SHA above |
+| assemblySourceSHA | Final clean reviewed integrated commit |
+| diffSHA256 | Full base-to-final binary diff digest from `recoverySourceEvidence` |
+| compiledInputsSHA256 | Matching tracked-input digest from that helper |
+| changedFiles | Exact helper records: path and before/after mode/blob IDs (null for absence) |
+| frozenRoot | Canonical absolute existing frozen root |
+| compiledManifestSHA256 | SHA-256 of untouched original COMPILED_PROVENANCE.json bytes |
+| preservedTrees | Exactly public-production, local-trial-preserving and stage-local keys, each with its `preservedTreeDigest` |
+| stage | Canonical, previously nonexistent recovery staging directory |
+| output | Canonical, previously nonexistent recovery output directory |
 
-- schema identifier and scope `local-only-packager-recovery`;
-- `compiledSourceSHA`: the full f7860bc9 SHA above;
-- `assemblySourceSHA`: the exact clean reviewed integrated correction SHA (not merely this
-  worker's branch name, nor a worker SHA if it is subsequently cherry-picked);
-- absolute frozen root and SHA-256 of its original COMPILED_PROVENANCE.json;
-- complete original source/toolchain/trust/storage fields and compiled inventory digest;
-- exact changed-path list with old/new blob IDs and modes, plus SHA-256 of the full binary diff;
-- identical compiled-input tree digest at both SHAs, defined below;
-- distinct, previously nonexistent recovery stage and output paths, scoped to local only;
-- original public artifact SHA-256 values, public provenance/plan digests, and hashes of the
-  preserved failed-local evidence, checked before and after recovery;
-- exact approval evidence reference and approved manifest SHA-256, supplied by the reviewer/
-  coordinator through the existing authorization channel. A self-written `approved:true` does
-  not authorize anything.
+The external approval record has exactly:
 
-The only allowed changed paths for this correction are:
+| Field | Required value |
+| --- | --- |
+| schema | 1 |
+| action | `assemble-local-recovery` |
+| manifestSHA256 | SHA-256 of final manifest FILE BYTES, not canonicalized JSON |
+| assemblySourceSHA | Same final integrated assembly SHA |
+| compiledSourceSHA | Same fixed compiled SHA |
+| variant | `local` |
+| explicitApproval | true, recorded only after external approval |
+| reviewer | Nonempty external reviewer identifier |
+| recordId | Nonempty external approval/evidence identifier |
+
+The approval FILE BYTES have a separate SHA-256 supplied by the trusted operator. There is no
+self-reference: manifest contains neither its own hash nor approval information. The approval
+record references the manifest hash; CLI pins reference both files. The assembly SHA is a
+parameter in these external records, not a constant requiring a post-approval source patch.
+
+Read-only exported helpers `recoverySourceEvidence(desktop, compiledSHA, assemblySHA)` and
+`preservedTreeDigest(root)` compute the exact values; they neither approve nor package. Final
+source/diff pins must be recomputed after cherry-picking/integration, not copied from the worker
+branch. Do not use placeholders or invent an approval record in order to get a passing check.
+
+## Source and path contract
+
+The exact changed-path allowlist is:
 
 ```
 desktop/scripts/release-variants.mjs
 desktop/scripts/release-variants.test.mjs
+desktop/scripts/release-recovery.mjs
+desktop/scripts/release-recovery.test.mjs
 desktop/docs/release-variants-recovery.md
 ```
 
-This is an exact path allowlist, not `scripts/**` or a general packaging exception. Only the
-first file executes in packaging; review its exact diff as config isolation only. Test/doc
-changes cannot authorize runtime changes. Any additional integrated change needs a newly
-reviewed manifest; never automatically expand the list. In particular signer, release trust,
-package/lock, electron-builder config, builders, app/core/preload/web/report/mobile sources and
-resources must remain identical.
+The full diff includes the verifier itself. It is hashed with `git diff --no-ext-diff
+--no-textconv --no-renames --binary --full-index BASE HEAD`. Git replacement objects are disabled.
+Both SHAs must resolve exactly, with the compiled SHA an ancestor. No caller may expand the
+allowlist. Tracked-input digests are SHA-256 over sorted NUL-terminated `git ls-tree -rz
+--full-tree SHA` records excluding ONLY these five exact paths. Path, blob ID and Git mode are
+included. All other tracked source/assets/config/trust/lock files must be identical.
 
-## Proposed verification and execution contract
+The verifier also checks actual worktree bytes against tracked Git blob IDs, executable bits,
+and regular canonical paths; this catches changes hidden by assume-unchanged/skip-worktree.
+Tracked symlinks/submodules and untracked/ignored source inputs are rejected. Only these ignored
+non-input dependency/generated-output trees are excluded from the untracked check:
+`desktop/node_modules`, `Web/node_modules`, `desktop/out`, `desktop/mobile/dist`, `desktop/.cache`,
+`desktop/dist`, `desktop/test-results`, `desktop/playwright-report`. There are no source-tree
+wildcard exceptions. Dependency installations remain operator-controlled, as in the original
+lock/tool-version provenance; this is not a new attestation of every node_modules byte.
 
-1. Resolve both full SHAs as commits and require the compiled commit to be an ancestor of the
-   reviewed assembly commit. Require a clean assembly checkout, including untracked files.
-   Enumerate changes with Git rename detection disabled; reject additions/deletions/type/mode
-   changes outside the exact allowlist. Bind the changed path records and the binary diff using
-   `git diff --no-ext-diff --no-textconv --no-renames --binary --full-index BASE HEAD`.
-2. Compute the compiled-input digest at each commit from sorted, NUL-delimited `git ls-tree -rz
-   --full-tree SHA` records after excluding ONLY the three allowlisted paths. Keep path, mode,
-   object type and blob ID in each record. Equal digests establish that every tracked potential
-   compile/runtime/resource input outside the reviewed packaging delta is unchanged; do not
-   substitute a hand-maintained list of likely builder entry points. Require all non-SHA source
-   fields in COMPILED_PROVENANCE to match the current Node/toolchain, platform, architecture,
-   lock, trust and storage contract. Dependency installations stay operator-controlled as in
-   the original provenance contract; this does not add a claim that node_modules was attested.
-3. Verify the untouched frozen inventory against its ORIGINAL source identity with the existing
-   exact `verifyFrozen(root, originalSource)` behavior. Compare its full bytes/modes and core
-   sidecar, and bind the original manifest digest to the approved recovery manifest. A separate
-   explicit recovery verifier may then return TWO identities: compiled source and assembly
-   source. It must never replace the frozen sourceSHA, suppress a normal source mismatch, or
-   treat a matching package version as equivalent provenance.
-4. After approval, use the corrected packager in a fresh process for ONE local assembly only,
-   into the manifest's fresh recovery paths. Do not retry the public branch, overwrite failed
-   local directories, or compile again. Key-file preflight, ASAR/native metadata checks,
-   external-resource inventory checks, codesign and per-ZIP manifest verification all stay on.
-   The local version remains `2.0.0-local-trial.20261029.1`, trial=true, with epoch2 storage.
-5. The new local ASSEMBLY_PLAN/VARIANT_PROVENANCE must record `compiledSourceSHA`,
-   `assemblySourceSHA`, original compiled-provenance digest and approved recovery-manifest
-   digest separately. Native BotlingGitCommit should continue to identify the compiled runtime
-   source; record the packaging correction separately, never label old compiled bytes as a new
-   runtime build. Recheck frozen and preserved public hashes afterward, then complete local
-   ZIP/native/profile/bootstrap acceptance. Installation/publication still require their own
-   exact approval and are not implied by recovery approval.
+Original frozen provenance is verified under its ORIGINAL compiled SHA, including complete
+inventory bytes/modes and storage sidecar. All other source fields must match current Node,
+platform/architecture, lock digest, tool versions, public trust and storage contract.
 
-Negative recovery tests required before implementing/executing the exception: wrong base or
-assembly SHA, dirty checkout, changed lock/trust/runtime asset, extra changed path, forged diff
-or input digest, altered frozen bytes/manifest, changed public artifact, reused recovery path,
-and absent/mismatched approval reference. They must fail before build/sign callbacks. A valid
-fixture must preserve the original SHA and invoke only one local assembly, with zero compile
-callbacks. This proposal intentionally provides no command that silently bypasses the current
-source gate.
+Recovery stage/output must be disjoint, outside the ENTIRE frozen root and checkout, and must
+not overlap either operator record. Their real parents must already exist, be canonical and
+owned, and not group/world-writable. Symlink parents/noncanonical paths and existing destinations
+are refused. Paths are checked again immediately before exclusive mkdir (mode 0700). Do not
+remove or rename failed local directories to make ordinary --reuse-built work. Builder caches
+are confined to the new recovery output, not inherited cache paths in preserved trees.
+
+## Complete preservation on success and failure
+
+Before signer preflight or builder invocation, the verifier checks both pinned records, approval,
+local-only scope, both SHAs, complete diff/input digests, actual worktree, paths, original frozen
+manifest/inventory and all three preserved trees. Each preserved-tree digest includes root and
+nested directories with modes, file bytes/size/mode, and symlink target text/mode. Legal relative
+app symlinks resolving within their own tree are recorded without traversal; escaping/dangling
+links and nonregular nodes are refused. There are NO ignored files or volatile exclusions in
+these preserved trees. Thus all public artifact bytes and all failed-local evidence are bound.
+
+After preflight the checks run again before assembly. After assembly they run before ZIP
+signing. They run again on both SUCCESS AND FAILURE, independently rechecking frozen/preserved
+trees even if source/approval validation already fails. Any mutation prevents completion;
+errors retain original failures plus postcheck failures. No cleanup, rollback, second compile
+or automatic retry occurs. Retain outputs for review. Operator must prevent concurrent writers;
+the verifier detects observed differences, not a malicious writer that changes and restores
+bytes entirely between checks.
+
+The local version/profile remain `2.0.0-local-trial.20261029.1` / true. Existing signing-key
+preflight, ASAR/native metadata checks, external-resource hashes, native codesign and ZIP
+manifest verification remain enabled. SOURCE_COMMIT.txt, native BotlingGitCommit and sourceSHA
+identify COMPILED f7860bc9. Local ASSEMBLY_PLAN/VARIANT_PROVENANCE additionally contain a recovery
+record with both SHAs, diff/input/original-manifest digests and the exact approval record/pins.
+RECOVERY_COMPLETE.json is written only after successful final checks. It is not installation or
+publication approval; local native/profile/bootstrap acceptance is still required.
+
+## Candidate-worker commands after full review
+
+First run focused checks in the integrated checkout:
+
+```sh
+node --test scripts/release-recovery.test.mjs scripts/release-variants.test.mjs scripts/release-sign.test.mjs scripts/release-check.test.mjs
+```
+
+With the externally reviewed absolute paths and pins supplied as operator variables, read-only
+validation (no private key read, no new directories, no build/sign callbacks) is:
+
+```sh
+node scripts/release-recovery.mjs --check \
+  --manifest "$REVIEWED_MANIFEST" --manifest-sha256 "$REVIEWED_MANIFEST_SHA256" \
+  --approval "$OPERATOR_APPROVAL" --approval-sha256 "$OPERATOR_APPROVAL_SHA256"
+```
+
+Only after approval of this exact recovery, remove `--check` and add
+`--key-file "$APPROVED_KEY_FILE"`. This invokes ONE local assembly and separate native/ZIP signing;
+it never compiles. Do not run it as part of implementation validation. There is no production
+CLI base-SHA override; the verifier's injectable test policy exists only for disposable Git
+fixtures. The normal exact-SHA verifier is unchanged.

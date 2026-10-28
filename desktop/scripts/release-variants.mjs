@@ -179,12 +179,14 @@ export async function compileOnce(desktop, root, expected, runner = run, sourceR
   save(join(root, 'COMPILED_PROVENANCE.json'), { schema: 1, source: expected, files: inventory(join(root, 'compiled')) });
   verifyFrozen(root, expected);
 }
-export async function assemble(desktop, root, name, expected, builder, base, runner = run) {
+export async function assemble(desktop, root, name, expected, builder, base, runner = run, recovery = null) {
   const frozen = verifyFrozen(root, expected), variant = variants[name];
   if (!variant) throw new Error('Choose --variant public or local');
-  const output = join(root, variant.directory), stage = join(root, `stage-${name}`);
+  if (recovery && name !== 'local') throw new Error('Recovery is local only');
+  const output = recovery?.output ?? join(root, variant.directory), stage = recovery?.stage ?? join(root, `stage-${name}`);
+  if (recovery) recovery.assertFresh();
   if (existsSync(output) || existsSync(stage)) throw new Error(`Refusing to overwrite prior ${name} assembly`);
-  mkdirSync(output); mkdirSync(stage);
+  mkdirSync(output, recovery ? { mode: 0o700 } : undefined); mkdirSync(stage, recovery ? { mode: 0o700 } : undefined);
   cpSync(join(root, 'compiled/out'), join(stage, 'out'), { recursive: true });
   cpSync(join(root, 'compiled/mobile'), join(stage, 'mobile'), { recursive: true });
   equal(inventory(stage), frozen.files, 'Staged compiled inventory');
@@ -192,7 +194,8 @@ export async function assemble(desktop, root, name, expected, builder, base, run
   // All runtime dependencies are bundled by the official builders. No dependency install in staging.
   const pkg = { ...json(join(desktop, 'package.json')), dependencies: {}, devDependencies: {}, ...config.extraMetadata };
   save(join(stage, 'package.json'), pkg);
-  const overlay = { variant: name, extraMetadata: config.extraMetadata, nativeVersion: variant.version, source: expected };
+  const overlay = { variant: name, extraMetadata: config.extraMetadata, nativeVersion: variant.version, source: expected,
+    ...(recovery ? { recovery: recovery.record } : {}) };
   save(join(output, 'ASSEMBLY_PLAN.json'), overlay); // Written before any ASAR/native signing.
   const files = await builder(config);
   equal(json(join(stage, 'package.json')), pkg, 'Staged metadata after assembly');
@@ -273,3 +276,5 @@ export async function releaseVariants(desktop, args) {
     console.log(`Assembled ${name}: ${result.output}; acceptance gates remain required`);
   }
 }
+
+export { source as releaseSource };
