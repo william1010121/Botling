@@ -28,7 +28,14 @@ export function createMarkdown(): MarkdownIt {
 
   md.renderer.rules.image = (tokens, index) => {
     const token = tokens[index];
-    return mediaHTML(token.attrGet("src") ?? "", token.content);
+    // A linked image is the link's label, not another control inside it.
+    // Preserve the enclosing destination; standalone images retain preview access.
+    let linked = false;
+    for (let i = index - 1; i >= 0; i--) {
+      if (tokens[i].type === "link_close") break;
+      if (tokens[i].type === "link_open") { linked = true; break; }
+    }
+    return mediaHTML(token.attrGet("src") ?? "", token.content, !linked);
   };
 
   // A table too wide for one line per row gets column widths from its text, so a short column
@@ -73,14 +80,15 @@ export function mediaSrc(url: string): string {
   return mediaSource(url);
 }
 
-export function mediaHTML(src: string, label: string): string {
+export function mediaHTML(src: string, label: string, interactive = true): string {
   const url = escapeHTML(src);
   const shown = escapeHTML(mediaSrc(src));
   const name = escapeHTML(label);
   if (videoExtensions.test(src.split("?")[0])) {
-    return `<video class="media" src="${shown}" controls preload="metadata" aria-label="${name || escapeHTML(t("markdown.video"))}"></video>`;
+    return `<video class="media" src="${shown}" ${interactive ? "controls" : ""} preload="metadata" aria-label="${name || escapeHTML(t("markdown.video"))}"></video>`;
   }
-  return `<img class="media" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${name || escapeHTML(t("lightbox.picture"))}" src="${shown}" alt="${name}" data-url="${url}" data-label="${name}" loading="lazy">`;
+  const trigger = interactive ? ` role="button" tabindex="0" aria-haspopup="dialog" aria-label="${name || escapeHTML(t("lightbox.picture"))}" data-url="${url}" data-label="${name}"` : "";
+  return `<img class="media"${trigger} src="${shown}" alt="${name}" loading="lazy">`;
 }
 
 /** About how many Latin letters fit across a bot bubble at the table's 14px. */

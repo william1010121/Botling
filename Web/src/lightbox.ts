@@ -65,6 +65,7 @@ export function openLightbox(url: string, label: string): void {
   (document.querySelector("dialog.summary-source-viewer[open]") ?? document.body).append(box);
   const close = box.querySelector<HTMLButtonElement>(".lightbox-close")!;
   const onKey = (event: KeyboardEvent) => {
+    if (!box.isConnected) { closeLightbox(false); return; }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -82,24 +83,33 @@ export function openLightbox(url: string, label: string): void {
     }
   };
   const onFocus = (event: FocusEvent) => {
+    if (!box.isConnected) { closeLightbox(false); return; }
     if (!box.contains(event.target as Node)) close.focus();
   };
+  // Both supported hosts are direct body children. Observe removals without watching
+  // every streaming message mutation; guards above also cover synchronous removal.
+  const removal = new MutationObserver(() => {
+    if (!box.isConnected) closeLightbox(false);
+  });
+  removal.observe(box.parentNode!, { childList: true });
+  if (box.parentNode !== document.body) removal.observe(document.body, { childList: true });
   document.addEventListener("keydown", onKey, true);
   document.addEventListener("focusin", onFocus, true);
   current = { box, restore, cleanup: () => {
+    removal.disconnect();
     document.removeEventListener("keydown", onKey, true);
     document.removeEventListener("focusin", onFocus, true);
   } };
   close.focus();
 }
 
-export function closeLightbox(): void {
+export function closeLightbox(restoreFocus = true): void {
   if (!current) return;
   const { box, restore, cleanup } = current;
   current = null;
   cleanup();
   box.remove();
-  if (restore instanceof HTMLElement && restore.isConnected) restore.focus();
+  if (restoreFocus && restore instanceof HTMLElement && restore.isConnected) restore.focus();
 }
 
 /** Opens a picture in the lightbox; anything else (a page, a file, a link) goes to Swift as before. */

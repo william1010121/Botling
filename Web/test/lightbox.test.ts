@@ -224,3 +224,29 @@ describe("attachment image keyboard entry", () => {
     expect(sent).toEqual([]);
   });
 });
+
+
+it("makes a linked Markdown image one external link, not a nested preview button", () => {
+ const row=document.createElement("div");
+ row.innerHTML=renderMarkdown('[![Photo](file:///tmp/a.png)](https://example.com/details)');
+ document.body.append(row);
+ const link=row.querySelector("a")!, image=link.querySelector("img")!;
+ expect(link.dataset.url).toBe("https://example.com/details");
+ expect(image.alt).toBe("Photo");
+ expect(image.hasAttribute("role")).toBe(false);
+ expect(image.tabIndex).toBe(-1);
+ expect(image.hasAttribute("data-url")).toBe(false);
+ image.click();
+ expect(sent).toEqual([{type:"openURL",url:"https://example.com/details",label:""}]);
+ expect(document.querySelector(".lightbox")).toBeNull();
+});
+it("does not swallow keyboard input after an unexpected preview DOM removal", () => {
+ openLightbox("file:///tmp/a.png","Photo");
+ document.querySelector(".lightbox")!.remove();
+ const tab=new KeyboardEvent("keydown",{key:"Tab",bubbles:true,cancelable:true});
+ document.dispatchEvent(tab);
+ expect(tab.defaultPrevented).toBe(false);
+ const escape=new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true});
+ document.dispatchEvent(escape);
+ expect(escape.defaultPrevented).toBe(false);
+});

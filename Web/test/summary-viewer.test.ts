@@ -79,3 +79,24 @@ it("keeps an open source viewer stable when only messages outside its range stre
  viewer.sync("owner",{...state(),messages:[a,b,message("outside",{text:"New streamed text"})]},view);
  expect(document.querySelector(".source-body")).toBe(body);expect(document.querySelector("[data-source-id=a]")).toBe(source);
 });
+
+
+it("disposes image preview listeners on in-range sync and subsequent summary close", async () => {
+ const { openLightbox, closeLightbox } = await import("../src/lightbox");
+ const restore=document.querySelector<HTMLButtonElement>("#restore")!;restore.focus();
+ const original={...state(),messages:[message("a",{text:"![Photo](file:///tmp/a.png)"}),b]};
+ viewer.open("owner",original,view,()=>null,()=>{});
+ const image=document.querySelector<HTMLElement>("dialog img.media")!;image.focus();
+ openLightbox("file:///tmp/a.png","Photo");
+ try {
+  viewer.sync("owner",{...original,messages:[{...original.messages[0],text:"Updated photo description"},b]},view);
+  expect(document.querySelector(".lightbox")).toBeNull();
+  expect(document.activeElement).toBe(document.querySelector('[data-source-close]'));
+  const tab=new KeyboardEvent("keydown",{key:"Tab",bubbles:true,cancelable:true});
+  document.activeElement!.dispatchEvent(tab);expect(tab.defaultPrevented).toBe(false);
+  viewer.close();expect(document.querySelector("dialog")).toBeNull();
+  const after=new KeyboardEvent("keydown",{key:"Tab",bubbles:true,cancelable:true});
+  restore.dispatchEvent(after);expect(after.defaultPrevented).toBe(false);
+  expect(document.activeElement).toBe(restore);
+ } finally {closeLightbox();}
+});
