@@ -38,6 +38,8 @@ module.exports = {
   // Everything the app runs is bundled into out/ by build.mjs (main, preload, core, plugin host,
   // renderer, the web AIs' page readers); no node_modules, no source maps, no test fixtures.
   files: ["package.json", "out/**/*", "!out/**/*.map", "!node_modules/**/*"],
+  // Ordinary files for the bridge's explicit absolute assets directory, outside app.asar.
+  extraResources: [{ from: "mobile/dist", to: "mobile", filter: ["index.html", "mobile.js", "mobile.css", "manifest.webmanifest", "icon.svg"] }],
   asar: true,
   // Electron's zip comes from (and is kept in) this cache, never ~/Library/Caches (the package script sets it).
   electronDownload: { cache: env.ELECTRON_CACHE || env.electron_config_cache || join(__dirname, ".cache", "electron") },

@@ -1,5 +1,5 @@
 // Builds Botling 2.0 for distribution: `node scripts/package.mjs [--mac|--win|--linux] [--dir]`
-// (npm run dist:mac). Bundles out/ (build.mjs), then runs electron-builder with
+// (npm run dist:mac). Bundles out/ and mobile/dist/, then runs electron-builder with
 // electron-builder.config.cjs. It never publishes.
 //
 // Caches stay beside the checkout unless set: electron-builder's (ELECTRON_BUILDER_CACHE) and
@@ -36,6 +36,10 @@ for (const dir of [process.env.ELECTRON_BUILDER_CACHE, process.env.electron_conf
 
 const built = spawnSync(process.execPath, [join(desktop, "build.mjs")], { cwd: desktop, stdio: "inherit" });
 if (built.status !== 0) process.exit(built.status ?? 1);
+
+// Build the browser client afresh; a failed mobile build must stop packaging too.
+const mobileBuilt = spawnSync(process.execPath, [join(desktop, "mobile/build.mjs")], { cwd: desktop, stdio: "inherit" });
+if (mobileBuilt.status !== 0) process.exit(mobileBuilt.status ?? 1);
 
 const { build, Platform } = await import("electron-builder");
 const platforms = [];

@@ -21,6 +21,26 @@ The standalone bundle is `desktop/mobile/dist/`. Serve it under `/mobile/` on th
 HTTPS origin as the authenticated command endpoint. It has no dependency on Electron preload.
 The application is not deployed, and this directory does not start any production server.
 
+## Desktop distribution assets
+
+The desktop `npm run dist:dir`, `dist:mac`, `dist:win` and `dist:linux` routes run
+`mobile/build.mjs` after the desktop build and stop if either build fails. electron-builder
+copies only `index.html`, `mobile.js`, `mobile.css`, `manifest.webmanifest` and `icon.svg`
+from `mobile/dist/` into `mobile/` under the packaged resources directory, outside `app.asar`.
+No frontend source, fixtures or source maps are included by this resource rule.
+
+For a separately authorized bridge setup, the existing config's absolute `assets` path is:
+
+- macOS: `<absolute app path>/Contents/Resources/mobile`
+- Windows/Linux unpacked distribution: `<absolute application directory>/resources/mobile`
+
+These are the `mobile` directory under Electron's `process.resourcesPath`. For a mounted
+AppImage, use its actual mounted resources path; do not assume a stable installation path.
+If the app moves or a versioned installation path changes, an existing explicit `assets`
+path must be updated during separately authorized setup. Source development can still use
+`desktop/mobile/dist/`. See [bridge setup](../src/mobile-bridge/README.md).
+Packaging does not set `BOTLING_MOBILE_CONFIG`, create credentials, or start a listener.
+
 ## Backend integration contract — required, not implemented here
 
 The inspected base revision (`dba3814`) has the transport-agnostic `Core.receive` and Electron IPC,
