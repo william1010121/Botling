@@ -1,14 +1,14 @@
 // Developer mode's builds (1.x's SelfUpdate.swift / Workspace+Developer.swift, core/self-update.ts): reading a
 // bundle, the confirm card, starting the install, how it went at the next start, and the app screenshot.
-// Nothing here runs the install script (it would open an app); its syntax is checked with bash -n.
+// Shell regression tests run the installer with a fake open command; no real app is launched.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, lstatSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
 import { packagedDataDir } from "../../src/main/main-environment";
 import {
-  DevBuilds, FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, devWorkRoot, failures, installOutcome, installTarget, localDataMove, prepareInstall, readBuild, sensitiveChanges, setFailures,
+  DevBuilds, FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, devWorkRoot, externalVolume, failures, installOutcome, installTarget, localDataMove, prepareInstall, readBuild, sensitiveChanges, setFailures,
   type BuildInfo, type DeskBot,
 } from "../../src/core/self-update";
 
@@ -270,17 +270,28 @@ describe("the data moves with a build that moves off an external volume", () => 
   const drive = "/Volumes/My-SSD/botling-work/installed/trial";
   const local = "/Users/me/Library/Application Support/Botling 2 Dev Trial";
 
-  it("goes to the folder the app opens with from Finder, only when the data is on an external volume and the build moves", () => {
+  it("goes to the folder the app opens with from Finder, when data is on an external volume, including an already-local app", () => {
     // What main hands the core is what it opens with when no BOTLING_DATA_DIR is set.
     expect(packagedDataDir("/Users/me/Library/Application Support", true)).toBe(local);
     const running = `${drive}/Botling 2.app`, target = "/Users/me/Applications/Botling 2.app";
     expect(localDataMove(`${drive}/development-data`, running, target, local)).toBe(local);
-    expect(localDataMove(`${drive}/development-data`, target, target, local)).toBeNull(); // installed in place
+    expect(localDataMove(`${drive}/development-data`, target, target, local)).toBe(local); // app already local
     expect(localDataMove("/Users/me/data", running, target, local)).toBeNull(); // already on this disk
     expect(localDataMove(`${drive}/development-data`, running, target, null)).toBeNull(); // not packaged
     expect(localDataMove(`${drive}/development-data`, running, target, "/Volumes/Other/data")).toBeNull();
     expect(localDataMove(`${drive}/development-data`, running, "/Volumes/X/Botling 2.app", local)).toBeNull();
     expect(localDataMove(null, running, target, local)).toBeNull();
+  });
+
+  it("detects the physical data behind a local profile symlink, even with an app already on the local disk", () => {
+    const source = tempDir("self-update-physical-data");
+    const home = mkdtempSync("/private/tmp/botling-migration-test-");
+    try {
+      const localData = join(home, "profile");
+      const app = join(home, "Botling 2.app");
+      symlinkSync(source, localData);
+      expect(localDataMove(localData, app, app, localData)).toBe(externalVolume(source) ? localData : null);
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
   it("the card says where the data goes, and the script is handed that folder", async () => {
@@ -319,26 +330,26 @@ describe("the data moves with a build that moves off an external volume", () => 
     const opened = join(dir, "opened.log");
     const fakeOpen = join(dir, "open.sh");
     // Logs what it was asked to open; MAKE_HEALTHY: the new build comes up, saying so where its data is.
-    writeFileSync(fakeOpen, `#!/bin/sh\necho "$*" >> "${opened}"\ncase "$2" in "${target}") [ -n "$MAKE_HEALTHY" ] && mkdir -p "$(dirname "$MAKE_HEALTHY")" && touch "$MAKE_HEALTHY";; esac\nexit 0\n`);
+    writeFileSync(fakeOpen, `#!/bin/sh\n[ -z "$BOTLING_SHOT_COMMAND$BOTLING_CHECK_COMMAND$BOTLING_DATA_DIR" ] || exit 23\necho "$*" >> "${opened}"\ncase "$2" in "${target}") if [ -n "$MAKE_HEALTHY" ]; then actual="$BOTLING_DATA_DIR"; for arg in "$@"; do case "$arg" in BOTLING_DATA_DIR=*) actual="\${arg#BOTLING_DATA_DIR=}";; esac; done; actual="\${actual:-${localData}}"; mkdir -p "$actual/core/self-update"; touch "$actual/core/self-update/healthy"; fi;; esac\nexit 0\n`);
     chmodSync(fakeOpen, 0o755);
-    const run = (healthyAt: string | null, freeKb?: number) => {
-      const command = prepareInstall(core, running, build, "DEV", "", spawnSync("/usr/bin/true").pid!, data, new Date(), undefined, target, localData);
+    const run = (healthyAt: string | null, freeKb?: number, inherited = false, alias = false) => {
+      const command = prepareInstall(alias ? join(localData, "core") : core, running, build, "DEV", "", spawnSync("/usr/bin/true").pid!, alias ? localData : data, new Date(), undefined, target, localData);
       const args = command.slice(3);
       args[6] = "1";
-      const env: Record<string, string | undefined> = { ...process.env, BOTLING_TEST_OPEN: fakeOpen, ...(healthyAt ? { MAKE_HEALTHY: healthyAt } : {}), ...(freeKb !== undefined ? { BOTLING_TEST_FREE_KB: String(freeKb) } : {}) };
+      const env: Record<string, string | undefined> = { ...process.env, ...(inherited ? { BOTLING_DATA_DIR: core, BOTLING_SHOT_COMMAND: "stale-ssd-command" } : {}), BOTLING_TEST_OPEN: fakeOpen, ...(healthyAt ? { MAKE_HEALTHY: healthyAt } : {}), ...(freeKb !== undefined ? { BOTLING_TEST_FREE_KB: String(freeKb) } : {}) };
       return spawnSync("/bin/bash", [command[2]!, ...args], { encoding: "utf8", env });
     };
     const openedLines = () => readFileSync(opened, "utf8").trim().split("\n");
     return { running, target, data, core, localData, run, openedLines };
   }
 
-  it("copies the data to this Mac's disk without old builds, rewrites its path, and opens the new build with no data folder named", () => {
+  it("copies data and launches against the same local directory as the health check despite inherited core overrides", () => {
     const dir = tempDir("self-update-data");
     const { running, target, data, core, localData, run, openedLines } = moving(dir);
-    const result = run(join(localData, "core", "self-update", "healthy"));
+    const result = run(join(localData, "core", "self-update", "healthy"), undefined, true);
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    // Opened as from Finder: no BOTLING_DATA_DIR, so the build finds the copy at its own default.
-    expect(openedLines()).toEqual([`-n ${target}`]);
+    // Explicit app data wins over the inherited core-only data directory.
+    expect(openedLines()).toEqual([`-n ${target} --env BOTLING_DATA_DIR=${localData}`]);
     const newCore = join(localData, "core");
     expect(JSON.parse(readFileSync(join(newCore, "approved-commands.json"), "utf8"))).toEqual({ main: [`cat ${newCore}/main/memory.md`] });
     expect(readFileSync(join(newCore, "codex-threads", "t.workers.json"), "utf8")).toContain(`Update only ${newCore}/main/memory.md`);
@@ -355,6 +366,46 @@ describe("the data moves with a build that moves off an external volume", () => 
     expect(readFileSync(join(data, "MOVED-TO-LOCAL-DISK.txt"), "utf8")).toContain(localData);
     expect(readBuild(running.path)?.commit).toBe("aaaaaaa1111");
     expect(result.stdout).toContain("rewrote the data folder's path in core/approved-commands.json");
+  });
+
+  it("replaces a local profile symlink with real data, preserving the original source and alias", () => {
+    const { data, core, localData, run } = moving(tempDir("self-update-alias"));
+    mkdirSync(join(localData, ".."), { recursive: true });
+    symlinkSync(data, localData);
+    const result = run("healthy", undefined, true, true);
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    expect(lstatSync(localData).isSymbolicLink()).toBe(false);
+    expect(installOutcome(join(localData, "core"))?.kind).toBe("installed");
+    expect(existsSync(join(core, "approved-commands.json"))).toBe(true);
+    const aside = readdirSync(join(localData, "..")).find(name => name.startsWith("Botling 2 Dev Trial.before-"))!;
+    expect(readlinkSync(join(localData, "..", aside))).toBe(data);
+  });
+
+  it("restores the local profile symlink on rollback, reopening the pinned original source", () => {
+    const { running, data, core, localData, run, openedLines } = moving(tempDir("self-update-alias-rollback"));
+    mkdirSync(join(localData, ".."), { recursive: true });
+    symlinkSync(data, localData);
+    const result = run(null, undefined, true, true);
+    expect(result.status, result.stdout + result.stderr).toBe(1);
+    expect(readlinkSync(localData)).toBe(data);
+    expect(openedLines().at(-1)).toBe(`-n ${running.path} --env BOTLING_DATA_DIR=${data}`);
+    expect(installOutcome(core)?.kind).toBe("rolledBack");
+  });
+
+  it("requires a restart for data migration even if the app is already local and changes are hot-applicable", async () => {
+    const root = tempDir("self-update-local-app");
+    const target = "/Users/me/Applications/Botling 2.app";
+    const planBuild = vi.fn(async () => ({ mode: "hot" as const, parts: ["core" as const] }));
+    const { builds, main, dev, launched } = desk(root, {
+      installTarget: () => target, appDataDir: `${drive}/development-data`, localDataDir: local, planBuild,
+      runningBuild: () => ({ path: target, bundleID: BUNDLE_ID, version: "2.0.1", commit: "aaaaaaa1111", dirty: false }),
+    });
+    const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
+    await builds.propose(built, "", dev);
+    expect(main.notices.at(-1)!.text).toContain("install a new Botling build and restart");
+    await main.notices.at(-1)!.onPick!(0);
+    expect(planBuild).not.toHaveBeenCalled();
+    expect(launched[0]!.at(-1)).toBe(local);
   });
 
   it("without room on this Mac's disk the data stays on the drive and the new build opens with it", () => {
@@ -375,7 +426,7 @@ describe("the data moves with a build that moves off an external volume", () => 
     writeFileSync(join(localData, "earlier.txt"), "an earlier profile");
     const result = run(null);
     expect(result.status, result.stdout + result.stderr).toBe(1);
-    expect(openedLines()).toEqual([`-n ${target}`, `-n ${running.path} --env BOTLING_DATA_DIR=${data}`]);
+    expect(openedLines()).toEqual([`-n ${target} --env BOTLING_DATA_DIR=${localData}`, `-n ${running.path} --env BOTLING_DATA_DIR=${data}`]);
     expect(readFileSync(join(localData, "earlier.txt"), "utf8")).toBe("an earlier profile");
     const parent = join(localData, "..");
     expect(readdirSync(parent).filter((name) => name.startsWith("Botling 2 Dev Trial.failed-"))).toHaveLength(1);

@@ -11,8 +11,8 @@
 // same way: an update notice in the main bot's chat, installed and restarted on only after the user's
 // pick there (`announceRelease`).
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { writeFileAtomic } from "./durable/atomic";
 import { planText, PART_NAMES, type HotReport, type InstallPlan } from "../hot-install-plan";
 
@@ -88,17 +88,23 @@ export function installTarget(running: string, home: string): string {
   return externalVolume(running) && home.startsWith("/") ? join(home, "Applications", basename(running)) : resolve(running);
 }
 
+/** Resolve existing symlinks, retaining lexical paths for destinations that do not exist yet. */
+function physicalPath(path: string): string {
+  try { return realpathSync(path); } catch { return resolve(path); }
+}
+
 /**
- * Where the app's data goes with a build that moves off an external volume (`installTarget`): the data folder
+ * Where external data goes when installing a local build (including an app already local): the data folder
  * it opens with when nothing names one (`localDataDir`, ~/Library/Application Support/Botling 2 Dev Trial for
  * a dev trial build), when the data is on an external volume now. Null: it stays where it is. The script
  * copies it there (leaving the copy on the drive as it is) only if this Mac's disk has room.
  */
-export function localDataMove(dataDir: string | null, running: string, target: string, localDataDir: string | null | undefined): string | null {
+export function localDataMove(dataDir: string | null, _running: string, target: string, localDataDir: string | null | undefined): string | null {
   if (!dataDir || !localDataDir || !localDataDir.startsWith("/") || !dataDir.startsWith("/")) return null;
-  if (!externalVolume(dataDir) || externalVolume(localDataDir) || externalVolume(target) || resolve(target) === resolve(running)) return null;
+  if (!externalVolume(physicalPath(dataDir)) || externalVolume(localDataDir) || externalVolume(physicalPath(dirname(localDataDir))) || externalVolume(physicalPath(target))) return null;
   const local = resolve(localDataDir);
-  return local === resolve(dataDir) || local.startsWith(`${resolve(dataDir)}/`) ? null : local;
+  const source = physicalPath(dataDir);
+  return local === source || local.startsWith(`${source}/`) ? null : local;
 }
 
 /** Room the data's copy must leave free on this Mac's disk, beyond its own size (KiB; the script's MARGIN). */
@@ -175,7 +181,7 @@ export function setFailures(root: string, count: number) {
  * `local-data` (`localDataMove`): the data folder moves with the build. Once the app has quit, the data is
  * copied there (without the old builds kept in self-update/backups, or Electron's single-instance lock) if the disk has room for it plus
  * DATA_MARGIN_KB, the old folder's path is rewritten to the new one in the copy's text files, and the new
- * build opens with no BOTLING_DATA_DIR, as it does from Finder, so it must find the copy on its own (it says
+ * build opens with an explicit BOTLING_DATA_DIR matching the health check (it says
  * it is up in the copy's self-update/healthy). The data on the drive is never changed but for its finished
  * install state; it is what the old build reopens with if the new one does not come up, and the copy is then
  * set aside. Without room, the data stays on the drive and the new build opens with it, as before.
@@ -188,9 +194,13 @@ OPEN="\${BOTLING_TEST_OPEN:-/usr/bin/open}"
 MARGIN=${DATA_MARGIN_KB}
 NEWDATA="$DATA"; MOVED=""; ASIDE=""
 say() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
-launch() {
+launch() (
+  # The installer is a core child: its data override names core/, not the app profile.
+  # Main recreates these commands/identities from the new bundle and chosen profile.
+  unset BOTLING_DATA_DIR BOTLING_APP_DATA_DIR BOTLING_APP_LOCAL_DATA_DIR BOTLING_APP_BUNDLE
+  unset BOTLING_MAIN_PID BOTLING_STARTUP_LOG BOTLING_SHOT_COMMAND BOTLING_CHECK_COMMAND
   if [ -n "$2" ]; then "$OPEN" -n "$1" --env "BOTLING_DATA_DIR=$2"; else "$OPEN" -n "$1"; fi
-}
+)
 reopen() { launch "$1" "$DATA"; }
 putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
 kib() { if [ -e "$1" ]; then du -sk "$1" 2>/dev/null | awk '{print $1}'; else echo 0; fi; }
@@ -220,7 +230,7 @@ movedata() {
     mv "$LOCAL" "$ASIDE" || { say "could not; the data stays in $DATA"; ASIDE=""; rm -rf "$part"; return 1; }
   fi
   mv "$part" "$LOCAL" || { say "could not put the copy in place; the data stays in $DATA"; rm -rf "$part"; if [ -n "$ASIDE" ]; then mv "$ASIDE" "$LOCAL"; fi; return 1; }
-  HEALTHY="$LOCAL/\${HEALTHY#"$DATA"/}"; NEWDATA=""; MOVED=1
+  HEALTHY="$LOCAL/\${HEALTHY#"$DATA"/}"; NEWDATA="$LOCAL"; MOVED=1
   return 0
 }
 say "waiting for Botling 2 ($PID) to quit"
@@ -270,6 +280,10 @@ exit 1
 
 /** Writes the state and the script; returns the command that runs the script (detached; the app quits right after). */
 export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), mode?: string, target = from.path, localData = ""): string[] {
+  // Pin the source before migration replaces a local alias (symlink) with the real copy.
+  // Rollback and the detached script must still name the original data on the drive.
+  root = physicalPath(root);
+  if (dataDir) dataDir = physicalPath(dataDir);
   const folder = updateFolder(root);
   mkdirSync(join(folder, "backups"), { recursive: true });
   for (const marker of [healthyFile(root), rolledBackFile(root)]) rmSync(marker, { force: true });
@@ -449,8 +463,8 @@ export class DevBuilds {
     if (!build) return refuse(`there is no app bundle at ${path}.`);
     if (build.bundleID !== running.bundleID) return refuse(`${path} is not Botling 2 (${build.bundleID}).`);
     if (build.path === running.path) return refuse("that is the build running now; build into desktop/dist/ and point at that.");
-    // A build that moves off an external volume is a new bundle on this Mac's disk: always a restart.
-    if (!this.deps.planBuild || this.moves(running)) return this.card(build, running, note, from, null);
+    // Moving either the app or its data requires a restart, even for core-only changes.
+    if (!this.deps.planBuild || this.moves(running) || this.dataMove(running)) return this.card(build, running, note, from, null);
     // Main compares the builds first, so the card can say whether the app restarts.
     return this.deps.planBuild(build.path).then(
       (plan) => this.card(build, running, note, from, plan),
@@ -466,7 +480,7 @@ export class DevBuilds {
     if (plan) lines.push(`- Expected: ${planText(plan)}`);
     if (this.moves(running)) lines.push(`- Installed to: ${this.target(running)} (this Mac's own disk). The copy running from ${externalVolume(running.path)} is left as it is.`);
     const data = this.dataMove(running);
-    if (data) lines.push(`- Data: copied to ${data} if this Mac's disk has room for it (else it stays on the drive). The data on ${externalVolume(this.deps.appDataDir!)} is left as it is and is used again if the new build does not come up.`);
+    if (data) lines.push(`- Data: copied to ${data} if this Mac's disk has room for it (else it stays on the drive). The data on ${externalVolume(physicalPath(this.deps.appDataDir!))} is left as it is and is used again if the new build does not come up.`);
     const what = note.trim();
     if (what) lines.push("", what);
     if (build.dirty) lines.push("", "It was built from uncommitted changes.");
@@ -506,7 +520,7 @@ export class DevBuilds {
     }
     const running = this.deps.runningBuild();
     if (!running || !this.deps.appPid) return;
-    if (!shown || !this.deps.planBuild || this.moves(running)) return this.restart(running, build, requester, note, shown);
+    if (!shown || !this.deps.planBuild || this.moves(running) || this.dataMove(running)) return this.restart(running, build, requester, note, shown);
     return this.deps.planBuild(build.path).then(async (plan) => {
       if (plan.mode !== shown.mode) {
         const why = `${buildLabel(build)} changed since the card was shown (it now means ${planText(plan)}), so nothing was installed.`;
