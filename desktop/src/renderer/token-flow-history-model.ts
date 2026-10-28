@@ -77,7 +77,7 @@ export function measuredWorkers(bot: BotView, history: TokenFlowHistoryView | nu
       status: "completed", engine: group.head === "codex" || group.head === "claude" ? group.head : null,
       output: amount, attributableOutput: amount, startedAt: 0, endedAt: null, direct: !group.workerId,
       parentId: undefined, parentKey: "coordinator", purpose: group.purpose, basis: "tokens", count: group.turns,
-      tasks: [{id: task?.id ?? (group.workerId ? `worker:${group.head}:${group.workerId}` : `chat:${group.id}`), name: task?.name ?? row?.title ?? (group.workerId ? "Worker" : "Chat")}],
+      tasks: [{id: task?.id ?? (group.workerId ? `worker:${group.head}:${group.workerId}` : `chat:${group.workId ?? group.id}`), name: task?.name ?? row?.title ?? (group.workerId ? "Worker" : "Chat")}],
     };
   });
 }

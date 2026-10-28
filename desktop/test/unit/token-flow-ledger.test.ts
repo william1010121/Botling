@@ -7,6 +7,9 @@ it("persists identified chats and workers across restart/day rollover, deduplica
  const file=join(tempDir("flow-ledger"),"usage.jsonl"); let ledger=new TokenFlowLedger(file);
  const a=turn(), b=turn({ threadId:"chat-two", turnId:"t2", endedAt:Date.UTC(2026,9,30), workerId:"worker",run:2,activities:["coordination"] });
  expect(ledger.record(a)).toBe(true); ledger.record(b); ledger=new TokenFlowLedger(file); ledger.record(a);
+ ledger.record({...a,startedAt:a.startedAt+86400000,endedAt:a.endedAt+86400000});
+ expect([...ledger.records.values()][0].endedAt).toBe(a.endedAt);
+ expect(meteredPurpose([...ledger.records.values()][0])).toBe("execution");
  expect(ledger.records.size).toBe(2); expect([...ledger.totals("stable-bot").values()].map(x=>x.output)).toEqual([20,20]);
  expect(ledger.totals("replacement-same-name").size).toBe(0);
  expect(meteredPurpose(a)).toBe("execution");expect(meteredPurpose(b)).toBe("communication");
@@ -15,7 +18,7 @@ it("persists identified chats and workers across restart/day rollover, deduplica
  expect(meteredPurpose(turn({activities:[]}))).toBe("unknown");
  ledger.record(turn({tokens:{input:60,output:30,cacheRead:40,cacheWrite:0}}));
  ledger=new TokenFlowLedger(file);expect(ledger.records.size).toBe(2);expect(meteredPurpose([...ledger.records.values()][0])).toBe("unknown");
- expect([...ledger.totals("stable-bot").values()][0]).toEqual({input:60,output:30,cacheRead:40,cacheWrite:0});
+ expect([...ledger.totals("stable-bot").values()][0]).toEqual({input:60,output:20,cacheRead:40,cacheWrite:0});
 });
 
 it("summarizes all historical metered chats and workers without dropping totals at display retention", async()=>{

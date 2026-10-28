@@ -15,10 +15,11 @@ interface Capture { threadId: string; turnId: string; startedAt: number; before:
 export class TokenFlowMeter {
   private baselines = new Map<string, TokenUsage>();
   private active = new Map<string, Capture>();
-  fresh(thread: string) { this.baselines.set(thread, noTokens()); }
+  fresh(thread: string) { if (this.baselines.size >= 1024) this.baselines.delete(this.baselines.keys().next().value!); this.baselines.set(thread, noTokens()); }
   begin(thread: string, turn: string, at = Date.now()) {
     const current = this.active.get(thread);
     if (current?.turnId === turn) return;
+    if (current?.after) this.baselines.set(thread, current.after);
     if (this.active.size >= 256) this.active.delete(this.active.keys().next().value!);
     this.active.set(thread,{threadId:thread,turnId:turn,startedAt:at,before:this.baselines.get(thread) ?? null,after:null,activities:new Set(),observedStart:true});
   }
@@ -27,12 +28,16 @@ export class TokenFlowMeter {
     if (typeof thread !== "string") return;
     if (method === "turn/started" && typeof params.turn?.id === "string") this.begin(thread, params.turn.id);
     const current = this.active.get(thread);
+    if (current && typeof params.turnId === "string" && params.turnId !== current.turnId) return;
     if (method === "thread/tokenUsage/updated" && params.tokenUsage?.total) {
       const raw = params.tokenUsage.total;
       if (![raw.inputTokens,raw.outputTokens,raw.cachedInputTokens ?? 0].every(x=>Number.isSafeInteger(x) && x>=0) || (raw.cachedInputTokens ?? 0)>raw.inputTokens) return;
       const tokens = codexTokens(raw);
       if (current) current.after = tokens;
-      else this.baselines.set(thread,tokens);
+      else {
+        const previous = this.baselines.get(thread);
+        if (!previous || Object.keys(tokens).every(key => tokens[key as keyof TokenUsage] >= previous[key as keyof TokenUsage])) this.baselines.set(thread,tokens);
+      }
     }
     if (current && (!params.turnId || params.turnId === current.turnId)) {
       const item = method === "item/tool/call" ? {type:"dynamicToolCall",tool:params.tool} : method === "item/started" || method === "item/completed" ? params.item : null;

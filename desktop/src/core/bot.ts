@@ -95,6 +95,7 @@ import {
 } from "./routines";
 import { codexWorkerDefaults } from "./settings";
 import { PAGE_COMPONENT, previewCards } from "./page-preview";
+import { tokenLedger } from "./token-flow-ledger";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
@@ -2456,6 +2457,12 @@ export class Bot {
     }
     if (item.kind === "controlResponse") return;
     if (item.kind === "usage") {
+      if (item.measurement && this.engine === "codex") {
+        // Legacy task cards hold bare worker IDs, not a stable head/turn identity.
+        // Preserve unknown task ownership rather than borrowing a same-named/cross-head link.
+        tokenLedger(join(this.owner.profile.storeDir, "token-flow-turns.jsonl")).record({ ...item.measurement,
+          botId: this.owner.id, head: "codex", taskId: null });
+      }
       // Claude's cost is a running total for its process: this turn's is the difference.
       const spent = Math.max(0, item.totalCost - this.sessionCost);
       this.sessionCost = Math.max(this.sessionCost, item.totalCost);

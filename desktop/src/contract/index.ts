@@ -486,7 +486,7 @@ export const DelegationRowView = z.strictObject({
 export type DelegationRowView = z.infer<typeof DelegationRowView>;
 
 const TokenFlowMeasuredGroup = z.strictObject({
-  id: z.string().max(200), head: z.string().nullable(), workerId: z.string().nullable(), taskId: z.string().nullable(),
+  id: z.string().max(200), workId: z.string().max(200).optional(), head: z.string().nullable(), workerId: z.string().nullable(), taskId: z.string().nullable(),
   purpose: z.enum(["communication", "execution", "mixed", "unknown"]), turns: z.number().int().nonnegative(),
   tokens: z.strictObject({input:z.number().nonnegative(),output:z.number().nonnegative(),cacheRead:z.number().nonnegative(),cacheWrite:z.number().nonnegative()}),
 });

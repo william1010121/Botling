@@ -50,10 +50,12 @@ export class TokenFlowLedger {
     if (!parsed.success) return false;
     const r = parsed.data, key = meteredKey(r), previous = this.records.get(key);
     if (previous) {
-      if (JSON.stringify(previous) === JSON.stringify(r)) return true;
+      const evidence = (record: MeteredTurn) => JSON.stringify({ ...record, startedAt: 0, endedAt: 0 });
+      if (evidence(previous) === evidence(r)) return true;
       // Conflicting replays cannot replace previously attributed evidence with a confident split.
       r.complete = false; r.activities = ["unclassified"];
-      for (const bucket of ["input", "output", "cacheRead", "cacheWrite"] as const) r.tokens[bucket] = Math.max(previous.tokens[bucket], r.tokens[bucket]);
+      // Keep one actually observed measurement, never manufacture a component-wise maximum.
+      r.tokens = previous.tokens; r.startedAt = previous.startedAt; r.endedAt = previous.endedAt;
     }
     const line = JSON.stringify(r) + "\n";
     if (this.bytes + Buffer.byteLength(line) > LIMIT) { this.limited = true; return false; }

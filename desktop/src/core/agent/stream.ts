@@ -4,6 +4,7 @@
 
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
+import type { MeteredTurn } from "../token-flow-ledger";
 import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../subagents";
 import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
@@ -57,7 +58,7 @@ export type StreamItem =
   /** The turn ended. */
   | { kind: "result"; ok: boolean; text: string; error: string; subtype: string }
   /** The session's cost so far (dollars; Codex: 0) and this turn's tokens (Phase 5c, 1.x's `.usage`). */
-  | { kind: "usage"; totalCost: number; tokens: TokenUsage }
+  | { kind: "usage"; totalCost: number; tokens: TokenUsage; measurement?: Omit<MeteredTurn, "botId" | "head" | "taskId"> }
   /** The subscription's limits as the CLI last reported them (`.rateLimits`, `.codexRateLimits`). */
   | { kind: "rateLimits"; engine: "claude" | "codex"; limits: RateLimits };
 

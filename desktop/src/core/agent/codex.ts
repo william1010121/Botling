@@ -1,3 +1,4 @@
+import { TokenFlowMeter } from "../token-flow-meter";
 import { codexAutoRiskConfig } from "./auto-risk-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
 // stdio), ported from the Swift app's CodexAgentProcess.swift (checked against codex-cli 0.163.0).
@@ -223,6 +224,7 @@ export class CodexSession {
   private completedTurns = new Set<string>();
   /** The coordinator thread's tokens so far, and when the last turn ended (Phase 5c, 1.x's `tokensTotal`). */
   private tokensTotal: TokenUsage = noTokens();
+  private readonly usageMeter = new TokenFlowMeter();
   private tokensAtTurnStart: TokenUsage = noTokens();
   private inbox: Input[] = [];
   private approvals = new Map<string, Approval>();
@@ -357,6 +359,13 @@ export class CodexSession {
     if (!value || typeof value !== "object") return [];
     const method = typeof value.method === "string" ? value.method : null;
     const params = value.params && typeof value.params === "object" ? value.params : {};
+    // Metadata only; routing and permission decisions below remain authoritative.
+    if (method && typeof params.threadId === "string") {
+      const worker = [...this.workers.values()].find(w => w.thread === params.threadId && !w.role);
+      const activeTurn = worker ? worker.turnId : this.turn?.id;
+      const suppliedTurn = params.turnId ?? (method === "turn/started" ? params.turn?.id : null);
+      if ((!activeTurn || !suppliedTurn || activeTurn === suppliedTurn) && ((params.threadId === this.threadId && (this.turn || method === "thread/tokenUsage/updated")) || (worker && (worker.active || method === "thread/tokenUsage/updated")))) this.usageMeter.observe(method, params);
+    }
     if (method && value.id !== undefined) return this.serverRequest(method, value.id, params);
     if (method) return this.notification(method, params);
     if (typeof value.id === "number") {
@@ -376,6 +385,7 @@ export class CodexSession {
       case "thread": {
         const thread = result?.thread?.id;
         if (error || typeof thread !== "string") return [{ kind: "failed", message: message(error) }];
+        if (!this.config.resumeThread) this.usageMeter.fresh(thread);
         if (this.config.resumeThread && this.managed) return [this.refreshInstructions(this.config.instructions, thread, { kind: "coordinatorInstructions", thread })];
         return this.coordinatorReady(thread);
       }
@@ -700,6 +710,7 @@ export class CodexSession {
     const turn = this.turn;
     if (!turn || turn.id || this.completedTurns.has(id)) return [];
     turn.id = id;
+    if (this.threadId) { this.usageMeter.begin(this.threadId, id); if (this.active) this.usageMeter.coordination(this.threadId); }
     const out = turn.waitingSteers.map((input) => this.steerCall(input, id));
     turn.waitingSteers = [];
     if (turn.interruptAsked && !turn.interruptSent && this.threadId) {
@@ -725,7 +736,9 @@ export class CodexSession {
     // What this turn used: the thread's tokens since the last turn ended (`tokensAtTurnStart`).
     const used = minusTokens(this.tokensTotal, this.tokensAtTurnStart);
     this.tokensAtTurnStart = this.tokensTotal;
-    if (totalTokens(used) > 0) out.push(this.item({ kind: "usage", totalCost: 0, tokens: used }));
+    const measured = this.threadId && current.id ? this.usageMeter.finish(this.threadId, current.id) : null;
+    if (totalTokens(used) > 0 || measured) out.push(this.item({ kind: "usage", totalCost: 0, tokens: used,
+      ...(measured ? { measurement: { ...measured, workerId: null, run: null, parentThreadId: null } } : {}) }));
     const final = current.said.findLast((said) => said.phase !== "commentary")?.text.trim() ?? "";
     switch (finished.status) {
       case "interrupted":
@@ -1169,6 +1182,7 @@ export class CodexSession {
     if (error || typeof thread !== "string") return this.failWorker(task, `Could not start worker session: ${message(error)}`);
     const resumed = !!worker.thread;
     worker.thread = thread;
+    if (!resumed) this.usageMeter.fresh(thread);
     worker.loaded = !resumed;
     const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
     worker.runtime = { engine: "codex", reasoningEffort: text(result.reasoningEffort), serviceTier: text(result.serviceTier) };
@@ -1198,6 +1212,7 @@ export class CodexSession {
     const worker = this.workers.get(task);
     if (!worker?.active || worker.turnId || worker.completedTurns.has(id) || worker.cancelled) return [];
     worker.turnId = id;
+    if (worker.thread) this.usageMeter.begin(worker.thread, id);
     const messages = worker.messages;
     worker.messages = [];
     return [this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) }), ...messages.map((text) => this.workerSteerCall(worker, text, id))];
@@ -1275,8 +1290,8 @@ export class CodexSession {
         worker.completedTurns.add(id);
         const closed = this.closeApprovals((approval) => approval.worker?.task === task && approval.worker.run === worker.run
           && (!approval.turn || approval.turn === id));
-        worker.turnId = null;
         const usage = this.workerUsage(worker);
+        worker.turnId = null;
         let status: string = typeof ended.status === "string" ? ended.status : "failed";
         const said = worker.said.findLast((s) => s.phase !== "commentary")?.text.trim() ?? "";
         let report = status === "failed" ? (typeof ended.error?.message === "string" ? ended.error.message : said || "Worker failed.") : said;
@@ -1321,7 +1336,9 @@ export class CodexSession {
     const now = worker.tokens ?? noTokens();
     const used = minusTokens(now, worker.tokensAtRunStart ?? noTokens());
     worker.tokensAtRunStart = now;
-    return totalTokens(used) > 0 ? [this.item({ kind: "usage", totalCost: 0, tokens: used })] : [];
+    const measured = worker.thread && worker.turnId ? this.usageMeter.finish(worker.thread, worker.turnId) : null;
+    return totalTokens(used) > 0 || measured ? [this.item({ kind: "usage", totalCost: 0, tokens: used,
+      ...(measured ? { measurement: { ...measured, workerId: worker.id, run: worker.run, parentThreadId: this.threadId } } : {}) })] : [];
   }
 
   private failWorker(task: string, report: string): CodexOutput[] {
