@@ -80,6 +80,41 @@ describe("WorkspaceStore", () => {
 
 
 describe("selected chat subscriptions", () => {
+  it("keeps selected-bot worker progress in the sidebar without rebuilding chat history", async () => {
+    const store = new WorkspaceStore(async () => snap("e1", 1));
+    await store.resync();
+    const changed = vi.fn(), sidebar = vi.fn();
+    store.subscribeChat(changed); store.subscribe(sidebar);
+    const first = store.getChatView();
+    for (let i = 0; i < 20; i++) {
+      store.receive({ v: 10, epoch: "e1", seq: i + 2, event: { type: "bot.updated", bot: {
+        ...botA, heads: [...botA.heads], unread: i, openTasks: i,
+        lastActivity: new Date(i * 1000).toISOString(),
+        subagentRows: [{ id: "worker", title: `Step ${i}`, status: "running", head: "codex", startedAt: 0, endedAt: null, unsettledAt: null, settled: false, prompt: "work" }],
+      } } });
+    }
+    expect(sidebar).toHaveBeenCalledTimes(20);
+    expect(store.getView().bots[0].subagentRows[0].title).toBe("Step 19");
+    expect(changed).not.toHaveBeenCalled();
+    expect(store.getChatView()).toBe(first);
+    store.receive(delta("e1", 22, "new token"));
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.getChatView().chat!.messages[0].text).toBe("new token");
+  });
+
+  it.each([
+    { name: "Renamed" }, { avatar: "square" }, { approvals: 1 }, { subagents: 1 },
+    { guest: "B" }, { heads: ["codex"] }, { components: ["report"] }, { members: ["B"] },
+    { codexRetry: { attempt: 1, max: 5, reason: "rateLimited", retryAt: null } },
+  ] as Partial<BotView>[])("still delivers selected chat metadata %j", async (change) => {
+    const store = new WorkspaceStore(async () => snap("e1", 1));
+    await store.resync();
+    const changed = vi.fn(); store.subscribeChat(changed);
+    store.receive({ v: 10, epoch: "e1", seq: 2, event: { type: "bot.updated", bot: { ...botA, ...change } } });
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(store.getChatView().bots[0]).toMatchObject(change);
+  });
+
   it("ignores other bots' activity while keeping the sidebar current and mention metadata fresh", async () => {
     const store = new WorkspaceStore(async () => snap("e1", 1));
     await store.resync();

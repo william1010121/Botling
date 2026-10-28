@@ -64,6 +64,14 @@ export interface WorkspaceView {
 /** Only inputs used by the selected chat page; sidebar activity is deliberately excluded. */
 export type ChatRenderView = Pick<WorkspaceView, "chat" | "subagent" | "board" | "settings" | "components" | "resyncs" | "bots"> & { libraryVersion: number };
 
+// Worker progress changes the selected bot's sidebar row on every step. Compare only
+// its chat inputs before invalidating the expensive history conversion. Keep unknown/new
+// fields conservative; only these four known sidebar-only fields are excluded.
+const chatBotKey = (bot: BotView): string => {
+  const { subagentRows: _rows, unread: _unread, openTasks: _tasks, lastActivity: _activity, ...chat } = bot;
+  return JSON.stringify(chat);
+};
+
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
@@ -92,7 +100,7 @@ export class WorkspaceStore {
     // only affect the sidebar, and must not invalidate this chat's payload.
     const bots = previous && previous.bots.length === view.bots.length && previous.bots.every((old, index) => {
       const bot = view.bots[index];
-      return old.id === bot.id && (bot.id === view.chat?.botId ? old === bot
+      return old.id === bot.id && (bot.id === view.chat?.botId ? old === bot || chatBotKey(old) === chatBotKey(bot)
         : old.name === bot.name && old.avatar === bot.avatar && old.role === bot.role);
     }) ? previous.bots : view.bots;
     if (previous && previous.chat === view.chat && previous.subagent === view.subagent && previous.board === view.board
