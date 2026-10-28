@@ -19,11 +19,11 @@ export function useMinuteClock(): number {
 }
 
 /** 1.x's SubagentOwnerMark: the parent's face, with its head identified in either look. */
-export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" | "codex" | null; avatar: string; look?: Look }) {
+export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" | "codex" | "agy" | null; avatar: string; look?: Look }) {
   if (!head) return null;
-  return <span className="subagent-owner" title={head === "codex" ? "Codex" : "Claude"} aria-hidden="true">
+  return <span className="subagent-owner" title={head === "agy" ? "Antigravity" : head === "codex" ? "Codex" : "Claude"} aria-hidden="true">
     <img src={faceURL({ avatar }, look, { engine: head })} alt="" />
-    {look === "original" && <span className="subagent-owner-badge">{head === "codex" ? "X" : "C"}</span>}
+    {look === "original" && <span className="subagent-owner-badge">{head === "agy" ? "A" : head === "codex" ? "X" : "C"}</span>}
   </span>;
 }
 
@@ -47,7 +47,7 @@ export function SubagentRows({ bot, look = "original", now, watching, onOpen, on
       {rows.map((row) => (
         <div key={row.id} className={`subagent-row${watching === row.id ? " selected" : ""}${row.status === "running" ? " running" : ""}`} data-subagent={row.id}>
           <button type="button" className="subagent-open" title={row.prompt} onClick={() => onOpen(row)}
-            aria-label={`Subagent of ${bot.name}${row.head ? ` (${row.head === "codex" ? "Codex" : "Claude"})` : ""}: ${row.title || "Subagent"}, ${row.status}`}>
+            aria-label={`Subagent of ${bot.name}${row.head ? ` (${row.head === "agy" ? "Antigravity" : row.head === "codex" ? "Codex" : "Claude"})` : ""}: ${row.title || "Subagent"}, ${row.status}`}>
             <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
             <OwnerMark head={row.head} avatar={bot.avatar} look={look} />
             <span className="subagent-title">{row.title || "Subagent"}</span>

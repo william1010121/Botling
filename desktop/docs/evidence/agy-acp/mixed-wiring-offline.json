@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-29",
+  "parent": "a9ac083cb8337e01c4fdbbd198a748b8dab88ceb",
+  "approvedRestrictedBaseline": "1c61405d1368c72dcafaeb929ccb7d430cd89432",
+  "production": {
+    "workers": false,
+    "mixed": false,
+    "claudeRoutesInvolvingAgy": false
+  },
+  "observed": {
+    "focusedTests": 71,
+    "files": 9,
+    "typecheck": "passed",
+    "realModelRuns": 0,
+    "authChanges": 0,
+    "runs": [
+      "70 passed in 8 files",
+      "12 passed in 2 files after resume fixture hardening; 11 repeated, 1 new production-gate contract"
+    ]
+  },
+  "addedRegression": "production gate rejection; rerun mixed wiring with configured managed-worker prompt to exercise leaf resume normalization",
+  "coverage": [
+    "bidirectional peer handoff/handback",
+    "stop rejects late return",
+    "separate restart identities",
+    "sticky mixed Codex denial",
+    "task/run/approval ownership",
+    "engine pinning",
+    "exact-grant worker MCP bridge",
+    "uncertain report reconciliation without task replay",
+    "nested worker inventory rejection",
+    "existing cleanup/concurrency/stale-run/recovery contracts"
+  ],
+  "unverified": [
+    "real Codex/agy worker permissions and inventory",
+    "real mixed-engine lifecycle",
+    "existing-account behavior in staged Codex transport",
+    "native leaf flags honored",
+    "live crash/cancel process cleanup"
+  ],
+  "restrictions": "No delegation by this executor. Product-test classification requires rule-owner clarification; no alternate execution attempted.",
+  "externalProcedure": "../../agy-external-live-validation.md"
+}

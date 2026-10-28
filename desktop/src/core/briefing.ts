@@ -91,14 +91,14 @@ export const RECENT_LINE_LENGTH = 600;
 
 /** `Bot.recentChat(leavingOut:)`: the chat's last lines for a bot that just woke up; empty in a new chat. */
 /** `Bot.speaker(_:head:)`: who said a line as `head` (the head being told) reads it, in a bot with two heads. */
-export function headSpeaker(record: ChatRecord, head: "claude" | "codex"): string {
-  const name = (engine: string) => (engine === "claude" ? "Claude" : engine === "codex" ? "Codex" : engine);
-  if (record.role === "bot") return record.engine && record.engine !== head && (record.engine === "claude" || record.engine === "codex") ? name(record.engine) : speaker("bot");
-  if (record.role === "user") return record.to && record.to !== "both" && (record.to === "claude" || record.to === "codex") ? `User (to ${name(record.to)} only)` : speaker("user");
+export function headSpeaker(record: ChatRecord, head: "claude" | "codex" | "agy"): string {
+  const name = (engine: string) => (engine === "agy" ? "Antigravity" : engine === "claude" ? "Claude" : engine === "codex" ? "Codex" : engine);
+  if (record.role === "bot") return record.engine && record.engine !== head && (record.engine === "agy" || record.engine === "claude" || record.engine === "codex") ? name(record.engine) : speaker("bot");
+  if (record.role === "user") return record.to && record.to !== "both" && (record.to === "agy" || record.to === "claude" || record.to === "codex") ? `User (to ${name(record.to)} only)` : speaker("user");
   return speaker(record.role);
 }
 
-export function recentChat(records: ChatRecord[], options: Clock & { archive: string; leavingOut?: string | null; head?: "claude" | "codex" | null }): string {
+export function recentChat(records: ChatRecord[], options: Clock & { archive: string; leavingOut?: string | null; head?: "claude" | "codex" | "agy" | null }): string {
   const lines = records.filter((record) => record.id !== options.leavingOut).slice(-RECENT_LINES).flatMap((record) => {
     let text = trimmed(record.text);
     if (characterCount(text) > RECENT_LINE_LENGTH) text = `${characterPrefix(text, RECENT_LINE_LENGTH)}…`;

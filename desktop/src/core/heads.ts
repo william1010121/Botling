@@ -4,15 +4,16 @@
 //
 // Kept in bot.json's `heads` key in 1.x's format ({engines, answerWith, limits, handoffs,
 // codexModel}), so a bot set up in 1.x keeps its heads here.
+import { agyPairAllowed } from "./agent/agy-capabilities";
 import { randomUUID } from "node:crypto";
 import { characterCount, characterPrefix } from "./briefing";
 
-export type Engine = "claude" | "codex";
+export type Engine = "claude" | "codex" | "agy";
 export type AnswerTarget = Engine | "both";
-export const ENGINES: Engine[] = ["claude", "codex"];
-export const displayName = (engine: Engine) => (engine === "claude" ? "Claude" : "Codex");
-export const isEngine = (value: unknown): value is Engine => value === "claude" || value === "codex";
-export const otherHead = (engine: Engine): Engine => (engine === "claude" ? "codex" : "claude");
+export const ENGINES: Engine[] = ["claude", "codex", "agy"];
+export const displayName = (engine: Engine) => (engine === "agy" ? "Antigravity" : engine === "claude" ? "Claude" : "Codex");
+export const isEngine = (value: unknown): value is Engine => value === "claude" || value === "codex" || value === "agy";
+export const otherHead = (engine: Engine, heads?: Heads): Engine => heads?.engines.find(candidate => candidate !== engine) ?? (engine === "claude" ? "codex" : "claude");
 
 export interface RoundLimits {
   discussion: number;
@@ -37,7 +38,8 @@ const clamp = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(10, Math.max(1, Math.trunc(value))) : fallback;
 
 export function makeHeads(engines: Engine[], answerWith: AnswerTarget = "both", rest: Partial<Omit<Heads, "engines" | "answerWith">> = {}): Heads {
-  const kept = ENGINES.filter((engine) => engines.includes(engine));
+  // Restore old mixed configurations as single agy; never start an unvalidated partner.
+  const kept = engines.includes("agy") ? (engines.includes("codex") && !engines.includes("claude") && agyPairAllowed("agy", "codex") ? ["codex", "agy"] as Engine[] : ["agy" as Engine]) : ENGINES.filter((engine) => engines.includes(engine)).slice(0, 2);
   const heads: Heads = { engines: kept.length ? kept : ["claude"], answerWith, limits: rest.limits ?? { ...DEFAULT_LIMITS }, handoffs: rest.handoffs ?? true, codexModel: rest.codexModel ?? null };
   heads.answerWith = fitted(heads, answerWith);
   return heads;
@@ -361,12 +363,12 @@ export class Conductor {
       this.blocked = { from, handoff, chainId };
       const lead = handoff.kind === "task" ? `${done} hand-offs for this message: the limit.`
         : handoff.kind === "review" ? `${done} review rounds done.` : `${done} rounds done. They still disagree.`;
-      const sides = ENGINES.flatMap((head) => (this.latest[head] !== undefined ? [`${displayName(head)}: ${short(this.latest[head]!)}`] : [])).join("\n");
+      const sides = this.settings.engines.flatMap((head) => (this.latest[head] !== undefined ? [`${displayName(head)}: ${short(this.latest[head]!)}`] : [])).join("\n");
       return [
         { type: "progress", progress: null },
         {
           type: "card", text: lead + (sides ? `\n\n${sides}` : ""),
-          choices: [...ENGINES.map((head) => ({ label: `Go with ${displayName(head)}'s`, pick: { goWith: head } as CardPick })), { label: "One more round", pick: { oneMoreRound: true } }],
+          choices: [...this.settings.engines.map((head) => ({ label: `Go with ${displayName(head)}'s`, pick: { goWith: head } as CardPick })), { label: "One more round", pick: { oneMoreRound: true } }],
         },
       ];
     }

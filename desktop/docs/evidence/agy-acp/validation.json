@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-28",
+  "base": "0a24538d560bc7843152fe4cb5004a6f22d6737b",
+  "branch": "bot/agy-engine-20261028",
+  "focusedTests": {
+    "files": 11,
+    "passed": 90,
+    "failed": 0
+  },
+  "typecheck": "passed",
+  "coreOnlyBundle": "passed",
+  "fullSuiteRun": false,
+  "installedAppChanged": false,
+  "nativeUiPreviewTested": false,
+  "liveWorkerDelegationTested": false,
+  "liveChecks": [
+    "official OAuth + session/new",
+    "native deny/cancel/MCP/hook checks",
+    "native forced-exit cleanup FAILED, native execution disabled",
+    "ACP app bridge deny/allow/cancel",
+    "session/load after process restart",
+    "model/effort/image",
+    "SIGKILL cleanup with sandboxed app-owned command",
+    "Bot engine selection/cards/denial/reconstruction"
+  ],
+  "pending": "Independent review, then separately assigned integration/package",
+  "sourceCommit": "8b57c78f847b95e195d8538b85817ba8e52ae6b7"
+}

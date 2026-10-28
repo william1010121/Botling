@@ -1,0 +1,47 @@
+{
+  "cards": [
+    {
+      "tool": "other",
+      "choices": [
+        "Allow once",
+        "Don't allow"
+      ]
+    },
+    {
+      "tool": "other",
+      "choices": [
+        "Allow once",
+        "Don't allow"
+      ]
+    }
+  ],
+  "turns": [
+    {
+      "turnId": "t-f17bd02c-8b13-45e6-b371-de22ff07ad0d",
+      "terminal": {
+        "type": "turn.finished",
+        "botId": "6A0B0000-0000-4000-8000-000000000002",
+        "turnId": "t-f17bd02c-8b13-45e6-b371-de22ff07ad0d",
+        "messageId": "096C671C-0F43-434E-B2C7-129810780F53",
+        "status": "failed",
+        "text": "Permission was denied by the user to write `denied-core.txt`. Stopping immediately without retry as instructed.",
+        "error": "Antigravity stopped: permission_denied"
+      }
+    },
+    {
+      "turnId": "t-8539ffff-79b7-4867-a899-b9b1e29a16c9",
+      "terminal": {
+        "type": "turn.finished",
+        "botId": "6A0B0000-0000-4000-8000-000000000002",
+        "turnId": "t-8539ffff-79b7-4867-a899-b9b1e29a16c9",
+        "messageId": "3BB1A318-061C-4B1C-9B33-88A2E45B3BDD",
+        "status": "failed",
+        "text": "The agent exited (SIGTERM) without finishing. ACP session/load timed out.",
+        "error": "The agent exited (SIGTERM) without finishing. ACP session/load timed out."
+      }
+    }
+  ],
+  "selection": [
+    "agy"
+  ]
+}

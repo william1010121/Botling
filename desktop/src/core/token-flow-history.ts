@@ -64,6 +64,8 @@ export async function tokenFlowHistory(bot: Bot): Promise<TokenFlowHistoryView> 
   // Same head/id from an old store and the live book is one worker. Live wins.
   const unique = new Map<string, { engine: "claude" | "codex"; record: SubagentRecord }>();
   for (const source of sources) for (const record of source.list) {
+    // Token Flow has no agy attribution contract; never relabel it as Claude or Codex.
+    if (source.engine === "agy") continue;
     const key = JSON.stringify([source.engine, record.id]);
     if (!unique.has(key)) unique.set(key, { engine: source.engine, record });
   }

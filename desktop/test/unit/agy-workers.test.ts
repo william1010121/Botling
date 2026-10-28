@@ -1,0 +1,156 @@
+import {afterEach,expect,it} from 'vitest';
+import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {AgyWorkers,type AgyWorkerHead} from '../../src/core/agent/agy-workers';
+import type {HeadHandlers} from '../../src/core/agent/head';
+import type {AgyConfig} from '../../src/core/agent/agy';
+const managers:AgyWorkers[]=[];
+const settle=()=>new Promise<void>(r=>setImmediate(r));
+afterEach(async()=>{for(const m of managers.splice(0))await m.close();});
+function harness(home=mkdtempSync(join(tmpdir(),'botling-agy-workers-')),resume=false){
+ const events:any[]=[],reports:any[]=[],starts:{config:AgyConfig,h:HeadHandlers,sent:any[],answers:any[],stopped:boolean,cleanup?:Promise<void>,cleanupError?:boolean}[]=[];
+ const m=new AgyWorkers({command:'not-executed',cwd:home,acpHome:home,sessionId:'owner',resume},i=>events.push(i),(id,text)=>reports.push({id,text}),(config,h)=>{
+  const state:{config:AgyConfig,h:HeadHandlers,sent:any[],answers:any[],stopped:boolean,cleanup?:Promise<void>,cleanupError?:boolean}={config,h,sent:[],answers:[],stopped:false};starts.push(state);
+  const head:AgyWorkerHead={start(){},send(...args){state.sent.push(args);},answer(...args){state.answers.push(args);},async terminate(){state.stopped=true;await state.cleanup;if(state.cleanupError)throw Error("fixture cleanup failed");return {killed:[],forced:false};}};return head;
+ });managers.push(m);return {m,events,reports,starts,home};
+}
+it('worker tools launch only dedicated ACP sessions and forward permission/refusal/report identity',async()=>{
+ const h=harness(),accepted=await h.m.tool('app_handoff',{instructions:'research only',name:'probe'});const id=accepted.task_id,w=h.starts[0]!;
+ expect(w.config).toMatchObject({worker:true,resume:false});expect(w.config.systemPrompt).toContain('Do not delegate');
+ w.h.onItem({kind:'permission',requestId:'acp:1',tool:'write',summary:'write file',input:{path:'x'}});
+ expect(h.events.at(-1)).toMatchObject({requestId:`worker:${id}:1:acp:1`,workerId:id});expect(w.answers).toEqual([]);
+ h.m.answer(`worker:${id}:1:acp:1`,false,{path:'x'});expect(w.answers[0][1]).toBe(false);
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});w.h.onItem({kind:'result',ok:false,text:'operation refused',error:'Antigravity stopped: permission_denied',subtype:'permission_denied'});
+ await settle();expect(w.stopped).toBe(true);expect(h.reports[0].id).toBe(id);expect(h.reports[0].text).toContain('not acceptance');expect(h.reports[0].text).toContain('status="failed"');
+ h.m.beginReport(id,1);h.m.acknowledgeReport(id,1);await h.m.tool('app_send_message',{task_id:id,run:1,message:'follow up'});expect(h.starts[1]!.config).toMatchObject({resume:true,sessionId:'11111111-2222-4333-8444-555555555555'});
+ w.h.onExit({code:0,signal:null,stderr:'',expected:true,silent:false});expect(h.m.running).toEqual([id]);
+ h.m.answer(`worker:${id}:1:acp:1`,true,{});expect(h.starts[1]!.answers).toEqual([]);
+});
+it('stop clears live worker dependencies; restart retains identity without claiming running jobs',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+ expect(h.m.completionDependencies).toHaveLength(1);await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'busy'})).rejects.toThrow('busy');
+ await h.m.cancel();expect(w.stopped).toBe(true);expect(h.m.completionDependencies).toEqual([]);
+ const restored=harness(h.home,true);await restored.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'});expect(restored.starts[0]!.config.resume).toBe(true);
+ const newChat=harness(h.home,false);await expect(newChat.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('Unknown');
+});
+
+it('durably queues correlated reports until the matching run is acknowledged',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+ w.h.onItem({kind:'result',ok:true,text:'verified report',error:'',subtype:'end_turn'});await h.m.close();
+ const restored=harness(h.home,true);expect(restored.starts).toEqual([]);expect(restored.reports[0].id).toBe(a.task_id);
+ restored.m.acknowledgeReport(a.task_id,99);expect(restored.m.completionDependencies[0]?.state).toBe('reportQueued');
+ expect(restored.m.beginReport(a.task_id,1)).toBe(true);restored.m.acknowledgeReport(a.task_id,1);expect(restored.m.completionDependencies).toEqual([]);
+ const again=harness(h.home,true);expect(again.reports).toEqual([]);
+});
+
+it('ignores events and approvals after a worker has finished',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});
+ const count=h.events.length;
+ w.h.onItem({kind:'permission',requestId:'late',tool:'write',summary:'late',input:{path:'x'}});
+ w.h.onItem({kind:'delta',text:'late output'});
+ expect(h.events.length).toBe(count);
+ h.m.answer(`worker:${a.task_id}:1:late`,true,{path:'x'});expect(w.answers).toEqual([]);
+});
+it('cannot overwrite a pending report with a new worker run',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});
+ await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'})).rejects.toThrow();
+ expect(h.starts).toHaveLength(1);
+});
+it('approval must belong to this worker run and match its actual pending input',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'A'}),b=await h.m.tool('app_handoff',{instructions:'B'});
+ const first=h.starts[0]!,second=h.starts[1]!;
+ first.h.onItem({kind:'permission',requestId:'same',tool:'write',summary:'A',input:{path:'a'}});
+ second.h.onItem({kind:'permission',requestId:'same',tool:'write',summary:'B',input:{path:'b'}});
+ h.m.answer(`worker:${a.task_id}:1:missing`,true,{path:'a'});
+ h.m.answer(`worker:${b.task_id}:1:same`,true,{path:'a'});
+ expect(first.answers).toEqual([]);expect(second.answers).toEqual([]);
+ h.m.answer(`worker:${a.task_id}:1:same`,false,{path:'a'});expect(first.answers).toHaveLength(1);
+ h.m.answer(`worker:${a.task_id}:1:same`,true,{path:'a'});expect(first.answers).toHaveLength(1);
+});
+
+it('holds concurrency and report delivery until process cleanup finishes',async()=>{
+ const h=harness();let clean!:()=>void;
+ const a=await h.m.tool('app_handoff',{instructions:'first'}),w=h.starts[0]!;w.cleanup=new Promise<void>(r=>clean=r);
+ for(let i=0;i<3;i++)await h.m.tool('app_handoff',{instructions:'other'});
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ expect(h.m.running).toHaveLength(4);expect(h.reports).toEqual([]);
+ await expect(h.m.tool('app_handoff',{instructions:'fifth'})).rejects.toThrow('Four');
+ await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'race'})).rejects.toThrow('busy');
+ clean();await settle();expect(h.reports).toHaveLength(1);expect(h.m.running).toHaveLength(3);
+ expect(h.m.beginReport(a.task_id,2)).toBe(false);expect(h.m.beginReport(a.task_id,1)).toBe(true);expect(h.m.beginReport(a.task_id,1)).toBe(false);
+ h.m.acknowledgeReport(a.task_id,1);await h.m.tool('app_handoff',{instructions:'fill fourth slot'});
+ await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'})).rejects.toThrow('Four');
+ await h.m.tool('app_cancel_task',{task_id:h.m.running[0],run:1});
+ await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'});
+ await expect(h.m.tool('app_cancel_task',{task_id:a.task_id,run:1})).rejects.toThrow('Stale');
+ w.h.onItem({kind:'permission',requestId:'stale',tool:'write',summary:'old run',input:{}});
+ expect(h.events.some(e=>e.requestId?.endsWith(':stale'))).toBe(false);expect(()=>w.config.processStarted?.(0)).toThrow('Stale');
+});
+it('a cleanup failure is never reported as success or released for continuation',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;w.cleanupError=true;
+ w.h.onItem({kind:'result',ok:true,text:'done',error:'',subtype:'end_turn'});await settle();
+ expect(h.reports[0].text).toContain('status="cleanup-failed"');expect(h.m.running).toEqual([a.task_id]);
+ expect(h.m.beginReport(a.task_id,1)).toBe(false);
+ await expect(h.m.tool('app_cancel_task',{task_id:a.task_id,run:1})).rejects.toThrow('cleanup incomplete');
+ await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'})).rejects.toThrow('busy');
+ w.cleanupError=false;await h.m.cancel();
+});
+it('uncertain report delivery is not replayed after restart and foreign owners are rejected',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();expect(h.m.beginReport(a.task_id,1)).toBe(true);await h.m.close();
+ const restored=harness(h.home,true);expect(restored.reports).toEqual([]);expect(restored.starts).toEqual([]);expect(restored.m.beginReport(a.task_id,1)).toBe(false);
+ await expect(restored.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'retry'})).rejects.toThrow('acknowledged');
+ const path=join(h.home,'workers.json'),saved=JSON.parse(readFileSync(path,'utf8'));saved.ownerSessionId='different';writeFileSync(path,JSON.stringify(saved));
+ expect(()=>harness(h.home,true)).toThrow('another conversation');
+});
+it('crashed active state restores identity but cannot resume before cleanup reconciliation',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+ const restored=harness(h.home,true);expect(restored.starts).toEqual([]);expect(restored.reports[0].text).toContain('interrupted');
+ expect(restored.m.beginReport(a.task_id,1)).toBe(true);restored.m.acknowledgeReport(a.task_id,1);
+ await expect(restored.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('cleanup');
+});
+it('denial remains failed even if a worker incorrectly emits successful completion',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'permission',requestId:'p',tool:'write',summary:'write',input:{path:'x'}});h.m.answer(`worker:${a.task_id}:1:p`,false,{path:'x'});
+ w.h.onItem({kind:'result',ok:true,text:'done',error:'',subtype:'end_turn'});await settle();expect(h.reports[0].text).toContain('status="failed"');
+});
+
+it('cleans real owned process groups and verifies reconstructed-manager recovery before resume',async()=>{
+ const {processTreeAdapter}=await import('../../src/core/process/tree');
+ const home=mkdtempSync(join(tmpdir(),'agy-worker-process-')),reports:any[]=[],groups:any[]=[];
+ const make=(resume:boolean)=>{
+  const manager=new AgyWorkers({command:'no-agent',cwd:home,acpHome:home,sessionId:'owner',resume},()=>{},(id,text,run)=>reports.push({id,text,run}),(config,handlers)=>{
+   const own:any[]=[];
+   return {start(){for(let i=0;i<2;i++){const p=processTreeAdapter().spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{cwd:home,env:{PATH:process.env.PATH}});own.push(p);groups.push(p);config.processStarted?.(p.pid);}handlers.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});},send(){},answer(){},async terminate(){await Promise.all(own.map(p=>p.terminate({graceMs:50})));return {killed:[],forced:false};}};
+  });managers.push(manager);return manager;
+ };
+ const m=make(false);
+ try{
+  const a=await m.tool('app_handoff',{instructions:'offline protocol fixture'});const restored=make(true);
+  expect(restored.beginReport(a.task_id,1)).toBe(true);restored.acknowledgeReport(a.task_id,1);
+  await expect(restored.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('cleanup');
+  // The original app-owned manager stops both its server-shaped and tool-shaped groups.
+  await m.cancel();for(const p of groups)expect(()=>process.kill(-p.pid,0)).toThrow();
+  const resumed=await restored.tool('app_send_message',{task_id:a.task_id,run:1,message:'explicit continuation'});expect(resumed.run).toBe(2);
+  await restored.cancel();for(const p of groups)expect(()=>process.kill(-p.pid,0)).toThrow();
+ }finally{await Promise.all(groups.map(p=>p.terminate({graceMs:50})));}
+});
+it('cancel closes pending approval cards and stale answers cannot reach the stopped worker',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'permission',requestId:'p',tool:'write',summary:'write',input:{}});
+ await h.m.tool('app_cancel_task',{task_id:a.task_id,run:1});
+ expect(h.events.some(e=>e.kind==='permissionCancelled'&&e.requestId===`worker:${a.task_id}:1:p`)).toBe(true);
+ h.m.answer(`worker:${a.task_id}:1:p`,true,{});expect(w.answers).toEqual([]);expect(h.m.completionDependencies).toEqual([]);
+});
+it('worker crash produces one failed report only after cleanup',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;let clean!:()=>void;w.cleanup=new Promise<void>(r=>clean=r);
+ w.h.onExit({code:1,signal:null,stderr:'fixture crashed',expected:false,silent:false});await settle();expect(h.reports).toEqual([]);
+ clean();await settle();expect(h.reports).toHaveLength(1);expect(h.reports[0].text).toContain('status="failed"');
+ w.h.onExit({code:1,signal:null,stderr:'late exit',expected:false,silent:false});await settle();expect(h.reports).toHaveLength(1);expect(h.m.completionDependencies[0]).toMatchObject({id:a.task_id,run:1,state:'reportQueued'});
+});

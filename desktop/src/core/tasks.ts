@@ -10,7 +10,7 @@ import { characterCount, characterPrefix } from "./briefing";
 import { newId } from "./store/records";
 import { TASK_STAGES, type TaskStage, type TaskState, type TaskTag } from "./reply";
 
-export type Head = "claude" | "codex";
+export type Head = "claude" | "codex" | "agy";
 
 export interface TaskHelp { handoffID: string; head: Head; text: string }
 
@@ -73,7 +73,7 @@ export function readTaskCard(value: unknown): TaskCard | null {
     messageIDs: Array.isArray(raw.messageIDs) ? raw.messageIDs.filter((id): id is string => typeof id === "string") : [],
     kept: raw.kept === true,
   };
-  if (raw.owner !== "claude" && raw.owner !== "codex") delete card.owner;
+  if (raw.owner !== "agy" && raw.owner !== "claude" && raw.owner !== "codex") delete card.owner;
   if (Array.isArray(raw.subagentIDs)) {
     const valid = raw.subagentIDs.filter((id): id is string => typeof id === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(id));
     card.subagentIDs = [...new Set(valid)];

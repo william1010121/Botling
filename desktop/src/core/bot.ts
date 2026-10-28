@@ -1,3 +1,7 @@
+import { AgyCodexHead } from "./agent/agy-codex-head";
+import { agyPairAllowed } from "./agent/agy-capabilities";
+import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
+import { AGY_EXECUTION_BLOCKED, AgyHead, type AgyConfig } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, its task cards
 // (tasks.json) and subagents (subagents.json).
@@ -154,6 +158,8 @@ export interface BotOptions {
   profile: BotProfile;
   /** How to run this bot's claude head for a session. */
   headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
+  /** Antigravity native protocol; no Claude permission or plugin configuration is forwarded. */
+  agyConfig?: ((profile: BotProfile, config: AgyConfig) => AgyConfig) | null;
   /** How to run its Codex head (null: Codex is not available here). */
   codexConfig?: ((profile: BotProfile, session: SessionStartCodex) => CodexHeadConfig) | null;
   /** The instructions for this bot's head (settings may change between wakes). */
@@ -192,7 +198,7 @@ export interface BotOptions {
   /** What a turn spent (dollars, Claude's; Codex: 0) and used (tokens), by the bot's name (1.x's `onSpend`, `onTokens`). */
   usage?: (bot: string, spent: number, tokens: TokenUsage) => void;
   /** A subscription's limits as a head reported them (`onRateLimits`, `onCodexRateLimits`). */
-  rateLimits?: (engine: Engine, limits: RateLimits) => void;
+  rateLimits?: (engine: "claude" | "codex", limits: RateLimits) => void;
   /** Plugins' afterReply hooks, when any plugin has one: may change a reply after it shows (null: none). */
   replyFilter?: () => ((text: string) => Promise<string>) | null;
   /** A reply showed (plugins' `bots.onReply`; Maintainer's requests settle). */
@@ -220,7 +226,7 @@ export interface BotOptions {
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
-type AgentHead = ClaudeHead | CodexHead;
+type AgentHead = ClaudeHead | CodexHead | AgyHead | AgyAcpHead;
 
 interface Turn {
   /** The app's continuation after the completion judge found work unfinished (keeps its no-progress count). */
@@ -500,8 +506,16 @@ export class Bot {
       const settings = this.store.loadSettings();
       this.headsSettings = readHeads(settings.heads, settings.engine);
       // 1.x's `engine`: the primary's head when it is one of the bot's heads.
-      const saved = settings.engine === "codex" || settings.engine === "claude" ? settings.engine : null;
+      const saved = settings.engine === "agy" || settings.engine === "codex" || settings.engine === "claude" ? settings.engine : null;
       (this as { engine: Engine }).engine = saved && this.headsSettings.engines.includes(saved) ? saved : this.headsSettings.engines[0]!;
+    }
+    if (this.engine === "agy") {
+      const saved = this.store.loadSettings().agyConversation;
+      if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.session = { sessionId: saved, started: true }; this.briefing = false; }
+    }
+    if (this.mixedCodex) {
+      const saved = this.store.loadSettings().mixedCodexConversation;
+      if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.session = {sessionId:saved,started:true}; this.briefing = false; }
     }
     this.conductor = new Conductor(this.headsSettings);
     this.load();
@@ -545,6 +559,28 @@ export class Bot {
     return this.owner.headsSettings;
   }
 
+  private peerEngine(head: Engine): Engine {
+    const owner = this.owner;
+    return owner.engine !== head ? owner.engine : owner.partner?.engine ?? otherHead(head, this.heads);
+  }
+
+  private get singleActionApprovals(): boolean { return this.engine === "agy" || this.mixedCodex; }
+
+  private get mixedCodex(): boolean {
+    return this.engine === "codex" && this.headsSettings.engines.includes("agy") && agyPairAllowed("codex", "agy");
+  }
+
+  /** Execution policy, including on-demand and restored routes (not just selected heads). */
+  private allowsEngineRoute(head: Engine, from: Engine = this.engine): boolean {
+    const owner = this.owner;
+    return head === from || (agyPairAllowed(from, head) && owner.engine !== "claude" && !owner.headsSettings.engines.includes("claude") && owner.partner?.engine !== "claude") || !(head === "agy" || from === "agy" || owner.engine === "agy"
+      || owner.partner?.engine === "agy" || owner.headsSettings.engines.includes("agy"));
+  }
+
+  private requireEngineRoute(head: Engine, from: Engine = this.engine): void {
+    if (!this.allowsEngineRoute(head, from)) throw new ContractError("conflict", "Antigravity cross-engine execution is disabled pending lifecycle validation. Nothing was routed.");
+  }
+
   /** The bot that runs `head`: this one, or its partner. */
   private botFor(head: Engine): Bot | null {
     const owner = this.owner;
@@ -559,8 +595,10 @@ export class Bot {
    */
   private makePartner(onDemand?: Engine): Bot | null {
     if (this.options.primary) return null;
+    const other = onDemand ?? this.partner?.engine ?? otherHead(this.engine, this.heads);
+    this.requireEngineRoute(other);
     if (this.partner) return onDemand && this.partner.engine !== onDemand ? null : this.partner;
-    const other = otherHead(this.engine);
+    if (other === this.engine) return null;
     if (onDemand ? onDemand !== other : !this.headsSettings.engines.includes(other)) return null;
     this.partner = new Bot({ ...this.options, primary: this, engine: other, lock: null, welcome: false });
     // The shared chat holds the partner's lines too: the same records, so a change shows in both.
@@ -1424,6 +1462,7 @@ export class Bot {
   /** A turn for `head` (this bot's or its partner's), routed there now. */
   private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin">> = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
+    this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head) ?? this;
     const turn = bot.newTurn(extra.origin ?? (userId ? "user" : "app"), words, userId);
     if (extra.conducted) turn.conducted = true;
@@ -1497,6 +1536,10 @@ export class Bot {
       hold.turn.words = `${words}\n\n${hold.turn.words}`;
       hold.turn.about.push(...about);
     }
+    if (!this.allowsEngineRoute(hold.held, hold.lead)) {
+      this.finishTurn(hold.turn, "failed", "Antigravity cross-engine held turn blocked; nothing was routed.");
+      return;
+    }
     this.log(`${displayName(hold.held)} gets the message${words ? " with what the other head said" : ""}`);
     this.botFor(hold.held)?.route(hold.turn);
   }
@@ -1513,6 +1556,7 @@ export class Bot {
    * wakes. (1.x also steers claude mid-turn; 2.0 keeps it for claude's next message.)
    */
   private tell(head: Engine, note: string, about: string[]) {
+    if (!this.allowsEngineRoute(head)) return;
     const target = this.botFor(head);
     if (!target || !target.head?.running) return;
     if (target.hearNow(note, about)) return;
@@ -1527,9 +1571,11 @@ export class Bot {
    * which counts as the app's: `<no-reply/>` shows nothing). False: no turn of ours to join.
    */
   private hearNow(note: string, about: string[]): boolean {
+    if (!this.allowsEngineRoute(this.engine, this.owner.engine)) return false;
     const turn = this.turn;
     const head = this.head;
     if (!turn?.open || !turn.sent || turn.origin === "tidy" || !head?.running || turn.head !== head || this.draining || this.ignoreResults > 0 || this.ending.has(head)) return false;
+    if (head instanceof AgyAcpHead) return false;
     if (head instanceof CodexHead) {
       if (!head.steer(note)) return false;
     } else {
@@ -1546,7 +1592,8 @@ export class Bot {
   private headWords(words: string) {
     const owner = this.owner;
     if (!this.sharesChat || words.includes("<reaction")) return;
-    const other = otherHead(this.engine);
+    const other = this.peerEngine(this.engine);
+    if (!this.allowsEngineRoute(other)) return;
     const note = wordsNote(this.engine, words);
     if (owner.claimHold?.lead === this.engine && owner.claimHold.held === other) {
       // The lead's first words say what it takes on: the other head starts with them.
@@ -1559,6 +1606,10 @@ export class Bot {
 
   /** A head showed a reply: the other head hears it, and the conductor carries any hand-off (`headReplied`). */
   private headReplied(record: ChatRecord, head: Engine, handoff: Handoff | null, handed: boolean, handoffId: string | null) {
+    if (!this.allowsEngineRoute(head) || (handoff && !this.allowsEngineRoute(handoff.to, head))) {
+      this.notice("Antigravity cross-engine handoff blocked; nothing was routed. Mixed-engine lifecycle validation is pending.");
+      return;
+    }
     const actions = this.conductor.replied(head, record.text, handoff, handed, handoffId);
     const decisions = new Set(handoffId ? this.handoffDecisions.get(handoffId) ?? [] : []);
     // An OPEN question gets an identity when it is actually handed over.
@@ -1577,7 +1628,7 @@ export class Bot {
     for (const action of actions) if (action.type === "ask" && action.handoffId && action.head !== head) this.handoffDecisions.set(action.handoffId, decisions);
     const note = saidNote(head, record.text, record.steps ?? []) + this.decisionContext(decisions);
     const about = [record.id, ...[...decisions].sort()];
-    const other = otherHead(head);
+    const other = this.peerEngine(head);
     if (this.claimHold?.lead === head && this.claimHold.held === other) this.releaseClaim(note, about);
     else this.tell(other, note, about);
     this.conduct(actions);
@@ -1589,6 +1640,13 @@ export class Bot {
     for (const action of actions) {
       switch (action.type) {
         case "ask":
+          if (!this.allowsEngineRoute(action.head, this.conductor.records.find(record => record.id === action.handoffId)?.from ?? this.engine)) {
+            if (action.handoffId) {
+              for (const stopped of this.conductor.stop(action.handoffId)) if (stopped.type === "progress") this.rounds = stopped.progress;
+            }
+            this.notice("Antigravity cross-engine action blocked; nothing was routed. Mixed-engine lifecycle validation is pending.");
+            break;
+          }
           this.deliverTo(action.head, action.text + this.decisionContext(action.handoffId ? this.handoffDecisions.get(action.handoffId) ?? new Set() : new Set()), null,
             { origin: "app", conducted: !!action.handoffId, handoffId: action.handoffId });
           break;
@@ -1666,22 +1724,34 @@ export class Bot {
   /** One head or two (1.x's Settings → Heads). An awake head that goes away tidies first. */
   async setHeads(engines: Engine[]): Promise<ResultOf<"heads.set">> {
     if (this.options.primary) return this.options.primary.setHeads(engines);
-    const kept = (["claude", "codex"] as Engine[]).filter((engine) => engines.includes(engine));
+    const kept = (["claude", "codex", "agy"] as Engine[]).filter((engine) => engines.includes(engine));
+    if (kept.includes("agy") && kept.length > 1 && !(kept.length === 2 && kept.includes("codex") && agyPairAllowed("agy", "codex"))) throw new ContractError("conflict", "Antigravity mixed-engine sessions are disabled pending lifecycle validation.");
     if (!kept.length) throw new ContractError("bad_request", "A bot needs a head.");
     if (kept.includes("codex") && !this.options.codexConfig) throw new ContractError("conflict", "Codex is not available here.");
+    if (kept.length > 2) throw new ContractError("bad_request", "Choose at most two engines.");
+    if (kept.includes("agy")) {
+      const config = this.options.agyConfig?.(this.profile, {command:"agy",cwd:this.profile.folder,sessionId:this.session.sessionId,resume:this.session.started});
+      if (config?.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
+      verifyAcpRuntime(config.command);
+    }
     const settings = this.headsSettings;
     // Its own head goes (1.x's `setHeads` / `switchEngine`): it runs on the other one, through a handoff.
     const target = kept.includes(this.engine) ? this.engine : kept[0]!;
     if (target === this.engine) this.switchTo = null;
     const switching = target !== this.engine ? target : null;
+    if (switching && kept.length > 1) throw new ContractError("bad_request", "A bot with two heads keeps its first one.");
     settings.engines = kept;
     settings.answerWith = fitted(settings, settings.answerWith === this.engine && kept.length > 1 ? "both" : settings.answerWith);
     this.conductor.settings = settings;
-    if (switching && hasTwo(settings)) throw new ContractError("bad_request", "A bot with two heads keeps its first one.");
     this.saveHeads(switching ?? undefined);
     if (hasTwo(settings) && !this.partner) this.makePartner();
     if (!hasTwo(settings) && this.partner) {
       const partner = this.partner;
+      if (target === "agy" && partner.engine === "agy") {
+        const saved = partner.store.loadSettings();
+        if (typeof saved.agyConversation === "string") this.store.saveSetting("agyConversation", saved.agyConversation);
+        if (saved.agyRecovery) this.store.saveSetting("agyRecovery", saved.agyRecovery);
+      }
       await partner.shutdown();
       this.partner = null;
     }
@@ -1724,18 +1794,19 @@ export class Bot {
     const owner = this.owner;
     const choices = owner.choices();
     return {
-      botId: owner.id, engines: [...owner.headsSettings.engines] as ("claude" | "codex")[],
+      botId: owner.id, engines: [...owner.headsSettings.engines] as Engine[],
       model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"],
       subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], codexModel: owner.headsSettings.codexModel ?? null,
+      agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
     };
   }
 
   /** Changes its own choices; a head already running keeps its own until it next wakes. */
-  configure(change: { model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null }): BotSettingsView {
+  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null }): BotSettingsView {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     const before = owner.settingsView();
-    for (const key of ["model", "effort", "subagentModel"] as const) {
+    for (const key of ["model", "effort", "subagentModel", "agyModel"] as const) {
       if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
     }
     if (change.codexModel !== undefined) {
@@ -1761,6 +1832,9 @@ export class Bot {
     }
     if (change.codexModel !== undefined && change.codexModel !== before.codexModel) {
       for (const bot of heads) if (bot.engine === "codex") bot.restartFor({ told: `Codex model ${change.codexModel ?? "default"}`, shown: change.codexModel ?? "Codex's default model" });
+    }
+    if (change.agyModel !== undefined && change.agyModel !== before.agyModel) {
+      for (const bot of heads) if (bot.engine === "agy") bot.restartFor({ told: `Antigravity model ${change.agyModel ?? "default"}`, shown: change.agyModel ?? "Antigravity default" });
     }
     return owner.settingsView();
   }
@@ -1790,7 +1864,10 @@ export class Bot {
   /** Its head is `to` now; the next head is a new session. */
   private becomeEngine(to: Engine) {
     (this as { engine: Engine }).engine = to;
-    this.newSession();
+    const saved = to === "agy" ? this.store.loadSettings().agyConversation : null;
+    if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) {
+      this.session = {sessionId:saved,started:true}; this.briefing = false;
+    } else this.newSession();
     this.store.saveHead(this.session);
     this.saveHeads(to);
   }
@@ -1852,7 +1929,7 @@ export class Bot {
 
   /** 1.x's `withSavedMemory`: a Codex head is given its saved memory and the recent chat with a prompt. */
   private withSavedMemory(prompt: string): string {
-    if (this.engine !== "codex") return prompt;
+    if (this.engine === "claude") return prompt;
     const parts = [prompt];
     let memory = "";
     try { memory = readFileSync(this.paths.memoryFile, "utf8"); } catch { /* none yet */ }
@@ -1877,8 +1954,16 @@ export class Bot {
       this.add(record);
       this.bumpUnread();
     }
-    const left = parsed.requests.length && this.options.onRequests ? this.options.onRequests(this.owner, parsed.requests) : parsed.requests;
+    const left = this.handleRequests(parsed.requests);
     if (left.length) this.notice(`Botling 2.0 cannot do this yet, so nothing happened: ${[...new Set(left.map(unsupportedRequest))].join("; ")}.`);
+  }
+
+  /** No silent fallback to a Claude worker/plugin from an Antigravity reply. */
+  private handleRequests(requests: BotRequest[]): BotRequest[] {
+    const unavailable = new Set(["team", "component", "plugin", "newBot", "newProject", "suggestComponent", "componentSpec"]);
+    const blocked = this.engine === "agy" ? requests.filter(request => unavailable.has(request.kind)) : [];
+    const supported = requests.filter(request => !blocked.includes(request));
+    return [...blocked, ...(supported.length && this.options.onRequests ? this.options.onRequests(this.owner, supported) : supported)];
   }
 
   /** These lines reached `head` (they are in its context): the chat marks them (`markSeen`). */
@@ -1988,6 +2073,7 @@ export class Bot {
 
   /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
   private route(turn: Turn): Turn {
+    this.requireEngineRoute(this.engine, this.owner.engine);
     const current = this.turn;
     // The core is being swapped (hot-swap.ts): nothing new begins; it waits and is handed over.
     if (this.swapHold) { this.queue.push(turn); return turn; }
@@ -2057,6 +2143,7 @@ export class Bot {
   private canSteer(current: Turn, next: Turn): boolean {
     if (next.origin !== "user" || current.origin === "tidy" || current.conducted || !current.open || !current.sent) return false;
     if (current.head !== this.head || !this.head?.running || this.draining || this.ignoreResults || this.ending.has(this.head)) return false;
+    if (this.head instanceof AgyAcpHead) return false;
     if (this.head instanceof CodexHead) return true;
     return !this.queue.length && !this.approvals.size && !this.subagents.running.some((subagent) => !subagent.background);
   }
@@ -2207,6 +2294,7 @@ export class Bot {
     try {
       head = given ?? this.ensureHead();
     } catch (error) {
+      if (this.engine === "agy" && this.session.started) this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: (error as Error).message.slice(-1000) });
       this.finishTurn(turn, "failed", `Could not start the agent: ${(error as Error).message}`);
       return;
     }
@@ -2224,7 +2312,8 @@ export class Bot {
     }
     const brief = waking && this.briefing;
     if (brief) this.briefing = false;
-    head.send(this.compose(turn, brief), turn.userId ?? turn.messageId, this.turnImages(turn));
+    try { head.send(this.compose(turn, brief), turn.userId ?? turn.messageId, this.turnImages(turn)); }
+    catch (error) { this.finishTurn(turn, "failed", (error as Error).message); return; }
     this.noteProgress();
     // With two heads: what reached this head (`markSeen`).
     const seen = [...turn.about, ...(turn.userId ? [turn.userId] : [])];
@@ -2330,13 +2419,15 @@ export class Bot {
 
   /** This head's instructions now. */
   private prompts(): BotPrompts {
-    return this.options.prompts(this.engine, this.sharesChat ? this.heads : null);
+    return this.options.prompts(this.engine, this.sharesChat ? {...this.heads, engines: this.owner.partner ? [this.owner.engine, this.owner.partner.engine] : this.heads.engines} : null);
   }
 
   private ensureHead(): AgentHead {
+    this.requireEngineRoute(this.engine, this.owner.engine);
     if (this.head?.running) return this.head;
     // It fell asleep before its switch of engine was done: it wakes on the new one.
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
+    this.requireEngineRoute(this.engine, this.owner.engine);
     this.restartPending = false;
     this.restartForPluginsOnly = false;
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
@@ -2356,10 +2447,31 @@ export class Bot {
       codexBypassPermissions: launch.codexBypassPermissions === true,
     };
     let head: AgentHead;
-    if (this.engine === "codex") {
+    if (this.engine === "agy") {
+      if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
+      const config = this.options.agyConfig(this.profile, { command: "agy", cwd: this.profile.folder, sessionId: start.sessionId, resume: start.resume,
+        model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown,
+        codexWorkerConfig: worker => {
+          if (!this.options.codexConfig) throw new Error("Codex worker transport unavailable.");
+          return this.options.codexConfig(this.profile, { ...start, sessionId: worker.sessionId, resume: worker.resume,
+            systemPrompt: worker.systemPrompt ?? "", workerInstructions: "", codexModel: this.heads.codexModel, routinesFile: null,
+            autoMode: false, codexBypassPermissions: false, claudeBypassPermissions: false, addDirs: [] });
+        } });
+      head = config.transport === "acp"
+        ? new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) })
+        : new AgyHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) });
+    } else if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
-      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
-      head = new CodexHead(config, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
+      const configured = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
+      const config = this.mixedCodex ? {...configured,autoMode:false,bypassPermissions:false,componentEditor:null,workerInstructions:null,routinesFile:null,writableRoots:[]} : configured;
+      if (this.mixedCodex && config.resume) {
+        const thread = config.threads.thread(config.sessionId);
+        if (!thread || (config.workerInstructions && !config.threads.isManaged(config.sessionId, thread))) throw new Error("Mixed Codex conversation mapping unavailable; identity retained, no replacement or replay.");
+      }
+      head = new (this.mixedCodex ? AgyCodexHead : CodexHead)(config, { onItem: item => {
+        if (this.mixedCodex && item.kind === "init") { this.store.saveSetting("mixedCodexConversation", item.sessionId); this.store.saveSetting("mixedCodexRecovery", undefined); }
+        this.onItem(head, item);
+      }, onExit: exit => this.onExit(head, exit) });
     } else {
       const config = this.options.headConfig(this.profile, start);
       head = new ClaudeHead(config, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
@@ -2376,6 +2488,11 @@ export class Bot {
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
   private newSession() {
+    if (this.mixedCodex && !this.readOnly) { this.store.saveSetting("mixedCodexConversation", undefined); this.store.saveSetting("mixedCodexRecovery", undefined); }
+    if (this.engine === "agy" && !this.readOnly) {
+      this.store.saveSetting("agyConversation", undefined);
+      this.store.saveSetting("agyRecovery", undefined);
+    }
     this.queuedNote = null;
     this.session = { sessionId: randomUUID(), started: false };
     this.briefing = true;
@@ -2449,10 +2566,11 @@ export class Bot {
       return;
     }
     if (item.kind === "init") {
+      if (this.engine === "agy") this.store.saveSetting("agyRecovery", undefined);
       let save = false;
       if (!this.session.started) { this.session.started = true; save = true; }
       if (item.sessionId && item.sessionId !== this.session.sessionId && /^[0-9a-f-]{36}$/i.test(item.sessionId)) { this.session.sessionId = item.sessionId; save = true; }
-      if (save) this.store.saveHead(this.session);
+      if (save) { this.store.saveHead(this.session); if (this.engine === "agy") this.store.saveSetting("agyConversation", this.session.sessionId); }
       return;
     }
     if (item.kind === "controlResponse") return;
@@ -2690,7 +2808,7 @@ export class Bot {
         if (this.subagents.started(item)) this.subagentChanged(this.subagents.get(item.id));
         if (item.background) this.addBackgroundTask(item.id, "agent", item.description);
         // A worker for handed-over work: its report carries the hand-back.
-        if (this.engine === "codex" && this.turn?.conducted && this.turn.handoffId && (item.type === "codex-worker" || item.type === "ccb-core:component-editor")) {
+        if ((this.engine === "codex" || this.engine === "agy") && this.turn?.conducted && this.turn.handoffId && (item.type === "codex-worker" || item.type === "agy-worker" || item.type === "ccb-core:component-editor")) {
           this.managedTaskHandoffs.set(item.id, this.turn.handoffId);
         }
         return true;
@@ -2876,7 +2994,7 @@ export class Bot {
     turn.resolve(status);
     if (status === "done") {
       this.bumpUnread();
-      const left = parsed.requests.length && this.options.onRequests ? this.options.onRequests(this.owner, parsed.requests) : parsed.requests;
+      const left = this.handleRequests(parsed.requests);
       if (left.length) {
         const what = [...new Set(left.map(unsupportedRequest))];
         this.notice(`Botling 2.0 cannot do this yet, so nothing happened: ${what.join("; ")}.`);
@@ -2898,7 +3016,7 @@ export class Bot {
   /** Whether this turn hands its work back now (`takeHandback`): not while a worker it started for the hand-off owns it. */
   private takeHandback(turn: Turn): boolean {
     const id = turn.handoffId;
-    if (this.engine === "codex" && turn.conducted && id && [...this.managedTaskHandoffs.values()].includes(id)) {
+    if ((this.engine === "codex" || this.engine === "agy") && turn.conducted && id && [...this.managedTaskHandoffs.values()].includes(id)) {
       this.managedHandbacks.add(id);
       return false;
     }
@@ -2965,7 +3083,7 @@ export class Bot {
 
   /** The running Agent-tool subagents own work like workers do: their notification wakes this head. */
   private completionSubagents(): WorkerDependency[] {
-    return this.subagents.running.filter((subagent) => subagent.type !== "codex-worker").map((subagent) => ({
+    return this.subagents.running.filter((subagent) => subagent.type !== "codex-worker" && subagent.type !== "agy-worker").map((subagent) => ({
       id: subagent.agentID ?? subagent.id, run: 1, task: [subagent.name, subagent.description, subagent.prompt].filter((part): part is string => !!part).join("\n"),
       state: "running" as const, callback: SUBAGENT_CALLBACK, taskTruncated: false,
     }));
@@ -2994,7 +3112,7 @@ export class Bot {
       || (turn.origin !== "user" && turn.origin !== "app") || this.queue.length) return;
     const continued = this.completionContinuing;
     this.completionContinuing = false;
-    const codex = this.head instanceof CodexHead ? this.head.completionDependencies : null;
+    const codex = this.head instanceof CodexHead || this.head instanceof AgyAcpHead ? this.head.completionDependencies : null;
     const subagents = this.completionSubagents();
     const workers = subagents.length ? [...(codex ?? []), ...subagents] : codex ?? undefined;
     const evaluated = new Date();
@@ -3116,7 +3234,7 @@ export class Bot {
   /** `Bot.reportFinishedSubagents`: the bot answered a finished subagent's news with nothing. */
   private reportFinished(ids: string[]) {
     // Codex: a worker's report turn is on its way (or under way); it says what came of it.
-    if (this.engine === "codex" && this.managedPending) return this.next();
+    if ((this.engine === "codex" || this.engine === "agy") && this.managedPending) return this.next();
     const finished = [...new Set(ids)].map((id) => this.subagents.get(id)).filter((subagent): subagent is SubagentRecord => !!subagent && subagent.status !== "running");
     const ask = finished.filter((subagent) => !this.reportAsked.has(subagent.id));
     if (ask.length && this.engine === "claude" && this.head?.running && !this.queue.length) {
@@ -3272,7 +3390,7 @@ export class Bot {
     let failedTurn = false;
     if (turn?.open && turn.head === head) {
       // A resume of a session claude no longer has: start a new session and send the message again, once.
-      if (exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
+      if (this.engine !== "agy" && !this.mixedCodex && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
         this.log(`resuming session ${this.session.sessionId} failed (${why}: ${exit.stderr.slice(0, 200)}); starting a new session`);
         this.newSession();
         this.store.saveHead(this.session);
@@ -3295,6 +3413,9 @@ export class Bot {
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
       this.restarting = null;
+    } else if (exit.expected && (this.engine === "agy" || this.mixedCodex)) {
+      // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
+      this.briefing = !this.session.started;
     } else if (exit.expected) {
       // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
       this.newSession();
@@ -3302,7 +3423,14 @@ export class Bot {
       // Nobody asked it to exit (1.x's `.exited`): it is asleep, and the next message wakes a new
       // session, briefed from memory.md and the chat. A non-zero exit is said in the chat (1.x:
       // its stderr, else "claude exited unexpectedly"); a failed turn already says it.
-      this.newSession();
+      if (this.mixedCodex) {
+        this.store.saveSetting("mixedCodexRecovery", {sessionId:this.session.sessionId,state:"resume-required",reason:exit.stderr.slice(-1000)||why});
+        this.briefing = !this.session.started;
+      } else if (this.engine === "agy") {
+        // Preserve identity across failed resumes, the next explicit message and app restart.
+        this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: exit.stderr.slice(-1000) || why });
+        this.briefing = !this.session.started;
+      } else this.newSession();
       this.store.saveHead(this.session);
       if (lostToNetwork) {
         const shown = this.outage !== null;
@@ -3313,7 +3441,7 @@ export class Bot {
         }
       } else if (exit.code !== 0 && !failedTurn) {
         const stderr = exit.stderr.trim();
-        this.add({ id: newId(), role: "error", text: stderr ? stderr.slice(-2_000) : `${this.engine === "codex" ? "codex" : "claude"} exited unexpectedly (${why})`, date: toSwiftDate() });
+        this.add({ id: newId(), role: "error", text: stderr ? stderr.slice(-2_000) : `${this.engine === "agy" ? "Antigravity ACP" : this.engine === "codex" ? "codex" : "claude"} exited unexpectedly (${why})`, date: toSwiftDate() });
         this.bumpUnread();
       }
     }
@@ -4341,7 +4469,7 @@ export class Bot {
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
     if (isReviewRefusal(item.requestId)) return this.showReviewRefusal(head, item);
     // A bare tool name or a 1.x rule ("Bash(npm test)", "Edit(//…)", "WebFetch(domain:…)"): permission-rules.ts.
-    if (item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
+    if (!this.singleActionApprovals && item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
       head.answer(item.requestId, true, item.input);
       return;
     }
@@ -4351,7 +4479,7 @@ export class Bot {
       return;
     }
     const choices: ChoiceRecord[] = [{ label: "Allow once", recommended: true, action: "allowOnce" }];
-    if (!NEVER_ALWAYS.has(item.tool)) choices.push({ label: `Always allow ${item.tool}`, detail: `For ${this.profile.name}, from now on`, recommended: false, action: "alwaysAllow" });
+    if (!this.singleActionApprovals && !NEVER_ALWAYS.has(item.tool)) choices.push({ label: `Always allow ${item.tool}`, detail: `For ${this.profile.name}, from now on`, recommended: false, action: "alwaysAllow" });
     choices.push({ label: "Don't allow", recommended: false, action: "deny" });
     const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary), date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
     const expires = Date.now() + this.options.approvalTimeoutMs;
@@ -4587,8 +4715,8 @@ export class Bot {
       return { accepted: false };
     }
     // What a pick means comes from its action, never its words: anything not an allow refuses.
-    const allow = choice.action === "allowOnce" || choice.action === "alwaysAllow";
-    const always = choice.action === "alwaysAllow" && !NEVER_ALWAYS.has(approval.tool);
+    const allow = choice.action === "allowOnce" || (!this.singleActionApprovals && choice.action === "alwaysAllow");
+    const always = !this.singleActionApprovals && choice.action === "alwaysAllow" && !NEVER_ALWAYS.has(approval.tool);
     clearTimeout(approval.timer);
     this.approvals.delete(messageId);
     record.chosen = index;
@@ -5016,7 +5144,7 @@ function executionText(id: string, execution: SubagentExecution | undefined): st
   return [`Agent: ${id}`, ...(execution ? [`Run: ${execution.run}`, execution.threadId ? `Thread: ${execution.threadId}` : "", execution.turnId ? `Turn: ${execution.turnId}` : "", execution.ownerSessionId ? `Owner session: ${execution.ownerSessionId}` : ""] : [])].filter(Boolean).join("\n");
 }
 
-export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook, ownerEngine?: "claude" | "codex"): SubagentView {
+export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook, ownerEngine?: Engine): SubagentView {
   const raw = subagent.runtime;
   const runtime = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   const text = (value: unknown) => typeof value === "string" && value.trim() ? clip(value.trim(), 200) : null;
@@ -5027,7 +5155,7 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
     status: subagent.status,
     type: clip(subagent.type, 200),
     model: clip(subagent.model, 200),
-    engine: runtime?.engine === "codex" || runtime?.engine === "claude" ? runtime.engine
+    engine: runtime?.engine === "agy" || runtime?.engine === "codex" || runtime?.engine === "claude" ? runtime.engine
       : subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : ownerEngine ?? "claude",
     runtime: runtime ? { reasoningEffort: text(runtime.reasoningEffort), serviceTier: text(runtime.serviceTier) } : null,
     outputTokens: reportedOutputTokens(subagent),
@@ -5079,10 +5207,10 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
   }
   if (typeof record.replyTo === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.replyTo)) view.replyTo = record.replyTo;
   if (typeof record.replyPreview === "string") view.replyPreview = record.replyPreview.slice(0, 2_000);
-  if (record.engine === "claude" || record.engine === "codex") view.engine = record.engine;
-  if (record.to === "claude" || record.to === "codex") view.to = record.to;
+  if (record.engine === "agy" || record.engine === "claude" || record.engine === "codex") view.engine = record.engine;
+  if (record.to === "agy" || record.to === "claude" || record.to === "codex") view.to = record.to;
   if (Array.isArray(record.seenBy)) {
-    const seen = (["claude", "codex"] as const).filter((engine) => record.seenBy!.includes(engine));
+    const seen = (["claude", "codex", "agy"] as const).filter((engine) => record.seenBy!.includes(engine));
     if (seen.length) view.seenBy = [...seen];
   }
   if (typeof record.decisionID === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.decisionID)) view.decisionId = record.decisionID;

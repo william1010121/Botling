@@ -93,7 +93,7 @@ export function discardHandover(dataDir: string) {
   rmSync(join(dataDir, SWAP_FILE), { force: true });
 }
 
-const ENGINES = new Set(["claude", "codex"]);
+const ENGINES = new Set(["claude", "codex", "agy"]);
 const SESSION = /^[0-9A-Za-z-]{1,64}$/;
 
 /** The handover for this start, once (the file is removed); null when there is none, it is stale or unreadable. */

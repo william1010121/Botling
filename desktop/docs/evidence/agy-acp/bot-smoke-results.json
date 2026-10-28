@@ -1,0 +1,48 @@
+{
+  "cards": [
+    {
+      "tool": "other",
+      "choices": [
+        "Allow once",
+        "Don't allow"
+      ]
+    },
+    {
+      "tool": "other",
+      "choices": [
+        "Allow once",
+        "Don't allow"
+      ]
+    }
+  ],
+  "turns": [
+    {
+      "turnId": "t-f11a90ad-3d01-4d1b-87d0-65a1bc64ced7",
+      "terminal": {
+        "type": "turn.finished",
+        "botId": "6A0B0000-0000-4000-8000-000000000002",
+        "turnId": "t-f11a90ad-3d01-4d1b-87d0-65a1bc64ced7",
+        "messageId": "A23EA16E-CBB7-4620-865C-EA66D05BE15A",
+        "status": "done",
+        "text": "Permission was denied (`denied by pre-tool hook: Denied by user (*)`). Stopping immediately without retry as requested."
+      }
+    },
+    {
+      "turnId": "t-4181bb7a-b502-40c7-8645-ea1df4c6f2ba",
+      "terminal": {
+        "type": "turn.finished",
+        "botId": "6A0B0000-0000-4000-8000-000000000002",
+        "turnId": "t-4181bb7a-b502-40c7-8645-ea1df4c6f2ba",
+        "messageId": "A326F383-AAC4-44C1-9AA9-0FE89CA54F85",
+        "status": "done",
+        "text": "BOTLING_ACP_CORE_RESUMED"
+      }
+    }
+  ],
+  "selection": [
+    "agy"
+  ],
+  "sameConversationAfterRestart": true,
+  "markerAbsent": true,
+  "passed": true
+}

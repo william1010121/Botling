@@ -1,0 +1,38 @@
+{
+  "workspace": "/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/mcp-smoke-1p7h37i8/workspace",
+  "prompts": [
+    {
+      "mode": "deny",
+      "stopReason": "end_turn",
+      "markerAbsent": true
+    },
+    {
+      "mode": "cancel",
+      "stopReason": "cancelled",
+      "markerAbsent": true
+    }
+  ],
+  "permissionRequests": [
+    {
+      "tool": "policy-fixture_write_marker",
+      "mode": "deny",
+      "markerAbsentWhilePending": true
+    },
+    {
+      "tool": "policy-fixture_write_marker",
+      "mode": "cancel",
+      "markerAbsentWhilePending": true
+    }
+  ],
+  "authenticated": true,
+  "modeVerifiedBeforePrompt": true,
+  "updates": [
+    "agent_message_chunk",
+    "available_commands_update",
+    "tool_call",
+    "tool_call_update",
+    "usage_update"
+  ],
+  "passed": true,
+  "processExited": true
+}

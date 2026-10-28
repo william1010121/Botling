@@ -1,0 +1,31 @@
+{
+  "workspace": "/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/active-smoke-y4yonvpd/workspace",
+  "prompts": [],
+  "permissionRequests": [
+    {
+      "rawInput": {
+        "CommandLine": "sh -c 'echo $$ > active.pid; sleep 60'",
+        "Cwd": "/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/active-smoke-y4yonvpd/workspace",
+        "WaitMsBeforeAsync": 1000
+      }
+    }
+  ],
+  "authenticated": true,
+  "modeVerifiedBeforePrompt": true,
+  "activeToolPid": 44272,
+  "serverPid": 43638,
+  "toolGroup": 44272,
+  "serverGroup": 43638,
+  "stopReason": "cancelled",
+  "toolAliveAfterCancel": false,
+  "updates": [
+    "agent_message_chunk",
+    "available_commands_update",
+    "tool_call",
+    "tool_call_update",
+    "usage_update"
+  ],
+  "passed": true,
+  "processExited": true,
+  "toolAliveAfterGroupCleanup": false
+}

@@ -112,6 +112,7 @@ export function mood(asleep: boolean, working: boolean, waiting: boolean): Mood 
 
 /** The character of a head with the bot's face as a hat (null `shape`: no hat), as an SVG data URL. */
 export function characterURL(engine: string, moodNow: Mood = "normal", shape: string | null = null): string {
+  if (engine === "agy") return avatarURL(shape ?? "star", moodNow === "sleep" ? "closed" : "open");
   const key = `chibi/${engine}/${moodNow}/${shape ?? ""}`;
   const cached = cache.get(key);
   if (cached) return cached;

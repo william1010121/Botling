@@ -1,0 +1,38 @@
+{
+  "workspace": "/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/policy-smoke-3kqolvje/workspace",
+  "prompts": [
+    {
+      "mode": "deny",
+      "stopReason": "end_turn",
+      "markerAbsent": true
+    },
+    {
+      "mode": "cancel",
+      "stopReason": "cancelled",
+      "markerAbsent": true
+    }
+  ],
+  "permissionRequests": [
+    {
+      "tool": "Run create_file?",
+      "mode": "deny",
+      "markerAbsentWhilePending": true
+    },
+    {
+      "tool": "printf 'hello' > DENIED_MARKER.txt",
+      "mode": "cancel",
+      "markerAbsentWhilePending": true
+    }
+  ],
+  "authenticated": true,
+  "modeVerifiedBeforePrompt": true,
+  "updates": [
+    "agent_message_chunk",
+    "available_commands_update",
+    "tool_call",
+    "tool_call_update",
+    "usage_update"
+  ],
+  "passed": true,
+  "processExited": true
+}

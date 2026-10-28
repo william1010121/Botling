@@ -1,0 +1,25 @@
+{
+  "usageReported": {
+    "input": 5483,
+    "output": 53,
+    "cacheRead": 0,
+    "cacheWrite": 0
+  },
+  "imageAndModel": {
+    "model": "gemini-3.8-flash-high",
+    "effort": "medium",
+    "reply": "Red",
+    "ok": true
+  },
+  "crashCleanup": {
+    "serverKilled": true,
+    "commandStopped": true,
+    "exit": {
+      "code": null,
+      "signal": "SIGKILL",
+      "stderr": "",
+      "expected": false,
+      "silent": true
+    }
+  }
+}

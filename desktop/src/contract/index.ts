@@ -89,7 +89,7 @@ export const ReactionView = z.strictObject({ emoji: z.string().max(16), actor: z
 export const TaskAgentView = z.strictObject({
   id: z.string().min(1).max(200),
   title: z.string().max(400),
-  engine: z.enum(["claude", "codex"]).nullable(),
+  engine: z.enum(["claude", "codex", "agy"]).nullable(),
   status: z.enum(["running", "completed", "failed", "stopped"]).nullable(),
   available: z.boolean(),
   run: z.number().int().positive().nullable(),
@@ -101,7 +101,7 @@ export const TaskView = z.strictObject({
   id,
   name: z.string().max(400),
   state: z.enum(["pending", "running", "waiting", "done", "stopped"]),
-  owner: z.enum(["claude", "codex"]).nullable(),
+  owner: z.enum(["claude", "codex", "agy"]).nullable(),
   now: z.string().max(2_000).nullable(),
   next: z.string().max(2_000).nullable(),
   blocked: z.string().max(2_000).nullable(),
@@ -127,7 +127,7 @@ export const TaskView = z.strictObject({
   /** Old cards without captured links cannot establish that there were zero agents. */
   agentLinks: z.enum(["recorded", "unknown"]).optional(),
   /** The other head's hand-offs for it: "Codex helping: …" lines (`TaskCard.helps`). Phase 5a. */
-  helps: z.array(z.strictObject({ head: z.enum(["claude", "codex"]), text: z.string().max(400) })).max(20).optional(),
+  helps: z.array(z.strictObject({ head: z.enum(["claude", "codex", "agy"]), text: z.string().max(400) })).max(20).optional(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -141,7 +141,7 @@ export const SubagentView = z.strictObject({
   type: z.string().max(200).nullable(),
   model: z.string().max(200).nullable(),
   /** Captured child settings, never inferred from the coordinator's current preferences. */
-  engine: z.enum(["claude", "codex"]).nullable().optional(),
+  engine: z.enum(["claude", "codex", "agy"]).nullable().optional(),
   runtime: z.strictObject({
     reasoningEffort: z.string().max(200).nullable(),
     serviceTier: z.string().max(200).nullable(),
@@ -164,8 +164,8 @@ export const SubagentView = z.strictObject({
 });
 export type SubagentView = z.infer<typeof SubagentView>;
 
-export const Engine = z.enum(["claude", "codex"]);
-export const AnswerTarget = z.enum(["claude", "codex", "both"]);
+export const Engine = z.enum(["claude", "codex", "agy"]);
+export const AnswerTarget = z.enum(["claude", "codex", "agy", "both"]);
 
 export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000) });
 /** A file waiting in the input box for your next message (1.x's `ChatPayload.Pending`). */
@@ -424,7 +424,7 @@ export const SubagentRowView = z.strictObject({
   title: z.string().max(400),
   status: z.enum(["running", "completed", "failed", "stopped"]),
   /** The head that owns this child, including a bot with only one enabled head. */
-  head: z.enum(["claude", "codex"]).nullable(),
+  head: z.enum(["claude", "codex", "agy"]).nullable(),
   startedAt: z.number(),
   endedAt: z.number().nullable(),
   /** Brought back from "Settled" then: an ended one stays listed for 10 minutes from it. */
@@ -587,7 +587,7 @@ export type ImportView = z.infer<typeof ImportView>;
 export const RunningView = z.strictObject({ turnId: id, messageId: id });
 export type RunningView = z.infer<typeof RunningView>;
 /** A turn under way, with its head (two heads can work at once) and its steps so far. */
-export interface RunView { turnId: string; messageId: string; head: "claude" | "codex"; live: StepView[] }
+export interface RunView { turnId: string; messageId: string; head: "claude" | "codex" | "agy"; live: StepView[] }
 
 /** A routine: a routines.cron line ("legacy", system time) or an app-owned schedule (once / recurring in a zone). */
 export const RoutineView = z.strictObject({
@@ -786,11 +786,12 @@ export type UsageView = z.infer<typeof UsageView>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
 export const BotSettingsView = z.strictObject({
   botId: id,
-  engines: z.array(z.enum(["claude", "codex"])).min(1).max(2),
+  engines: z.array(z.enum(["claude", "codex", "agy"])).min(1).max(2),
   model: BotModel.nullable(),
   effort: Effort.nullable(),
   subagentModel: BotModel.nullable(),
   codexModel: z.string().max(200).nullable(),
+  agyModel: z.string().max(200).nullable().optional(),
 });
 export type BotSettingsView = z.infer<typeof BotSettingsView>;
 
@@ -1059,7 +1060,7 @@ export const Command = z.discriminatedUnion("type", [
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
   z.strictObject({
     type: z.literal("bot.configure"), botId, model: BotModel.nullable().optional(), effort: Effort.nullable().optional(),
-    subagentModel: BotModel.nullable().optional(), codexModel: ModelId.nullable().optional(),
+    subagentModel: BotModel.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
   }),
   /** Main only: "Add project…" (main's folder picker), then `projects.add`; the new bot is selected. */
   z.strictObject({ type: z.literal("projects.pick") }),
@@ -1191,8 +1192,8 @@ export interface Results {
   "link.authorize": { result: boolean; linked: boolean };
   /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
   "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };
-  "heads.set": { engines: ("claude" | "codex")[] };
-  "heads.answerWith": { answerWith: "claude" | "codex" | "both" };
+  "heads.set": { engines: ("claude" | "codex" | "agy")[] };
+  "heads.answerWith": { answerWith: "claude" | "codex" | "agy" | "both" };
   "handoff.stop": { stopped: boolean };
   "rounds.stop": { stopped: boolean };
   "chat.choose": { accepted: boolean };

@@ -1,0 +1,42 @@
+{
+  "parent": "dc88262488808a6bced658c3fd44e7200955dbcd",
+  "reviewer": "68d26752",
+  "beforeFix": {
+    "command": "vitest run test/unit/agy-core.test.ts",
+    "passed": 5,
+    "failed": 2,
+    "observed": [
+      "successful agy reply with handoff tags reached intercepted Claude route and later self fallback",
+      "conductor card pick reached intercepted Claude route"
+    ],
+    "safety": "route intercepted before execution; no real agent launched"
+  },
+  "fix": [
+    "central Bot execution policy for cross-engine routes involving agy",
+    "guards at partner creation/reuse, direct dispatch, route and ensureHead including already-running heads",
+    "reject successful-reply handoffs and restored conductor/card actions; stop blocked assignment chains and clear progress",
+    "guard held turns and in-turn peer notes/steering"
+  ],
+  "validation": {
+    "sourceTests": [
+      "agy-core.test.ts",
+      "agy-routing.test.ts",
+      "heads.test.ts",
+      "two-heads.test.ts",
+      "seen-heads.test.ts"
+    ],
+    "passed": 50,
+    "files": 5,
+    "freshCoreBundle": "node scripts/core-dev.mjs passed; no swap/restart",
+    "typecheck": "passed",
+    "diffCheck": "passed",
+    "fakeOnly": "CoreHarness sets BOTLING_AGENT=fake and local fake-claude.mjs/fake-codex.mjs; no real Claude/Codex/ACP launch",
+    "reused": "Reviewer-approved file-helper/sticky-terminal P1 checks (24 focused tests and helper probes); not repeated"
+  },
+  "ownership": [
+    "desktop/src/core/bot.ts (routing methods only; onItem/usage untouched)",
+    "desktop/test/unit/agy-core.test.ts",
+    "this evidence JSON"
+  ],
+  "remaining": "Full integration incomplete. Worker and mixed-engine capabilities stay disabled pending live permission isolation, correlated reports, stale-run rejection, cancellation/crash/restart, concurrency and handback/stop validation. No merge/package/install/full suite."
+}

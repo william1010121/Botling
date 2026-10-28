@@ -214,6 +214,11 @@ const core = new Core({
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   headConfig,
+  agyConfig: (profile, config) => {
+    const command = process.env.BOTLING_AGY_ACP_PATH;
+    if (!command) throw new Error("Antigravity requires the verified official ACP 1.4.3 runtime. BOTLING_AGY_ACP_PATH is not configured; the legacy CLI remains disabled.");
+    return { ...config, command, transport: "acp", acpHome: join(dataDir, "agy-acp", profile.id) };
+  },
   // Whether claude kept a session's transcript (only whether one is there). The fake CLI keeps one only under a
   // CLAUDE_CONFIG_DIR a test gives it: without one, a test never looks in the user's own ~/.claude.
   claudeSessionExists: (process.env.BOTLING_AGENT ?? "fake") === "claude" || process.env.CLAUDE_CONFIG_DIR ? (session, folder) => claudeSessionExists(session, folder) : () => false,

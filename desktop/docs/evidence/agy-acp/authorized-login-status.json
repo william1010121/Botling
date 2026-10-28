@@ -1,0 +1,9 @@
+{
+  "phase": "session-created",
+  "authenticated": true,
+  "serverPid": 16214,
+  "startedAt": 1793196066.192887,
+  "browserFlowObserved": true,
+  "sessionCreated": true,
+  "processExited": true
+}

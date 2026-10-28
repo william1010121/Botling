@@ -5,7 +5,7 @@ import type { TaskCard } from "./tasks";
 import type { ChatRecord } from "./store/records";
 import type { SubagentRecord } from "./subagents";
 
-export interface AgentSource { engine: "claude" | "codex"; list: SubagentRecord[] }
+export interface AgentSource { engine: "claude" | "codex" | "agy"; list: SubagentRecord[] }
 
 export function taskAgentIds(card: TaskCard, messages: ChatRecord[], sources: AgentSource[]): string[] {
   const ids = new Set(card.subagentIDs ?? []);

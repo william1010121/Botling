@@ -1,0 +1,78 @@
+{
+  "sourceCommit": "89bae7d5485d7ccbadfaf787e877a1066f89c236",
+  "base": "0a24538d560bc7843152fe4cb5004a6f22d6737b",
+  "blockedPrevious": "85c09565cf34c7992271a120d3d6905e28d9e0c7",
+  "regressionBeforeFix": {
+    "command": "vitest run test/unit/agy-mcp.test.ts test/unit/agy-acp.test.ts",
+    "failed": 2,
+    "passed": 14,
+    "observed": [
+      "dangling symlink write returned File written instead of rejection",
+      "deny + failed tool + end_turn emitted ok:true subtype:end_turn"
+    ]
+  },
+  "checks": {
+    "focusedUnit": {
+      "files": 11,
+      "passed": 100
+    },
+    "finalAcpRerun": {
+      "passed": 12,
+      "reason": "late permission after cancellation must retain cancelled outcome"
+    },
+    "typecheck": "passed",
+    "helperBuild": {
+      "compiler": "Apple clang 21.0.0 clang-2100.1.1.101",
+      "sha256": "1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403",
+      "repeatBuildSameDigest": true
+    },
+    "diffCheck": "passed"
+  },
+  "live": {
+    "head": "review-head-smoke-results.json",
+    "bot": "review-bot-smoke-results.json",
+    "crash": "review-crash-smoke-results.json",
+    "firstBotAttempt": "review-bot-smoke-first-attempt.json",
+    "firstAttemptLimitation": "Denied turn correctly failed; official session/load timed out at 60 seconds. One bounded retry passed.",
+    "provenance": "Live bundles built from the fixing worktree before the final type-only import/late-permission cancellation preservation adjustment. That final adjustment was covered by the passing 12-test ACP rerun and typecheck, not another model run.",
+    "bundleHashes": {
+      "head_smoke.mjs": "e23d6d91459453e5d908e6ef8c5878c6599b9fed0b023a0933837e2f84ebe82b",
+      "bot_smoke.mjs": "d407f0bc1ddb5c91083096df82a20122ca1b295481ee4252448003d8f28a9fb0",
+      "extended_smoke.mjs": "55c8a334fbdd4b1a2bd85cc87edebcc027b6fc1740b4cd130d0f8bb37fa8ecb9"
+    }
+  },
+  "enabled": [
+    "single agy ACP",
+    "account-supported models and effort",
+    "streaming text/tools/errors",
+    "allow-once/refusal",
+    "anchored workspace file tools",
+    "sandboxed app-owned command tool",
+    "session continuation/recovery",
+    "image input (previous evidence reused)"
+  ],
+  "disabled": [
+    "legacy headless execution",
+    "app-managed ACP worker startup and MCP tools",
+    "agy mixed-engine selection and restored pairs",
+    "native mutation/commands/subagents/workflows",
+    "global/external plugins",
+    "auto_edit/yolo"
+  ],
+  "notRun": [
+    "live workers",
+    "live mixed engine",
+    "Claude",
+    "new OAuth",
+    "full suite",
+    "package/install/restart/merge/push"
+  ],
+  "limitations": [
+    "Full requested worker/mixed integration incomplete",
+    "Native arbitrary daemon containment not established",
+    "Helper pin is specific to the verified arm64 compiler output; different output requires review",
+    "Directory traversal pins authorized inodes; external relocation of the same inode is not claimed to be prevented",
+    "Official ACP can initiate OAuth if credentials become unavailable; no silent-only guarantee"
+  ],
+  "ownership": "agy adapters/helper/build script, narrow bot.setHeads/heads/prompts/Settings changes and focused tests/docs; no codex.ts, stream.ts, Bot onItem or usage changes in this pass"
+}

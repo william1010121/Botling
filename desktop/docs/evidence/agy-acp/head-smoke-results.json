@@ -1,0 +1,83 @@
+{
+  "turns": [
+    {
+      "kind": "result",
+      "ok": true,
+      "text": "Permission was denied when attempting to create `denied.txt` using `botling:write_file`:\n\n```\ndenied by pre-tool hook: Denied by user (*)\n```\n\nAs requested, stopping here without trying anything else.",
+      "error": "",
+      "subtype": "end_turn"
+    },
+    {
+      "kind": "result",
+      "ok": true,
+      "text": "ACP_RESUMED",
+      "error": "",
+      "subtype": "end_turn"
+    },
+    {
+      "kind": "result",
+      "ok": true,
+      "text": "[approved.txt](file:///Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/head-smoke-nKxImK/workspace/approved.txt) has been created with the content `APPROVED`.",
+      "error": "",
+      "subtype": "end_turn"
+    },
+    {
+      "kind": "result",
+      "ok": false,
+      "text": "The request was cancelled by the client.",
+      "error": "Antigravity stopped: cancelled",
+      "subtype": "cancelled"
+    }
+  ],
+  "permissions": [
+    {
+      "summary": "Run list_resources?\n{\"ServerName\":\"botling\"}",
+      "markerAbsent": true
+    },
+    {
+      "summary": "botling_write_file\n{\"arguments\":{\"content\":\"hello\",\"path\":\"denied.txt\"},\"content\":\"hello\",\"path\":\"denied.txt\"}",
+      "markerAbsent": true
+    },
+    {
+      "summary": "botling_write_file\n{\"arguments\":{\"content\":\"APPROVED\",\"path\":\"approved.txt\"},\"content\":\"APPROVED\",\"path\":\"approved.txt\"}",
+      "markerAbsent": true
+    },
+    {
+      "summary": "botling_run_command\n{\"arguments\":{\"command\":\"echo $$ > active.pid; sleep 60\"},\"command\":\"echo $$ > active.pid; sleep 60\"}",
+      "markerAbsent": true
+    }
+  ],
+  "exits": [
+    {
+      "code": null,
+      "signal": "SIGTERM",
+      "stderr": "",
+      "expected": true,
+      "silent": true
+    },
+    {
+      "code": null,
+      "signal": "SIGTERM",
+      "stderr": "",
+      "expected": true,
+      "silent": true
+    },
+    {
+      "code": null,
+      "signal": "SIGTERM",
+      "stderr": "",
+      "expected": true,
+      "silent": true
+    },
+    {
+      "code": null,
+      "signal": "SIGTERM",
+      "stderr": "",
+      "expected": true,
+      "silent": true
+    }
+  ],
+  "activeToolStopped": true,
+  "sessionId": "b6193761-dcef-4a86-bda8-5ced9f6eec21",
+  "markerAbsent": true
+}

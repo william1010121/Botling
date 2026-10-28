@@ -1,0 +1,19 @@
+{
+  "sdk": "0.1.22",
+  "checks": [
+    "view_file: waits and refuses",
+    "write_to_file: waits and refuses",
+    "run_command: waits and refuses",
+    "read_url: waits and refuses",
+    "delegate: waits and refuses",
+    "custom_tool: waits and refuses",
+    "unknown_future_tool: waits and refuses",
+    "execute: waits and refuses",
+    "callback exception: denied",
+    "missing callback: rejected",
+    "no credentials: A Gemini API key is required. Set it via GEMINI_API_KEY environment variable or via LocalAgentConfig(api_key=...).",
+    "LocalAgentConfig: no auth OAuth field"
+  ],
+  "network_calls": 0,
+  "child_processes": 0
+}
