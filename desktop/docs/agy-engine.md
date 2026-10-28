@@ -280,3 +280,23 @@ silently relax the digest check or re-sign the pinned Google binaries and assume
 the old digests still apply. No downloader, global install, external plugin,
 account change, package, merge or app restart was performed here. Model/vision and
 native/plugin limitations from the single-head review remain unchanged.
+
+### Offline mixed-engine wiring (2026-10-29; supersedes staging TODOs above)
+
+The staged ACP coordinator now constructs its worker manager and routes agy or
+Codex workers through a pinned engine identity. Bot peer routing, selection,
+handback/stop and separate saved Codex conversation identity are wired. Mixed
+Codex uses a leaf wrapper with single-action approvals and sticky denial/cancel/
+failed-tool outcomes; ordinary Codex implementation and metering are unchanged.
+Uncertain report delivery has an exact-grant `app_reconcile_report` API (acknowledge
+or report-only retry, never task replay). Worker profiles, task/run/request
+ownership and recovery contracts remain enforced.
+
+Both source runtime gates remain false, including worker tool inventory/dispatch.
+Claude routes involving agy remain blocked even when the offline pair fixture is
+active. No live acceptance is claimed. The offline fixtures replace all agent
+transports; the worker lifecycle suite additionally uses owned benign Node
+process groups, not model agents. See `agy-external-live-validation.md` for the
+executor-boundary clarification and the separate pending external procedure.
+The procedure requires a permitted live harness; it is not a ready-made or
+already-passed live test command. Full integration remains incomplete.

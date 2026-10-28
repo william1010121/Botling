@@ -15,7 +15,7 @@ export interface AgyWorkerHead {
   terminate(graceMs?:number):Promise<TerminateResult>;
 }
 interface Worker {
-  id:string;name:string;instructions:string;sessionId:string;run:number;active:boolean;
+  id:string;engine:"agy"|"codex";name:string;instructions:string;sessionId:string;run:number;active:boolean;
   cleaning:boolean;denied:boolean;recoveryRequired?:boolean;reportDispatching?:boolean;report?:string;status:string;reportPending:boolean;
   head?:AgyWorkerHead;cleanup?:Promise<void>;discardReport?:boolean;
   approvals:Map<string,Record<string,unknown>>;processes:{pid:number;started:string}[];
@@ -34,9 +34,9 @@ export class AgyWorkers {
       if(saved.version!==2||saved.ownerSessionId!==config.sessionId||!Array.isArray(saved.workers)||saved.workers.length>128)throw Error('Invalid worker owner');
       // Validate the complete state before any callback. Legacy/foreign state is preserved, never adopted.
       const restored:Worker[]=saved.workers.map((r:any)=>{
-        if(!r||typeof r.id!=='string'||!uuid.test(r.id)||typeof r.sessionId!=='string'||!Number.isSafeInteger(r.run)||r.run<1||typeof r.name!=='string'||typeof r.instructions!=='string'||typeof r.status!=='string'||typeof r.active!=='boolean'||typeof r.cleaning!=='boolean'||typeof r.reportPending!=='boolean'||(r.report!==undefined&&typeof r.report!=='string'))throw Error('Invalid worker state');
+        if(!r||typeof r.id!=='string'||!uuid.test(r.id)||(r.engine!==undefined&&r.engine!=='agy'&&r.engine!=='codex')||typeof r.sessionId!=='string'||!Number.isSafeInteger(r.run)||r.run<1||typeof r.name!=='string'||typeof r.instructions!=='string'||typeof r.status!=='string'||typeof r.active!=='boolean'||typeof r.cleaning!=='boolean'||typeof r.reportPending!=='boolean'||(r.report!==undefined&&typeof r.report!=='string'))throw Error('Invalid worker state');
         if(!Array.isArray(r.processes)||r.processes.some((p:any)=>!Number.isSafeInteger(p.pid)||p.pid<=0||typeof p.started!=='string'||!p.started))throw Error('Invalid process identity');
-        return {id:r.id,name:r.name,instructions:r.instructions,sessionId:r.sessionId,run:r.run,active:false,cleaning:false,denied:false,approvals:new Map(),processes:r.processes,status:r.status,report:r.report,reportPending:r.reportPending,recoveryRequired:r.recoveryRequired===true||r.active||r.cleaning,reportDispatching:r.reportDispatching===true,
+        return {id:r.id,engine:r.engine??"agy",name:r.name,instructions:r.instructions,sessionId:r.sessionId,run:r.run,active:false,cleaning:false,denied:false,approvals:new Map(),processes:r.processes,status:r.status,report:r.report,reportPending:r.reportPending,recoveryRequired:r.recoveryRequired===true||r.active||r.cleaning,reportDispatching:r.reportDispatching===true,
           ...(r.active||r.cleaning?{status:'stopped',report:'Worker interrupted before confirmed cleanup/result. Process-ledger recovery is required before any explicit continuation; no task was replayed.',reportPending:true}:{})};
       });
       if(new Set(restored.map(w=>w.id)).size!==restored.length)throw Error('Duplicate worker identity');
@@ -54,15 +54,23 @@ export class AgyWorkers {
   async tool(name:string,args:Record<string,unknown>){
     if(this.closed)throw new Error('Worker manager closed.');
     if(name==='app_handoff'){
-      if(args.engine!==undefined&&args.engine!=='agy')throw new Error('Only agy workers are available in this transport; cross-engine workers are not validated.');
+      const engine=args.engine??'agy';if(engine!=='agy'&&engine!=='codex')throw new Error('Unsupported worker engine; Claude is forbidden.');
       if(typeof args.instructions!=='string'||!args.instructions.trim()||args.instructions.length>64_000)throw new Error('Instructions required (maximum 64000 characters).');
       if(this.running.length>=4)throw new Error('Four ACP workers are already running or cleaning up.');
       if(this.workers.size>=128)throw new Error('Worker history limit reached.');
-      const id=randomUUID(),w:Worker={id,name:typeof args.name==='string'?args.name.slice(0,200):args.instructions.slice(0,80),instructions:args.instructions,sessionId:'',run:0,active:false,cleaning:false,denied:false,approvals:new Map(),processes:[],status:'new',reportPending:false};this.workers.set(id,w);
+      const id=randomUUID(),w:Worker={id,engine,name:typeof args.name==='string'?args.name.slice(0,200):args.instructions.slice(0,80),instructions:args.instructions,sessionId:'',run:0,active:false,cleaning:false,denied:false,approvals:new Map(),processes:[],status:'new',reportPending:false};this.workers.set(id,w);
       this.launch(w,args.instructions);return {accepted:true,task_id:id,run:w.run};
     }
     const w=this.workers.get(String(args.task_id));if(!w)throw new Error('Unknown task_id.');
+    if(args.engine!==undefined&&args.engine!==w.engine)throw new Error('Worker engine identity cannot change on continuation.');
     if(args.run!==w.run)throw new Error('Stale or missing worker run identity.');
+    if(name==='app_reconcile_report'){
+      if(w.active||w.cleaning||!w.reportPending||!w.reportDispatching)throw new Error('No uncertain report available for reconciliation.');
+      if(args.action!=='acknowledge'&&args.action!=='retry')throw new Error('Explicit report reconciliation action required.');
+      w.reportDispatching=false;w.reportPending=args.action==='retry';this.save();
+      if(w.reportPending)this.deliverReport(w);
+      return {task_id:w.id,run:w.run,action:args.action,taskReplayed:false};
+    }
     if(name==='app_cancel_task'){await this.stop(w,true);if(w.cleaning)throw new Error('Worker cleanup incomplete; task remains blocked.');return {task_id:w.id,run:w.run,status:w.status};}
     if(name==='app_send_message'){
       if(w.recoveryRequired){if(!this.processesGone(w))throw new Error('Worker crash cleanup has not been verified; continuation blocked.');w.recoveryRequired=false;this.save();}
@@ -77,9 +85,9 @@ export class AgyWorkers {
   private launch(w:Worker,text:string){
     w.processes=[];w.active=true;w.run++;const run=w.run;w.status='running';w.denied=false;w.discardReport=false;w.reportPending=false;w.reportDispatching=false;delete w.report;this.save();
     this.emit({kind:'managedPending',pending:true});
-    this.emit({kind:'toolUse',id:w.id,tool:'Agent',title:`Delegate ${w.name}`,detail:text,parent:null,input:{description:w.name,prompt:text,subagent_type:'agy-worker',run_in_background:true}});
-    this.emit({kind:'subagentStarted',id:w.id,description:w.name,type:'agy-worker',prompt:text,background:true,execution:{run,ownerSessionId:this.config.sessionId,threadId:w.sessionId||null,turnId:null}});
-    this.emit({kind:'subagentRuntime',id:w.id,runtime:{engine:'agy',reasoningEffort:this.config.effort}});
+    this.emit({kind:'toolUse',id:w.id,tool:'Agent',title:`Delegate ${w.name}`,detail:text,parent:null,input:{description:w.name,prompt:text,subagent_type:`${w.engine}-worker`,run_in_background:true}});
+    this.emit({kind:'subagentStarted',id:w.id,description:w.name,type:`${w.engine}-worker`,prompt:text,background:true,execution:{run,ownerSessionId:this.config.sessionId,threadId:w.sessionId||null,turnId:null}});
+    this.emit({kind:'subagentRuntime',id:w.id,runtime:{engine:w.engine,reasoningEffort:this.config.effort}});
     const finish=(status:string,result:string)=>{
       if(!w.active||w.run!==run)return;
       if(w.denied||w.approvals.size){status='failed';result='Worker execution blocked by denied or unresolved approval.\n'+result;}
@@ -109,7 +117,7 @@ export class AgyWorkers {
       if(item.kind==='toolUse'||item.kind==='toolResult'){if(item.kind==='toolResult'&&item.failed)w.denied=true;this.emit({...item,parent:w.id,id:`${w.id}:${run}:${item.id}`});}
     };
     try{
-      w.head=this.factory({...this.config,worker:true,processStarted:pid=>{
+      w.head=this.factory({...this.config,worker:true,workerEngine:w.engine,processStarted:pid=>{
         if(w.run!==run||!w.active)throw Error('Stale worker process registration.');
         const started=processStartTime(pid);if(!started)throw Error('Cannot record worker process identity.');
         this.config.processStarted?.(pid);w.processes.push({pid,started});this.save();
@@ -134,7 +142,7 @@ export class AgyWorkers {
   }
   private cancelApprovals(w:Worker){for(const id of w.approvals.keys())this.emit({kind:'permissionCancelled',requestId:`worker:${w.id}:${w.run}:${id}`});w.approvals.clear();}
   private deliverReport(w:Worker){
-    this.report(w.id,`<app_task_result task_id="${w.id}" run="${w.run}" status="${w.status}">\n${(w.report??'').replaceAll('<','&lt;')}\n</app_task_result>\nWorker completion is execution evidence, not acceptance of the user's full objective. Assess the result and continue authorized work as needed.`,w.run);
+    this.report(w.id,`<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${(w.report??'').replaceAll('<','&lt;')}\n</app_task_result>\nWorker completion is execution evidence, not acceptance of the user's full objective. Assess the result and continue authorized work as needed.`,w.run);
   }
   beginReport(id:string,run:number):boolean {
     const w=this.workers.get(id);if(this.closed||!w||w.run!==run||!w.reportPending||w.reportDispatching||w.active||w.cleaning||w.cleanup)return false;

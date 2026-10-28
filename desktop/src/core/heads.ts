@@ -4,6 +4,7 @@
 //
 // Kept in bot.json's `heads` key in 1.x's format ({engines, answerWith, limits, handoffs,
 // codexModel}), so a bot set up in 1.x keeps its heads here.
+import { agyPairAllowed } from "./agent/agy-capabilities";
 import { randomUUID } from "node:crypto";
 import { characterCount, characterPrefix } from "./briefing";
 
@@ -38,7 +39,7 @@ const clamp = (value: unknown, fallback: number) =>
 
 export function makeHeads(engines: Engine[], answerWith: AnswerTarget = "both", rest: Partial<Omit<Heads, "engines" | "answerWith">> = {}): Heads {
   // Restore old mixed configurations as single agy; never start an unvalidated partner.
-  const kept = engines.includes("agy") ? ["agy" as Engine] : ENGINES.filter((engine) => engines.includes(engine)).slice(0, 2);
+  const kept = engines.includes("agy") ? (engines.includes("codex") && !engines.includes("claude") && agyPairAllowed("agy", "codex") ? ["codex", "agy"] as Engine[] : ["agy" as Engine]) : ENGINES.filter((engine) => engines.includes(engine)).slice(0, 2);
   const heads: Heads = { engines: kept.length ? kept : ["claude"], answerWith, limits: rest.limits ?? { ...DEFAULT_LIMITS }, handoffs: rest.handoffs ?? true, codexModel: rest.codexModel ?? null };
   heads.answerWith = fitted(heads, answerWith);
   return heads;

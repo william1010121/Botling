@@ -1,3 +1,5 @@
+import { AgyCodexHead } from "./agent/agy-codex-head";
+import { agyPairAllowed } from "./agent/agy-capabilities";
 import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
 import { AGY_EXECUTION_BLOCKED, AgyHead, type AgyConfig } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
@@ -501,6 +503,10 @@ export class Bot {
       const saved = this.store.loadSettings().agyConversation;
       if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.session = { sessionId: saved, started: true }; this.briefing = false; }
     }
+    if (this.mixedCodex) {
+      const saved = this.store.loadSettings().mixedCodexConversation;
+      if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.session = {sessionId:saved,started:true}; this.briefing = false; }
+    }
     this.conductor = new Conductor(this.headsSettings);
     this.load();
     // Subagents that were running when the app went away went with their process.
@@ -548,10 +554,16 @@ export class Bot {
     return owner.engine !== head ? owner.engine : owner.partner?.engine ?? otherHead(head, this.heads);
   }
 
+  private get singleActionApprovals(): boolean { return this.engine === "agy" || this.mixedCodex; }
+
+  private get mixedCodex(): boolean {
+    return this.engine === "codex" && this.headsSettings.engines.includes("agy") && agyPairAllowed("codex", "agy");
+  }
+
   /** Execution policy, including on-demand and restored routes (not just selected heads). */
   private allowsEngineRoute(head: Engine, from: Engine = this.engine): boolean {
     const owner = this.owner;
-    return head === from || !(head === "agy" || from === "agy" || owner.engine === "agy"
+    return head === from || (agyPairAllowed(from, head) && owner.engine !== "claude" && !owner.headsSettings.engines.includes("claude") && owner.partner?.engine !== "claude") || !(head === "agy" || from === "agy" || owner.engine === "agy"
       || owner.partner?.engine === "agy" || owner.headsSettings.engines.includes("agy"));
   }
 
@@ -1670,7 +1682,7 @@ export class Bot {
   async setHeads(engines: Engine[]): Promise<ResultOf<"heads.set">> {
     if (this.options.primary) return this.options.primary.setHeads(engines);
     const kept = (["claude", "codex", "agy"] as Engine[]).filter((engine) => engines.includes(engine));
-    if (kept.includes("agy") && kept.length > 1) throw new ContractError("conflict", "Antigravity mixed-engine sessions are disabled pending lifecycle validation.");
+    if (kept.includes("agy") && kept.length > 1 && !(kept.length === 2 && kept.includes("codex") && agyPairAllowed("agy", "codex"))) throw new ContractError("conflict", "Antigravity mixed-engine sessions are disabled pending lifecycle validation.");
     if (!kept.length) throw new ContractError("bad_request", "A bot needs a head.");
     if (kept.includes("codex") && !this.options.codexConfig) throw new ContractError("conflict", "Codex is not available here.");
     if (kept.length > 2) throw new ContractError("bad_request", "Choose at most two engines.");
@@ -2395,14 +2407,28 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: this.profile.folder, sessionId: start.sessionId, resume: start.resume,
-        model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown });
+        model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown,
+        codexWorkerConfig: worker => {
+          if (!this.options.codexConfig) throw new Error("Codex worker transport unavailable.");
+          return this.options.codexConfig(this.profile, { ...start, sessionId: worker.sessionId, resume: worker.resume,
+            systemPrompt: worker.systemPrompt ?? "", workerInstructions: "", codexModel: this.heads.codexModel, routinesFile: null,
+            autoMode: false, codexBypassPermissions: false, claudeBypassPermissions: false, addDirs: [] });
+        } });
       head = config.transport === "acp"
         ? new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) })
         : new AgyHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) });
     } else if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
-      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
-      head = new CodexHead(config, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
+      const configured = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
+      const config = this.mixedCodex ? {...configured,autoMode:false,bypassPermissions:false,componentEditor:null,workerInstructions:null,routinesFile:null,writableRoots:[]} : configured;
+      if (this.mixedCodex && config.resume) {
+        const thread = config.threads.thread(config.sessionId);
+        if (!thread || (config.workerInstructions && !config.threads.isManaged(config.sessionId, thread))) throw new Error("Mixed Codex conversation mapping unavailable; identity retained, no replacement or replay.");
+      }
+      head = new (this.mixedCodex ? AgyCodexHead : CodexHead)(config, { onItem: item => {
+        if (this.mixedCodex && item.kind === "init") { this.store.saveSetting("mixedCodexConversation", item.sessionId); this.store.saveSetting("mixedCodexRecovery", undefined); }
+        this.onItem(head, item);
+      }, onExit: exit => this.onExit(head, exit) });
     } else {
       const config = this.options.headConfig(this.profile, start);
       head = new ClaudeHead(config, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
@@ -2419,6 +2445,7 @@ export class Bot {
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
   private newSession() {
+    if (this.mixedCodex && !this.readOnly) { this.store.saveSetting("mixedCodexConversation", undefined); this.store.saveSetting("mixedCodexRecovery", undefined); }
     if (this.engine === "agy" && !this.readOnly) {
       this.store.saveSetting("agyConversation", undefined);
       this.store.saveSetting("agyRecovery", undefined);
@@ -3314,7 +3341,7 @@ export class Bot {
     let failedTurn = false;
     if (turn?.open && turn.head === head) {
       // A resume of a session claude no longer has: start a new session and send the message again, once.
-      if (this.engine !== "agy" && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
+      if (this.engine !== "agy" && !this.mixedCodex && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
         this.log(`resuming session ${this.session.sessionId} failed (${why}: ${exit.stderr.slice(0, 200)}); starting a new session`);
         this.newSession();
         this.store.saveHead(this.session);
@@ -3337,7 +3364,7 @@ export class Bot {
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
       this.restarting = null;
-    } else if (exit.expected && this.engine === "agy") {
+    } else if (exit.expected && (this.engine === "agy" || this.mixedCodex)) {
       // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
       this.briefing = !this.session.started;
     } else if (exit.expected) {
@@ -3347,7 +3374,10 @@ export class Bot {
       // Nobody asked it to exit (1.x's `.exited`): it is asleep, and the next message wakes a new
       // session, briefed from memory.md and the chat. A non-zero exit is said in the chat (1.x:
       // its stderr, else "claude exited unexpectedly"); a failed turn already says it.
-      if (this.engine === "agy") {
+      if (this.mixedCodex) {
+        this.store.saveSetting("mixedCodexRecovery", {sessionId:this.session.sessionId,state:"resume-required",reason:exit.stderr.slice(-1000)||why});
+        this.briefing = !this.session.started;
+      } else if (this.engine === "agy") {
         // Preserve identity across failed resumes, the next explicit message and app restart.
         this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: exit.stderr.slice(-1000) || why });
         this.briefing = !this.session.started;
@@ -4390,7 +4420,7 @@ export class Bot {
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
     if (isReviewRefusal(item.requestId)) return this.showReviewRefusal(head, item);
     // A bare tool name or a 1.x rule ("Bash(npm test)", "Edit(//…)", "WebFetch(domain:…)"): permission-rules.ts.
-    if (this.engine !== "agy" && item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
+    if (!this.singleActionApprovals && item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
       head.answer(item.requestId, true, item.input);
       return;
     }
@@ -4400,7 +4430,7 @@ export class Bot {
       return;
     }
     const choices: ChoiceRecord[] = [{ label: "Allow once", recommended: true, action: "allowOnce" }];
-    if (this.engine !== "agy" && !NEVER_ALWAYS.has(item.tool)) choices.push({ label: `Always allow ${item.tool}`, detail: `For ${this.profile.name}, from now on`, recommended: false, action: "alwaysAllow" });
+    if (!this.singleActionApprovals && !NEVER_ALWAYS.has(item.tool)) choices.push({ label: `Always allow ${item.tool}`, detail: `For ${this.profile.name}, from now on`, recommended: false, action: "alwaysAllow" });
     choices.push({ label: "Don't allow", recommended: false, action: "deny" });
     const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary), date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
     const expires = Date.now() + this.options.approvalTimeoutMs;
@@ -4636,8 +4666,8 @@ export class Bot {
       return { accepted: false };
     }
     // What a pick means comes from its action, never its words: anything not an allow refuses.
-    const allow = choice.action === "allowOnce" || (this.engine !== "agy" && choice.action === "alwaysAllow");
-    const always = this.engine !== "agy" && choice.action === "alwaysAllow" && !NEVER_ALWAYS.has(approval.tool);
+    const allow = choice.action === "allowOnce" || (!this.singleActionApprovals && choice.action === "alwaysAllow");
+    const always = !this.singleActionApprovals && choice.action === "alwaysAllow" && !NEVER_ALWAYS.has(approval.tool);
     clearTimeout(approval.timer);
     this.approvals.delete(messageId);
     record.chosen = index;

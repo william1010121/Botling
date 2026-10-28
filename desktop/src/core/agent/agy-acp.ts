@@ -7,7 +7,9 @@ import type { AgyConfig } from "./agy";
 import type { HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
 import { imageMediaType } from "../attachments";
-import type { AgyWorkers } from "./agy-workers";
+import { agyWorkerRuntimeEnabled } from "./agy-capabilities";
+import { createAgyWorkerHead } from "./agy-worker-router";
+import { AgyWorkers } from "./agy-workers";
 import type { CodexItem } from "./codex";
 import { AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
 import { processTreeAdapter, type ManagedProcess, type TerminateResult } from "../process/tree";
@@ -229,7 +231,7 @@ export class AgyAcpHead {
   get completionDependencies() { return this.workers?.completionDependencies ?? []; }
   get pid() { return this.process?.pid ?? -1; }
   start() {
-    if (this.config.worker) throw new Error("Antigravity app workers are disabled pending live lifecycle validation.");
+    if (this.config.worker && !agyWorkerRuntimeEnabled()) throw new Error("Antigravity app workers are disabled pending live lifecycle validation.");
     verifyAcpRuntime(this.config.command);
     verifyAgyFileHelper(join(dirname(this.config.command), "botling-agy-file-helper"), this.config.cwd);
     if (!this.config.acpHome || !isAbsolute(this.config.acpHome)) throw new Error("ACP requires a private Botling profile.");
@@ -244,8 +246,7 @@ export class AgyAcpHead {
     writeFileSync(join(home, "antigravity-acp/trusted_workspaces.json"), JSON.stringify({ trusted: [], untrusted: [cwd] }), { mode: 0o600 });
     const env: NodeJS.ProcessEnv = { GEMINI_HOME: home };
     for (const key of ["HOME", "USER", "PATH", "TMPDIR", "LANG"]) if (process.env[key]) env[key] = process.env[key];
-    this.bridge = new AgyMcpBridge(cwd, home, undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"));
-    const mcpServers = this.bridge.start().then(server => [server]);
+    const mcpServers = this.connectTools(cwd, home);
     void mcpServers.catch(() => {});
     this.process = processTreeAdapter().spawn(this.config.command, [], { cwd, env });
     const child = this.process.child; this.running = true;
@@ -281,7 +282,14 @@ export class AgyAcpHead {
     child.once("close", report);
     try { if (this.pid > 0) this.config.processStarted?.(this.pid); }
     catch (error) { this.failure = "Cannot register ACP process for cleanup."; void this.terminate(500); throw error; }
-    void this.protocol.start().catch(() => {});
+    void this.protocol.start().then(() => this.drain()).catch(() => {});
+  }
+  private connectTools(cwd:string, home:string) {
+    if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.handlers.onItem,
+      (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
+      (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h)));
+    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"));
+    return this.bridge.start().then(server => [server]);
   }
   send(text: string, uuid: string, images: string[] = []) {
     if (!this.protocol || this.stopped) throw new Error("ACP not running.");

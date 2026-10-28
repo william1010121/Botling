@@ -13,6 +13,9 @@ export interface AgyConfig {
   acpHome?: string;
   transport?: "acp";
   worker?: boolean;
+  workerEngine?: "agy" | "codex";
+  /** App-supplied transport config; never constructed from model/tool arguments. */
+  codexWorkerConfig?: (worker: AgyConfig) => import("./codex").CodexHeadConfig;
   processStarted?: (pid: number) => void;
   canStartReport?: () => boolean;
   prefixArgs?: string[];

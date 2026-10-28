@@ -1,3 +1,4 @@
+import { agyPairAllowed } from "../core/agent/agy-capabilities";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { postToChat } from "./editor-surface";
@@ -479,7 +480,7 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           // 1.x's "Engines in this bot": the only head cannot go; turning off the first of two runs the bot on the other, through a handoff.
           return (
             <Toggle key={engine} label={name} checked={on} disabled={bot.phase === "switching" || (on && !two) || (!on && two && engine !== "agy")}
-              onChange={(wanted) => setHeads(wanted ? (engine === "agy" || hasAgy ? [engine] : [...view.engines, engine]) : view.engines.filter((candidate) => candidate !== engine))} />
+              onChange={(wanted) => setHeads(wanted ? ((engine === "agy" || hasAgy) && !(agyPairAllowed("agy", "codex") && engine !== "claude" && !hasClaude) ? [engine] : [...view.engines, engine]) : view.engines.filter((candidate) => candidate !== engine))} />
           );
         })}
       </Group>
