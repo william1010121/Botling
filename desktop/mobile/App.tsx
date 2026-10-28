@@ -1,12 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MobileError, MobileTransport, endpointURL, type MobileSnapshot, type MobileCommand } from './transport';
+import { Session, sessionRequest, loadDrafts, saveDrafts, clearDrafts, type BrowserSession } from './session';
 import type { MessageView } from '../src/contract';
 
 export function App() {
+  const [session, setSession] = useState<BrowserSession | null>(null);
+  const [authState, setAuthState] = useState<'checking' | 'ready' | 'signedOut' | 'denied' | 'unavailable'>('checking');
+  const draftOwner = useRef('');
+  const connecting = useRef(false);
   const [client, setClient] = useState<MobileTransport | null>(null);
   const [snapshot, setSnapshot] = useState<MobileSnapshot | null>(null);
   const [selected, setSelected] = useState<string>();
-  const [navigation, setNavigation] = useState(true);
+  const [navigation, setNavigation] = useState(() => window.matchMedia?.('(min-width: 601px)').matches ?? false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reply, setReply] = useState<MessageView | null>(null);
   const [target, setTarget] = useState('both');
@@ -23,23 +28,52 @@ export function App() {
   const current = useRef(client); current.current = client;
   const generation = useRef(0);
   const actionLock = useRef(false);
+  const pollPending = useRef(false);
   const messages = useRef<HTMLElement>(null);
   const follow = useRef(true);
   const bot = snapshot?.bots.find(row => row.id === selected);
   const chat = snapshot?.chat && snapshot.chat.botId === selected ? snapshot.chat : null;
   const draft = selected ? drafts[selected] ?? '' : '';
 
-  function disconnect() {
+  function disconnect(discardDrafts = true) {
     generation.current++;
-    client?.close(); setClient(null); setSnapshot(null); setSelected(undefined);
-    setDrafts({}); setReply(null); setQuestion(null); setAnswer(''); setBusy(false);
-    actionLock.current = false; setLoading(false); setRefreshed(''); setUncertain(false);
+    client?.close(); current.current = null; setClient(null); setSnapshot(null); setSelected(undefined);
+    if (discardDrafts) { setDrafts({}); clearDrafts(); draftOwner.current = ''; }
+    setSession(null); setAuthState('signedOut');
+    setReply(null); setQuestion(null); setAnswer(''); setBusy(false);
+    actionLock.current = false; setLoading(false); setRefreshed(''); if (discardDrafts) setUncertain(false);
   }
   function fail(cause: unknown) {
     setError(cause instanceof Error ? cause.message : 'Request failed.');
-    if (cause instanceof MobileError && cause.auth) disconnect();
+    if (cause instanceof MobileError && cause.auth) disconnect(false);
     if (cause instanceof MobileError && cause.uncertain) setUncertain(true);
   }
+  async function connect() {
+    if (connecting.current) return;
+    connecting.current = true; setAuthState('checking'); setError('');
+    try {
+      const next = Session.parse(await sessionRequest('session'));
+      if (next.expiresAt <= Date.now()) throw new MobileError('Session expired. Sign in again.', true);
+      const restored = draftOwner.current === next.principal ? drafts : loadDrafts(next.principal);
+      draftOwner.current = next.principal; setDrafts(restored);
+      setSession(next); setClient(new MobileTransport(endpointURL('/api/mobile/browser/command', location.origin), { csrf: next.csrf }));
+      setSelected(next.botIds[0]); setAuthState('ready');
+    } catch (cause) {
+      setAuthState(cause instanceof MobileError ? cause.auth ? 'signedOut' : cause.denied ? 'denied' : 'unavailable' : 'unavailable');
+      setError(cause instanceof MobileError ? cause.message : 'Sign-in is unavailable. Try again.');
+    } finally { connecting.current = false; }
+  }
+  async function logout() {
+    if (!session || actionLock.current) return;
+    actionLock.current = true; setBusy(true);
+    try {
+      await sessionRequest('logout', session.csrf);
+      disconnect(); window.location.assign('/cdn-cgi/access/logout');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not sign out. Try again.'); }
+    finally { actionLock.current = false; setBusy(false); }
+  }
+  useEffect(() => { void connect(); }, []);
+  useEffect(() => { if (draftOwner.current) saveDrafts(draftOwner.current, drafts); }, [drafts]);
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
     window.addEventListener('online', update); window.addEventListener('offline', update);
@@ -47,21 +81,24 @@ export function App() {
   }, []);
   useEffect(() => {
     if (!client) return;
-    let stopped = false, pending = false;
+    let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const version = ++generation.current;
     const refresh = async () => {
-      if (stopped || pending || document.hidden || !navigator.onLine) return;
-      pending = true; setLoading(true);
+      clearTimeout(timer);
+      if (stopped || document.hidden || !navigator.onLine) return;
+      // Shared across effect generations so selection/reconnect cannot overlap reads.
+      if (pollPending.current) { timer = setTimeout(refresh, 100); return; }
+      pollPending.current = true; setLoading(true);
       try {
         const next = await client.snapshot(selected);
         if (stopped || version !== generation.current) return;
-        setSnapshot(next); setRefreshed(new Date().toLocaleTimeString());
+        setSnapshot(next); setError(''); setRefreshed(new Date().toLocaleTimeString());
         if (!selected && next.chat) setSelected(next.chat.botId);
       } catch (cause) { if (!stopped && version === generation.current) fail(cause); }
       finally {
-        pending = false;
-        if (!stopped) { setLoading(false); timer = setTimeout(refresh, 5_000); }
+        pollPending.current = false;
+        if (!stopped) { setLoading(false); clearTimeout(timer); timer = setTimeout(refresh, 5_000); }
       }
     };
     const resume = () => { if (timer) clearTimeout(timer); void refresh(); };
@@ -90,13 +127,16 @@ export function App() {
   const canSend = Boolean(client && chat && online && !busy && !uncertain && !bot?.problem && !chat.pendingFiles?.length);
 
   return <div className="app">
-    <header><button onClick={() => setNavigation(!navigation)} aria-expanded={navigation} aria-controls="chats">Chats</button><div><strong>{bot?.name ?? 'Botling'}</strong><small>{client ? !online ? 'Offline · draft kept in this tab' : loading ? 'Refreshing…' : `Updated ${refreshed || '…'}` : 'Mobile'}</small></div>{client && <button onClick={disconnect}>Disconnect</button>}</header>
+    <header><button onClick={() => setNavigation(!navigation)} aria-expanded={navigation} aria-controls="chats">Chats</button><div><strong>{bot?.name ?? 'Botling'}</strong><small>{client ? !online ? 'Offline · draft kept in this tab' : loading ? 'Refreshing…' : `Updated ${refreshed || '…'}` : 'Mobile'}</small></div>{client && <button disabled={busy} onClick={() => void logout()}>Sign out</button>}</header>
     {error && <div className="banner" role="alert">{error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
-    {!client ? <main className="connect"><h1>Your bots, with you.</h1><p>Open this page from your private Botling server and enter its access token.</p><form onSubmit={event => {
-      event.preventDefault(); const form = event.currentTarget; const data = new FormData(form);
-      try { const transport = new MobileTransport(endpointURL(String(data.get('endpoint')), location.origin), String(data.get('token'))); setError(''); setClient(transport); form.reset(); }
-      catch (cause) { fail(cause); }
-    }}><label>Command endpoint<input name="endpoint" defaultValue="/api/mobile/command" required autoCapitalize="none" spellCheck={false} /></label><label>Access token<input name="token" type="password" required autoComplete="off" autoCapitalize="none" spellCheck={false} /></label><button className="primary">Connect</button></form><p className="muted">The token stays in memory until you disconnect or close this page. Keep Botling running on your computer. A configured, authenticated HTTPS bridge is required.</p></main> : <div className="workspace">
+    {!client ? <main className="connect" aria-busy={authState === 'checking'}><h1>Your bots, with you.</h1>
+      <p>Sign in with the Google account approved by your Botling owner. Only explicitly shared chats are available.</p>
+      {authState === 'checking' ? <p role="status">Checking your session…</p> : <>
+        <button className="primary" onClick={() => { window.location.assign('/api/mobile/login'); }}>Sign in with Google</button>
+        <button onClick={() => void connect()}>Check connection</button>
+      </>}
+      <p className="muted">Keep Botling running on your computer. Drafts stay in this tab through sign-in; signing out clears them. No access token to copy.</p>
+    </main> : <div className="workspace">
       <nav id="chats" className={navigation ? 'open' : ''} aria-label="Chats"><h2>Chats</h2>{!snapshot && <p>Waiting for the server…</p>}{snapshot?.bots.map(row => <button key={row.id} aria-current={selected === row.id ? 'page' : undefined} disabled={busy} onClick={() => chooseBot(row.id)}><strong>{row.name}</strong><small>{row.working ? 'Working' : row.role === 'manager' ? 'Project' : 'Ready'}{row.unread ? ` · ${row.unread} unread` : ''}{row.approvals ? ` · ${row.approvals} waiting` : ''}</small></button>)}</nav>
       <main className="conversation" aria-label="Conversation">
         <div className="chat-tools"><span>{bot?.working ? '● Working' : 'Chat'}</span><button onClick={() => { setError(''); setRevision(value => value + 1); }} disabled={loading}>Refresh</button></div>

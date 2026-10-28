@@ -6,6 +6,7 @@ import { App } from './App';
 import { PROTOCOL_VERSION } from '../src/contract';
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
+  sessionStorage.clear();
   vi.useFakeTimers();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(document, 'hidden', { configurable: true, value: false });
@@ -15,6 +16,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 it('continues refreshing after opening the already-selected chat', async () => {
   let reads = 0;
   vi.stubGlobal('fetch', vi.fn(async (_url: unknown, init: RequestInit) => {
+    if (String(_url).endsWith('/session')) return new Response(JSON.stringify({ principal: 'a'.repeat(64), csrf: 'c'.repeat(43), expiresAt: Date.now() + 3600000, botIds: ['main'] }));
     const request = JSON.parse(init.body as string); reads++;
     return new Response(JSON.stringify({ v: PROTOCOL_VERSION, id: request.id, ok: true, result: {
       epoch: 'epoch', seq: reads,
@@ -23,11 +25,73 @@ it('continues refreshing after opening the already-selected chat', async () => {
     } }));
   }));
   await act(async () => root.render(<App />));
-  (container.querySelector('input[name="token"]') as HTMLInputElement).value = 'fixture-token';
-  await act(async () => { container.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); });
+  expect(container.querySelector('input[name="token"]')).toBeNull();
+  expect(container.querySelector('nav')!.className).not.toContain('open');
   const before = reads;
   await act(async () => { (container.querySelector('nav button') as HTMLButtonElement).click(); });
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
   expect(reads).toBeGreaterThan(before);
   expect(container.querySelector('.messages')!.textContent).toContain(`revision-${reads}`);
+});
+
+function browserFixture() {
+  const principal = 'b'.repeat(64); const csrf = 's'.repeat(43);
+  let status = 200, reads = 0, active = 0, maximum = 0;
+  let gate: Promise<void> | undefined;
+  const fetcher = vi.fn(async (url: unknown, init: RequestInit) => {
+    if (String(url).endsWith('/session')) return new Response(JSON.stringify({ principal, csrf, expiresAt: Date.now() + 3600000, botIds: ['main'] }));
+    const request = JSON.parse(init.body as string); reads++; active++; maximum = Math.max(active, maximum);
+    try {
+      if (gate) await gate;
+      if (status === 401) return new Response(JSON.stringify({ error: { code: 'auth_required' } }), { status });
+      if (status === 403) return new Response(JSON.stringify({ v: PROTOCOL_VERSION, id: request.id, ok: false, error: { code: 'forbidden', message: 'Not granted' } }), { status });
+      return new Response(JSON.stringify({ v: PROTOCOL_VERSION, id: request.id, ok: true, result: {
+        epoch: 'epoch', seq: reads, bots: [{ id: 'main', name: 'Main', role: 'main', working: false, approvals: 0, unread: 0, problem: null, heads: ['claude'] }],
+        chat: { botId: 'main', messages: [], tasks: [], pendingFiles: [] },
+      } }));
+    } finally { active--; }
+  });
+  vi.stubGlobal('fetch', fetcher);
+  sessionStorage.setItem('botling-mobile-drafts', JSON.stringify({ principal, drafts: { main: 'unsent draft' } }));
+  return { fetcher, principal, csrf, status: (next: number) => { status = next; }, gate: (next?: Promise<void>) => { gate = next; }, maximum: () => maximum };
+}
+it('restores drafts on return/reload and sends cookie credentials without bearer or storage credentials', async () => {
+  const fixture = browserFixture();
+  await act(async () => root.render(<App />));
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+  const init = fixture.fetcher.mock.calls.find(([url]) => String(url).endsWith('/browser/command'))![1];
+  expect(init).toMatchObject({ credentials: 'same-origin', redirect: 'manual', headers: { 'X-Botling-CSRF': fixture.csrf } });
+  expect(init.headers).not.toHaveProperty('Authorization');
+  expect(JSON.stringify(sessionStorage)).not.toContain(fixture.csrf);
+  await act(async () => root.unmount()); root = createRoot(container);
+  await act(async () => root.render(<App />));
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+});
+it('preserves drafts on expiry and reconnects without an automatic login redirect', async () => {
+  const fixture = browserFixture(); await act(async () => root.render(<App />));
+  fixture.status(401); await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(container.textContent).toContain('Sign in with Google');
+  expect(sessionStorage.getItem('botling-mobile-drafts')).toContain('unsent draft');
+  fixture.status(200);
+  await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Check connection')!.click(); });
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+it('keeps the authenticated UI and draft on bot denial, then clears the error after successful refresh', async () => {
+  const fixture = browserFixture(); await act(async () => root.render(<App />));
+  fixture.status(403); await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(container.textContent).toContain('This bot or action is not authorized');
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+  fixture.status(200); await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+it('does not overlap polls when online/visibility events arrive during an in-flight refresh', async () => {
+  const fixture = browserFixture(); await act(async () => root.render(<App />));
+  let release!: () => void; fixture.gate(new Promise<void>(resolve => { release = resolve; }));
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  await act(async () => { window.dispatchEvent(new Event('online')); document.dispatchEvent(new Event('visibilitychange')); await vi.advanceTimersByTimeAsync(500); });
+  expect(fixture.maximum()).toBe(1);
+  fixture.gate(); await act(async () => release());
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(fixture.maximum()).toBe(1);
 });

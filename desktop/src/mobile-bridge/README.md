@@ -1,5 +1,9 @@
 # Private mobile bridge (review required)
 
+Google sign-in candidate: see [Access deployment contract](./ACCESS-CONTRACT.md). The browser now uses
+Google/Access sessions; the bearer setup below applies only to automation. This candidate
+requires coordinated edge configuration and private account policy before deployment.
+
 Protocol v10, `POST /api/mobile/command`, same-origin bearer authentication. Mobile assets are
 served at `/mobile/`; only the public application shell is unauthenticated. Every data/command
 request needs a current token and an explicit bot grant. There is no HTTP listener, public bind,

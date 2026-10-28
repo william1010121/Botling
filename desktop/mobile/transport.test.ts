@@ -21,9 +21,21 @@ describe('mobile authentication and protocol', () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ v: PROTOCOL_VERSION, cmd: { type: 'chat.snapshot' } });
     expect(endpoint.search).toBe('');
   });
-  it.each([401, 403])('reports HTTP %i as authentication failure', async status => {
+  it('reports HTTP 401 as authentication failure', async () => {
+    const status = 401;
     const client = new MobileTransport(endpoint, 'test', async () => new Response('', { status }));
     await expect(client.snapshot()).rejects.toMatchObject({ auth: true });
+  });
+  it('distinguishes structured bot denial from edge denial without expiring the session', async () => {
+    for (const bridge of [true, false]) {
+      const fetcher = vi.fn(async (_url: unknown, init: RequestInit) => new Response(bridge ? JSON.stringify({
+        v: PROTOCOL_VERSION, id: JSON.parse(init.body as string).id, ok: false,
+        error: { code: 'forbidden', message: 'Command or bot not authorized.' },
+      }) : '<html>Denied</html>', { status: 403 }));
+      const client = new MobileTransport(endpoint, 'test', fetcher as typeof fetch);
+      await expect(client.snapshot()).rejects.toMatchObject({ auth: false, denied: true,
+        message: bridge ? 'This bot or action is not authorized. Choose an allowed chat.' : 'Access was denied before the request could be completed. Check your account access.' });
+    }
   });
   it('rejects mismatched response ids and versions', async () => {
     for (const change of [{ id: 'wrong' }, { v: 999 }]) {
