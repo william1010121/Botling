@@ -44,3 +44,25 @@ jobs:
         run: swift build --build-tests
       - name: Fast tests
         run: swift test --skip-build --no-parallel
+
+  desktop:
+    name: Electron 2 checks
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run release:check
+      - run: npm run test:release
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run test:reports
+      - run: npm run test:web-isolation

@@ -1,6 +1,6 @@
 {
   "name": "botling-desktop",
-  "version": "2.0.0-dev.20261029.18",
+  "version": "2.0.0",
   "private": true,
   "description": "Botling 2.0: cross-platform desktop app (React + TypeScript + Electron).",
   "main": "out/main/main.cjs",
@@ -31,7 +31,9 @@
     "dist:win": "node scripts/package.mjs --win",
     "dist:linux": "node scripts/package.mjs --linux",
     "test:packaged": "playwright test -c playwright.packaged.config.ts",
-    "test:packaged:fixture": "node build.mjs && node test/packaged/build-older.mjs"
+    "test:packaged:fixture": "node build.mjs && node test/packaged/build-older.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "test:release": "node --test scripts/release-check.test.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.9.0",
@@ -63,5 +65,5 @@
     "typescript": "5.9.3",
     "vitest": "4.1.12"
   },
-  "botlingDevTrial": true
+  "botlingDevTrial": false
 }

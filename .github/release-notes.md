@@ -1,49 +1,32 @@
-[Botling 2: First open / 首次開啟](https://github.com/william1010121/Botling/blob/bot/electron-2-0/docs/first-open.md) — macOS 15 Open Anyway / Windows SmartScreen.
+# Botling 2.0.0
 
-Botling 2 update checks are **on by default**, with a Settings opt-out. Automatic installation requires configured release trust; current development artifacts explicitly mark unsigned updates.
+Electron desktop release for **macOS Apple silicon (arm64)**. Intel, Windows and Linux assets
+are not included. This draft must be reviewed against the final integrated candidate before publication.
 
-## What's new in 1.19.0
+## Install
 
-- **Catch-up summaries.** Unread bot replies fold into one Catch-up card with a short summary
-  of what finished, what is still running and what waits for you. Any interval between your
-  messages can be summarized from its last reply, every bullet links back to the messages it
-  came from, and Settings → General → Chat summaries sets thresholds, model and prompt.
-- **One-time routines and Codex scheduling.** Routines can run once or every day in a chosen
-  time zone, and Codex heads can create, pause and cancel them with `app_routines`.
-- **Codex command monitors.** A Codex head can start an approved command, end its turn and be
-  woken when the command exits.
-- **A general Browser** for ordinary websites, with pinned sites, separate accounts and
-  Capture, so the Maintainer can build a tool for one exact website.
-- **Report a problem from any card** sends the card's context and a screenshot to the
-  Maintainer.
-- **Completion verification** can judge each reply and continue unfinished work; it is now
-  off by default and shows its verdict per reply when enabled.
-- Optional one-hour prompt cache for Claude subagents, faster scoped validation for Codex
-  workers, and bots tidying their notes together when you quit.
-- The hand-off chip and its Stop buttons over the input box are removed; hand-off dividers
-  stay in the chat.
-- Fixes for waits on live workers and scheduled retries, decisions handed between heads,
-  workers blocking new hand-offs, summary folding, subagent avatars and the pinned strip.
+Download `Botling-2-2.0.0-mac-arm64.dmg`, open it and drag **Botling 2.app** to Applications.
+Alternatively unpack `Botling-2-2.0.0-mac-arm64.zip`. Keep one installed production copy.
+The app uses ad-hoc Apple signing and is **not notarized**. If macOS blocks this trusted download,
+use the app-specific System Settings → Privacy & Security → Open Anyway flow; do not disable
+Gatekeeper globally. See [first-open guidance](https://github.com/william1010121/Botling/blob/v2.0.0/docs/first-open.md).
 
-See the [full changelog](https://github.com/william1010121/Botling/blob/v1.19.0/CHANGELOG.md#1190).
+The ZIP has a separate Ed25519 `.zip.manifest.json` for authenticated in-app updates. This updater
+signature is independent of Apple signing. Update checks are enabled by default with a Settings
+opt-out; automatic installation requires matching embedded release trust.
 
-## Known limitations
+## Existing data
 
-- Hand-offs can no longer be stopped from the chat; they end on their own or with the bot.
-- Authenticated Grok replies and sign-in persistence, a second Google account, Gemini's
-  nested menu on the real site, live model reactions and interruption recovery still need
-  live acceptance. Local fixtures and startup checks do not establish those results.
+The production profile is `~/Library/Application Support/Botling 2`. Existing production data is
+reused; **Dev Trial data is not automatically moved or merged**. The trial shortcut's explicit data
+override still targets its trial data: launch from Applications for the normal production profile.
+A fresh profile imports supported 1.x data from `~/.claudecodebot` without modifying the source.
+Retain the original data and attachments. Web sign-ins and plugin secrets require reauthentication.
+See [migration and release details](https://github.com/william1010121/Botling/blob/v2.0.0/desktop/docs/release-2.md).
 
-**Install**
+Claude and Codex require separately installed, authenticated CLIs. Antigravity requires its pinned
+external ACP/helper runtime configured in Settings; it is not ready out of the box. Live service
+availability depends on the user's installations and accounts.
 
-1. On macOS 14 or later (Apple silicon or Intel), download `botling-1.19.0-macOS.zip` below,
-   unzip it, and replace the previous app in Applications with **Botling.app**.
-2. The app is not notarized: the first time, right-click it → **Open** → **Open**.
-3. Install and sign in to the CLI for the head you use: [Claude Code](https://docs.claude.com/en/docs/claude-code)
-   (`claude` on your PATH) or Codex (`codex` on your PATH). Node.js (for plugin programs)
-   and git (for the plugin library) are recommended.
-
-Existing chats, settings, plugin secrets and web profiles reuse their current storage and
-application identity. Keep one installed copy when replacing the app.
-
-See the [README](https://github.com/william1010121/Botling#readme) for what it does and how it works.
+Final feature notes and known limitations must be reconciled with the integrated 2.0.0 changelog
+and clean-user acceptance before this draft is published.

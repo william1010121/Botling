@@ -1,37 +1,80 @@
-name: Release
+name: Electron 2 release candidate
 
+# Prepares assets only. Creating/publishing the GitHub release is an operator gate.
 on:
+  workflow_dispatch:
   push:
-    tags: ["v*"]
+    tags: ['v2.*']
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: electron-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: macos-26
-    timeout-minutes: 30
+  candidate:
+    runs-on: macos-15
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      BOTLING_RELEASE_BUILD: '1'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check the tag matches VERSION
-        run: |
-          test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
-          grep -q "^## ${GITHUB_REF_NAME#v}$" CHANGELOG.md
-      # Build + fast tests only: `.integration` / `.wallClock` tests skip themselves on CI.
-      - name: Test
-        run: |
-          (cd Web && npm ci && npm test)
-          swift build --build-tests
-          swift test --skip-build --no-parallel
-      - name: Build Botling.app
-        run: scripts/make-app.sh "${GITHUB_REF_NAME#v}"
-      - name: Publish the release
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Check stable tag, production profile and committed trust
         env:
-          GH_TOKEN: ${{ github.token }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip \
-            --title "Botling $GITHUB_REF_NAME" \
-            --notes-file .github/release-notes.md
+          if [ "$REF_TYPE" = tag ]; then
+            node scripts/release-check.mjs --tag "$REF_NAME" --trust
+          else
+            node scripts/release-check.mjs --trust
+          fi
+      - run: npm ci --no-audit --no-fund
+      - run: npm run test:release
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run test:reports
+      - run: npm run test:web-isolation
+      # Apple code signing is ad-hoc; no Developer ID/notarization is claimed.
+      # Ed25519 update signing below is mandatory and independent of Apple signing.
+      - name: Package macOS arm64 ZIP and DMG (never publishes)
+        run: npm run dist:mac
+      - name: Sign and verify the exact ZIP
+        env:
+          BOTLING_RELEASE_KEY: ${{ secrets.BOTLING_RELEASE_KEY }}
+        run: |
+          node scripts/release-check.mjs --signing-key
+          VERSION=$(node -p 'require("./package.json").version')
+          node scripts/release-sign.mjs sign "$VERSION" "dist/Botling-2-$VERSION-mac-arm64.zip"
+          node scripts/release-check.mjs --artifacts dist
+      - name: Record source and checksums
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          git rev-parse HEAD > dist/SOURCE_COMMIT.txt
+          cd dist
+          shasum -a 256 "Botling-2-$VERSION-mac-arm64.zip" "Botling-2-$VERSION-mac-arm64.zip.manifest.json" "Botling-2-$VERSION-mac-arm64.dmg" > SHA256SUMS.txt
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64-candidate
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/dist/Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64.zip
+            desktop/dist/Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64.zip.manifest.json
+            desktop/dist/Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64.dmg
+            desktop/dist/SHA256SUMS.txt
+            desktop/dist/SOURCE_COMMIT.txt
