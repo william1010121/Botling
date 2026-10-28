@@ -1,0 +1,15 @@
+{
+  "artifact": "antigravity-acp 1.4.3",
+  "handler_byte_offset": 68046291,
+  "checks": [
+    "run_command: pending until reply, then refused",
+    "run_command: pending until reply, then refused",
+    "write_to_file: pending until reply, then refused",
+    "write_to_file: pending until reply, then refused",
+    "start_subagent: pending until reply, then refused",
+    "start_subagent: pending until reply, then refused",
+    "mcp_tool: pending until reply, then refused",
+    "mcp_tool: pending until reply, then refused"
+  ],
+  "coverage": "handler only; helpers/peer synthetic; no native dispatch, auth, MCP or subagent execution"
+}

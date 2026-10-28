@@ -1,5 +1,7 @@
 # Antigravity integration — blocked, not ready to ship
 
+Latest: [ACP 1.4.3 runtime and authentication blocker](agy-acp-blocker.md).
+
 Follow-up: see [transport feasibility](agy-transport-feasibility.md). An isolated
 SDK development install and offline policy checks are now complete; official
 ACP is an additional candidate for existing subscription authentication. The
