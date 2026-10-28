@@ -72,7 +72,7 @@ it("parses Claude percentages, zero usage and reset dates without inventing abse
   expect(claudeUsageLimits({ five_hour: { utilization: "0" }, seven_day: { utilization: 101 } })).toEqual({});
 });
 
-it.each([[401, "auth_required"], [403, "forbidden"], [500, "network_error"]])("classifies Claude HTTP %s", async (status, expected) => {
+it.each([[401, "auth_rejected"], [403, "forbidden"], [500, "network_error"]])("classifies Claude HTTP %s", async (status, expected) => {
   const request = vi.fn(async () => new Response("", { status: Number(status) }));
   await expect(readClaudeQuota({ CLAUDE_CODE_OAUTH_TOKEN: "test-only" }, request as typeof fetch)).rejects.toMatchObject({ status: expected });
   expect(request).toHaveBeenCalledTimes(1);
@@ -109,4 +109,55 @@ rl.on('line', line => {
 
 it("reports missing Codex executable without launching a login", async () => {
   await expect(readCodexQuota({ BOTLING_CODEX_PATH: join(tempDir("quota-no-cli"), "absent") })).rejects.toMatchObject({ status: "cli_unavailable" });
+});
+
+// Synthetic file credentials only: never consult the real home directory or Keychain.
+function claudeFixture(expiresAt?: unknown) {
+  const dir = tempDir("quota-expiry");
+  writeFileSync(join(dir, ".credentials.json"), JSON.stringify({
+    claudeAiOauth: { accessToken: "fixture-only-token", expiresAt },
+  }));
+  return { CLAUDE_CONFIG_DIR: dir };
+}
+
+it.each([0, 1793145599999, 1793145600000])("rejects known expired Claude token %s before any request", async expiresAt => {
+  vi.spyOn(Date, "now").mockReturnValue(1793145600000);
+  const request = vi.fn(async () => new Response('{"seven_day":{"utilization":22}}'));
+  const env = claudeFixture(expiresAt);
+  await expect(readClaudeQuota(env, request as typeof fetch)).rejects.toMatchObject({ status: "token_expired", message: "token_expired" });
+  expect(request).not.toHaveBeenCalled();
+  const book = new UsageBook(tempDir("quota-expired-view"), undefined, undefined, async engine => {
+    if (engine === "claude") return readClaudeQuota(env, request as typeof fetch);
+    return { week: { used: .2, seen: 20 } };
+  });
+  await book.refresh();
+  expect(UsageView.parse(usageView(book.view())).quotaStatus?.claude).toBe("token_expired");
+  expect(request).not.toHaveBeenCalled();
+});
+
+it("uses an unexpired Claude token normally and reports 401 as rejection with unknown cause", async () => {
+  vi.spyOn(Date, "now").mockReturnValue(1793145600000);
+  const env = claudeFixture(1793145600001);
+  const request = vi.fn(async () => new Response('{"seven_day":{"utilization":22}}'));
+  expect((await readClaudeQuota(env, request as typeof fetch)).week?.used).toBe(.22);
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(request.mock.calls[0]).toEqual([
+    "https://api.anthropic.com/api/oauth/usage",
+    expect.objectContaining({ redirect: "error", signal: expect.any(AbortSignal) }),
+  ]);
+  const rejected = vi.fn(async () => new Response("", { status: 401 }));
+  const book = new UsageBook(tempDir("quota-rejected-view"), undefined, undefined, async engine => {
+    if (engine === "claude") return readClaudeQuota(env, rejected as typeof fetch);
+    return { week: { used: .2, seen: 20 } };
+  });
+  await book.refresh();
+  expect(UsageView.parse(usageView(book.view())).quotaStatus?.claude).toBe("auth_rejected");
+  expect(rejected).toHaveBeenCalledTimes(1);
+});
+
+it.each([undefined, null, "1793145599999", "invalid", -1, 1.5, {}, [], 1e100])("keeps unknown/malformed Claude expiry %j compatible", async expiresAt => {
+  vi.spyOn(Date, "now").mockReturnValue(1793145600000);
+  const request = vi.fn(async () => new Response('{"seven_day":{"utilization":22}}'));
+  expect((await readClaudeQuota(claudeFixture(expiresAt), request as typeof fetch)).week?.used).toBe(.22);
+  expect(request).toHaveBeenCalledTimes(1);
 });

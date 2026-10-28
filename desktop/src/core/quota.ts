@@ -8,7 +8,7 @@ import { executableEnvironment, resolveExecutable } from "./process/executable";
 import { codexRateLimits, isEmptyLimits, type RateLimits } from "./usage";
 import { toSwiftDate } from "./store/records";
 
-export type QuotaStatus = "available" | "missing" | "auth_required" | "forbidden" | "timeout" | "network_error" | "invalid_response" | "cli_unavailable";
+export type QuotaStatus = "available" | "missing" | "auth_required" | "token_expired" | "auth_rejected" | "forbidden" | "timeout" | "network_error" | "invalid_response" | "cli_unavailable";
 export class QuotaError extends Error { constructor(readonly status: QuotaStatus) { super(status); } }
 export type QuotaRetriever = (engine: "claude" | "codex") => Promise<RateLimits>;
 
@@ -30,10 +30,19 @@ async function claudeToken(env: NodeJS.ProcessEnv): Promise<string> {
     if (process.platform === "darwin" && !env.CLAUDE_CONFIG_DIR) {
       raw = await new Promise<string>((resolve, reject) => execFile("/usr/bin/security", ["find-generic-password", "-s", "Claude Code-credentials", "-w"], { timeout: 2000, maxBuffer: 128 * 1024 }, (error, stdout) => error ? reject(new QuotaError("auth_required")) : resolve(stdout)));
     } else raw = await readFile(join(env.CLAUDE_CONFIG_DIR ?? join(env.HOME ?? homedir(), ".claude"), ".credentials.json"), "utf8");
-    const token = JSON.parse(raw)?.claudeAiOauth?.accessToken;
+    const credentials = JSON.parse(raw)?.claudeAiOauth;
+    const token = credentials?.accessToken;
     if (typeof token !== "string" || !token) throw new Error();
+    // expiresAt is epoch milliseconds. Unknown/malformed expiry is not evidence of expiration.
+    const expiresAt = credentials?.expiresAt;
+    if (typeof expiresAt === "number" && Number.isSafeInteger(expiresAt) && expiresAt >= 0 && expiresAt <= Date.now()) {
+      throw new QuotaError("token_expired");
+    }
     return token;
-  } catch { throw new QuotaError("auth_required"); }
+  } catch (error) {
+    if (error instanceof QuotaError) throw error;
+    throw new QuotaError("auth_required");
+  }
 }
 
 export async function readClaudeQuota(env: NodeJS.ProcessEnv = process.env, request: typeof fetch = fetch): Promise<RateLimits> {
@@ -42,7 +51,7 @@ export async function readClaudeQuota(env: NodeJS.ProcessEnv = process.env, requ
     const response = await request("https://api.anthropic.com/api/oauth/usage", {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" }, signal: AbortSignal.timeout(6000), redirect: "error",
     });
-    if (!response.ok) throw new QuotaError(response.status === 401 ? "auth_required" : response.status === 403 ? "forbidden" : "network_error");
+    if (!response.ok) throw new QuotaError(response.status === 401 ? "auth_rejected" : response.status === 403 ? "forbidden" : "network_error");
     let value: unknown;
     try { value = await response.json(); } catch { throw new QuotaError("invalid_response"); }
     const limits = claudeUsageLimits(value);
