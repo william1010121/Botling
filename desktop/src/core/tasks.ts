@@ -8,7 +8,7 @@
 // kept on each card.
 import { characterCount, characterPrefix } from "./briefing";
 import { newId } from "./store/records";
-import type { TaskState, TaskTag } from "./reply";
+import { TASK_STAGES, type TaskStage, type TaskState, type TaskTag } from "./reply";
 
 export type Head = "claude" | "codex";
 
@@ -29,6 +29,8 @@ export interface TaskCard {
   now?: string;
   next?: string;
   blocked?: string;
+  /** How far finished work has got, from its `<task stage=…>` (2.x). */
+  stage?: TaskStage;
   createdAt: number;
   updatedAt: number;
   messageIDs: string[];
@@ -80,6 +82,7 @@ export function readTaskCard(value: unknown): TaskCard | null {
   else delete card.subagentIDs;
   if (raw.stateFromTag !== undefined && !STATES.has(raw.stateFromTag as TaskState)) delete card.stateFromTag;
   if (typeof raw.declared !== "boolean") delete card.declared;
+  if (!TASK_STAGES.includes(raw.stage as TaskStage)) delete card.stage;
   if (Array.isArray(raw.history)) card.history = raw.history.filter(isTaskEvent);
   else delete card.history;
   if (typeof raw.manuallyCompletedAt !== "number" || !Number.isFinite(raw.manuallyCompletedAt)) delete card.manuallyCompletedAt;
@@ -335,6 +338,8 @@ export class TaskBook {
       if (value) card[field] = value;
       else delete card[field];
     }
+    if (tag.stage) card.stage = tag.stage;
+    else if (tag.stage === "") delete card.stage;
     card.state = tag.state ?? (asks ? "waiting" : "running");
     if (tag.state) card.stateFromTag = tag.state;
     card.updatedAt = at;

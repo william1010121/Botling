@@ -5,7 +5,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RightPanel, taskTimeline, type RightPanelProps } from "../../src/renderer/RightPanel";
+import { RightPanel, taskGroups, taskTimeline, type RightPanelProps } from "../../src/renderer/RightPanel";
 import { shellOverlayActive } from "../../src/renderer/ShellOverlay";
 import type { BotView, TaskView } from "../../src/contract";
 
@@ -133,6 +133,70 @@ describe("grouped task list", () => {
     await act(async () => { row.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })); });
     expect(document.querySelector(".task-timeline")).toBeNull();
     expect(shellOverlayActive()).toBe(false);
+  });
+});
+
+describe("Quiet and To verify", () => {
+  const idle = { ...bot, working: false };
+  const staged: TaskView[] = [
+    task({ id: "live", name: "Live", state: "running", now: "Editing", updatedAt: at(2) }),
+    task({ id: "old", name: "Old", state: "running", now: "Waiting on CI", updatedAt: at(125) }),
+    task({ id: "busy", name: "Busy", state: "running", updatedAt: at(30), atWork: true }),
+    task({ id: "built", name: "Built", state: "running", stage: "built", updatedAt: at(3) }),
+    task({ id: "rev", name: "Reviewed", state: "done", stage: "reviewed", updatedAt: at(4) }),
+    task({ id: "inst", name: "Installed", state: "done", stage: "installed", updatedAt: at(5) }),
+    task({ id: "ok", name: "Verified", state: "done", stage: "verified", updatedAt: at(6) }),
+    task({ id: "plain", name: "Plain", state: "done", updatedAt: at(7) }),
+    task({ id: "closed", name: "Closed", state: "done", stage: "built", manuallyCompletedAt: at(8), updatedAt: at(8) }),
+    task({ id: "stop", name: "Stopped", state: "stopped", stage: "built", updatedAt: at(9) }),
+  ];
+  const ids = (list: TaskView[]) => list.map((item) => item.id);
+
+  it("routes stale tasks to Quiet, built-not-verified work to To verify, done+verified to Done", () => {
+    const lists = taskGroups(staged, false, Date.now());
+    expect(ids(lists.running)).toEqual(["live", "busy"]);
+    expect(ids(lists.quiet)).toEqual(["old"]);
+    expect(ids(lists.verify)).toEqual(["built", "rev", "inst"]);
+    expect(ids(lists.done)).toEqual(["ok", "plain", "closed", "stop"]);
+    // While the bot works, nothing is quiet.
+    expect(ids(taskGroups(staged, true, Date.now()).quiet)).toEqual([]);
+  });
+
+  it("orders the groups Needs you, Running, To verify, Quiet, Done; Quiet and Done start folded", async () => {
+    const { host } = await mount(null, { bot: idle, tasks: [...staged, task({ id: "ask", name: "Ask", state: "waiting", blocked: "Which?" })] });
+    const groups = [...host.querySelectorAll<HTMLElement>(".task-group")];
+    expect(groups.map((node) => node.dataset.group)).toEqual(["waiting", "running", "verify", "quiet", "done"]);
+    expect(groups.map((node) => node.querySelector("h3")!.textContent)).toEqual(["Needs you", "Running", "To verify", "Quiet", "Done"]);
+    expect(group(host, "quiet")!.querySelector(".task-group-fold")!.getAttribute("aria-expanded")).toBe("false");
+    expect(group(host, "verify")!.querySelector(".task-group-fold")!.getAttribute("aria-expanded")).toBe("true");
+    expect(group(host, "verify")!.querySelector(".task-group-count")!.textContent).toBe("3");
+  });
+
+  it("a quiet row says how long without news, in gray, and its card still offers Ask it to report", async () => {
+    const report = vi.fn();
+    const { host } = await mount(null, { bot: idle, tasks: staged, onAskForReport: report });
+    await act(async () => group(host, "quiet")!.querySelector<HTMLButtonElement>(".task-group-fold")!.click());
+    const row = group(host, "quiet")!.querySelector<HTMLElement>(".task-row")!;
+    expect(row.dataset.state).toBe("quiet");
+    expect(row.querySelector(".task-line")!.textContent).toBe("No news for 2 h");
+    expect(group(host, "running")!.querySelector('[data-task="old"]')).toBeNull();
+    await cleanup!(); cleanup = null;
+    const { host: open } = await mount("old", { bot: idle, tasks: staged, onAskForReport: report });
+    await act(async () => group(open, "quiet")!.querySelector<HTMLButtonElement>(".task-report")!.click());
+    expect(report).toHaveBeenCalled();
+  });
+
+  it("a To verify row shows its four-step bar and label; its card shows the four steps", async () => {
+    const { host } = await mount(null, { bot: idle, tasks: staged });
+    const line = (id: string) => group(host, "verify")!.querySelector(`.task-row[data-task="${id}"] .task-line`)!;
+    expect(line("built").textContent).toBe("Built · not reviewed");
+    expect(line("rev").textContent).toBe("Reviewed · not installed");
+    expect(line("inst").textContent).toBe("Installed · verifying");
+    expect([...line("rev").querySelectorAll<HTMLElement>(".task-stage-seg")].map((seg) => seg.dataset.step)).toEqual(["done", "current", "todo", "todo"]);
+    await cleanup!(); cleanup = null;
+    const { host: open } = await mount("inst", { bot: idle, tasks: staged });
+    const steps = [...group(open, "verify")!.querySelectorAll<HTMLElement>(".task-card .task-stage")];
+    expect(steps.map((step) => [step.textContent, step.dataset.step])).toEqual([["Code done", "done"], ["Reviewed", "done"], ["Installed", "current"], ["Verified", "todo"]]);
   });
 });
 

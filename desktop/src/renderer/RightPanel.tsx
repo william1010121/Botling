@@ -228,8 +228,30 @@ function taskTime(iso: string, now: number): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+/** "45 min", "2 h": how long a task has had no news. */
+function silence(task: TaskView, now: number): string {
+  const mins = Math.floor((now - new Date(task.updatedAt).getTime()) / 60_000);
+  return mins >= 60 ? `${Math.floor(mins / 60)} h` : `${mins} min`;
+}
+
+type Stage = NonNullable<TaskView["stage"]>;
+const STAGES: Stage[] = ["built", "reviewed", "installed", "verified"];
+const STAGE_LABELS: Record<Stage, string> = { built: "Built · not reviewed", reviewed: "Reviewed · not installed", installed: "Installed · verifying", verified: "Verified" };
+const STAGE_STEPS = ["Code done", "Reviewed", "Installed", "Verified"];
+
+/**
+ * Work built but not yet verified: a task running (or just sent) whose stage is built, reviewed or
+ * installed, or one said done at any stage but verified. Closed by you, it is done.
+ */
+export function toVerify(task: TaskView): boolean {
+  if (!task.stage || task.stage === "verified" || task.manuallyCompletedAt) return false;
+  return task.state === "pending" || task.state === "running" || task.state === "done";
+}
+
 /** How a task stands, in its row's second line (`TaskRowView.line`; design R2-3). */
-function taskLine(task: TaskView, stale: boolean, now: number): string {
+export function taskLine(task: TaskView, stale: boolean, now: number, quiet = false): string {
+  if (toVerify(task)) return STAGE_LABELS[task.stage!];
+  if (quiet) return `No news for ${silence(task, now)}`;
   if (stale) return `May be stuck · No news for ${Math.floor((now - new Date(task.updatedAt).getTime()) / 60_000)} min`;
   switch (task.state) {
     case "pending": return "New message · waiting for a head";
@@ -257,9 +279,27 @@ const Chevron = ({ className }: { className?: string }) => (
   <svg className={className} width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg>
 );
 
-type GroupKey = "waiting" | "running" | "done";
-const GROUPS: { key: GroupKey; title: string }[] = [{ key: "waiting", title: "Needs you" }, { key: "running", title: "Running" }, { key: "done", title: "Done" }];
-const groupOf = (task: TaskView): GroupKey => (task.state === "waiting" ? "waiting" : task.state === "pending" || task.state === "running" ? "running" : "done");
+type GroupKey = "waiting" | "running" | "verify" | "quiet" | "done";
+const GROUPS: { key: GroupKey; title: string }[] = [
+  { key: "waiting", title: "Needs you" }, { key: "running", title: "Running" }, { key: "verify", title: "To verify" },
+  { key: "quiet", title: "Quiet" }, { key: "done", title: "Done" },
+];
+
+/** The group a task is listed in: built-not-verified work is To verify; a running task with no news (`isStale`) is Quiet. */
+export function groupOf(task: TaskView, working: boolean, now: number): GroupKey {
+  if (task.state === "waiting") return "waiting";
+  if (toVerify(task)) return "verify";
+  if (task.state === "pending" || task.state === "running") return isStale(task, working, now) ? "quiet" : "running";
+  return "done";
+}
+
+/** The task list's groups, each in its order: under way newest first (`activeTasks`), finished newest first. */
+export function taskGroups(tasks: TaskView[], working: boolean, now: number): Record<GroupKey, TaskView[]> {
+  const lists: Record<GroupKey, TaskView[]> = { waiting: [], running: [], verify: [], quiet: [], done: [] };
+  const byDate = (a: TaskView, b: TaskView) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+  for (const task of [...tasks].sort(byDate)) lists[groupOf(task, working, now)].push(task);
+  return lists;
+}
 
 interface TaskListProps {
   tasks: TaskView[]; now: number; working: boolean; messages: MessageView[]; summarized: ReadonlySet<string> | undefined; selected: string | null;
@@ -277,7 +317,7 @@ const HOVER_MS = 250;
  */
 function TaskGroups(props: TaskListProps) {
   const { tasks, now, working, selected } = props;
-  const [folded, setFolded] = useState<Record<GroupKey, boolean>>({ waiting: false, running: false, done: true });
+  const [folded, setFolded] = useState<Record<GroupKey, boolean>>({ waiting: false, running: false, verify: false, quiet: true, done: true });
   const [hover, setHover] = useState<{ id: string; top: number; right: number } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancel = () => { if (timer.current) clearTimeout(timer.current); timer.current = null; };
@@ -298,11 +338,7 @@ function TaskGroups(props: TaskListProps) {
     window.addEventListener("dragenter", fold, true);
     return () => { window.removeEventListener("dragstart", fold, true); window.removeEventListener("dragenter", fold, true); };
   }, []);
-  const lists: Record<GroupKey, TaskView[]> = {
-    waiting: activeTasks(tasks).filter((task) => task.state === "waiting"),
-    running: activeTasks(tasks).filter((task) => task.state !== "waiting"),
-    done: finishedTasks(tasks, Infinity),
-  };
+  const lists = taskGroups(tasks, working, now);
   const selectedGroup = tasks.find((task) => task.id === selected);
   const hovered = hover ? tasks.find((task) => task.id === hover.id && task.id !== selected) : undefined;
   if (!tasks.length) return null;
@@ -310,7 +346,7 @@ function TaskGroups(props: TaskListProps) {
     <div className="task-groups">
       {GROUPS.filter((group) => lists[group.key].length > 0).map((group) => {
         // A task opened from elsewhere (a chip, a link) unfolds its group.
-        const open = !folded[group.key] || (!!selectedGroup && groupOf(selectedGroup) === group.key);
+        const open = !folded[group.key] || (!!selectedGroup && groupOf(selectedGroup, working, now) === group.key);
         return (
           <section key={group.key} className="task-group" data-group={group.key}>
             <div className="task-group-head">
@@ -327,7 +363,7 @@ function TaskGroups(props: TaskListProps) {
                   const stale = isStale(task, working, now);
                   return task.id === selected
                     ? <TaskCard key={task.id} {...props} task={task} stale={stale} folded={isFoldedIntoSummary(task, props.messages, props.summarized)} />
-                    : <TaskRow key={task.id} task={task} now={now} stale={stale} hovered={hover?.id === task.id} onSelect={(id) => { leave(); props.onSelect(id); }} onComplete={props.onComplete} onEnter={enter} onLeave={leave} />;
+                    : <TaskRow key={task.id} task={task} now={now} stale={stale} quiet={group.key === "quiet"} hovered={hover?.id === task.id} onSelect={(id) => { leave(); props.onSelect(id); }} onComplete={props.onComplete} onEnter={enter} onLeave={leave} />;
                 })}
               </div>
             )}
@@ -340,23 +376,36 @@ function TaskGroups(props: TaskListProps) {
 }
 
 /** A task not open: its state dot, name and a line on how it stands, its head, and Mark complete while under way. */
-function TaskRow({ task, now, stale, hovered, onSelect, onComplete, onEnter, onLeave }: {
-  task: TaskView; now: number; stale: boolean; hovered: boolean; onSelect: (id: string) => void; onComplete: (id: string) => void;
+function TaskRow({ task, now, stale, quiet, hovered, onSelect, onComplete, onEnter, onLeave }: {
+  task: TaskView; now: number; stale: boolean; quiet: boolean; hovered: boolean; onSelect: (id: string) => void; onComplete: (id: string) => void;
   onEnter: (id: string, row: HTMLElement) => void; onLeave: () => void;
 }) {
-  const line = taskLine(task, stale, now);
-  const state = stale ? "stale" : task.state;
+  const line = taskLine(task, stale, now, quiet);
+  const verify = toVerify(task);
+  const state = verify ? "verify" : quiet ? "quiet" : stale ? "stale" : task.state;
   return (
     <div className={`task-row${hovered ? " hov" : ""}`} data-task={task.id} data-state={state} onMouseEnter={(event) => onEnter(task.id, event.currentTarget)} onMouseLeave={onLeave}>
       <span className="task-dot" data-state={state} aria-hidden="true" />
       <button type="button" className="task-row-open" aria-label={`Task ${task.name}: ${line}`} onClick={() => onSelect(task.id)}
         title={task.manuallyCompletedAt ? "Marked complete by you" : undefined}>
         <span className="task-row-name">{task.name}</span>
-        <span className="task-line">{line}</span>
+        {verify
+          ? <span className="task-line task-stage-line"><StageBar stage={task.stage!} />{line}</span>
+          : <span className="task-line">{line}</span>}
       </button>
       {task.owner && <span className="task-owner-dot" data-head={task.owner} title={headName(task.owner)} />}
       {isActiveTask(task) && <CheckButton className="task-check" onClick={() => onComplete(task.id)} />}
     </div>
+  );
+}
+
+/** The four steps from code done to verified, as 14×3 px segments: done green, the current one blue, the rest gray. */
+function StageBar({ stage }: { stage: Stage }) {
+  const at = STAGES.indexOf(stage);
+  return (
+    <span className="task-stage-bar" aria-hidden="true">
+      {STAGES.map((step, index) => <span key={step} className="task-stage-seg" data-step={index < at ? "done" : index === at ? "current" : "todo"} />)}
+    </span>
   );
 }
 
@@ -391,6 +440,14 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
           : task.owner ? <span className="task-owner"><span className="task-owner-dot" data-head={task.owner} aria-hidden="true" />{headName(task.owner)}</span> : null}
         <span>· {age}</span>
       </div>
+      {toVerify(task) && (
+        <div className="task-stages" aria-label={`Stage: ${STAGE_LABELS[task.stage!]}`}>
+          {STAGE_STEPS.map((label, index) => {
+            const at = STAGES.indexOf(task.stage!);
+            return <span key={label} className="task-stage" data-step={index < at ? "done" : index === at ? "current" : "todo"}>{label}</span>;
+          })}
+        </div>
+      )}
       {task.state === "waiting" && task.blocked?.trim() && (
         <div className="task-blocked">
           <span>{task.blocked}</span>

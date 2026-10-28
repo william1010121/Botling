@@ -4,6 +4,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseReply, saysNoReply, saysNothing } from "../../src/core/reply";
+import { botPrompts, desktopPrompts, TASK_STAGE_SENTENCE } from "../../src/core/prompts";
+import { taskView } from "../../src/core/bot";
+import { readTaskCard } from "../../src/core/tasks";
 import { TaskBook, type TaskTurn } from "../../src/core/tasks";
 import { desktop } from "../helpers";
 
@@ -80,5 +83,42 @@ describe("task book: the Swift TaskBook's cards", () => {
       }));
     };
     expect(normalize(results)).toEqual(normalize(golden.taskScenario));
+  });
+});
+
+describe("<task stage=…> (2.x)", () => {
+  it("reads built, reviewed, installed and verified (any case), \"\" to clear, and leaves an unknown stage out", () => {
+    expect(parseReply('<task name="Ship" state="done" stage="built"/>').tasks).toEqual([{ name: "Ship", state: "done", stage: "built" }]);
+    expect(parseReply('<task name="Ship" stage="Installed"/>').tasks).toEqual([{ name: "Ship", stage: "installed" }]);
+    expect(parseReply('<task name="Ship" stage="verified"/>').tasks).toEqual([{ name: "Ship", stage: "verified" }]);
+    expect(parseReply('<task name="Ship" stage=""/>').tasks).toEqual([{ name: "Ship", stage: "" }]);
+    expect(parseReply('<task name="Ship" stage="shipped"/>').tasks).toEqual([{ name: "Ship" }]);
+    expect(parseReply('<task name="Ship" state="running"/>').tasks).toEqual([{ name: "Ship", state: "running" }]);
+  });
+
+  it("is kept on the card until changed or cleared, and shown on its view; a saved card with a bad stage drops it", () => {
+    const book = new TaskBook();
+    const turn: TaskTurn = { head: "claude", userMessage: "m1", started: 0, usedTools: true };
+    book.begin("m1", "ship it", null, 1);
+    book.replied("r1", turn, [{ name: "Ship", state: "done", stage: "built" }], 2);
+    expect(book.named("Ship")!.stage).toBe("built");
+    book.replied("r2", { ...turn, userMessage: "m9" }, [{ continues: "Ship", now: "Reviewing" }], 3);
+    expect(book.named("Ship")!.stage).toBe("built");
+    book.replied("r3", { ...turn, userMessage: "m9" }, [{ continues: "Ship", stage: "installed" }], 4);
+    expect(taskView(book.named("Ship")!, new Set()).stage).toBe("installed");
+    book.replied("r4", { ...turn, userMessage: "m9" }, [{ continues: "Ship", stage: "" }], 5);
+    expect(book.named("Ship")!.stage).toBeUndefined();
+    expect("stage" in taskView(book.named("Ship")!, new Set())).toBe(false);
+    expect(readTaskCard({ id: "A", name: "X", createdAt: 1, stage: "reviewed" })!.stage).toBe("reviewed");
+    expect(readTaskCard({ id: "A", name: "X", createdAt: 1, stage: "bogus" })!.stage).toBeUndefined();
+  });
+
+  it("is told to every bot in one sentence after the <task> line's states", () => {
+    for (const role of ["main", "manager", "bot"] as const) {
+      const profile = { name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null };
+      const plain = botPrompts({ profile });
+      expect(plain.system).not.toContain(TASK_STAGE_SENTENCE);
+      expect(desktopPrompts(plain, profile).system).toContain(`done or stopped. ${TASK_STAGE_SENTENCE} Every attribute is optional;`);
+    }
   });
 });

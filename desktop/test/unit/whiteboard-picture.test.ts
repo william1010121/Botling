@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseReply, saysNothing } from "../../src/core/reply";
-import { botPrompts, desktopPrompts, WHITEBOARD_PICTURE_LINE } from "../../src/core/prompts";
+import { botPrompts, desktopPrompts, TASK_STAGE_SENTENCE, WHITEBOARD_PICTURE_LINE } from "../../src/core/prompts";
 import { tempDir, until } from "../helpers";
 import { CoreHarness } from "../core-harness";
 import { writeLibrary } from "../fixtures/components";
@@ -37,7 +37,8 @@ describe("the line bots are told", () => {
       expect(system).toContain(`</show> to your reply.\n${WHITEBOARD_PICTURE_LINE}\n`);
     }
     const main = botPrompts({ profile: profile("main") });
-    expect(desktopPrompts(main, profile("main")).system).toBe(main.system);
+    // The main bot gets no picture line; every bot gets only the <task> stage sentence besides.
+    expect(desktopPrompts(main, profile("main")).system).toBe(main.system.replace(" done or stopped.", ` done or stopped. ${TASK_STAGE_SENTENCE}`));
     expect(WHITEBOARD_PICTURE_LINE).toContain('<whiteboard name="component name" size="1x1">JSON</whiteboard>');
   });
 });
