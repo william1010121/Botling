@@ -27,6 +27,7 @@ installImeGuard(window);
 /** How close to the bottom (px) still counts as being at the bottom. */
 const bottomSlack = 80;
 const historyPageSize = 50;
+const historyWindowSize = historyPageSize * 3;
 const historyTopSlack = 160;
 
 /**
@@ -68,6 +69,9 @@ class Chat {
   private subagentID: string | null = null;
   /** The loaded prefix grows only when reading back; incoming state keeps the same boundary. */
   private firstID: string | null = null;
+  /** Navigation uses a moving window; ordinary recent-history pagination stays unchanged. */
+  private navigatingHistory = false;
+  private readonly historyLatest = document.createElement("button");
   private readonly historyMore = document.createElement("button");
   private historyRequest: number | null = null;
   private readingAnchor: { element: Element; top: number } | null = null;
@@ -88,6 +92,17 @@ class Chat {
     this.historyMore.hidden = true;
     this.list.before(this.historyMore);
     this.historyMore.addEventListener("click", () => this.loadEarlier());
+    this.historyLatest.type = "button";
+    this.historyLatest.className = "catchup-button history-latest";
+    this.historyLatest.hidden = true;
+    this.list.after(this.historyLatest);
+    this.historyLatest.addEventListener("click", () => {
+      if (!this.last) return;
+      this.firstID = null;
+      this.stuck = true;
+      this.readingAnchor = null;
+      this.setState(this.last, true);
+    });
     document.addEventListener("ccb-reveal-message", (event) => {
       const id: unknown = (event as CustomEvent).detail;
       if (typeof id === "string") this.revealMessage(id);
@@ -148,6 +163,7 @@ class Chat {
       this.botID = state.botID;
       this.subagentID = subagentID;
       this.firstID = null;
+      this.navigatingHistory = false;
       this.readingAnchor = null;
       if (this.historyRequest !== null) cancelAnimationFrame(this.historyRequest);
       this.historyRequest = null;
@@ -158,6 +174,9 @@ class Chat {
     // Bot look Cute: the seen marks show the heads' tiny characters (a style rule, so lines drawn already follow).
     setSeenHeads(state.seenHeads);
     configureAnimatedHeads(state.animatedHeads);
+
+    // Resolve a deleted boundary while retained rows still exist, before a settings redraw.
+    if (this.firstID !== null) this.firstID = state.messages[this.historyStart(state.messages)]?.id ?? null;
 
     // A new language (Settings) draws every message again in its words.
     if (setLanguage(state.lang)) {
@@ -176,8 +195,14 @@ class Chat {
     }
 
     // Gone ones first, so they do not make the rest move (a moved frame reloads).
+    const newest = state.messages[state.messages.length - 1];
+    const sentNow = !switched && !redrawing && newest?.role === "user" && newest.id !== newestBefore;
+    if (this.navigatingHistory && (sentNow || this.stuck)) this.firstID = null;
     const start = this.historyStart(state.messages);
-    const messages = state.messages.slice(start);
+    const end = this.navigatingHistory ? Math.min(state.messages.length, start + historyWindowSize) : state.messages.length;
+    const messages = state.messages.slice(start, end);
+    this.historyLatest.hidden = end === state.messages.length;
+    this.historyLatest.textContent = t("catchup.latest", { line: newest?.text.replace(/\s+/g, " ").slice(0, 80) ?? "" });
     this.firstID = messages[0]?.id ?? null;
     this.historyMore.hidden = start === 0;
     this.historyMore.textContent = t("messages.loadEarlier", { n: Math.min(start, historyPageSize) });
@@ -279,9 +304,10 @@ class Chat {
     this.pins.update(state);
     this.floats.update(state);
     this.composer.update(state);
+    // Live activity belongs at the latest end, not after an older window.
+    if (this.typing) this.typing.style.display = this.historyLatest.hidden ? "" : "none";
+    if (this.workerWaiting) this.workerWaiting.style.display = this.historyLatest.hidden ? "" : "none";
     // Something you just sent always shows, even if you had scrolled up.
-    const newest = state.messages[state.messages.length - 1];
-    const sentNow = !switched && !redrawing && newest?.role === "user" && newest.id !== newestBefore;
     if (switched || sentNow) {
       this.stuck = true;
       this.readingAnchor = null;
@@ -333,11 +359,18 @@ class Chat {
   }
 
   /** Coalesce wheel/key/scroll events; opening a chat never drains its history by itself. */
-  private requestHistory(): void {
+  private requestHistory(later = false): void {
     if (this.historyRequest !== null) return;
     this.historyRequest = requestAnimationFrame(() => {
       this.historyRequest = null;
-      if (!this.stuck && this.scroller.scrollTop <= historyTopSlack) this.loadEarlier();
+      if (later) {
+        if (!this.last || this.historyLatest.hidden || this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight > historyTopSlack) return;
+        this.stuck = false;
+        this.rememberReadingAnchor();
+        const start = this.historyStart(this.last.messages);
+        this.firstID = this.last.messages[Math.min(start + historyPageSize, this.last.messages.length - 1)].id;
+        this.setState(this.last, true);
+      } else if (!this.stuck && this.scroller.scrollTop <= historyTopSlack) this.loadEarlier();
     });
   }
 
@@ -348,7 +381,8 @@ class Chat {
     if (index < 0) return;
     this.stuck = false;
     this.readingAnchor = null;
-    this.firstID = this.last.messages[Math.max(0, index - historyPageSize + 1)].id;
+    this.navigatingHistory = true;
+    this.firstID = this.last.messages[Math.max(0, index - historyPageSize)].id;
     this.setState(this.last, true);
   }
 
@@ -419,21 +453,24 @@ class Chat {
     this.scroller.addEventListener("wheel", (event) => {
       this.readingAnchor = null;
       if (event.deltaY < 0) { readBack(); this.requestHistory(); }
+      else if (event.deltaY > 0) this.requestHistory(true);
     }, { passive: true });
     this.scroller.addEventListener("pointerdown", () => { this.readingAnchor = null; }, { passive: true });
     this.scroller.addEventListener("keydown", (event) => {
       this.readingAnchor = null;
       if (["PageUp", "Home", "ArrowUp"].includes(event.key)) { readBack(); this.requestHistory(); }
+      else if (["PageDown", "End", "ArrowDown"].includes(event.key)) this.requestHistory(true);
     });
     document.addEventListener("ccb-read-back", readBack);
     this.scroller.addEventListener("scroll", () => {
       const top = this.scroller.scrollTop;
       const distance = this.scroller.scrollHeight - top - this.scroller.clientHeight;
       // Back at the very bottom: follow it again. Dragging the scrollbar up far enough: stop.
-      if (distance < 4) this.stuck = true;
+      if (distance < 4 && this.historyLatest.hidden) this.stuck = true;
       else if (top < this.lastTop && distance >= bottomSlack) this.stuck = false;
       if (top !== this.lastTop) this.readingAnchor = null;
       if (!this.stuck && top < this.lastTop && top <= historyTopSlack) this.requestHistory();
+      if (top > this.lastTop && distance <= historyTopSlack) this.requestHistory(true);
       this.lastTop = top;
     }, { passive: true });
     const observer = new ResizeObserver(() => {

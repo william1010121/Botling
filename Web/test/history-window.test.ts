@@ -37,7 +37,7 @@ const state = (messages: MessageView[], extra: Partial<ChatState> = {}): ChatSta
   botID: "history", botName: "History", messages, working: false, avatar: "", placeholder: "",
   replyingTo: null, pendingFiles: [], components: {}, ...extra,
 });
-const rows = () => [...document.querySelectorAll<HTMLElement>("#messages > .row, #messages > .stamped")];
+const rows = () => [...document.querySelectorAll<HTMLElement>("#messages > .row[data-id], #messages > .stamped")];
 const row = (id: string) => document.querySelector<HTMLElement>(`.row[data-id="${id}"]`)!;
 const more = () => document.querySelector<HTMLButtonElement>(".history-more")!;
 let scroller: HTMLElement;
@@ -171,7 +171,8 @@ describe("chat history window", () => {
       jumpTo("m20");
       expect(row("m20")).not.toBeNull();
       expect(scroll).toHaveBeenCalledTimes(1);
-      expect(row("m159")).not.toBeNull();
+      expect(row("m159")).toBeNull();
+      expect(document.querySelector<HTMLButtonElement>(".history-latest")!.hidden).toBe(false);
       window.ccb.setState(state(history(160), { botID: "tasks" }));
       expect(row("m15")).toBeNull();
       window.ccb.jumpToTask("m15", "task-1");
@@ -309,5 +310,119 @@ it("bounds old-message navigation and retains its context and selection through 
     expect(row("m1999").textContent).toContain("stream update");
     expect(row("m2000")).not.toBeNull();
     expect(rows().length).toBeLessThanOrEqual(150);
+  } finally { HTMLElement.prototype.scrollIntoView = previous; }
+});
+
+it("pages both ways after a jump without losing the visible row, and returns to live updates", () => {
+  let top = 0;
+  const rect = (y: number, height: number) => ({ x: 0, y, top: y, bottom: y + height, left: 0, right: 600, width: 600, height, toJSON() {} }) as DOMRect;
+  const latest = () => document.querySelector<HTMLButtonElement>(".history-latest")!;
+  const height = () => rows().length * 40 + (more().hidden ? 0 : 24) + (latest().hidden ? 0 : 24);
+  Object.defineProperties(scroller, {
+    scrollHeight: { configurable: true, get: height },
+    clientHeight: { configurable: true, get: () => 400 },
+    scrollTop: { configurable: true, get: () => top, set: value => { top = Math.max(0, Math.min(value, height() - 400)); } },
+  });
+  const original = HTMLElement.prototype.getBoundingClientRect;
+  const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    if (this === scroller) return rect(0, 400);
+    if (this.parentElement?.id === "messages" && this.matches(".row, .stamped")) {
+      return rect(rows().indexOf(this) * 40 + (more().hidden ? 0 : 24) - top, 40);
+    }
+    return original.call(this);
+  });
+  const previous = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = function () { scroller.scrollTop = rows().indexOf(this) * 40; };
+  try {
+    const messages = history(2000);
+    window.ccb.setState(state(messages));
+    jumpTo("m800");
+    expect(rows()).toHaveLength(150);
+    expect(row("m799")).not.toBeNull();
+    expect(row("m801")).not.toBeNull();
+    scroller.scrollTop = 120;
+    scroller.dispatchEvent(new Event("scroll"));
+    const upperAnchor = row("m753");
+    const upperTop = upperAnchor.getBoundingClientRect().top;
+    paint();
+    expect(rows()).toHaveLength(150);
+    expect(rows()[0].dataset.id).toBe("m700");
+    expect(row("m753")).toBe(upperAnchor);
+    expect(upperAnchor.getBoundingClientRect().top).toBe(upperTop);
+    expect(row("m849")).not.toBeNull();
+    expect(row("m850")).toBeNull();
+    scroller.scrollTop = height() - 500;
+    scroller.dispatchEvent(new Event("scroll"));
+    const lowerAnchor = row("m840");
+    const lowerTop = lowerAnchor.getBoundingClientRect().top;
+    paint();
+    expect(rows()).toHaveLength(150);
+    expect(rows()[0].dataset.id).toBe("m750");
+    expect(row("m840")).toBe(lowerAnchor);
+    expect(lowerAnchor.getBoundingClientRect().top).toBe(lowerTop);
+    expect(row("m899")).not.toBeNull();
+    const reached = new Set(rows().map(r => r.dataset.id));
+    for (let i = 0; i < 24; i++) {
+      scroller.scrollTop = height();
+      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 40 }));
+      paint();
+      expect(rows().length).toBeLessThanOrEqual(150);
+      rows().forEach(r => reached.add(r.dataset.id));
+    }
+    for (let i = 750; i < 2000; i++) expect(reached.has(`m${i}`)).toBe(true);
+    expect(row("m1999")).not.toBeNull();
+    expect(latest().hidden).toBe(true);
+    jumpTo("m20");
+    latest().click();
+    expect(rows()).toHaveLength(50);
+    expect(row("m1999")).not.toBeNull();
+    expect(latest().hidden).toBe(true);
+    window.ccb.patchState({ order: [...messages.map(m => m.id), "m2000"], changed: [message(2000)] });
+    expect(row("m2000")).not.toBeNull();
+    expect(scroller.scrollTop).toBe(height() - 400);
+    jumpTo("m20");
+    window.ccb.patchState({ order: [...messages.map(m => m.id), "m2000", "m2001"], changed: [message(2001, { role: "user", text: "new question" })] });
+    expect(row("m2001").textContent).toContain("new question");
+    expect(row("m20")).toBeNull();
+    expect(rows().length).toBeLessThanOrEqual(150);
+    expect(scroller.scrollTop).toBe(height() - 400);
+  } finally {
+    geometry.mockRestore();
+    HTMLElement.prototype.scrollIntoView = previous;
+    for (const property of ["scrollTop", "scrollHeight", "clientHeight"]) delete (scroller as unknown as Record<string, unknown>)[property];
+  }
+}, 15000);
+
+it("preserves a historical target on full state updates and redraw, releases old frames, and resets on chat switch", () => {
+  const previous = HTMLElement.prototype.scrollIntoView;
+  HTMLElement.prototype.scrollIntoView = () => {};
+  try {
+    const components = { card: { template: "<p>card</p>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const messages = history(2000);
+    messages[1999] = message(1999, { displays: [{ name: "card", data: "{}", at: null }] });
+    window.ccb.setState(state(messages, { components }));
+    const frame = row("m1999").querySelector("iframe")!;
+    const watcher = Near.all.find(o => o.targets.has(frame))!;
+    jumpTo("m20");
+    expect(frame.isConnected).toBe(false);
+    expect(watcher.targets.has(frame)).toBe(false);
+    const target = row("m20");
+    window.ccb.setState(state([...messages, ...history(200).map((_, i) => message(2000 + i))], { components, working: true }));
+    expect(rows()).toHaveLength(150);
+    expect(row("m20")).toBe(target);
+    expect(document.querySelector<HTMLElement>(".typing")!.style.display).toBe("none");
+    window.ccb.setState(state(messages.slice(1), { components, lang: "zh-Hant" }));
+    expect(rows()).toHaveLength(150);
+    expect(row("m20").textContent).toContain("Reply 20");
+    expect(rows()[0].dataset.id).toBe("m1");
+    window.ccb.jumpToTask("m1100", "task-middle");
+    expect(row("m1100")).not.toBeNull();
+    expect(row("m1099")).not.toBeNull();
+    expect(row("m1101")).not.toBeNull();
+    expect(rows()).toHaveLength(150);
+    window.ccb.setState(state(messages, { botID: "other-history" }));
+    expect(rows()).toHaveLength(50);
+    expect(row("m1999")).not.toBeNull();
+    expect(document.querySelector<HTMLButtonElement>(".history-latest")!.hidden).toBe(true);
   } finally { HTMLElement.prototype.scrollIntoView = previous; }
 });
