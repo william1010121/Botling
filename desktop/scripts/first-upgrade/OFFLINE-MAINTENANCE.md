@@ -1,3 +1,7 @@
+> Historical investigation. [RUN-OFFLINE.md](RUN-OFFLINE.md) supersedes this
+> document: manual fully-quit/no-relaunch scope is accepted, required hooks are
+> implemented, and no protected-OS prerequisite is imposed by the adapter.
+
 # Offline maintenance preparation — exact limits and decision
 
 This supersedes the online bridge proposal; do not wait for an online .18 API.

@@ -1,3 +1,7 @@
+> Superseded for execution preparation by [RUN-OFFLINE.md](RUN-OFFLINE.md).
+> The online contract below is historical; the offline adapter now binds owner
+> commit 822c73415dc2d6dd6d318bb53e291db960ceb18d.
+
 # First upgrade from installed .18 — preparation only
 
 Status: **blocked for production execution**. The isolated driver implements the
