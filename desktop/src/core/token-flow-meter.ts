@@ -19,9 +19,12 @@ export class TokenFlowMeter {
   begin(thread: string, turn: string, at = Date.now()) {
     const current = this.active.get(thread);
     if (current?.turnId === turn) return;
-    if (current?.after) this.baselines.set(thread, current.after);
+    // A boundary can seed only one interval. Replacing an unfinished capture (cancel/error)
+    // cannot promote its intermediate snapshot into a trustworthy end boundary.
+    const before = current ? null : this.baselines.get(thread) ?? null;
+    this.baselines.delete(thread);
     if (this.active.size >= 256) this.active.delete(this.active.keys().next().value!);
-    this.active.set(thread,{threadId:thread,turnId:turn,startedAt:at,before:this.baselines.get(thread) ?? null,after:null,activities:new Set(),observedStart:true});
+    this.active.set(thread,{threadId:thread,turnId:turn,startedAt:at,before,after:null,activities:new Set(),observedStart:true});
   }
   observe(method: string, params: any) {
     const thread = params.threadId;
@@ -50,6 +53,7 @@ export class TokenFlowMeter {
     if (!current || current.turnId !== turn) return null;
     this.active.delete(thread);
     if(current.after) this.baselines.set(thread,current.after);
+    else this.baselines.delete(thread); // Missing end usage breaks the chain, including zero-based fresh threads.
     if(!current.before || !current.after) return null;
     const tokens=minusTokens(current.after,current.before);
     if(!Object.values(tokens).every(x=>Number.isSafeInteger(x)&&x>=0)) return null;

@@ -13,3 +13,14 @@ it("attributes whole metered turns by structured activity, including worker coor
  const resumed=new TokenFlowMeter();resumed.begin("past","first");resumed.observe("thread/tokenUsage/updated",{threadId:"past",tokenUsage:{total:{inputTokens:900,outputTokens:100}}});expect(resumed.finish("past","first")).toBeNull();
  resumed.begin("past","next");resumed.observe("thread/tokenUsage/updated",{threadId:"past",tokenUsage:{total:{inputTokens:910,outputTokens:105}}});const r=resumed.finish("past","next")!;expect(r.tokens.output).toBe(5);expect(meteredPurpose(r)).toBe("unknown");
 });
+
+it.each([false,true])("invalidates an abandoned turn even with intermediate usage=%s, then recovers", intermediate => {
+ const m=new TokenFlowMeter();m.fresh("thread");m.begin("thread","abandoned");m.coordination("thread");
+ if(intermediate)m.observe("thread/tokenUsage/updated",{threadId:"thread",turnId:"abandoned",tokenUsage:{total:{inputTokens:100,outputTokens:20}}});
+ // Cancellation/error may omit turn/completed. An intermediate update is not its final boundary.
+ m.begin("thread","replacement");m.observe("item/started",{threadId:"thread",turnId:"replacement",item:{type:"commandExecution"}});
+ m.observe("thread/tokenUsage/updated",{threadId:"thread",turnId:"replacement",tokenUsage:{total:{inputTokens:110,outputTokens:25}}});
+ expect(m.finish("thread","replacement")).toBeNull();
+ m.begin("thread","recovered");m.observe("thread/tokenUsage/updated",{threadId:"thread",turnId:"recovered",tokenUsage:{total:{inputTokens:120,outputTokens:30}}});
+ expect(m.finish("thread","recovered")?.tokens).toEqual({input:10,output:5,cacheRead:0,cacheWrite:0});
+});

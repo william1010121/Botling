@@ -79,3 +79,21 @@ it("does not assign resumed lifetime totals, foreign turn updates or late idle u
  note(resumed,"thread/tokenUsage/updated",{threadId:"past",turnId:"resumed",tokenUsage:{total:{inputTokens:50000,outputTokens:10000}}});
  expect(note(resumed,"turn/completed",{threadId:"past",turn:{id:"resumed",status:"completed"}}).some(o=>o.kind==="item"&&o.item.kind==="usage"&&o.item.measurement)).toBe(false);
 });
+
+it.each(["completed", "interrupted", "failed"])("does not carry a missing %s usage boundary into execution, and recovers after a known boundary", status => {
+ const s=ready("gap-chat");
+ const start=(id:string)=>response(s,request(s.send("fixture"),"turn/start"),{turn:{id}});
+ const activity=(id:string,type:string,tool?:string)=>note(s,"item/started",{threadId:"gap-chat",turnId:id,item:{id:`item-${id}`,type,tool,command:"echo fixture"}});
+ const total=(id:string,inputTokens:number,outputTokens:number)=>note(s,"thread/tokenUsage/updated",{threadId:"gap-chat",turnId:id,tokenUsage:{total:{inputTokens,outputTokens}}});
+ const end=(id:string,state="completed")=>note(s,"turn/completed",{threadId:"gap-chat",turn:{id,status:state}}).flatMap(o=>o.kind==="item"&&o.item.kind==="usage"&&o.item.measurement?[o.item.measurement]:[]);
+ start("coordination-gap");activity("coordination-gap","dynamicToolCall","app_send_message");
+ expect(end("coordination-gap",status)).toEqual([]);
+ start("execution-after-gap");activity("execution-after-gap","commandExecution");total("execution-after-gap",110,25);
+ // These 135 cumulative tokens include an unmetered coordination interval.
+ expect(end("execution-after-gap")).toEqual([]);
+ start("recovered-execution");activity("recovered-execution","commandExecution");total("recovered-execution",120,30);
+ const recovered=end("recovered-execution");
+ expect(recovered).toHaveLength(1);
+ expect(recovered[0]).toMatchObject({tokens:{input:10,output:5,cacheRead:0,cacheWrite:0},complete:true});
+ expect(meteredPurpose(recovered[0])).toBe("execution");
+});
