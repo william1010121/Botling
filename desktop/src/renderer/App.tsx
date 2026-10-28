@@ -26,7 +26,6 @@ import { Icon } from "./icons";
 import { WebPane, WebPanel, WebRail } from "./Web";
 import { SpecFrame } from "./SpecFrame";
 import { TokenFlow } from "./TokenFlow";
-import "./token-flow.css";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
