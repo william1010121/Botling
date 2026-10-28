@@ -26,15 +26,14 @@ html, body { height: 100%; height: 100dvh; }
 .web-secondary { border: 1px solid var(--border); background: transparent; color: var(--text); }
 
 /* Phone width: one column. The chat fills the page; the left column (expanded or folded) slides over it
-   from the button at the header's start; picking a bot closes it. The right panel is already hidden
-   below 860px by styles.css, so its toggle goes too. */
+   from the button at the header's start; picking a bot closes it. Details has its own drawer. */
 @media (max-width: 700px) {
   .web-nav-button {
     display: inline-flex; position: absolute; left: 10px; top: 8px; width: 32px; height: 24px; align-items: center; justify-content: center;
     border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
   }
   .web-nav-button[aria-expanded="true"] { background: var(--selected); color: var(--text); }
-  .web-root .chat-header { padding: 0 48px; overflow: hidden; white-space: nowrap; }
+  .web-root .chat-header { padding: 0 84px 0 48px; overflow: hidden; white-space: nowrap; }
   .web-root .chat-title { overflow: hidden; text-overflow: ellipsis; }
   .web-root .chat-status { display: none; }
   .web-root .rail, .web-root .rail-strip {
@@ -43,7 +42,6 @@ html, body { height: 100%; height: 100dvh; }
   }
   .web-root[data-nav="open"] .rail, .web-root[data-nav="open"] .rail-strip { transform: none; }
   .web-root[data-nav="open"] .web-scrim { display: block; position: fixed; inset: 0; z-index: 35; background: #0008; }
-  .web-root .right-toggle { display: none; }
   .web-root .chat-pane { width: 100%; }
   .web-root .banner.bottom { bottom: 120px; padding: 6px 16px; }
 }

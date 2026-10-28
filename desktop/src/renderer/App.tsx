@@ -20,7 +20,7 @@ import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, t
 import { PluginsButton } from "./Plugins";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
-import { RightPanel, RightToggle } from "./RightPanel";
+import { TaskDetails } from "./TaskDetails";
 import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
 import { Icon } from "./icons";
 import { WebPane, WebPanel, WebRail } from "./Web";
@@ -346,7 +346,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {/* The open component spec takes the right panel's place, while its chat is shown (1.x's `openSpec(in:)`). */}
       {bot && !site && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} />}
       {bot && !site && !openSpec && (
-        <RightPanel
+        <TaskDetails
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
           results={results} teams={view.teams} watching={watching} collapsed={collapsed}
@@ -377,7 +377,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           onExpand={toggleRight}
         />
       )}
-      {bot && !site && !openSpec && <RightToggle collapsed={collapsed} onToggle={toggleRight} />}
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
         onRemove={() => { if (menu.bot.role === "group") setDeletingGroup(menu.bot); else setRemoving(menu.bot); setMenu(null); }}
         pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }}
