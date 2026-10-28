@@ -17,7 +17,7 @@ import type { SessionStart, SessionStartCodex } from "./bot";
 import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
 import { Layout } from "./store/workspace";
 import { readSettings } from "./settings";
-import type { HeadConfig } from "./agent/head";
+import { claudeSessionPermissionConfig, type HeadConfig } from "./agent/head";
 import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
@@ -59,8 +59,7 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
     addDirs: session.addDirs ?? [],
     effort: session.effort ?? null,
     // Claude Code's auto mode and the rules for blocked calls the user allowed (AgentProcess.swift).
-    autoMode: session.autoMode ?? false, allowRules: session.allowRules ?? [],
-    bypassPermissions: session.claudeBypassPermissions ?? (readSettings(Layout.settings(dataDir)).claudeBypassPermissions === true),
+    ...claudeSessionPermissionConfig(session),
   };
   if (kind === "claude") {
     return {

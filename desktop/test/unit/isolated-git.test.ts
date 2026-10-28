@@ -106,8 +106,8 @@ describe("isolated worker Git approval", () => {
 });
 function writes(out: CodexOutput[]) { return out.filter((o) => o.kind === "write").map((o) => o.value as any); }
 function items(out: CodexOutput[]) { return out.filter((o) => o.kind === "item").map((o) => o.item); }
-function sessionFixture(ownershipEnabled = true, f = fixture()) {
-  const s = new CodexSession({ cwd: f.repo, instructions: "Coordinator", workerInstructions: "Worker", resumeThread: null, model: null, workerModel: null, effort: null, restoredWorkers: [] });
+function sessionFixture(ownershipEnabled = true, f = fixture(), bypassPermissions = true) {
+  const s = new CodexSession({ cwd: f.repo, instructions: "Coordinator", workerInstructions: "Worker", resumeThread: null, model: null, workerModel: null, effort: null, restoredWorkers: [], bypassPermissions });
   s.start(); s.receive(JSON.stringify({ id: 1, result: {} })); s.receive(JSON.stringify({ id: 2, result: { thread: { id: "coordinator" } } }));
   const call = (id: string, tool: string, args: any) => s.receive(JSON.stringify({ id, method: "item/tool/call", params: { threadId: "coordinator", tool, arguments: args } }));
   const handed = call("handoff", "app_handoff", { instructions: "Implementation: own files", ...(ownershipEnabled ? { isolated_git: f.ownership } : {}) });
@@ -122,6 +122,14 @@ function sessionFixture(ownershipEnabled = true, f = fixture()) {
   return { ...f, s, ask, call, receipt };
 }
 describe("Codex single-request app approval path", () => {
+  it("model-supplied implementation authorization does not bypass auto/manual permission mode", () => {
+    const f = sessionFixture(true, fixture(), false);
+    expect(f.receipt.isolated_git_approval).toBe("manual");
+    const out = f.ask(f.create);
+    expect(writes(out).some(value => value.result?.decision === "accept")).toBe(false);
+    expect(items(out).some(item => item.kind === "permission")).toBe(true);
+  });
+
   it("auto-accepts only its live owning worker; persists ownership; others show manual cards", () => {
     const f = sessionFixture(); expect(f.receipt.isolated_git_approval).toBe("validated");
     expect(writes(f.ask(f.create))).toEqual([{ jsonrpc: "2.0", id: "approval", result: { decision: "accept" } }]);

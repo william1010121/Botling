@@ -11,7 +11,9 @@ function session(autoMode?: boolean, overrides: Partial<CodexConfig> = {}) {
   const s = new CodexSession({ cwd: "/tmp/bot", instructions: "Coordinator", workerInstructions: "Worker", resumeThread: null, model: null, workerModel: null, effort: null, restoredWorkers: [], ...(autoMode === undefined ? {} : { autoMode }), ...overrides });
   const started = writes([...s.start(), ...s.receive(JSON.stringify({ id: 1, result: {} }))]);
   const thread = started.find((w) => w.method === "thread/start" || w.method === "thread/resume");
-  s.receive(JSON.stringify({ id: thread.id, result: { thread: { id: "coordinator" } } }));
+  const ready = writes(s.receive(JSON.stringify({ id: thread.id, result: { thread: { id: "coordinator" } } })));
+  const refresh = ready.find(w => w.method === "thread/inject_items");
+  if (refresh) s.receive(JSON.stringify({ id: refresh.id, result: {} }));
   const line = (value: unknown) => s.receive(JSON.stringify(value));
   const denied = (threadId: string, command = "rm -rf build") => line({ method: "item/autoApprovalReview/completed", params: {
     threadId, turnId: "t", reviewId: "r1", targetItemId: "exec-1", decisionSource: "agent",
@@ -156,4 +158,18 @@ describe("auto risk policy reaches heads and app-managed workers", () => {
       expect(worker(f).start.params.config["auto_review.extra_policy"]).toBeUndefined();
     }
   });
+});
+
+
+it("manual command override is thread/cwd scoped and single-use", () => {
+  const f = session();
+  worker(f);
+  f.s.answer(items(f.denied("coordinator", "echo retry"))[0].requestId, true);
+  f.s.send("continue");
+  const request = (id: string, threadId: string, cwd: string) => f.line({ id, method: "item/commandExecution/requestApproval", params: { threadId, cwd, command: "echo retry", environmentId: "local" } });
+  for (const out of [request("other-worker", "worker", "/tmp/bot"), request("other-cwd", "coordinator", "/tmp/other")]) {
+    expect(writes(out).some(w => w.result?.decision === "accept")).toBe(false);
+  }
+  expect(writes(request("own", "coordinator", "/tmp/bot"))).toMatchObject([{ result: { decision: "accept" } }]);
+  expect(writes(request("again", "coordinator", "/tmp/bot")).some(w => w.result?.decision === "accept")).toBe(false);
 });

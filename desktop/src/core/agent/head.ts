@@ -63,6 +63,11 @@ export interface HeadConfig {
   allowRules?: string[];
 }
 
+/** Only normal bot sessions explicitly carry the app setting. Auxiliary sessions omit it. */
+export function claudeSessionPermissionConfig(session: { autoMode?: boolean; allowRules?: string[]; claudeBypassPermissions?: boolean }) {
+  return { autoMode: session.autoMode ?? false, allowRules: session.allowRules ?? [], bypassPermissions: session.claudeBypassPermissions === true };
+}
+
 /** claude's arguments for a long-lived head (cf. `ClaudeAgentProcess.arguments`). */
 export function headArguments(config: HeadConfig): string[] {
   const args = [

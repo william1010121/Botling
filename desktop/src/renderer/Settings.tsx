@@ -405,8 +405,8 @@ function Engines({ settings, change, codexModels }: { settings: SettingsView; ch
   return (
     <>
       <Group title="Engine permissions" note="Applies when an engine process next starts, including resumed sessions and its workers. Running sessions keep their current mode: let work finish, then restart the app to apply changes. No new conversation is required. App-specific approvals and server policies remain in force.">
-        <p className="settings-hint">Auto mode requests low/medium-risk approval and a human checkpoint for high risk. Engines classify risk; hard denies and managed policies still apply. Unknown risk, review failures and OS/sandbox blocks are not auto-approved.</p>
-        <Toggle label="Claude: bypass permission checks" hint="Skips Claude tool permission checks for sessions and Claude workers. Explicit tool restrictions, managed policy and OS protections still apply." checked={settings.claudeBypassPermissions} onChange={(value) => change({ key: "claudeBypassPermissions", value })} />
+        <p className="settings-hint">Auto mode instructs the engines to allow low/medium-risk actions automatically and ask for human approval of high-risk actions. Engine classification is not guaranteed; hard denies and managed policies still apply. Unknown risk, review failures and OS/sandbox blocks are not auto-approved.</p>
+        <Toggle label="Claude: bypass permission checks" hint="Skips Claude tool permission checks for sessions and Claude workers. Protected paths, explicit tool restrictions, managed policy and OS protections still apply." checked={settings.claudeBypassPermissions} onChange={(value) => change({ key: "claudeBypassPermissions", value })} />
         <Toggle label="Codex: bypass approvals and sandbox" hint="Disables Codex approval prompts, auto review and its filesystem/network sandbox for sessions and Codex workers. Commands run with the app user's OS access." checked={settings.codexBypassPermissions} onChange={(value) => change({ key: "codexBypassPermissions", value })} />
       </Group>
       <Group title="Claude subagents" note="Takes effect when a bot next wakes.">

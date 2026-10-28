@@ -301,7 +301,7 @@ const RECENT_TOOL_CALLS = 500;
 export const NO_LONGER_NEEDED = "No longer needed";
 const NO_ANSWER = "No answer in time";
 /** Tools whose "always" would be far broader than it sounds; they are asked every time (`Bot.neverAlways`). */
-const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command"]);
+const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command", "Permissions"]);
 /** 1.x's `RestartReason.plugins`. */
 const PLUGINS_RESTART = { told: "loading new plugins", shown: "loading new plugins" };
 const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
@@ -4286,7 +4286,7 @@ export class Bot {
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
     if (isReviewRefusal(item.requestId)) return this.showReviewRefusal(head, item);
     // A bare tool name or a 1.x rule ("Bash(npm test)", "Edit(//…)", "WebFetch(domain:…)"): permission-rules.ts.
-    if (item.tool !== "Monitored command" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
+    if (item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
       head.answer(item.requestId, true, item.input);
       return;
     }

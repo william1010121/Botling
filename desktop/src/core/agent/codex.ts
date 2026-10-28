@@ -232,7 +232,7 @@ export class CodexSession {
   /** The coordinator's next turn asks the app instead of the reviewer, once (1.x `reviewerNext`). */
   private reviewerNext: string | null = null;
   /** Reviewer refusals shown as cards: what was refused, and whose. */
-  private reviews = new Map<string, { command: string; task: string | null }>();
+  private reviews = new Map<string, { command: string; task: string | null; thread: string; cwd: string }>();
   private finishing = false;
   private stopped = false;
   private workers = new Map<string, Worker>();
@@ -342,6 +342,8 @@ export class CodexSession {
   stop(): CodexOutput[] {
     const monitors = this.cancelMonitors();
     this.stopped = true;
+    this.allowedCommands.clear();
+    this.reviews.clear();
     this.inbox = [];
     return [...this.cancelWorkers(), ...this.closeApprovals(() => true, true), ...monitors];
   }
@@ -497,9 +499,15 @@ export class CodexSession {
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
-        // A call the user allowed after the reviewer refused it (1.x `allowedCommands`).
-        if (this.allowedCommands.size && (params.kind === undefined || params.kind === "command")
-          && [params.command, codexCommand(params)].some((c) => typeof c === "string" && this.allowedCommands.has(c))) {
+        // A manual override covers one retry in its exact thread and working directory.
+        const retryKey = JSON.stringify([params.threadId, params.cwd, params.command]);
+        const retryWorker = [...this.workers.values()].find(w => !w.role && w.thread === params.threadId);
+        const current = this.approvalCurrent({ rpcId, kind: "command", thread: params.threadId, turn: params.turnId ?? null,
+          ...(retryWorker ? { worker: { task: retryWorker.id, run: retryWorker.run } } : {}) });
+        if (current && params.environmentId === "local" && !params.networkApprovalContext
+          && (params.kind === undefined || params.kind === "command")
+          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
+          && this.allowedCommands.delete(retryKey)) {
           return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
         }
         // Keep the automatic path independent of manual-card correlation: lifecycle handling
@@ -509,7 +517,7 @@ export class CodexSession {
         const ownership = worker?.isolatedGit;
         const exclusive = ownership && ![...this.workers.values()].some((w) => w !== worker && w.isolatedGit
           && (w.isolatedGit.worktree === ownership.worktree || w.isolatedGit.branch === ownership.branch));
-        if (!this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
+        if (this.config.bypassPermissions === true && !this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
           && !worker.completedTurns.has(worker.turnId)
           && (params.kind === undefined || params.kind === "command") // never stdin to a running process
           && params.environmentId === "local" && !params.networkApprovalContext
@@ -565,7 +573,8 @@ export class CodexSession {
       : review.status === "denied" ? "Auto review denied this action."
       : `Auto review did not approve this action (${typeof review.status === "string" ? review.status : "unknown result"}). No automatic approval was granted.`;
     const requestId = `codex-review:${randomUUID()}`;
-    this.reviews.set(requestId, { command, task: worker?.id ?? null });
+    this.reviews.set(requestId, { command, task: worker?.id ?? null,
+      thread: typeof params.threadId === "string" ? params.threadId : "", cwd: typeof action.cwd === "string" ? action.cwd : "" });
     // The bot shows it as auto mode's blocked-call card (the reason apart from the call) and tells the head after the pick.
     const input = { reviewRefused: true, reason: `${risk}${why}`.trim(), ...(worker ? { worker: worker.name || worker.id } : {}) };
     return [this.item({ kind: "permission", requestId, tool: action.type === "applyPatch" ? "Edit" : "Bash", summary: what, input, ...(worker ? { workerId: worker.id } : {}) })];
@@ -576,7 +585,7 @@ export class CodexSession {
     if (!review) return [];
     this.reviews.delete(requestId);
     if (!allow || this.stopped) return [];
-    if (review.command) this.allowedCommands.add(review.command);
+    if (review.command && review.thread && review.cwd) this.allowedCommands.add(JSON.stringify([review.thread, review.cwd, review.command]));
     const worker = review.task ? this.workers.get(review.task) : undefined;
     // The next turn of the refused call's thread asks the app (which accepts the allowed call), once.
     if (this.config.autoMode !== false) { if (worker) worker.reviewerNext = "user"; else this.reviewerNext = "user"; }
@@ -1017,14 +1026,14 @@ export class CodexSession {
         else isolatedGitOwners.set(isolatedGit.worktree, task);
       }
       // An invalid/missing grant still launches the task, with the existing approval cards.
-      const instructions = isolatedGit ? `${args.instructions}\n\nApp-validated isolated Git ownership (only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Other operations still require normal approval.` : args.instructions;
+      const instructions = isolatedGit ? `${args.instructions}\n\nValidated isolated Git path metadata (not proof of user authorization; only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Permission mode still controls approval; model-supplied implementationAuthorized is not a user grant.` : args.instructions;
       this.workers.set(task, { id: task, name, instructions, role: args.role, isolatedGit, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
       out.push(
         this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", run_in_background: true } }),
         this.item({ kind: "subagentStarted", id: task, description: name, type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
         ...this.startWorkerThread(task),
       );
-      response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
+      response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
     } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.workers.has(args.task_id)) {
       const queued = this.workers.get(args.task_id)!.active;
       out.push(...this.messageWorker(args.task_id, args.message));

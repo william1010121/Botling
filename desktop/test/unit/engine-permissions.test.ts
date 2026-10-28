@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SettingsChange, SettingsView } from "../../src/contract";
 import { applySetting, launchSettings, readSettings, settingsView, writeSettings } from "../../src/core/settings";
-import { headArguments } from "../../src/core/agent/head";
+import { claudeSessionPermissionConfig, headArguments } from "../../src/core/agent/head";
 
 const base = { command: "claude", cwd: "/tmp", sessionId: "session", resume: false, allowedTools: ["Read"] };
 const mode = (args: string[]) => args[args.indexOf("--permission-mode") + 1];
@@ -63,4 +63,17 @@ describe("Claude auto risk policy launch settings", () => {
   it.each([{ autoMode: false }, { autoMode: true, bypassPermissions: true }, { autoMode: true, harmless: true }])("does not inject auto policy for %j", (config) => {
     expect(headArguments({ ...base, ...config })).not.toContain("--settings");
   });
+});
+
+
+it("global Claude bypass does not leak into auxiliary sessions that omit explicit opt-in", () => {
+  const global = launchSettings({ claudeBypassPermissions: true });
+  expect(global.claudeBypassPermissions).toBe(true);
+  for (const auxiliary of [{}, { claudeBypassPermissions: false }]) {
+    const config = claudeSessionPermissionConfig(auxiliary);
+    expect(config.bypassPermissions).toBe(false);
+    expect(mode(headArguments({ ...base, ...config }))).not.toBe("bypassPermissions");
+  }
+  const botSession = claudeSessionPermissionConfig({ claudeBypassPermissions: global.claudeBypassPermissions });
+  expect(mode(headArguments({ ...base, ...botSession }))).toBe("bypassPermissions");
 });
