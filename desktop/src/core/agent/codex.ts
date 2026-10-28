@@ -242,7 +242,7 @@ export class CodexSession {
   private workers = new Map<string, Worker>();
   private results: Result[] = [];
   private active: Result | null = null;
-  private toolReplies = new Map<string, Record<string, unknown>>();
+  private toolReplies = new Map<string, { intent: string; response: Record<string, unknown> }>();
   private pending = false;
   private monitors = new Map<string, CommandMonitor>();
   private activeMonitor: string | null = null;
@@ -1007,8 +1007,6 @@ export class CodexSession {
 
   private managedTool(rpcId: unknown, params: any): CodexOutput[] {
     const id = key(rpcId);
-    const known = this.toolReplies.get(id);
-    if (known) return [{ kind: "write", value: known }];
     const reply = (payload: unknown, success: boolean) => ({ jsonrpc: "2.0", id: rpcId, result: { success, contentItems: [{ type: "inputText", text: json(payload) }] } });
     const tool = typeof params.tool === "string" ? params.tool : null;
     let args: any = params.arguments;
@@ -1018,14 +1016,22 @@ export class CodexSession {
       const requester = [...this.workers.values()].find(worker => worker.thread === params.threadId);
       const response = reply(monitorHandback(tool, args, { task_id: requester?.id ?? null, run: requester?.run ?? null, owner_session_id: this.config.ownerSession?.toLowerCase() ?? null,
         requester_thread_id: params.threadId ?? null, requester_turn_id: params.turnId ?? null, cwd: this.config.cwd }), false);
-      this.toolReplies.set(id, response);
       return [{ kind: "write", value: response }];
     }
-    if (!this.managed || this.stopped || (this.finishing && tool !== "app_task_checkpoint") || params.threadId !== this.threadId) {
+    if (!this.threadId || !this.managed || this.stopped || (this.finishing && tool !== "app_task_checkpoint") || params.threadId !== this.threadId) {
       const response = reply({ error: "App handoff tools are available only to the active coordinator." }, false);
-      this.toolReplies.set(id, response);
       return [{ kind: "write", value: response }];
     }
+    if (tool === "app_monitor_start" && (!this.turn || params.turnId !== this.turn.id)) {
+      return [{ kind: "write", value: reply({ error: "A monitor must be created by the current owning Codex turn." }, false) }];
+    }
+    // RPC IDs alone are not identities. Session/thread/turn own a receipt; altered
+    // call identity or intent under that key is a collision, never another execution.
+    const cacheKey = JSON.stringify([this.config.ownerSession ?? null, this.threadId, params.turnId ?? null, rpcId]);
+    const intent = JSON.stringify([tool, params.callId ?? null, args]);
+    const known = this.toolReplies.get(cacheKey);
+    if (known) return [{ kind: "write", value: known.intent === intent ? known.response
+      : reply({ error: "RPC identity was reused with different tool intent; nothing was executed." }, false) }];
     const out: CodexOutput[] = [];
     let response: Record<string, unknown>;
     if (tool === "app_routines") {
@@ -1039,15 +1045,13 @@ export class CodexSession {
         if (args.operation !== "list") out.push(this.item({ kind: "routinesChanged" }));
       }
     } else if (tool?.startsWith("app_monitor_")) {
-      const handled = tool === "app_monitor_start" && (!this.turn || params.turnId !== this.turn.id)
-        ? { payload: { error: "A monitor must be created by the current owning Codex turn." }, success: false, out: [] }
-        : this.monitorTool(tool, args);
+      const handled = this.monitorTool(tool, args);
       response = reply(handled.payload, handled.success);
       out.push(...handled.out);
     } else if (tool === "app_handoff" && typeof args.instructions === "string" && args.instructions.trim()) {
       if (args.role !== undefined && (args.role !== "component-editor" || !this.config.componentEditor?.launch)) {
         const denied = reply({ error: this.config.componentEditor?.error ?? "The requested component-editor role is unavailable to this coordinator. Only the app-created Maintainer can use it; no generic worker was launched." }, false);
-        this.toolReplies.set(id, denied);
+        this.toolReplies.set(cacheKey, { intent, response: denied });
         return [{ kind: "write", value: denied }];
       }
       const task = randomUUID().toLowerCase();
@@ -1094,7 +1098,7 @@ export class CodexSession {
     } else {
       response = reply({ error: "Invalid app tool arguments or unknown task_id. Use app_handoff to create a task, then app_send_message with its task_id." }, false);
     }
-    this.toolReplies.set(id, response);
+    this.toolReplies.set(cacheKey, { intent, response });
     // The receipt goes first, so slow thread startup never keeps the model waiting.
     return [{ kind: "write", value: response }, ...out, ...this.pendingChanged()];
   }
@@ -1797,7 +1801,7 @@ export class CodexHead {
       return;
     }
     if (current) { this.editors.delete(action.task); this.retireEditor(action.task, current.head); }
-    const head = new ClaudeHead(action.config, {
+    const head = new ClaudeHead({ ...action.config, monitorWorker: true }, {
       onItem: item => {
         const live = this.editors.get(action.task);
         if (live?.head !== head) return;

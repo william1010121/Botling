@@ -53,7 +53,7 @@ export function briefFrom(answer: string): string | null {
 export function briefConfig(base: HeadConfig): HeadConfig {
   return {
     ...base,
-    resume: true, forkSession: true, persistSession: false,
+    monitorWorker: true, resume: true, forkSession: true, persistSession: false,
     systemPrompt: BRIEF_SYSTEM_PROMPT, allowedTools: BRIEF_TOOLS, askPermission: false, disallowedTools: BRIEF_DENIED_TOOLS,
     // A copy of the session needs none of the bot's plugins or extra folders to answer from memory.
     pluginDirs: base.pluginDirs ?? [],
@@ -68,7 +68,7 @@ export function writeBrief(config: HeadConfig, prompt: string, timeoutMs = BRIEF
   return new Promise((resolve) => {
     let settled = false;
     let text = "";
-    const head: ClaudeHead = new ClaudeHead(config, {
+    const head: ClaudeHead = new ClaudeHead({ ...config, monitorWorker: true }, {
       onItem: (item) => {
         if (item.kind === "delta") text += item.text;
         else if (item.kind === "assistantText" && !text) text = item.text;

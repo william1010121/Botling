@@ -7,7 +7,7 @@ function transport() {
   const writes: any[] = [], items: any[] = [];
   const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
   child.stdin.on("data", chunk => writes.push(JSON.parse(String(chunk))));
-  const head = new ClaudeHead({ command: "/test/claude", cwd: "/tmp", sessionId: "owner", resume: false, allowedTools: ["Monitor"], bypassPermissions: true },
+  const head = new ClaudeHead({ command: "/test/claude", cwd: "/tmp", sessionId: "owner", resume: false, allowedTools: ["Monitor"], bypassPermissions: true, monitorWorker: false },
     { onItem: i => items.push(i), onExit() {} }, { platform: "test", verified: true, spawn: () => ({ pid: 1, child, terminate: async () => ({ killed: [], forced: false }) }) } as any);
   head.start();
   const receive = (value: unknown) => child.stdout.write(JSON.stringify(value) + "\n");

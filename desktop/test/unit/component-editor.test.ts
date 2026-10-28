@@ -57,7 +57,7 @@ describe("app-created Maintainer editor binding", () => {
   it("accepts the Core-owned identity and keeps the definition's configured model/tools and existing permissions", () => {
     const b = binding();
     const route = b.bind(b.owner, b.session)!;
-    expect(route.launch).toMatchObject({ model: "haiku", tools: ["Read", "Write", "Edit", "Bash"], systemPrompt: "Existing editor instructions.",
+    expect(route.launch).toMatchObject({ monitorWorker: true, model: "haiku", tools: ["Read", "Write", "Edit", "Bash"], systemPrompt: "Existing editor instructions.",
       addDirs: b.parent.addDirs, autoMode: false, allowRules: b.parent.allowRules, effort: "high", resume: false });
     expect(route.launch?.pluginDirs).toBeUndefined();
     const args = headArguments(route.launch!);

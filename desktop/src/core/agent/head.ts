@@ -35,7 +35,7 @@ export interface HeadConfig {
   allowedTools: string[];
   /** Explicit tool inventory for an app execution role; omitted for ordinary heads. */
   tools?: string[];
-  /** App-managed child role, independent of model-supplied hook fields. */
+  /** Only an app-owned coordinator sets false. Missing ownership denies Monitor. */
   monitorWorker?: boolean;
   /** Appended to claude's system prompt. */
   systemPrompt?: string | null;
@@ -223,7 +223,7 @@ export class ClaudeHead {
     }
     if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === MONITOR_HOOK) {
       this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
-        response: claudeMonitorDecision(message.request.input, this.config.monitorWorker) } });
+        response: claudeMonitorDecision(message.request.input, this.config.monitorWorker !== false) } });
       return;
     }
     for (const item of parseLine(line)) {

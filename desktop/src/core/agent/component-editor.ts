@@ -39,7 +39,7 @@ export function maintainerEditorBinding(owner: BotProfile, root: string, headCon
     const tools = (fields.tools ?? "").split(",").map(tool => tool.trim()).filter(Boolean);
     if (!tools.length || tools.some(tool => !["Read", "Write", "Edit", "Bash"].includes(tool))) return { error: "The component-editor definition requests tools outside its existing Read/Write/Edit/Bash boundary; no tools or settings were changed." };
     return { launch: {
-      command: parent.command, prefixArgs: parent.prefixArgs, cwd: library, env: parent.env,
+      monitorWorker: true, command: parent.command, prefixArgs: parent.prefixArgs, cwd: library, env: parent.env,
       sessionId: session.sessionId, resume: false, model: fields.model, systemPrompt: role,
       allowedTools: tools, tools, disallowedTools: [...new Set([...(parent.disallowedTools ?? []), "Agent", "Task", "SendMessage"])],
       addDirs: parent.addDirs, effort: parent.effort, autoMode: parent.autoMode, bypassPermissions: parent.bypassPermissions, allowRules: parent.allowRules,

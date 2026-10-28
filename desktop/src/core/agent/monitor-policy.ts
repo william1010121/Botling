@@ -4,7 +4,7 @@ export const MONITOR_HOOK = "botling-monitor-owner";
 export function monitorHandback(tool: string, input: unknown, correlation: Record<string, unknown>) {
   return { code: "coordinator_only_monitor", error: MONITOR_HANDBACK, handback: { tool, input, ...correlation }, executed: false };
 }
-export function claudeMonitorDecision(input: any, worker = false): Record<string, unknown> {
+export function claudeMonitorDecision(input: any, worker = true): Record<string, unknown> {
   if (input?.hook_event_name !== "PreToolUse" || input?.tool_name !== "Monitor") return {};
   if (!worker && !input.agent_id && !input.agent_type) return {}; // Never auto-allow the coordinator.
   return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny",

@@ -223,7 +223,7 @@ export class TeamDesk {
     };
     try {
       const config = this.deps.config(folder, spec, teamTools(spec, results), { sessionId: run.id.toLowerCase(), systemPrompt: teamSystem(spec, folder, results, this.deps.language()), model: spec.model });
-      head = new ClaudeHead({ ...config, askPermission: false }, { onItem, onExit });
+      head = new ClaudeHead({ ...config, askPermission: false, monitorWorker: true }, { onItem, onExit });
     } catch (error) {
       this.deps.tell(`${spec.title} could not start: ${(error as Error).message}`);
       return null;

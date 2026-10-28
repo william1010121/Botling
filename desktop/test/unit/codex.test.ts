@@ -211,7 +211,7 @@ describe("Codex head: app-managed workers", () => {
     expect(workerStart.dynamicTools).toBeUndefined();
     expect(session.workerRecords).toMatchObject([{ id: task, name: "Parser", run: 1, wasActive: true, reportPending: false }]);
     // The same request again (a retry) gets the same receipt and starts nothing.
-    expect(new Out(session.receive(JSON.stringify({ method: "item/tool/call", id: serverId, params: {} }))).writes[0]).toEqual(handed.writes[0]);
+    expect(new Out(session.receive(JSON.stringify({ method: "item/tool/call", id: serverId, params: { threadId: COORD, turnId: "t1", callId: `call-${serverId}`, tool: "app_handoff", arguments: { instructions: "Build the parser\nwith tests", name: "Parser" } } }))).writes[0]).toEqual(handed.writes[0]);
     // The coordinator's turn ends; the worker's thread and turn start.
     expect(replay(session, [agent(COORD, "t1", "A worker has it."), note("turn/completed", { threadId: COORD, turn: { id: "t1", status: "completed" } })]).results).toEqual([{ ok: true, text: "A worker has it." }]);
     const workerTurn = new Out(session.receive(JSON.stringify({ id: 4, result: { thread: { id: "w1" } } })));
@@ -432,4 +432,26 @@ it.each([false, true])("coordinator monitor still requires Allow once with bypas
   const allowed = new Out(s.answer(`monitor:${m.monitor_id}`, true));
   expect(allowed.params("command/exec")).toMatchObject({ cwd: "/tmp/bot", sandboxPolicy: { type: "workspaceWrite", writableRoots: ["/tmp/authorized", "/tmp/bot"], networkAccess: false } });
   expect(new Out(s.answer(`monitor:${m.monitor_id}`, true)).writes).toEqual([]);
+});
+
+it("authorizes before monitor replay and binds retries to owner, turn and intent", () => {
+  const s = new CodexSession(config({ ownerSession: "owner" })); ready(s); s.send("authorized");
+  s.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+  const original = JSON.parse(toolCall("app_monitor_start", { command: "echo original" }));
+  const accepted = new Out(s.receive(JSON.stringify(original)));
+  const child = { ...original, params: { ...original.params, threadId: "child", arguments: { command: "echo other" } } };
+  const denied = new Out(s.receive(JSON.stringify(child)));
+  expect(denied.writes[0].result.success).toBe(false);
+  expect(receipt(denied)).toMatchObject({ code: "coordinator_only_monitor", handback: { input: { command: "echo other" } } });
+  expect(receipt(denied)).not.toHaveProperty("monitor_id");
+  const retry = new Out(s.receive(JSON.stringify(original)));
+  expect(retry.writes).toEqual(accepted.writes);
+  expect(retry.items).toEqual([]);
+  for (const params of [{ ...original.params, arguments: { command: "echo changed" } }, { ...original.params, callId: "different-call" }, { ...original.params, turnId: "stale" }]) {
+    const out = new Out(s.receive(JSON.stringify({ ...original, params })));
+    expect(out.writes[0].result.success).toBe(false);
+    expect(out.items).toEqual([]);
+  }
+  expect(s.monitorRecords).toHaveLength(1);
+  expect(s.monitorRecords[0].state).toBe("awaitingApproval");
 });

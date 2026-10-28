@@ -2536,7 +2536,7 @@ export class Bot {
       }, onExit: exit => this.onExit(head, exit) });
     } else {
       const config = this.options.headConfig(this.profile, start);
-      head = new ClaudeHead(config, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
+      head = new ClaudeHead({ ...config, monitorWorker: false }, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
     }
     head.start();
     this.head = head;
