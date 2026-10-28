@@ -37,6 +37,9 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
   } else asset(join(root, "src/renderer/index.html"), "index.html");
   asset(join(root, "src/renderer/styles.css"), "styles.css", true);
+  // Linked from index.html. Never `import` CSS from the TSX: esbuild would emit it as renderer.css/web.css,
+  // which no page links (that left Token Flow unstyled).
+  asset(join(root, "src/renderer/token-flow.css"), "token-flow.css", true);
   asset(join(root, "src/renderer/chat-frame/chat.html"), "chat.html");
   asset(join(root, "src/renderer/chat-frame/frame.css"), "frame.css");
   asset(join(web, "src/chat.css"), "chat.css", true);

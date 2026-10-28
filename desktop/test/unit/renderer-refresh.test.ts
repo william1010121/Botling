@@ -16,6 +16,7 @@ function fixture() {
   put("desktop/src/renderer/chat-frame/entry.ts", 'globalThis.chatVersion = "chat-one"; globalThis.latex = __LATEX_SOURCE__;');
   put("desktop/src/renderer/index.html", '<div id="root"></div><script src="renderer.js"></script>');
   put("desktop/src/renderer/styles.css", '@import "../../../Web/src/tokens.css";\n.shell { color: red; }');
+  put("desktop/src/renderer/token-flow.css", '.token-flow { color: red; }');
   put("desktop/src/renderer/chat-frame/chat.html", '<script src="chat.js"></script>');
   put("desktop/src/renderer/chat-frame/frame.css", '.frame { color: red; }');
   put("Web/src/chat.css", '@import "tokens.css";\n.chat { color: red; }');
@@ -76,4 +77,14 @@ it("one watcher publishes TS, HTML, token CSS and chat changes, then recovers fr
   f.put("desktop/src/renderer/main.tsx", 'globalThis.shellVersion = "shell-three";');
   await expect.poll(() => f.read("renderer.js")).toContain("shell-three");
   expect(builds.length).toBeGreaterThanOrEqual(3);
+});
+
+it("every stylesheet the renderer imports is published and linked by the pages", async () => {
+  const { readdirSync } = await import("node:fs");
+  for (const file of readdirSync("src/renderer").filter(name => name.endsWith(".tsx") || name.endsWith(".ts")))
+    expect(readFileSync(join("src/renderer", file), "utf8"), `${file} must not import CSS (esbuild emits an unlinked renderer.css)`).not.toMatch(/import\s+["'][^"']+\.css["']/);
+  for (const page of ["src/renderer/index.html", "mobile/index.html"])
+    expect(readFileSync(page, "utf8")).toMatch(/href="(\.\/)?token-flow\.css"/);
+  const f = fixture(); await buildRenderer(f);
+  expect(f.read("token-flow.css")).toContain(".token-flow");
 });
