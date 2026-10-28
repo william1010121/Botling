@@ -122,14 +122,23 @@ export function checkExtraResources(appOutDir, mappings, provenance) {
     walk(target);
   }
 }
+// electron-builder mutates arrays/objects while normalizing config. Keep hooks as functions;
+// JSON/structuredClone would drop or reject them. Reject unfamiliar mutable object types.
+export function cloneAssemblyConfig(value) {
+  if (Array.isArray(value)) return value.map(cloneAssemblyConfig);
+  if (value === null || typeof value !== 'object') return value;
+  if (![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error('Unsupported assembly config object');
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, cloneAssemblyConfig(child)]));
+}
 export function assemblyConfig(base, desktop, stage, output, variant, provenance) {
   if (!Object.values(variants).includes(variant)) throw new Error('Unknown release variant');
-  return { ...base,
+  const resourceMappings = cloneAssemblyConfig(base.extraResources);
+  return cloneAssemblyConfig({ ...base,
     directories: { ...base.directories, app: stage, output },
     afterPack: async context => {
       const { extractFile } = await import('@electron/asar');
       const app = join(context.appOutDir, 'Botling 2.app');
-      checkExtraResources(context.appOutDir, base.extraResources, provenance);
+      checkExtraResources(context.appOutDir, resourceMappings, provenance);
       const archive = join(app, 'Contents/Resources/app.asar');
       const nativeVersion = execFileSync('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', join(app, 'Contents/Info.plist')], { encoding: 'utf8' }).trim();
       checkPackagedMetadata(JSON.parse(extractFile(archive, 'package.json')), nativeVersion,
@@ -153,7 +162,7 @@ export function assemblyConfig(base, desktop, stage, output, variant, provenance
     mac: { ...base.mac, extendInfo: { ...base.mac.extendInfo,
       CFBundleShortVersionString: variant.version, BotlingGitCommit: provenance.source.sourceSHA, BotlingGitDirty: '0' } },
     extraResources: base.extraResources.map(resource => ({ ...resource, from: join(stage, resource.from) })),
-  };
+  });
 }
 export async function compileOnce(desktop, root, expected, runner = run, sourceReader = source) {
   for (const path of [join(desktop, 'out'), join(desktop, 'mobile'), join(desktop, 'mobile/dist')]) {
@@ -248,7 +257,8 @@ export async function releaseVariants(desktop, args) {
   process.env.ELECTRON_BUILDER_CACHE ||= join(parent, 'cache/electron-builder');
   process.env.electron_config_cache ||= join(parent, 'cache/electron');
   const { build, Platform } = await import('electron-builder');
-  const base = (await import(pathToFileURL(join(desktop, 'electron-builder.config.cjs')).href)).default;
+  // Snapshot separately from the module cache: builder may also load/mutate that export.
+  const base = cloneAssemblyConfig((await import(pathToFileURL(join(desktop, 'electron-builder.config.cjs')).href)).default);
   for (const name of mode === '--reuse-built' ? [value('--variant')] : ['public', 'local']) {
     equal(source(desktop), expected, 'Source before assembly');
     const result = await assemble(desktop, root, name, expected,

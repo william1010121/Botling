@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, cpSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assemble, assemblyConfig, checkExtraResources, compileOnce, inventory, variants, verifyFrozen } from './release-variants.mjs';
+import { assemble, assemblyConfig, cloneAssemblyConfig, checkExtraResources, compileOnce, inventory, variants, verifyFrozen } from './release-variants.mjs';
 import { checkMetadata } from './release-check.mjs';
 
 function fixture(t) {
@@ -210,4 +210,45 @@ test('external resource mapping rejects traversal, unsupported filters, missing 
   const excluded = { ...provenance.files.find(file => file.path === 'mobile/dist/web.js'), path: 'mobile/dist/web.js.map' };
   const { default: base } = await import('../electron-builder.config.cjs');
   checkExtraResources(output, [base.extraResources[0]], { ...provenance, files: [...provenance.files, excluded] });
+});
+test('two sequential build calls normalize independently without sharing mutable config or dropping hooks', async t => {
+  const f = fixture(t);
+  const { default: official } = await import('../electron-builder.config.cjs');
+  const { doMergeConfigs } = await import('app-builder-lib/out/util/config/config.js');
+  let hookCalls = 0;
+  const beforeBuild = () => { hookCalls++; return false; };
+  const base = cloneAssemblyConfig({ ...official, beforeBuild });
+  const original = JSON.stringify(base);
+  await compileOnce(f.desktop, f.root, f.expected, f.runner, () => f.expected);
+  const inputs = [], normalized = [];
+  const builder = async config => {
+    inputs.push(config);
+    // The real electron-builder normalization mutates the input files array, leaving nulls.
+    const merged = doMergeConfigs([config]);
+    normalized.push(merged);
+    assert.equal(merged.beforeBuild, beforeBuild);
+    assert.equal(merged.beforeBuild(), false);
+    assert.equal(typeof merged.afterPack, 'function');
+    assert.equal(typeof merged.afterSign, 'function');
+    return ['zip', 'dmg'].map(ext => {
+      const path = join(config.directories.output, `Botling-2-${config.extraMetadata.version}-mac-arm64.${ext}`);
+      writeFileSync(path, 'temporary fake artifact'); return path;
+    });
+  };
+  for (const name of ['public', 'local']) await assemble(f.desktop, f.root, name, f.expected, builder, base, f.runner);
+  assert.equal(inputs.length, 2);
+  assert.equal(hookCalls, 2);
+  assert.equal(JSON.stringify(base), original);
+  assert.equal(normalized[0].extraMetadata.version, variants.public.version);
+  assert.equal(normalized[1].extraMetadata.version, variants.local.version);
+  assert.deepEqual(normalized[0].files, normalized[1].files);
+  function references(value, result = new Set()) {
+    if (value && typeof value === 'object') {
+      result.add(value); for (const child of Object.values(value)) references(child, result);
+    }
+    return result;
+  }
+  const first = references(inputs[0]), second = references(inputs[1]), template = references(base);
+  for (const reference of first) { assert.ok(!second.has(reference)); assert.ok(!template.has(reference)); }
+  for (const reference of second) assert.ok(!template.has(reference));
 });
