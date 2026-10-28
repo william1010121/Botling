@@ -81,17 +81,23 @@ describe('WebBridge (the renderer bridge over the mobile bridge)', () => {
     expect(await bridge.poll('main')).toBe(false);
   });
 
-  it('a lost session signs out; a cancelled request drops its late answer', async () => {
+  it('a lost session signs out and answers nothing more', async () => {
     const onAuthLost = vi.fn();
-    let release!: () => void;
-    const transport: CommandTransport = { request: vi.fn(async (cmd: any) => {
-      if (cmd.type === 'chat.send') { await new Promise<void>(resolve => { release = resolve; }); return { messageId: 'late', turnId: null }; }
-      throw new MobileError('expired', true);
-    }) };
+    const transport: CommandTransport = { request: vi.fn(async () => { throw new MobileError('expired', true); }) };
     const bridge = new WebBridge({ transport, onAuthLost });
-    const client = new Client(bridge);
-    await expect(client.request({ type: 'chat.snapshot' })).rejects.toBeInstanceOf(RequestFailed);
+    const heard: unknown[] = []; bridge.subscribe(message => heard.push(message));
+    bridge.post({ v: 10, id: 'first', cmd: { type: 'chat.snapshot' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(heard).toEqual([]);
     expect(onAuthLost).toHaveBeenCalledOnce();
+    expect(bridge.closed).toBe(true);
+  });
+
+  it('a cancelled request drops its late answer', async () => {
+    let release!: () => void;
+    const transport: CommandTransport = { request: vi.fn(async () => { await new Promise<void>(resolve => { release = resolve; }); return { messageId: 'late', turnId: null }; }) };
+    const bridge = new WebBridge({ transport });
+    const client = new Client(bridge);
     const controller = new AbortController();
     const sent = client.request({ type: 'chat.send', botId: 'main', text: 'x' }, { signal: controller.signal });
     await Promise.resolve();
@@ -101,5 +107,59 @@ describe('WebBridge (the renderer bridge over the mobile bridge)', () => {
     release(); await new Promise(resolve => setTimeout(resolve, 0));
     expect(heard).toEqual([]);
     expect(PROTOCOL_VERSION).toBe(10);
+  });
+});
+
+describe('WebBridge when the session ends', () => {
+  const failing = (error: MobileError) => {
+    let fail = false;
+    const transport: CommandTransport = { request: vi.fn(async (cmd: any) => {
+      if (fail) throw error;
+      return cmd.type === 'chat.snapshot' ? snapshot(1) : { messageId: 'm', turnId: null };
+    }) };
+    return { transport, fail: () => { fail = true; } };
+  };
+  it.each([
+    ['401 session expired', new MobileError('expired', true)],
+    ['403 access revoked before the request', new MobileError('revoked', false, false, true, true)],
+  ])('a background poll that hears %s signs out and drops what it kept', async (_name, error) => {
+    const onAuthLost = vi.fn();
+    const { transport, fail } = failing(error);
+    const bridge = new WebBridge({ transport, onAuthLost });
+    const client = new Client(bridge);
+    await client.request({ type: 'chat.snapshot' });
+    expect(await bridge.poll('main')).toBe(false);
+    fail();
+    await expect(bridge.poll('main')).rejects.toBe(error);
+    expect(onAuthLost).toHaveBeenCalledOnce();
+    expect(bridge.closed).toBe(true);
+    // Nothing kept is served again, and nothing more is sent.
+    const heard: unknown[] = []; bridge.subscribe(message => heard.push(message));
+    bridge.post({ v: 10, id: 'after', cmd: { type: 'chat.snapshot' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(heard).toEqual([]);
+    expect(transport.request).toHaveBeenCalledTimes(3);
+  });
+  it('a bot-level refusal (a bridge envelope) does not sign out', async () => {
+    const onAuthLost = vi.fn();
+    const { transport, fail } = failing(new MobileError('This bot or action is not authorized.', false, false, true));
+    const bridge = new WebBridge({ transport, onAuthLost });
+    fail();
+    await expect(bridge.poll('main')).rejects.toBeInstanceOf(MobileError);
+    await expect(new Client(bridge).request({ type: 'chat.send', botId: 'main', text: 'x' })).rejects.toBeInstanceOf(RequestFailed);
+    expect(onAuthLost).not.toHaveBeenCalled();
+    expect(bridge.closed).toBe(false);
+  });
+  it('a command that hears 401 signs out once and closes', async () => {
+    const onAuthLost = vi.fn();
+    const { transport, fail } = failing(new MobileError('expired', true));
+    const bridge = new WebBridge({ transport, onAuthLost });
+    const client = new Client(bridge);
+    await client.request({ type: 'chat.snapshot' });
+    fail();
+    void client.request({ type: 'chat.send', botId: 'main', text: 'x' });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(onAuthLost).toHaveBeenCalledOnce();
+    expect(bridge.closed).toBe(true);
   });
 });

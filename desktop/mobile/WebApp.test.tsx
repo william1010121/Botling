@@ -17,7 +17,7 @@ const MAIN = '6A0B0000-0000-4000-8000-000000000002';
 const bot = (id: string, name: string, role: string) => ({ id, name, role, avatar: 'circle', folder: name, phase: 'awake', working: false, approvals: 0, unread: 0,
   subagents: 0, problem: null, heads: ['claude'], job: null, subagentRows: [], openTasks: 0, lastActivity: null });
 function server(options: { signedIn?: boolean } = {}) {
-  let signedIn = options.signedIn ?? true;
+  let signedIn = options.signedIn ?? true, commandStatus = 200;
   const commands: any[] = [], paths: string[] = [];
   const fetcher = vi.fn(async (url: unknown, init: RequestInit) => {
     const path = new URL(String(url), location.origin).pathname; paths.push(path);
@@ -25,6 +25,7 @@ function server(options: { signedIn?: boolean } = {}) {
     if (path === '/api/mobile/session') return new Response(JSON.stringify({ principal: 'a'.repeat(64), csrf: 'c'.repeat(43), expiresAt: Date.now() + 3_600_000, botIds: ['*'] }));
     if (path === '/api/mobile/logout') { signedIn = false; return new Response('{"loggedOut":true}'); }
     const request = JSON.parse(init.body as string); commands.push(request.cmd);
+    if (commandStatus !== 200) return new Response(commandStatus === 401 ? '{"error":{"code":"auth_required"}}' : '<html>edge denied</html>', { status: commandStatus });
     expect((init.headers as Record<string, string>)['X-Botling-CSRF']).toBe('c'.repeat(43));
     return new Response(JSON.stringify({ v: 10, id: request.id, ok: true, result: { epoch: 'e', seq: 1, imported: null, components: {}, teams: [], waiting: { items: [], doing: {} },
       settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: [] },
@@ -32,7 +33,7 @@ function server(options: { signedIn?: boolean } = {}) {
       chat: { botId: request.cmd.botId ?? MAIN, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, catchUp: null, intervalSummaries: [], pins: [], floating: [], pinChoices: [], pendingFiles: [] } } }));
   });
   vi.stubGlobal('fetch', fetcher);
-  return { commands, paths };
+  return { commands, paths, expire: (status = 401) => { commandStatus = status; } };
 }
 const flush = async () => { for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
 
@@ -73,4 +74,47 @@ it('a Google denial from the callback is shown without contacting the API', asyn
   expect(container.textContent).toContain('This Google account is not authorized.');
   expect(paths).toEqual([]);
   expect(location.search).toBe('');
+});
+
+const showsPrivateChat = () => !!container.querySelector('.shell, #chat-frame, .bot-row');
+
+it.each([401, 403])('a background poll that hears %i returns to sign-in, clears the chat and stops polling', async status => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    const { commands, expire } = server();
+    await act(async () => root.render(<WebApp />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(showsPrivateChat()).toBe(true);
+    expire(status);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_600); });
+    expect(showsPrivateChat()).toBe(false);
+    expect(container.textContent).toContain('Sign in with Google');
+    const sent = commands.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(commands.length).toBe(sent);
+  } finally { vi.useRealTimers(); }
+});
+
+it('a command that hears 401 returns to sign-in and clears the chat', async () => {
+  const { expire } = server();
+  await act(async () => root.render(<WebApp />));
+  await flush();
+  expect(showsPrivateChat()).toBe(true);
+  expire(401);
+  await act(async () => { (container.querySelector('.bot-row[data-bot="p2"]') as HTMLButtonElement).click(); });
+  await flush();
+  expect(showsPrivateChat()).toBe(false);
+  expect(container.textContent).toContain('Sign in with Google');
+});
+
+it('sign-out clears the chat and this browser\'s kept layout', async () => {
+  server();
+  localStorage.setItem('botling-web-layout', JSON.stringify({ pinnedBots: ['p1'] }));
+  await act(async () => root.render(<WebApp />));
+  await flush();
+  expect(showsPrivateChat()).toBe(true);
+  await act(async () => { (container.querySelector('.web-sign-out') as HTMLButtonElement).click(); });
+  await flush();
+  expect(showsPrivateChat()).toBe(false);
+  expect(localStorage.getItem('botling-web-layout')).toBeNull();
 });

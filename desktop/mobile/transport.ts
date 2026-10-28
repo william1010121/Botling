@@ -12,7 +12,9 @@ export const Snapshot = z.object({
 export type MobileSnapshot = z.infer<typeof Snapshot>;
 export type MobileCommand = Extract<Command, { type: 'chat.snapshot' | 'chat.send' | 'chat.choose' | 'chat.answer' }>;
 export class MobileError extends Error {
-  constructor(message: string, public auth = false, public uncertain = false, public denied = false) { super(message); }
+  /** `revoked`: refused before the bridge looked at the request (no bridge envelope): the session itself
+   * is no longer accepted, unlike a bridge's refusal of one bot or command. */
+  constructor(message: string, public auth = false, public uncertain = false, public denied = false, public revoked = false) { super(message); }
 }
 
 export function endpointURL(input: string, origin: string): URL {
@@ -55,7 +57,7 @@ export class MobileTransport {
         // Only a matching bridge envelope identifies a bot denial; edge HTML is not trusted.
         const body = ResponseEnvelope.safeParse(await response.json().catch(() => null));
         const botDenied = body.success && body.data.id === id && !body.data.ok && body.data.error.code === 'forbidden';
-        throw new MobileError(botDenied ? 'This bot or action is not authorized. Choose an allowed chat.' : 'Access was denied before the request could be completed. Check your account access.', false, false, true);
+        throw new MobileError(botDenied ? 'This bot or action is not authorized. Choose an allowed chat.' : 'Access was denied before the request could be completed. Check your account access.', false, false, true, !botDenied);
       }
       if (!response.ok) throw new MobileError(`Server returned HTTP ${response.status}.`, false, mutating);
       const envelope = ResponseEnvelope.parse(await response.json());

@@ -18,7 +18,7 @@ export const REMOTE_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'c
 /** Layout settings this browser keeps for itself (the desktop keeps its own). */
 export const LOCAL_SETTINGS = ['rightPanelCollapsed', 'railCollapsed', 'pinnedBots', 'messageColumnWidth'] as const;
 type LocalKey = typeof LOCAL_SETTINGS[number];
-const STORAGE_KEY = 'botling-web-layout';
+export const STORAGE_KEY = 'botling-web-layout';
 const PRIMED_FOR_MS = 3_000;
 
 type Snapshot = ResultOf<'chat.snapshot'>;
@@ -43,14 +43,14 @@ export class WebBridge implements Bridge {
   private primed: { botId: string | undefined; at: number; snapshot: Snapshot } | null = null;
   private last: { botId: string | undefined; snapshot: Snapshot } | null = null;
   private local: Partial<Record<LocalKey, unknown>>;
-  private closed = false;
+  private ended = false;
 
   constructor(private options: WebBridgeOptions) {
     this.local = readLocal(options.storage);
   }
 
   post(envelope: unknown): void {
-    if (this.closed) return;
+    if (this.ended) return;
     const cancel = CancelEnvelope.safeParse(envelope);
     if (cancel.success) {
       // The HTTPS request cannot be withdrawn; its answer is dropped and the caller hears "cancelled".
@@ -60,9 +60,11 @@ export class WebBridge implements Bridge {
     }
     const request = RequestEnvelope.safeParse(envelope);
     if (!request.success) return;
-    void this.handle(request.data.id, request.data.cmd).then(response => {
-      if (this.cancelled.delete(response.id)) return;
-      this.emit(response);
+    void this.handle(request.data.id, request.data.cmd).then(({ response, ended }) => {
+      // A session found over ends everything at once: the page goes back to Sign in and no answer
+      // (not even this one) reaches the renderer that is being taken down.
+      if (ended) { this.ended_(ended); return; }
+      if (!this.cancelled.delete(response.id) && !this.ended) this.emit(response);
     });
   }
 
@@ -72,11 +74,24 @@ export class WebBridge implements Bridge {
     return () => { this.listeners.delete(listener); };
   }
 
-  close() { this.closed = true; this.listeners.clear(); this.primed = null; this.last = null; }
+  /** Closed: signed out or the session ended. Nothing kept is served again and nothing more is sent. */
+  get closed() { return this.ended; }
+  close() { this.ended = true; this.listeners.clear(); this.cancelled.clear(); this.primed = null; this.last = null; }
+
+  /** A 401, or a refusal before the bridge looked at the request: the session is over. */
+  private ended_(error: unknown) {
+    if (!(error instanceof MobileError) || !(error.auth || error.revoked) || this.ended) return;
+    this.close();
+    this.options.onAuthLost?.(error);
+  }
 
   /** Reads the chat on screen again; true when anything changed since the store last saw it. */
   async poll(botId: string | undefined): Promise<boolean> {
-    const snapshot = await this.options.transport.request({ type: 'chat.snapshot', ...(botId ? { botId } : {}) }) as Snapshot;
+    if (this.ended) return false;
+    let snapshot: Snapshot;
+    try { snapshot = await this.options.transport.request({ type: 'chat.snapshot', ...(botId ? { botId } : {}) }) as Snapshot; }
+    catch (error) { this.ended_(error); throw error; }
+    if (this.ended) return false;
     const seen = this.last;
     this.primed = { botId, at: this.now(), snapshot };
     return !seen || seen.botId !== snapshot.chat?.botId || seen.snapshot.epoch !== snapshot.epoch || seen.snapshot.seq !== snapshot.seq;
@@ -89,7 +104,8 @@ export class WebBridge implements Bridge {
     return { ...snapshot, ...(settings ? { settings } : {}) };
   }
 
-  private async handle(id: string, cmd: Command): Promise<ResponseEnvelope> {
+  private async handle(id: string, cmd: Command): Promise<{ response: ResponseEnvelope; ended?: MobileError }> {
+    const answer = (response: ResponseEnvelope) => ({ response });
     try {
       if (cmd.type === 'chat.snapshot') {
         const primed = this.primed;
@@ -99,12 +115,12 @@ export class WebBridge implements Bridge {
         const fresh = primed && matches && this.now() - primed.at < PRIMED_FOR_MS ? primed.snapshot
           : await this.options.transport.request(cmd) as Snapshot;
         this.last = { botId: fresh.chat?.botId, snapshot: fresh };
-        return okResponse(id, this.overlay(fresh));
+        return answer(okResponse(id, this.overlay(fresh)));
       }
       if (REMOTE_COMMANDS.has(cmd.type)) {
         const result = await this.options.transport.request(cmd as MobileCommand);
         this.options.onMutated?.();
-        return okResponse(id, result);
+        return answer(okResponse(id, result));
       }
       if (cmd.type === 'settings.set' && (LOCAL_SETTINGS as readonly string[]).includes(cmd.change.key)) {
         this.local = { ...this.local, [cmd.change.key]: cmd.change.value };
@@ -112,20 +128,20 @@ export class WebBridge implements Bridge {
         // Show it at once from the last read (no server round trip).
         if (this.last) this.primed = { botId: this.last.botId, at: this.now(), snapshot: this.last.snapshot };
         queueMicrotask(() => this.options.onLocalChange?.());
-        return okResponse(id, {});
+        return answer(okResponse(id, {}));
       }
-      if (cmd.type === 'chat.read') return okResponse(id, {});
+      if (cmd.type === 'chat.read') return answer(okResponse(id, {}));
       if (cmd.type === 'link.open' && !cmd.reveal && /^https?:\/\//i.test(cmd.url)) {
         this.options.openURL?.(cmd.url);
-        return okResponse(id, {});
+        return answer(okResponse(id, {}));
       }
-      return errorResponse(id, { code: 'forbidden', message: 'Not available in Botling Web. Use the desktop app for this.' });
+      return answer(errorResponse(id, { code: 'forbidden', message: 'Not available in Botling Web. Use the desktop app for this.' }));
     } catch (error) {
       if (error instanceof MobileError) {
-        if (error.auth) this.options.onAuthLost?.(error);
-        return errorResponse(id, { code: error.denied ? 'forbidden' : 'core_unavailable', message: error.message.slice(0, 2_000) });
+        const response = errorResponse(id, { code: error.denied ? 'forbidden' : 'core_unavailable', message: error.message.slice(0, 2_000) });
+        return error.auth || error.revoked ? { response, ended: error } : { response };
       }
-      return errorResponse(id, { code: 'internal', message: 'Request failed. Check the chat before sending again.' });
+      return answer(errorResponse(id, { code: 'internal', message: 'Request failed. Check the chat before sending again.' }));
     }
   }
 
@@ -145,4 +161,9 @@ function readLocal(storage: WebBridgeOptions['storage']): Partial<Record<LocalKe
 }
 function writeLocal(storage: WebBridgeOptions['storage'], value: Partial<Record<LocalKey, unknown>>) {
   try { storage?.setItem(STORAGE_KEY, JSON.stringify(value)); } catch { /* Private browsing: this page only. */ }
+}
+
+/** Sign-out: this browser forgets the layout it kept (pinned bot ids included). */
+export function forgetLocal(storage: Pick<Storage, 'removeItem'> | null | undefined) {
+  try { storage?.removeItem(STORAGE_KEY); } catch { /* Storage blocked. */ }
 }

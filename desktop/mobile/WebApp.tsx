@@ -8,7 +8,7 @@ import { WorkspaceStore } from '../src/renderer/store';
 import { Icon } from '../src/renderer/icons';
 import { MobileError, MobileTransport, endpointURL } from './transport';
 import { Session, clearDrafts, sessionRequest } from './session';
-import { WebBridge } from './web-bridge';
+import { WebBridge, forgetLocal } from './web-bridge';
 
 const POLL_MS = 2_500;
 type Auth = 'checking' | 'signedOut' | 'denied' | 'unavailable';
@@ -39,10 +39,10 @@ export function startSync(connected: Connected, interval = POLL_MS): () => void 
       try {
         const view = connected.store.getView();
         if (await connected.bridge.poll(view.chat?.botId)) await connected.store.resync();
-      } catch { /* The next tick tries again; an expired session signs out through the bridge. */ }
+      } catch { /* The next tick tries again; an ended session has closed the bridge (onAuthLost). */ }
       finally { busy = false; }
     }
-    if (!stopped) timer = setTimeout(tick, interval);
+    if (!stopped && !connected.bridge.closed) timer = setTimeout(tick, interval);
   };
   connected.wake.poke = () => { clearTimeout(timer); timer = setTimeout(tick, 300); };
   const visible = () => { if (!document.hidden) { clearTimeout(timer); void tick(); } };
@@ -100,7 +100,7 @@ export function WebApp() {
     setBusy(true);
     try {
       await sessionRequest('logout', connected.csrf);
-      connected.bridge.close(); clearDrafts(); setConnected(null); setAuth('signedOut'); setMessage('');
+      connected.bridge.close(); clearDrafts(); forgetLocal(storage()); setConnected(null); setAuth('signedOut'); setMessage('');
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Could not sign out. Try again.'); }
     finally { setBusy(false); }
   }, [connected, busy]);
