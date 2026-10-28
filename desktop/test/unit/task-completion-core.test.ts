@@ -11,10 +11,10 @@ const core = (dir: string, env: Record<string, string> = {}) => {
   const c = new CoreHarness(dir, env); clients.push(c); return c;
 };
 afterEach(async () => { for (const c of clients.splice(0)) await c.kill("SIGKILL"); });
-const seed = (dir: string, state = "pending") => {
-  mkdirSync(join(dir, "main"), { recursive: true });
-  writeFileSync(join(dir, "main", "chat.json"), JSON.stringify([{ id: "user", role: "user", text: "helo", date: 1 }]));
-  writeFileSync(join(dir, "main", "tasks.json"), JSON.stringify([{ id: "task", name: "helo", state, createdAt: 1, updatedAt: 1, messageIDs: ["user"], kept: false, declared: true }]));
+const seed = (dir: string, state = "pending", folder = "main", taskId = "task") => {
+  mkdirSync(join(dir, folder), { recursive: true });
+  writeFileSync(join(dir, folder, "chat.json"), JSON.stringify([{ id: "user", role: "user", text: "helo", date: 1 }]));
+  writeFileSync(join(dir, folder, "tasks.json"), JSON.stringify([{ id: taskId, name: "helo", state, createdAt: 1, updatedAt: 1, messageIDs: ["user"], kept: false, declared: true }]));
 };
 const complete = (c: CoreHarness, taskId = "task", botId = MAIN) => c.call({ type: "task.complete", botId, taskId });
 
@@ -69,19 +69,60 @@ describe("task.complete over the core transport", () => {
     expect(await complete(c)).toEqual({ changed: true });
   });
 
-  it("refuses manual closure from a project instance that does not own the project lock", async () => {
+  it("allows manual closure under an advisory project lock without changing the holder's tasks or lock", async () => {
     const dir = tempDir("task-completion-lock");
     const project = "44444444-4444-4444-8444-444444444444";
     const folder = join(dir, "project"); mkdirSync(folder);
     for (const name of ["a", "b"]) {
-      mkdirSync(join(dir, name));
-      writeFileSync(join(dir, name, "projects.json"), JSON.stringify([{ id: project, name: "Project", folder: pathToFileURL(folder).href + "/", avatar: "hexagon" }]));
+      const profile = join(dir, name);
+      seed(profile, "pending", join("projects", project), `${name}-task`);
+      writeFileSync(join(profile, "projects.json"), JSON.stringify([{ id: project, name: "Project", folder: pathToFileURL(folder).href + "/", avatar: "hexagon" }]));
     }
     const first = core(join(dir, "a"));
-    await first.call({ type: "chat.send", botId: project, text: "/task" });
-    const task = await until(async () => (await first.chat(project)).tasks.find((t: any) => t.state === "running"));
-    const second = core(join(dir, "b")); await second.chat(project);
-    await expect(complete(second, task.id, project)).rejects.toThrow(/conflict/);
-    expect((await first.chat(project)).tasks.find((t: any) => t.id === task.id).state).toBe("running");
+    const firstTask = (await first.chat(project)).tasks.find((t: any) => t.id === "a-task");
+    expect(firstTask).toMatchObject({ state: "pending" });
+    const lockFile = join(folder, ".bot", "botling.lock");
+    const lock = readFileSync(lockFile, "utf8");
+    expect(JSON.parse(lock)).toMatchObject({ app: "Botling 2.0", pid: first.child.pid, dataDir: join(dir, "a") });
+    const firstFile = join(dir, "a", "projects", project, "tasks.json");
+    const firstSaved = readFileSync(firstFile, "utf8");
+    const second = core(join(dir, "b"));
+    const snapshot = await second.call({ type: "chat.snapshot", botId: project });
+    expect(snapshot.bots.find((b: any) => b.id === project).problem).toBeNull();
+    expect(snapshot.chat.messages.some((m: any) => m.text.includes(`Another Botling (Botling 2.0, pid ${first.child.pid}) has this project open. Both may write`))).toBe(true);
+    expect(snapshot.chat.tasks.find((t: any) => t.id === "b-task")).toMatchObject({ state: "pending" });
+    // Task IDs belong to the profile, even when both bots work in the same project folder.
+    await expect(complete(second, "a-task", project)).rejects.toThrow(/not_found/);
+    expect(second.of("tasks.updated")).toHaveLength(0);
+    expect(await complete(second, "b-task", project)).toEqual({ changed: true });
+    const updated = (second.of("tasks.updated").at(-1)!.event as any).tasks.find((t: any) => t.id === "b-task");
+    expect(updated).toMatchObject({ state: "done", manuallyCompletedAt: expect.any(String) });
+    expect((await second.chat(project)).tasks.find((t: any) => t.id === "b-task")).toEqual(updated);
+    const saved = JSON.parse(readFileSync(join(dir, "b", "projects", project, "tasks.json"), "utf8"));
+    expect(saved.find((t: any) => t.id === "b-task")).toMatchObject({ state: "done", kept: true, manuallyCompletedAt: expect.any(Number) });
+    expect((await first.chat(project)).tasks.find((t: any) => t.id === "a-task")).toEqual(firstTask);
+    expect(first.of("tasks.updated")).toHaveLength(0);
+    expect(readFileSync(firstFile, "utf8")).toBe(firstSaved);
+    expect(readFileSync(lockFile, "utf8")).toBe(lock);
+    await second.kill();
+    // A nonholder must not remove the live holder's lock on shutdown either.
+    expect(readFileSync(lockFile, "utf8")).toBe(lock);
+  });
+
+  it("refuses manual closure when unreadable chat makes the bot genuinely read-only", async () => {
+    const dir = tempDir("task-completion-readonly"); seed(dir);
+    const chatFile = join(dir, "main", "chat.json");
+    writeFileSync(chatFile, "{invalid json");
+    const tasksFile = join(dir, "main", "tasks.json");
+    const before = readFileSync(tasksFile, "utf8");
+    const c = core(dir);
+    const snapshot = await c.call({ type: "chat.snapshot", botId: MAIN });
+    expect(snapshot.bots.find((b: any) => b.id === MAIN).problem).toMatch(/chat file cannot be read/);
+    expect(snapshot.chat.tasks.find((t: any) => t.id === "task")).toMatchObject({ state: "pending" });
+    await expect(complete(c)).rejects.toThrow(/conflict/);
+    expect(c.of("tasks.updated")).toHaveLength(0);
+    expect((await c.chat()).tasks.find((t: any) => t.id === "task")).toMatchObject({ state: "pending" });
+    expect(readFileSync(tasksFile, "utf8")).toBe(before);
+    expect(readFileSync(chatFile, "utf8")).toBe("{invalid json");
   });
 });
