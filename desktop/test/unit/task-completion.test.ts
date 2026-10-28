@@ -9,7 +9,7 @@ const make = () => {
 const reload = (book: TaskBook) => new TaskBook(JSON.parse(JSON.stringify(book.tasks)).map((raw: unknown) => readTaskCard(raw)!));
 
 describe("manual task closure", () => {
-  it.each(["pending", "running", "waiting"] as const)("closes %s durably and keeps delayed owner, other-head and worker reports linked", (state) => {
+  it.each(["pending", "running", "waiting"] as const)("closes %s durably and keeps delayed owner and worker reports linked; rejects other-head reports", (state) => {
     let { book, id } = make();
     book.set(id, state, 2);
     book.link("worker", id);
@@ -31,7 +31,7 @@ describe("manual task closure", () => {
     book.replied("continued", { head: "claude" }, [{ continues: "Docs", state: "running" }], 10);
     book.set(id, "running", 11);
     expect(book.tasks).toHaveLength(1);
-    expect(book.task(id)).toMatchObject({ state: "done", kept: true, manuallyCompletedAt: 3, updatedAt: 3, owner: "claude", subagentIDs: ["worker"], messageIDs: ["user", "owner", "worker-report", "other-head", "untagged", "named", "continued"] });
+    expect(book.task(id)).toMatchObject({ state: "done", kept: true, manuallyCompletedAt: 3, updatedAt: 3, owner: "claude", subagentIDs: ["worker"], messageIDs: ["user", "owner", "worker-report", "untagged", "named", "continued"] });
     expect(book.task(id)!.now).toBeUndefined();
   });
 

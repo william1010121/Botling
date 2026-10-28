@@ -196,5 +196,10 @@ it("links a partner Codex worker to the originating Claude task through the actu
   const agent = task.relatedAgents[0];
   const detail = (await c.call({ type: "subagent.view", botId: MAIN, subagentId: agent.id })).subagent;
   expect(detail).toMatchObject({ id: agent.id, engine: "codex", prompt: "build the parser", result: "Worker did: build the parser" });
-  expect(task.atWork).toBe(false);
+  // A completed worker may still have its owner processing the report.
+  const settled = await until(async () => {
+    const current = (await c.chat()).tasks.find((candidate: any) => candidate.id === task.id);
+    return current && !current.atWork ? current : undefined;
+  });
+  expect(settled.atWork).toBe(false);
 });

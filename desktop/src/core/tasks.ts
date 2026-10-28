@@ -256,7 +256,7 @@ export class TaskBook {
         const id = this.working(turn.userMessage, turn.userText ?? "", turn.head, at);
         base = this.task(id);
       }
-      if (!base) return [];
+      if (!base || (base.owner && base.owner !== turn.head)) return [];
       // As 1.x keeps it; without a <task> line it is bookkeeping only and `shownTasks` leaves it out.
       const at_ = this.index(base.id)!;
       if (quick && !base.kept && (base.state === "pending" || base.state === "running") && !base.subagentIDs?.length) {
@@ -290,6 +290,7 @@ export class TaskBook {
         touched.push(identified.id);
         return;
       }
+      if (base?.owner && base.owner !== turn.head) return;
       const continued = tag.continues ? this.named(tag.continues) : undefined;
       const named = tag.name ? this.named(tag.name) : undefined;
       // Named terminal reports update the named original, never rename a current repair card.
@@ -345,6 +346,7 @@ export class TaskBook {
   }
 
   private touch(card: TaskCard, message: string, head: Head, asks: boolean, at: number) {
+    if (card.owner && card.owner !== head) return;
     if (!card.messageIDs.includes(message)) card.messageIDs.push(message);
     if (card.manuallyCompletedAt !== undefined) return;
     if (!card.owner) card.owner = head;
@@ -355,6 +357,7 @@ export class TaskBook {
   }
 
   private apply(tag: TaskTag, card: TaskCard, head: Head, message: string, asks: boolean, at: number) {
+    if (card.owner && card.owner !== head) return;
     if (!card.messageIDs.includes(message)) card.messageIDs.push(message);
     card.declared = true;
     if (card.manuallyCompletedAt !== undefined) return;

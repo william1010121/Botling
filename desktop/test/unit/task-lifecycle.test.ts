@@ -153,3 +153,10 @@ describe("original-owner reconciliation with an expected snapshot", () => {
     expect(book.tasks).toEqual(before);
   });
 });
+
+it.each([{ tags: [] }, { tags: [{ state: "done" as const }] }, { tags: [{ name: "Foreign rename", state: "done" as const }] }])("rejects foreign base reports before links or declaration change: %j", ({ tags }) => {
+  const { book } = started();
+  const before = structuredClone(book.tasks);
+  book.replied("foreign", { head: "codex", userMessage: "u", usedTools: true }, tags, 10);
+  expect(book.tasks).toEqual(before);
+});
