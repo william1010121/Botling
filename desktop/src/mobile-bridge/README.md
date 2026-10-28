@@ -36,6 +36,9 @@ stable when reissuing a token for the same client. Secure/back up this directory
 it contains outcomes, but not bearer tokens or command text. Power-loss guarantees depend on
 the existing core atomic-file implementation (directory fsync is best-effort, especially Windows).
 
+See [LOCAL-SETUP.md](LOCAL-SETUP.md) for the inert config template, offline preflight,
+startup prerequisites and device acceptance checklist.
+
 ## Local setup for later authorized activation
 
 These are setup instructions, not evidence that a phone can connect. No config was enabled,
