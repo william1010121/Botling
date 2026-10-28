@@ -1,4 +1,4 @@
-// The generated instructions are the Swift app's, character for character. Two checks:
+// The generated instructions preserve Swift parity, with explicit approved desktop report additions. Two checks:
 // - prompts-golden.json holds the strings the Swift code itself wrote for a set of inputs
 //   (Tests/ClaudeCodeBotCoreTests/DesktopPromptGoldenExport.swift; re-export after changing
 //   Prompts.swift, see desktop/README.md);
@@ -36,6 +36,22 @@ function promptsFor(input: GoldenPrompt["input"], engine: "claude" | "codex" = "
   });
 }
 
+// Approved desktop-only report guidance (40418b0). Keep the exported Swift goldens intact:
+// compose only these reviewed changes, then compare the entire prompt so unrelated drift fails.
+function withDesktopReportGuidance(swift: string, worker: boolean): string {
+  const reportHeading = "Local HTML report image rules:\n";
+  expect(swift.split(reportHeading)).toHaveLength(2);
+  let expected = swift.replace(reportHeading, reportHeading +
+    "- Keep preview commands, tool names, and decode checks in the internal evidence handback. In user reports, state any missing content or failed check that affects the conclusion or decision, with its practical effect. Omit routine validation boilerplate; never conceal defects or claim checks you did not run.\n");
+  if (worker) {
+    const oldLead = "- Final report: state completed or failed,";
+    expect(expected.split(oldLead)).toHaveLength(2);
+    expected = expected.replace(oldLead,
+      "- Final report to the coordinator: keep research-only scope, test commands, and preview-tool details in this internal handback, separate from user report prose. User reports still state material uncertainty and failed checks in plain language. State completed or failed,");
+  }
+  return expected;
+}
+
 describe("prompts: the Swift app's strings", () => {
   it("has golden strings for every configuration", () => {
     expect(golden.prompts.length).toBeGreaterThanOrEqual(13);
@@ -54,7 +70,10 @@ describe("prompts: the Swift app's strings", () => {
     it(`matches ${entry.name} (a Codex head)`, () => {
       const ours = promptsFor(entry.input, "codex");
       for (const key of ["system", "headsRule", "wake", "tidy", "handoff", "resume", "codexWorkerSystem"] as const) {
-        expect(ours[key], `${entry.name}.${key}`).toBe(entry.output[key]);
+        const expected = key === "system" || key === "codexWorkerSystem"
+          ? withDesktopReportGuidance(entry.output[key], key === "codexWorkerSystem")
+          : entry.output[key];
+        expect(ours[key], `${entry.name}.${key}`).toBe(expected);
       }
     });
   }
