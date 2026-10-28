@@ -4,7 +4,8 @@ Protocol v10, `POST /api/mobile/command`, same-origin bearer authentication. Mob
 served at `/mobile/`; only the public application shell is unauthenticated. Every data/command
 request needs a current token and an explicit bot grant. There is no HTTP listener, public bind,
 CORS, reverse-proxy trust, cookie authentication, file endpoint or network token-issuance route.
-No listener starts unless the local owner supplies `BOTLING_MOBILE_CONFIG` before core startup.
+No listener starts unless the local owner supplies `BOTLING_MOBILE_CONFIG`, or creates the
+owner-only `<selected core data>/mobile/config.json` opt-in before core startup.
 
 The core adapter allows snapshot/send/choose/answer only. Existing boot-activation checks,
 plugin before-send hooks and question/approval semantics run through core `handle` unchanged.
@@ -76,9 +77,14 @@ live token issued, app installed/restarted or public route deployed by this chan
    }
    ```
 
-   Keep the private key owner-only. Set `BOTLING_MOBILE_CONFIG` to this absolute config path in
-   the environment of the core at its next separately authorized launch. No config means disabled.
-   A future launcher/Rust migration must explicitly preserve this opt-in environment/config path.
+   Keep the private key owner-only. For persistent opt-in, put config.json in the selected core
+   data directory's private `mobile/` directory (0700); config.json and clients.json must be 0600.
+   Main supplies this core data directory from the actual selected app profile (`<profile>/core`).
+   An explicit `BOTLING_MOBILE_CONFIG` overrides discovery; an explicitly empty value disables it.
+   Missing default config means disabled; malformed/insecure config fails closed without fallback.
+   Discovery never exports its path into the environment, so another selected profile does not
+   inherit it. Probe cores always skip mobile. No settings.json or global environment changes.
+   A future Rust migration must preserve this profile-local opt-in and override precedence.
 5. On the phone, open `https://botling.home.arpa:8443/mobile/`, enter the token, check the expected
    Main/project content, then test a harmless send and a question response. Verify desktop unread
    is unchanged by snapshots, and desktop queued attachments block sending. Verify revocation.
@@ -115,3 +121,20 @@ core handle/Bot.choose checks: valid unexpired/unrevoked token, explicitly allow
 activated core, existing open question and valid choice; tool permissions additionally need
 an outstanding approval. Accepted:false remains false. No new bypass or bot grant is added.
 The regression uses controlled approval callbacks, never a real tool approval or installer.
+
+## Local Cloudflare Tunnel compatibility
+
+Public browser origin and private listener port are independent. For the coordinated deployment,
+use public origin `https://botling-bridge.driseam.com` with `host: "127.0.0.1", port: 8443`.
+The connector runs on the Mac; the cluster cannot route the home LAN. It must connect using HTTPS,
+set TLS server name to `botling-bridge.driseam.com`, and verify the upstream certificate against
+its configured trusted issuer. Preserve HTTP Host `botling-bridge.driseam.com`, browser Origin
+`https://botling-bridge.driseam.com`, and Authorization unchanged. Do not rewrite Host to
+`127.0.0.1:8443`, trust forwarded headers, or disable TLS verification. The port separation changes
+only listener configuration; exact Host/Origin, HTTPS, private bind and bearer/bot checks remain.
+
+Use `/mobile/` with its trailing slash and `/api/mobile/command`. This is HTTP snapshot polling,
+not WebSocket/SSE. Public edge authentication may add protection but never replaces the app token.
+Cloudflare account/token/DNS/tunnel resources are owned by flux-k8s; this code does not provision
+them or install/start cloudflared. Certificate issuance/trust and device access remain deployment
+acceptance tasks. No root process or privileged port is needed for the local listener.

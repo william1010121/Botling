@@ -104,9 +104,9 @@ describe('HTTPS contract', () => {
       void handler(options)(req, res);
     });
     server.listen(0, '127.0.0.1'); await once(server, 'listening');
-    const port = (server.address() as any).port; options.origin = `https://127.0.0.1:${port}`;
+    const port = (server.address() as any).port; options.origin = 'https://botling-bridge.driseam.com';
     const call = (body: unknown = envelope(), headers: Record<string, string> = {}, path = '/api/mobile/command', method = 'POST') => new Promise<{ status: number; body: string; headers: any }>((resolve, reject) => {
-      const req = httpsRequest(options.origin + path, { rejectUnauthorized: false, method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers } }, res => {
+      const req = httpsRequest(`https://127.0.0.1:${port}` + path, { rejectUnauthorized: false, method, headers: { Host: 'botling-bridge.driseam.com', Origin: options.origin, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...headers } }, res => {
         let body = ''; res.on('data', c => { body += c; }); res.on('end', () => resolve({ status: res.statusCode!, body, headers: res.headers }));
       }); req.on('error', reject); req.end(method === 'POST' ? JSON.stringify(body) : undefined);
     });
@@ -114,6 +114,9 @@ describe('HTTPS contract', () => {
       expect((await call(envelope(), { Authorization: '' })).status).toBe(401);
       expect((await call(envelope(), { Origin: 'https://evil.invalid' })).status).toBe(403);
       expect((await call(envelope(), { Host: 'evil.invalid' })).status).toBe(403);
+      expect((await call(envelope(), { Host: `127.0.0.1:${port}`, 'X-Forwarded-Host': 'botling-bridge.driseam.com' })).status).toBe(403);
+      expect((await call(envelope(), { Origin: 'https://botling-bridge.driseam.com:8443' })).status).toBe(403);
+      expect((await call(envelope(), { Host: 'botling-bridge.driseam.com:8443' })).status).toBe(403);
       expect((await call({ v: 10, id: 'x', cmd: { type: 'chat.read', botId } })).status).toBe(403);
       expect((await call({ v: 10, id: 'x', cmd: { type: 'chat.send', botId: 'other', text: 'no' } })).status).toBe(403);
       expect((await call({ ...envelope(), v: 9 })).status).toBe(400);

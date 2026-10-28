@@ -7,20 +7,24 @@ an absolute config filename; output contains check stages, never config contents
 
 ## Prepare without starting Botling
 
-Use an existing private LAN/VPN route. Supply the specific computer IPv4, private HTTPS hostname
-and port, and the existing certificate chain/private key. The certificate SAN must match the
-hostname. Phone DNS and trust of its issuing CA are separate requirements. Do not create a CA,
-change system/device trust, set up forwarding, or expose a public service as part of this procedure.
-The IP and hostname in `config.example.json` are examples, not detected or approved endpoints.
+For the coordinated Cloudflare Tunnel deployment, the public origin is
+`https://botling-bridge.driseam.com`; the private backend is `https://127.0.0.1:8443` on the Mac.
+The tunnel connector must run on this Mac because the cluster cannot route the home LAN.
+Public origin port and local listener port are independent; neither endpoint may use HTTP.
+Supply a certificate/key for the public hostname SAN with issuer trusted by the local connector.
+Do not generate credentials before flux-k8s confirms the trust scheme. This procedure does not
+create Cloudflare resources, change system trust, or install/start the connector.
 
-From the repository root, choose a NEW account-owned directory for this phone configuration:
+Persistent opt-in is `<actual selected app profile>/core/mobile/config.json`. Determine the
+selected profile from the running app/authorized launch contract; do not assume the Finder default
+when `BOTLING_DATA_DIR` or `--botling-update-data` chooses another profile. From the repo root,
+replace the placeholder with that verified profile before running these preparation commands:
 
 ```sh
-mobile_private="$HOME/.botling-mobile-phone"
-(umask 077; mkdir "$mobile_private")
-# Stop if mkdir reports an existing directory; inspect/reuse it deliberately, do not overwrite.
-(umask 077; cp -n desktop/src/mobile-bridge/config.example.json "$mobile_private/config.json")
-chmod 600 "$mobile_private/config.json"
+mobile_private="/REPLACE/verified-app-profile/core/mobile"
+(umask 077; mkdir "$mobile_private") &&
+  (umask 077; cp -n desktop/src/mobile-bridge/config.example.json "$mobile_private/config.json")
+# Stop on any failure; inspect an existing directory rather than overwriting it.
 ```
 
 Replace every example value with the agreed private endpoint and absolute paths. On this macOS
@@ -46,7 +50,7 @@ and choose a new private token-output file; do not silently overwrite or discard
 Transfer the token to the intended phone privately; never use URLs, shell arguments, screenshots,
 shared logs, or this repository. This preparation run has NOT issued a live token.
 
-Preflight checks exact config fields, specific local private IPv4, HTTPS/port agreement, key
+Preflight checks exact config fields, specific local private IPv4, HTTPS origin and independent valid listener port, key
 permissions, certificate time/SAN and key pairing, client schema/current Main grant, and the five
 nonempty assets. It does not verify certificate chain trust, phone DNS/firewall, free port, token
 possession, or actual core behavior. A loopback PASS is computer-local only. Failures print only a
@@ -55,24 +59,33 @@ with the current bridge configuration (there is no passphrase field).
 
 ## Separately authorized activation
 
-Current core has no live configure command: `startConfiguredMobile` reads `BOTLING_MOBILE_CONFIG`
-once at startup; probe cores intentionally skip it. Exporting a variable in a new shell cannot
-modify the running core. Do NOT launch a second app against the same profile, kill/restart the
-current core, or hot-swap it merely to activate mobile during other workers' jobs.
+There is no live configure command. At startup the core uses this precedence:
 
-At a coordinator-approved restart window, after clean app exit and successful preflight, launch
-the existing installed executable with its existing operational profile environment preserved.
-For the standard installed path, the additional environment setting is:
+1. If `BOTLING_MOBILE_CONFIG` is present, use that explicit path. Empty means disabled. Invalid or
+   missing explicit file fails closed, never falling back to a default. Existing env-path behavior
+   is preserved; clear the override deliberately if switching to profile-local discovery.
+2. Otherwise read only `<selected core data>/mobile/config.json`. Absent means disabled. The mobile
+   directory must be owner-only 0700 and the config owner-only 0600; discovery rejects symlinked
+   mobile directories/config files and malformed config. No other profile/home path is searched.
+3. Probe cores skip all mobile config IO and never bind. Discovery does not mutate process.env,
+   so an inherited discovered path cannot silently enable a different selected profile later.
 
-```sh
-BOTLING_MOBILE_CONFIG="$mobile_private/config.json" "$HOME/Applications/Botling 2.app/Contents/MacOS/Botling 2"
-```
+Main already passes `<actual selected app profile>/core` as core data. No main startup/settings
+change is needed. On a separately confirmed App-managed install/restart, the existing installer
+preserves/selects the app profile and the new core discovers that profile's opt-in. The config
+persists outside the bundle for future Finder starts selecting the same profile. A Finder start
+selecting a DIFFERENT profile stays disabled unless that profile has its own opt-in or an explicit
+override is supplied. Normal authorized profile migration carries the profile's private files;
+this implementation does not copy them or choose another profile itself.
 
-This command is documentation only and was NOT executed. If the normal launcher supplies data
-or profile overrides, preserve those verified values; do not switch profiles by copying this
-command blindly. The variable is process-local, not persistent for future Finder launches.
-An approved persistent launcher arrangement must retain it on later app starts. No launch agent,
-launchctl environment mutation, app install, or profile write is included here.
+Creating the file does not reconfigure an already running core. Complete local preparation and
+preflight, then request the existing App install/restart confirmation; do not launch a duplicate
+app, kill the current core, or use a hot swap solely to bypass restart confirmation. No launchd,
+launchctl, global environment or app-owned settings writes are part of this setup.
+
+The connector must preserve public Host and browser Origin while verifying upstream TLS with
+public hostname SNI and its trusted CA. `cloudflared` is not installed by these changes. A local
+loopback listener is unreachable from the phone without the approved connector and edge routing.
 
 ## Device and bridge acceptance
 
@@ -99,11 +112,7 @@ existing mobile feature contract; do not invent those features during this accep
 
 ## Preparation verification status
 
-This addition is local preparation, not mobile acceptance. On 2026-10-28 the allocated
-offline behavior check passed all 10/10 disposable certificate/config cases in 0.73 seconds:
-valid input, wrong SAN, wrong key, expired certificate, public bind address, missing bind
-address, unsafe permissions, expired Main grant, missing Main grant, and missing assets.
-Syntax/JSON/diff static checks also passed. These results are reused for this cumulative
-candidate; they do not validate a real endpoint, certificate/config, or physical phone.
-No listener, app launch, live token issuance, or production profile change was required.
-Phone DNS/TLS trust, device behavior, and live bridge/core acceptance remain unverified.
+The prior approved preflight passed ten offline cases on commit 78c9fb01. This revision changes
+port separation and adds profile-local discovery; new focused bridge/discovery/listener cases and
+an updated offline preflight pass must be recorded separately. No physical phone, production
+config, real certificate, tunnel or App startup acceptance follows from unit/fixture results.

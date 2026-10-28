@@ -26,7 +26,7 @@ try {
   const [a, b] = c.host.split('.').map(Number);
   requireValue(a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127));
   const origin = new URL(c.origin);
-  requireValue(origin.protocol === 'https:' && origin.origin === c.origin && Number.isInteger(c.port) && c.port >= 1 && c.port <= 65535 && Number(origin.port || 443) === c.port);
+  requireValue(origin.protocol === 'https:' && origin.origin === c.origin && Number.isInteger(c.port) && c.port >= 1 && c.port <= 65535);
   requireValue(Object.values(networkInterfaces()).flat().some(n => n?.address === c.host));
   stage = 'TLS key, certificate, validity and hostname';
   ownerFile(c.keyFile);

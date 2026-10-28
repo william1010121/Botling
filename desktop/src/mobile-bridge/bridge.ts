@@ -90,13 +90,15 @@ export function handler(options: BridgeOptions) {
 }
 export function startBridge(options: BridgeOptions, failed: (error: Error) => void) {
   const origin = new URL(options.origin);
+  // origin is the public browser origin; port is the independent private HTTPS listener.
   // Bind only a specific private IPv4 address, never 0.0.0.0 or a public interface.
   const octets = options.host.split('.').map(Number);
   const privateHost = octets.length === 4 && octets.every(n => Number.isInteger(n) && n >= 0 && n <= 255)
     && (octets[0] === 127 || octets[0] === 10 || (octets[0] === 192 && octets[1] === 168)
       || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127));
-  if (!privateHost || origin.protocol !== 'https:' || origin.origin !== options.origin || Number(origin.port || 443) !== options.port
-    || !options.tls.key || !options.tls.cert) throw new Error('Explicit private bind address and matching HTTPS origin/TLS certificate required.');
+  if (!privateHost || origin.protocol !== 'https:' || origin.origin !== options.origin
+    || !Number.isInteger(options.port) || options.port < 1 || options.port > 65535
+    || !options.tls.key || !options.tls.cert) throw new Error('Explicit private bind address, valid listener port and HTTPS origin/TLS certificate required.');
   Clients.parse(options.clients());
   const server = createServer({ ...options.tls, minVersion: 'TLSv1.2' }, (req, res) => { void handler(options)(req, res).catch(() => { res.destroy(); }); });
   server.requestTimeout = 15_000; server.headersTimeout = 10_000; server.maxHeadersCount = 32; server.maxConnections = 32;
