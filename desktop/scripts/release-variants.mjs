@@ -202,15 +202,28 @@ export async function assemble(desktop, root, name, expected, builder, base, run
     acceptance: 'Assembly only; actual ASAR/native version, codesign, profile/bootstrap and release gates still required' });
   return { output, variant, zip: artifacts[0], artifacts };
 }
+// Pipe signer diagnostics so child-process exceptions cannot echo key arguments or raw errors.
+// Only a path crosses this boundary; private bytes remain inside the signer subprocess.
+export function runReleaseSigner(desktop, commandArgs, keyFile) {
+  try {
+    execFileSync(process.execPath, [join(desktop, 'scripts/release-sign.mjs'), ...commandArgs,
+      ...(keyFile === undefined ? [] : ['--key-file', keyFile])], { cwd: desktop, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch {
+    throw new Error('Release signer failed; check key file ownership/mode, validity and committed public trust');
+  }
+}
 export async function releaseVariants(desktop, args) {
   const value = flag => args[args.indexOf(flag) + 1];
   const modes = ['--release-variants', '--compile-only', '--reuse-built'].filter(flag => args.includes(flag));
   if (modes.length !== 1) throw new Error('Select exactly one release mode');
   const mode = modes[0], raw = value(mode);
-  const allowed = new Set([mode, '--variant', '--sign-manifests']);
+  const allowed = new Set([mode, '--variant', '--sign-manifests', '--key-file']);
   for (let i = 0; i < args.length; i++) {
-    if (!allowed.has(args[i])) throw new Error(`Unknown release argument: ${args[i]}`);
-    if (args[i] !== '--sign-manifests') i++;
+    if (!allowed.has(args[i])) throw new Error('Unknown release argument');
+    if (args[i] !== '--sign-manifests') {
+      if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Release option requires a value');
+      i++;
+    }
   }
   if (!raw || !isAbsolute(raw)) throw new Error('Release root must be an absolute path');
   if (process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('This release requires macOS arm64');
@@ -225,6 +238,10 @@ export async function releaseVariants(desktop, args) {
   process.env.BOTLING_RELEASE_BUILD = '1'; process.env.BOTLING_UNSIGNED_UPDATES = '0';
   process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
   const expected = source(desktop);
+  const keyFile = args.includes('--key-file') ? value('--key-file') : process.env.BOTLING_RELEASE_KEY_FILE;
+  if (keyFile !== undefined && (!keyFile || !isAbsolute(keyFile))) throw new Error('Signing key file must be an absolute path');
+  // Before compileOnce creates a root or invokes either builder, and before reuse assembly.
+  if (args.includes('--sign-manifests') || keyFile !== undefined) runReleaseSigner(desktop, ['preflight'], keyFile);
   if (mode !== '--reuse-built') await compileOnce(desktop, root, expected);
   else verifyFrozen(root, expected);
   if (mode === '--compile-only') return;
@@ -237,7 +254,7 @@ export async function releaseVariants(desktop, args) {
     const result = await assemble(desktop, root, name, expected,
       config => build({ projectDir: desktop, targets: Platform.MAC.createTarget(), config, publish: 'never' }), base);
     if (args.includes('--sign-manifests')) {
-      run(process.execPath, [join(desktop, 'scripts/release-sign.mjs'), 'sign', result.variant.version, result.zip], desktop);
+      runReleaseSigner(desktop, ['sign', result.variant.version, result.zip], keyFile);
       const manifest = `${result.zip}.manifest.json`;
       checkArtifact(readFileSync(result.zip), json(manifest), json(join(desktop, 'release-config.json')).publicKey, result.variant.version);
       result.artifacts.push(manifest);

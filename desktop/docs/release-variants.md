@@ -14,8 +14,10 @@ Do not run tests that rebuild or remove these directories concurrently (R01 owns
 From `desktop/`, select an unused absolute release root outside the checkout (parent exists):
 
 ```sh
-node --test scripts/release-variants.test.mjs scripts/release-check.test.mjs
+node --test scripts/release-sign.test.mjs scripts/release-variants.test.mjs scripts/release-check.test.mjs
 node scripts/release-check.mjs --tag v2.0.0 --trust
+export BOTLING_RELEASE_KEY_FILE='/absolute/path/to/operator-owned-ed25519.pkcs8.pem'
+node scripts/release-sign.mjs preflight
 node scripts/package.mjs --release-variants /Volumes/My-SSD/botling-work/builds/release-2.0.0-20261029 --sign-manifests
 ```
 
@@ -23,10 +25,28 @@ The last command compiles desktop and mobile once each, freezes their complete i
 then separately assembles/signs public and local ASAR/native bundles, ZIPs and DMGs. It invokes
 the existing signer separately for each exact ZIP and verifies each signed manifest. It never
 publishes, installs or changes user data. CSC_LINK/CSC_NAME/BOTLING_RELEASE_KEY must be unset;
-Apple signing is ad-hoc, and the existing signer reads its private file only when explicitly
-requested by `--sign-manifests`. Without that switch ZIP manifests are not signed or emitted.
+Apple signing is ad-hoc. Select the private key by absolute file path using
+`BOTLING_RELEASE_KEY_FILE` or `--key-file /absolute/path/to/key.pem` (the flag takes precedence).
+Do not put PEM bytes in this variable or copy the key to the legacy default. The selected
+file must be a readable, non-symlink regular file, owned by the invoking UID with exactly
+0600 permissions on POSIX. The signer validates the opened file descriptor too, rejects
+symlink substitution/nonregular files, and checks an Ed25519 key against committed public trust.
 
-For a review pause between compilation and assembly, use instead:
+When signing is requested, or a key file is explicitly selected, variants runs the signer's
+silent `preflight` subprocess **before creating the compilation root or running either builder**,
+and before reuse assembly. Only that subprocess reads private bytes; the parent forwards a
+path and suppresses raw child errors. A matching key exits zero with no output; failure is
+nonzero with a fixed sanitized diagnostic, never PEM, path, OpenSSL details or an exception
+stack. The key is reopened and revalidated for each later manifest signature, so preflight is
+not a guarantee against subsequent removal/replacement. No key bytes are stored in provenance.
+Without `--sign-manifests` ZIP manifests are not signed or emitted, even when preflight runs.
+Standalone `release-sign.mjs sign <version> <zip> --key-file <absolute-path>` uses the same checks.
+Standalone signing preserves CI's existing `BOTLING_RELEASE_KEY` PEM-secret input when no file
+input is selected; combining both input forms is rejected. With neither input, the legacy
+`~/.botling-release/ed25519.key` remains the default and now uses the same safe file checks.
+
+For a review pause between compilation and assembly, keep the path-only environment variable
+above set and use instead:
 
 ```sh
 node scripts/package.mjs --compile-only /Volumes/My-SSD/botling-work/builds/release-2.0.0-20261029
