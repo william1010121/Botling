@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "lang": "zh-Hant",
+  "kind": "investigation",
+  "title": "手機版為什麼只看到 Main bot",
+  "subtitle": "範例：假設情境，用來示範調查型報告",
+  "asOf": "2026-10-27 23:00",
+  "status": { "level": "at_risk", "reason": "已退回 .3 止血；根因修好前不重新上線" },
+  "tldr": "手機版 .4 上線後，bot 清單請求帶了 limit=1，Bridge 照做只回傳第一筆，所以只看到 Main。已退回 .3，修正後再上線。",
+  "next": ["拿掉 limit 預設值", "加回歸測試", "重新上線 .5"],
+  "sections": [
+    {
+      "title": "影響",
+      "takeaway": "所有手機使用者有 80 分鐘看不到其他 bot",
+      "blocks": [
+        { "type": "kpi", "items": [
+          { "label": "受影響的手機", "value": "100%", "status": "blocked" },
+          { "label": "看不到的 bot", "value": "2 / 3" },
+          { "label": "持續時間", "value": 80, "unit": "分" },
+          { "label": "資料遺失", "value": "無", "status": "done" }
+        ] }
+      ]
+    },
+    {
+      "title": "經過",
+      "takeaway": "問題在 21:10 的 .4 上線後出現",
+      "blocks": [
+        { "type": "timeline", "title": "從上線到止血 80 分鐘", "items": [
+          { "start": "10/27 21:10", "label": "手機版 .4 上線", "status": "done" },
+          { "start": "21:40", "label": "使用者回報只看到 Main", "status": "blocked", "text": "iPhone 與 Android 都一樣" },
+          { "start": "22:05", "label": "確認 /bots 只回傳一筆", "status": "risk" },
+          { "start": "22:20", "label": "找到 .4 新增的 limit=1", "status": "done" },
+          { "start": "22:30", "label": "退回 .3，清單恢復", "status": "done" }
+        ] },
+        { "type": "quote", "text": "手機上只看得到 Main bot，其他 bot 都不見了。", "source": "使用者回報 · 21:40" }
+      ]
+    },
+    {
+      "title": "原因",
+      "takeaway": "手機端多送了 limit=1，Bridge 照單全收",
+      "blocks": [
+        { "type": "sequence", "title": "清單在第一個請求就被截斷", "actors": ["手機", "Bridge", "Core"], "steps": [
+          { "from": "手機", "to": "Bridge", "label": "GET /bots?limit=1", "status": "risk" },
+          { "from": "Bridge", "to": "Core", "label": "listBots(limit 1)" },
+          { "from": "Core", "to": "Bridge", "label": "1 個 bot", "kind": "reply" },
+          { "from": "Bridge", "to": "手機", "label": "只有 Main", "kind": "reply", "status": "blocked" }
+        ] },
+        { "type": "prose", "text": "**很可能（80–95%）**是 .4 的分頁改動：它把 `limit` 預設成 1，原本是給「最近一個 bot」用的。未檢查：Windows 桌面版是否走同一個 API。" }
+      ]
+    },
+    {
+      "title": "修正",
+      "takeaway": "四項修正已完成兩項",
+      "blocks": [
+        { "type": "checklist", "title": "修正與負責人", "items": [
+          { "label": "退回 .3 止血", "status": "done", "note": "Bot · 22:30" },
+          { "label": "找到 limit=1 的來源", "status": "done", "note": "Bot · 22:20" },
+          { "label": "拿掉預設值並加回歸測試", "status": "active", "note": "Bot · 今晚" },
+          { "label": "重新上線 .5 並實機驗收", "status": "pending", "note": "William · 10/29" }
+        ] }
+      ]
+    },
+    {
+      "title": "依據",
+      "blocks": [
+        { "type": "sources", "items": [
+          { "ref": "bridge.log 22:05", "text": "/bots 回應只有 1 筆" },
+          { "ref": "mobile .4 diff", "text": "新增 limit 預設值 1" },
+          { "ref": "rollback 22:30", "text": "退回 .3 後清單恢復 3 筆" }
+        ] }
+      ]
+    }
+  ],
+  "asks": []
+}

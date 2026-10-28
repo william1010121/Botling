@@ -1,0 +1,70 @@
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ground);color:var(--text)}
+body{font:15px/1.5 var(--sys);-webkit-font-smoothing:antialiased;overflow-wrap:anywhere}
+.rpt{container:page/inline-size;background:var(--ground)}
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+:focus-visible{outline:2px solid var(--blue);outline-offset:3px}
+code{font:.85em var(--mono);background:var(--chip);border-radius:6px;padding:.1em .4em}
+
+/* report shell (the approved redesign: eyebrow → title → verdict card → cards) */
+.rp{max-width:1040px;margin:0 auto;padding:44px 40px 48px;display:flex;flex-direction:column;gap:16px;container:report/inline-size}
+.rp h1,.rp h2,.rp h3,.rp h4,.rp p{margin:0}
+.rp-head{margin-bottom:8px}
+.eyebrow{font-size:12.5px;color:var(--faint)}
+.rp h1{font-size:30px;font-weight:650;letter-spacing:-.02em;line-height:1.25;margin-top:6px;text-wrap:balance}
+.subtitle{color:var(--muted);margin-top:8px!important}
+.pill{display:inline-flex;align-items:center;flex:none;border:1px solid currentColor;border-radius:100px;padding:1px 9px;font-size:12px;font-weight:650;line-height:1.5;color:var(--tone,var(--muted));white-space:nowrap}
+.pill.t-neutral{color:var(--muted)}
+
+.verdict{background:var(--bubble);border:1px solid var(--border);border-left:4px solid var(--tone);border-radius:16px;padding:20px 24px 18px}
+.vlabel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:650;color:var(--tone);letter-spacing:.04em}
+.vreason{font-weight:500;color:var(--muted);letter-spacing:0;font-size:13px}
+.vline{font-size:20px;font-weight:600;line-height:1.45;margin-top:4px!important;text-wrap:pretty}
+.plan{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:16px!important;padding-top:14px;border-top:1px solid var(--line)}
+.plabel{font-size:12.5px;color:var(--faint);margin-right:4px}
+.pstep-wrap{display:inline-flex;align-items:center;gap:8px}
+.pstep{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:4px 12px 4px 6px;border-radius:10px;background:var(--chip);font-size:13.5px}
+.pstep i,.asks ol i{font-style:normal;flex:none;width:20px;height:20px;border-radius:50%;background:var(--blue);color:var(--on-accent);font-size:11.5px;font-weight:650;display:inline-flex;align-items:center;justify-content:center}
+.parr{color:var(--faint)}
+
+.sec{display:flex;flex-direction:column;gap:12px;margin-top:20px}
+.sh{padding:0 2px}
+.kicker{font-size:12.5px;font-weight:600;color:var(--faint);letter-spacing:.04em;margin-bottom:2px!important}
+.sh h2{font-size:19px;font-weight:650;line-height:1.4;letter-spacing:-.01em;text-wrap:balance}
+.row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:stretch}
+.cell{grid-column:span var(--span,12);min-width:0;display:flex;flex-direction:column}
+.cell>.blk{flex:1}
+.r-split .cell>.blk-prose,.r-split .cell>.blk-callout,.r-split .cell>.blk-quote{flex:0 1 auto;align-self:stretch}
+.r-split{align-items:center}
+
+.asks{background:var(--bubble);border:1px solid var(--border);border-radius:16px;padding:18px 22px;margin-top:20px}
+.asks h2{font-size:12.5px;font-weight:650;color:var(--blue);letter-spacing:.04em;margin-bottom:10px!important}
+.asks ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+.asks li{display:flex;gap:10px;align-items:flex-start}
+.asks li i{margin-top:2px}
+.asks li p{display:flex;flex-direction:column;gap:1px}
+.asks li b{font-weight:600}
+.asks li span{font-size:12.5px;color:var(--faint)}
+.noask{color:var(--muted)}
+.rp-foot{font-size:12px;color:var(--faint);padding:8px 2px 0;border-top:1px solid var(--line);margin-top:16px}
+
+@container page (max-width:640px){
+  .rp{padding:24px 16px 32px;gap:12px}
+  .rp h1{font-size:24px}
+  .verdict{padding:16px 18px}
+  .vline{font-size:17px}
+  .plan{flex-direction:column;align-items:stretch;gap:6px}
+  .pstep-wrap{display:flex}.parr{display:none}
+  .sh h2{font-size:17px}
+  .sec{margin-top:12px}
+}
+@container report (max-width:720px){
+  .row{gap:12px}
+  .cell{grid-column:span 12}
+}
+@media print{
+  :root{color-scheme:light}
+  .rp{max-width:none;padding:0}
+  .blk,.verdict,.asks{break-inside:avoid}
+  .sh{break-after:avoid}
+}

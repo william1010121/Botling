@@ -14,7 +14,7 @@ let temp, api;
 before(async () => {
   temp = await mkdtemp(join(tmpdir(), 'report-test-'));
   await mkdir(join(temp, 'artifacts'));
-  await build({ stdin: { contents: `export * from './reports/render'; export * from './src/core/page-preview'; export * from './src/main/preview-response';`, resolveDir: root }, outfile: join(temp, 'api.cjs'), bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', loader: { '.css': 'text' }, logLevel: 'silent' });
+  await build({ stdin: { contents: `export * from './reports/render'; export * from './src/core/page-preview'; export * from './src/main/preview-response';`, resolveDir: root }, outfile: join(temp, 'api.cjs'), bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', loader: { '.css': 'text' }, logLevel: 'silent', tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } } });
   api = createRequire(import.meta.url)(join(temp, 'api.cjs'));
 });
 after(async () => { await rm(temp, { recursive: true, force: true }); });

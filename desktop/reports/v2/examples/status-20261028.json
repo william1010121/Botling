@@ -1,0 +1,82 @@
+{
+  "version": 2,
+  "lang": "zh-Hant",
+  "kind": "status",
+  "title": "Botling 今天的交付狀態",
+  "asOf": "2026-10-28 18:00",
+  "status": { "level": "at_risk", "reason": "手機版 bot 清單受阻，今晚修 API 後重驗" },
+  "tldr": "任務面板 .11 已安裝並開啟；Rust 遷移與報告改版照計畫進行。唯一受阻的是手機版：bot 清單只回傳 Main。",
+  "next": ["修手機版 bot 清單", "補完 Rust IPC 指令", "定稿報告區塊"],
+  "sections": [
+    {
+      "title": "總覽",
+      "takeaway": "四條工作線：一條完成、兩條進行、一條受阻",
+      "blocks": [
+        { "type": "kpi", "stack": true, "items": [
+          { "label": "工作線", "value": 4 },
+          { "label": "完成", "value": 1, "status": "done" },
+          { "label": "進行中", "value": 2, "status": "active" },
+          { "label": "受阻", "value": 1, "status": "blocked" }
+        ] }
+      ]
+    },
+    {
+      "title": "進度",
+      "takeaway": "Rust 遷移過六成，手機版功能追上七成",
+      "blocks": [
+        { "type": "progress", "title": "各工作線完成度", "items": [
+          { "label": "任務面板 .11 驗收", "value": 6, "max": 6, "status": "done" },
+          { "label": "Rust 後端指令", "value": 34, "max": 52, "status": "active" },
+          { "label": "手機版功能對齊", "value": 7, "max": 10, "status": "blocked" },
+          { "label": "報告區塊", "value": 18, "max": 22, "status": "active" }
+        ] },
+        { "type": "prose", "text": "Rust 剩下的 18 個指令以檔案與 IPC 為主，預計 11/2 完成。手機版缺的 3 項**都依賴 bot 清單 API**，所以一個修好，三個一起解。" }
+      ]
+    },
+    {
+      "title": "交付流程",
+      "takeaway": "手機版卡在驗收：清單只回傳 Main",
+      "blocks": [
+        { "type": "flow", "title": "手機版 .4 在驗收被擋下", "dir": "LR", "nodes": [
+          { "id": "impl", "label": "實作", "status": "done" },
+          { "id": "review", "label": "複審", "status": "done" },
+          { "id": "pack", "label": "打包", "status": "done" },
+          { "id": "install", "label": "安裝", "status": "done" },
+          { "id": "accept", "label": "驗收", "sub": "只看到 Main", "status": "blocked" },
+          { "id": "ship", "label": "上線", "status": "pending" }
+        ], "edges": [
+          { "from": "impl", "to": "review" }, { "from": "review", "to": "pack" }, { "from": "pack", "to": "install" },
+          { "from": "install", "to": "accept" }, { "from": "accept", "to": "ship" },
+          { "from": "accept", "to": "impl", "label": "退回修正", "kind": "dashed" }
+        ] }
+      ]
+    },
+    {
+      "title": "接下來",
+      "takeaway": "本週收尾三條線，下週開始 Windows",
+      "blocks": [
+        { "type": "roadmap", "title": "現在只做三件事", "columns": [
+          { "title": "現在", "items": [
+            { "label": "手機版 bot 清單", "status": "blocked", "note": "今晚修" },
+            { "label": "Rust IPC 指令", "status": "active", "note": "剩 18 個" },
+            { "label": "報告區塊定稿", "status": "active" }
+          ] },
+          { "title": "下一步", "items": [ { "label": "手機版 .5 上線" }, { "label": "Rust 資料遷移" } ] },
+          { "title": "之後", "items": [ { "label": "Windows / Linux 打包" } ] }
+        ] }
+      ]
+    },
+    {
+      "title": "依據",
+      "blocks": [
+        { "type": "sources", "items": [
+          { "ref": "task-panel .11", "text": "已安裝並開啟，6 項驗收通過" },
+          { "ref": "rust-backend", "text": "52 個指令中 34 個已接上" },
+          { "ref": "mobile .4", "text": "驗收時只列出 Main bot" },
+          { "ref": "report-blocks", "text": "22 個區塊中 18 個完成" }
+        ] }
+      ]
+    }
+  ],
+  "asks": [ { "what": "同意手機版先維持 .3 到明天", "who": "William", "by": "10/29" } ]
+}

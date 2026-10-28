@@ -1,0 +1,2214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "number",
+      "const": 2
+    },
+    "lang": {
+      "default": "zh-Hant",
+      "type": "string",
+      "enum": [
+        "zh-Hant",
+        "en"
+      ]
+    },
+    "kind": {
+      "description": "One report type per report; picks the skeleton (see the prompt doc).",
+      "type": "string",
+      "enum": [
+        "status",
+        "decision",
+        "investigation",
+        "comparison",
+        "plan",
+        "results",
+        "explainer"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "description": "What this report is about, ≤ 22 CJK chars."
+    },
+    "subtitle": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "asOf": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40,
+      "description": "When the evidence was taken, human readable."
+    },
+    "status": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "on_track",
+            "at_risk",
+            "off_track",
+            "done",
+            "info"
+          ]
+        },
+        "reason": {
+          "description": "Required for at_risk / off_track: cause and fix in one line.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        }
+      },
+      "required": [
+        "level"
+      ],
+      "additionalProperties": false
+    },
+    "tldr": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "description": "The answer first: ≤ 3 sentences. Shown in the verdict card and on the cover slide."
+    },
+    "next": {
+      "description": "≤ 3 one-line next steps, shown as numbered chips under the verdict.",
+      "minItems": 1,
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 24
+      }
+    },
+    "sections": {
+      "minItems": 1,
+      "maxItems": 8,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24,
+            "description": "Short topic label, shown small above the takeaway."
+          },
+          "takeaway": {
+            "description": "The section's conclusion as one sentence; becomes the slide headline.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "layout": {
+            "default": "auto",
+            "type": "string",
+            "enum": [
+              "auto",
+              "stack",
+              "split",
+              "grid"
+            ]
+          },
+          "blocks": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "prose"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1200,
+                      "description": "Restricted Markdown. No headings, links, images or HTML."
+                    },
+                    "slide": {
+                      "description": "One-sentence version for slides; defaults to the first paragraph.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A short paragraph or bullet list in restricted Markdown (**bold**, *italic*, `code`, - bullets, 1. numbers)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "callout"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "tone": {
+                      "default": "info",
+                      "type": "string",
+                      "enum": [
+                        "good",
+                        "warn",
+                        "bad",
+                        "info",
+                        "neutral"
+                      ]
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 240
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "additionalProperties": false,
+                  "description": "One highlighted message with a tone: info, warn, bad (risk), good (success) or neutral."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "kpi"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "items": {
+                      "minItems": 1,
+                      "maxItems": 6,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 10
+                              }
+                            ]
+                          },
+                          "unit": {
+                            "type": "string",
+                            "maxLength": 6
+                          },
+                          "delta": {
+                            "description": "Signed change, e.g. \"-42%\" or \"+3\". Colour follows deltaDir.",
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 12
+                          },
+                          "deltaDir": {
+                            "default": "up_good",
+                            "type": "string",
+                            "enum": [
+                              "up_good",
+                              "down_good",
+                              "neutral"
+                            ]
+                          },
+                          "target": {
+                            "description": "e.g. \"目標 ≤ 3%\"",
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20
+                          },
+                          "spark": {
+                            "minItems": 2,
+                            "maxItems": 40,
+                            "type": "array",
+                            "items": {
+                              "type": "number"
+                            }
+                          },
+                          "status": {
+                            "description": "Colours the number (blocked = red, pending = orange…).",
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "stack": {
+                      "description": "Draw a segmented bar of the items that have a status (first item = total).",
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "items"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A row of 1–6 headline numbers, each with label and optional delta, target and sparkline."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "bar"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "series": {
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20
+                          }
+                        },
+                        "required": [
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "rows": {
+                      "minItems": 1,
+                      "maxItems": 15,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 24
+                          },
+                          "values": {
+                            "minItems": 1,
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "number",
+                              "minimum": 0
+                            }
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "values"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "stacked": {
+                      "type": "boolean"
+                    },
+                    "horizontal": {
+                      "description": "Omit to choose automatically (horizontal for many or long labels).",
+                      "type": "boolean"
+                    },
+                    "sort": {
+                      "description": "Sort rows by size, largest first.",
+                      "type": "boolean"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "maxLength": 8
+                    },
+                    "highlight": {
+                      "description": "Row label to emphasise; other bars turn grey.",
+                      "type": "string",
+                      "maxLength": 24
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "series",
+                    "rows"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Bar chart for comparing categories: one or more series, grouped or stacked, vertical or horizontal (auto)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "trend"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "x": {
+                      "default": "date",
+                      "description": "date = \"YYYY-MM-DD\", \"YYYY-MM-DD HH:MM\" or \"HH:MM\"; num = numbers; cat = ordered labels.",
+                      "type": "string",
+                      "enum": [
+                        "date",
+                        "num",
+                        "cat"
+                      ]
+                    },
+                    "series": {
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20
+                          },
+                          "points": {
+                            "minItems": 2,
+                            "maxItems": 60,
+                            "type": "array",
+                            "items": {
+                              "type": "array",
+                              "prefixItems": [
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 20
+                                    },
+                                    {
+                                      "type": "number"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ],
+                              "items": false,
+                              "minItems": 2,
+                              "maxItems": 2
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "points"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "area": {
+                      "type": "boolean"
+                    },
+                    "zero": {
+                      "description": "Start the y axis at zero.",
+                      "type": "boolean"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "maxLength": 8
+                    },
+                    "target": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 16
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "marks": {
+                      "maxItems": 3,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 20
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "series"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Line or area chart over time (or any ordered x) for 1–4 series, with direct end labels, optional target line and up to 3 event marks."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "donut"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "parts": {
+                      "minItems": 2,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20
+                          },
+                          "value": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "unit": {
+                      "type": "string",
+                      "maxLength": 8
+                    },
+                    "center": {
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 12
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "label"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "parts"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Parts of one whole, 2–4 slices, with a centre figure and a value legend."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "beforeafter"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "labels": {
+                      "description": "Defaults to 之前 / 之後.",
+                      "type": "object",
+                      "properties": {
+                        "before": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 12
+                        },
+                        "after": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 12
+                        }
+                      },
+                      "required": [
+                        "before",
+                        "after"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "rows": {
+                      "minItems": 1,
+                      "maxItems": 6,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20
+                          },
+                          "before": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "after": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "unit": {
+                            "type": "string",
+                            "maxLength": 8
+                          },
+                          "better": {
+                            "type": "string",
+                            "enum": [
+                              "higher",
+                              "lower"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "before",
+                          "after",
+                          "better"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "rows"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Paired before/after bars per metric with the change in %, coloured by whether higher or lower is better."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "matrix"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "rows": {
+                      "minItems": 1,
+                      "maxItems": 30,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 16
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "done",
+                                  "active",
+                                  "pending",
+                                  "blocked",
+                                  "risk",
+                                  "unverified",
+                                  "skipped"
+                                ],
+                                "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                              }
+                            },
+                            "required": [
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "cols": {
+                      "minItems": 1,
+                      "maxItems": 30,
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "label": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 16
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "done",
+                                  "active",
+                                  "pending",
+                                  "blocked",
+                                  "risk",
+                                  "unverified",
+                                  "skipped"
+                                ],
+                                "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                              }
+                            },
+                            "required": [
+                              "label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "A column with a status colours the item chips placed in it."
+                    },
+                    "cells": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "maxItems": 4,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 14
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "scale": {
+                      "default": "seq",
+                      "description": "seq = low→high; div = negative↔positive around 0.",
+                      "type": "string",
+                      "enum": [
+                        "seq",
+                        "div"
+                      ]
+                    },
+                    "unit": {
+                      "type": "string",
+                      "maxLength": 8
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "rows",
+                    "cols",
+                    "cells"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A grid of rows × columns: a heatmap of numbers, or a placement grid where each cell lists short item names."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "quadrant"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "x": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 16,
+                      "description": "X axis name, low → high (left → right)."
+                    },
+                    "y": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 16,
+                      "description": "Y axis name, low → high (bottom → top)."
+                    },
+                    "quadrants": {
+                      "description": "[top-left, top-right, bottom-left, bottom-right]",
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "maxLength": 12
+                        },
+                        {
+                          "type": "string",
+                          "maxLength": 12
+                        },
+                        {
+                          "type": "string",
+                          "maxLength": 12
+                        },
+                        {
+                          "type": "string",
+                          "maxLength": 12
+                        }
+                      ],
+                      "items": false,
+                      "minItems": 4,
+                      "maxItems": 4
+                    },
+                    "best": {
+                      "description": "Index of the quadrant to highlight as the good one (0=top-left…3=bottom-right).",
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 3
+                    },
+                    "points": {
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          "x": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "y": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "x",
+                          "y"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "x",
+                    "y",
+                    "points"
+                  ],
+                  "additionalProperties": false,
+                  "description": "2×2 chart: items placed by two 0–1 scores (e.g. effort × impact), with the four quadrants named."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "timeline"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "items": {
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          },
+                          "start": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20,
+                            "description": "Event: any short time text (\"10/27 21:40\"). Gantt: \"YYYY-MM-DD\"."
+                          },
+                          "end": {
+                            "description": "Gantt only, \"YYYY-MM-DD\". Omit for milestones/events.",
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          },
+                          "lane": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          "text": {
+                            "description": "Event mode only: one line of detail.",
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "start"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "today": {
+                      "description": "Gantt only, \"YYYY-MM-DD\".",
+                      "type": "string",
+                      "maxLength": 20
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "items"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Either a vertical event log (items without end) or a gantt chart (items with start and end dates, optional lanes and a today line)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "roadmap"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "columns": {
+                      "minItems": 2,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 12
+                          },
+                          "items": {
+                            "maxItems": 6,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 30
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "done",
+                                    "active",
+                                    "pending",
+                                    "blocked",
+                                    "risk",
+                                    "unverified",
+                                    "skipped"
+                                  ],
+                                  "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                                },
+                                "note": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 40
+                                }
+                              },
+                              "required": [
+                                "label"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "title",
+                          "items"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "columns"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Two to four columns (e.g. Now / Next / Later) of short items with optional status."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "flow"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "dir": {
+                      "default": "LR",
+                      "type": "string",
+                      "enum": [
+                        "LR",
+                        "TB"
+                      ]
+                    },
+                    "nodes": {
+                      "minItems": 2,
+                      "maxItems": 25,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 24,
+                            "pattern": "^[A-Za-z0-9_-]+$"
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 30
+                          },
+                          "sub": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 24
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "step",
+                              "decision",
+                              "start",
+                              "end"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "edges": {
+                      "maxItems": 40,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "string"
+                          },
+                          "to": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "solid",
+                              "dashed"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "to"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "nodes",
+                    "edges"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Flowchart laid out automatically (elkjs): boxes with optional status colour, decisions, start/end pills, labelled arrows; left→right or top→bottom."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "sequence"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "actors": {
+                      "minItems": 2,
+                      "maxItems": 5,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 14
+                      }
+                    },
+                    "steps": {
+                      "minItems": 1,
+                      "maxItems": 14,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "string"
+                          },
+                          "to": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "call",
+                              "reply",
+                              "note"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "to",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "actors",
+                    "steps"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Sequence diagram: 2–5 actors as columns, numbered messages between them (call, dashed reply, or a note on one actor)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "table"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "columns": {
+                      "minItems": 2,
+                      "maxItems": 6,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 24
+                      }
+                    },
+                    "rows": {
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 60
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 60
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "done",
+                                    "active",
+                                    "pending",
+                                    "blocked",
+                                    "risk",
+                                    "unverified",
+                                    "skipped"
+                                  ],
+                                  "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                                },
+                                "tone": {
+                                  "type": "string",
+                                  "enum": [
+                                    "good",
+                                    "warn",
+                                    "bad",
+                                    "info",
+                                    "neutral"
+                                  ]
+                                },
+                                "strong": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "text"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    "highlight": {
+                      "description": "Index of the row to emphasise.",
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "columns",
+                    "rows"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A compact table; cells can carry a status or tone dot. Numeric columns align right."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "options"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "criteria": {
+                      "minItems": 2,
+                      "maxItems": 7,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16
+                      }
+                    },
+                    "options": {
+                      "minItems": 2,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 20
+                          },
+                          "summary": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          },
+                          "recommended": {
+                            "type": "boolean"
+                          },
+                          "cells": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "text": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 36
+                                },
+                                "tone": {
+                                  "default": "neutral",
+                                  "type": "string",
+                                  "enum": [
+                                    "good",
+                                    "warn",
+                                    "bad",
+                                    "neutral"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "text"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "cells"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "verdict": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "criteria",
+                    "options"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Options compared on the same criteria (2–4 options incl. \"do nothing\", 2–7 criteria), each cell rated good / warn / bad, with the recommended option marked."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "proscons"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "pros": {
+                      "minItems": 1,
+                      "maxItems": 5,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 50
+                      }
+                    },
+                    "cons": {
+                      "minItems": 1,
+                      "maxItems": 5,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 50
+                      }
+                    },
+                    "verdict": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "pros",
+                    "cons"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Two lists, pros and cons of one option, with an optional one-line verdict."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "checklist"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "items": {
+                      "minItems": 1,
+                      "maxItems": 12,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          },
+                          "note": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 60
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "status"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "items"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A list of items with a status each, plus a done-count and a status bar."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "progress"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "items": {
+                      "minItems": 1,
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 30
+                          },
+                          "value": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "max": {
+                            "default": 100,
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "unit": {
+                            "type": "string",
+                            "maxLength": 8
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          }
+                        },
+                        "required": [
+                          "label",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "items"
+                  ],
+                  "additionalProperties": false,
+                  "description": "One to eight labelled progress bars (value of max)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "steps"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "items": {
+                      "minItems": 2,
+                      "maxItems": 6,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 24
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 70
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          }
+                        },
+                        "required": [
+                          "title"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "items"
+                  ],
+                  "additionalProperties": false,
+                  "description": "An ordered sequence of 2–6 steps, each a short title with an optional one-line detail."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "quote"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "source": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A short quotation with its source."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "image"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "src": {
+                      "type": "string",
+                      "maxLength": 4000000,
+                      "pattern": "^data:image\\/(png|jpeg|gif|webp|svg\\+xml);base64,[A-Za-z0-9+/=]+$"
+                    },
+                    "alt": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160
+                    },
+                    "caption": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "annotations": {
+                      "maxItems": 6,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "y": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          }
+                        },
+                        "required": [
+                          "x",
+                          "y",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "src",
+                    "alt"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A screenshot or figure with up to 6 numbered annotations placed at relative positions (0–1)."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "sources"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "items": {
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40,
+                            "description": "Commit, file, run or ticket id; shown as code."
+                          },
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 60,
+                            "description": "What this source establishes, in one line."
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "text"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "items"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Up to four one-line sources: a short reference (commit, file, run id) and what it shows."
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "title",
+          "blocks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "asks": {
+      "description": "What the reader must do (owner, deadline). [] renders \"No action needed\".",
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "what": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "who": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20
+          },
+          "by": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20
+          }
+        },
+        "required": [
+          "what"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version",
+    "title",
+    "asOf",
+    "tldr",
+    "sections"
+  ],
+  "additionalProperties": false
+}
