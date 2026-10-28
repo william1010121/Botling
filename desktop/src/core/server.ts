@@ -75,6 +75,7 @@ export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: 
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
 
 export interface CoreOptions {
+  quotaRetriever?: import("./quota").QuotaRetriever;
   /** Read-only CLI self-check; production starts it offline after activation. */
   doctor?: Doctor;
   dataDir: string;
@@ -252,7 +253,7 @@ export class Core {
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
     this.importOnce();
     // Quota files must be imported before their first in-memory reading.
-    this.usage = new UsageBook(options.dataDir);
+    this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
     const loaded = loadProfiles(options.dataDir);
     if (loaded.problem) this.log(`projects: ${loaded.problem}`);
     // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
@@ -1659,7 +1660,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.notice": this.plugins.webNotice(cmd.name, cmd.text); return {};
       case "plugins.file": return this.plugins.webFile(cmd.name, cmd.path);
       case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
-      case "usage.view": return usageView(this.usage.view());
+      case "usage.view": await this.usage.refresh(); return usageView(this.usage.view());
       case "doctor.view": return this.doctor.view();
       case "doctor.run": return this.doctor.run(cmd.includeLatest);
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);

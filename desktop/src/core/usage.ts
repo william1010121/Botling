@@ -6,6 +6,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./durable/atomic";
+import { QuotaError, type QuotaRetriever, type QuotaStatus } from "./quota";
 import { toSwiftDate } from "./store/records";
 
 export interface TokenUsage { input: number; output: number; cacheWrite: number; cacheRead: number }
@@ -173,12 +174,15 @@ export function readLimits(value: any): RateLimits {
 
 /** The usage files, the latest readings kept as 1.x keeps them. */
 export class UsageBook {
+  private refreshPending?: Promise<void>;
+  private lastRefresh = -Infinity;
+  quotaStatus: Record<"claude" | "codex", QuotaStatus> = { claude: "missing", codex: "missing" };
   spending: Spending;
   claude: RateLimits;
   codex: RateLimits;
   spendingStatus: import("../contract").UsageView["spendingStatus"];
 
-  constructor(private readonly dir: string, private readonly changed: () => void = () => {}, now = new Date()) {
+  constructor(private readonly dir: string, private readonly changed: () => void = () => {}, now = new Date(), private readonly retrieve?: QuotaRetriever) {
     const read = (name: string) => { try { return existsSync(join(dir, name)) ? JSON.parse(readFileSync(join(dir, name), "utf8")) : null; } catch { return null; } };
     const saved = readSpending(read("spending.json"));
     this.spendingStatus = saved ? "available" : existsSync(join(dir, "spending.json")) ? "unreadable" : "missing";
@@ -186,6 +190,29 @@ export class UsageBook {
     this.spending = !saved ? freshSpending(day) : saved.day === day ? saved : rolled(saved, day);
     this.claude = readLimits(read("rate-limits.json"));
     this.codex = readLimits(read("codex-rate-limits.json"));
+    for (const engine of ["claude", "codex"] as const) if (!isEmptyLimits(this[engine])) this.quotaStatus[engine] = "available";
+  }
+
+  /** Deduplicate concurrent opens and bound provider traffic, including failed requests. */
+  refresh(): Promise<void> {
+    if (this.refreshPending) return this.refreshPending;
+    if (!this.retrieve || Date.now() - this.lastRefresh < 60_000) return Promise.resolve();
+    this.lastRefresh = Date.now();
+    this.refreshPending = Promise.all((["claude", "codex"] as const).map(async engine => {
+      try {
+        const limits = await this.retrieve!(engine);
+        if (isEmptyLimits(limits)) throw new QuotaError("missing");
+        // A read is a complete snapshot; stream events remain incremental in note().
+        this[engine] = limits;
+        this.quotaStatus[engine] = "available";
+        this.save(engine === "claude" ? "rate-limits.json" : "codex-rate-limits.json", limits);
+        this.changed();
+      } catch (error) {
+        this.quotaStatus[engine] = error instanceof QuotaError ? error.status : "network_error";
+        this.changed();
+      }
+    })).then(() => {}).finally(() => { this.refreshPending = undefined; });
+    return this.refreshPending;
   }
 
   /** What a bot (or team) spent: dollars (Claude's) and tokens. */
@@ -199,6 +226,7 @@ export class UsageBook {
 
   /** The latest reading of each limit, Claude's or Codex's (`note(_:)`, `note(codex:)`). */
   note(engine: "claude" | "codex", limits: RateLimits) {
+    if (!isEmptyLimits(limits)) this.quotaStatus[engine] = "available";
     const old = engine === "claude" ? this.claude : this.codex;
     const next = mergeLimits(old, limits);
     if (JSON.stringify(next) === JSON.stringify(old)) return;
@@ -208,10 +236,10 @@ export class UsageBook {
   }
 
   /** Today's record, rolled over if the day changed since. */
-  view(now = new Date()): { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus: import("../contract").UsageView["spendingStatus"] } {
+  view(now = new Date()): { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus: import("../contract").UsageView["spendingStatus"]; quotaStatus: Record<"claude" | "codex", QuotaStatus> } {
     const day = today(now);
     if (this.spending.day !== day) this.spending = rolled(this.spending, day);
-    return { spending: this.spending, claude: this.claude, codex: this.codex, spendingStatus: this.spendingStatus };
+    return { spending: this.spending, claude: this.claude, codex: this.codex, spendingStatus: this.spendingStatus, quotaStatus: this.quotaStatus };
   }
 
   private save(name: string, value: unknown) {
@@ -220,7 +248,7 @@ export class UsageBook {
 }
 
 /** What Settings → Usage shows (dates as ms since 1970): today's bots, most first, and the days before. */
-export function usageView(book: { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus?: import("../contract").UsageView["spendingStatus"] }): import("../contract").UsageView {
+export function usageView(book: { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus?: import("../contract").UsageView["spendingStatus"]; quotaStatus?: Record<"claude" | "codex", QuotaStatus> }): import("../contract").UsageView {
   const { spending } = book;
   const names = [...new Set([...Object.keys(spending.byBot), ...Object.keys(spending.tokensByBot)])];
   const byBot = names.map((name) => ({ name: name.slice(0, 200), spent: Math.max(0, spending.byBot[name] ?? 0), tokens: totalTokens(spending.tokensByBot[name] ?? noTokens()) }))
@@ -230,6 +258,7 @@ export function usageView(book: { spending: Spending; claude: RateLimits; codex:
   const limits = (value: RateLimits) => ({ fiveHour: window(value.fiveHour), week: window(value.week) });
   const nonNegative = (tokens: TokenUsage): TokenUsage => ({ input: Math.max(0, tokens.input), output: Math.max(0, tokens.output), cacheWrite: Math.max(0, tokens.cacheWrite), cacheRead: Math.max(0, tokens.cacheRead) });
   return {
+    ...(book.quotaStatus ? { quotaStatus: book.quotaStatus } : {}),
     spendingStatus: book.spendingStatus ?? "available",
     day: spending.day.slice(0, 20), spent: Math.max(0, spending.spent), tokens: nonNegative(spending.tokens), byBot,
     history: spending.history.slice(-31).map((day) => ({ day: day.day.slice(0, 20), spent: Math.max(0, day.spent), tokens: Math.max(0, totalTokens(day.tokens)) })),

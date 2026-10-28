@@ -1,6 +1,7 @@
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
+import { retrieveQuota } from "./quota";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { CLASSIFIER_TIMEOUT_MS, codexClassifier } from "./promise-check";
@@ -201,6 +202,7 @@ function groupTiming(text: string | undefined) {
 }
 
 const core = new Core({
+  ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { quotaRetriever: retrieveQuota } : {}),
   // A swap's self-check (BOTLING_CORE_PROBE, main/core-swap.ts) runs on a scratch folder and checks no CLI.
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor() } : {}),
   dataDir,
