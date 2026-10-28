@@ -55,6 +55,8 @@ await Promise.all([
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(out, "host/check-plugin.cjs") }),
   buildRenderer({ root: here }),
 ]);
+// Storage epoch must travel with the core, including staged development builds.
+writeFileSync(join(out, "core/storage-contract.json"), JSON.stringify(JSON.parse(readFileSync(join(here, "package.json"), "utf8")).botlingStorageContract));
 // The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.
 // Its bundled packages' licences go next to it (THIRD_PARTY_LICENSES.txt, from the build's metafile).
 const report = await build({ ...node, entryPoints: [join(here, "reports/cli-main.ts")], outfile: join(out, "report/report.cjs"), minify: true, metafile: true, jsx: "automatic", loader: { ".css": "text" }, define: { "process.env.NODE_ENV": '"production"' }, tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } });

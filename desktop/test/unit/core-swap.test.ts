@@ -34,27 +34,27 @@ function ports(overrides: Partial<SwapPorts> = {}) {
 describe("CoreSwapper", () => {
   it("self-checks, drains with requests held, stops the old core, starts the new one, then lets requests go", async () => {
     const { calls, ports: p } = ports();
-    const outcome = await new CoreSwapper(p).swap("/new/core/main.cjs");
+    const outcome = await new CoreSwapper(p, () => ({ version: 1, epoch: 2 })).swap("/new/core/main.cjs");
     expect(outcome).toMatchObject({ ok: true, entries: 2, interrupted: ["b1"] });
     expect(calls).toEqual(["probe /new/core/main.cjs", "hold drain", "drain", "hold all", "stop", "start /new/core/main.cjs", "hold none"]);
   });
 
   it("a build that fails its self-check is discarded: the running core is not drained, held or stopped", async () => {
     const { calls, ports: p } = ports({ probe: async () => "it exited (1): SyntaxError" });
-    const outcome = await new CoreSwapper(p).swap("/broken/core/main.cjs");
+    const outcome = await new CoreSwapper(p, () => ({ version: 1, epoch: 2 })).swap("/broken/core/main.cjs");
     expect(outcome).toEqual({ ok: false, stage: "self-check", error: "it exited (1): SyntaxError" });
     expect(calls).toEqual([]);
   });
 
   it("a probe that throws counts as a failed self-check", async () => {
     const { calls, ports: p } = ports({ probe: async () => { throw new Error("spawn failed"); } });
-    expect(await new CoreSwapper(p).swap("/x")).toMatchObject({ ok: false, stage: "self-check", error: "spawn failed" });
+    expect(await new CoreSwapper(p, () => ({ version: 1, epoch: 2 })).swap("/x")).toMatchObject({ ok: false, stage: "self-check", error: "spawn failed" });
     expect(calls).toEqual([]);
   });
 
   it("a drain that fails is called off and the held requests go to the running core", async () => {
     const { calls, ports: p } = ports({ drain: async () => ({ ok: false, error: "conflict" }) });
-    const outcome = await new CoreSwapper(p).swap("/new");
+    const outcome = await new CoreSwapper(p, () => ({ version: 1, epoch: 2 })).swap("/new");
     expect(outcome).toMatchObject({ ok: false, stage: "drain" });
     expect(calls).toEqual(["probe /new", "hold drain", "undrain", "hold none"]);
   });
@@ -64,7 +64,7 @@ describe("CoreSwapper", () => {
     const { calls, ports: p } = ports();
     const start = p.start;
     p.start = async (s) => (++starts === 1 ? (calls.push(`start ${s}`), "it exited (1)") : start(s));
-    const outcome = await new CoreSwapper(p).swap("/new/core/main.cjs");
+    const outcome = await new CoreSwapper(p, () => ({ version: 1, epoch: 2 })).swap("/new/core/main.cjs");
     expect(outcome).toEqual({ ok: false, stage: "start", error: "it exited (1)", rolledBack: true });
     expect(calls).toEqual(["probe /new/core/main.cjs", "hold drain", "drain", "hold all", "stop", "start /new/core/main.cjs", "stop", "write {\"v\":1}", "start /old/core/main.cjs", "hold none"]);
   });
@@ -72,7 +72,7 @@ describe("CoreSwapper", () => {
   it("one swap at a time", async () => {
     let release!: () => void;
     const { ports: p } = ports({ probe: () => new Promise((resolve) => { release = () => resolve(null); }) });
-    const swapper = new CoreSwapper(p);
+    const swapper = new CoreSwapper(p, () => ({ version: 1, epoch: 2 }));
     const first = swapper.swap("/a");
     expect(await swapper.swap("/b")).toMatchObject({ ok: false, stage: "busy" });
     release();

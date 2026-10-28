@@ -9,7 +9,8 @@
 // 3. Switch: the old core stops (its heads end without the tidy); the new one starts on the real data,
 //    resumes the handed-over sessions and gets the held requests. If it does not come up, the old build
 //    starts again with the same handover (rollback).
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { parseStorageContract, storageCompatible, STORAGE_CONTRACT_FILE, STORAGE_RESTART_REASON, type StorageContract } from "../storage-contract";
+import { readFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 /** What a core build directory must have (the layout of desktop/out). */
@@ -98,14 +99,31 @@ export type SwapOutcome =
 export const SWAP_TIMEOUT_MS = 120_000;
 export const SWAP_BOUNDARY_MS = 30_000;
 
+/** Read only the bounded declaration next to the actual (possibly staged) core script. */
+export function coreStorageContract(script: string): StorageContract | null {
+  try {
+    const file = join(dirname(script), STORAGE_CONTRACT_FILE);
+    if (statSync(file).size > 4096) return null;
+    return parseStorageContract(JSON.parse(readFileSync(file, "utf8")));
+  } catch { return null; }
+}
+
 export class CoreSwapper {
   private running = false;
-  constructor(private ports: SwapPorts) {}
+  private readonly runningStorage: StorageContract | null;
+  constructor(private ports: SwapPorts, private readStorage = coreStorageContract) {
+    // Cache before the bundle on disk can be replaced by hot-install. Reading the running
+    // path after install could mistake the incoming declaration for the running process.
+    this.runningStorage = readStorage(ports.script);
+  }
 
   get busy() { return this.running; }
 
   async swap(script: string, options: SwapOptions = {}): Promise<SwapOutcome> {
     if (this.running) return { ok: false, stage: "busy", error: "A core swap is already under way." };
+    if (!storageCompatible(this.runningStorage, this.readStorage(script))) {
+      return { ok: false, stage: "self-check", error: STORAGE_RESTART_REASON };
+    }
     this.running = true;
     const started = Date.now();
     const ports = this.ports;

@@ -21,11 +21,12 @@ const execute = promisify(execFile);
 const run: Run = (file, args) => execute(file, args);
 
 const BASE_FILES: Record<string, string> = {
-  "package.json": JSON.stringify({ name: "botling-desktop", version: "2.0.0-dev.1", main: "out/main/main.cjs", botlingDevTrial: true }),
+  "package.json": JSON.stringify({ name: "botling-desktop", version: "2.0.0-dev.1", main: "out/main/main.cjs", botlingDevTrial: true, botlingStorageContract: { version: 1, epoch: 2 } }),
   "out/main/main.cjs": "main v1",
   "out/preload/preload.cjs": "preload v1",
   "out/preload/editor-host.cjs": "editor host v1",
   "out/core/main.cjs": "core v1",
+  "out/core/storage-contract.json": JSON.stringify({ version: 1, epoch: 2 }),
   "out/host/host.mjs": "host v1",
   "out/host/host-utility.mjs": "host utility v1",
   "out/host/check-plugin.cjs": "check v1",

@@ -2,7 +2,7 @@
 // (docs/core-hot-swap.md). Never deletes out/ and never starts or restarts Electron.
 // Output is written next to the target first and then moved in, so a swap never sees half a build.
 import { build } from "esbuild";
-import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +21,8 @@ await Promise.all([
   build({ entryPoints: [join(web, "host/src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(stage, "host/host.mjs") }),
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(stage, "host/check-plugin.cjs") }),
 ]);
+// Storage epoch must travel with the core, including staged development builds.
+writeFileSync(join(stage, "core/storage-contract.json"), JSON.stringify(JSON.parse(readFileSync(join(here, "package.json"), "utf8")).botlingStorageContract));
 const extractors = join(here, "..", "Sources", "ClaudeCodeBot", "Resources", "web-extractors");
 mkdirSync(join(stage, "web-extractors"), { recursive: true });
 for (const name of readdirSync(extractors).filter((name) => name.endsWith(".js") || name.endsWith(".md"))) cpSync(join(extractors, name), join(stage, "web-extractors", name));

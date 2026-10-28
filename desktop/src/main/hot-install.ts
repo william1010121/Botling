@@ -14,6 +14,7 @@
 // the fingerprints the decision used), install the bundle on disk (old one moved to a backup, the copy
 // verified), then core swap, chat page reload, shell reload. Any failure puts back what was applied and
 // the old bundle on disk; when that cannot be done the report says a restart is required.
+import { parseStorageContract, storageCompatible, STORAGE_RESTART_REASON, type StorageContract } from "../storage-contract";
 import type * as NodeFs from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, join, resolve, sep } from "node:path";
@@ -130,6 +131,8 @@ export function classify(path: string): Place {
 }
 
 export interface BundlePrints {
+  /** Known only when package metadata and staged core metadata agree. */
+  storageContract?: StorageContract | null;
   /** Kernel pieces by name, each a digest. */
   kernel: Record<string, string>;
   /** Swappable parts' digests ("" when a part has no files). */
@@ -203,6 +206,7 @@ export async function bundlePrints(bundle: string, fs: Fs): Promise<BundlePrints
   const kernel: Record<string, [string, string][]> = {};
   const info = await bundleKernel(bundle, fs, kernel);
   const source = await openApp(bundle, fs);
+  let declaredStorage: StorageContract | null = null;
   const files = { core: {}, chat: {}, shell: {} } as Record<HotPart, Record<string, string>>;
   for (const [path, entry] of source.files) {
     const place = classify(path);
@@ -217,11 +221,20 @@ export async function bundlePrints(bundle: string, fs: Fs): Promise<BundlePrints
     if ("part" in place) files[place.part][path.slice("out/".length)] = sha(bytes);
     else if (path === "package.json") {
       const json = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
+      declaredStorage = parseStorageContract(json.botlingStorageContract);
+      // Keep the storage declaration in the kernel digest: even old planners must restart
+      // on the first upgrade, before any envelope-writing candidate can touch live data.
       delete json.version; delete json.description;
       (kernel["package.json"] ??= []).push([path, JSON.stringify(sorted(json))]);
     } else (kernel[place.kernel] ??= []).push([path, sha(bytes)]);
   }
+  let coreStorage: StorageContract | null = null;
+  const metadata = source.files.get("out/core/storage-contract.json");
+  if (metadata && !metadata.link && metadata.size <= 4096) {
+    try { coreStorage = parseStorageContract(JSON.parse((await source.read("out/core/storage-contract.json")).toString("utf8"))); } catch { /* unknown: restart */ }
+  }
   return {
+    storageContract: storageCompatible(declaredStorage, coreStorage) ? declaredStorage : null,
     kernel: Object.fromEntries(Object.entries(kernel).map(([what, rows]) => [what, digest(rows)])),
     parts: Object.fromEntries(HOT_PARTS.map((part) => [part, Object.keys(files[part]).length ? digest(Object.entries(files[part])) : ""])) as Record<HotPart, string>,
     files,
@@ -238,6 +251,7 @@ export function planInstall(running: BundlePrints, incoming: BundlePrints): Inst
   const changed = names.filter((name) => running.kernel[name] !== incoming.kernel[name]);
   if (incoming.kernel["native modules"] || running.kernel["native modules"]) if (!changed.includes("native modules")) changed.push("native modules");
   if (changed.length) return { mode: "restart", reasons: [`kernel changed: ${changed.join(", ")}`] };
+  if (!storageCompatible(running.storageContract, incoming.storageContract)) return { mode: "restart", reasons: [STORAGE_RESTART_REASON] };
   return { mode: "hot", parts: HOT_PARTS.filter((part) => running.parts[part] !== incoming.parts[part]) };
 }
 

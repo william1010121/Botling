@@ -65,5 +65,9 @@
     "typescript": "5.9.3",
     "vitest": "4.1.12"
   },
-  "botlingDevTrial": false
+  "botlingDevTrial": false,
+  "botlingStorageContract": {
+    "version": 1,
+    "epoch": 2
+  }
 }
