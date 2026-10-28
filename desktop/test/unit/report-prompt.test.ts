@@ -63,3 +63,10 @@ describe("the report page line as a shell command", () => {
     expect(line).toContain(`read '${join(base, "Botling 2.app", "Contents", "Resources", "report", "report-blocks.md")}'`);
   });
 });
+
+
+it("preserves report modes and does not mandate language, measurements or certainty globally", () => {
+  const line = reportPageLine(tool, "/x/artifacts");
+  expect(line).toContain("status, decision, investigation, comparison, plan, results, explainer");
+  expect(line).not.toMatch(/MUST|功能模組|交付狀態|ASD-STE100|hedging|CPU %|kind=|20 words/);
+});

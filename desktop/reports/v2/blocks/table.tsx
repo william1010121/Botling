@@ -8,33 +8,37 @@ type Cell = string | number | CellObj;
 type Table = { columns: string[]; rows: Cell[][]; highlight?: number; title?: string };
 const isNum = (c: Cell) => typeof c === 'number' || (typeof c === 'string' && /^[-+−]?[\d.,]+\s?[%a-zA-Z]{0,3}$/.test(c.trim()));
 
+// Plain strings opt into status hints only under an explicit status column heading.
+const isStatusColumn = (heading: string) => /^(status|狀態|状态|交付狀態|交付状态)$/i.test(heading.trim());
+
 function inferStatus(text: string): { status: Status; strike?: boolean } | null {
   const s = text.trim().toLowerCase();
-  if (/^(已包含|已在|已完成|已修復|已交付|已部署|通過|pass|done|shipped|fixed)/i.test(s)) {
+  if (s === 'risk' || s === 'unverified') return { status: s };
+  if (/^(已完成|已修復|已交付|已部署|通過|pass|done|shipped|fixed)$/i.test(s)) {
     return { status: 'done' };
   }
-  if (/^(待發布|待處理|待驗證|待量測|待驗收|未包含|審查中|pending|review|risk|unverified)/i.test(s)) {
+  if (/^(待發布|待處理|待驗證|待量測|待驗收|審查中|pending|review)$/i.test(s)) {
     return { status: 'pending' };
   }
-  if (/^(受阻|失敗|阻塞|卡住|blocked|failed)/i.test(s)) {
+  if (/^(受阻|失敗|阻塞|卡住|blocked|failed)$/i.test(s)) {
     return { status: 'blocked' };
   }
-  if (/^(已取消|已終止|終止取消|已略過|停工|取消|skipped|cancelled|shelved)/i.test(s)) {
+  if (/^(已取消|已終止|終止取消|已略過|取消|skipped|cancelled|shelved)$/i.test(s)) {
     return { status: 'skipped', strike: true };
   }
   return null;
 }
 
-function CellView({ cell, ctx }: { cell: Cell; ctx: Ctx }) {
+function CellView({ cell, ctx, statusColumn }: { cell: Cell; ctx: Ctx; statusColumn: boolean }) {
   if (typeof cell !== 'object') {
     if (typeof cell === 'number') return <>{cell.toLocaleString('en-US')}</>;
     const str = String(cell).trim();
-    const inferred = inferStatus(str);
+    const inferred = statusColumn ? inferStatus(str) : null;
     if (inferred) {
       return (
         <span className={`cell-s t-${statusTone[inferred.status]}`}>
           <i aria-hidden="true"/>
-          {inferred.strike ? <s>{str}</s> : str}
+          {inferred.strike ? <s>{cell}</s> : cell}
           <span className="sr-only">（{ctx.t.status[inferred.status]}）</span>
         </span>
       );
@@ -70,8 +74,8 @@ export const table = defineBlock({
         <table className="tbl">
           <thead><tr>{t.columns.map((c, j) => <th key={j} scope="col" className={numeric[j] ? 'r' : undefined}>{c}</th>)}</tr></thead>
           <tbody>{t.rows.map((r, i) => <tr key={i} className={t.highlight === i ? 'hi' : undefined}>{r.map((c, j) => j === 0
-            ? <th key={j} scope="row"><CellView cell={c} ctx={ctx}/></th>
-            : <td key={j} className={numeric[j] ? 'r' : undefined}><CellView cell={c} ctx={ctx}/></td>)}</tr>)}</tbody>
+            ? <th key={j} scope="row"><CellView cell={c} ctx={ctx} statusColumn={isStatusColumn(t.columns[j])}/></th>
+            : <td key={j} className={numeric[j] ? 'r' : undefined}><CellView cell={c} ctx={ctx} statusColumn={isStatusColumn(t.columns[j])}/></td>)}</tr>)}</tbody>
         </table>
       </div>
     </Card>;

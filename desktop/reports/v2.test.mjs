@@ -265,3 +265,45 @@ test('the bundled command ships a licence notice for every package in the bundle
   assert.match(await readFile(join(root, 'build.mjs'), 'utf8'), /writeFileSync\(join\(out, "report", NOTICES_FILE\), notices\.text\)/);
   assert.match(await readFile(join(root, 'electron-builder.config.cjs'), 'utf8'), new RegExp(`from: "out/report", to: "report", filter: \\[[^\\]]*"${NOTICES_FILE}"`));
 });
+
+
+test('table status hints require a status column and exact labels; feature names remain plain', async () => {
+  const ambiguous = ['已在調查，尚未修復', 'Password reset', 'fixed-width layout', '取消按鈕', 'done later', 'passenger', '已完成部分', '未包含', '已包含', '停工'];
+  for (const mode of ['doc', 'slide']) {
+    const r = await api.renderBlock({ type: 'table', columns: ['Feature', 'Status'], rows: ambiguous.map(text => [text, text]) }, { mode });
+    const d = dom(r.html);
+    assert.equal(d.querySelectorAll('.cell-s, s, .sr-only').length, 0);
+    const cells = [...d.querySelectorAll('tbody th, tbody td')];
+    assert.deepEqual(cells.map(c => c.textContent), ambiguous.flatMap(s => [s, s]));
+    const exact = dom((await api.renderBlock({ type: 'table', columns: ['Feature', 'Status'], rows: [
+      ['Done', 'done'], ['Cancelled', 'cancelled'], ['Review', 'pending'],
+      ['Failed', 'failed'], ['Fixed', { text: 'Still investigating', status: 'active' }],
+    ] }, { mode })).html);
+    assert.equal(exact.querySelectorAll('tbody th .cell-s').length, 0);
+    assert.equal(exact.querySelectorAll('tbody td .cell-s').length, 5);
+    assert.equal(exact.querySelector('s').textContent, 'cancelled');
+    assert.equal(exact.querySelectorAll('tbody td .sr-only').length, 5);
+    const explicit = dom((await api.renderBlock({ type: 'table', columns: ['Feature', 'Status'], rows: [
+      [{ text: 'Feature', status: 'active' }, 'risk'],
+      [{ text: 'Done', tone: 'warn' }, 'unverified'],
+      [{ text: 'Done', strong: true }, { text: 'Done', status: 'blocked' }],
+    ] }, { mode, lang: 'en' })).html);
+    assert.deepEqual([...explicit.querySelectorAll('tbody td .sr-only')].map(c => c.textContent), ['（At risk）', '（Unverified）', '（Blocked）']);
+    assert.ok(explicit.querySelector('tbody th .t-info'));
+    assert.ok(explicit.querySelector('tbody th .t-warn'));
+    assert.equal(explicit.querySelector('tbody th b').textContent, 'Done');
+    const localized = dom((await api.renderBlock({ type: 'table', columns: ['狀態', '功能'], rows: [['已完成', '已完成']] }, { mode })).html);
+    assert.equal(localized.querySelectorAll('tbody th .cell-s').length, 1);
+    assert.equal(localized.querySelectorAll('tbody td .cell-s').length, 0);
+  }
+});
+
+test('results lint suggests evidence without claiming mandatory comparisons or inventing measurements', () => {
+  const { spec: s } = api.validateSpec(spec([{ type: 'prose', text: 'No baseline was measured; the cause remains uncertain.' }], { kind: 'results' }));
+  const warnings = api.lintSpec(s, api.registry);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].message, /when available/);
+  assert.doesNotMatch(warnings[0].message, /must/);
+  const { spec: measured } = api.validateSpec(spec([{ type: 'kpi', items: [{ label: 'Observed latency', value: 12 }] }], { kind: 'results' }));
+  assert.deepEqual(api.lintSpec(measured, api.registry), []);
+});

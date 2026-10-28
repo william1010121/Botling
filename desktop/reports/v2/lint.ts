@@ -53,6 +53,6 @@ export function lintSpec(spec: ReportSpec, registry: Map<string, AnyBlockDef>, s
   if (total > budgets.visualsPerReport) warn('sections', `${total} charts in the report; keep ≤ ${budgets.visualsPerReport}. Too many visuals hide the point.`);
   if (spec.kind === 'decision' && !kindsUsed.has('options') && !kindsUsed.has('proscons')) warn('sections', 'Decision report without an options or proscons block; compare the options on the same criteria.');
   if ((spec.kind === 'investigation') && !kindsUsed.has('timeline') && !kindsUsed.has('flow') && !kindsUsed.has('sequence')) warn('sections', 'Investigation without a timeline, flow or sequence; show what happened and why.');
-  if (spec.kind === 'results' && !kindsUsed.has('beforeafter') && !kindsUsed.has('bar') && !kindsUsed.has('trend') && !kindsUsed.has('kpi')) warn('sections', 'Results report without beforeafter, bar, trend, or kpi block; numbers must show before/after or change.');
+  if (spec.kind === 'results' && !kindsUsed.has('beforeafter') && !kindsUsed.has('bar') && !kindsUsed.has('trend') && !kindsUsed.has('kpi')) warn('sections', 'Results report without beforeafter, bar, trend, or kpi block; consider showing measured evidence when available; state missing measurements or baselines explicitly.');
   return w;
 }
