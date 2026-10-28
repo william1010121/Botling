@@ -8,8 +8,10 @@ import { createPackage } from '@electron/asar';
 import { payload } from '../../scripts/release-manifest.mjs';
 import { authenticateLocalBuild, exactTree } from '../../src/main/hot-auth';
 import { HotTransaction, durableJSON } from '../../src/main/hot-transaction';
-import { HotInstaller, bundlePrints, planInstall, type Run } from '../../src/main/hot-install';
+import { HotInstaller, bundlePrints, planInstall, stageParts, type Run } from '../../src/main/hot-install';
 import { tempDir } from '../helpers';
+import { CoreSwapper } from '../../src/main/core-swap';
+import { BotStore } from '../../src/core/store/bot-store';
 const execute = promisify(execFile);
 const run: Run = (file, args) => execute(file, args);
 const keys = generateKeyPairSync('ed25519');
@@ -189,4 +191,40 @@ it('pins signed candidate to trial profile for ordinary subsequent launches', as
   const { packagedDataDir } = await import('../../src/main/main-environment');
   expect(packagedDataDir(appDataDir, pkg.botlingDevTrial === true)).not.toBe(pin.dataDir);
   expect(packagedDataDir(appDataDir, true)).toBe(pin.dataDir);
+});
+
+
+it('signed mobile transaction uses the storage-gated core swap and preserves durable history on rollback', async () => {
+  const f = await fixture('shell-v2'), data = join(f.root, 'combined-data'), profile = join(data, 'core');
+  put(join(profile, 'subagents.json'), JSON.stringify([{ id: 'retained', result: 'original report' }]));
+  const before = await exactTree(f.target, fs);
+  const initial = await stageParts(f.target, await bundlePrints(f.target, fs), ['core'], join(f.root, 'initial-runtime'), fs, 'old');
+  let script = initial.core!, starts = 0, reloads = 0;
+  const reports: any[] = [];
+  const swapper = new CoreSwapper({ get script() { return script; }, probe: async () => null,
+    hold() {}, drain: async () => ({ ok: true, entries: 0, interrupted: [] }), undrain() {},
+    stop: async () => {}, readHandover: () => null, writeHandover() {}, log() {},
+    start: async next => {
+      expect(fs.existsSync(join(data, 'hot-install-pending.json'))).toBe(true);
+      script = next; starts++;
+      // Rollback must restore the bundle before this explicit old-generation handover.
+      if (starts === 2) expect(await exactTree(f.target, fs)).toBe(before);
+      const store = new BotStore(profile), rows = store.loadList('subagents.json');
+      store.commitWorkerHistory([...rows, { id: starts === 1 ? 'candidate' : 'after-rollback', result: 'durable report' }]);
+      await store.closeWorkerHistory();
+      return null;
+    },
+  });
+  const installer = new HotInstaller({ target: f.target, dataDir: data, fs, run, authenticate: f.auth,
+    notify: report => reports.push(report), ports: {
+      coreScript: () => script, swapCore: next => swapper.swap(next), useRenderer: () => '/previous-renderer',
+      reloadChat: async () => true, reloadShell: async () => ++reloads > 1, log() {},
+    } });
+  expect(await installer.install({ path: f.candidate, requester: 'combined', note: '', from: '2.0.0', to: '2.0.1' })).toMatchObject({ ok: true });
+  await expect.poll(() => reports.length).toBe(1);
+  expect(reports[0]).toMatchObject({ ok: false, disk: 'restored', applied: [] });
+  expect(starts).toBe(2);
+  expect(new BotStore(profile).loadList('subagents.json').map((row: any) => row.id)).toEqual(['retained', 'candidate', 'after-rollback']);
+  expect(await exactTree(f.target, fs)).toBe(before);
+  expect(fs.existsSync(join(data, 'hot-install-pending.json'))).toBe(false);
 });

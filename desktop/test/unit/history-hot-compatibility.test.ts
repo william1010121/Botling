@@ -16,7 +16,10 @@ beforeAll(async()=>{
   const result=await build({stdin:{contents,resolveDir:join(desktop,'src/core/store'),loader:'ts'},bundle:true,platform:'node',format:'cjs',target:'node22',write:false});
   const module={exports:{} as any};new Function('require','module','exports',result.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports);LegacyStore=module.exports.BotStore;
   const oldHot=execFileSync('git',['show','65f0efa:desktop/src/main/hot-install.ts'],{cwd:desktop,encoding:'utf8'});
-  const oldBundle=await build({stdin:{contents:oldHot,resolveDir:join(desktop,'src/main'),loader:'ts'},bundle:true,platform:'node',format:'cjs',target:'node22',write:false});
+  // Keep the historical planner's runtime part list historical too: today's list adds mobile.
+  const oldPlan=execFileSync('git',['show','65f0efa:desktop/src/hot-install-plan.ts'],{cwd:desktop,encoding:'utf8'});
+  const oldBundle=await build({stdin:{contents:oldHot,resolveDir:join(desktop,'src/main'),loader:'ts'},bundle:true,platform:'node',format:'cjs',target:'node22',write:false,
+    plugins:[{name:'historical-install-plan',setup(plugin){plugin.onLoad({filter:/hot-install-plan\.ts$/},()=>({contents:oldPlan,loader:'ts'}));}}]});
   const hotModule={exports:{} as any};new Function('require','module','exports',oldBundle.outputFiles[0].text)(createRequire(import.meta.url),hotModule,hotModule.exports);oldPlanner=hotModule.exports;
 });
 const contract=(epoch=2)=>({version:1,epoch});
