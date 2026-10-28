@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -299,10 +299,64 @@ describe("operator release scripts in a throwaway HOME only", () => {
     expect(verifyManifest(manifest, keys.publicKey).size).toBe(bytes.length);
     expect(existsSync(join(f.base, ".botling-release"))).toBe(false);
   });
-  it("explicit release-build mode fails before bundling when trust is unconfigured", () => {
-    const result = spawnSync(process.execPath, [resolve("build.mjs")], { env: { ...process.env, BOTLING_RELEASE_BUILD: "1" }, encoding: "utf8" });
+  // Execute the unchanged release gate in an owned miniature project. Only dependency
+  // resolution is shared: no source/output directory points back into the checkout.
+  function buildFixture(publicKey: string | null) {
+    const base = tempDir("release-build");
+    cleanups.push(() => rmSync(base, { recursive: true, force: true }));
+    const root = join(base, "desktop"), out = join(root, "out");
+    function put(file: string, text: string) {
+      const path = join(root, file);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, text);
+    }
+    put("build.mjs", readFileSync(resolve("build.mjs"), "utf8"));
+    put("release-config.json", JSON.stringify({ publicKey }));
+    put("package.json", JSON.stringify({ botlingStorageContract: { version: 1, epoch: 2 } }));
+    symlinkSync(resolve("node_modules"), join(root, "node_modules"), "dir");
+    // Renderer/preload/licence generation is outside this trust-gate test.
+    put("build-renderer.mjs", "export async function buildRenderer() {}\n");
+    put("build-preloads.mjs", "export async function buildPreloads() {}\n");
+    put("reports/licenses.mjs", 'export const NOTICES_FILE = "licenses.txt"; export const thirdPartyNotices = () => ({ missing: [], text: "fixture" });\n');
+    put("src/main/main.ts", "console.log(__UPDATE_PUBLIC_KEY__);\n");
+    for (const file of ["src/core/main.ts", "../Web/host/src/host.ts", "src/host/utility.ts", "src/core/plugins/check-cli.ts", "reports/cli-main.ts"]) put(file, 'console.log("fixture");\n');
+    for (const file of ["docs/report-blocks.md", "reports/v2/NOTICE", "../Sources/ClaudeCodeBot/Resources/web-extractors/fixture.js"]) put(file, "fixture");
+    put("out/keep.txt", "existing output");
+    return {
+      out,
+      run: () => spawnSync(process.execPath, [join(root, "build.mjs")], {
+        cwd: root, env: { ...process.env, HOME: base, BOTLING_RELEASE_BUILD: "1" }, encoding: "utf8",
+      }),
+    };
+  }
+  it.each([true, false])("explicit release-build mode fails before bundling when trust is unconfigured (existing output: %s)", (existingOutput) => {
+    const f = buildFixture(null);
+    if (!existingOutput) rmSync(f.out, { recursive: true });
+    const result = f.run();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("Release build requires an explicit Ed25519 public key");
+    if (existingOutput) {
+      expect(readdirSync(f.out)).toEqual(["keep.txt"]);
+      expect(readFileSync(join(f.out, "keep.txt"), "utf8")).toBe("existing output");
+    } else expect(existsSync(f.out)).toBe(false);
+  });
+  it("explicit release-build mode embeds valid trust and rebuilds only its owned output", () => {
+    const keys = keypair(), f = buildFixture(keys.publicKey);
+    const result = f.run();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("built out/");
+    expect(existsSync(join(f.out, "keep.txt"))).toBe(false);
+    // Execute the tiny bundled main to verify the real buildMain define embeds the key.
+    expect(execFileSync(process.execPath, [join(f.out, "main/main.cjs")], { encoding: "utf8" }).trim()).toBe(keys.publicKey.trim());
+    expect(existsSync(join(f.out, "core/main.cjs"))).toBe(true);
+  });
+  it("explicit release-build mode refuses non-Ed25519 trust before changing output", () => {
+    const publicKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).publicKey.export({ type: "spki", format: "pem" }).toString();
+    const f = buildFixture(publicKey), result = f.run();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Release public key must be Ed25519");
+    expect(readdirSync(f.out)).toEqual(["keep.txt"]);
+    expect(readFileSync(join(f.out, "keep.txt"), "utf8")).toBe("existing output");
   });
   it("refuses a signing key that differs from the configured public trust", () => {
     const f = scriptFixture(), keys = keypair();
