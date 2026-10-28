@@ -118,3 +118,22 @@ it('sign-out clears the chat and this browser\'s kept layout', async () => {
   expect(showsPrivateChat()).toBe(false);
   expect(localStorage.getItem('botling-web-layout')).toBeNull();
 });
+
+it.each([401, 403])('a session that is already over at the first read (%i) can be checked again after signing in', async status => {
+  const { paths, expire } = server();
+  expire(status);
+  await act(async () => root.render(<WebApp />));
+  await flush();
+  expect(showsPrivateChat()).toBe(false);
+  expect(container.textContent).toContain(status === 401 ? 'Your session expired' : 'Access was denied');
+  const again = [...container.querySelectorAll('button')].find(button => button.textContent === 'Check again') as HTMLButtonElement;
+  expect(again).toBeTruthy();
+  // Signed in again elsewhere (the Google round trip): the bridge now answers.
+  expire(200);
+  const before = paths.length;
+  await act(async () => { again.click(); });
+  await flush();
+  expect(paths.length).toBeGreaterThan(before);
+  expect(showsPrivateChat()).toBe(true);
+  expect(container.querySelectorAll('.bot-row')).toHaveLength(4);
+});

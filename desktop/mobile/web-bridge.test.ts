@@ -81,14 +81,17 @@ describe('WebBridge (the renderer bridge over the mobile bridge)', () => {
     expect(await bridge.poll('main')).toBe(false);
   });
 
-  it('a lost session signs out and answers nothing more', async () => {
+  it('a lost session rejects the request that found it, signs out and answers nothing more', async () => {
     const onAuthLost = vi.fn();
     const transport: CommandTransport = { request: vi.fn(async () => { throw new MobileError('expired', true); }) };
     const bridge = new WebBridge({ transport, onAuthLost });
     const heard: unknown[] = []; bridge.subscribe(message => heard.push(message));
     bridge.post({ v: 10, id: 'first', cmd: { type: 'chat.snapshot' } });
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(heard).toEqual([]);
+    expect(heard).toEqual([{ v: 10, id: 'first', ok: false, error: { code: 'core_unavailable', message: 'The session ended. Sign in again.' } }]);
+    bridge.post({ v: 10, id: 'second', cmd: { type: 'chat.snapshot' } });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(heard).toHaveLength(1);
     expect(onAuthLost).toHaveBeenCalledOnce();
     expect(bridge.closed).toBe(true);
   });
@@ -157,9 +160,37 @@ describe('WebBridge when the session ends', () => {
     const client = new Client(bridge);
     await client.request({ type: 'chat.snapshot' });
     fail();
-    void client.request({ type: 'chat.send', botId: 'main', text: 'x' });
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await expect(client.request({ type: 'chat.send', botId: 'main', text: 'x' })).rejects.toBeInstanceOf(RequestFailed);
     expect(onAuthLost).toHaveBeenCalledOnce();
     expect(bridge.closed).toBe(true);
+  });
+});
+
+describe('WebBridge settles what was pending when it closes', () => {
+  it('a request pending when the session ends is rejected, and a late success is dropped', async () => {
+    let release!: (value: unknown) => void;
+    const transport: CommandTransport = { request: vi.fn(async (cmd: any) => {
+      if (cmd.type === 'chat.send') return new Promise(resolve => { release = resolve; });
+      throw new MobileError('expired', true);
+    }) };
+    const onAuthLost = vi.fn();
+    const bridge = new WebBridge({ transport, onAuthLost });
+    const client = new Client(bridge);
+    const slow = client.request({ type: 'chat.send', botId: 'main', text: 'x' });
+    const failing = client.request({ type: 'chat.snapshot' });
+    await expect(failing).rejects.toSatisfy((error: unknown) => error instanceof RequestFailed && /session ended/i.test(error.error.message));
+    await expect(slow).rejects.toBeInstanceOf(RequestFailed);
+    expect(onAuthLost).toHaveBeenCalledOnce();
+    const heard: unknown[] = []; bridge.subscribe(message => heard.push(message));
+    release({ messageId: 'late', turnId: null });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(heard).toEqual([]);
+  });
+  it('sign-out (close) rejects what is pending too', async () => {
+    const transport: CommandTransport = { request: vi.fn(() => new Promise(() => {})) };
+    const bridge = new WebBridge({ transport });
+    const pending = new Client(bridge).request({ type: 'chat.snapshot' });
+    bridge.close();
+    await expect(pending).rejects.toBeInstanceOf(RequestFailed);
   });
 });

@@ -12,20 +12,25 @@ import { WebBridge, forgetLocal } from './web-bridge';
 
 const POLL_MS = 2_500;
 type Auth = 'checking' | 'signedOut' | 'denied' | 'unavailable';
-export interface Connected { csrf: string; bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void } }
+export interface Connected { csrf: string; bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void }; shown: { value: boolean } }
 
 function storage(): Storage | null { try { return window.localStorage; } catch { return null; } }
 
 export function connectWorkspace(csrf: string, onAuthLost: (error: MobileError) => void, fetcher: typeof fetch = fetch): Connected {
   const transport = new MobileTransport(endpointURL('/api/mobile/browser/command', location.origin), { csrf }, fetcher);
   const wake = { poke: () => {} };
+  const shown = { value: false };
   const bridge = new WebBridge({ transport, storage: storage(), onAuthLost,
     openURL: url => { window.open(url, '_blank', 'noopener,noreferrer'); },
     onMutated: () => wake.poke(), onLocalChange: () => { void store.resync(); } });
   const client = new Client(bridge);
-  const store = new WorkspaceStore(botId => client.request({ type: 'chat.snapshot', ...(botId ? { botId } : {}) }));
+  // Once the workspace is shown, a read the ended session rejected has nobody to tell (the page is
+  // going back to Sign in): it stays unsettled instead of an unhandled rejection. The first read
+  // (connect) still fails, so Check again / sign-in start over with a fresh bridge.
+  const store = new WorkspaceStore(botId => client.request({ type: 'chat.snapshot', ...(botId ? { botId } : {}) })
+    .catch(error => { if (shown.value && bridge.closed) return new Promise<never>(() => {}); throw error; }));
   client.onEvent(event => store.receive(event));
-  return { csrf, bridge, client, store, wake };
+  return { csrf, bridge, client, store, wake, shown };
 }
 
 /** Re-reads the chat on screen every few seconds (and soon after a send); resyncs the store when it changed. */
@@ -73,8 +78,11 @@ export function WebApp() {
     try {
       const session = Session.parse(await sessionRequest('session'));
       if (session.expiresAt <= Date.now()) throw new MobileError('Session expired. Sign in again.', true);
-      const next = connectWorkspace(session.csrf, lost);
-      await next.store.resync();
+      // A fresh bridge each time: an ended one stays closed. Its first read settles either way.
+      let ended: MobileError | undefined;
+      const next = connectWorkspace(session.csrf, error => { ended = error; lost(error); });
+      try { await next.store.resync(); } catch (cause) { next.bridge.close(); throw ended ?? cause; }
+      next.shown.value = true;
       setConnected(next);
     } catch (cause) {
       setAuth(cause instanceof MobileError ? cause.auth ? 'signedOut' : cause.denied ? 'denied' : 'unavailable' : 'unavailable');

@@ -18,6 +18,7 @@ export const REMOTE_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'c
 /** Layout settings this browser keeps for itself (the desktop keeps its own). */
 export const LOCAL_SETTINGS = ['rightPanelCollapsed', 'railCollapsed', 'pinnedBots', 'messageColumnWidth'] as const;
 type LocalKey = typeof LOCAL_SETTINGS[number];
+export const SESSION_ENDED = 'The session ended. Sign in again.';
 export const STORAGE_KEY = 'botling-web-layout';
 const PRIMED_FOR_MS = 3_000;
 
@@ -40,6 +41,8 @@ export class WebBridge implements Bridge {
   readonly protocol = 2;
   private listeners = new Set<(message: unknown) => void>();
   private cancelled = new Set<string>();
+  /** Requests posted and not answered yet: closing rejects them, so nothing waits forever. */
+  private pending = new Set<string>();
   private primed: { botId: string | undefined; at: number; snapshot: Snapshot } | null = null;
   private last: { botId: string | undefined; snapshot: Snapshot } | null = null;
   private local: Partial<Record<LocalKey, unknown>>;
@@ -55,16 +58,21 @@ export class WebBridge implements Bridge {
     if (cancel.success) {
       // The HTTPS request cannot be withdrawn; its answer is dropped and the caller hears "cancelled".
       this.cancelled.add(cancel.data.cancel);
+      this.pending.delete(cancel.data.cancel);
       this.emit(errorResponse(cancel.data.cancel, { code: 'cancelled', message: 'The request was cancelled.' }));
       return;
     }
     const request = RequestEnvelope.safeParse(envelope);
     if (!request.success) return;
+    this.pending.add(request.data.id);
     void this.handle(request.data.id, request.data.cmd).then(({ response, ended }) => {
       // A session found over ends everything at once: the page goes back to Sign in and no answer
       // (not even this one) reaches the renderer that is being taken down.
+      // (This request is still pending then: closing rejects it with the others.) A late answer after
+      // closing, success or not, is dropped.
       if (ended) { this.ended_(ended); return; }
-      if (!this.cancelled.delete(response.id) && !this.ended) this.emit(response);
+      if (this.ended || !this.pending.delete(response.id)) return;
+      if (!this.cancelled.delete(response.id)) this.emit(response);
     });
   }
 
@@ -76,7 +84,16 @@ export class WebBridge implements Bridge {
 
   /** Closed: signed out or the session ended. Nothing kept is served again and nothing more is sent. */
   get closed() { return this.ended; }
-  close() { this.ended = true; this.listeners.clear(); this.cancelled.clear(); this.primed = null; this.last = null; }
+  close() {
+    if (this.ended) return;
+    this.ended = true;
+    this.primed = null; this.last = null;
+    // Settle everything still waiting (the page's first read included), then hear nothing more.
+    const waiting = [...this.pending];
+    this.pending.clear(); this.cancelled.clear();
+    for (const id of waiting) this.emit(errorResponse(id, { code: 'core_unavailable', message: SESSION_ENDED }));
+    this.listeners.clear();
+  }
 
   /** A 401, or a refusal before the bridge looked at the request: the session is over. */
   private ended_(error: unknown) {
