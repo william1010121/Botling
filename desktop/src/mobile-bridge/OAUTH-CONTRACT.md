@@ -42,10 +42,31 @@ Public shell assets and top-level login/callback GETs allow cross-site navigatio
 HttpOnly, Path=/, SameSite=Lax (Google's top-level return must carry the transaction cookie).
 Sessions are random opaque identifiers, stored only as SHA-256 lookup keys in memory, with
 separate random CSRF tokens. Session lifetime is at most one hour and no later than ID-token expiry;
-transactions expire after ten minutes. Both collections are bounded and pruned. Restart requires
-sign-in again; it cannot restore a revoked/stale session. An in-progress code is consumed before
-network awaits, so concurrent callbacks and replay fail closed. Logout or transaction expiry during
-exchange also prevents a late callback from restoring a session.
+transactions expire after ten minutes. Pending transactions use an AES-256-GCM authenticated,
+encrypted HttpOnly cookie containing state, nonce, PKCE verifier, expiration, a sequence number
+and a logout generation. The per-process encryption key and origin/cookie-name authenticated data
+prevent forgery, cross-instance reuse and plaintext verifier exposure. Anonymous starts allocate
+no per-request server state. Restart invalidates both transactions and sessions.
+
+Logout revokes all sessions for the principal and rotates the pending-login generation. This
+single-account deployment conservatively invalidates **all pre-logout login attempts**, including
+sibling-browser callbacks already awaiting Google and callbacks that have not arrived yet. Checks
+run before exchange and immediately before session issuance. A fresh post-logout login succeeds;
+correctness does not depend on comparing wall-clock timestamps.
+
+Callback consumption is recorded before network awaits, including rejected callbacks. Its replay
+ledger holds at most 256 entries. Evicting the lowest sequence advances a rejection floor: all
+older transactions become invalid, so evicted consumption records never become replayable.
+The oldest pending logins may need to restart under callback/signed-cookie replacement pressure.
+No-cookie or forged-cookie login-start floods neither fill this ledger nor evict legitimate flows.
+
+At most eight exchanges run concurrently; excess callbacks fail closed with 503 and require a
+fresh login. Slots are released on success/failure and existing five-second network timeouts bound
+each outbound fetch. Authenticated API sessions and new login starts do not use exchange slots.
+A sustained valid-cookie callback flood can still deny completion or force old attempts to restart;
+volumetric CPU/network saturation is also outside this guarantee. This design eliminates the cheap
+256-start/ten-minute global lockout while keeping memory and outbound concurrency bounded. It does
+not rely on Cloudflare mitigation or derive identity from untrusted forwarded/IP headers.
 
 JWT validation pins Google's HTTPS JWKS endpoint, RS256 and RSA >=2048; checks signature, issuer,
 audience/authorized party, expiry/issued-at/not-before, nonce, subject and verified email. JWKS
@@ -79,3 +100,11 @@ integration test; 19 startup/bearer bridge tests, all passing (73 distinct tests
 and mobile TypeScript checks pass. The handler's return-page regression and the OAuth
 logout-during-exchange tests were rerun after their fixes; unchanged startup/bearer/mobile
 results were reused. No package build, live Google exchange, installation or restart was run.
+
+Security-review delta (a35935ec): the two sibling-logout timings and anonymous-start saturation
+regressions failed on 2a5cab9 before the fix. After the fix, 33 OAuth tests plus 1 HTTP-handler
+integration test pass, including 2,048 anonymous/forged-cookie starts around a successful login,
+cookie tampering/swap/duplicates/restart, replay-ledger pressure, exchange admission/recovery,
+replacement-login cancellation, and post-logout fresh login. Desktop TypeScript passes. Reused
+unchanged evidence: 27 mobile tests, 19 startup/bearer tests and mobile TypeScript. No package,
+live Google/phone verification, cloud changes, installation or restart was performed.
