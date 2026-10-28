@@ -313,3 +313,63 @@ it('offers the chat view to a window picture only while it is laid out and uncov
  ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds:null});expect(nativeEditorLayer(owner as any)).toBeNull();
  ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});f.dispose();expect(nativeEditorLayer(owner as any)).toBeNull();
 });
+
+it('reveals Quick settings immediately despite a pending capture and restores chat on close',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();let finish!:(image:any)=>void;
+  f.layout({occluded:false});
+  f.capture.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  const visibility=vi.mocked(f.view.setVisible);visibility.mockClear();
+  const started=Date.now();
+  f.layout({revealImmediately:true});
+  expect(visibility).toHaveBeenLastCalledWith(false);
+  expect(Date.now()-started).toBe(0);
+  await vi.advanceTimersByTimeAsync(500);
+  f.layout({occluded:false});
+  expect(visibility).toHaveBeenLastCalledWith(true);
+  finish({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,AA=='});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.snapshots()).toHaveLength(0);
+  visibility.mockClear();
+  f.layout({revealImmediately:true});
+  expect(visibility).toHaveBeenLastCalledWith(false);
+  expect(f.capture).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(f.capture).toHaveBeenCalledTimes(2);
+  expect(f.snapshots()).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+
+it.each([false,true])('measures cover handoff with a 500ms capture and 50ms decode (immediate=%s)',async revealImmediately=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();
+  f.layout({occluded:false});
+  f.capture.mockImplementation(()=>new Promise(resolve=>setTimeout(()=>resolve({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,AA=='} as any),500)));
+  const started=Date.now();let revealedAt:number|undefined;
+  vi.mocked(f.view.setVisible).mockImplementation(visible=>{if(!visible&&revealedAt===undefined)revealedAt=Date.now()-started;});
+  f.layout({revealImmediately});
+  await vi.advanceTimersByTimeAsync(500);
+  const captured=f.snapshots()[0][1];
+  await vi.advanceTimersByTimeAsync(50);
+  ipcMain.emit(EDITOR_CHANNEL.layout,f.event,{stamp:f.stamp,snapshotReady:captured.revision});
+  expect(revealedAt).toBe(revealImmediately?0:550);
+ }finally{vi.useRealTimers();}
+});
+
+it('keeps Quick settings revealed after capture failure and rejects forged immediate reveal',async()=>{
+ const f=await snapshotFixture();f.layout({occluded:false});
+ const visibility=vi.mocked(f.view.setVisible);visibility.mockClear();
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.view.webContents,senderFrame:f.view.webContents.mainFrame},{stamp:f.stamp,bounds:f.bounds,occluded:true,revealImmediately:true});
+ expect(visibility).not.toHaveBeenCalled();
+ f.capture.mockRejectedValueOnce(new Error('capture unavailable'));
+ f.owner.isVisible=()=>true;
+ vi.mocked(f.view.webContents.isFocused).mockReturnValue(true);
+ f.layout({revealImmediately:true});await Promise.resolve();
+ expect(visibility).toHaveBeenLastCalledWith(false);
+ expect(f.owner.webContents.focus).toHaveBeenCalledOnce();
+ expect(f.snapshots()).toHaveLength(0);
+ f.layout({occluded:false});
+ expect(visibility).toHaveBeenLastCalledWith(true);
+});

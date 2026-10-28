@@ -51,6 +51,29 @@ async function choose(element: HTMLSelectElement, value: string) {
 }
 
 describe("Settings' model and effort choices are dropdowns", () => {
+  it("saves independent permission switches and explains running-session behavior", async () => {
+    const sent: any[] = [];
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot: null, plugins: null, initialSection: "engines", onClose() {} }));
+    try {
+      const claude = host.querySelector<HTMLInputElement>('input[aria-label="Claude: bypass permission checks"]')!;
+      const codex = host.querySelector<HTMLInputElement>('input[aria-label="Codex: bypass approvals and sandbox"]')!;
+      expect(claude.checked).toBe(false);
+      expect(codex.checked).toBe(false);
+      await act(async () => claude.click());
+      expect(claude.checked).toBe(true);
+      expect(codex.checked).toBe(false);
+      await act(async () => codex.click());
+      expect(codex.checked).toBe(true);
+      await act(async () => claude.click());
+      expect(codex.checked).toBe(true);
+      expect(sent.filter(c => c.type === "settings.set").map(c => c.change)).toEqual([
+        { key: "claudeBypassPermissions", value: true }, { key: "codexBypassPermissions", value: true }, { key: "claudeBypassPermissions", value: false },
+      ]);
+      expect(host.textContent).toContain("Running sessions keep their current mode");
+      expect(host.textContent).toContain("filesystem/network sandbox");
+    } finally { await done(); }
+  });
+
   it("Engines: subagents, Codex workers, verification and component editor", async () => {
     const sent: any[] = [];
     const raw = { codexWorkersFollow: false, codexWorkerChoice: { model: "gpt-5-old", effort: null, fast: null }, completionVerificationEnabledChoice: false };

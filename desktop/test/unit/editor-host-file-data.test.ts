@@ -31,3 +31,19 @@ it('still bounds file data by the contract limit, and other actions by the 1 MB 
  expect(editorMessageAllowed('up',{botling:'action',action:{type:'addFileData',name:'a.png',base64:'A',extra:'x'.repeat(2*1024*1024)}})).toBe(false);
  expect(editorMessageAllowed('up',{botling:'action',action:{type:'send',text:'x'.repeat(2*1024*1024)}})).toBe(false);
 });
+
+it('carries bounded composer correlation fields with a real-size image',()=>{
+ const message=fileData(2*1024*1024);
+ Object.assign(message.action,{botID:'chat-A',requestID:'submission-1'});
+ expect(editorMessageAllowed('up',message)).toBe(true);
+ Object.assign(message.action,{requestID:'x'.repeat(81)});
+ expect(editorMessageAllowed('up',message)).toBe(false);
+});
+it('routes only a shaped downward composer acknowledgement',()=>{
+ const message={botling:'composerResult',requestID:'submission-1',ok:true};
+ expect(editorMessageAllowed('down',message)).toBe(true);
+ expect(editorMessageAllowed('up',message)).toBe(false);
+ expect(editorMessageAllowed('down',{...message,ok:'true'})).toBe(false);
+ expect(editorMessageAllowed('down',{...message,error:'x'.repeat(4097)})).toBe(false);
+ expect(editorMessageAllowed('down',{...message,command:'run'})).toBe(false);
+});

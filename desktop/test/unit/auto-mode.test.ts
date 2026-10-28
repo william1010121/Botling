@@ -28,8 +28,8 @@ describe("auto mode: arguments and setting", () => {
 
   it("passes allowed blocked calls as --settings rules", () => {
     const args = headArguments({ ...base, autoMode: true, allowRules: ["Bash(rm -rf build, now)"] });
-    expect(JSON.parse(args[args.indexOf("--settings") + 1]!)).toEqual({ permissions: { allow: ["Bash(rm -rf build, now)"] } });
-    expect(headArguments({ ...base, autoMode: true })).not.toContain("--settings");
+    expect(JSON.parse(args[args.indexOf("--settings") + 1]!)).toMatchObject({ permissions: { allow: ["Bash(rm -rf build, now)"] } });
+    expect(headArguments({ ...base, autoMode: false })).not.toContain("--settings");
   });
 
   it("is on by default and follows 1.x's autoApprove setting", () => {
@@ -88,6 +88,14 @@ describe("auto mode: the blocked-call card", () => {
     cleanups.push(async () => { head.running = false; await bot.shutdown({ tidy: false }); });
     return { bot, head, allow, sent, answer, feed, block, cards };
   }
+
+  it("never reuses a legacy permanent Permissions grant or offers a new one", () => {
+    const h = harness();
+    (h.bot as any).alwaysAllowed = ["Permissions"];
+    (h.bot as any).ask(h.head, { kind: "permission", requestId: "permissions-1", tool: "Permissions", summary: "More access", input: {} }, null);
+    expect(h.answer).not.toHaveBeenCalled();
+    expect(h.cards()[0].choices.map((choice: any) => choice.action)).toEqual(["allowOnce", "deny"]);
+  });
 
   it("shows one card for the blocked call, with the classifier's reason, and no approval waiting", () => {
     const h = harness();

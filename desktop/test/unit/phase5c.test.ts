@@ -139,10 +139,10 @@ describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(f
     expect(replyPages(record, page)).toEqual(P.pages.map((entry: any) => ({ path: ours(entry.path), text: entry.text })));
   });
 
-  it("ships 1.x's own card: its template and about.md, and the earlier copies it replaces", () => {
-    expect(PREVIEW_TEMPLATE).toBe(P.template);
+  it("recognizes exact 1.x shipped copies for migration and retains their data documentation", () => {
+    expect(OLDER_PREVIEW_TEMPLATES[0]).toBe(P.template);
     expect(PREVIEW_ABOUT).toBe(P.about);
-    expect(OLDER_PREVIEW_TEMPLATES).toEqual(P.olderTemplates);
+    expect(OLDER_PREVIEW_TEMPLATES.slice(1)).toEqual(P.olderTemplates);
   });
 
   it("seeds the shipped preview, upgrades old shipped templates, and preserves hand edits", () => {
@@ -154,6 +154,12 @@ describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(f
       writeFileSync(join(card, "template.html"), old);
       prepareLibrary(dir);
       expect(readFileSync(join(card, "template.html"), "utf8")).toBe(PREVIEW_TEMPLATE);
+    }
+    // Both edits to an old default and a separately migrated plugin template stay byte-for-byte.
+    for (const custom of [OLDER_PREVIEW_TEMPLATES[0] + "<!-- custom -->", PREVIEW_TEMPLATE + "<!-- Maintainer -->"]) {
+      writeFileSync(join(card, "template.html"), custom);
+      prepareLibrary(dir);
+      expect(readFileSync(join(card, "template.html"), "utf8")).toBe(custom);
     }
     writeFileSync(join(card, "template.html"), "<p>My card</p>");
     writeFileSync(join(card, "about.md"), "My own usage");

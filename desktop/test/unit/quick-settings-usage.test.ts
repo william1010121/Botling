@@ -51,6 +51,8 @@ describe("quota readings in the production Quick settings popup", () => {
     expect(host.textContent).toContain("Develop Botling itself");
     expect(host.textContent).toContain("Usage by bot");
     expect(host.textContent).not.toContain("99%");
+    expect(host.querySelectorAll('[role="status"]')).toHaveLength(0);
+    expect(host.textContent).not.toContain("Last-known");
   });
 
   it("keeps missing windows unavailable and distinguishes an actually reported zero", async () => {
@@ -90,8 +92,103 @@ describe("quota readings in the production Quick settings popup", () => {
     expect(ui.cards()[0].textContent).toContain("42%");
     request.mockRejectedValueOnce(new Error("offline")); await ui.finished();
     expect(host.textContent).toContain("Quota readings unavailable.");
-    expect(host.textContent).not.toContain("Showing the last successful reading.");
+    for (const card of ui.cards()) expect(card.getAttribute("aria-label")).toContain("Last-known");
+    expect(host.textContent).toContain("Claude: quota refresh failed.");
+    expect(host.textContent).toContain("Codex: quota refresh failed.");
     expect(ui.cards()[0].textContent).toContain("42%");
+    await ui.finished();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.querySelectorAll('[role="status"]')).toHaveLength(0);
+    expect(host.textContent).not.toContain("Last-known");
+  });
+
+  it.each([
+    ["auth_required", "sign-in required"],
+    ["auth_rejected", "quota authentication rejected; cause unknown"],
+    ["forbidden", "quota access denied"],
+    ["timeout", "quota request timed out"],
+    ["network_error", "quota network error"],
+    ["invalid_response", "invalid quota response"],
+    ["missing", "quota readings missing"],
+    ["cli_unavailable", "CLI unavailable"],
+  ] as const)("explains %s independently for each provider without adding retries", async (status, note) => {
+    const value = limits();
+    value.quotaStatus = { claude: status, codex: "available" };
+    const ui = await mount(vi.fn(async () => structuredClone(value))); await ui.toggle();
+    expect([...host.querySelectorAll('[role="status"]')].map(node => node.textContent)).toEqual([`Claude: ${note}.`]);
+    expect(ui.cards()[0].getAttribute("aria-label")).toContain("42% used, Last-known");
+    expect(ui.cards()[1].getAttribute("aria-label")).toContain("18% used, Last-known");
+    expect(ui.cards()[2].getAttribute("aria-label")).not.toContain("Last-known");
+    await act(async () => vi.advanceTimersByTime(59_000));
+    expect(ui.request).toHaveBeenCalledTimes(1);
+    value.quotaStatus = { claude: "available", codex: status };
+    await ui.finished();
+    expect([...host.querySelectorAll('[role="status"]')].map(node => node.textContent)).toEqual([`Codex: ${note}.`]);
+    expect(ui.cards()[0].getAttribute("aria-label")).not.toContain("Last-known");
+    expect(ui.cards()[1].getAttribute("aria-label")).not.toContain("Last-known");
+    expect(ui.cards()[2].getAttribute("aria-label")).toContain("31% used, Last-known");
+    value.quotaStatus.codex = "available"; value.codex.week!.used = .52;
+    await ui.finished();
+    expect(host.querySelectorAll('[role="status"]')).toHaveLength(0);
+    expect(host.textContent).not.toContain("Last-known");
+    expect(ui.cards()[2].textContent).toContain("52%");
+  });
+
+  it("explains expired Claude credentials without requiring login or promising refresh", async () => {
+    const value = limits();
+    value.quotaStatus = { claude: "token_expired", codex: "available" };
+    const ui = await mount(vi.fn(async () => structuredClone(value))); await ui.toggle();
+    expect([...host.querySelectorAll('[role="status"]')].map(node => node.textContent)).toEqual([
+      "Claude: credentials expired; a normal Claude session may refresh them.",
+    ]);
+    expect(host.textContent).not.toContain("sign-in required");
+    expect(ui.cards()[0].getAttribute("aria-label")).toContain("42% used, Last-known");
+    expect(ui.cards()[1].getAttribute("aria-label")).toContain("18% used, Last-known");
+    expect(ui.cards()[2].getAttribute("aria-label")).not.toContain("Last-known");
+    await act(async () => vi.advanceTimersByTime(59_000));
+    expect(ui.request).toHaveBeenCalledTimes(1);
+    value.quotaStatus.claude = "available";
+    await ui.finished();
+    expect(host.querySelectorAll('[role="status"]')).toHaveLength(0);
+    expect(host.textContent).not.toContain("Last-known");
+  });
+
+  it.each(["future_failure", "toString"])("shows a safe fallback for unknown status %s", async status => {
+    const value = limits();
+    value.quotaStatus = { claude: "available", codex: "available" };
+    Reflect.set(value.quotaStatus, "claude", status);
+    Reflect.set(value.quotaStatus, "codex", status);
+    value.claude.fiveHour = null;
+    value.claude.week = { used: 0, seen: now, resetsAt: null };
+    const ui = await mount(vi.fn(async () => structuredClone(value))); await ui.toggle();
+    expect([...host.querySelectorAll('[role="status"]')].map(node => node.textContent)).toEqual([
+      "Claude: quota readings unavailable.", "Codex: quota readings unavailable.",
+    ]);
+    expect(ui.cards()).toHaveLength(3);
+    expect(ui.cards()[0].textContent).toContain("unavailable");
+    expect(ui.cards()[0].textContent).not.toMatch(/0%|Last-known/);
+    expect(ui.cards()[1].getAttribute("aria-label")).toBe("Claude Week limit, 0% used, Last-known");
+    expect(ui.cards()[2].getAttribute("aria-label")).toContain("31% used, Last-known");
+    value.quotaStatus = { claude: "available", codex: "available" };
+    await ui.finished();
+    expect(host.querySelectorAll('[role="status"]')).toHaveLength(0);
+    expect(host.textContent).not.toContain("Last-known");
+  });
+
+  it("labels only retained windows, preserving missing versus measured zero on failure", async () => {
+    const value = limits();
+    value.quotaStatus = { claude: "auth_required", codex: "cli_unavailable" };
+    value.claude = { fiveHour: null, week: { used: 0, seen: now, resetsAt: null } };
+    value.codex.week = null;
+    const ui = await mount(vi.fn(async () => value)); await ui.toggle();
+    expect(ui.cards()).toHaveLength(3);
+    for (const index of [0, 2]) {
+      expect(ui.cards()[index].textContent).toContain("unavailable");
+      expect(ui.cards()[index].textContent).not.toMatch(/0%|Last-known/);
+    }
+    expect(ui.cards()[1].getAttribute("aria-label")).toBe("Claude Week limit, 0% used, Last-known");
+    expect(host.textContent).toContain("Claude: sign-in required.");
+    expect(host.textContent).toContain("Codex: CLI unavailable.");
   });
 
   it("does not apply an outstanding request from a closed popup to the next opening", async () => {

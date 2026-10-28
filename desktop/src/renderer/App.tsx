@@ -16,7 +16,7 @@ import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
-import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
+import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
@@ -27,7 +27,12 @@ import { WebPane, WebPanel, WebRail } from "./Web";
 import { SpecFrame } from "./SpecFrame";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
 
-export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
+/** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
+ * header (the phone's bot list button) and the left column's foot in place of the desktop's add,
+ * plugin and settings controls, which the web has no commands for. The desktop passes neither. */
+export interface WebChrome { headerLead?: ReactNode; railFooter: ReactNode }
+
+export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -102,7 +107,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
-  const whiteboard = whiteboardOn && bot?.role === "main" && !watching && !site;
+  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching && !site;
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -201,7 +206,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
           onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
           onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }} onNewGroup={() => setEditingGroup({ group: null })}
-          settingsControl={<SidebarSettings compact client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />} />
+          settingsControl={web ? null : <SidebarSettings compact client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />} />
       ) : (
       <aside className="rail">
         <div className="rail-top drag"><RailToggle collapsed={false} onToggle={() => toggleRail(true)} /></div>
@@ -260,6 +265,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             </>
           )}
         </nav>
+        {web ? <div className="rail-settings web-rail-footer">{web.railFooter}</div> : <>
         {makingBot && <NewBotForm onDone={createBot} busy={creating} />}
         <div className="rail-add">
           <button type="button" className="rail-button" onClick={addProject}><Icon name="plus" size={13} />Add project</button>
@@ -272,6 +278,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         <div className="rail-settings">
           <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />
         </div>
+        </>}
       </aside>
       )}
       <section className="chat-pane">
@@ -283,12 +290,13 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         )}
         <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}`} hidden={!!site}>
         <header className="chat-header drag">
+          {web?.headerLead}
           {bot && <span className="chat-title">{bot.name}</span>}
           {bot && (bot.heads.length > 1 || bot.heads[0] === "codex") && (
             <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => (head === "codex" ? "Codex" : "Claude")).join(" & ")}</span>
           )}
           {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
-          {bot && chat && (
+          {bot && chat && !web && (
             <span className="chat-actions">
               {bot.role !== "group" && <RoutinesButton client={client} botId={bot.id} />}
             </span>
@@ -300,7 +308,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             <div className="board-switch" role="group" aria-label="Chat or Board">
               <button type="button" aria-pressed={!view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
               <button type="button" aria-pressed={view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
-              {bot.role === "main" && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => setWhiteboardOn(true)}><Icon name="people" size={13} />Whiteboard</button>}
+              {bot.role === "main" && !web && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => setWhiteboardOn(true)}><Icon name="people" size={13} />Whiteboard</button>}
             </div>
           </div>
         )}
@@ -475,7 +483,7 @@ function focusComposer() {
   if (!target) return;
   target.focus();
   const message: ShellMessage = { botling: "focus" };
-  target.postMessage(message, CHAT_ORIGIN);
+  target.postMessage(message, CHAT_TARGET);
 }
 
 /** The button that folds the left column into a strip of faces and opens it again (1.x's RailToggle, ⌃⌘S). */
@@ -659,7 +667,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       mark("shell.recover.focus.after");
       const traceId = mark("shell.recover.send");
       const message: ShellMessage = { botling: "recoverFocus", ...(traceId ? { traceId } : {}) };
-      element?.contentWindow?.postMessage(message, CHAT_ORIGIN);
+      element?.contentWindow?.postMessage(message, CHAT_TARGET);
     };
     const focusChanged = () => {
       if (traceTimerPending) mark("shell.recover.timer.cancel");
@@ -779,6 +787,10 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       }
       if (message.botling !== "action") return;
       const action = message.action;
+      const composerReply = (ok: boolean, error?: string) => {
+        if (typeof action.requestID === "string") postToChat({ botling: "composerResult", requestID: action.requestID, ok, ...(error ? { error: error.slice(0, 4096) } : {}) });
+      };
+      const composerFailure = (error: unknown) => { composerReply(false, error instanceof Error ? error.message : String(error)); onError(error); };
       switch (action?.type) {
         case "shellCommand":
           if (nativeEditor() && ["settings", "rightPanel", "sidebar", "search"].includes(String(action.command))) {
@@ -797,12 +809,16 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           return;
         case "send": {
           // Words, or only the files waiting in the input box.
-          if (!chat || typeof action.text !== "string" || (!action.text.trim() && !chat.pendingFiles?.length)) return;
-          onSent();
-          const reply = replyingRef.current?.botId === chat.botId ? replyingRef.current.id : undefined;
-          setReplying(null);
+          if (!chat || typeof action.text !== "string") { composerReply(false, "Chat is not ready."); return; }
+          const botId = typeof action.botID === "string" ? action.botID : chat.botId;
+          const reply = replyingRef.current?.botId === botId ? replyingRef.current.id : undefined;
           const to = action.to === "both" || action.to === "claude" || action.to === "codex" ? { to: action.to as "both" | "claude" | "codex" } : {};
-          void client.request({ type: "chat.send", botId: chat.botId, text: action.text, ...(reply ? { replyTo: reply } : {}), ...to }).catch(onError);
+          void client.request({ type: "chat.send", botId, text: action.text, ...(reply ? { replyTo: reply } : {}), ...to }).then(result => {
+            if (result.stoppedBy) { composerReply(false, `Plugin ${result.stoppedBy} stopped the message.`); return; }
+            onSent();
+            setReplying(current => current?.botId === botId && current.id === reply ? null : current);
+            composerReply(true);
+          }).catch(composerFailure);
           return;
         }
         case "setAnswerWith": {
@@ -860,7 +876,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           void client.request({ type: "task.output", botId, messageId, taskId }).then((result) => {
             if (store.getView().chat?.botId !== botId) return;
             const response: ShellMessage = { botling: "taskOutput", botID: botId, messageID: messageId, taskID: taskId, text: result.text };
-            frame.current?.contentWindow?.postMessage(response, CHAT_ORIGIN);
+            frame.current?.contentWindow?.postMessage(response, CHAT_TARGET);
           }).catch(onError);
           return;
         }
@@ -1012,12 +1028,13 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           return;
         // Files for the next message: main's picker, a pasted or dropped file the page read, taking one out.
         case "pickFiles":
-          if (chat) void client.request({ type: "files.pick", botId: chat.botId }).catch(onError);
+          if (chat) void client.request({ type: "files.pick", botId: typeof action.botID === "string" ? action.botID : chat.botId }).then(() => composerReply(true)).catch(composerFailure);
+          else composerReply(false, "Chat is not ready.");
           return;
         case "addFileData":
           if (chat && typeof action.name === "string" && typeof action.base64 === "string" && action.base64) {
-            void client.request({ type: "files.data", botId: chat.botId, name: action.name.slice(0, 255) || "file", base64: action.base64 }).catch(onError);
-          }
+            void client.request({ type: "files.data", botId: typeof action.botID === "string" ? action.botID : chat.botId, name: action.name.slice(0, 255) || "file", base64: action.base64 }).then(() => composerReply(true)).catch(composerFailure);
+          } else composerReply(false, "Chat or attachment is not ready.");
           return;
         case "removeFile":
           if (chat && typeof action.id === "string") void client.request({ type: "files.remove", botId: chat.botId, id: action.id }).catch(onError);
@@ -1074,7 +1091,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
   if (nativeEditor()) return <>{viewer}<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
     {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
   </div></>;
-  return <>{viewer}<iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} title="Chat" /></>;
+  return <>{viewer}<iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} sandbox={CHAT_SANDBOX} allow={CHAT_SANDBOX ? "clipboard-write" : undefined} title="Chat" /></>;
 }
 
 /**

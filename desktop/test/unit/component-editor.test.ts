@@ -70,6 +70,33 @@ describe("app-created Maintainer editor binding", () => {
     expect(harmless[harmless.indexOf("--tools") + 1]).toBe("Read");
   });
 
+  it.each([false, true])("propagates Claude bypass=%s through the app-managed editor without widening tools", (bypassPermissions) => {
+    const b = binding();
+    b.parent.bypassPermissions = bypassPermissions;
+    const route = b.bind(b.owner, b.session)!;
+    const session = ready(route);
+    const action = call(session, "app_handoff", { role: "component-editor", instructions: "Edit" }).actions[0];
+    expect(action?.kind).toBe("start");
+    if (action?.kind !== "start") throw new Error("Missing editor");
+    const args = headArguments(action.config);
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe(bypassPermissions ? "bypassPermissions" : "acceptEdits");
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Write,Edit,Bash");
+    expect(args[args.indexOf("--disallowedTools") + 1]).toContain("Agent,Task,SendMessage");
+  });
+
+  it("passes Claude low/medium policy to a component worker even under a Codex coordinator", () => {
+    const b = binding();
+    b.parent.autoMode = true;
+    const route = b.bind(b.owner, b.session)!;
+    const session = ready(route);
+    const action = call(session, "app_handoff", { role: "component-editor", instructions: "Edit" }).actions[0];
+    if (action?.kind !== "start") throw new Error("Missing editor");
+    const args = headArguments(action.config);
+    const policy = JSON.parse(args[args.indexOf("--settings") + 1]).autoMode;
+    expect(policy.allow.some((rule: string) => rule.startsWith("Botling medium risk (allow)"))).toBe(true);
+    expect(policy.soft_deny.some((rule: string) => rule.startsWith("Botling high risk (ask)"))).toBe(true);
+  });
+
   it("rejects a copied fixed ID, same name/folder, ordinary bot, and a different app's Maintainer before loading config", () => {
     const b = binding();
     for (const fake of [{ ...b.owner }, { ...b.owner, id: "foreign" }, { ...b.owner, role: "bot" as const }, maintainerProfile(tempDir("other-app"), "maintain")]) {

@@ -1,3 +1,4 @@
+import { codexAutoRiskConfig } from "./auto-risk-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
 // stdio), ported from the Swift app's CodexAgentProcess.swift (checked against codex-cli 0.163.0).
 //
@@ -120,6 +121,8 @@ export interface CodexConfig {
   restoredMonitors?: CommandMonitor[];
   /** Auto mode (default on): Codex's own reviewer (`auto_review`) answers escalations; only its refusals become a card. */
   autoMode?: boolean;
+  /** Explicit opt-in: no approval prompts and no Codex sandbox. */
+  bypassPermissions?: boolean;
   /** More folders it may write besides `cwd` (1.x's `writableRoots`: the bot's `--add-dir` folders). */
   writableRoots?: string[];
 }
@@ -229,7 +232,7 @@ export class CodexSession {
   /** The coordinator's next turn asks the app instead of the reviewer, once (1.x `reviewerNext`). */
   private reviewerNext: string | null = null;
   /** Reviewer refusals shown as cards: what was refused, and whose. */
-  private reviews = new Map<string, { command: string; task: string | null }>();
+  private reviews = new Map<string, { command: string; task: string | null; thread: string; cwd: string }>();
   private finishing = false;
   private stopped = false;
   private workers = new Map<string, Worker>();
@@ -339,6 +342,8 @@ export class CodexSession {
   stop(): CodexOutput[] {
     const monitors = this.cancelMonitors();
     this.stopped = true;
+    this.allowedCommands.clear();
+    this.reviews.clear();
     this.inbox = [];
     return [...this.cancelWorkers(), ...this.closeApprovals(() => true, true), ...monitors];
   }
@@ -494,9 +499,15 @@ export class CodexSession {
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
-        // A call the user allowed after the reviewer refused it (1.x `allowedCommands`).
-        if (this.allowedCommands.size && (params.kind === undefined || params.kind === "command")
-          && [params.command, codexCommand(params)].some((c) => typeof c === "string" && this.allowedCommands.has(c))) {
+        // A manual override covers one retry in its exact thread and working directory.
+        const retryKey = JSON.stringify([params.threadId, params.cwd, params.command]);
+        const retryWorker = [...this.workers.values()].find(w => !w.role && w.thread === params.threadId);
+        const current = this.approvalCurrent({ rpcId, kind: "command", thread: params.threadId, turn: params.turnId ?? null,
+          ...(retryWorker ? { worker: { task: retryWorker.id, run: retryWorker.run } } : {}) });
+        if (current && params.environmentId === "local" && !params.networkApprovalContext
+          && (params.kind === undefined || params.kind === "command")
+          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
+          && this.allowedCommands.delete(retryKey)) {
           return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
         }
         // Keep the automatic path independent of manual-card correlation: lifecycle handling
@@ -506,7 +517,7 @@ export class CodexSession {
         const ownership = worker?.isolatedGit;
         const exclusive = ownership && ![...this.workers.values()].some((w) => w !== worker && w.isolatedGit
           && (w.isolatedGit.worktree === ownership.worktree || w.isolatedGit.branch === ownership.branch));
-        if (!this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
+        if (this.config.bypassPermissions === true && !this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
           && !worker.completedTurns.has(worker.turnId)
           && (params.kind === undefined || params.kind === "command") // never stdin to a running process
           && params.environmentId === "local" && !params.networkApprovalContext
@@ -541,7 +552,7 @@ export class CodexSession {
     }
   }
 
-  private get reviewer(): string { return this.config.autoMode === false ? "user" : "auto_review"; }
+  private get reviewer(): string { return this.config.bypassPermissions || this.config.autoMode === false ? "user" : "auto_review"; }
 
   private nextReviewer(params: Record<string, unknown>) {
     if (!this.reviewerNext) return;
@@ -551,16 +562,19 @@ export class CodexSession {
 
   /** Codex's reviewer refused a call: a card with its reason (1.x `reviewed`). Allow lets it through next time. */
   private reviewed(params: any, worker: Worker | null): CodexOutput[] {
-    const review = params.review;
-    if (!review || review.status !== "denied") return [];
+    const review = params.review && typeof params.review === "object" ? params.review : {};
+    if (review.status === "approved") return [];
     const action = params.action && typeof params.action === "object" ? params.action : {};
     const command = typeof action.command === "string" ? action.command
       : Array.isArray(action.argv) ? action.argv.filter((a: unknown) => typeof a === "string").join(" ") : "";
     const what = command || (typeof action.type === "string" ? action.type : "a call");
     const risk = typeof review.riskLevel === "string" ? `[${review.riskLevel} risk] ` : "";
-    const why = typeof review.rationale === "string" ? review.rationale : "";
+    const why = typeof review.rationale === "string" && review.rationale ? review.rationale
+      : review.status === "denied" ? "Auto review denied this action."
+      : `Auto review did not approve this action (${typeof review.status === "string" ? review.status : "unknown result"}). No automatic approval was granted.`;
     const requestId = `codex-review:${randomUUID()}`;
-    this.reviews.set(requestId, { command, task: worker?.id ?? null });
+    this.reviews.set(requestId, { command, task: worker?.id ?? null,
+      thread: typeof params.threadId === "string" ? params.threadId : "", cwd: typeof action.cwd === "string" ? action.cwd : "" });
     // The bot shows it as auto mode's blocked-call card (the reason apart from the call) and tells the head after the pick.
     const input = { reviewRefused: true, reason: `${risk}${why}`.trim(), ...(worker ? { worker: worker.name || worker.id } : {}) };
     return [this.item({ kind: "permission", requestId, tool: action.type === "applyPatch" ? "Edit" : "Bash", summary: what, input, ...(worker ? { workerId: worker.id } : {}) })];
@@ -571,7 +585,7 @@ export class CodexSession {
     if (!review) return [];
     this.reviews.delete(requestId);
     if (!allow || this.stopped) return [];
-    if (review.command) this.allowedCommands.add(review.command);
+    if (review.command && review.thread && review.cwd) this.allowedCommands.add(JSON.stringify([review.thread, review.cwd, review.command]));
     const worker = review.task ? this.workers.get(review.task) : undefined;
     // The next turn of the refused call's thread asks the app (which accepts the allowed call), once.
     if (this.config.autoMode !== false) { if (worker) worker.reviewerNext = "user"; else this.reviewerNext = "user"; }
@@ -631,12 +645,13 @@ export class CodexSession {
 
   private startThread(): CodexOutput {
     const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: this.reviewer, sandbox: "workspace-write", developerInstructions: this.config.instructions,
+      cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write", developerInstructions: this.config.instructions,
     };
+    params.config = codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions);
     if (this.managed) {
       params.environments = [];
       params.dynamicTools = MANAGED_TOOLS;
-      params.config = COORDINATOR_CONFIG;
+      params.config = { ...COORDINATOR_CONFIG, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) };
     }
     if (this.config.model) params.model = this.config.model;
     // Its other folders are writable too, as in 1.x (`sandbox_workspace_write.writable_roots`).
@@ -1011,14 +1026,14 @@ export class CodexSession {
         else isolatedGitOwners.set(isolatedGit.worktree, task);
       }
       // An invalid/missing grant still launches the task, with the existing approval cards.
-      const instructions = isolatedGit ? `${args.instructions}\n\nApp-validated isolated Git ownership (only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Other operations still require normal approval.` : args.instructions;
+      const instructions = isolatedGit ? `${args.instructions}\n\nValidated isolated Git path metadata (not proof of user authorization; only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Permission mode still controls approval; model-supplied implementationAuthorized is not a user grant.` : args.instructions;
       this.workers.set(task, { id: task, name, instructions, role: args.role, isolatedGit, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
       out.push(
         this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", run_in_background: true } }),
         this.item({ kind: "subagentStarted", id: task, description: name, type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
         ...this.startWorkerThread(task),
       );
-      response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
+      response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
     } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.workers.has(args.task_id)) {
       const queued = this.workers.get(args.task_id)!.active;
       out.push(...this.messageWorker(args.task_id, args.message));
@@ -1063,9 +1078,9 @@ export class CodexSession {
     }
     if (worker.role !== undefined) return this.failWorker(task, "Unknown persisted worker role; no generic worker was substituted.");
     const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: "on-request", approvalsReviewer: this.reviewer, sandbox: "workspace-write",
+      cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write",
       developerInstructions: this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
-      config: { "features.multi_agent": false, "agents.enabled": false },
+      config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) },
     };
     // The workers write where the coordinator may, as in 1.x (`writable_roots`).
     params.config = { ...(params.config as Record<string, unknown>), ...writableRootsConfig(this.config.writableRoots) };
@@ -1516,6 +1531,8 @@ export interface CodexHeadConfig {
   routinesFile?: string | null;
   /** Codex's own reviewer answers escalations (default on). */
   autoMode?: boolean;
+  /** Explicit opt-in: no approval prompts and no Codex sandbox. */
+  bypassPermissions?: boolean;
   /** More folders it may write (its `--add-dir` folders; 1.x's `writableRoots`). */
   writableRoots?: string[];
   componentEditor?: ComponentEditorRoute | null;
@@ -1565,6 +1582,7 @@ export class CodexHead {
       restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
       autoMode: config.autoMode ?? true,
+      bypassPermissions: config.bypassPermissions === true,
       writableRoots: config.writableRoots ?? [],
       componentEditor: config.componentEditor,
     });

@@ -73,7 +73,7 @@ export function SidebarSettings({ client, settings, plugins, doctor, compact = f
         <Icon name="gear" size={14} />
         {doctor?.needsAttention && <span className="doctor-dot" role="img" aria-label="Claude Code needs attention" style={{ position: "absolute", right: 2, top: 2, width: 7, height: 7, borderRadius: "50%", background: "var(--error)", pointerEvents: "none" }} />}
       </button>
-      {open && <ShellOverlay><div ref={panel} id={id} className="sidebar-settings-popover" role="dialog" aria-label="Quick settings" style={position}>
+      {open && <ShellOverlay revealImmediately><div ref={panel} id={id} className="sidebar-settings-popover" role="dialog" aria-label="Quick settings" style={position}>
         <header><strong>Quick settings</strong><button type="button" aria-label="Close quick settings" onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button></header>
         <QuickSettingsUsage client={client} />
         <label className="sidebar-settings-switch">

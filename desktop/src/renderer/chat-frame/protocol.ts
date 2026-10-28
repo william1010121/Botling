@@ -6,11 +6,22 @@ import type { ChatState, SpecState, StatePatch } from "../../../../Web/src/types
 import type { Command, WebPluginSpecView } from "../../contract";
 import type { FrameExtras } from "../payload";
 
+/** Botling Web (desktop/mobile/build.mjs defines it): the same shell and chat page, served by the
+ * mobile bridge. The chat page then runs in a sandboxed frame without allow-same-origin, so it has an
+ * opaque origin ("null"), no cookies and no storage: like the desktop's own origin, it shares nothing
+ * with the shell but postMessage, and every receiver still checks `event.source`. */
+declare const __BOTLING_WEB__: boolean | undefined;
+export const WEB = typeof __BOTLING_WEB__ !== "undefined" && __BOTLING_WEB__ === true;
+const served = WEB ? new URL(location.href).origin : "";
 /** The app page's origin (the React shell, which has the bridge). */
-export const APP_ORIGIN = "app://botling";
+export const APP_ORIGIN = WEB ? served : "app://botling";
 /** The chat page's own origin (Phase 4a): it shares nothing with the app page but postMessage. */
-export const CHAT_ORIGIN = "botling-chat://chat";
-export const CHAT_PAGE = `${CHAT_ORIGIN}/chat.html`;
+export const CHAT_ORIGIN = WEB ? "null" : "botling-chat://chat";
+/** The target origin the shell posts to the chat page with (an opaque origin can only be named "*"). */
+export const CHAT_TARGET = WEB ? "*" : CHAT_ORIGIN;
+export const CHAT_PAGE = WEB ? `${served}/mobile/chat.html` : `${CHAT_ORIGIN}/chat.html`;
+/** The chat frame's sandbox on the web (none on the desktop, whose scheme already isolates it). */
+export const CHAT_SANDBOX: string | undefined = WEB ? "allow-scripts" : undefined;
 
 /** Frame → shell. */
 export type FrameMessage =
@@ -32,12 +43,13 @@ export type FrameMessage =
 
 /** Shell → frame. */
 export type ShellMessage =
+  | { botling: "composerResult"; requestID: string; ok: boolean; error?: string }
   | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }
   | { botling: "widthRejected"; value: number | null; actual: number | null }
   | { botling: "widthPreview"; value: number | null | undefined }
-  | { botling: "state"; state: ChatState; revision?: number; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  | { botling: "state"; avatarSources?: string[]; state: ChatState; revision?: number; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
   /** Sequenced delta against the last full snapshot or delta in this page. */
-  | { botling: "stateDelta"; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  | { botling: "stateDelta"; avatarSources?: string[]; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
   | { botling: "response"; id: number; ok: boolean; error?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }

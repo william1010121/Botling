@@ -1,0 +1,9 @@
+{
+  "origin": "https://botling-bridge.driseam.com",
+  "host": "127.0.0.1",
+  "port": 8443,
+  "certFile": "/REPLACE/private/server-cert.pem",
+  "keyFile": "/REPLACE/private/server-key.pem",
+  "clientsFile": "/REPLACE/private/clients.json",
+  "assets": "/REPLACE/Botling 2.app/Contents/Resources/mobile"
+}

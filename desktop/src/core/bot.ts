@@ -133,6 +133,8 @@ export interface SessionStart {
   addDirs?: string[];
   /** Auto mode: Claude Code's (`--permission-mode auto`) or Codex's reviewer (`auto_review`); Claude only: rules for blocked calls the user allowed (`--settings`). */
   autoMode?: boolean;
+  claudeBypassPermissions?: boolean;
+  codexBypassPermissions?: boolean;
   allowRules?: string[];
   /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
   codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null;
@@ -212,7 +214,7 @@ export interface BotOptions {
   /** The completion judge when Settings has it on (1.x's `promiseCheck`), with its model; null: off. */
   promiseCheck?: () => { check: Check; model: string } | null;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; autoMode?: boolean };
+  launch?: () => { subagentHourCache: boolean; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -299,7 +301,7 @@ const RECENT_TOOL_CALLS = 500;
 export const NO_LONGER_NEEDED = "No longer needed";
 const NO_ANSWER = "No answer in time";
 /** Tools whose "always" would be far broader than it sounds; they are asked every time (`Bot.neverAlways`). */
-const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command"]);
+const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command", "Permissions"]);
 /** 1.x's `RestartReason.plugins`. */
 const PLUGINS_RESTART = { told: "loading new plugins", shown: "loading new plugins" };
 const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
@@ -338,6 +340,11 @@ export class Bot {
   /** Who else has this bot's project open, when someone does: shown once as a notice, never a block. */
   private lockNotice: string | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
+  // At most one pending write, retaining the book itself rather than queued snapshots.
+  private subagentSaveTimer: NodeJS.Timeout | null = null;
+  private subagentsDirty = false;
+  private subagentsCheckpointRequired = false;
+  private subagentSaveRetryMs = 1_000;
   private head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
   readonly engine: Engine;
@@ -1103,8 +1110,43 @@ export class Bot {
     return { changed };
   }
 
-  private saveSubagents() {
-    if (!this.readOnly) this.store.saveList("subagents.json", this.subagents.list);
+  private saveSubagents(progress = false) {
+    if (this.readOnly) return;
+    this.subagentsDirty = true;
+    if (!progress) this.subagentsCheckpointRequired = true;
+    // Only running text/token/runtime progress may lag disk by 500 ms. Starts, tool events,
+    // execution identity, terminal states and explicit user changes remain synchronous.
+    if (progress && !this.shuttingDown) this.scheduleSubagentSave(500);
+    else this.flushSubagents();
+  }
+
+  private scheduleSubagentSave(delay: number) {
+    if (this.subagentSaveTimer || this.shuttingDown) return;
+    this.subagentSaveTimer = setTimeout(() => {
+      this.subagentSaveTimer = null;
+      try { this.flushSubagents(true); }
+      catch (error) { this.log(`subagents save failed; retry pending: ${String(error)}`); }
+    }, delay);
+    this.subagentSaveTimer.unref?.();
+  }
+
+  /** A failed write stays dirty. Critical callers see the error; background retries are bounded. */
+  private flushSubagents(progress = false) {
+    if (this.subagentSaveTimer) { clearTimeout(this.subagentSaveTimer); this.subagentSaveTimer = null; }
+    if (this.readOnly || !this.subagentsDirty) return;
+    if (!progress) this.subagentsCheckpointRequired = true;
+    try {
+      if (progress && !this.subagentsCheckpointRequired) this.store.saveWorkerProgress(this.subagents.list);
+      else this.store.saveList("subagents.json", this.subagents.list);
+      this.subagentsCheckpointRequired = false;
+      this.subagentsDirty = false;
+      this.subagentSaveRetryMs = 1_000;
+    } catch (error) {
+      this.subagentsDirty = true;
+      this.scheduleSubagentSave(this.subagentSaveRetryMs);
+      this.subagentSaveRetryMs = Math.min(this.subagentSaveRetryMs * 2, 30_000);
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------------------------------
@@ -2267,6 +2309,8 @@ export class Bot {
       addDirs: this.owner.options.addDirs?.() ?? [],
       // 1.x's "Auto-approve safe actions": on unless turned off.
       autoMode: launch.autoMode !== false, allowRules: this.allowRules,
+      claudeBypassPermissions: launch.claudeBypassPermissions === true,
+      codexBypassPermissions: launch.codexBypassPermissions === true,
     };
     let head: AgentHead;
     if (this.engine === "codex") {
@@ -2581,16 +2625,16 @@ export class Bot {
         return item.parent !== null;
       }
       case "subagentRuntime":
-        if (this.subagents.runtime(item.id, item.runtime, item.model)) this.subagentChanged(this.subagents.get(item.id));
+        if (this.subagents.runtime(item.id, item.runtime, item.model)) this.subagentChanged(this.subagents.get(item.id), true);
         return true;
       case "subagentOutput":
-        if (this.subagents.output(item.id, item.counter, item.tokens)) this.subagentChanged(this.subagents.get(item.id));
+        if (this.subagents.output(item.id, item.counter, item.tokens)) this.subagentChanged(this.subagents.get(item.id), true);
         return true;
       case "subagentExecution":
         if (this.subagents.execution(item.id, item.execution)) this.subagentChanged(this.subagents.get(item.id));
         return true;
       case "subagentText":
-        if (this.subagents.text(item.parent, item.text)) this.subagentChanged(this.subagents.get(item.parent));
+        if (this.subagents.text(item.parent, item.text)) this.subagentChanged(this.subagents.get(item.parent), true);
         return true;
       case "subagentStarted":
         // Initial ownership comes from the Agent call, never from whichever turn is now visible.
@@ -2623,9 +2667,9 @@ export class Bot {
   }
 
   /** It changed: saved, its view sent, and the step that sent it (status, count) drawn again. */
-  private subagentChanged(subagent: SubagentRecord | undefined) {
+  private subagentChanged(subagent: SubagentRecord | undefined, progress = false) {
     if (!subagent) return;
-    this.saveSubagents();
+    this.saveSubagents(progress && subagent.status === "running");
     this.rowsChanged();
     this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) });
     // Status/metadata are stored in subagents.json; publish the task projection without rewriting cards.
@@ -4248,7 +4292,7 @@ export class Bot {
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
     if (isReviewRefusal(item.requestId)) return this.showReviewRefusal(head, item);
     // A bare tool name or a 1.x rule ("Bash(npm test)", "Edit(//…)", "WebFetch(domain:…)"): permission-rules.ts.
-    if (item.tool !== "Monitored command" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
+    if (item.tool !== "Monitored command" && item.tool !== "Permissions" && alwaysAllows(this.alwaysAllowed, item, this.commandFolder)) {
       head.answer(item.requestId, true, item.input);
       return;
     }
@@ -4698,7 +4742,11 @@ export class Bot {
   flushForSwap() {
     this.persist();
     this.partner?.persist();
-    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) if (bot.session.started) bot.store.saveHead(bot.session);
+    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) {
+      try { bot.flushSubagents(); }
+      catch (error) { bot.log(`subagents save failed during core swap: ${String(error)}`); }
+      if (bot.session.started) bot.store.saveHead(bot.session);
+    }
   }
 
   /** At the new core's start: go on in the sessions the old core handed over (`--resume`), then what waited. */
@@ -4748,8 +4796,13 @@ export class Bot {
       if (!ended) await last.terminate(1_000);
     }
     await partner;
-    this.options.lock?.release();
-    this.persist();
+    try {
+      try { this.flushSubagents(); }
+      catch (error) { this.log(`subagents save failed during shutdown: ${String(error)}`); }
+      this.persist();
+    } finally {
+      this.options.lock?.release();
+    }
   }
 }
 

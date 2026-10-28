@@ -42,7 +42,7 @@ export function maintainerEditorBinding(owner: BotProfile, root: string, headCon
       command: parent.command, prefixArgs: parent.prefixArgs, cwd: library, env: parent.env,
       sessionId: session.sessionId, resume: false, model: fields.model, systemPrompt: role,
       allowedTools: tools, tools, disallowedTools: [...new Set([...(parent.disallowedTools ?? []), "Agent", "Task", "SendMessage"])],
-      addDirs: parent.addDirs, effort: parent.effort, autoMode: parent.autoMode, allowRules: parent.allowRules,
+      addDirs: parent.addDirs, effort: parent.effort, autoMode: parent.autoMode, bypassPermissions: parent.bypassPermissions, allowRules: parent.allowRules,
       askPermission: parent.askPermission, harmless: parent.harmless, harmlessTools: parent.harmlessTools?.filter(tool => tools.includes(tool)),
     } };
   };

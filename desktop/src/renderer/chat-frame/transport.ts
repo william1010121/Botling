@@ -18,6 +18,20 @@ export function fromShell(receive: (message: ShellMessage) => void): () => void 
   return () => window.removeEventListener("message", listener);
 }
 
+/** Native shell reload/rebinding invalidates delivery assumptions, not the user's editor draft. */
+export function onTransportDisconnect(disconnected: () => void): () => void {
+  let previous = nativeChat?.current();
+  const unsubscribe = nativeChat?.subscribe(packet => {
+    if ("unbound" in packet) { previous = null; disconnected(); }
+    else if ("bound" in packet) {
+      if (previous && (previous.surfaceId !== packet.stamp.surfaceId || previous.documentGeneration !== packet.stamp.documentGeneration)) disconnected();
+      previous = packet.stamp;
+    }
+  });
+  window.addEventListener("pagehide", disconnected);
+  return () => { unsubscribe?.(); window.removeEventListener("pagehide", disconnected); };
+}
+
 /** Existing application shortcuts become semantic actions; editing events never leave this root. */
 export function installNativeShellCommands(): void {
   if (!nativeChat) return;

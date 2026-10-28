@@ -51,7 +51,7 @@ describe("a Codex head", () => {
     expect((await bots(c))[0]).toMatchObject({ heads: ["codex"], phase: "awake" });
     // The coordinator: workspace-write, asks first, no shell or native subagents, the app's tools.
     const start = JSON.parse(lines(join(dir, "codex-input.log")).find((entry) => entry.kind === "coordinator-start").text);
-    expect(start).toEqual({ sandbox: "workspace-write", approvalPolicy: "on-request", config: { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled",
+    expect(start).toEqual({ sandbox: "workspace-write", approvalPolicy: "on-request", config: { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled", "auto_review.extra_policy": expect.any(String),
         // Its other folders are writable roots, as in 1.x: the main bot's are every bot's notes (here Maintainer's).
         sandbox_workspace_write: { writable_roots: [join(dir, "plugins", ".bot")] } },
       tools: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"] });

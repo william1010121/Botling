@@ -7,6 +7,8 @@
 // path (main's dialog chose them), pasted or dropped ones written to `<core>/incoming/` first (1.x:
 // the temp folder's `ccb-incoming`), which is emptied as they are sent or removed.
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, open, rm } from "node:fs/promises";
+import { ContractError } from "../contract";
 import { basename, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -131,6 +133,7 @@ export function safeName(name: string): string {
 /** The files waiting in each bot's input box. */
 export class PendingFiles {
   private readonly byBot = new Map<string, PendingFile[]>();
+  private readonly writes = new Map<string, number>();
 
   constructor(private readonly incomingDir: string, private readonly onChange: (botId: string, files: PendingFileView[]) => void) {}
 
@@ -164,16 +167,31 @@ export class PendingFiles {
   }
 
   /** A pasted or dropped file the page read (`addFileData`), written to the incoming folder. */
-  addData(botId: string, name: string, base64: string): PendingFileView[] {
+  async addData(botId: string, name: string, base64: string): Promise<PendingFileView[]> {
+    if (this.list(botId).length + (this.writes.get(botId) ?? 0) >= 50) throw new ContractError("bad_request", "At most 50 attachments can wait in a chat.");
     const data = Buffer.from(base64, "base64");
-    if (!data.length) return this.views(botId);
-    mkdirSync(this.incomingDir, { recursive: true });
+    if (!data.length) throw new ContractError("bad_request", "The attachment is empty.");
+    this.writes.set(botId, (this.writes.get(botId) ?? 0) + 1);
     const id = randomUUID().toUpperCase();
     const safe = safeName(name);
-    const path = join(this.incomingDir, `${id.slice(0, 6)}-${safe}`);
-    writeFileSync(path, data, { mode: 0o600 });
-    this.set(botId, [...this.list(botId), { id, name: safe, path, kind: attachmentKind(path), incoming: true }]);
-    return this.views(botId);
+    const path = join(this.incomingDir, `${id}-${safe}`);
+    let created = false;
+    try {
+      await mkdir(this.incomingDir, { recursive: true });
+      const handle = await open(path, "wx", 0o600);
+      created = true;
+      try { await handle.writeFile(data); } finally { await handle.close(); }
+      // A native picker may have added files while the disk write was pending.
+      if (this.list(botId).length >= 50) throw new ContractError("bad_request", "At most 50 attachments can wait in a chat.");
+      this.set(botId, [...this.list(botId), { id, name: safe, path, kind: attachmentKind(path), incoming: true }]);
+      return this.views(botId);
+    } catch (error) {
+      if (created) await rm(path, { force: true }).catch(() => {});
+      throw error;
+    } finally {
+      const remaining = (this.writes.get(botId) ?? 1) - 1;
+      if (remaining) this.writes.set(botId, remaining); else this.writes.delete(botId);
+    }
   }
 
   remove(botId: string, id: string): PendingFileView[] {

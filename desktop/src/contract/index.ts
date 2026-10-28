@@ -647,6 +647,8 @@ export const SettingsView = z.strictObject({
   completionVerificationModel: z.string().max(200),
   subagentModel: BotModel.nullable(),
   subagentHourCache: z.boolean(),
+  claudeBypassPermissions: z.boolean().default(false),
+  codexBypassPermissions: z.boolean().default(false),
   codexWorkersFollow: z.boolean(),
   codexWorkers: z.strictObject({ model: z.string().max(200).nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }),
   componentEditorModel: BotModel,
@@ -682,6 +684,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("completionVerificationModel"), value: ModelId.nullable() }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
   z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("claudeBypassPermissions"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("codexBypassPermissions"), value: z.boolean() }),
   z.strictObject({ key: z.literal("codexWorkersFollow"), value: z.boolean() }),
   z.strictObject({ key: z.literal("codexWorkers"), value: z.strictObject({ model: ModelId.nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }) }),
   z.strictObject({ key: z.literal("componentEditorModel"), value: BotModel }),
@@ -726,7 +730,9 @@ const TokensView = z.strictObject({ input: z.number().int().nonnegative(), outpu
 const LimitWindowView = z.strictObject({ used: z.number().min(0).max(1), resetsAt: z.number().nullable(), seen: z.number() });
 const LimitsView = z.strictObject({ fiveHour: LimitWindowView.nullable(), week: LimitWindowView.nullable() });
 /** What the bots used (Phase 5c; 1.x's usage page): today, by bot, the days before, and each CLI's subscription limits. */
+const QuotaStatus = z.enum(["available", "missing", "auth_required", "token_expired", "auth_rejected", "forbidden", "timeout", "network_error", "invalid_response", "cli_unavailable"]);
 export const UsageView = z.strictObject({
+  quotaStatus: z.strictObject({ claude: QuotaStatus, codex: QuotaStatus }).optional(),
   /** Whether local spending was read or recorded; missing/corrupt files are not measured zero. */
   spendingStatus: z.enum(["available", "missing", "unreadable"]),
   day: z.string().max(20),

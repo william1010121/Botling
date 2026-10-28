@@ -15,7 +15,9 @@ function bounded(value:unknown,limit:number):boolean {try{const text=JSON.string
 function fileData(value:Record<string,any>):Record<string,any>|null {
  const action=value.action;
  if(value.botling!=='action'||!object(action)||action.type!=='addFileData')return null;
- if(Object.keys(action).length!==3||typeof action.name!=='string'||action.name.length<1||action.name.length>255)return null;
+ if(Object.keys(action).some(key=>!['type','name','base64','botID','requestID'].includes(key))||typeof action.name!=='string'||action.name.length<1||action.name.length>255)return null;
+ if(action.botID!==undefined&&(typeof action.botID!=='string'||action.botID.length<1||action.botID.length>160))return null;
+ if(action.requestID!==undefined&&(typeof action.requestID!=='string'||action.requestID.length<1||action.requestID.length>80))return null;
  const base64=action.base64;
  if(typeof base64!=='string'||base64.length<1||base64.length>FILE_DATA_LIMIT||!/^[A-Za-z0-9+/=]+$/.test(base64))return null;
  return {...value,action:{...action,base64:''}};
@@ -24,6 +26,7 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(!object(value))return false;
  const file=direction==='up'?fileData(value):null;
  if(!bounded(file??value,direction==='up'?1024*1024:16*1024*1024))return false;
+ if(direction==='down'&&value.botling==='composerResult')return Object.keys(value).every(key=>['botling','requestID','ok','error'].includes(key))&&typeof value.requestID==='string'&&value.requestID.length>0&&value.requestID.length<=80&&typeof value.ok==='boolean'&&(value.error===undefined||typeof value.error==='string'&&value.error.length<=4096);
  if(direction==='down')return ['widthRejected','widthPreview','state','stateDelta','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);

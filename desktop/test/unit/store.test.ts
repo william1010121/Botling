@@ -149,3 +149,38 @@ describe("selected chat subscriptions", () => {
     expect(store.getChatView().libraryVersion).toBe(first.libraryVersion + 2);
   });
 });
+
+
+describe("chat selection during an outstanding snapshot", () => {
+  it.each(["resolve", "reject"] as const)("opens the latest selection before the old request settles (%s)", async (outcome) => {
+    let resolveOld!: (value: ResultOf<"chat.snapshot">) => void;
+    let rejectOld!: (error: Error) => void;
+    const fetch = vi.fn((id?: string) => id === "B" ? Promise.resolve(snap("e1", 4, "B reply", "B"))
+      : new Promise<ResultOf<"chat.snapshot">>((resolve, reject) => { resolveOld = resolve; rejectOld = reject; }));
+    const store = new WorkspaceStore(fetch);
+    const old = store.select("A").catch(() => {});
+    await store.select("B");
+    expect(store.getView().chat?.botId).toBe("B");
+    store.receive(delta("e1", 5, "!", "B"));
+    if (outcome === "resolve") resolveOld(snap("e1", 1, "stale", "A"));
+    else rejectOld(new Error("old request failed"));
+    await old;
+    expect(store.getView().chat?.botId).toBe("B");
+    expect(store.getView().chat?.messages[0].text).toBe("B reply!");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps events buffered for the new selection when an obsolete snapshot finishes", async () => {
+    const pending: Array<(value: ResultOf<"chat.snapshot">) => void> = [];
+    const store = new WorkspaceStore(() => new Promise(resolve => pending.push(resolve)));
+    const old = store.select("A");
+    const latest = store.select("B");
+    expect(pending).toHaveLength(2);
+    pending[0](snap("e1", 1));
+    await old;
+    store.receive(delta("e1", 3, " live", "B"));
+    pending[1](snap("e1", 2, "B", "B"));
+    await latest;
+    expect(store.getView().chat?.messages[0].text).toBe("B live");
+  });
+});

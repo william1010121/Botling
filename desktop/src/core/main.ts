@@ -1,6 +1,8 @@
+import { startConfiguredMobile } from '../mobile-bridge/start';
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
+import { retrieveQuota } from "./quota";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { CLASSIFIER_TIMEOUT_MS, codexClassifier } from "./promise-check";
@@ -15,7 +17,7 @@ import type { SessionStart, SessionStartCodex } from "./bot";
 import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
 import { Layout } from "./store/workspace";
 import { readSettings } from "./settings";
-import type { HeadConfig } from "./agent/head";
+import { claudeSessionPermissionConfig, type HeadConfig } from "./agent/head";
 import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
@@ -57,7 +59,7 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
     addDirs: session.addDirs ?? [],
     effort: session.effort ?? null,
     // Claude Code's auto mode and the rules for blocked calls the user allowed (AgentProcess.swift).
-    autoMode: session.autoMode ?? false, allowRules: session.allowRules ?? [],
+    ...claudeSessionPermissionConfig(session),
   };
   if (kind === "claude") {
     return {
@@ -101,6 +103,7 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     routinesFile: session.routinesFile,
     // Auto mode: Codex's own reviewer answers escalations (settings.json `autoApprove`, as for Claude).
     autoMode: session.autoMode !== false,
+    bypassPermissions: session.codexBypassPermissions === true,
     // Its other folders (the main bot: every bot's inbox; Maintainer: folders you let it use) are writable, as in 1.x.
     writableRoots: session.addDirs ?? [],
   };
@@ -201,6 +204,7 @@ function groupTiming(text: string | undefined) {
 }
 
 const core = new Core({
+  ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { quotaRetriever: retrieveQuota } : {}),
   // A swap's self-check (BOTLING_CORE_PROBE, main/core-swap.ts) runs on a scratch folder and checks no CLI.
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor() } : {}),
   dataDir,
@@ -255,6 +259,11 @@ const core = new Core({
     process: process.env.BOTLING_1X_PROCESS ? new RegExp(process.env.BOTLING_1X_PROCESS) : DEFAULT_ONE_X_PROCESS,
   },
 });
+// Disabled by default. Configuration and bind failures never terminate the desktop core.
+try {
+  startConfiguredMobile(core, dataDir, () => log('mobile bridge unavailable: check local TLS/bind configuration'));
+} catch { log('mobile bridge disabled: invalid local configuration'); }
+
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
 // Main's startup log (src/startup-marks.ts): how long after this process began its bots and chats were loaded.
 if (process.env.BOTLING_STARTUP_LOG) new StartupMarks({ file: process.env.BOTLING_STARTUP_LOG }).mark("core.loaded");

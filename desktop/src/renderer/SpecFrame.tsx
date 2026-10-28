@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { Client } from "./client";
 import type { SpecStateView } from "../contract";
 import { specState } from "./payload";
-import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
+import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 
 export function SpecFrame({ client, spec, lang, onError }: { client: Client; spec: SpecStateView; lang: string | null; onError: (failure: unknown) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -18,7 +18,7 @@ export function SpecFrame({ client, spec, lang, onError }: { client: Client; spe
     const target = frame.current?.contentWindow;
     if (!target || !ready.current) return;
     const message: ShellMessage = { botling: "spec", spec: specState(latest.current, lang) };
-    target.postMessage(message, CHAT_ORIGIN);
+    target.postMessage(message, CHAT_TARGET);
   }, [lang]);
   useEffect(push, [push, spec]);
 
@@ -33,7 +33,7 @@ export function SpecFrame({ client, spec, lang, onError }: { client: Client; spe
         // Its preview's component frame: main serves the page from botling-card://page/.
         const answer = (url: string | null) => {
           const reply: ShellMessage = { botling: "page", id: message.id, url };
-          frame.current?.contentWindow?.postMessage(reply, CHAT_ORIGIN);
+          frame.current?.contentWindow?.postMessage(reply, CHAT_TARGET);
         };
         if (typeof message.html !== "string" || typeof message.id !== "number") return;
         client.request({ type: "card.page", html: message.html }).then((result) => answer(result.url), () => answer(null));
@@ -81,7 +81,7 @@ export function SpecFrame({ client, spec, lang, onError }: { client: Client; spe
 
   return (
     <aside className={`spec-panel${spec.wide ? " wide" : ""}`} aria-label="Component spec">
-      <iframe ref={frame} className="spec-frame" src={`${CHAT_PAGE}?spec=1`} title="Component spec" />
+      <iframe ref={frame} className="spec-frame" src={`${CHAT_PAGE}?spec=1`} sandbox={CHAT_SANDBOX} title="Component spec" />
     </aside>
   );
 }

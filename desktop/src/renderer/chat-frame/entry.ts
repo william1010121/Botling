@@ -2,6 +2,7 @@
 // fed with state by the app page. On top of it the desktop adds what the page does not have yet:
 // Phase 0's sandboxed cards in their bubbles, a Stop button in the input box, and KaTeX (the
 // ccb-latex plugin, bundled in).
+import { unpackChatAvatars } from "../chat-avatar-wire";
 import { observeTraceEditor } from "./input-trace-chat";
 import { inputTrace } from "../input-trace";
 import "./shim";
@@ -14,7 +15,8 @@ import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
-import { type FrameMessage } from "./protocol";
+import { WEB, type FrameMessage } from "./protocol";
+import { cardHostPage, desktopCardURL, showInHost } from "../web-pages";
 import { toShell, fromShell, nativeChat, installNativeShellCommands } from "./transport";
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
@@ -67,7 +69,7 @@ const broker = new CardBroker({
 interface DrawnCard { element: HTMLElement; target: CardTarget; unregister: () => void; data: string | null; loaded: boolean }
 const cards = new Map<string, DrawnCard>();
 
-function cardElement(botId: string, messageId: string, cardId: string): DrawnCard {
+function cardElement(botId: string, messageId: string, cardId: string, html: string): DrawnCard {
   const element = document.createElement("div");
   element.className = "card";
   element.dataset.card = cardId;
@@ -76,7 +78,8 @@ function cardElement(botId: string, messageId: string, cardId: string): DrawnCar
   frame.setAttribute("referrerpolicy", "no-referrer");
   frame.title = "Card";
   frame.style.height = "80px";
-  frame.src = `botling-card://card/${encodeURIComponent(botId)}/${encodeURIComponent(messageId)}/${encodeURIComponent(cardId)}`;
+  if (WEB) showInHost(frame, cardHostPage(html));
+  else frame.src = desktopCardURL(botId, messageId, cardId);
   element.append(frame);
   const target: CardTarget = { botId, messageId, cardId, frame, onSize: (height) => { frame.style.height = `${Math.max(40, Math.min(height, 900))}px`; } };
   const drawn: DrawnCard = { element, target, unregister: broker.register(target), data: null, loaded: false };
@@ -123,7 +126,7 @@ function decorate(extras: FrameExtras) {
       keep.add(key);
       let drawn = cards.get(key);
       if (!drawn) {
-        drawn = cardElement(extras.botId, messageId, card.id);
+        drawn = cardElement(extras.botId, messageId, card.id, card.html);
         cards.set(key, drawn);
       }
       if (drawn.element.parentElement !== host) host.append(drawn.element);
@@ -149,20 +152,23 @@ let receivedState: ChatState | null = null;
 fromShell(message => {
   if (!message || typeof message !== "object") return;
   if (message.botling === "state" || message.botling === "stateDelta") {
+    const unpacked = unpackChatAvatars(message);
+    if (!unpacked) { toShell({ botling: "action", action: { type: "resync" } }); return; }
+    const packet = unpacked;
     // Validate the base before touching the editor, local media source or card decorations.
-    const state = message.botling === "state" ? message.state
-      : receivedState?.botID === message.botID && message.baseRevision === receivedRevision
-        ? applyPatch(receivedState, message.patch) : null;
+    const state = packet.botling === "state" ? packet.state
+      : receivedState?.botID === packet.botID && packet.baseRevision === receivedRevision
+        ? applyPatch(receivedState, packet.patch) : null;
     if (!state) { toShell({ botling: "action", action: { type: "resync" } }); return; }
     receivedState = state;
-    receivedRevision = message.revision ?? 0;
+    receivedRevision = packet.revision ?? 0;
     // Words typed before the first state (the first second after the window opens) would be replaced
     // by that chat's draft (empty) when the box switches to it: they are put back.
-    inputTrace()?.mark("frame.state.receive", () => ({ traceId: message.traceId, chat: state.botID,
+    inputTrace()?.mark("frame.state.receive", () => ({ traceId: packet.traceId, chat: state.botID,
       previousChat: document.documentElement.dataset.chat, ...inputTrace()!.snapshot() }));
     const early = !nativeChat && document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
     inputTrace()?.mark("frame.early.snapshot", () => ({ early, ...inputTrace()!.snapshot() }));
-    column.set(message.messageColumnWidth ?? null, state.botID);
+    column.set(packet.messageColumnWidth ?? null, state.botID);
     // The chat the page draws, before it draws it (its local pictures are asked for as this bot's).
     shownChat = state.botID;
     window.ccb.setState(state);
@@ -172,7 +178,7 @@ fromShell(message => {
     // state would be replaced by that chat's draft); tests wait for it.
     document.documentElement.dataset.chat = state.botID;
     inputTrace()?.mark("frame.state.complete", () => inputTrace()!.snapshot());
-    decorate(message.extras);
+    decorate(packet.extras);
     if (nativeChat) {
       // Initial focus is set in this root document before main reveals its native surface.
       if (stateRevision === 0) window.ccb.focus();

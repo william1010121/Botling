@@ -69,6 +69,8 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     completionVerificationModel: text(raw.completionVerificationModelChoice) ?? JUDGE_MODEL,
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
+    claudeBypassPermissions: bool(raw.claudeBypassPermissions, false),
+    codexBypassPermissions: bool(raw.codexBypassPermissions, false),
     codexWorkersFollow: bool(raw.codexWorkersFollow, true),
     codexWorkers: codexWorkerDefaults(raw.codexWorkerChoice),
     componentEditorModel: oneOf(BOT_MODELS, raw.componentEditorModel) ?? "sonnet",
@@ -106,6 +108,8 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "completionVerification": set("completionVerificationOn", change.value); break;
     case "completionVerificationModel": set("completionVerificationModelChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
+    case "claudeBypassPermissions": set("claudeBypassPermissions", change.value); break;
+    case "codexBypassPermissions": set("codexBypassPermissions", change.value); break;
     case "subagentHourCache": set("subagentHourCacheChoice", change.value); break;
     case "codexWorkersFollow": set("codexWorkersFollow", change.value); break;
     case "codexWorkers": {
@@ -133,9 +137,10 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
  * Phase 4c the subagents' model and the Codex workers' choice are each bot's own (bot.json, seeded from
  * the app's defaults and changed with them, as 1.x); only the hour cache is the app's.
  */
-export function launchSettings(raw: RawSettings): { subagentHourCache: boolean; autoMode: boolean } {
+export function launchSettings(raw: RawSettings) {
   // 1.x's `autoApprove` (AppSettings.autoApprovesSafeActions), on unless turned off; settings.json comes over from 1.x as it is.
-  return { subagentHourCache: settingsView(raw).subagentHourCache, autoMode: bool(raw.autoApprove, true) };
+  return { subagentHourCache: settingsView(raw).subagentHourCache, autoMode: bool(raw.autoApprove, true),
+    claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false) };
 }
 
 /** What Codex workers start on with the app's choice applied (`appliedCodexWorkerDefaults`): following

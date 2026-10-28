@@ -1,3 +1,4 @@
+import { pickAttachments } from "./composer-transport";
 // Runs before the Web/src chat page: the page talks to "the app" through WebKit's
 // `webkit.messageHandlers.ccb.postMessage` (Web/src/bridge.ts). Here that goes to the app page
 // (the React shell) instead, which owns the contract client.
@@ -16,6 +17,7 @@ function userLink(url:unknown):boolean {
   messageHandlers: Object.freeze({
     ccb: Object.freeze({
       postMessage(action: unknown) {
+        if ((action as { type?: string })?.type === "pickFiles") { pickAttachments(); return; }
         const value = action as {type?:unknown;url?:unknown} | null;
         // Mirrored for Reload Chat Page (draft-keep.ts); the app still receives the action as before.
         if (nativeChat && value?.type === "draft") keepDraft(pageDraftStore(), (value as { botID?: unknown }).botID as string, value as { text?: unknown; cursor?: unknown } as { text: unknown; cursor: unknown });

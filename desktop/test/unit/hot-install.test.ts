@@ -217,6 +217,14 @@ describe("applying", () => {
     expect(chat.calls).toEqual(["stage chat", "install", "renderer /data/hot-builds/1/renderer", "reload chat"]);
   });
 
+  it("a failed chat reload does not activate the new shell or report success", async () => {
+    let loads = 0;
+    const { calls, ports } = fakePorts({ reloadChat: async () => { calls.push("reload chat"); return ++loads > 1; } });
+    expect(await applyHot(["chat", "shell"], ports)).toMatchObject({ ok: false, applied: [], disk: "restored" });
+    expect(calls).not.toContain("reload shell");
+    expect(calls).toContain("restore");
+  });
+
   it("the core's self-check fails: the old core stays, no page is touched, the bundle on disk is put back", async () => {
     const { calls, ports } = fakePorts({ swapCore: async (next) => { calls.push(`swap ${next}`); return { ok: false, stage: "self-check", error: "it exited (1): SyntaxError" }; } });
     const result = await applyHot(["core", "chat"], ports);

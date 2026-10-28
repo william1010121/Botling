@@ -16,7 +16,7 @@ export function editorBridge(ipc:Transport,role:'shell'|'editor'){
  return Object.freeze({
   version:1,current:()=>stamp,
   post(message:unknown){const packet={stamp,message};if(!stamp||!isEditorPacket(outgoing,packet))return false;ipc.send(EDITOR_CHANNEL[outgoing],packet);return true;},
-  layout(bounds:unknown,occluded=false){if(role!=='shell'||!stamp)return false;ipc.send(EDITOR_CHANNEL.layout,{stamp,bounds,...(occluded?{occluded:true}:{})});return true;},
+  layout(bounds:unknown,occluded=false,revealImmediately=false){if(role!=='shell'||!stamp)return false;ipc.send(EDITOR_CHANNEL.layout,{stamp,bounds,...(occluded?{occluded:true,...(revealImmediately?{revealImmediately:true}:{})}:{})});return true;},
   snapshotReady(revision:number){if(role!=='shell'||!stamp||!Number.isSafeInteger(revision)||revision<0)return false;ipc.send(EDITOR_CHANNEL.layout,{stamp,snapshotReady:revision});return true;},
   subscribe(listener:(packet:Notice)=>void){if(typeof listener!=='function')throw new TypeError('subscribe takes a function');listeners.add(listener);if(stamp)listener({stamp,bound:true});return()=>{listeners.delete(listener);};},
  });

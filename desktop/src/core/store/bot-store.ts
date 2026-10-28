@@ -36,8 +36,60 @@ export function readJSON(file: string): unknown {
   }
 }
 
+// One process-wide LRU budget shared by all bots and partner stores. Neither the owner
+// nor cached record keys are held strongly. Dead-owner cleanup is opportunistic as well
+// as finalized, so GC scheduling is not needed to enforce the bounds.
+const WORKER_CACHE_CHARACTERS = 64 * 1024 * 1024;
+const WORKER_CACHE_STORES = 128;
+const WORKER_CACHE_ITEMS = 4096;
+interface WorkerHistoryCache {
+  owner: WeakRef<BotStore>;
+  rows: WeakMap<object, string>;
+  characters: number;
+  items: number;
+}
+const workerHistoryCaches = new Map<object, WorkerHistoryCache>();
+let workerHistoryCharacters = 0;
+let workerHistoryItems = 0;
+const workerHistoryFinalizer = new FinalizationRegistry<object>(token => clearWorkerHistory(token));
+function clearWorkerHistory(token: object): void {
+  const entry = workerHistoryCaches.get(token);
+  if (!entry) return;
+  workerHistoryCharacters -= entry.characters;
+  workerHistoryItems -= entry.items;
+  workerHistoryCaches.delete(token);
+  workerHistoryFinalizer.unregister(token);
+}
+function sweepWorkerHistory(): void {
+  for (const [token, entry] of workerHistoryCaches) if (!entry.owner.deref()) clearWorkerHistory(token);
+}
+function retainWorkerHistory(token: object, entry: WorkerHistoryCache): void {
+  clearWorkerHistory(token);
+  sweepWorkerHistory();
+  if (!entry.items) return;
+  while (workerHistoryCharacters + entry.characters > WORKER_CACHE_CHARACTERS || workerHistoryCaches.size >= WORKER_CACHE_STORES
+    || workerHistoryItems + entry.items > WORKER_CACHE_ITEMS) {
+    clearWorkerHistory(workerHistoryCaches.keys().next().value!);
+  }
+  workerHistoryCaches.set(token, entry);
+  workerHistoryCharacters += entry.characters;
+  workerHistoryItems += entry.items;
+  const owner = entry.owner.deref();
+  if (owner) workerHistoryFinalizer.register(owner, token, token);
+}
+
 export class BotStore {
   constructor(readonly directory: string) {}
+
+  private readonly workerHistoryToken = {};
+
+  /** Read-only cache diagnostics; counts reserved encoded content, not total process RSS. */
+  static workerHistoryCacheUsage() {
+    sweepWorkerHistory();
+    return { characters: workerHistoryCharacters, stores: workerHistoryCaches.size,
+      items: workerHistoryItems,
+      limitCharacters: WORKER_CACHE_CHARACTERS, limitStores: WORKER_CACHE_STORES, limitItems: WORKER_CACHE_ITEMS };
+  }
 
   private path(name: string) {
     return join(this.directory, name);
@@ -99,13 +151,49 @@ export class BotStore {
 
   /** A list file kept as it is (subagents.json, tasks.json, …): its entries, or [] when missing. */
   loadList(name: (typeof CHAT_FILES)[number]): unknown[] {
+    if (name === "subagents.json") clearWorkerHistory(this.workerHistoryToken);
     const value = readJSON(this.path(name));
+    // subagents-progress.json belonged to an unreleased incompatible implementation.
+    // It is not authoritative and is deliberately never read or removed: even malformed
+    // leftovers must not hide a valid checkpoint or trigger Bot's empty-list fallback.
     return Array.isArray(value) ? value : [];
   }
 
   /** Writes a list file (tasks.json, subagents.json) whole, in 1.x's format. */
   saveList(name: (typeof CHAT_FILES)[number], list: unknown[]) {
-    writeFileAtomic(this.path(name), JSON.stringify(list));
+    if (name === "subagents.json") this.saveWorkers(list, false);
+    else writeFileAtomic(this.path(name), JSON.stringify(list));
+  }
+
+  /** Running text/token/runtime changes only. Ended rows must be unchanged since the
+   * last saveList; callers editing history/status/identity must use saveList instead.
+   * Every successful call still durably writes the COMPLETE legacy-compatible JSON array.
+   */
+  saveWorkerProgress(list: unknown[]): void {
+    this.saveWorkers(list, true);
+  }
+
+  private saveWorkers(list: unknown[], progress: boolean): void {
+    const running = list.some(row => row && typeof row === "object" && (row as { status?: string }).status === "running");
+    if (!progress || !running) clearWorkerHistory(this.workerHistoryToken);
+    const previous = workerHistoryCaches.get(this.workerHistoryToken);
+    const next = new WeakMap<object, string>();
+    let cachedCharacters = 0;
+    let cachedItems = 0;
+    const parts = Array.from(list, row => {
+      const ended = row && typeof row === "object" && !Array.isArray(row)
+        && ["completed", "failed", "stopped"].includes((row as { status: string }).status);
+      const text = (progress && ended ? previous?.rows.get(row) : undefined) ?? JSON.stringify(row) ?? "null";
+      // No cache for idle/terminal-only stores. Duplicate row references count once.
+      if (running && ended && !next.has(row) && cachedItems < WORKER_CACHE_ITEMS && cachedCharacters + text.length <= WORKER_CACHE_CHARACTERS) {
+        next.set(row, text); cachedCharacters += text.length; cachedItems++;
+      }
+      return text;
+    });
+    writeFileAtomic(this.path("subagents.json"), `[${parts.join(",")}]`);
+    // Failed writes must never establish a cache for a checkpoint that did not commit.
+    retainWorkerHistory(this.workerHistoryToken, { owner: new WeakRef(this), rows: next,
+      characters: cachedCharacters, items: cachedItems });
   }
 
   /** The bot's picture on the main bot's whiteboard (whiteboard.json, 2.0 only), as kept; null: none. */
