@@ -81,8 +81,11 @@ const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "bot
 const installedApp = dirname(dirname(dirname(process.execPath)));
 const installProfilePin = app.isPackaged && dataDir === packagedDataDir(app.getPath("appData"), devTrial)
   ? { dataDir, appDataDir: app.getPath("appData"), devTrial } : undefined;
+const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
+const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
+const startupRecovery = shotMode ? null : volumeRecovery() || blockingRecovery(dataDir,installedApp);
 // Refusal must precede renderer configuration, profile creation, and log setup.
-if (app.isPackaged && !shotMode) {
+if (app.isPackaged && !shotMode && !startupRecovery) {
   try {
     checkStorageStartup({ dataDir, target: installedApp, version: app.getVersion(), argv: process.argv,
       packageContract: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).botlingStorageContract,
@@ -93,17 +96,15 @@ if (app.isPackaged && !shotMode) {
     process.exit(1);
   }
 }
-const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
+const renderer = startupRecovery ? { directory: join(root, "out/renderer"), development: false }
+  : rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
 /** Where the shell and chat page come from; a hot install (hot-install.ts) points it at a copy of the new build's. */
 let rendererDir = renderer.directory;
 /** After a hot install pages are served with no-store, so nothing cached from the previous build is reused. */
 let rendererNoStore = renderer.development;
 if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell, Alt+Cmd+R the chat page`);
 // Preloads re-run on each page reload; a developer build dir (--botling-preload-dir) can supply them.
-const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
-const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
-const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
-const startupRecovery = shotMode ? null : volumeRecovery() || blockingRecovery(dataDir,installedApp);
+const preloadDir = startupRecovery ? join(root, "out/preload") : preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
 const traceContext=!shotMode&&!startupRecovery?syntheticTraceContext({packaged:app.isPackaged,dataDir,syntheticBase:join(root,".cache/test-data"),env:process.env}):null;
 let traceWriter:InputTraceWriter|null=null;
 if(!startupRecovery)mkdirSync(dataDir, { recursive: true });

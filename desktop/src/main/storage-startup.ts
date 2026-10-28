@@ -1,3 +1,4 @@
+import { checkMaintenanceStartup } from './update-maintenance';
 // Candidate-side fence also protects the FIRST install from older developer helpers that do not
 // snapshot data. No core (and hence no storage migration) may start until this check succeeds.
 import { join, dirname, basename } from 'node:path';
@@ -16,6 +17,7 @@ export interface StorageStartupOptions {
 /** Read-only fence: safe before Electron profile/log initialization. */
 export function checkStorageStartup(options: StorageStartupOptions) {
   const { dataDir, target, version, fs } = options;
+  const maintenanceLaunch = checkMaintenanceStartup(dataDir, target, options.argv);
   const candidate = parseStorageContract(options.packageContract);
   if (!candidate || !storageCompatible(candidate, options.coreContract)) throw new Error('Packaged storage compatibility metadata is missing or inconsistent');
   const receipt = join(dataDir, RECEIPT);
@@ -23,7 +25,7 @@ export function checkStorageStartup(options: StorageStartupOptions) {
   if (fs.existsSync(receipt)) previous = smallJSON(receipt, fs);
   const core = join(dataDir, 'core');
   const hasProfile = fs.existsSync(core) && (fs.readdirSync(core)).length > 0;
-  if ((hasProfile || previous !== null) && !storageCompatible(previous, candidate)) {
+  if (maintenanceLaunch || ((hasProfile || previous !== null) && !storageCompatible(previous, candidate))) {
     const token = options.argv.find(arg => arg.startsWith('--botling-update-token='))?.slice('--botling-update-token='.length);
     let protectedBoot = false;
     try {

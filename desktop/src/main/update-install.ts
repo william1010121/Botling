@@ -1,3 +1,5 @@
+import { claimMaintenanceHelper, requireMaintenance, filesystemIdentity, maintenanceEnvironment, readMaintenance, type MaintenanceRecord, type QuiescenceCheck } from './update-maintenance';
+import { durableJSON } from './hot-transaction';
 import { validateProfilePin, verifyProfilePin, type InstallProfilePin } from './install-profile';
 // Ed25519 authenticates the ZIP before extraction, quarantine removal, or app replacement.
 // The shell helper needs no Node runtime (packaged Electron has RunAsNode disabled).
@@ -27,6 +29,7 @@ export interface InstallOptions {
   launchArgs?: string[];
   profilePin?: InstallProfilePin;
   bundleFs?: typeof nodeFs;
+  maintenance?: MaintenanceRecord;
 }
 const run = promisify(execFile);
 // Native removal avoids Electron's ASAR virtual-filesystem recursion inside packaged bundles.
@@ -104,7 +107,23 @@ parent="$1"; target="$2"; staged="$3"; previous="$4"; receipt="$5"; token="$6"; 
 root="\${staged%/*}"
 data="\${10-}"; parent_attempts="\${11-1200}"; grace="\${12-50}"
 if [ "$#" -ge 12 ]; then shift 12; else shift "$#"; fi
+offline="\${BOTLING_UPDATE_OFFLINE-0}"
 new_pid=''; moved=0; snapshot=0
+phase() { printf '%s\n' "$1" > "$root/maintenance-phase.tmp" && /bin/mv "$root/maintenance-phase.tmp" "$root/maintenance-phase" && /bin/sync; }
+permit() {
+  phase "awaiting-$1" || exit 18
+  while [ ! -f "$root/permit-$2" ]; do [ ! -e "$root/maintenance-invalidated" ] || exit 17; /bin/sleep 0.1; done
+  [ ! -e "$root/maintenance-invalidated" ] || exit 17
+  [ "$(/bin/cat "$root/permit-$2")" = "$2:$token" ] || exit 17
+}
+terminal() {
+  phase "$1" || return 1
+  printf '%s' "$1" > "$root/maintenance-terminal" || return 1
+  /bin/sync
+  /bin/rm -f "$data/update-maintenance.json" || return 1
+  /bin/sync
+}
+
 restore="$data.update-restore-$token"; after="$data.update-after-$token"
 result() { printf '%s\n' "$1" > "$root/result.tmp" && /bin/mv "$root/result.tmp" "$root/result"; }
 decide() {
@@ -169,6 +188,9 @@ finish() {
   trap - EXIT
   trap '' HUP INT TERM
   [ "$code" -ne 0 ] || exit 0
+  if [ "$offline" = 1 ] && [ -z "$new_pid" ] && [ "$code" -ne 23 ]; then
+    phase recovery-required || true; result "failed:$code" || true; exit "$code"
+  fi
   if [ -f "$root/decision" ] && [ "$(/bin/cat "$root/decision")" = "commit:$token" ]; then result booted || true; exit 0; fi
   # Even partial data copies are retained until explicit user deletion. Free disposable assets
   # before allocating the failure journal; ENOSPC must not consume the only recovery evidence.
@@ -182,6 +204,10 @@ finish() {
     while kill -0 "$new_pid" 2>/dev/null && [ "$n" -lt "$grace" ]; do n=$((n+1)); /bin/sleep 0.1 || true; done
     kill -KILL "$new_pid" 2>/dev/null || true
     wait "$new_pid" 2>/dev/null || true
+  fi
+  # A concurrent writer invalidates snapshot consistency; retain both generations for review.
+  if [ "$offline" = 1 ] && [ -e "$root/maintenance-invalidated" ]; then
+    phase recovery-required || true; result failed:22 || true; exit 22
   fi
   available="$target"
   if [ "$moved" -eq 1 ] && [ -d "$previous" ]; then
@@ -203,6 +229,10 @@ finish() {
     else printf restored > "$root/data-restored" || true; fi
   fi
   result "failed:$code" || true
+  if [ "$offline" = 1 ]; then
+    case "$code" in 13|23) terminal rolled-back || true;; *) phase recovery-required || true;; esac
+    exit "$code"
+  fi
   case "$code" in 19|20|21|22) exit "$code";; esac
   if [ "$code" -eq 10 ]; then while kill -0 "$parent" 2>/dev/null; do /bin/sleep 0.1 || true; done; fi
   if ! kill -0 "$parent" 2>/dev/null && [ -d "$available" ]; then reopen --args "$@" || true; fi
@@ -220,20 +250,40 @@ done
 /usr/bin/plutil -convert json -o "$root/recovery.json" "$root/recovery.plist" || exit 18
 /bin/rm -f "$root/recovery.plist" || exit 18
 n=0
+if [ "$offline" != 1 ]; then
 while kill -0 "$parent" 2>/dev/null; do n=$((n+1)); [ "$n" -lt "$parent_attempts" ] || exit 10; /bin/sleep 0.1; done
+fi
+if [ "$offline" = 1 ] && [ "\${BOTLING_UPDATE_RESUME-0}" = 1 ]; then
+  moved=1; snapshot=1
+else
 [ ! -e "$previous" ] || exit 11
+if [ "$offline" = 1 ]; then permit snapshot snapshot; fi
 if [ -n "$data" ] && [ -d "$data" ]; then /usr/bin/stat -f '%d:%i' "$data" > "$root/original-data.identity" || exit 18; snapshot_data || exit 18; snapshot=1; fi
+if [ "$offline" = 1 ]; then permit activation activate; fi
 /bin/mv "$target" "$previous" || exit 14
 moved=1
 /bin/mv "$staged" "$target" || exit 12
+fi
+if [ "$offline" = 1 ]; then
+  phase activated-awaiting-operator-launch || exit 18
+  while [ ! -f "$root/operator-choice" ]; do [ ! -e "$root/maintenance-invalidated" ] || exit 17; /bin/sleep 0.1; done
+  [ ! -e "$root/maintenance-invalidated" ] || exit 17
+  choice=$(/bin/cat "$root/operator-choice")
+  [ "$choice" != "rollback:$token" ] || exit 23
+  [ "$choice" = "launch:$token" ] || exit 17
+  phase launching || exit 18
+  set -- "--botling-maintenance-launch=$token" "$@"
+fi
 "$target/Contents/MacOS/$executable" "--botling-update-token=$token" "--botling-update-data=$data" "$@" >/dev/null 2>&1 &
 new_pid=$!
 printf '%s' "$new_pid" > "$root/new.pid" || exit 13
 while :; do
+  if [ "$offline" = 1 ] && [ -e "$root/maintenance-invalidated" ]; then exit 17; fi
   if [ -f "$receipt" ] && [ "$(/bin/cat "$receipt")" = "$token" ] && kill -0 "$new_pid" 2>/dev/null; then
     # Commit marker precedes starting external work. After this, rollback is forbidden.
     decide commit || exit 22
     result booted || exit 22
+    if [ "$offline" = 1 ]; then terminal committed || exit 22; fi
     trap - EXIT HUP INT TERM
     /bin/rm -f "$root/download.zip" &
     cleanup_pid=$!
@@ -295,7 +345,15 @@ export class VerifiedInstaller {
     if (this.busy) throw new Error("An update is already being prepared");
     const unavailable = this.unavailable(true);
     if (unavailable) throw new Error(unavailable);
-    await recoverUpdates(this.options.dataDir, this.options.appPath);
+    const maintenance = this.options.maintenance;
+    if (maintenance) {
+      requireMaintenance(maintenance);
+      if (!this.options.profilePin || maintenance.target !== this.options.appPath || maintenance.dataDir !== this.options.dataDir || filesystemIdentity(this.options.appPath) !== maintenance.appIdentity
+        || filesystemIdentity(this.options.dataDir) !== maintenance.dataIdentity) throw new Error('Maintenance profile/app identity changed');
+    } else {
+      if (readMaintenance(this.options.dataDir, this.options.appPath)) throw new Error('Offline maintenance is active');
+      await recoverUpdates(this.options.dataDir, this.options.appPath);
+    }
     if (existsSync(join(this.options.dataDir, "update-pending.json")) || (await fs.readdir(join(this.options.dataDir, "update-cleanup")).catch(() => [])).length) throw new Error("The previous update still needs recovery; restart before preparing another update");
     newer(release.version, this.options.current);
     if (!release.asset || !new RegExp(`^Botling-2-.+-mac-${this.options.arch}\\.zip$`).test(release.asset)) throw new Error("No compatible macOS ZIP in this release");
@@ -303,7 +361,8 @@ export class VerifiedInstaller {
     this.busy = true;
     let root: string | undefined;
     try {
-      await this.discard();
+      if (maintenance && this.staged) throw new Error("Maintenance candidate already staged");
+      if (!maintenance) await this.discard();
       const url = this.options.assetURL?.(release) ?? `${RELEASE_PAGE}download/v${encodeURIComponent(release.version)}/${encodeURIComponent(release.asset)}`;
       const fetchSource = async (manifest: boolean) => localZip
         ? new Response(Readable.toWeb(createReadStream(localZip + (manifest ? '.manifest.json' : ''))) as ReadableStream<Uint8Array>)
@@ -312,8 +371,8 @@ export class VerifiedInstaller {
       if (manifest.version !== release.version) throw new Error("Signed version does not match release");
       newer(manifest.version, this.options.current);
       await requireSpace(dirname(this.options.appPath),manifest.size);
-      const token=randomUUID();
-      root = mkdtempSync(join(dirname(this.options.appPath), ".botling-update-"));
+      const token=maintenance?.token ?? randomUUID();
+      root = maintenance?.root ?? mkdtempSync(join(dirname(this.options.appPath), ".botling-update-"));
       chmodSync(root, 0o700);
       writeFileSync(join(root, "owner.json"), JSON.stringify({ pid: process.pid, target: this.options.appPath, dataDir: this.options.dataDir, token }), { mode: 0o600 });
       const zip = join(root, "download.zip");
@@ -345,12 +404,22 @@ export class VerifiedInstaller {
       await fs.rename(app, probe); await fs.rename(probe, app);
       this.staged = { app, zip, manifest, digest, pending: { root, token, target: this.options.appPath, version: manifest.version, executable } };
     } catch (error) {
-      if (root) await removeTree(root);
+      if (root && !maintenance) await removeTree(root);
       throw error;
     } finally { this.busy = false; }
   }
   /** Called ONLY by the explicit Restart to update IPC. No quit hook auto-installs. */
   async restart(parentPid: number): Promise<void> {
+    if (this.options.maintenance) throw new Error('Use startMaintenance for offline activation');
+    return this.arm(parentPid);
+  }
+  /** Adapter supplies repeated writer checks via permitMaintenance; no fabricated parent PID. */
+  async startMaintenance(assertQuiescent: QuiescenceCheck, environment: Readonly<Record<string, string>>): Promise<void> {
+    if (!this.options.maintenance) throw new Error('Acquire maintenance before staging');
+    requireMaintenance(this.options.maintenance); await assertQuiescent();
+    return this.arm(null, environment);
+  }
+  private async arm(parentPid: number | null, environment?: Readonly<Record<string, string>>): Promise<void> {
     if (existsSync(join(this.options.dataDir, "hot-install-pending.json"))) throw new Error("Hot install needs completion or recovery first");
     if (this.busy) throw new Error("An update is already being prepared");
     this.busy = true;
@@ -363,14 +432,20 @@ export class VerifiedInstaller {
     const installedVersion = (await run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", join(this.options.appPath, "Contents", "Info.plist")], { encoding: "utf8" })).stdout.trim();
     newer(this.staged.manifest.version, installedVersion);
     const { pending, app } = this.staged;
+    if (parentPid === null) {
+      const r = requireMaintenance(this.options.maintenance!);
+      if (r.root !== pending.root || r.token !== pending.token || filesystemIdentity(this.options.dataDir) !== r.dataIdentity) throw new Error('Maintenance transaction changed');
+      await claimMaintenanceHelper(r);
+      await durableJSON(join(pending.root, 'maintenance-stage.json'), { pending, dataDir: this.options.dataDir, digest: this.staged.digest, beforeDigest: await treeDigest(this.options.appPath) }, nodeFs);
+    }
     const snapshot=await dataBytes(this.options.dataDir);await requireSpace(pending.root,snapshot*2);await requireSpace(this.options.dataDir,snapshot);
     const script = join(pending.root, "swap.sh");
     writeFileSync(script, SWAP_SCRIPT, { mode: 0o700 });
     mkdirSync(this.options.dataDir, { recursive: true });
-    writeFileSync(join(this.options.dataDir, "update-pending.json"), JSON.stringify(pending), { mode: 0o600 });
+    await durableJSON(join(this.options.dataDir, "update-pending.json"), pending, nodeFs);
     let child:ReturnType<typeof spawn>;
     try {
-      child = spawn("/bin/sh", [script, String(parentPid), pending.target, app, join(pending.root, "previous.app"), join(pending.root, "boot.ok"), pending.token, pending.executable, "0", "0.1", this.options.dataDir, "1200", "50", ...(this.options.launchArgs ?? [])], { detached: true, stdio: "ignore" });
+      child = spawn("/bin/sh", [script, parentPid === null ? "" : String(parentPid), pending.target, app, join(pending.root, "previous.app"), join(pending.root, "boot.ok"), pending.token, pending.executable, "0", "0.1", this.options.dataDir, "1200", "50", ...(this.options.launchArgs ?? [])], { detached: true, stdio: "ignore", env: parentPid === null ? maintenanceEnvironment(environment!) : { ...process.env, BOTLING_UPDATE_OFFLINE: "0", BOTLING_UPDATE_RESUME: "0" } });
       await new Promise<void>((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
       if(!child.pid)throw new Error("Could not start update helper");
     }catch(error){
@@ -385,6 +460,7 @@ export class VerifiedInstaller {
   }
   async discard(): Promise<void> {
     const staged = this.staged; this.staged = null;
+    if (staged && this.options.maintenance) { this.staged = staged; throw new Error("Maintenance staging requires explicit offline recovery"); }
     if (staged) await removeTree(staged.pending.root);
   }
 }
@@ -515,6 +591,7 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
  return visibleRecovery(dataDir).recoveryError;
 }
 export function recoverUpdates(dataDir:string,target:string,collect=true):Promise<string|null>{
+ if (readMaintenance(dataDir,target)) return Promise.resolve("Offline maintenance retains this transaction; use its explicit operator controls");
  if(!collect)return sweepUpdates(dataDir,target,false);
  const key=dataDir+'\0'+target,previous=collections.get(key);if(previous)return previous;
  const work=sweepUpdates(dataDir,target,true).finally(()=>{collections.delete(key);});collections.set(key,work);return work;
@@ -526,4 +603,34 @@ export async function runningAppBundles():Promise<string[]>{
  const paths=new Set<string>();
  for(const line of [process.execPath,...stdout.split('\n')]){const path=line.trim(),at=path.indexOf('.app/');if(at>=0)paths.add(path.slice(0,at+4));}
  return [...paths];
+}
+
+/** Resume only the unlaunched, fully activated pause. Ambiguous snapshot/rename/launch crashes
+ * remain blocked for explicit recovery inspection; never infer writer exit from a missing PID. */
+export async function resumeMaintenance(record: MaintenanceRecord, assertQuiescent: QuiescenceCheck, environment: Readonly<Record<string, string>>): Promise<void> {
+  const r = requireMaintenance(record); await assertQuiescent(); requireMaintenance(r);
+  if (processAlive(await readText(join(r.root, 'helper.pid'))) || existsSync(join(r.root, 'new.pid'))
+    || existsSync(join(r.root, 'operator-choice')) || existsSync(join(r.root, 'maintenance-invalidated'))
+    || await readText(join(r.root, 'maintenance-phase')) !== 'activated-awaiting-operator-launch') throw new Error('Maintenance interruption requires explicit recovery; cannot resume launch');
+  const state = readSmallJSON(join(r.root, 'maintenance-stage.json'));
+  if (state.pending?.root !== r.root || state.pending?.token !== r.token || state.pending?.target !== r.target || state.dataDir !== r.dataDir
+    || await treeDigest(r.target) !== state.digest || !existsSync(join(r.root, 'previous.app'))
+    || await treeDigest(join(r.root, 'previous.app')) !== state.beforeDigest
+    || await readText(join(r.root, 'snapshot.complete')) !== 'complete' || filesystemIdentity(r.dataDir) !== r.dataIdentity) throw new Error('Maintenance generations changed; recovery required');
+  await claimMaintenanceHelper(r, true);
+  const script = join(r.root, 'swap.sh'); writeFileSync(script, SWAP_SCRIPT, { mode: 0o700 });
+  const p = state.pending;
+  const child = spawn('/bin/sh', [script, '', r.target, join(r.root, 'Botling 2.app'), join(r.root, 'previous.app'), join(r.root, 'boot.ok'), r.token, p.executable, '0', '0.1', r.dataDir, '0', '50'],
+    { detached: true, stdio: 'ignore', env: { ...maintenanceEnvironment(environment), BOTLING_UPDATE_RESUME: '1' } });
+  await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); child.on('error', () => {}); child.unref();
+}
+
+/** Recheck exact authenticated bytes after an arbitrarily long operator pause. */
+export async function verifyMaintenanceGeneration(r: MaintenanceRecord, action: 'snapshot' | 'activate' | 'launch' | 'rollback'): Promise<void> {
+  const state = readSmallJSON(join(r.root, 'maintenance-stage.json'));
+  if (state.pending?.token !== r.token || state.pending?.root !== r.root || state.pending?.target !== r.target || state.dataDir !== r.dataDir) throw new Error('Maintenance candidate identity changed');
+  const path = action === 'snapshot' || action === 'activate' ? join(r.root, 'Botling 2.app') : r.target;
+  if (action !== 'rollback' && await treeDigest(path) !== state.digest) throw new Error('Verified maintenance candidate changed');
+  const before = action === 'snapshot' || action === 'activate' ? r.target : join(r.root, 'previous.app');
+  if (await treeDigest(before) !== state.beforeDigest) throw new Error('Previous maintenance generation changed');
 }

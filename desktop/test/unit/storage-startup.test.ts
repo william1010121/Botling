@@ -42,3 +42,13 @@ describe('first-install storage startup fence', () => {
     await expect(authorizeStorageStartup({ ...f.options, coreContract: { version: 1, epoch: 3 } })).rejects.toThrow('missing or inconsistent');
   });
 });
+
+it('maintenance refuses even compatible storage and a forged token before writes', async () => {
+  const f = fixture();
+  put(join(f.options.dataDir, 'installed-storage-contract.json'), { version: 1, epoch: 2 });
+  put(join(f.options.dataDir, 'update-maintenance.json'), { phase: 'maintenance' });
+  const before = fs.readFileSync(f.history);
+  await expect(authorizeStorageStartup(f.options)).rejects.toThrow(/maintenance/i);
+  await expect(authorizeStorageStartup({ ...f.options, argv: ['--botling-update-token=forged'] })).rejects.toThrow(/maintenance/i);
+  expect(fs.readFileSync(f.history)).toEqual(before);
+});
