@@ -1,5 +1,10 @@
 # Antigravity integration — blocked, not ready to ship
 
+Follow-up: see [transport feasibility](agy-transport-feasibility.md). An isolated
+SDK development install and offline policy checks are now complete; official
+ACP is an additional candidate for existing subscription authentication. The
+older investigation below predates that authorization and evidence.
+
 Base: `0a24538d560bc7843152fe4cb5004a6f22d6737b` (installed .13).
 Isolated branch: `bot/agy-engine-20261028`. Never merged or installed.
 
