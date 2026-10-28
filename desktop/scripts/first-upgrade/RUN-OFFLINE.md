@@ -171,3 +171,45 @@ and receipt writes are not claimed undone; invalidated generations remain retain
 The final cumulative signed candidate path and ZIP digest are not yet supplied.
 Fill those only from the separately approved package; do not substitute the
 synthetic fixture ZIP or treat this source runtime as a release package.
+
+## Ownership follow-up to review R1/R2
+
+`process-ownership.mjs` installs process-local wrappers before loading the unchanged
+reviewed runtime. Only explicit approved-runtime async scopes register children;
+other callers pass through without authority. Each registration comes from the
+actual ChildProcess handle, with exact argument vector, parent PID, UID and OS
+start identity. A five-second stdin gate holds that child before executing the
+command. The shell disables startup/function injection without changing UID.
+PID-scoped native inspection attests the gate; active censuses must
+accept before release. A rejected or stalled census closes/expires the gate
+without executing its target. The watcher is never disabled.
+
+This covers direct verification commands and first/resumed transaction helpers
+before helper.pid publication. A resume can temporarily observe only the exact
+previous helper PID captured from its owner record, for at most five seconds;
+the returned helper identity is the newly attested child, not that old number.
+Publication of a different PID is rejected. Helper argv must equal the owner's
+recorded transaction invocation, and its script digest must remain unchanged.
+
+macOS may briefly expose `(sh)` during spawn; it is retried a bounded number of
+times while the gate remains closed and is never accepted as executable identity.
+The `/usr/bin/lipo` Xcode shim is resolved once with `xcrun --find lipo`, then that
+concrete executable is invoked and attested directly. No basename/path wildcard
+is added to admit verification tools. A known exited child's missing argv or OS
+zombie row is reconciled only against its registered PID/parent/UID/start identity.
+Unknown siblings, changed arguments/parent/start identity and unregistered same-tool
+processes remain refused. Helper-root matching now requires attested full identity
+and full argv; unknown shell descendants are not granted helper authority.
+
+Additional checks: three required probes failed on 346eccce before the fix; nine
+bounded native sandbox ownership tests cover actual lipo/PlistBuddy fixture reads,
+foreground census overlap with helper publication/resume, unknown sibling refusal,
+and a gate timeout with no target effects. The eight real transaction tests now
+also run staging/helper handoff through this ownership layer. All native process
+observations in these tests are PID-scoped to the test process and its own fixture
+children; no live app/profile census or installation was performed. The standalone
+runtime artifact and its approved SHA-256 are unchanged.
+
+Ownership follow-up validation: 41 focused checks passed (3 regression probes,
+9 native ownership tests, 21 existing adapter/census/watcher checks, and 8 real
+transaction tests). The approved runtime was reused unchanged.

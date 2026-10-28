@@ -7,7 +7,7 @@ const fail = message => { throw new Error(message); };
 
 // Parse complete ps records, retaining start time to distinguish reused PIDs.
 // Neither raw commands nor open-file paths are emitted by the CLI.
-export function parseProcesses(stdout, argvText) {
+export function parseProcesses(stdout, argvText, { reconcileMissing } = {}) {
   const argv = new Map();
   for (const line of argvText.split('\n').filter(x => x.trim())) {
     const m = /^\s*(\d+)\s+(.+)$/.exec(line);
@@ -19,6 +19,10 @@ export function parseProcesses(stdout, argvText) {
     const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+([A-Za-z]{3}\s+[A-Za-z]{3}\s+\d+\s+\d\d:\d\d:\d\d\s+\d{4})\s+(.+)$/.exec(line);
     if (!m) fail('Uncertain process identity');
     const pid = Number(m[1]);
+    if (!argv.has(pid)) {
+      const restored = reconcileMissing?.({ pid, ppid: Number(m[2]), uid: Number(m[3]), start: m[4].replace(/\s+/g, ' '), executable: m[5] });
+      if (restored) argv.set(pid, restored);
+    }
     if (!argv.has(pid)) {
       if (m[5] === '/bin/ps' || m[5] === 'ps') continue;
       fail('Process changed during census; retry after quiescence');
@@ -43,7 +47,7 @@ export function parseOpenFiles(stdout) {
   return entries;
 }
 export async function findWriters(processes, files, { appPath, dataDir, allowed = [] }, canonical = realpath) {
-  const exempt = new Set(allowed.filter(a => processes.some(p => p.pid === a.pid && p.start === a.start && p.executable === a.executable)).map(a => a.pid));
+  const exempt = new Set(allowed.filter(a => processes.some(p => p.pid === a.pid && p.ppid === a.ppid && p.uid === a.uid && p.start === a.start && p.executable === a.executable && p.args === a.args)).map(a => a.pid));
   const found = new Set();
   for (const p of processes) {
     if (exempt.has(p.pid)) continue;
@@ -78,8 +82,8 @@ const command = async (file, args) => {
 const helperTools = new Set(['/bin/sh', '/bin/bash', '/usr/bin/ditto', '/usr/bin/du', '/bin/mv', '/usr/bin/stat', '/bin/df', '/usr/bin/awk', '/bin/rm', '/bin/mkdir', '/usr/bin/plutil', '/bin/cat', '/bin/sleep', '/bin/sync', '/bin/ln']);
 export function transactionProcesses(processes, h) {
   if (!h) return [];
-  const roots = processes.filter(p => p.pid === h.pid && ['/bin/sh', '/bin/bash'].includes(p.executable)
-    && (p.args.startsWith('/bin/sh ' + h.script + ' ') || p.args.startsWith('/bin/bash ' + h.script + ' ')));
+  const roots = processes.filter(p => h.identity && ['pid', 'ppid', 'uid', 'start'].every(k => p[k] === h.identity[k])
+    && p.executable === '/bin/sh' && p.args === h.args);
   const candidates = roots.length && h.candidate ? processes.filter(p => p.ppid === h.pid && p.executable === h.candidate.executable
     && p.args.includes('--botling-update-token=' + h.candidate.token)
     && p.args.includes('--botling-maintenance-launch=' + h.candidate.token)) : [];
@@ -92,27 +96,33 @@ export function transactionProcesses(processes, h) {
   }
   const owned = [...roots, ...candidateTree];
   for (let pass = 0; pass < processes.length; pass++) {
-    const additions = processes.filter(p => !owned.some(o => o.pid === p.pid) && helperTools.has(p.executable) && owned.some(o => o.pid === p.ppid));
+    const additions = processes.filter(p => !owned.some(o => o.pid === p.pid) && helperTools.has(p.executable) && (!['/bin/sh', '/bin/bash'].includes(p.executable) || p.args === h.args) && owned.some(o => o.pid === p.ppid));
     if (!additions.length) break;
     owned.push(...additions);
   }
   return owned;
 }
-export function createWriterCheck({ appPath, dataDir, uid = process.getuid(), allowed = [], helper = () => null }, run = command) {
+export function createWriterCheck({ appPath, dataDir, uid = process.getuid(), allowed = [], helper = () => null, ownership }, run = command) {
   return async () => {
-    // Deliberately serial: compare identities around open-file enumeration.
-    const identity = await run('/bin/ps', ['-axww', '-o', 'pid=,ppid=,uid=,lstart=,comm=']);
-    const args = await run('/bin/ps', ['-axww', '-o', 'pid=,args=']);
-    const processes = parseProcesses(identity, args);
-    const self = processes.find(p => p.pid === process.pid);
-    if (!self || self.uid !== uid) fail('Cannot bind bootstrap process identity');
-    const files = parseOpenFiles(await run('/usr/sbin/lsof', ['-nP', '-a', '-u', String(uid), '-F0pcfn']));
-    const later = parseProcesses(await run('/bin/ps', ['-axww', '-o', 'pid=,ppid=,uid=,lstart=,comm=']), await run('/bin/ps', ['-axww', '-o', 'pid=,args=']));
-    const h = helper();
-    const helpers = [...transactionProcesses(processes, h), ...transactionProcesses(later, h)];
-    const options = { appPath, dataDir, allowed: [self, ...allowed, ...helpers] };
-    const writers = new Set([...await findWriters(processes, files, options), ...await findWriters(later, files, options)]);
-    if (writers.size) fail(`Maintenance refused: app/core/profile references remain (PIDs ${[...writers].join(', ')}). Quit normally and retry.`);
-    return { checkedAt: new Date().toISOString(), scope: 'manual-no-relaunch-window', observedWriters: 0, helperPresent: !!h && helpers.some(p => p.pid === h.pid) };
+    const finishCensus = ownership?.beginCensus?.(); let accepted = false;
+    try {
+      // Deliberately serial: compare identities around open-file enumeration.
+      const identity = await run('/bin/ps', ['-axww', '-o', 'pid=,ppid=,uid=,lstart=,comm=']);
+      const args = await run('/bin/ps', ['-axww', '-o', 'pid=,args=']);
+      const reconcile = { reconcileMissing: row => ownership?.reconcileExited?.(row) };
+      const processes = parseProcesses(identity, args, reconcile);
+      const self = processes.find(p => p.pid === process.pid);
+      if (!self || self.uid !== uid) fail('Cannot bind bootstrap process identity');
+      const files = parseOpenFiles(await run('/usr/sbin/lsof', ['-nP', '-a', '-u', String(uid), '-F0pcfn']));
+      const later = parseProcesses(await run('/bin/ps', ['-axww', '-o', 'pid=,ppid=,uid=,lstart=,comm=']), await run('/bin/ps', ['-axww', '-o', 'pid=,args=']), reconcile);
+      const h = helper();
+      const helpers = [...transactionProcesses(processes, h), ...transactionProcesses(later, h)];
+      const registered = ownership ? await ownership.attestObservations(processes, later) : [];
+      const options = { appPath, dataDir, allowed: [self, ...allowed, ...helpers, ...registered] };
+      const writers = new Set([...await findWriters(processes, files, options), ...await findWriters(later, files, options)]);
+      if (writers.size) fail(`Maintenance refused: app/core/profile references remain (PIDs ${[...writers].join(', ')}). Quit normally and retry.`);
+      accepted = true;
+      return { checkedAt: new Date().toISOString(), scope: 'manual-no-relaunch-window', observedWriters: 0, helperPresent: !!h && [...helpers, ...registered].some(p => p.pid === h.pid) };
+    } finally { finishCensus?.(accepted); }
   };
 }

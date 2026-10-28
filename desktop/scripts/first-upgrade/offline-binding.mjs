@@ -6,7 +6,7 @@ import { persistentDigest, verifySnapshot } from './offline-snapshot.mjs';
 
 // Thin binding to the owner's offline extension of VerifiedInstaller.
 // No shell templates, snapshot copying, swapping or rollback implementation.
-export function createOfflineBinding(runtime, plan, environment) {
+export function createOfflineBinding(runtime, plan, environment, ownership) {
   for (const name of ['beginMaintenance', 'readMaintenance', 'requireMaintenance', 'maintenancePhase', 'permitMaintenance', 'resumeMaintenance', 'durableJSON', 'invalidateMaintenance']) {
     if (typeof runtime[name] !== 'function') throw new Error(`Reviewed runtime missing offline export: ${name}`);
   }
@@ -38,7 +38,8 @@ export function createOfflineBinding(runtime, plan, environment) {
       requirePlan(r); await check();
       await installer.stageLocal(authenticated.zip, authenticated.version);
       await check();
-      await installer.startMaintenance(check, environment);
+      if (ownership) await ownership.withHelper(r, false, () => installer.startMaintenance(check, environment));
+      else await installer.startMaintenance(check, environment);
       // The helper publishes its PID before any permit-controlled snapshot.
       // Do not misclassify our just-spawned helper during that publication gap.
       const until = Date.now() + 5000;
@@ -90,8 +91,9 @@ export function createOfflineBinding(runtime, plan, environment) {
           if (!/^[A-Za-z0-9 ._-]+$/.test(executable || '')) throw new Error('Unsafe candidate executable identity');
           candidate = { executable: join(record.target, 'Contents/MacOS', executable), appPath: record.target, token: record.token };
         }
-        return { pid, script: join(record.root, 'swap.sh'), candidate };
-      } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+        const registered = ownership?.helperFor(record, pid);
+        return { ...registered, pid: registered?.pid ?? pid, script: join(record.root, 'swap.sh'), candidate };
+      } catch (error) { if (error.code === 'ENOENT') return ownership?.helperFor(record) ?? null; throw error; }
     },
     async acquire({ identities, assertQuiescent }) {
       record = await runtime.beginMaintenance({ target: plan.appPath, dataDir: plan.dataDir, planSha256: plan.planSha256 }, assertQuiescent);
@@ -109,7 +111,8 @@ export function createOfflineBinding(runtime, plan, environment) {
       const observation = await assertQuiescent();
       if (observation?.helperPresent !== true) {
         const oldPid = this.helper()?.pid;
-        await runtime.resumeMaintenance(record, assertQuiescent, environment);
+        if (ownership) await ownership.withHelper(record, true, () => runtime.resumeMaintenance(record, assertQuiescent, environment));
+        else await runtime.resumeMaintenance(record, assertQuiescent, environment);
         const until = Date.now() + 5000;
         while (this.helper()?.pid === oldPid) {
           if (Date.now() > until) throw new Error('Resumed helper identity was not published; retained');

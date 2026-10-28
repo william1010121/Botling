@@ -42,15 +42,18 @@ test('only exact owned shell and restricted descendants are exempted', async () 
   const { transactionProcesses } = await import('./offline-processes.mjs');
   const helper = { pid: 12, script: '/fixture/.botling-update-id/swap.sh' };
   const shell = p(12, '/bin/sh', '/bin/sh ' + helper.script + ' target');
+  helper.identity = shell; helper.args = shell.args;
   const copy = { ...p(13, '/usr/bin/ditto'), ppid: 12 };
   const stranger = { ...p(14, '/bin/node'), ppid: 12 };
-  assert.deepEqual(transactionProcesses([shell, copy, stranger], helper).map(p => p.pid), [12, 13]);
+  const unknownShell = { ...p(15, '/bin/sh', '/bin/sh -c unreviewed'), ppid: 12 };
+  assert.deepEqual(transactionProcesses([shell, copy, stranger, unknownShell], helper).map(p => p.pid), [12, 13]);
   assert.deepEqual(transactionProcesses([{ ...shell, args: '/bin/sh /other/swap.sh' }, copy], helper), []);
 });
 test('candidate exemption requires actual helper ancestry and both launch tokens', async () => {
   const { transactionProcesses } = await import('./offline-processes.mjs');
   const h = { pid: 12, script: '/fixture/.botling-update-id/swap.sh', candidate: { appPath: opts.appPath, executable: opts.appPath + '/Contents/MacOS/Botling 2', token: 'bound-token' } };
   const shell = p(12, '/bin/sh', '/bin/sh ' + h.script + ' target');
+  h.identity = shell; h.args = shell.args;
   const candidate = { ...p(15, h.candidate.executable, h.candidate.executable + ' --botling-update-token=bound-token --botling-maintenance-launch=bound-token'), ppid: 12 };
   assert.deepEqual(transactionProcesses([shell, candidate], h).map(p => p.pid), [12, 15]);
   assert.deepEqual(transactionProcesses([shell, { ...candidate, ppid: 1 }], h).map(p => p.pid), [12]);

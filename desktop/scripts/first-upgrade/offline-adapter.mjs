@@ -69,8 +69,7 @@ export async function loadReviewedRuntime(plan) {
   for (const name of ['authenticateLocalBuild', 'VerifiedInstaller', 'openApp']) demand(typeof runtime[name] === 'function', `Runtime missing ${name}`);
   return runtime;
 }
-const exec = promisify(execFile);
-const run = (file, args) => exec(file, args, { timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024 });
+const run = (file, args) => promisify(execFile)(file, args, { timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024 });
 
 /** Production glue: defaults use real filesystem/process checks; tests may supply
  * only test-local services. Never expose injected services in CLI arguments.

@@ -5,21 +5,22 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { tmpdir } from 'node:os';
 import { generateKeyPairSync, createHash, sign } from 'node:crypto';
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { createProcessOwnership } from './process-ownership.mjs';
 import { createOfflineBinding } from './offline-binding.mjs';
 const runtimePath = process.env.BOOTSTRAP_TEST_RUNTIME;
 if (!runtimePath) throw new Error('Set BOOTSTRAP_TEST_RUNTIME to the reviewed standalone fixture runtime');
-const parent = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'botling-offline-transaction-')));
+const sandboxParent = new URL('./.generated/', import.meta.url).pathname; fs.mkdirSync(sandboxParent, { recursive: true });
+const parent = fs.realpathSync(fs.mkdtempSync(join(sandboxParent, 'botling-offline-transaction-')));
 const children = [];
 const originalSpawn = childProcess.spawn;
 childProcess.spawn = function(command, args, options) {
   if (command === '/bin/sh') {
-    const script = fs.realpathSync(args[0]);
+    const script = fs.realpathSync(args.includes('botling-owned') ? args[args.indexOf('botling-owned') + 2] : args[0]);
     assert.ok(script.startsWith(parent + '/'), 'Refuse helper outside owned sandbox');
     fs.writeFileSync(script, fs.readFileSync(script, 'utf8').replaceAll('/usr/bin/open', '/usr/bin/false'));
     const child = originalSpawn.call(this, command, args, options); children.push(child); return child;
@@ -27,6 +28,7 @@ childProcess.spawn = function(command, args, options) {
   return originalSpawn.call(this, command, args, options);
 };
 syncBuiltinESMExports();
+const ownership = createProcessOwnership(); ownership.install();
 const runtime = await import(pathToFileURL(runtimePath).href);
 const wait = async condition => { const until = Date.now() + 15000; while (Date.now() < until) { if (await condition()) return; await delay(40); } throw new Error('Fixture transaction timed out'); };
 const text = file => { try { return fs.readFileSync(file, 'utf8').trim(); } catch { return ''; } };
@@ -52,7 +54,7 @@ async function fixture(mode = 'crash') {
   manifest.signature = sign(null, Buffer.from(JSON.stringify([manifest.version, manifest.sha256, manifest.size])), pair.privateKey).toString('base64');
   fs.writeFileSync(zip + '.manifest.json', JSON.stringify(manifest));
   const plan = { appPath, dataDir, planSha256: 'a'.repeat(64) };
-  const binding = createOfflineBinding(runtime, plan, { HOME: base, TMPDIR: base });
+  const binding = createOfflineBinding(runtime, plan, { HOME: base, TMPDIR: base }, ownership);
   let checks = 0;
   const check = async () => { checks++; return { helperPresent: children.some(c => c.exitCode === null && c.signalCode === null) }; };
   const tx = await binding.acquire({ identities: { appIdentity: runtime.filesystemIdentity(appPath), profileIdentity: runtime.filesystemIdentity(dataDir) }, assertQuiescent: check });
@@ -61,7 +63,7 @@ async function fixture(mode = 'crash') {
   const authenticated = await runtime.authenticateLocalBuild(source, appPath, publicKey, fs,
     async (file, args) => ({ stdout: childProcess.execFileSync(file, args, { encoding: 'utf8', timeout: 10000 }) }), process.arch,
     { appDataDir: base, dataDir, devTrial: true });
-  await tx.stage(installer, authenticated, check);
+  await ownership.run('fixture-signed-staging', () => tx.stage(installer, authenticated, check));
   await binding.removeAuthenticationScratch(authenticated);
   return { base, dataDir, appPath, plan, binding, tx, check, checks: () => checks };
 }
@@ -69,7 +71,7 @@ test.after(async () => {
   // Only children spawned from validated fixture swap.sh can be signalled here.
   for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
   await Promise.all(children.map(child => child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve => child.once('exit', resolve))));
-  childProcess.spawn = originalSpawn; syncBuiltinESMExports();
+  ownership.restore(); childProcess.spawn = originalSpawn; syncBuiltinESMExports();
   await fsp.rm(parent, { recursive: true, force: true });
 });
 test('actual signed staging snapshots and pauses, then operator rollback restores old app without launching', async () => {
