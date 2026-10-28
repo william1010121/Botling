@@ -21,7 +21,8 @@ describe("Token Flow accounting and identity", () => {
     const date = new Date(2026, 9, 28);
     const spending = addSpending(freshSpending("2026-10-28"), 0, tokens, "Main", date);
     const view = UsageSchema.parse(usageView({ spending, claude: {}, codex: {} }, true));
-    expect(flowTotal(flowLedger(bot, [bot], view)!)).toBe(120);
+    expect(flowTotal(view.byBot[0].breakdown!)).toBe(120);
+    expect(flowLedger(bot, [bot], view)).toBeNull();
     expect(view.byBot[0].breakdown).toEqual({ input: 60, output: 20, cacheRead: 40, cacheWrite: 0 });
     expect(flowLedger(bot, [bot, { ...bot, id: "other" }], view)).toBeNull();
     expect(flowLedger(bot, [bot], { ...view, spendingStatus: "missing" })).toBeNull();
@@ -57,6 +58,7 @@ it("renders states, selection and failures; coalesces updates and tears down wit
   const render = async (value = bot) => { currentBot = value; await act(async () => root.render(createElement(TokenFlow, { client, bot: value, bots: [value], tasks: [task("task-id")] }))); };
   try {
     await render();
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".tf-source button")].find(button => button.textContent?.includes("Legacy"))!.click());
     expect(request).toHaveBeenCalledWith({ type: "usage.view", localOnly: true });
     expect(host.textContent).not.toContain("PRIVATE PROMPT");
     await act(async () => host.querySelector<HTMLButtonElement>(".tf-worker")!.click());

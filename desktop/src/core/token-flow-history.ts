@@ -3,8 +3,11 @@ import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { TokenFlowHistoryView } from "../contract";
 import type { Bot } from "./bot";
-import { exclusiveOutputTokens, readSubagent, SubagentBook, type SubagentRecord } from "./subagents";
-import { taskAgentIds } from "./task-agents";
+import { readSubagent, SubagentBook, type SubagentRecord } from "./subagents";
+
+import { tokenLedger } from "./token-flow-ledger";
+import { meteredSummary } from "./token-flow-summary";
+import { legacyOwnership } from "./token-flow-provenance";
 import { shownTasks } from "./tasks";
 
 const LIMIT_BYTES = 8 * 1024 * 1024;
@@ -25,7 +28,7 @@ async function savedRows(file: string): Promise<{ rows: SubagentRecord[]; unread
       value = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
     } finally { await handle.close(); }
     if (!Array.isArray(value)) throw new Error("Invalid saved worker list");
-    const rows = value.slice(-500).flatMap(raw => {
+    const rows = value.flatMap(raw => {
       if (!raw || typeof raw !== "object") return [];
       // Retain only metadata/counters, never prompt, result, steps or session credentials.
       const row = readSubagent({ id: raw.id, description: raw.description, parentID: raw.parentID,
@@ -47,11 +50,11 @@ async function savedRows(file: string): Promise<{ rows: SubagentRecord[]; unread
 }
 
 export async function tokenFlowHistory(bot: Bot): Promise<TokenFlowHistoryView> {
-  const sources = [{ engine: bot.engine, list: bot.subagents.list.slice(-500) }];
+  const sources = [{ engine: bot.engine, list: bot.subagents.list }];
   let unreadable = false;
   // Include saved inactive heads without constructing a Bot or launching an engine.
   for (const engine of ["claude", "codex"] as const) {
-    if (bot.partner?.engine === engine) sources.push({ engine, list: bot.partner.subagents.list.slice(-500) });
+    if (bot.partner?.engine === engine) sources.push({ engine, list: bot.partner.subagents.list });
     else {
       const saved = await savedRows(join(bot.profile.storeDir, `partner-${engine}`, "subagents.json"));
       unreadable ||= saved.unreadable;
@@ -64,16 +67,33 @@ export async function tokenFlowHistory(bot: Bot): Promise<TokenFlowHistoryView> 
     const key = JSON.stringify([source.engine, record.id]);
     if (!unique.has(key)) unique.set(key, { engine: source.engine, record });
   }
-  const retained = [...unique.values()].sort((a, b) => a.record.startedAt - b.record.startedAt).slice(-500);
-  const exclusive = exclusiveOutputTokens(retained.map(item => item.record));
+  const complete = [...unique.values()];
+  const exclusive = legacyOwnership(join(bot.profile.storeDir, "token-flow-ownership.json"), sources.flatMap(source => source.list.map(record => ({engine:source.engine,record}))));
+  if (unreadable) for (const item of complete) exclusive.set(item.record, null);
+  const retained = complete.sort((a, b) => a.record.startedAt - b.record.startedAt).slice(-500);
   const rows = retained.map(({ engine, record }) => new SubagentBook([record]).delegationRows(engine, exclusive)[0]);
   const tasks = bot.tasks.tasks.filter(card => shownTasks([card]).length || card.history?.some(event => event.kind === "subagent" && !!event.text)).slice(-300).map(card => {
     const recorded = (card.history ?? []).filter(event => event.kind === "subagent" && /^[A-Za-z0-9_.:-]{1,200}$/.test(event.text ?? "")).map(event => event.text!);
-    const ids = new Set(taskAgentIds({ ...card, subagentIDs: [...(card.subagentIDs ?? []), ...recorded] }, [], sources));
-    const workers = rows.filter(row => ids.has(row.id)).map(row => ({ id: row.id, head: row.head }));
-    // Preserve explicit missing records as unreported rather than silently implying zero work.
-    for (const id of ids) if (!workers.some(worker => worker.id === id)) workers.push({ id: id.slice(0, 200), head: null });
+    const ids = new Set([...(card.subagentIDs ?? []), ...recorded]);
+    const linked = new Map<string, { id: string; head: "claude" | "codex" | null }>();
+    for (const id of ids) {
+      const matches = complete.filter(item => item.record.id === id);
+      const head = matches.length === 1 ? matches[0].engine : null;
+      linked.set(JSON.stringify([head, id]), { id, head });
+    }
+    // Descendants inherit only an unambiguous composite identity, never a bare cross-head id.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const { engine, record } of complete) {
+        const key = JSON.stringify([engine, record.id]);
+        if (record.parentID && linked.has(JSON.stringify([engine, record.parentID])) && !linked.has(key)) {
+          linked.set(key, { id: record.id, head: engine }); changed = true;
+        }
+      }
+    }
+    const workers = [...linked.values()];
     return { id: card.id.slice(0, 200), name: card.name.slice(0, 400) || "Task", workers: workers.slice(0, 500) };
   });
-  return { botId: bot.id, asOf: Date.now(), limited: true, unreadable, rows, tasks };
+  return { botId: bot.id, asOf: Date.now(), limited: true, unreadable, rows, tasks, metered: meteredSummary(tokenLedger(join(bot.profile.storeDir, "token-flow-turns.jsonl")), bot.id) };
 }

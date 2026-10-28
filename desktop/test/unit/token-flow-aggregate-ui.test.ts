@@ -21,9 +21,12 @@ it("defaults to bot-wide saved history, collapses workers into task allocation g
   const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
   try {
     await act(async () => root.render(createElement(TokenFlow, { client, bot, bots: [bot], tasks: [] })));
+    expect(host.querySelector(".tf-source button[aria-pressed=true]")?.textContent).toContain("Measured");
+    expect(host.querySelector('.tf-purpose-summary [data-purpose="execution"]')?.textContent).toContain("—");
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".tf-source button")].find(button => button.textContent?.includes("Legacy"))!.click());
     expect(host.querySelector<HTMLSelectElement>('[aria-label="History period"]')!.value).toBe("all");
-    expect(host.querySelector('.tf-purpose-summary [data-purpose="execution"]')?.textContent).toContain("54K");
-    expect(host.querySelectorAll('[data-flow-node]')).toHaveLength(6); // root + 2 work groups + 3 purposes
+    expect(host.querySelector('.tf-purpose-summary [data-purpose="unknown"]')?.textContent).toContain("54K");
+    expect(host.querySelectorAll('[data-flow-node]')).toHaveLength(7); // root + 2 work groups + 3 purposes
     expect(host.querySelector('.tf-canvas')?.textContent).not.toContain("Individual old");
     const release = [...host.querySelectorAll<HTMLButtonElement>('[data-flow-node]')].find(node => node.textContent?.includes("Release"))!;
     await act(async () => release.click());
@@ -32,10 +35,10 @@ it("defaults to bot-wide saved history, collapses workers into task allocation g
     expect(host.querySelector('.tf-contributor')?.textContent).toContain("Individual old");
     const period = host.querySelector<HTMLSelectElement>('[aria-label="History period"]')!;
     await act(async () => { period.value = "today"; period.dispatchEvent(new Event("change", { bubbles: true })); });
-    expect(host.querySelector('.tf-purpose-summary [data-purpose="execution"]')?.textContent).toContain("12K");
+    expect(host.querySelector('.tf-purpose-summary [data-purpose="unknown"]')?.textContent).toContain("12K");
     expect([...host.querySelectorAll('[data-flow-node]')].some(node => node.textContent?.includes("Release"))).toBe(false);
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Daily usage details"]')!.click());
     expect(host.querySelector('[aria-label="Daily ledger detail"] .tf-stack')).not.toBeNull();
-    expect(host.querySelector('.tf-ledger-values')?.textContent).toContain("400");
+    expect(host.querySelector('.tf-ledger-values')?.textContent).not.toContain("400");
   } finally { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; }
 });

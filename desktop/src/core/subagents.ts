@@ -310,7 +310,7 @@ export class SubagentBook {
   }
 
   /** Retained parent identities only; a missing parent stays missing, never becomes the bot. */
-  delegationRows(head: "claude" | "codex" | null, exclusive = exclusiveOutputTokens(this.list.slice(-500))): import("../contract").DelegationRowView[] {
+  delegationRows(head: "claude" | "codex" | null, exclusive = exclusiveOutputTokens(this.list)): import("../contract").DelegationRowView[] {
     return this.list.slice(-500).map(child => ({
       id: child.id.slice(0, 200), parentId: child.parentID?.slice(0, 200) ?? null,
       head, title: child.description.slice(0, 400), status: child.status,

@@ -115,3 +115,8 @@
 .tf-ledger-values b { display: block; font-size: 17px; color: var(--text); }
 .tf-graph-loading { min-height: 420px; display: grid; place-items: center; color: var(--muted); }
 @container (max-width: 400px) { .tf-chart-grid { grid-template-columns: 105px 1fr; gap: 10px; } .tf-donut { width: 105px; height: 105px; } .tf-chart-legend > div { font-size: 10px; } .tf-ledger-values { grid-template-columns: repeat(2, 1fr); } }
+.tf-source{display:flex;gap:6px}.tf-source button{font-size:11px;padding:5px 9px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--muted)}.tf-source button[aria-pressed=true]{background:var(--selected);color:var(--text)}
+.tf-purpose-summary{grid-template-columns:repeat(4,minmax(0,1fr))}
+[data-purpose=unknown]{--purpose:var(--faint)}
+.tf-purpose-summary [data-purpose=unknown] i,.tf-edges [data-purpose=unknown],.tf-ring-value[data-purpose=unknown]{--purpose:var(--faint)}
+@container (max-width:500px){.tf-purpose-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.tf-contributors{grid-template-columns:1fr}}

@@ -16,7 +16,11 @@ const bot: BotView = { id: 'main', name: 'Main', role: 'main', avatar: 'square',
 const tokens = { input: 84000, output: 22000, cacheRead: 132000, cacheWrite: 0 };
 const usage: UsageView = { spendingStatus: empty ? 'missing' : 'available', day: new Date().toLocaleDateString('en-CA'), spent: 0, tokens, byBot: [{ name: 'Main', tokens: 238000, spent: 0, breakdown: tokens }], history: [], claude: { fiveHour: null, week: null }, codex: { fiveHour: null, week: null } };
 function history(current: BotView): TokenFlowHistoryView {
+  const group = (id: string, taskId: string, purpose: "communication" | "execution" | "mixed" | "unknown", amount: number, workerId: string | null) => ({id,taskId,purpose,workerId,head:"codex",tokens:{input:amount*.5,output:amount*.2,cacheRead:amount*.3,cacheWrite:0},turns:3});
+  const all = empty ? [] : [group("chat-plan","token-flow","communication",18000,null),group("build","token-flow","execution",70000,"build"),group("review","token-flow","mixed",22000,"review"),group("audit","audit","execution",30000,"old-audit"),group("oldchat","release","unknown",14000,null)];
+
   return { botId: current.id, asOf: Date.now(), limited: true, unreadable: false,
+    metered: {since:now-14*day,limited:false,unreadable:false,periods:{all,today:all.slice(0,3),"7d":all.slice(0,4)}},
     rows: empty ? [] : [...current.delegationRows!, row('old-audit', 'Audit exports', 8800, 3), row('old-release', 'Release checks', 42000, 10)],
     tasks: empty ? [] : [
       { id: 'token-flow', name: 'Token Flow', workers: current.delegationRows!.map(record => ({ id: record.id, head: record.head })) },

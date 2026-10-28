@@ -18,7 +18,7 @@ export function flowWorkers(bot: BotView, tasks: TaskView[]) {
   }));
   for (const task of tasks) for (const agent of task.relatedAgents ?? []) {
     const candidates = [...workers.values()].filter(node => node.id === agent.id);
-    const matches = candidates.length === 1 ? candidates : candidates.filter(node => node.engine === agent.engine);
+    const matches = agent.engine === null ? [] : candidates.filter(node => node.engine === agent.engine);
     let node = matches.length === 1 ? matches[0] : undefined;
     if (!node) {
       const key = workerKey(agent.engine, agent.id);
@@ -34,13 +34,12 @@ export function flowWorkers(bot: BotView, tasks: TaskView[]) {
   }
   return [...workers.values()].sort((a, b) => (b.output ?? -1) - (a.output ?? -1));
 }
-export type FlowWorker = ReturnType<typeof flowWorkers>[number] & { purpose?: FlowPurpose; aggregate?: boolean; count?: number };
+export type FlowWorker = ReturnType<typeof flowWorkers>[number] & { purpose?: FlowPurpose; basis?: "tokens" | "output"; incomplete?: boolean; aggregate?: boolean; count?: number };
 
 /** The legacy ledger is keyed by name, not bot id. Ambiguous names cannot be attributed. */
 export function flowLedger(bot: BotView, bots: BotView[], usage: UsageView | null) {
-  if (!usage || usage.spendingStatus !== "available") return null;
-  if (bots.filter(candidate => candidate.name === bot.name).length !== 1) return null;
-  return usage.byBot.find(row => row.name === bot.name)?.breakdown ?? null;
+  // Display-name uniqueness today cannot prove historical bot ownership.
+  return null;
 }
 
 /** Core-normalized buckets are disjoint: Codex cache reads have already been removed from input. */
@@ -49,16 +48,12 @@ export function flowTotal(tokens: UsageView["tokens"]): number {
 }
 export const flowCount = (value: number | null) => value === null ? "—" : new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 
-export type FlowPurpose = "communication" | "execution" | "mixed";
-export function flowPurpose(worker: FlowWorker, workers: FlowWorker[]): FlowPurpose {
-  if (worker.purpose) return worker.purpose;
-  // A retained delegation is evidence of role, not evidence of semantic token purpose.
-  if (worker.attributableOutput === null) return "mixed";
-  if (!worker.parentKey || (worker.parentKey !== "coordinator" && !workers.some(parent => parent.key === worker.parentKey))) return "mixed";
-  return workers.some(child => child.parentKey === worker.key) ? "mixed" : "execution";
+export type FlowPurpose = "communication" | "execution" | "mixed" | "unknown";
+export function flowPurpose(worker: FlowWorker, _workers: FlowWorker[]): FlowPurpose {
+  return worker.purpose ?? "unknown";
 }
 export function purposeTotals(workers: FlowWorker[]) {
-  const totals = { communication: { known: 0, measured: 0, unknown: 1 }, execution: { known: 0, measured: 0, unknown: 0 }, mixed: { known: 0, measured: 0, unknown: 0 } };
+  const totals = { communication: { known: 0, measured: 0, unknown: 0 }, execution: { known: 0, measured: 0, unknown: 0 }, mixed: { known: 0, measured: 0, unknown: 0 }, unknown: { known: 0, measured: 0, unknown: 0 } };
   for (const worker of workers) {
     const group = totals[flowPurpose(worker, workers)];
     if (worker.attributableOutput === null || !Number.isSafeInteger(group.known + worker.attributableOutput)) group.unknown++;
@@ -66,4 +61,4 @@ export function purposeTotals(workers: FlowWorker[]) {
   }
   return totals;
 }
-export const PURPOSE_BASIS = "Role estimate, not measured purpose: coordinator → communication; delegated workers → execution; workers that delegate, lack a parent or have unverified counters → mixed/unknown. Only uniquely owned output counters are added. Bars compare known retained output only, not today's input/cache. — is unreported; ? marks incomplete coverage.";
+export const PURPOSE_BASIS = "Whole metered turns grouped by observed structured activity. Coordination + execution stays mixed; absent or unclassified evidence stays unknown. No role inference or per-tool token split. Input/cache buckets are normalized and counted once. Legacy output is separate and has unknown purpose.";

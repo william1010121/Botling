@@ -48,12 +48,12 @@ it("aggregates all saved history, partitions shared tasks once, and refuses to p
   expect(all.known).toBe(190);
   expect(all.groups.find(group => group.id === "shared-tasks")?.known).toBe(30);
   expect(all.groups.flatMap(group => group.workers).map(worker => worker.id).sort()).toEqual(["older", "past", "spans", "today"]);
-  expect(all.edges.filter(edge => edge.target === "purpose:execution").reduce((sum, edge) => sum + (edge.value ?? 0), 0)).toBe(190);
+  expect(all.edges.filter(edge => edge.target === "purpose:unknown").reduce((sum, edge) => sum + (edge.value ?? 0), 0)).toBe(190);
   expect(historicalAllocation(workers, "7d", now).known).toBe(40);
   const today = historicalAllocation(workers, "today", now);
   expect(today.known).toBe(10);
   expect(today.workers.find(worker => worker.id === "spans")?.attributableOutput).toBeNull();
-  expect(today.unknown).toBe(2); // Spanning record plus unmeasured coordinator.
+  expect(today.unknown).toBe(1); // Spanning record, no invented coordinator amount.
   expect(today.nodes.every(node => node.aggregate)).toBe(true);
 });
 
@@ -66,5 +66,17 @@ it("collapses many historical tasks into five groups without changing totals", (
   expect(flow.groups).toHaveLength(5);
   expect(flow.known).toBe(190);
   expect(flow.groups.reduce((sum, group) => sum + group.known, 0)).toBe(190);
-  expect(flow.nodes).toHaveLength(8); // Five work groups + three purpose buckets, no call-log nodes.
+  expect(flow.nodes).toHaveLength(9); // Five work groups + three purpose buckets, no call-log nodes.
+});
+
+it("resolves ownership before retention and leaves two-head task identities unresolved", async () => {
+  const dir = tempDir("token-flow-ownership");
+  const make = (id: string, counter: string, startedAt: number) => readSubagent({ id, description: id, startedAt, status: "completed", steps: [], outputTokenCounters: { [counter]: 100 } })!;
+  const rows = Array.from({ length: 501 }, (_, i) => make(`w${i}`, i === 0 || i === 500 ? "thread:shared" : `thread:${i}`, i));
+  const bot = { engine: "codex", profile: { storeDir: dir, id: "B" }, id: "B", subagents: { list: rows }, partner: { engine: "claude", subagents: { list: [make("w500", "message:other", 600)] } }, tasks: { tasks: [{ id: "t", name: "T", state: "done", kept: true, messageIDs: [], subagentIDs: ["w500"] }] } } as unknown as Bot;
+  const history = await tokenFlowHistory(bot);
+  expect(history.rows.find(row => row.id === "w500" && row.head === "codex")?.attributableOutputTokens).toBeNull();
+  expect(history.tasks[0].workers).toEqual([{ id: "w500", head: null }]);
+  bot.subagents.list.splice(0, 500);
+  expect((await tokenFlowHistory(bot)).rows.find(row => row.id === "w500" && row.head === "codex")?.attributableOutputTokens).toBeNull();
 });

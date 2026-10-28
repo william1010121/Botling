@@ -19,7 +19,8 @@ it("drags nodes, pans, zooms, fits and keeps user positions across token updates
   const arranged = layout.addPositions({}, ids);
   const arrange = vi.spyOn(layout, "layoutFlow").mockResolvedValue(arranged);
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, left: 0, top: 0, width: 800, height: 500, right: 800, bottom: 500, toJSON() {} });
-  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
+  localStorage.clear();
+  const host = document.createElement("div"); document.body.append(host); let root = createRoot(host);
   const select = vi.fn();
   const render = async (value = bot) => act(async () => root.render(createElement(TokenFlowCanvas, { bot: value, workers: flowWorkers(value, []), selected: null, onSelect: select })));
   const pointer = (element: Element, type: string, x: number, y: number) => {
@@ -31,7 +32,7 @@ it("drags nodes, pans, zooms, fits and keeps user positions across token updates
   try {
     await render();
     const canvas = host.querySelector<HTMLElement>(".tf-canvas")!;
-    const child = [...host.querySelectorAll<HTMLElement>("[data-flow-node]")].find(node => node.textContent?.includes("Child"))!;
+    let child = [...host.querySelectorAll<HTMLElement>("[data-flow-node]")].find(node => node.textContent?.includes("Child"))!;
     const old = position(child), scale = camera()[2];
     expect(host.querySelectorAll(".tf-edges > path")).toHaveLength(2);
     const edges = [...host.querySelectorAll<SVGElement>(".tf-edges > path")].map(path => [path.dataset.source, path.dataset.target]);
@@ -45,8 +46,12 @@ it("drags nodes, pans, zooms, fits and keeps user positions across token updates
     const updated = { ...bot, delegationRows: [...bot.delegationRows!.map(row => ({ ...row, outputTokens: 999 })), { ...bot.delegationRows![1], id: "new-child" }] };
     await render(updated);
     expect(position(child)).toEqual(moved);
+    await render({ ...bot, delegationRows: bot.delegationRows!.filter(row => row.id !== "child") });
+    await render(updated);
+    expect(position([...host.querySelectorAll<HTMLElement>("[data-flow-node]")].find(node => node.dataset.flowNode === initial[1].key)!)).toEqual(moved);
     expect(arrange).toHaveBeenCalledTimes(1);
     expect(host.querySelectorAll("[data-flow-node]")).toHaveLength(5);
+    child = [...host.querySelectorAll<HTMLElement>("[data-flow-node]")].find(node => node.dataset.flowNode === initial[1].key)!;
     const beforePan = camera();
     await act(async () => { pointer(canvas, "pointerdown", 10, 10); pointer(canvas, "pointermove", 60, 40); pointer(canvas, "pointerup", 60, 40); });
     expect(camera().slice(0, 2)).toEqual([beforePan[0] + 50, beforePan[1] + 30]);
@@ -70,5 +75,9 @@ it("drags nodes, pans, zooms, fits and keeps user positions across token updates
     expect(position(child)).toEqual(moved);
     await act(async () => child.click());
     expect(select).toHaveBeenCalledWith(initial[1].key);
+    const savedCamera = camera();
+    await act(async () => root.unmount()); root = createRoot(host); await render(updated);
+    expect(camera()).toEqual(savedCamera);
+    expect([...host.querySelectorAll<HTMLElement>("[data-flow-node]")].find(node => node.dataset.flowNode === initial[1].key)!.dataset.position).toBe(moved.join(","));
   } finally { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; }
 });

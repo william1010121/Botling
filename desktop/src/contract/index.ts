@@ -485,8 +485,14 @@ export const DelegationRowView = z.strictObject({
 });
 export type DelegationRowView = z.infer<typeof DelegationRowView>;
 
+const TokenFlowMeasuredGroup = z.strictObject({
+  id: z.string().max(200), head: z.string().nullable(), workerId: z.string().nullable(), taskId: z.string().nullable(),
+  purpose: z.enum(["communication", "execution", "mixed", "unknown"]), turns: z.number().int().nonnegative(),
+  tokens: z.strictObject({input:z.number().nonnegative(),output:z.number().nonnegative(),cacheRead:z.number().nonnegative(),cacheWrite:z.number().nonnegative()}),
+});
 export const TokenFlowHistoryView = z.strictObject({
   botId: BotId, asOf: z.number(), limited: z.literal(true), unreadable: z.boolean(),
+  metered: z.strictObject({since:z.number().nullable(),limited:z.boolean(),unreadable:z.boolean(),periods:z.strictObject({all:z.array(TokenFlowMeasuredGroup).max(200),today:z.array(TokenFlowMeasuredGroup).max(200),"7d":z.array(TokenFlowMeasuredGroup).max(200)})}).optional(),
   rows: z.array(DelegationRowView).max(500),
   tasks: z.array(z.strictObject({ id: z.string().max(200), name: z.string().max(400),
     workers: z.array(z.strictObject({ id: z.string().max(200), head: z.enum(["claude", "codex"]).nullable() })).max(500),

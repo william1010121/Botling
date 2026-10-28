@@ -13,7 +13,7 @@ it("uses ELK for a directed three-level layout and fits negative manual coordina
   const zoomed = zoomCamera(camera, camera.scale * 2, { x: 150, y: 100 });
   expect((150 - zoomed.x) / zoomed.scale).toBeCloseTo((150 - camera.x) / camera.scale);
   expect(addPositions({ stale: { x: 1, y: 1 }, root: points.root }, ["root", "new"]).root).toEqual(points.root);
-  expect(addPositions({ stale: { x: 1, y: 1 } }, ["root"])).not.toHaveProperty("stale");
+  expect(addPositions(addPositions({ stale: { x: 777, y: 888 } }, ["root"]), ["stale"]).stale).toEqual({ x: 777, y: 888 });
 });
 
 it("projects bounded nested identities without prompts, results or inferred parents", () => {

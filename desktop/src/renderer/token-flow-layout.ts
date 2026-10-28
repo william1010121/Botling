@@ -6,13 +6,12 @@ export const MIN_SCALE = .001, MAX_SCALE = 2.5;
 export const clampScale = (scale: number) => Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
 
 /** New arrivals get free slots; existing coordinates are never recomputed on telemetry refresh. */
-export function addPositions(previous: Record<string, Point>, ids: string[]) {
-  const retained = new Set(ids);
-  const next = Object.fromEntries(Object.entries(previous).filter(([id]) => retained.has(id)));
+export function addPositions(previous: Record<string, Point>, ids: string[], vertical = false) {
+  const next = { ...previous };
   let slot = 0;
   for (const id of ids) if (!next[id]) {
     let point: Point;
-    do { point = { x: (slot % 3) * 290, y: Math.floor(slot / 3) * 160 }; slot++; }
+    do { point = vertical ? { x: 0, y: slot * 150 } : { x: (slot % 3) * 290, y: Math.floor(slot / 3) * 160 }; slot++; }
     while (Object.values(next).some(other => Math.abs(other.x - point.x) < NODE_WIDTH + 20 && Math.abs(other.y - point.y) < NODE_HEIGHT + 20));
     next[id] = point;
   }
@@ -41,4 +40,22 @@ export async function layoutFlow(ids: string[], edges: FlowEdge[]): Promise<Reco
     }, children: ids.map(id => ({ id, width: NODE_WIDTH, height: NODE_HEIGHT })),
     edges: edges.map((edge, index) => ({ id: `e${index}`, sources: [edge.source], targets: [edge.target] })) });
     return Object.fromEntries((graph.children ?? []).map(node => [node.id, { x: node.x ?? 0, y: node.y ?? 0 }]));
+}
+
+export function readFlowLayout(botId: string): { positions: Record<string, Point>; camera: Camera } | null {
+  try {
+    const value = JSON.parse(localStorage.getItem("token-flow-layout-v2") ?? "{}")[botId];
+    if (!value || !Number.isFinite(value.camera?.x) || !Number.isFinite(value.camera?.y) || !(value.camera?.scale > 0)) return null;
+    const positions = Object.fromEntries(Object.entries(value.positions ?? {}).slice(-200).filter(([, p]: [string, any]) => Number.isFinite(p?.x) && Number.isFinite(p?.y))) as Record<string, Point>;
+    return { positions, camera: { ...value.camera, scale: clampScale(value.camera.scale) } };
+  } catch { return null; }
+}
+export function saveFlowLayout(botId: string, positions: Record<string, Point>, camera: Camera) {
+  try {
+    const all = JSON.parse(localStorage.getItem("token-flow-layout-v2") ?? "{}");
+    delete all[botId];
+    const bounded = Object.fromEntries(Object.entries(all).slice(-19));
+    bounded[botId] = { positions: Object.fromEntries(Object.entries(positions).slice(-200)), camera };
+    localStorage.setItem("token-flow-layout-v2", JSON.stringify(bounded));
+  } catch { /* Storage unavailable: retain the in-memory layout. */ }
 }
