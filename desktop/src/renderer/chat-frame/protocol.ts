@@ -32,6 +32,7 @@ export type FrameMessage =
 
 /** Shell → frame. */
 export type ShellMessage =
+  | { botling: "composerResult"; requestID: string; ok: boolean; error?: string }
   | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }
   | { botling: "widthRejected"; value: number | null; actual: number | null }
   | { botling: "widthPreview"; value: number | null | undefined }

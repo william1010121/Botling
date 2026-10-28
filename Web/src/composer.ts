@@ -3,6 +3,7 @@ import { EditorState, Prec, StateEffect, Transaction, type Extension } from "@co
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
 import { Compartment } from "@codemirror/state";
 import { post } from "./bridge";
+import { composerHost } from "./composer-host";
 import { escapeRegExp, shared } from "./contract";
 import { language, t } from "./i18n";
 import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
@@ -50,6 +51,8 @@ export class Composer {
   private readonly filesRow: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
   private hasFiles = false;
+  private readonly sending = new Set<string>();
+  private readonly submissionStatus = document.createElement("div");
   /**
    * "Answer with" in the box's toolbar, between + and send: Both / Claude / Codex as one
    * segmented control, then the ⌥1 ⌥2 ⌥3 hint; the app saves its choice for this bot.
@@ -81,6 +84,9 @@ export class Composer {
   constructor(parent: HTMLElement) {
     this.root = document.createElement("div");
     this.root.className = "composer";
+    this.submissionStatus.setAttribute("role", "status");
+    this.submissionStatus.className = "composer-submission-status";
+    this.root.append(this.submissionStatus);
     this.replyBar = document.createElement("div");
     this.replyBar.className = "reply-bar";
     this.filesRow = document.createElement("div");
@@ -213,6 +219,7 @@ export class Composer {
     if (key === this.draftKey) return;
     if (this.draftKey !== null) this.saveDraft();
     this.draftKey = key;
+    this.submissionStatus.textContent = this.sending.has(key) ? "Sending…" : "";
     this.restoreDraft(key);
   }
 
@@ -428,14 +435,36 @@ export class Composer {
   submit(): boolean {
     let text = this.text;
     if (text.trim() === "" && !this.hasFiles) return true;
-    if (this.answer) {
-      // "@codex …" overrides this message only; the chips keep the saved preference.
-      const typed = answerPrefix(text, this.answer);
-      if (typed) text = typed.rest;
-      post({ type: "send", text, to: typed?.id ?? this.answerPicks.get(this.answerChat)?.id ?? this.answer.chosen });
-    } else {
-      post({ type: "send", text });
+    const key = this.draftKey;
+    if (key && this.sending.has(key)) return true;
+    const original = text;
+    const typed = this.answer ? answerPrefix(text, this.answer) : null;
+    if (typed) text = typed.rest;
+    const to = this.answer ? typed?.id ?? this.answerPicks.get(this.answerChat)?.id ?? this.answer.chosen : undefined;
+    if (composerHost && key) {
+      this.saveDraft();
+      this.sending.add(key);
+      this.submissionStatus.textContent = "Sending…";
+      this.refreshSend();
+      // Keep the text editable and recoverable until the core has actually accepted it.
+      const finish = () => { this.sending.delete(key); this.refreshSend(); };
+      let request: Promise<void>;
+      try { request = composerHost.send({ type: "send", botID: key, text, ...(to ? { to } : {}) }); }
+      catch (error) { request = Promise.reject(error); }
+      void request.then(() => {
+        if (this.draftKey === key) {
+          if (this.text === original) { this.setText(""); this.saveDraft(); }
+          this.submissionStatus.textContent = "";
+        } else if (this.drafts.get(key)?.text === original) {
+          this.drafts.delete(key);
+          post({ type: "draft", botID: key, text: "", cursor: 0 });
+        }
+      }, (error: unknown) => {
+        if (this.draftKey === key) this.submissionStatus.textContent = `Not sent: ${error instanceof Error ? error.message : String(error)}`;
+      }).finally(finish);
+      return true;
     }
+    post({ type: "send", text, ...(to ? { to } : {}) });
     this.setText("");
     this.saveDraft();
     return true;
@@ -514,7 +543,7 @@ export class Composer {
   }
 
   private refreshSend(): void {
-    this.sendButton.disabled = this.text.trim() === "" && !this.hasFiles;
+    this.sendButton.disabled = !!(this.draftKey && this.sending.has(this.draftKey)) || (this.text.trim() === "" && !this.hasFiles);
   }
 
   /** Pasted or dropped files (screenshots too) go to Swift; plain text pastes as text. */
@@ -578,6 +607,7 @@ function slashItemsOf(state: ChatState): Mention[] {
 
 /** Reads a file in the page and hands it to Swift, which saves it and attaches it. */
 export function sendFile(file: File): void {
+  if (composerHost?.upload) { composerHost.upload(file); return; }
   const reader = new FileReader();
   reader.onload = () => {
     const result = String(reader.result ?? "");

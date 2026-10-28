@@ -42,11 +42,15 @@ describe("the plugin host", () => {
     expect(sent.turnId).toBeTruthy();
     const user = (await c.chat()).messages.find((m: any) => m.role === "user");
     expect(user.text).toBe("Compute $x^2$");
+    await c.call({ type: "files.data", botId: MAIN, name: "retained.txt", base64: Buffer.from("original attachment").toString("base64") });
     const stopped = await c.call({ type: "chat.send", botId: MAIN, text: "My password is 1234" });
     expect(stopped).toMatchObject({ turnId: null, stoppedBy: "tidy" });
     const chat = await c.chat();
     expect(chat.messages.some((m: any) => m.role === "user" && m.text.includes("1234"))).toBe(false);
     expect(chat.messages.at(-1)).toMatchObject({ role: "notice", text: 'Plugin "tidy" stopped this message: My password is 1234' });
+    expect(chat.pendingFiles).toEqual([expect.objectContaining({ name: "retained.txt" })]);
+    await c.call({ type: "chat.send", botId: MAIN, text: "Retry without the secret" });
+    expect((await c.chat()).pendingFiles).toEqual([]);
   });
 
   it("afterReply, bots.onReply, notify, storage and routines.add; a plugin's own env has no core variables", async () => {

@@ -50,13 +50,13 @@ describe("attachments (Models.swift Attachment, Bot.keep)", () => {
     expect(keep(join(dir, "missing.png"), join(dir, "kept"))).toBeNull();
   });
 
-  it("files wait per bot; pasted ones live in incoming/ until sent or removed", () => {
+  it("files wait per bot; pasted ones live in incoming/ until sent or removed", async () => {
     const dir = tempDir("pending");
     writeFileSync(join(dir, "doc.txt"), "x");
     const changes: string[] = [];
     const pending = new PendingFiles(join(dir, "incoming"), (botId, files) => changes.push(`${botId}:${files.length}`));
     expect(pending.addPaths("A", [join(dir, "doc.txt"), join(dir, "nope.txt"), dir]).map((file) => file.name)).toEqual(["doc.txt"]);
-    const [pasted] = pending.addData("A", "a/b.png", PNG.toString("base64")).slice(1);
+    const [pasted] = (await pending.addData("A", "a/b.png", PNG.toString("base64"))).slice(1);
     expect(pasted!.name).toBe("a-b.png");
     expect(readdirSync(join(dir, "incoming"))).toHaveLength(1);
     expect(pending.views("B")).toEqual([]);

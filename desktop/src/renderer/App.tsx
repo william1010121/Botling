@@ -779,6 +779,10 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       }
       if (message.botling !== "action") return;
       const action = message.action;
+      const composerReply = (ok: boolean, error?: string) => {
+        if (typeof action.requestID === "string") postToChat({ botling: "composerResult", requestID: action.requestID, ok, ...(error ? { error } : {}) });
+      };
+      const composerFailure = (error: unknown) => { composerReply(false, error instanceof Error ? error.message : String(error)); onError(error); };
       switch (action?.type) {
         case "shellCommand":
           if (nativeEditor() && ["settings", "rightPanel", "sidebar", "search"].includes(String(action.command))) {
@@ -797,12 +801,16 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           return;
         case "send": {
           // Words, or only the files waiting in the input box.
-          if (!chat || typeof action.text !== "string" || (!action.text.trim() && !chat.pendingFiles?.length)) return;
-          onSent();
-          const reply = replyingRef.current?.botId === chat.botId ? replyingRef.current.id : undefined;
-          setReplying(null);
+          if (!chat || typeof action.text !== "string") { composerReply(false, "Chat is not ready."); return; }
+          const botId = typeof action.botID === "string" ? action.botID : chat.botId;
+          const reply = replyingRef.current?.botId === botId ? replyingRef.current.id : undefined;
           const to = action.to === "both" || action.to === "claude" || action.to === "codex" ? { to: action.to as "both" | "claude" | "codex" } : {};
-          void client.request({ type: "chat.send", botId: chat.botId, text: action.text, ...(reply ? { replyTo: reply } : {}), ...to }).catch(onError);
+          void client.request({ type: "chat.send", botId, text: action.text, ...(reply ? { replyTo: reply } : {}), ...to }).then(result => {
+            if (result.stoppedBy) { composerReply(false, `Plugin ${result.stoppedBy} stopped the message.`); return; }
+            onSent();
+            setReplying(current => current?.botId === botId && current.id === reply ? null : current);
+            composerReply(true);
+          }).catch(composerFailure);
           return;
         }
         case "setAnswerWith": {
@@ -1012,12 +1020,13 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           return;
         // Files for the next message: main's picker, a pasted or dropped file the page read, taking one out.
         case "pickFiles":
-          if (chat) void client.request({ type: "files.pick", botId: chat.botId }).catch(onError);
+          if (chat) void client.request({ type: "files.pick", botId: typeof action.botID === "string" ? action.botID : chat.botId }).then(() => composerReply(true)).catch(composerFailure);
+          else composerReply(false, "Chat is not ready.");
           return;
         case "addFileData":
           if (chat && typeof action.name === "string" && typeof action.base64 === "string" && action.base64) {
-            void client.request({ type: "files.data", botId: chat.botId, name: action.name.slice(0, 255) || "file", base64: action.base64 }).catch(onError);
-          }
+            void client.request({ type: "files.data", botId: typeof action.botID === "string" ? action.botID : chat.botId, name: action.name.slice(0, 255) || "file", base64: action.base64 }).then(() => composerReply(true)).catch(composerFailure);
+          } else composerReply(false, "Chat or attachment is not ready.");
           return;
         case "removeFile":
           if (chat && typeof action.id === "string") void client.request({ type: "files.remove", botId: chat.botId, id: action.id }).catch(onError);

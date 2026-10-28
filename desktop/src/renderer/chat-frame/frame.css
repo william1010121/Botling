@@ -49,3 +49,7 @@ body.board .message-width-handle, body.spec-mode .message-width-handle, body.pan
 #messages .bot-column, #messages .speaker-column, #messages .bot-bubble,
 #messages .notice-bubble, #messages .relay:not(.row), #messages .row.sub-from, #messages .row.sub-work { max-width: 100%; }
 #messages .user-body { max-width: min(100%, calc(var(--message-column-width) - 180px)); }
+
+.composer-submission-status:empty, .composer-upload-status:empty { display: none; }
+.composer-submission-status, .composer-upload-status { font-size: 12px; padding: 4px 10px; overflow-wrap: anywhere; }
+.composer-upload-status button { margin-left: 8px; }
