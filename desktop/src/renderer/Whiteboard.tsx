@@ -678,9 +678,10 @@ function Latest({ bot, data, waiting, one }: { bot: BotView; data: WhiteboardBot
 }
 
 const KIND_LABEL: Record<AskKind, string> = { question: "Question", call: "Your call", approval: "Approval" };
-const KIND_BUTTON: Record<AskKind, string> = { question: "Answer", call: "Notify", approval: "Review" };
-/** An ask's button: Answer / Review open the chat; Notify (your call) only acknowledges it: it takes it off the list and answers nothing. */
+const KIND_BUTTON = { call: "Notify", approval: "Review" };
+/** Questions stay in the conversation, reached through the card/report navigation. Notify only acknowledges; Review opens the approval. */
 function AskButton({ ask, lang, onOpenChat, onNotify }: { ask: Ask; lang?: Lang | null; onOpenChat: (botId: string) => void; onNotify: (ask: Ask) => void }) {
+  if (ask.kind === "question") return null;
   if (ask.kind === "call" && ask.ack) return <button type="button" className="wb-ask-open notify" onClick={() => onNotify(ask)}>{say(lang, "whiteboard.notify")}</button>;
   return <button type="button" className="wb-ask-open" onClick={() => onOpenChat(ask.open)}>{KIND_BUTTON[ask.kind]}</button>;
 }

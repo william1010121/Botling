@@ -12,6 +12,7 @@ import { PROTOCOL_VERSION, type BotView, type ResultOf, type TaskView, type Wait
 import { Client } from "../../src/renderer/client";
 import { CARD_LINE_WIDTH, SHELF_KEY, Whiteboard, ageLabel, askCount, boardLanes, boardWeek, botWeek, dayKey, doneByDay, highlight, lineWidth, shortLine, lastActive, nextSteps, openRanking, quietWeeks, taskCounts, waitingAsks, waitingCount } from "../../src/renderer/Whiteboard";
 import { tempDir } from "../helpers";
+import { isOpenQuestion, type ChatRecord } from "../../src/core/store/records";
 
 const id = (n: number) => `6A0B0000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`;
 const MAIN = "6A0B0000-0000-4000-8000-000000000002";
@@ -42,6 +43,16 @@ const components = { status: { template: '<div class="card" id="s"></div>', vers
 const waiting: WaitingView = { items: [{ botId: site.id, text: "Publish now?", messageId: null }], doing: {} };
 
 describe("whiteboard data", () => {
+  it("does not classify a declarative reply as waiting without explicit unanswered choices", () => {
+    const record: ChatRecord = { id: id(90), role: "bot", date: 814897456.479,
+      text: "**Codex 慢，主因是它的工作方式，不是啟動。** 我抽查過，設定值和程式位置都對得上。" };
+    expect(isOpenQuestion(record)).toBe(false);
+    record.choices = [{ label: "先加 TTFT 計時，再決定怎麼改", recommended: false }];
+    expect(isOpenQuestion(record)).toBe(true);
+    expect(isOpenQuestion({ ...record, chosen: 0 })).toBe(false);
+    expect(isOpenQuestion({ ...record, answer: "先不要改" })).toBe(false);
+  });
+
   it("puts the bots with something for you in Waiting, the rest on the shelf; no card for the main bot or a group with no question", () => {
     const byBot = new Map(data.bots.map((entry) => [entry.botId, entry]));
     const lanes = boardLanes(bots, byBot, waiting);
@@ -296,9 +307,7 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
       expect(approval.querySelector("code")!.textContent).toBe("npm publish --tag next");
       expect(approval.querySelector(".wb-ask-age")!.textContent).toBe("20m ago");
       const question = host.querySelector(`.lane-waiting [data-bot="${asking.id}"] .wb-ask.question`)!;
-      expect(question.querySelector(".wb-ask-open")!.textContent).toBe("Answer");
-      await act(async () => question.querySelector<HTMLButtonElement>(".wb-ask-open")!.click());
-      expect(opened.at(-1)).toBe(asking.id);
+      expect(question.querySelector(".wb-ask-open")).toBeNull();
       expect([...host.querySelectorAll(".quiet-pill .name")].map((pill) => pill.textContent)).toEqual(["Pinned", "Fresh", "Stale", "Silent"]);
       expect(host.querySelector(`.quiet-pill[data-bot="${fresh.id}"]`)!.className).toContain("ready");
       expect(host.querySelector(".wb-inactive-toggle")).toBeNull();
@@ -306,6 +315,22 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
       (host.querySelector(".lane-waiting") as any).scrollIntoView = () => { scrolled = true; };
       await act(async () => host.querySelector<HTMLButtonElement>('[data-metric="Waiting on you"]')!.click());
       expect(scrolled).toBe(true);
+    });
+
+    it("keeps unanswered choices accessible without an Answer button for a declarative excerpt", async () => {
+      const excerpt = "**Codex 慢，主因是它的工作方式，不是啟動。** 我抽查過，設定值和程式位置都對得上。";
+      await act(async () => root.render(createElement(Whiteboard, {
+        client: boardClient(), bots: [main, asking], mainMessages: [], mainBotId: MAIN,
+        waiting: { items: [{ botId: asking.id, messageId: id(90), text: excerpt }], doing: {} },
+        components: {}, look: "original", now, statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: (id: string) => opened.push(id), onError: () => {}, refreshMs: 0,
+      })));
+      expect(host.querySelector(".wb-ask-text")?.textContent).toBe(excerpt);
+      expect(host.querySelector(".wb-pill")?.textContent).toBe("1 waiting");
+      expect(host.querySelector(".wb-ask.question button")).toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>(".wb-card-head")!.click());
+      expect(host.querySelector(".wb-report .wb-ask.question button")).toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>(".wb-report-chat")!.click());
+      expect(opened.at(-1)).toBe(asking.id);
     });
 
     it("opens the shelf's details list and keeps it open for the next start", async () => {
