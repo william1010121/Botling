@@ -82,6 +82,7 @@ import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type 
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
 import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
+import { approvalSummary, doneDays, doneLogFile, readDoneLog, recordDone, type DoneDay, type DoneLog } from "./whiteboard-data";
 import type { CatchUpChat } from "./catchup";
 import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
@@ -461,6 +462,8 @@ export class Bot {
   private pins: PinRecord[] = [];
   /** Its own picture on the main bot's whiteboard (whiteboard.json; the primary's). */
   private whiteboard: WhiteboardRecord | null = null;
+  /** When its tasks were finished (done-days.json; the primary's): read when first needed. */
+  private doneLog: DoneLog | null = null;
   /** Its own components (bot.json `components`, at most 20); null: not given yet. */
   private componentList: string[] | null = null;
   /** What this head's session has been told about components (null: tell it in full). */
@@ -1088,12 +1091,40 @@ export class Bot {
   private saveTasks(): void {
     if (this.options.primary) return this.options.primary.saveTasks();
     if (!this.readOnly) this.store.saveList("tasks.json", this.tasks.tasks);
+    this.keepDoneLog();
     this.emit({ type: "tasks.updated", botId: this.id, tasks: this.taskViews() });
     // Its row's "N tasks" follows.
     const open = shownTasks(this.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length;
     if (open !== this.lastOpenTasks) { this.lastOpenTasks = open; this.updated(); }
   }
   private lastOpenTasks = 0;
+
+  /** Logs tasks that became done (and drops ones open again) in done-days.json, so they outlive tasks.json's pruning. */
+  private keepDoneLog(now = Date.now()): DoneLog {
+    const log = this.doneLog ??= readDoneLog(this.store.loadDoneLog());
+    if (recordDone(log, this.tasks.tasks, now) && !this.readOnly) {
+      try { this.store.saveDoneLog(doneLogFile(log)); } catch (error) { this.log(`done-days.json: ${(error as Error).message}`); }
+    }
+    return log;
+  }
+
+  /** Tasks finished on each of the last 14 days, oldest first (the whiteboard's chart). */
+  doneDays(now = Date.now()): DoneDay[] {
+    if (this.options.primary) return this.options.primary.doneDays(now);
+    return doneDays(this.keepDoneLog(now), now);
+  }
+
+  /** Its tool approvals waiting for you: the tool, what it would run, when it asked (oldest first). */
+  pendingApprovals(): { tool: string; text: string; at: string | null }[] {
+    const out: { tool: string; text: string; at: string | null; date: number }[] = [];
+    for (const bot of [this, this.partner].filter((candidate): candidate is Bot => !!candidate)) {
+      for (const [id, approval] of bot.approvals) {
+        const record = this.owner.records.find((candidate) => candidate.id === id);
+        out.push({ tool: approval.tool.slice(0, 200), text: record ? approvalSummary(record.text) : approval.tool.slice(0, 400), at: record ? swiftDateISO(record.date) : null, date: record?.date ?? Infinity });
+      }
+    }
+    return out.sort((a, b) => a.date - b.date).slice(0, 20).map(({ tool, text, at }) => ({ tool, text, at }));
+  }
 
   /** A user closes a card, independently of whether its owner has finished executing. */
   completeTask(id: string): ResultOf<"task.complete"> {

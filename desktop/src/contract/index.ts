@@ -172,7 +172,8 @@ export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: 
 export const PendingFileView = z.strictObject({ id, name: z.string().max(400), kind: z.enum(["image", "video", "file"]) });
 
 /** One thing waiting on you (1.x's `Workspace.Waiting`): a bot's open question, or its memory's "Waiting on you". */
-export const WaitingItemView = z.strictObject({ botId: BotId, text: z.string().max(400), messageId: id.nullable(), /** A question in a group's chat: the group (1.x's `groupID`). Phase 5a. */ groupId: BotId.optional() });
+export const WaitingItemView = z.strictObject({ botId: BotId, text: z.string().max(400), messageId: id.nullable(), /** A question in a group's chat: the group (1.x's `groupID`). Phase 5a. */ groupId: BotId.optional(),
+  /** When the question was asked (its line's time, ISO-8601); absent for a memory.md line. */ at: z.string().max(40).optional() });
 export type WaitingItemView = z.infer<typeof WaitingItemView>;
 /** What the right panels show: what waits on you across the bots, and each manager's first "In progress" line. */
 export const WaitingView = z.strictObject({
@@ -225,6 +226,14 @@ export const WhiteboardBotView = z.strictObject({
   results: z.array(z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) })).max(12),
   /** The picture it gave its card (<whiteboard>), drawn as a Board tile of that size; null: none (the card shows its tasks ring). */
   picture: WhiteboardPictureView.nullable(),
+  /** Its latest action: the newest entry on its task cards' timelines (a task done, what it does now, what it waits on you for). */
+  latest: z.strictObject({ kind: z.enum(["done", "now", "waiting"]), text: z.string().max(400), at: z.string().max(40) }).nullable().optional(),
+  /** Tasks finished on each of the last 14 days, oldest first (done-days.json, so pruned cards still count); `manual`: closed by you. */
+  doneDays: z.array(z.strictObject({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), done: z.number().int().nonnegative(), manual: z.number().int().nonnegative() })).max(14).optional(),
+  /** The bot in one line (its job, else its first "Current status" line, else its folder's name), for the board's tooltip. */
+  description: z.string().max(400).nullable().optional(),
+  /** Its tool approvals waiting for you, oldest first: the tool and what it would run. */
+  approvals: z.array(z.strictObject({ tool: z.string().max(200), text: z.string().max(400), at: z.string().max(40).nullable() })).max(20).optional(),
 });
 export type WhiteboardBotView = z.infer<typeof WhiteboardBotView>;
 export const WhiteboardView = z.strictObject({

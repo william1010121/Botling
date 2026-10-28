@@ -45,7 +45,8 @@ import { briefConfig, writeBrief } from "./component-brief";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
-import { isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
+import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
+import { botDescription, latestAction } from "./whiteboard-data";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { Conversations } from "./conversations";
@@ -1060,6 +1061,11 @@ First write a test that shows this, then fix it.`;
    * memory's "Waiting on you"; then the main bot's own questions; without what you set aside.
    */
   waiting(): WaitingView {
+    // When a question was asked (its line's time), for the whiteboard's "2h ago".
+    const asked = (chat: Bot | null | undefined, id: string): { at?: string } => {
+      const date = chat?.line(id)?.date;
+      return typeof date === "number" && Number.isFinite(date) ? { at: new Date(fromSwiftDate(date)).toISOString() } : {};
+    };
     const ignored = new Set(readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting));
     const out: WaitingView["items"] = [];
     const doing: WaitingView["doing"] = {};
@@ -1071,14 +1077,14 @@ First write a test that shows this, then fix it.`;
         if (first) doing[profile.id] = first.slice(0, 400);
       }
       const question = this.bots.get(profile.id)?.openQuestion();
-      if (question) out.push({ botId: profile.id, text: firstLine(question.text).slice(0, 400), messageId: question.id });
+      if (question) out.push({ botId: profile.id, text: firstLine(question.text).slice(0, 400), messageId: question.id, ...asked(this.bots.get(profile.id), question.id) });
       else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
-    for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) out.push({ botId: MAIN_BOT_ID, text: firstLine(question.text).slice(0, 400), messageId: question.id });
+    for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) out.push({ botId: MAIN_BOT_ID, text: firstLine(question.text).slice(0, 400), messageId: question.id, ...asked(this.bots.get(MAIN_BOT_ID), question.id) });
     // Questions in group chats: the member that asked (else the group), and the group (1.x's `inGroups`).
     for (const group of this.groups?.groups ?? []) {
       for (const question of this.groups.chat(group.id)?.openQuestions() ?? []) {
-        out.push({ botId: question.sourceID ?? group.id, text: firstLine(question.text).slice(0, 400), messageId: question.id, groupId: group.id });
+        out.push({ botId: question.sourceID ?? group.id, text: firstLine(question.text).slice(0, 400), messageId: question.id, groupId: group.id, ...asked(this.groups.chat(group.id), question.id) });
       }
     }
     return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing };
@@ -1098,10 +1104,13 @@ First write a test that shows this, then fix it.`;
       // Read and parsed once per change of the file (MemoryFiles), not on every ask.
       const file = join(profile.folder, profile.memoryPath);
       const items = (section: "currentStatus" | "inProgress" | "decided") => (profile.problem ? [] : this.memoryFiles.items(file, section).slice(0, 20).map((item) => item.slice(0, 400)));
+      const currentStatus = items("currentStatus");
+      const tasks = bot.taskViews().slice(-100);
       out.push({
-        botId: profile.id, currentStatus: items("currentStatus"), inProgress: items("inProgress"), decided: items("decided"),
-        tasks: bot.taskViews().slice(-100), results: bot.results().slice(0, 12).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) })),
+        botId: profile.id, currentStatus, inProgress: items("inProgress"), decided: items("decided"),
+        tasks, results: bot.results().slice(0, 12).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) })),
         picture: bot.whiteboardPicture(),
+        latest: latestAction(tasks), doneDays: bot.doneDays(), description: botDescription(profile.job, currentStatus[0], profile.folder), approvals: bot.pendingApprovals(),
       });
       // Shown now: a picture whose command the user allowed runs again (at most every 30 s), as a pin "when shown".
       bot.whiteboardShown();

@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
-// The main bot's whiteboard (Whiteboard.tsx): cards grouped by group chat, then projects and bots;
-// a card's highlight, waiting count and task bar from the bots' own data; pressed, the report with
-// only the parts that have something in them; and the main bot's Chat / Board / Whiteboard switch.
+// The main bot's whiteboard (Whiteboard.tsx): the summary (numbers, donuts, where the open work is,
+// tasks finished), the Waiting on you and Running lanes and the Idle & asleep shelf; a card's latest
+// line, waiting items and task bar from the bots' own data; pressed, the report with only the parts
+// that have something in them; and the main bot's Chat / Board / Whiteboard switch.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { PROTOCOL_VERSION, type BotView, type ResultOf, type TaskView, type WaitingView, type WhiteboardView } from "../../src/contract";
+import { PROTOCOL_VERSION, type BotView, type ResultOf, type TaskView, type WaitingView, type WhiteboardBotView, type WhiteboardView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
-import { CARD_LINE_WIDTH, INACTIVE_AFTER_MS, Whiteboard, doneByDay, highlight, lineWidth, shortLine, isInactive, lastActive, nextSteps, shownSections, taskCounts, waitingCount, whiteboardSections } from "../../src/renderer/Whiteboard";
+import { CARD_LINE_WIDTH, SHELF_KEY, Whiteboard, ageLabel, boardLanes, boardWeek, botWeek, dayKey, doneByDay, highlight, lineWidth, shortLine, lastActive, nextSteps, openRanking, quietWeeks, taskCounts, waitingAsks, waitingCount } from "../../src/renderer/Whiteboard";
 import { tempDir } from "../helpers";
 
 const id = (n: number) => `6A0B0000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`;
@@ -41,8 +42,10 @@ const components = { status: { template: '<div class="card" id="s"></div>', vers
 const waiting: WaitingView = { items: [{ botId: site.id, text: "Publish now?", messageId: null }], doing: {} };
 
 describe("whiteboard data", () => {
-  it("groups a group chat's members first, then projects, then bots; no card for the main bot or the group", () => {
-    expect(whiteboardSections(bots).map((section) => [section.title, section.bots.map((entry) => entry.name)])).toEqual([["Writing", ["Paper"]], ["Projects", ["Site"]], ["Bots", ["News"]]]);
+  it("puts the bots with something for you in Waiting, the rest on the shelf; no card for the main bot or a group with no question", () => {
+    const byBot = new Map(data.bots.map((entry) => [entry.botId, entry]));
+    const lanes = boardLanes(bots, byBot, waiting);
+    expect([lanes.waiting, lanes.running, lanes.quiet].map((lane) => lane.map((entry) => entry.name))).toEqual([["Site"], [], ["Paper", "News"]]);
   });
   it("takes the highlight from the bot's own words and counts what waits on you", () => {
     expect(highlight(site, data.bots[0], waiting)).toBe("The theme is live.");
@@ -74,7 +77,7 @@ describe("whiteboard: terse cards (one short line, as the approved design)", () 
     expect(lineWidth(line)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
     expect(line.startsWith("token-speed 是 Rust CLI")).toBe(true);
   });
-  it("draws no empty task bar on a card with no tasks, and keeps the main bot's reply to a short excerpt", async () => {
+  it("draws no empty task bar for a bot with no tasks, and keeps the main bot's reply to a short excerpt", async () => {
     const host = document.createElement("div"); document.body.append(host);
     const root = createRoot(host); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     let receive: (value: unknown) => void = () => {};
@@ -90,9 +93,9 @@ describe("whiteboard: terse cards (one short line, as the approved design)", () 
         statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
       })));
       const card = host.querySelector(`.wb-card[data-bot="${site.id}"]`)!;
-      expect(lineWidth(card.querySelector(".wb-highlight")!.textContent!)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
+      expect(lineWidth(card.querySelector(".wb-latest .txt")!.textContent!)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
       expect(card.querySelector(".wb-statebar")).not.toBeNull();
-      expect(host.querySelector(`.wb-card[data-bot="${paper.id}"] .wb-statebar`)).toBeNull();
+      expect(host.querySelector(`[data-bot="${paper.id}"] .wb-statebar`)).toBeNull();
       const excerpt = host.querySelector(".wb-main-reply")!.textContent!;
       expect(excerpt).not.toContain("第二段");
       expect(lineWidth(excerpt)).toBeLessThanOrEqual(2 * CARD_LINE_WIDTH + 1);
@@ -102,101 +105,160 @@ describe("whiteboard: terse cards (one short line, as the approved design)", () 
   });
 });
 
-describe("whiteboard: bots gone quiet", () => {
+describe("whiteboard: lanes, ranking, the week and the shelf", () => {
   const now = Date.parse("2026-10-26T12:00:00Z");
   const old = "2026-10-23T09:00:00Z";
   const recent = new Date(now - 3 * 3_600_000).toISOString();
   const none: WaitingView = { items: [], doing: {} };
-  const empty = (botId: string, tasks: TaskView[] = []) => ({ botId, currentStatus: [], inProgress: [], decided: [], tasks, results: [], picture: null });
+  const empty = (botId: string, tasks: TaskView[] = [], extra: Partial<WhiteboardBotView> = {}): WhiteboardBotView => ({ botId, currentStatus: [], inProgress: [], decided: [], tasks, results: [], picture: null, ...extra });
   const stale = bot(31, "Stale", "bot", { lastActivity: old });
-  const fresh = bot(32, "Fresh", "bot", { lastActivity: recent });
+  const fresh = bot(32, "Fresh", "bot", { lastActivity: recent, phase: "awake" });
   const asking = bot(33, "Asking", "bot", { lastActivity: old });
   const busy = bot(34, "Busy", "bot", { lastActivity: old, working: true });
   const helped = bot(35, "Helped", "bot", { lastActivity: old, subagents: 1 });
-  const approving = bot(36, "Approving", "bot", { lastActivity: old, approvals: 1 });
+  const approving = bot(36, "Approving", "bot", { lastActivity: old, approvals: 1, working: true });
   const pinnedBot = bot(37, "Pinned", "bot", { lastActivity: old });
-  const taskNews = bot(38, "TaskNews", "bot", { lastActivity: old });
   const silent = bot(39, "Silent", "bot", { lastActivity: null });
-  const asks: WaitingView = { items: [{ botId: asking.id, text: "Which one?", messageId: null }], doing: {} };
+  const asks: WaitingView = { items: [{ botId: asking.id, text: "Which one?", messageId: "Q1", at: new Date(now - 2 * 3_600_000).toISOString() }], doing: {} };
 
-  it("waits 48 hours, counting a task card's change as activity", () => {
-    expect(INACTIVE_AFTER_MS).toBe(48 * 3_600_000);
-    expect(lastActive(stale, undefined)).toBe(Date.parse(old));
-    expect(lastActive(taskNews, empty(taskNews.id, [task("t", "Draft", "done", recent)]))).toBe(Date.parse(recent));
-    expect(lastActive(silent, undefined)).toBeNull();
+  it("puts a bot once: Waiting (even while running), else Running, else the shelf (pinned, then ready, then latest)", () => {
+    const byBot = new Map([[helped.id, empty(helped.id)]]);
+    const lanes = boardLanes([main, stale, fresh, asking, busy, helped, approving, pinnedBot, silent, group], byBot, asks, new Set([pinnedBot.id]));
+    expect(lanes.waiting.map((entry) => entry.name)).toEqual(["Asking", "Approving"]);
+    expect(lanes.running.map((entry) => entry.name)).toEqual(["Busy", "Helped"]);
+    expect(lanes.quiet.map((entry) => entry.name)).toEqual(["Pinned", "Fresh", "Stale", "Silent"]);
+    // A running task's subagent at work counts as running.
+    const atWork = boardLanes([stale], new Map([[stale.id, empty(stale.id, [task("r", "Build", "running", old, { atWork: true })])]]), none);
+    expect(atWork.running.map((entry) => entry.name)).toEqual(["Stale"]);
+    // A group chat shows only with a question of its own.
+    const groupAsk: WaitingView = { items: [{ botId: group.id, text: "Who writes?", messageId: "Q2", groupId: group.id }], doing: {} };
+    expect(boardLanes([group], new Map(), groupAsk).waiting.map((entry) => entry.name)).toEqual(["Writing"]);
   });
 
-  it("hides a bot quiet for 48 hours with nothing waiting and nothing running; keeps waiting, working, recent and pinned ones", () => {
-    const pins = new Set([pinnedBot.id]);
-    const hidden = (entry: BotView, waitingView = none, data = empty(entry.id)) => isInactive(entry, data, waitingView, now, pins);
-    expect(hidden(stale)).toBe(true);
-    expect(hidden(silent)).toBe(true);
-    expect(hidden(fresh)).toBe(false);
-    expect(hidden(asking, asks)).toBe(false);
-    expect(hidden(busy)).toBe(false);
-    expect(hidden(helped)).toBe(false);
-    expect(hidden(approving)).toBe(false);
-    expect(hidden(pinnedBot)).toBe(false);
-    expect(hidden(taskNews, none, empty(taskNews.id, [task("t", "Draft", "done", recent)]))).toBe(false);
-    expect(hidden(stale, none, empty(stale.id, [task("w", "Pick", "waiting", old)]))).toBe(false);
-    expect(hidden(stale, none, empty(stale.id, [task("r", "Build", "running", old, { atWork: true })]))).toBe(false);
-    // Exactly at the line: still shown.
-    expect(isInactive(bot(40, "Edge", "bot", { lastActivity: new Date(now - INACTIVE_AFTER_MS).toISOString() }), undefined, none, now, new Set())).toBe(false);
+  it("lists every thing waiting on you oldest first, with its kind, age and the chat that answers it", () => {
+    const ago = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
+    const entry = bot(50, "Many", "bot", { approvals: 2 });
+    const view: WaitingView = { items: [{ botId: entry.id, text: "Ship it?", messageId: "Q3", at: ago(1) }, { botId: entry.id, text: "Pick a name", messageId: null }, { botId: entry.id, text: "In the group", messageId: "Q4", groupId: group.id, at: ago(5) }], doing: {} };
+    const wb = empty(entry.id, [task("w", "Domain", "waiting", ago(9), { blocked: "Which domain?", history: [{ kind: "waiting", at: ago(3), text: "Which domain?" }] })],
+      { approvals: [{ tool: "Bash", text: "npm publish", at: ago(2) }] });
+    const list = waitingAsks(entry, view, wb);
+    expect(list).toHaveLength(waitingCount(entry, view, wb));
+    expect(list.map((ask) => [ask.kind, ask.code ?? ask.text, ageLabel(ask.at, now), ask.open])).toEqual([
+      ["question", "In the group", "5h", group.id],
+      ["call", "Domain · Which domain?", "3h", entry.id],
+      ["approval", "npm publish", "2h", entry.id],
+      ["question", "Ship it?", "1h", entry.id],
+      ["call", "Pick a name", null, entry.id],
+      ["approval", "1 tool approval waiting", null, entry.id], // The core named one of two: the other is counted.
+    ]);
+    expect(ageLabel(ago(0.1), now)).toBe("6m");
+    expect(ageLabel(ago(50), now)).toBe("2d");
   });
 
-  it("leaves out sections with no card shown and counts what it hid", () => {
-    const sections = whiteboardSections([main, stale, fresh, bot(41, "Old project", "manager", { lastActivity: old })]);
-    const result = shownSections(sections, (entry) => entry.lastActivity === old);
-    expect(result.hidden).toBe(2);
-    expect(result.sections.map((section) => [section.title, section.bots.map((entry) => entry.name)])).toEqual([["Bots", ["Fresh"]]]);
+  it("ranks the open work by what waits on you, then what is under way", () => {
+    const a = bot(51, "A", "bot", { approvals: 1 });
+    const b = bot(52, "B", "bot");
+    const c = bot(53, "C", "bot");
+    const byBot = new Map([[b.id, empty(b.id, [task("1", "One", "running", old), task("2", "Two", "pending", old)])], [c.id, empty(c.id, [task("3", "Three", "done", old)])]]);
+    expect(openRanking([main, a, b, c], byBot, none).map((row) => [row.bot.name, row.waiting, row.active])).toEqual([["A", 1, 0], ["B", 0, 2]]);
+  });
+
+  it("sums the tasks finished on each of the last seven days across the bots, with last week's sum from the done log", () => {
+    const day = (back: number) => { const date = new Date(now); date.setDate(date.getDate() - back); return dayKey(date.getTime()); };
+    const logged = empty("x", [], { doneDays: Array.from({ length: 14 }, (_, index) => ({ day: day(13 - index), done: index === 13 ? 2 : index === 3 ? 4 : 1, manual: 0 })) });
+    // An older core (no done log): its done cards by their last change.
+    const older = empty("y", [task("d", "Done", "done", new Date(now).toISOString())]);
+    const week = boardWeek([logged, older, undefined], now);
+    expect(week.days.map((entry) => entry.count)).toEqual([1, 1, 1, 1, 1, 1, 3]);
+    expect(week.days.at(-1)).toMatchObject({ label: "Today", today: true });
+    expect(week.week).toBe(9);
+    expect(week.lastWeek).toBe(10);
+    expect(botWeek(logged, now)).toEqual([1, 1, 1, 1, 1, 1, 2]);
+    expect(boardWeek([older], now).lastWeek).toBeNull();
+  });
+
+  it("says a bot is quiet from three weeks on", () => {
+    expect(quietWeeks(bot(60, "Q", "bot", { lastActivity: new Date(now - 26 * 86_400_000).toISOString() }), undefined, now)).toBe(3);
+    expect(quietWeeks(bot(61, "R", "bot", { lastActivity: new Date(now - 20 * 86_400_000).toISOString() }), undefined, now)).toBeNull();
+    expect(quietWeeks(silent, undefined, now)).toBeNull();
+    expect(lastActive(stale, empty(stale.id, [task("t", "Draft", "done", recent)]))).toBe(Date.parse(recent));
   });
 
   describe("on the page", () => {
     let host: HTMLDivElement;
     let root: ReturnType<typeof createRoot>;
-    beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; });
+    beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; try { localStorage.removeItem(SHELF_KEY); } catch { /* none */ } });
     afterEach(async () => { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; });
-    const quietClient = () => {
+    const boardClient = (view: WhiteboardView = { bots: [] }) => {
       let receive: (value: unknown) => void = () => {};
       return new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
-        const result = envelope.cmd.type === "whiteboard.view" ? { bots: [] } : {};
+        const result = envelope.cmd.type === "whiteboard.view" ? view : {};
         queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result }));
       } });
     };
-    const render = (lang?: string) => act(async () => root.render(createElement(Whiteboard, {
-      client: quietClient(), bots: [main, stale, fresh, asking, busy, pinnedBot, silent], waiting: asks, components: {}, look: "original", now, mainMessages: [], mainBotId: MAIN, refreshMs: 0,
-      pinned: [pinnedBot.id], lang: lang as any, statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
+    const opened: string[] = [];
+    const render = (lang?: string, view?: WhiteboardView, list = [main, stale, fresh, asking, busy, approving, pinnedBot, silent]) => act(async () => root.render(createElement(Whiteboard, {
+      client: boardClient(view), bots: list, waiting: asks, components: {}, look: "original", now, mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+      pinned: [pinnedBot.id], lang: lang as any, statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: (botId: string) => opened.push(botId), onError: () => {},
     })));
-    const shownNames = () => [...host.querySelectorAll(".wb-card .wb-card-name")].map((name) => name.textContent);
+    const names = (selector: string) => [...host.querySelectorAll(`${selector} .wb-card-name`)].map((name) => name.textContent);
 
-    it("shows only the active bots, counts only them, and the toggle at the end reveals the rest", async () => {
-      await render();
-      expect(shownNames()).toEqual(["Fresh", "Asking", "Busy", "Pinned"]);
-      expect(host.querySelector(".wb-bar-count")?.textContent).toBe("4 bots · 0 tasks · 1 waiting on you");
-      const toggle = host.querySelector<HTMLButtonElement>(".wb-inactive-toggle")!;
-      expect(toggle.textContent).toBe("Show 2 inactive");
-      expect(toggle.getAttribute("aria-expanded")).toBe("false");
-      expect(host.querySelector(".wb-sections")!.lastElementChild).toBe(toggle.parentElement);
-      await act(async () => toggle.click());
-      expect(shownNames()).toEqual(["Stale", "Fresh", "Asking", "Busy", "Pinned", "Silent"]);
-      expect(host.querySelector(".wb-bar-count")?.textContent).toBe("6 bots · 0 tasks · 1 waiting on you");
-      expect(toggle.textContent).toBe("Hide inactive");
-      expect(toggle.getAttribute("aria-expanded")).toBe("true");
-      await act(async () => toggle.click());
-      expect(shownNames()).toHaveLength(4);
-    });
-
-    it("says the toggle in the app's language", async () => {
-      await render("zh-Hant");
-      expect(host.querySelector(".wb-inactive-toggle")?.textContent).toBe("顯示 2 個不活躍的");
-    });
-
-    it("has no toggle when nothing is hidden", async () => {
-      await act(async () => root.render(createElement(Whiteboard, {
-        client: quietClient(), bots: [main, fresh], waiting: none, components: {}, look: "original", now, mainMessages: [], mainBotId: MAIN, refreshMs: 0,
-        statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
-      })));
+    it("draws the numbers, the lanes and the quiet bots as dimmed pills; the waiting number scrolls to its lane", async () => {
+      await render(undefined, { bots: [empty(approving.id, [], { approvals: [{ tool: "Bash", text: "npm publish --tag next", at: new Date(now - 20 * 60_000).toISOString() }] })] });
+      const metric = (name: string) => host.querySelector(`[data-metric="${name}"]`)!;
+      expect(metric("Bots").querySelector(".wb-metric-n")!.textContent).toBe("7");
+      expect(metric("Bots").querySelector(".wb-metric-s")!.textContent).toBe("2 active · 2 waiting · 3 asleep");
+      expect(metric("Waiting on you").querySelector(".wb-metric-n")!.textContent).toBe("2");
+      expect(metric("Waiting on you").querySelector(".wb-metric-s")!.textContent).toBe("from 2 bots · oldest 2 hours");
+      expect(metric("Running").querySelector(".wb-metric-s")!.textContent).toBe("0 tasks under way · 1 also waiting");
+      expect(names(".lane-waiting")).toEqual(["Asking", "Approving"]);
+      expect(names(".lane-running")).toEqual(["Busy"]);
+      // Running and waiting: in Waiting only, marked Running.
+      expect(host.querySelector(`.lane-waiting [data-bot="${approving.id}"] .wb-status`)!.textContent).toBe("Running");
+      const approval = host.querySelector(`.lane-waiting [data-bot="${approving.id}"] .wb-ask.approval`)!;
+      expect(approval.querySelector(".wb-ask-kind")!.textContent).toBe("Approval");
+      expect(approval.querySelector("code")!.textContent).toBe("npm publish --tag next");
+      expect(approval.querySelector(".wb-ask-age")!.textContent).toBe("20m ago");
+      const question = host.querySelector(`.lane-waiting [data-bot="${asking.id}"] .wb-ask.question`)!;
+      expect(question.querySelector(".wb-ask-open")!.textContent).toBe("Answer");
+      await act(async () => question.querySelector<HTMLButtonElement>(".wb-ask-open")!.click());
+      expect(opened.at(-1)).toBe(asking.id);
+      expect([...host.querySelectorAll(".quiet-pill .name")].map((pill) => pill.textContent)).toEqual(["Pinned", "Fresh", "Stale", "Silent"]);
+      expect(host.querySelector(`.quiet-pill[data-bot="${fresh.id}"]`)!.className).toContain("ready");
       expect(host.querySelector(".wb-inactive-toggle")).toBeNull();
+      let scrolled = false;
+      (host.querySelector(".lane-waiting") as any).scrollIntoView = () => { scrolled = true; };
+      await act(async () => host.querySelector<HTMLButtonElement>('[data-metric="Waiting on you"]')!.click());
+      expect(scrolled).toBe(true);
+    });
+
+    it("opens the shelf's details list and keeps it open for the next start", async () => {
+      await render();
+      const toggle = () => host.querySelector<HTMLButtonElement>(".wb-shelf-toggle")!;
+      expect(toggle().textContent).toBe("Show details");
+      expect(toggle().getAttribute("aria-expanded")).toBe("false");
+      await act(async () => toggle().click());
+      expect(host.querySelectorAll(".quiet-row:not(.quiet-head)")).toHaveLength(4);
+      expect(host.querySelector(".quiet-pill")).toBeNull();
+      expect(toggle().textContent).toBe("Show less");
+      expect(localStorage.getItem(SHELF_KEY)).toBe("1");
+      await act(async () => root.unmount());
+      root = createRoot(host);
+      await render();
+      expect(host.querySelectorAll(".quiet-row:not(.quiet-head)")).toHaveLength(4);
+      await act(async () => toggle().click());
+      expect(localStorage.getItem(SHELF_KEY)).toBe("0");
+    });
+
+    it("says the shelf's toggle in the app's language", async () => {
+      await render("zh-Hant");
+      expect(host.querySelector(".wb-shelf-toggle")?.textContent).toBe("顯示詳情");
+    });
+
+    it("has no shelf when no bot is quiet", async () => {
+      await render(undefined, undefined, [main, busy]);
+      expect(host.querySelector(".lane-quiet")).toBeNull();
+      expect(names(".lane-running")).toEqual(["Busy"]);
     });
   });
 });
@@ -223,16 +285,21 @@ describe("whiteboard page", () => {
       statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: (botId: string) => opened.push(botId), onError: () => {},
     })));
     expect(commands[0]).toEqual({ type: "whiteboard.view" });
-    const card = host.querySelector<HTMLButtonElement>(`.wb-card[data-bot="${site.id}"]`)!;
+    const card = host.querySelector<HTMLElement>(`.wb-card[data-bot="${site.id}"]`)!;
     expect(card.className).toContain("waiting");
     expect(card.querySelector(".wb-pill")?.textContent).toBe("2 waiting");
-    expect(card.querySelector(".wb-highlight")?.textContent).toBe("The theme is live.");
-    expect(card.querySelector(".wb-ring")?.getAttribute("aria-label")).toBe("1 of 3 tasks done");
-    expect(host.querySelector(`.wb-card[data-bot="${paper.id}"] .wb-highlight`)?.textContent).toBe("Nothing written yet");
-    expect(host.querySelector(`.wb-card[data-bot="${MAIN}"]`)).toBeNull();
-    expect(host.querySelector(".wb-main-line")?.textContent).toBe("2 waiting on you: 2 from Site.");
+    expect([...card.querySelectorAll(".wb-ask-text")].map((text) => text.textContent)).toEqual(["Pick a domain · Which domain?", "Publish now?"]); // Oldest first; a memory line has no time.
+    expect([...card.querySelectorAll(".wb-ask-open")].map((button) => button.textContent)).toEqual(["Decide", "Decide"]);
+    expect(card.querySelector(".wb-latest .txt")?.textContent).toBe("The theme is live.");
+    expect(card.querySelector(".wb-foot-count")?.textContent).toBe("1/3");
+    expect(card.querySelector(".wb-ring")).toBeNull();
+    expect(host.querySelector(`.quiet-pill[data-bot="${paper.id}"]`)).not.toBeNull();
+    expect(host.querySelector(`[data-bot="${MAIN}"]`)).toBeNull();
+    // Where the open work is: Site, 2 waiting on you and 1 under way.
+    expect(host.querySelector(`.wb-rank li[data-bot="${site.id}"] .wb-rank-v`)?.textContent).toBe("2 · 1");
+    expect(host.querySelector('[data-donut="tasks"] svg')?.getAttribute("aria-label")).toBe("tasks: Done 1, Under way 1, Waiting 1");
 
-    await act(async () => card.click());
+    await act(async () => card.querySelector<HTMLButtonElement>(".wb-card-open")!.click());
     const report = host.querySelector(`.wb-report[data-bot="${site.id}"]`)!;
     expect([...report.querySelectorAll("[data-part]")].map((part) => part.getAttribute("data-part"))).toEqual(["sum", "ask", "made", "trend", "log", "decided", "next"]);
     expect(report.querySelector('[data-part="ask"]')?.textContent).toContain("Publish now?");
@@ -244,7 +311,7 @@ describe("whiteboard page", () => {
     expect(host.querySelector(".wb-report")).toBeNull();
 
     // A bot with nothing written: the report says so, with no empty parts.
-    await act(async () => host.querySelector<HTMLButtonElement>(`.wb-card[data-bot="${paper.id}"]`)!.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(`.quiet-pill[data-bot="${paper.id}"]`)!.click());
     expect(host.querySelectorAll(".wb-report [data-part]")).toHaveLength(0);
     expect(host.querySelector(".wb-report-empty")).not.toBeNull();
     await act(async () => host.querySelector<HTMLButtonElement>(".wb-report-chat")!.click());
@@ -252,19 +319,30 @@ describe("whiteboard page", () => {
     expect(host.querySelector(".wb-report")).toBeNull();
   });
 
-  it("draws a bot's own picture in its card (wide for 2x1) instead of the ring; one waiting for your OK keeps the ring and asks in the report", async () => {
+  it("draws a running bot's own picture on its card (wide for 2x1); one waiting for your OK is not drawn and asks in the report", async () => {
     const saved = data.bots.map((entry) => entry.picture);
     data.bots[0]!.picture = display({ size: "2x1" });
     data.bots[1]!.picture = display({ name: "gitlog", data: "null", command: "printf x", folder: "/tmp/paper", status: "approve" });
+    const working = bots.map((entry) => (entry.id === site.id ? { ...entry, working: true } : entry));
+    const calm: WaitingView = { items: [], doing: {} };
+    const settled: WhiteboardView = { bots: [{ ...data.bots[0]!, tasks: data.bots[0]!.tasks.filter((entry) => entry.state !== "waiting") }, ...data.bots.slice(1)] };
+    const pictures = () => {
+      let receive: (value: unknown) => void = () => {};
+      return new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
+        commands.push(envelope.cmd);
+        const result = envelope.cmd.type === "whiteboard.view" ? settled : envelope.cmd.type === "card.page" ? { url: `botling-card://page/${commands.length}` } : envelope.cmd.type === "whiteboard.allow" ? { accepted: true } : {};
+        queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result }));
+      } });
+    };
     try {
       await act(async () => root.render(createElement(Whiteboard, {
-        client: client(), bots, waiting, components: { ...components, gitlog: components.status }, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+        client: pictures(), bots: working, waiting: calm, components: { ...components, gitlog: components.status }, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
         statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
       })));
-      const card = host.querySelector(`.wb-card[data-bot="${site.id}"]`)!;
+      const card = host.querySelector(`.lane-running .wb-card[data-bot="${site.id}"]`)!;
       for (let i = 0; i < 50 && !card.querySelector("iframe"); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
       expect(card.className).toContain("wide");
-      expect(card.querySelector(".wb-ring")).toBeNull();
+      expect(card.querySelector(".wb-next")?.textContent).toBe("Next · Dark mode");
       const frame = card.querySelector<HTMLIFrameElement>("iframe.wb-picture-frame")!;
       expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
       expect(frame.getAttribute("src")).toMatch(/^botling-card:\/\/page\//);
@@ -272,7 +350,7 @@ describe("whiteboard page", () => {
       expect(page.html).toContain('data-size="2x1" data-surface="board" data-fill');
       expect(page.html).toContain('"ok":true');
       // Waiting for your OK: no frame, and the report says what would run where, with Allow.
-      const paperCard = host.querySelector<HTMLButtonElement>(`.wb-card[data-bot="${paper.id}"]`)!;
+      const paperCard = host.querySelector<HTMLButtonElement>(`.quiet-pill[data-bot="${paper.id}"]`)!;
       expect(paperCard.querySelector("iframe")).toBeNull();
       await act(async () => paperCard.click());
       const ask = host.querySelector(".wb-picture-ask")!;
@@ -354,7 +432,7 @@ describe("whiteboard page: asks with the stamp it has", () => {
       client, bots, waiting, components, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 40,
       statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
     })));
-    const highlight = () => host.querySelector(`.wb-card[data-bot="${site.id}"] .wb-highlight`)?.textContent;
+    const highlight = () => host.querySelector(`.wb-card[data-bot="${site.id}"] .wb-latest .txt`)?.textContent;
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
     expect(asked[0]).toEqual({ type: "whiteboard.view" });
     expect(asked.slice(1).length).toBeGreaterThan(0);

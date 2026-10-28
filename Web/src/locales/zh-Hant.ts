@@ -434,6 +434,6 @@ export const zhHant: Dictionary = {
   "taskCard.stale": "可能卡住",
   "catchup.showingMessages": "下方顯示全部 {n} 則訊息",
   "catchup.rangeEnd": "摘要範圍結束",
-  "whiteboard.showInactive": "顯示 {n} 個不活躍的",
-  "whiteboard.hideInactive": "隱藏不活躍的",
+  "whiteboard.showDetails": "顯示詳情",
+  "whiteboard.showLess": "收起",
 };

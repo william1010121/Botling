@@ -437,8 +437,8 @@ export const en = {
   "taskCard.stale": "May be stuck",
   "catchup.showingMessages": "Showing all {n} messages below",
   "catchup.rangeEnd": "End of summary range",
-  "whiteboard.showInactive": ["Show {n} inactive", "Show {n} inactive"],
-  "whiteboard.hideInactive": "Hide inactive",
+  "whiteboard.showDetails": "Show details",
+  "whiteboard.showLess": "Show less",
 } as const satisfies Record<string, Word>;
 
 export type Key = keyof typeof en;

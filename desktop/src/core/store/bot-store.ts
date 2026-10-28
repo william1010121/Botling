@@ -3,6 +3,7 @@
 //   bot.json         its settings (model, alwaysAllowed, unread, …); keys 2.0 does not use are kept
 //   subagents.json, tasks.json, pins.json, specs.json   kept as they are (2.0 does not use them yet)
 //   head.json        2.0 only: the claude session its head resumes
+//   done-days.json   2.0 only: when its tasks were finished, the last 14 days (the whiteboard's chart)
 // Every write is atomic. A file that exists but cannot be read is never replaced: the bot is
 // reported as broken instead, and the file stays for the user (or 1.x) to look at.
 import { existsSync, readFileSync, rmSync } from "node:fs";
@@ -205,6 +206,15 @@ export class BotStore {
   saveWhiteboard(value: unknown) {
     if (value === null) rmSync(this.path("whiteboard.json"), { force: true });
     else writeFileAtomic(this.path("whiteboard.json"), JSON.stringify(value));
+  }
+
+  /** When its tasks were finished (done-days.json, 2.0 only; `whiteboard-data.ts`), as kept; null: none or unreadable. */
+  loadDoneLog(): unknown {
+    try { return readJSON(this.path("done-days.json")) ?? null; } catch { return null; }
+  }
+
+  saveDoneLog(value: unknown) {
+    writeFileAtomic(this.path("done-days.json"), JSON.stringify(value));
   }
 
   loadHead(): HeadState | null {

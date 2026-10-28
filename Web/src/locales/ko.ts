@@ -434,6 +434,6 @@ export const ko: Dictionary = {
   "taskCard.stale": "멈췄을 수 있음",
   "catchup.showingMessages": "아래에 메시지 {n}개 표시 중",
   "catchup.rangeEnd": "요약 범위 끝",
-  "whiteboard.showInactive": "비활성 {n}개 보기",
-  "whiteboard.hideInactive": "비활성 숨기기",
+  "whiteboard.showDetails": "자세히 보기",
+  "whiteboard.showLess": "접기",
 };

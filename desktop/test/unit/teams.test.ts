@@ -257,7 +257,7 @@ describe("teams, bots and settling through the core", () => {
     const copy = await until(async () => (await c.chat()).messages.find((m: any) => m.role === "notice" && m.text === "Garden: Which way?"), { what: "the copy" });
     expect(copy.choices.map((choice: any) => choice.label)).toEqual(["Fast", "Slow"]);
     // The copy is the project's question, not the main bot's own (what waits on you lists it once).
-    expect((await c.call({ type: "waiting.list" })).items).toEqual([{ botId, text: "Which way?", messageId: question.id }]);
+    expect((await c.call({ type: "waiting.list" })).items).toEqual([{ botId, text: "Which way?", messageId: question.id, at: expect.any(String) }]); // `at`: when it was asked (the whiteboard's age).
     await c.call({ type: "chat.choose", botId: MAIN, messageId: copy.id, index: 1 });
     await until(async () => (await c.chat(botId)).messages.find((m: any) => m.id === question.id)?.chosen === 1, { what: "the pick in the project's chat" });
     await until(async () => (await c.chat(botId)).messages.some((m: any) => m.role === "user" && m.text === "Slow"), { what: "the pick as the project's message" });

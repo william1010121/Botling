@@ -434,6 +434,6 @@ export const ja: Dictionary = {
   "taskCard.stale": "止まっているかも",
   "catchup.showingMessages": "下に全 {n} 件を表示中",
   "catchup.rangeEnd": "要約範囲の終わり",
-  "whiteboard.showInactive": "非アクティブな {n} 件を表示",
-  "whiteboard.hideInactive": "非アクティブを隠す",
+  "whiteboard.showDetails": "詳細を表示",
+  "whiteboard.showLess": "閉じる",
 };
