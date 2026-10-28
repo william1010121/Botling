@@ -1,13 +1,12 @@
 // Antigravity's event protocol is NOT Claude's stream-json protocol.
 // Contract: https://antigravity.google/docs/cli/headless/ (checked 2026-10-28).
 import { randomUUID } from "node:crypto";
-import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
-import { childEnvironment } from "./runner";
-import { resolveExecutable } from "../process/executable";
+import { type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import type { HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
 
-export const AGY_LIMITATIONS = "Antigravity uses its existing CLI permissions. Actions needing approval are refused in headless mode; Botling cannot grant them. Shared-engine chats, managed workers, plugin injection and image input are unavailable.";
+export const AGY_EXECUTION_BLOCKED = "Antigravity execution is blocked: the CLI has no verified pre-task policy barrier. No process or task was started. Choose another engine until a safe transport is available.";
+export const AGY_LIMITATIONS = AGY_EXECUTION_BLOCKED;
 export interface AgyConfig {
   command: string;
   prefixArgs?: string[];
@@ -32,6 +31,7 @@ const text = (v: any): string => typeof v === "string" ? v : "";
 const display = (v: any): string => typeof v === "string" ? v : v == null ? "" : JSON.stringify(v);
 
 export class AgyStream {
+  private state: "awaiting-init" | "ready" | "failed" = "awaiting-init";
   private tools = new Set<string>();
   private endedTools = new Set<string>();
   private textStep: string | null = null;
@@ -40,14 +40,24 @@ export class AgyStream {
   private usageSteps = new Set<string>();
   private usage = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
   parse(line: string): StreamItem[] {
-    const event = object(JSON.parse(line));
+    if (this.state === "failed") throw new Error("Antigravity protocol is failed.");
+    let event: Record<string, any>;
+    try { event = object(JSON.parse(line)); }
+    catch (error) { this.state = "failed"; throw error; }
     if (event.event === "init") {
+      const previous = this.state;
+      this.state = "failed";
+      if (previous !== "awaiting-init") throw new Error("Duplicate Antigravity init.");
+      if (!["strict", "request-review"].includes(event.init?.permission_mode)) throw new Error("Antigravity requires strict or request-review permissions.");
       this.session = text(event.conversation_id);
-      // Never present an always-proceed session as review-protected.
-      if (event.init?.permission_mode !== "request-review") throw new Error("Antigravity requires request-review permissions. Botling will not run an always-proceed session.");
       if (!this.session) throw new Error("Antigravity did not provide a conversation ID.");
+      // Observing init is NOT authorization to submit a task; runtime remains blocked.
+      this.state = "ready";
       return [{ kind: "init", sessionId: this.session }];
     }
+    if (this.state !== "ready") { this.state = "failed"; throw new Error("Antigravity event received before validated init."); }
+    const conversation = event.conversation_id ?? event.step_update?.conversation_id ?? event.result?.conversation_id;
+    if (conversation && conversation !== this.session) { this.state = "failed"; throw new Error("Antigravity conversation changed unexpectedly."); }
     if (event.event === "result") {
       const r = object(event.result);
       this.textStep = null;
@@ -96,80 +106,24 @@ export class AgyStream {
   }
 }
 
-/** One persistent, serial stream. Cancellation ends the process group; the next head resumes by ID. */
+/** Deliberately non-executable until a supported, verified policy boundary exists.
+ * No environment flag, fake executable or init event can bypass this boundary.
+ */
 export class AgyHead {
-  private process: ManagedProcess | null = null;
-  private buffer = "";
-  private stderr = "";
-  private stream = new AgyStream();
-  private closed = false;
-  private expected = false;
-  private printed = false;
-  private active = false;
-  private first = true;
-  private exitResolve!: () => void;
-  readonly exited = new Promise<void>(resolve => { this.exitResolve = resolve; });
-  running = false;
-  constructor(readonly config: AgyConfig, private handlers: HeadHandlers, private adapter: ProcessTreeAdapter = processTreeAdapter()) {}
-  get pid() { return this.process?.pid ?? -1; }
-  start() {
-    const env = childEnvironment(this.config.env);
-    this.process = this.adapter.spawn(resolveExecutable(this.config.command, env), [...(this.config.prefixArgs ?? []), ...agyArguments(this.config)], { cwd: this.config.cwd, env });
-    this.running = true;
-    const child = this.process.child;
-    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
-    child.stdin.on("error", () => {});
-    child.stderr.on("data", (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-4000); });
-    child.stdout.on("data", (chunk: string) => {
-      if (this.closed) return;
-      this.printed = true; this.buffer += chunk;
-      if (this.buffer.length > 4_000_000) { this.fail("Antigravity output exceeded the event size limit."); return; }
-      let at: number;
-      while (!this.closed && (at = this.buffer.indexOf("\n")) >= 0) {
-        const line = this.buffer.slice(0, at).trim(); this.buffer = this.buffer.slice(at + 1);
-        if (line) this.line(line);
-      }
-    });
-    let reported = false;
-    const report = (code: number | null, signal: NodeJS.Signals | null, error = "") => {
-      if (reported) return; reported = true;
-      if (!this.closed && this.buffer.trim()) this.line(this.buffer.trim());
-      this.buffer = ""; this.running = false; this.closed = true; this.exitResolve();
-      this.handlers.onExit({ code, signal, stderr: `${this.stderr}\n${error}`.trim(), expected: this.expected, silent: !this.printed });
-    };
-    child.once("error", error => report(null, null, `Cannot start Antigravity (${this.config.command}): ${error.message}`));
-    child.once("close", (code, signal) => report(code, signal));
-  }
-  private line(line: string) {
-    try {
-      for (const item of this.stream.parse(line)) {
-        if (item.kind === "result") this.active = false;
-        this.handlers.onItem(item);
-      }
-    } catch (error) { this.fail(`Antigravity protocol error: ${(error as Error).message}`); }
-  }
-  private fail(error: string) {
-    this.stderr = error; this.closed = true;
-    if (this.active) { this.active = false; this.handlers.onItem({ kind: "result", ok: false, text: "", error, subtype: "ERROR" }); }
-    void this.process?.terminate({ graceMs: 500 });
-  }
-  send(prompt: string, _uuid: string, images: string[] = []) {
+  readonly exited = Promise.resolve();
+  readonly running = false;
+  constructor(readonly config: AgyConfig, _handlers: HeadHandlers, _adapter?: ProcessTreeAdapter) {}
+  get pid() { return -1; }
+  start(): never { throw new Error(AGY_EXECUTION_BLOCKED); }
+  send(_prompt: string, _uuid: string, images: string[] = []): never {
     if (images.length) throw new Error("Antigravity stream input supports text only. Remove image attachments or choose another engine.");
-    if (!this.running || this.closed || !this.process) throw new Error("Antigravity session is closed.");
-    if (this.active) throw new Error("Antigravity accepts one turn at a time.");
-    this.active = true;
-    const content = this.first && this.config.systemPrompt ? `${this.config.systemPrompt}\n\n${AGY_LIMITATIONS}\n\nUser message:\n${prompt}` : prompt;
-    this.first = false;
-    this.process.child.stdin.write(JSON.stringify({ event: "user", message: { content } }) + "\n");
+    throw new Error(AGY_EXECUTION_BLOCKED);
   }
-  answer(_id: string, _allow: boolean, _input: Record<string, unknown>, _message?: string) {
+  answer(_id: string, _allow: boolean, _input: Record<string, unknown>, _message?: string): never {
     throw new Error("Antigravity headless mode cannot receive approval responses; no permission was granted.");
   }
-  allow(_rules: string[]) { throw new Error("Antigravity permission rules cannot be changed from Botling."); }
-  interrupt(): string { const id = randomUUID(); void this.terminate(); return id; }
-  finish() { this.expected = true; this.process?.child.stdin.end(); }
-  async terminate(graceMs = 1500): Promise<TerminateResult> {
-    this.expected = true; this.closed = true;
-    return this.process?.terminate({ graceMs }) ?? { killed: [], forced: false };
-  }
+  allow(_rules: string[]): never { throw new Error("Antigravity permission rules cannot be changed from Botling."); }
+  interrupt(): string { return randomUUID(); }
+  finish() {}
+  async terminate(_graceMs = 1500): Promise<TerminateResult> { return { killed: [], forced: false }; }
 }

@@ -1,4 +1,4 @@
-import { AgyHead, type AgyConfig } from "./agent/agy";
+import { AGY_EXECUTION_BLOCKED, AgyHead, type AgyConfig } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, its task cards
 // (tasks.json) and subagents (subagents.json).
@@ -1634,8 +1634,7 @@ export class Bot {
     const kept = (["claude", "codex", "agy"] as Engine[]).filter((engine) => engines.includes(engine));
     if (!kept.length) throw new ContractError("bad_request", "A bot needs a head.");
     if (kept.includes("codex") && !this.options.codexConfig) throw new ContractError("conflict", "Codex is not available here.");
-    if (kept.includes("agy") && kept.length !== 1) throw new ContractError("bad_request", "Antigravity must run as the only engine in this bot.");
-    if (kept.includes("agy") && !this.options.agyConfig) throw new ContractError("conflict", "Antigravity is not available here.");
+    if (kept.includes("agy")) throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
     const settings = this.headsSettings;
     // Its own head goes (1.x's `setHeads` / `switchEngine`): it runs on the other one, through a handoff.
     const target = kept.includes(this.engine) ? this.engine : kept[0]!;
@@ -2186,6 +2185,7 @@ export class Bot {
     try {
       head = given ?? this.ensureHead();
     } catch (error) {
+      if (this.engine === "agy" && this.session.started) this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: (error as Error).message.slice(-1000) });
       this.finishTurn(turn, "failed", `Could not start the agent: ${(error as Error).message}`);
       return;
     }
@@ -2361,7 +2361,10 @@ export class Bot {
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
   private newSession() {
-    if (this.engine === "agy" && !this.readOnly) this.store.saveSetting("agyConversation", undefined);
+    if (this.engine === "agy" && !this.readOnly) {
+      this.store.saveSetting("agyConversation", undefined);
+      this.store.saveSetting("agyRecovery", undefined);
+    }
     this.queuedNote = null;
     this.session = { sessionId: randomUUID(), started: false };
     this.briefing = true;
@@ -2435,6 +2438,7 @@ export class Bot {
       return;
     }
     if (item.kind === "init") {
+      if (this.engine === "agy") this.store.saveSetting("agyRecovery", undefined);
       let save = false;
       if (!this.session.started) { this.session.started = true; save = true; }
       if (item.sessionId && item.sessionId !== this.session.sessionId && /^[0-9a-f-]{36}$/i.test(item.sessionId)) { this.session.sessionId = item.sessionId; save = true; }
@@ -3289,7 +3293,11 @@ export class Bot {
       // Nobody asked it to exit (1.x's `.exited`): it is asleep, and the next message wakes a new
       // session, briefed from memory.md and the chat. A non-zero exit is said in the chat (1.x:
       // its stderr, else "claude exited unexpectedly"); a failed turn already says it.
-      this.newSession();
+      if (this.engine === "agy") {
+        // Preserve identity across failed resumes, the next explicit message and app restart.
+        this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: exit.stderr.slice(-1000) || why });
+        this.briefing = !this.session.started;
+      } else this.newSession();
       this.store.saveHead(this.session);
       if (lostToNetwork) {
         const shown = this.outage !== null;

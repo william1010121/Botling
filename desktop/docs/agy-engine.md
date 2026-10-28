@@ -1,110 +1,93 @@
-# Antigravity engine
+# Antigravity integration — blocked, not ready to ship
 
-Implementation base: `0a24538d560bc7843152fe4cb5004a6f22d6737b`
-(`2.0.0-dev.20261028.13`). This branch is not installed or merged.
+Base: `0a24538d560bc7843152fe4cb5004a6f22d6737b` (installed .13).
+Isolated branch: `bot/agy-engine-20261028`. Never merged or installed.
 
-Select **Antigravity** in the bot's own Settings → Engines. It runs alone;
-selecting Claude or Codex switches back. Set a model ID from `agy models`
-in the Antigravity model field (saved on leaving the field), or leave it empty
-for the CLI default. The bot's reasoning-effort setting also applies.
-`BOTLING_AGY_PATH` optionally selects the CLI executable; the default is `agy`.
-Existing CLI authentication is required. Botling does not log in, update the
-CLI, change global settings or import Claude/Codex permission overrides.
+Review of `71cf40c` demonstrated that init validation happened too late: a child
+could emit `always-proceed` and execute the submitted task before being killed.
+The old successful live smoke did not establish a permission boundary. It is
+superseded and its executable test has been removed.
 
-## Supported
+## Current behavior
 
-- Dedicated NDJSON input/output adapter; streamed text and tool activity.
-- Errors, terminal status and explicit soft-denial handling. A CLI `SUCCESS`
-  containing `denied_actions` is a failed/blocked Botling turn, never completion.
-- Per-step token accounting (the CLI's result counters are cumulative).
-- Persistent multi-turn process and actual `conversation_id` persistence.
-- Model/effort restart, app restart and cancellation resume by conversation ID.
-- Process-group termination through Botling's existing process-tree adapter;
-  cancelled-process output is ignored. A platform daemon that independently
-  detaches is outside the existing adapter's process-group boundary.
-- Task/chat engine attribution, engine selection and per-bot model configuration.
+AgyHead.start and send now fail before spawning any executable or submitting
+any task, including configured/fake executables. There is no bypass switch.
+Backend engine selection rejects agy; the UI disables its toggle with an
+explanation. Previously saved agy bots retain configuration and can select
+another engine. Full agy integration is NOT delivered.
 
-## Explicit limitations
+The retained protocol decoder requires validated init before any event, poisons
+itself on invalid init, rejects duplicate init and changed conversation IDs,
+and recognizes both request-review and strict. Decoder validation does not
+confer runtime execution authority. Soft-denied SUCCESS remains a failure;
+approval responses and direct image blocks remain explicitly rejected.
 
-The upstream headless protocol cannot answer interactive tool approval requests.
-It rejects `control_request` / `control_response` input. Botling sends neither,
-never supplies bypass flags, and does not create allow rules. A non-review
-`init` is rejected and the process terminated; this is a runtime check, not an
-OS sandbox. The CLI emits `init` after a first prompt is submitted, so this
-check is not a pre-execution permissions handshake. Existing CLI allow/deny
-rules remain authoritative. The CLI may permit workspace operations itself.
+Unexpected exits and blocked startup preserve the existing conversation ID and
+persist agyRecovery {sessionId, state: "resume-required", reason}. No immediate
+replay occurs. The next explicit message and app restart retain the same ID.
+Intentional new-session clears recovery and identity; valid init clears recovery.
 
-Shared-engine chats and peer handoffs are gated. Botling-managed workers and
-Claude plugin injection are unavailable: delegated team/component/plugin/new
-bot/project requests cannot silently start a Claude worker. Native Antigravity
-subagent execution, when used by the CLI, is not mapped to Botling's managed
-worker lifecycle; only exposed tool activity is shown. No app worker routing
-protocol is claimed. Image input is rejected rather than silently discarded.
-Model discovery is via the existing CLI; the UI accepts its model IDs.
-Subscription quota and monetary cost are not available through this adapter.
+## Why the CLI cannot presently be enabled
 
-Agy-specific prompts are isolated from the Claude/Codex prompts. App request
-handlers retain their existing authorization checks for supported requests.
+Official documentation reviewed 2026-10-28:
 
-## Protocol evidence
+- https://antigravity.google/docs/cli/headless/ — streamed user tasks trigger
+  execution; approval control messages and non-text blocks are rejected.
+- https://antigravity.google/docs/cli/modes/ — plan is a planning instruction,
+  not containment; modes do not replace explicit policy.
+- https://antigravity.google/docs/sandbox/ — terminal sandboxing alone does not
+  establish whole-execution containment; availability and configuration matter.
+- https://antigravity.google/docs/settings?tab=cli — strict asks even for reads
+  despite allow rules. It must not be downgraded to request-review.
 
-Official contract checked 2026-10-28:
-https://antigravity.google/docs/cli/headless/
+No documented immutable per-execution tool policy flag or pre-task handshake
+was found in these documents or local CLI help. Reading mutable settings or
+sending a harmless probe cannot establish the necessary guarantee. No settings,
+login, permissions, global instructions, or installed dependencies were changed.
 
-The locally installed CLI produced:
+## Official alternative and remaining implementation
 
-- Input: `{"event":"user","message":{"content":"..."}}`.
-- Output: `init`, `step_update` (`agent_response`, `tool`), `result`.
-- Tool fields: `tool_info.name`, `parameters`, `output`, optional `error`.
-- Command refusal: `status: "SUCCESS"`, empty response, and
-  `denied_actions: [{"action":"command","display_name":"RunCommand"}]`.
-- A read-file tool followed by a refused `printf` command; no allow rule or
-  bypass flag was used. The refusal notice was also sent on stderr.
+https://antigravity.google/docs/sdk/policies/ documents LocalAgentConfig policies
+with default deny, explicit allows and per-tool approval callbacks. This is a
+candidate transport for mapping Botling's approvals/refusals before execution.
+https://antigravity.google/docs/sdk/overview/ documents custom tools, MCP,
+subagents and multimodal input: an app-owned bridge could expose existing worker
+APIs through custom tools/MCP, without Claude plugin flags or global prompts.
 
-The initial attempted Claude-shaped stdin invocation failed before a turn.
-The corrected native event protocol ran successfully. No CLI compatibility
-was inferred merely from the shared `stream-json` option name.
+The local Python environment has no google.antigravity package. The SDK documents
+Gemini API key or Vertex/ADC authentication; reuse of the existing agy CLI login
+is not established. This task prohibits installation/new authentication, so no
+SDK runtime or authorization callback smoke was attempted. Next step is a
+separately authorized isolated SDK dependency and verification of an existing
+supported credential path (never collecting credentials in chat). Alternative:
+a supported CLI immutable policy/approval API, or independently validated
+whole-execution containment covering every tool, child and sidecar.
 
-## Focused verification
+Mixed-head routing, app-managed worker lifecycle/delegation and native
+subagent_info visibility remain unimplemented app work, NOT inherent protocol
+limitations. They must be completed and tested after a safe transport is chosen.
+Neither model configuration nor CLI presence makes this engine usable.
 
-From `desktop/`, after linking the existing dependencies:
+## Focused evidence
 
-```sh
-node scripts/core-dev.mjs
-./node_modules/.bin/tsc --noEmit -p tsconfig.json
-./node_modules/.bin/vitest run test/unit/agy.test.ts test/unit/agy-core.test.ts test/unit/agy-settings.test.ts
+The startup race and three decoder regressions all failed on the previous code;
+the race wrote the task marker before termination. The failed-resume regression
+also failed against the prior bot.ts because agyConversation was deleted.
+The new tests cover pre-spawn rejection, decoder state/policy, conversation
+identity through another explicit message and Bot reconstruction from disk (the
+app restart path), and disabled selection. All 23 focused tests below and the
+TypeScript check passed.
+Run from desktop:
+
+```
+npx vitest run test/unit/agy-review.test.ts test/unit/agy.test.ts test/unit/agy-core.test.ts test/unit/agy-settings.test.ts test/unit/process-tree.test.ts test/unit/engine-permissions.test.ts
+npx tsc --noEmit -p tsconfig.json
 ```
 
-Explicit opt-in live smoke (uses the existing account, a private temporary
-folder, model `gemini-3.8-flash-medium`, and benign prompts; never changes
-account permissions):
-
-```sh
-BOTLING_LIVE_AGY=1 BOTLING_AGY_PATH=/path/to/agy ./node_modules/.bin/vitest run test/live/agy.test.ts
-```
-
-The live smoke passed: two turns remembered a marker; a new process resumed
-that marker; file tool activity was observed; a command was refused and
-surfaced as failure; cancellation exited without late output. This smoke's
-refusal assertion is intentionally account-policy-dependent: if a user has
-already allowlisted the command, it must not be described as a refusal test.
-
-Regression checks passed for existing engine switching, engine permissions,
-settings dropdowns and engine avatars. The settings UI test selects agy alone,
-saves a model ID, displays limits, and switches back to Codex. Core tests cover
-settings persistence, process restart, blocked delegation, refusal and stop/resume.
-No full suite, package build, install, app restart or push was run.
-
-## Integration
-
-Review and integrate the entire commit together: contract, renderer and core
-must all recognize the new engine. Do not swap only this core into an older UI.
-`agyModel` is an optional response field for compatibility; the stored
-`agyConversation` belongs only to agy and is cleared on an intentional engine
-switch/new session. Existing Claude/Codex prompts and permission flags remain
-unchanged. Changes touch engine unions in task/subagent presentation, but no
-Whiteboard implementation or Rust migration.
-
-Native packaged GUI verification and the cumulative packaging pass remain
-with the coordinator. The local React interaction test is not packaged-app
-visual acceptance.
+Process-tree tests use benign Node fixtures with active children, including
+SIGTERM-resistant children. They are general group-cleanup evidence only: no
+real agy tool/subagent cancellation or detached sidecar cleanup is established.
+There is no active agy subprocess to cancel in the blocked adapter. No full
+suite, package, installed-app restart, real agent smoke or native preview is
+claimed for this revision. Review this safety correction together with 71cf40c;
+do not release the earlier runnable adapter alone.

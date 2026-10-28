@@ -1,20 +1,14 @@
-import { describe,it,expect,afterEach } from 'vitest';
-import { join } from 'node:path';
+import { describe,it,expect } from 'vitest';
 import { AgyHead,AgyStream,agyArguments } from '../../src/core/agent/agy';
-import { desktop,tempDir,until } from '../helpers';
-import type { StreamItem } from '../../src/core/agent/stream';
-import type { HeadExit } from '../../src/core/agent/head';
-const heads:AgyHead[]=[];
-afterEach(async()=>{for(const h of heads.splice(0)) await h.terminate(100);});
-const config=()=>({command:process.execPath,prefixArgs:[join(desktop,'test/fixtures/fake-agy.mjs')],cwd:tempDir('agy'),sessionId:'new-session',resume:false});
-function start(extra={}){const items:StreamItem[]=[],exits:HeadExit[]=[];const head=new AgyHead({...config(),...extra},{onItem:i=>items.push(i),onExit:e=>exits.push(e)});heads.push(head);head.start();return {head,items,exits};}
+import { tempDir } from '../helpers';
+const config=()=>({command:'agy',cwd:tempDir('agy'),sessionId:'new-session',resume:false});
 const wire=(step:object)=>JSON.stringify({event:'step_update',step_update:{conversation_id:'session',step_index:1,...step}});
 describe('Antigravity protocol',()=>{
  it('uses its own arguments without permission bypass or Claude flags',()=>{
  expect(agyArguments({...config(),resume:true,sessionId:'prior',model:'model-id',effort:'high'})).toEqual(['--input-format','stream-json','--output-format','stream-json','--disable-slash-commands','--conversation','prior','--model','model-id','--effort','high']);
  });
  it('streams unicode and maps tools, failure and terminal error',()=>{
- const s=new AgyStream();expect(s.parse(wire({step_type:'agent_response',state:'ACTIVE',text_delta:'你好'}))).toContainEqual({kind:'delta',text:'你好'});
+ const s=new AgyStream();s.parse(JSON.stringify({event:"init",conversation_id:"session",init:{permission_mode:"request-review"}}));expect(s.parse(wire({step_type:'agent_response',state:'ACTIVE',text_delta:'你好'}))).toContainEqual({kind:'delta',text:'你好'});
  const tool={step_type:'tool',tool_name:'run_command',tool_info:{name:'run_command',parameters:{CommandLine:'printf hello'}}};
  expect(s.parse(wire({...tool,step_index:2,state:'ACTIVE'}))[0]).toMatchObject({kind:'toolUse',tool:'run_command'});
  const done=wire({...tool,step_index:2,state:'DONE',tool_info:{...tool.tool_info,error:{type:'permission',message:'Permission denied'}}});
@@ -22,21 +16,14 @@ describe('Antigravity protocol',()=>{
  expect(s.parse(JSON.stringify({event:'result',result:{status:'ERROR',error:'quota exhausted'}})).at(-1)).toMatchObject({kind:'result',ok:false,error:'quota exhausted'});
  });
  it('does not call a soft-denied SUCCESS a completed job',()=>{
- const s=new AgyStream();const items=s.parse(JSON.stringify({event:'result',result:{status:'SUCCESS',response:'',denied_actions:[{action:'command',display_name:'RunCommand'}]}}));
+ const s=new AgyStream();s.parse(JSON.stringify({event:"init",conversation_id:"session",init:{permission_mode:"request-review"}}));const items=s.parse(JSON.stringify({event:'result',result:{status:'SUCCESS',response:'',denied_actions:[{action:'command',display_name:'RunCommand'}]}}));
  expect(items.at(-1)).toMatchObject({kind:'result',ok:false});expect(JSON.stringify(items)).toContain('RunCommand');
  expect(items.some(i=>i.kind==='permission')).toBe(false);
  });
- it('rejects unprotected init and cannot manufacture approvals',async()=>{
- const {head,items,exits}=start({env:{FAKE_AGY_MODE:'always-proceed'}});head.send('hello','id');await until(()=>exits.length>0);
- expect(items.some(i=>i.kind==='result'&&!i.ok&&i.error.includes('request-review'))).toBe(true);
+ it('cannot manufacture approval or send any text while blocked',()=>{
+ const head=new AgyHead(config(),{onItem(){},onExit(){}});
+ expect(()=>head.send('hello','id')).toThrow('pre-task policy barrier');
  expect(()=>head.answer('request',true,{})).toThrow('cannot receive approval');expect(()=>head.allow(['command(*)'])).toThrow('cannot be changed');
+ expect(()=>head.send('image','id',['x.png'])).toThrow('text only');
  });
- it('runs two turns, exits gracefully, resumes and cancels the process',async()=>{
- const {head,items}=start();head.send('first','1');await until(()=>items.filter(i=>i.kind==='result').length===1);
- head.send('second','2');await until(()=>items.filter(i=>i.kind==='result').length===2);
- const init=items.find(i=>i.kind==='init');head.finish();await head.exited;expect(head.running).toBe(false);
- const resumed=start({resume:true,sessionId:init?.kind==='init'?init.sessionId:''});resumed.head.send('AGY_HANG','3');await until(()=>resumed.items.some(i=>i.kind==='init'));
- resumed.head.interrupt();await resumed.head.exited;expect(resumed.exits[0].expected).toBe(true);expect(resumed.head.running).toBe(false);expect(resumed.items.some(i=>i.kind==='result')).toBe(false);
- });
- it('rejects image input before sending anything',()=>{const {head,items}=start();expect(()=>head.send('image','id',['x.png'])).toThrow('text only');expect(items).toEqual([]);});
 });
