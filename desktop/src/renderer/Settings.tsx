@@ -22,7 +22,7 @@ type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
-  { id: "engines", title: "Engines and subagents", terms: "claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
+  { id: "engines", title: "Engines and subagents", terms: "antigravity agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
@@ -95,7 +95,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
           <div className="settings-body">
             {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} codexModels={codexModels} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
-            {shown && current?.id === "engines" && <Engines settings={shown} change={change} codexModels={codexModels} />}
+            {shown && current?.id === "engines" && <Engines client={client} settings={shown} change={change} codexModels={codexModels} />}
             {current?.id === "usage" && <Usage client={client} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
@@ -400,11 +400,45 @@ function General({ settings, change, bot, codexModels }: { settings: SettingsVie
   );
 }
 
-function Engines({ settings, change, codexModels }: { settings: SettingsView; change: (next: SettingsChange) => void; codexModels: CodexModelOption[] }) {
+function AntigravityRuntime({ client, settings, change }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
+  const [path, setPath] = useState(settings.agyAcpPath ?? "");
+  const [status, setStatus] = useState<import("../contract").ResultOf<"agy.runtime.check"> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setPath(settings.agyAcpPath ?? ""); }, [settings.agyAcpPath]);
+  useEffect(() => {
+    let live = true;
+    void client.request({ type: "agy.runtime.check" }).then(value => { if (live) setStatus(value); }, failure => { if (live) setError(why(failure)); });
+    return () => { live = false; };
+  }, [client, settings.agyAcpPath]);
+  const run = async (save: boolean) => {
+    setBusy(true); setError(null); setStatus(null);
+    try {
+      if (save && !await change({ key: "agyAcpPath", value: path.trim() || null })) return;
+      setStatus(await client.request({ type: "agy.runtime.check" }));
+    } catch (failure) { setError(why(failure)); }
+    finally { setBusy(false); }
+  };
+  return <Group title="Antigravity" note="Official ACP 1.4.3 for macOS arm64. Requires agy_acp_server.par, localharness_external and the verified Botling file helper in the same folder, outside your projects. Provisioning these files is separate; this setting does not download or launch them.">
+    <Row label="Official ACP runtime path">
+      <input aria-label="Official ACP runtime path" type="text" value={path} disabled={busy} placeholder="/absolute/path/agy_acp_server.par" onChange={event => { setPath(event.target.value); setStatus(null); }} />
+    </Row>
+    <p className="settings-hint">Takes effect on the next Antigravity launch. BOTLING_AGY_ACP_PATH takes priority over this saved path. Clear the field and save to remove the saved choice.</p>
+    <button type="button" disabled={busy} onClick={() => void run(true)}>{busy ? "Verifying…" : "Save and verify"}</button>{" "}
+    <button type="button" disabled={busy} onClick={() => void run(false)}>Check active runtime</button>
+    {status?.override && <p className="settings-hint">Environment override active: {status.override}. To use the saved path, remove BOTLING_AGY_ACP_PATH and restart the app.</p>}
+    {status?.effective && <p className="settings-hint">Active path: {status.effective}</p>}
+    {status?.message && <p className={status.valid ? "settings-hint" : "settings-problem"} role={status.valid ? "status" : "alert"}>{status.message}</p>}
+    {error && <p className="settings-problem" role="alert">{error}</p>}
+  </Group>;
+}
+
+function Engines({ client, settings, change, codexModels }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; codexModels: CodexModelOption[] }) {
   const workers = settings.codexWorkers;
   const following = settings.codexWorkersFollow;
   return (
     <>
+      <AntigravityRuntime client={client} settings={settings} change={change} />
       <Group title="Engine permissions" note="Applies when an engine process next starts, including resumed sessions and its workers. Running sessions keep their current mode: let work finish, then restart the app to apply changes. No new conversation is required. App-specific approvals and server policies remain in force.">
         <p className="settings-hint">Auto mode instructs the engines to allow low/medium-risk actions automatically and ask for human approval of high-risk actions. Engine classification is not guaranteed; hard denies and managed policies still apply. Unknown risk, review failures and OS/sandbox blocks are not auto-approved.</p>
         <Toggle label="Claude: bypass permission checks" hint="Skips Claude tool permission checks for sessions and Claude workers. Protected paths, explicit tool restrictions, managed policy and OS protections still apply." checked={settings.claudeBypassPermissions} onChange={(value) => change({ key: "claudeBypassPermissions", value })} />

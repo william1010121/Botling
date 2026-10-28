@@ -1,3 +1,4 @@
+import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
 import { tokenFlowHistory } from "./token-flow-history";
 import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
@@ -1636,6 +1637,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params) ?? null };
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
+      case "agy.runtime.check": return agyRuntimeStatus(readSettings(Layout.settings(this.options.dataDir)), this.options.dataDir);
       case "projects.add": return this.addProject(cmd.folder);
       case "bots.create": {
         const made = this.makeBot(cmd.name, cmd.job, { setUp: true });
@@ -1874,6 +1876,7 @@ First write a test that shows this, then fix it.`;
     const file = Layout.settings(this.options.dataDir);
     const before = readSettings(file);
     const developerBefore = this.developerProject();
+    if (change.key === "agyAcpPath" && change.value?.trim()) validateAgyRuntimePath(change.value.trim(), this.options.dataDir);
     const next = applySetting(before, change);
     writeSettings(file, next);
     // Turning developer mode on again gives builds a fresh start after failures (`setDeveloperMode`).

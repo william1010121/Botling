@@ -21,6 +21,7 @@ function fakeClient(raw: Record<string, unknown>, sent: unknown[], botView?: Bot
     request: async (cmd: any) => {
       sent.push(cmd);
       if (cmd.type === "codex.models") return { models: MODELS };
+      if (cmd.type === "agy.runtime.check") return { saved: null, override: null, effective: null, valid: false, message: "Runtime not configured." };
       if (cmd.type === "settings.get") return settingsView(settings);
       if (cmd.type === "settings.set") { settings = applySetting(settings, cmd.change as SettingsChange); return settingsView(settings); }
       if (cmd.type === "bot.settings") return bot;
@@ -80,7 +81,7 @@ describe("Settings' model and effort choices are dropdowns", () => {
     const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient(raw, sent), settings: null, bot: null, plugins: null, initialSection: "engines", onClose() {} }));
     try {
       expect(host.querySelectorAll(".segmented")).toHaveLength(0);
-      expect(host.querySelector('input[type="text"]')).toBeNull();
+      expect(host.querySelector('input[type="text"]:not([aria-label="Official ACP runtime path"])')).toBeNull();
       expect(options(select(host, "Subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
       // The Codex list, after "Same as bot", and the saved model it does not have.
       const workers = select(host, "Workers' model");

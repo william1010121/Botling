@@ -669,6 +669,7 @@ const BotModel = z.enum(["haiku", "sonnet", "opus"]);
 const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 const ModelId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\/-]+$/);
 export const SettingsView = z.strictObject({
+  agyAcpPath: z.string().nullable().optional(),
   language: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]).nullable(),
   /** The language in effect: the chosen one, else the system's (`AppLanguage.preferred`). */
   effectiveLanguage: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]),
@@ -710,6 +711,7 @@ export const SettingsView = z.strictObject({
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
 export const SettingsChange = z.discriminatedUnion("key", [
+  z.strictObject({ key: z.literal("agyAcpPath"), value: z.string().max(4096).nullable() }),
   z.strictObject({ key: z.literal("language"), value: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]).nullable() }),
   z.strictObject({ key: z.literal("botLook"), value: z.enum(["original", "cute"]) }),
   z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
@@ -1038,6 +1040,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown() }),
   /** The app's settings (settings.json), with every default filled in. */
   z.strictObject({ type: z.literal("settings.get") }),
+  z.strictObject({ type: z.literal("agy.runtime.check") }),
   z.strictObject({ type: z.literal("settings.set"), change: SettingsChange }),
   /** Main: look at GitHub Releases (`manual`: now, even when the check is off or was done lately). */
   z.strictObject({ type: z.literal("updates.check"), manual: z.boolean() }),
@@ -1120,7 +1123,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "agy.runtime.check", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "tokenFlow.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
@@ -1238,6 +1241,7 @@ export interface Results {
   "plugins.call": { result: unknown };
   "plugins.web": { specs: WebPluginSpecView[] };
   "settings.get": SettingsView;
+  "agy.runtime.check": { saved: string | null; override: string | null; effective: string | null; valid: boolean; message: string };
   "projects.pick": { botId: string | null; added: boolean };
   "projects.add": { botId: string; added: boolean };
   "waiting.list": WaitingView;

@@ -1,3 +1,4 @@
+import { resolveAgyRuntime } from "./agy-runtime-settings";
 import { startConfiguredMobile } from '../mobile-bridge/start';
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
@@ -215,8 +216,7 @@ const core = new Core({
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   headConfig,
   agyConfig: (profile, config) => {
-    const command = process.env.BOTLING_AGY_ACP_PATH;
-    if (!command) throw new Error("Antigravity requires the verified official ACP 1.4.3 runtime. BOTLING_AGY_ACP_PATH is not configured; the legacy CLI remains disabled.");
+    const command = resolveAgyRuntime(readSettings(Layout.settings(dataDir)), config.cwd);
     return { ...config, command, transport: "acp", acpHome: join(dataDir, "agy-acp", profile.id) };
   },
   // Whether claude kept a session's transcript (only whether one is there). The fake CLI keeps one only under a

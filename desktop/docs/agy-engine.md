@@ -326,3 +326,28 @@ by the attribution guard. Passed unchanged tests were reused, not rerun.
 No full suite, package, installation, restart, real model or live worker test ran.
 The external live-validation procedure and helper provisioning acceptance remain
 prerequisites to a separately authorized enablement/release phase.
+
+## Runtime Settings (2026-10-29 candidate)
+
+Settings → Engines and subagents → Antigravity now accepts an absolute path to
+`agy_acp_server.par`. **Save and verify** checks the existing pinned official ACP
+1.4.3 server/harness hashes and Apple signatures, executable access, and the pinned
+canonical `botling-agy-file-helper` beside them before persisting `agyAcpPath` in
+global `settings.json`. A failed save leaves the previous setting untouched. An
+empty saved path removes only this preference. **Check active runtime** rechecks
+files without executing the runtime, logging in, downloading, or sending a model
+request. A successful check is file verification, not connection acceptance.
+
+A nonempty `BOTLING_AGY_ACP_PATH` still overrides the saved preference, even if
+invalid; Settings displays the override and never silently falls back. Remove or
+correct that environment variable and restart the app to change the override.
+The saved preference is read on the next Antigravity configuration/launch without
+an app restart; running sessions keep their process. Launch rechecks the runtime
+and helper against the actual project location. Settings checks against the app
+data directory, so its success does not promise suitability for every project.
+The runtime/helper must remain outside the project, with a canonical helper path.
+
+Provisioning remains external: the official macOS arm64 ACP 1.4.3 distribution
+and the exact verified Botling helper described above are required, plus the
+existing official Google sign-in at connection time. No installer, legacy CLI
+fallback, worker/mixed-engine gate, or delegation/permission policy was changed.

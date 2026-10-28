@@ -52,6 +52,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
   const size = int(raw.chatAvatarSizeChoice);
   const stall = int(raw.stallReminderMinutes);
   return {
+    agyAcpPath: text(raw.agyAcpPath)?.trim() ?? null,
     language: oneOf(LANGUAGES, raw.languageChoice),
     effectiveLanguage: oneOf(LANGUAGES, raw.languageChoice) ?? systemLanguage,
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
@@ -90,6 +91,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
   const next: RawSettings = { ...raw };
   const set = (key: string, value: unknown) => { if (value === null || value === undefined) delete next[key]; else next[key] = value; };
   switch (change.key) {
+    case "agyAcpPath": set("agyAcpPath", change.value?.trim() || null); break;
     case "language": set("languageChoice", change.value); break;
     case "botLook": set("botLookChoice", change.value); break;
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
