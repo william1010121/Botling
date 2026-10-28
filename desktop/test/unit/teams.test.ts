@@ -9,6 +9,7 @@ import { tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
 import { DEFAULT_TEAMS, loadTeams, parseTeam, prepareTeamsPlugin, runFolderName, teamFileText, teamSystem, teamTask, teamTools } from "../../src/core/teams";
 import { botName, projectBriefingText } from "../../src/core/projects";
+import { readHistoryState } from "../../src/core/durable/history-journal";
 import { headArguments } from "../../src/core/agent/head";
 import { listedRows, resultLinks, settledRows } from "../../src/contract";
 import golden from "../fixtures/teams-golden.json";
@@ -225,16 +226,22 @@ describe("teams, bots and settling through the core", () => {
 
   it("subagent rows in the bot's view; settling moves one to Settled (kept as 1.x's dismissedAt) and back", async () => {
     const dir = tempDir("settle");
-    const c = core(dir);
+    let c = core(dir);
     await reply(c, MAIN, "/agent");
     const row = await until(() => c.of("bot.updated").map((e) => (e.event as any).bot).find((b: any) => b.id === MAIN && b.subagentRows.some((r: any) => r.status === "completed"))?.subagentRows[0], { what: "the row" });
-    expect(row).toMatchObject({ title: "Research the API", status: "completed", head: null, settled: false, prompt: "Look up the API and report", unsettledAt: null });
+    expect(row).toMatchObject({ title: "Research the API", status: "completed", head: "claude", settled: false, prompt: "Look up the API and report", unsettledAt: null });
     expect(listedRows([row], Date.now())).toHaveLength(1);
     expect(await c.call({ type: "subagent.settle", botId: MAIN, subagentId: row.id, settled: true })).toEqual({ changed: true });
     expect(await c.call({ type: "subagent.settle", botId: MAIN, subagentId: row.id, settled: true })).toEqual({ changed: false });
     const settled = (await c.call({ type: "chat.snapshot" })).bots.find((b: any) => b.id === MAIN).subagentRows[0];
     expect(settled.settled).toBe(true);
-    expect(typeof JSON.parse(readFileSync(join(dir, "main", "subagents.json"), "utf8"))[0].dismissedAt).toBe("number");
+    // Settling commits the journal before the asynchronous checkpoint is written.
+    const persisted = readHistoryState(join(dir, "main", "subagents.json")).rows.find((saved) => saved.id === row.id);
+    expect(persisted).toMatchObject({ id: row.id, status: "completed", dismissedAt: expect.any(Number) });
+    await c.kill();
+    c = core(dir);
+    const restored = (await c.call({ type: "chat.snapshot" })).bots.find((b: any) => b.id === MAIN).subagentRows[0];
+    expect(restored).toMatchObject({ id: row.id, status: "completed", head: "claude", settled: true });
     await c.call({ type: "subagent.settle", botId: MAIN, subagentId: row.id, settled: false });
     const back = (await c.call({ type: "chat.snapshot" })).bots.find((b: any) => b.id === MAIN).subagentRows[0];
     expect(back.settled).toBe(false);
@@ -257,7 +264,7 @@ describe("teams, bots and settling through the core", () => {
     const copy = await until(async () => (await c.chat()).messages.find((m: any) => m.role === "notice" && m.text === "Garden: Which way?"), { what: "the copy" });
     expect(copy.choices.map((choice: any) => choice.label)).toEqual(["Fast", "Slow"]);
     // The copy is the project's question, not the main bot's own (what waits on you lists it once).
-    expect((await c.call({ type: "waiting.list" })).items).toEqual([{ botId, text: "Which way?", messageId: question.id, at: expect.any(String) }]); // `at`: when it was asked (the whiteboard's age).
+    expect((await c.call({ type: "waiting.list" })).items).toEqual([{ botId, text: "Which way? — 1. Fast / 2. Slow", messageId: question.id, at: expect.any(String) }]); // `at`: when it was asked (the whiteboard's age).
     await c.call({ type: "chat.choose", botId: MAIN, messageId: copy.id, index: 1 });
     await until(async () => (await c.chat(botId)).messages.find((m: any) => m.id === question.id)?.chosen === 1, { what: "the pick in the project's chat" });
     await until(async () => (await c.chat(botId)).messages.some((m: any) => m.role === "user" && m.text === "Slow"), { what: "the pick as the project's message" });

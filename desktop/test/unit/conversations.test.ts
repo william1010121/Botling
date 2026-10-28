@@ -100,7 +100,7 @@ describe("call-ins and bots' @ (CallIn.swift, BotMentions.swift)", () => {
     const question = await until(async () => (await c.chat(groupId)).messages.find((m: any) => m.sourceId === shop && m.choices?.length));
     // It waits on you, as Shop's, in the group (1.x's `groupID`).
     const waiting = await until(async () => { const list = await c.call({ type: "waiting.list" }); return list.items.find((item: any) => item.groupId === groupId); });
-    expect(waiting).toEqual({ botId: shop, text: "Which one?", messageId: question.id, groupId, at: expect.any(String) });
+    expect(waiting).toEqual({ botId: shop, text: "Which one? — 1. Red / 2. Blue", messageId: question.id, groupId, at: expect.any(String) });
     expect(await c.call({ type: "chat.choose", botId: groupId, messageId: question.id, index: 0 })).toEqual({ accepted: true });
     await until(async () => !(await c.call({ type: "waiting.list" })).items.some((item: any) => item.groupId === groupId));
     await until(async () => (await c.chat(groupId)).messages.some((m: any) => m.sourceId === shop && m.text === "Shop here: The user picked: Red"));
