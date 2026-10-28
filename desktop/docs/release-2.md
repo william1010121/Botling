@@ -8,16 +8,49 @@ creates a tag, GitHub release, or publication. The Swift/Web CI jobs remain lega
 the desktop job adds typecheck, unit, report and mobile isolation checks. Live/e2e and clean-user
 acceptance remain separate operator gates; green CI is not certification of those behaviors.
 
-## Trust provisioning — blocked until the owner supplies the existing identity
+## Trust provisioning — new 2.0 identity approved 2026-10-29
 
-`release-config.json` intentionally still has `publicKey: null`. Neither CI nor packaging may
-silently generate a new trust root or use `--unsigned-updates` for a production release.
-The owner must supply/approve the intended Ed25519 public SPKI PEM (including its final newline)
-and arrange access to the matching private PKCS8 PEM. Commit only that public key to
-`desktop/release-config.json` **before** building. Provision the private PEM as GitHub Actions
-secret `BOTLING_RELEASE_KEY` through the owner's approved secret channel; never put it in Git,
-logs, reports or release assets. If an identity already serves users, preserve it. If no identity
-exists, choosing and generating one requires a separate explicit owner decision.
+The owner explicitly chose a new Ed25519 updater identity for 2.0 on 2026-10-29.
+`release-config.json` now contains its public SPKI PEM, including the final newline.
+Public fingerprint (SHA-256 of SPKI DER):
+`1a423f6b0027da46675d0df7a63dfc43b11a3f2bdef1264027b66049dbb8f0c1`.
+Commit only public trust; neither CI nor packaging may generate another trust root or use
+`--unsigned-updates` for a production release. This is a new 2.0 identity; continuity with
+any older installed identity is not certified.
+
+The matching PKCS8 PEM is held locally at
+`~/.config/botling/release-keys/botling-2.0-ed25519-20261029.pkcs8.pem`.
+The containing directory is owner-only `0700`, and the private file is owner-only `0600`.
+Creation used exclusive writes and did not overwrite an existing key. No backup was created
+or verified. Retain this identity for subsequent updates; do not regenerate it for each release.
+Never put private bytes in Git, logs, reports, shell arguments, persistent environment files,
+or release assets. The existing helper's default `~/.botling-release/ed25519.key` is **not**
+this identity. For an authorized local signing run, from `desktop/`, load the new file only
+inside the signing process (the ZIP must already exist and have passed packaging checks):
+
+```sh
+node --input-type=module <<'JS'
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+process.env.BOTLING_RELEASE_KEY = readFileSync(join(homedir(),
+  '.config/botling/release-keys/botling-2.0-ed25519-20261029.pkcs8.pem'), 'utf8');
+process.argv = [process.execPath, 'release-sign.mjs', 'sign', version,
+  `dist/Botling-2-${version}-mac-arm64.zip`];
+try { await import('./scripts/release-sign.mjs'); }
+finally { delete process.env.BOTLING_RELEASE_KEY; }
+JS
+node scripts/release-check.mjs --artifacts dist
+```
+
+**CI provisioning remains pending:** `.github/workflows/release.yml` consumes the matching
+private PEM as the GitHub Actions repository secret `BOTLING_RELEASE_KEY` in
+`william1010121/Botling`. The owner must separately authorize that specific secret upload;
+then provision the file through an approved secret-input channel without printing its bytes.
+Local key creation did not authorize or perform that disclosure. Until provisioned, the
+workflow's signing step fails closed. No push, workflow dispatch or release is authorized by
+this setup. Apple signing and notarization credentials are unrelated.
 
 The signature binds ZIP digest, byte count and version. `release-sign.mjs` checks that the private
 key matches the committed public key; `release-check.mjs --artifacts dist` independently verifies
