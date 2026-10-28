@@ -338,6 +338,10 @@ export class Bot {
   /** Who else has this bot's project open, when someone does: shown once as a notice, never a block. */
   private lockNotice: string | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
+  // At most one pending write, retaining the book itself rather than queued snapshots.
+  private subagentSaveTimer: NodeJS.Timeout | null = null;
+  private subagentsDirty = false;
+  private subagentSaveRetryMs = 1_000;
   private head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
   readonly engine: Engine;
@@ -1103,8 +1107,38 @@ export class Bot {
     return { changed };
   }
 
-  private saveSubagents() {
-    if (!this.readOnly) this.store.saveList("subagents.json", this.subagents.list);
+  private saveSubagents(progress = false) {
+    if (this.readOnly) return;
+    this.subagentsDirty = true;
+    // Only running text/token/runtime progress may lag disk by 500 ms. Starts, tool events,
+    // execution identity, terminal states and explicit user changes remain synchronous.
+    if (progress && !this.shuttingDown) this.scheduleSubagentSave(500);
+    else this.flushSubagents();
+  }
+
+  private scheduleSubagentSave(delay: number) {
+    if (this.subagentSaveTimer || this.shuttingDown) return;
+    this.subagentSaveTimer = setTimeout(() => {
+      this.subagentSaveTimer = null;
+      try { this.flushSubagents(); }
+      catch (error) { this.log(`subagents save failed; retry pending: ${String(error)}`); }
+    }, delay);
+    this.subagentSaveTimer.unref?.();
+  }
+
+  /** A failed write stays dirty. Critical callers see the error; background retries are bounded. */
+  private flushSubagents() {
+    if (this.subagentSaveTimer) { clearTimeout(this.subagentSaveTimer); this.subagentSaveTimer = null; }
+    if (!this.subagentsDirty || this.readOnly) return;
+    try {
+      this.store.saveList("subagents.json", this.subagents.list);
+      this.subagentsDirty = false;
+      this.subagentSaveRetryMs = 1_000;
+    } catch (error) {
+      this.scheduleSubagentSave(this.subagentSaveRetryMs);
+      this.subagentSaveRetryMs = Math.min(this.subagentSaveRetryMs * 2, 30_000);
+      throw error;
+    }
   }
 
   // ------------------------------------------------------------------------------------------
@@ -2581,16 +2615,16 @@ export class Bot {
         return item.parent !== null;
       }
       case "subagentRuntime":
-        if (this.subagents.runtime(item.id, item.runtime, item.model)) this.subagentChanged(this.subagents.get(item.id));
+        if (this.subagents.runtime(item.id, item.runtime, item.model)) this.subagentChanged(this.subagents.get(item.id), true);
         return true;
       case "subagentOutput":
-        if (this.subagents.output(item.id, item.counter, item.tokens)) this.subagentChanged(this.subagents.get(item.id));
+        if (this.subagents.output(item.id, item.counter, item.tokens)) this.subagentChanged(this.subagents.get(item.id), true);
         return true;
       case "subagentExecution":
         if (this.subagents.execution(item.id, item.execution)) this.subagentChanged(this.subagents.get(item.id));
         return true;
       case "subagentText":
-        if (this.subagents.text(item.parent, item.text)) this.subagentChanged(this.subagents.get(item.parent));
+        if (this.subagents.text(item.parent, item.text)) this.subagentChanged(this.subagents.get(item.parent), true);
         return true;
       case "subagentStarted":
         // Initial ownership comes from the Agent call, never from whichever turn is now visible.
@@ -2623,9 +2657,9 @@ export class Bot {
   }
 
   /** It changed: saved, its view sent, and the step that sent it (status, count) drawn again. */
-  private subagentChanged(subagent: SubagentRecord | undefined) {
+  private subagentChanged(subagent: SubagentRecord | undefined, progress = false) {
     if (!subagent) return;
-    this.saveSubagents();
+    this.saveSubagents(progress && subagent.status === "running");
     this.rowsChanged();
     this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) });
     // Status/metadata are stored in subagents.json; publish the task projection without rewriting cards.
@@ -4698,7 +4732,10 @@ export class Bot {
   flushForSwap() {
     this.persist();
     this.partner?.persist();
-    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) if (bot.session.started) bot.store.saveHead(bot.session);
+    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) {
+      bot.flushSubagents();
+      if (bot.session.started) bot.store.saveHead(bot.session);
+    }
   }
 
   /** At the new core's start: go on in the sessions the old core handed over (`--resume`), then what waited. */
@@ -4748,8 +4785,9 @@ export class Bot {
       if (!ended) await last.terminate(1_000);
     }
     await partner;
-    this.options.lock?.release();
+    this.flushSubagents();
     this.persist();
+    this.options.lock?.release();
   }
 }
 
