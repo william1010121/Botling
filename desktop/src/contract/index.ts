@@ -418,6 +418,8 @@ export type SpecAction = z.infer<typeof SpecAction>;
 
 /** A subagent's row under its bot in the left column, or in the right panel's "Settled" (1.x's `Subagent`). Times are ms since 1970. */
 export const SubagentRowView = z.strictObject({
+  /** Reported worker output only; never a share of parent usage. */
+  outputTokens: z.number().int().nonnegative().nullable().optional(),
   id: z.string().max(200),
   title: z.string().max(400),
   status: z.enum(["running", "completed", "failed", "stopped"]),
@@ -747,7 +749,7 @@ export const UsageView = z.strictObject({
   day: z.string().max(20),
   spent: z.number().nonnegative(),
   tokens: TokensView,
-  byBot: z.array(z.strictObject({ name: z.string().max(200), spent: z.number().nonnegative(), tokens: z.number().int().nonnegative() })).max(500),
+  byBot: z.array(z.strictObject({ name: z.string().max(200), spent: z.number().nonnegative(), tokens: z.number().int().nonnegative(), breakdown: TokensView.nullable().optional() })).max(500),
   history: z.array(z.strictObject({ day: z.string().max(20), spent: z.number().nonnegative(), tokens: z.number().int().nonnegative() })).max(31),
   claude: LimitsView,
   codex: LimitsView,
@@ -1008,8 +1010,9 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("settings.set"), change: SettingsChange }),
   /** Main: look at GitHub Releases (`manual`: now, even when the check is off or was done lately). */
   z.strictObject({ type: z.literal("updates.check"), manual: z.boolean() }),
-  /** What the bots used today and before, and the subscriptions' limits (Settings → Usage). */
-  z.strictObject({ type: z.literal("usage.view") }),
+  /** What the bots used today and before, and the subscriptions' limits (Settings → Usage).
+   * localOnly skips quota refresh and includes normalized per-name token buckets for Token Flow. */
+  z.strictObject({ type: z.literal("usage.view"), localOnly: z.boolean().optional() }),
   z.strictObject({ type: z.literal("doctor.view") }),
   z.strictObject({ type: z.literal("doctor.copy"), tool: z.enum(["claude", "codex"]) }),
   z.strictObject({ type: z.literal("doctor.run"), includeLatest: z.boolean() }),

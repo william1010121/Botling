@@ -1,0 +1,50 @@
+.chat-column.token-flow-on #chat-frame { display: none; }
+.token-flow { flex: 1; min-height: 0; overflow: auto; padding: 24px clamp(14px, 4vw, 48px); color: var(--text); container-type: inline-size; }
+.token-flow h2, .token-flow h3, .token-flow p { margin: 0; }
+.token-flow h2 { font-size: 21px; letter-spacing: -.5px; }
+.token-flow h3 { font-size: 13px; }
+.tf-muted, .tf-reading, .tf-footnote, .tf-empty { color: var(--muted); font-size: 12px; }
+.tf-heading, .tf-flow-heading, .tf-detail > div { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.token-flow select, .tf-reading button, .tf-detail button { background: var(--bubble); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; }
+.tf-summary { display: grid; grid-template-columns: 1.5fr 1fr 1fr; gap: 12px; margin: 24px 0 16px; }
+.tf-summary > div { display: flex; flex-direction: column; }
+.tf-summary strong { font-size: clamp(23px, 5cqw, 36px); font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.tf-summary span { color: var(--muted); font-size: 12px; margin-top: 5px; }
+.tf-accounting { display: grid; grid-template-columns: repeat(4, 1fr); padding: 14px; background: var(--bubble); border-radius: 12px; gap: 12px; }
+.tf-accounting span { display: flex; flex-direction: column; color: var(--muted); font-size: 11px; }
+.tf-accounting b { color: var(--text); font-size: 15px; font-weight: 500; }
+.tf-reading { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 9px; }
+.tf-reading button { border: 0; background: none; font-size: 12px; cursor: pointer; }
+.tf-flow-heading { margin: 30px 0 14px; flex-wrap: wrap; }
+.tf-root { display: flex; align-items: center; gap: 12px; padding: 15px; border: 1px solid var(--line); background: var(--bubble); border-radius: 12px; }
+.tf-root > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tf-root > span:last-child { color: var(--muted); font-size: 12px; }
+.tf-root small, .tf-worker small { display: block; color: var(--muted); font-size: 11px; }
+.tf-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 8px; }
+.tf-dot.running { background: var(--blue); box-shadow: 0 0 0 4px color-mix(in srgb, var(--blue) 15%, transparent); }
+.tf-dot.completed { background: var(--green, #369576); }
+.tf-dot.failed { background: var(--error); }
+.tf-dot.waiting { background: var(--orange); }
+.tf-workers { margin-left: 19px; padding-top: 10px; }
+.tf-worker { display: flex; align-items: center; gap: 12px; width: 100%; position: relative; margin: 0 0 9px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--ground); text-align: left; cursor: pointer; }
+.tf-worker.direct:before { content: ''; position: absolute; left: -20px; top: -11px; width: 18px; height: calc(50% + 11px); border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0 0 0 8px; }
+.tf-worker[aria-pressed=true] { border-color: var(--blue); background: var(--selected); }
+.tf-worker:hover { background: var(--hover); }
+.token-flow button:focus-visible, .token-flow select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.tf-worker-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.tf-worker-title b { font-size: 13px; font-weight: 600; }
+.tf-task { margin-top: 5px; }
+.tf-worker-tokens { text-align: right; min-width: 90px; }
+.tf-worker-tokens b { font-size: 19px; font-variant-numeric: tabular-nums; }
+.tf-worker-tokens i { display: block; height: 3px; background: var(--line); border-radius: 4px; margin-top: 7px; overflow: hidden; }
+.tf-worker-tokens em { display: block; height: 100%; background: var(--blue); }
+.tf-empty { padding: 25px 0; }
+.tf-detail { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--bubble); }
+.tf-detail dl { display: grid; grid-template-columns: 100px 1fr; gap: 8px; font-size: 12px; }
+.tf-detail dt { color: var(--muted); }
+.tf-detail dd { margin: 0; overflow-wrap: anywhere; }
+.tf-detail code { color: var(--muted); font-size: 10px; }
+.token-flow .tf-footnote { margin: 18px 0; }
+.tf-ledger { margin-top: 16px; }
+.tf-ledger > div { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 12px; overflow-wrap: anywhere; }
+@container (max-width: 400px) { .tf-accounting { grid-template-columns: repeat(2, 1fr); } .tf-worker { gap: 8px; padding: 12px 10px; } .tf-worker-tokens { min-width: 70px; } .tf-detail dl { grid-template-columns: 75px 1fr; } }

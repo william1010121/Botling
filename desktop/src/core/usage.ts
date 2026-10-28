@@ -248,10 +248,10 @@ export class UsageBook {
 }
 
 /** What Settings → Usage shows (dates as ms since 1970): today's bots, most first, and the days before. */
-export function usageView(book: { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus?: import("../contract").UsageView["spendingStatus"]; quotaStatus?: Record<"claude" | "codex", QuotaStatus> }): import("../contract").UsageView {
+export function usageView(book: { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus?: import("../contract").UsageView["spendingStatus"]; quotaStatus?: Record<"claude" | "codex", QuotaStatus> }, breakdown = false): import("../contract").UsageView {
   const { spending } = book;
   const names = [...new Set([...Object.keys(spending.byBot), ...Object.keys(spending.tokensByBot)])];
-  const byBot = names.map((name) => ({ name: name.slice(0, 200), spent: Math.max(0, spending.byBot[name] ?? 0), tokens: totalTokens(spending.tokensByBot[name] ?? noTokens()) }))
+  const byBot = names.map((name) => ({ name: name.slice(0, 200), spent: Math.max(0, spending.byBot[name] ?? 0), tokens: totalTokens(spending.tokensByBot[name] ?? noTokens()), ...(breakdown ? { breakdown: spending.tokensByBot[name] ?? null } : {}) }))
     .sort((a, b) => b.spent - a.spent || b.tokens - a.tokens).slice(0, 500);
   const ms = (swift: number) => Math.round((swift + 978_307_200) * 1000);
   const window = (value: RateLimitWindow | undefined) => (value ? { used: clamp01(value.used), resetsAt: value.resetsAt === undefined ? null : ms(value.resetsAt), seen: ms(value.seen) } : null);

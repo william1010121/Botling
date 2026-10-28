@@ -1681,7 +1681,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.notice": this.plugins.webNotice(cmd.name, cmd.text); return {};
       case "plugins.file": return this.plugins.webFile(cmd.name, cmd.path);
       case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
-      case "usage.view": await this.usage.refresh(); return usageView(this.usage.view());
+      case "usage.view": if (!cmd.localOnly) await this.usage.refresh(); return usageView(this.usage.view(), cmd.localOnly);
       case "doctor.view": return this.doctor.view();
       case "doctor.run": return this.doctor.run(cmd.includeLatest);
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);

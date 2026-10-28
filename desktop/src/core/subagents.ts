@@ -11,7 +11,7 @@ import { fromSwiftDate, toSwiftDate, type StepRecord } from "./store/records";
 export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
 
 /** A row for the left column / "Settled" (the contract's SubagentRowView). */
-export interface SubagentRow { id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string }
+export interface SubagentRow { outputTokens?: number | null; id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string }
 
 export { LISTED_AFTER_ENDING_MS, LISTED_AT_MOST, listedRows, settledRows } from "../contract";
 
@@ -297,6 +297,7 @@ export class SubagentBook {
       title: subagent.description.slice(0, 400),
       status: subagent.status,
       head,
+      outputTokens: reportedOutputTokens(subagent),
       startedAt: fromSwiftDate(subagent.startedAt),
       endedAt: typeof subagent.endedAt === "number" ? fromSwiftDate(subagent.endedAt) : null,
       unsettledAt: typeof subagent.unsettledAt === "number" ? fromSwiftDate(subagent.unsettledAt) : null,
