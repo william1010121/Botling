@@ -138,7 +138,7 @@ describe("whiteboard.view: the board's new data", () => {
     const saved = JSON.parse(readFileSync(join(store, "done-days.json"), "utf8"));
     expect(Object.keys(saved.tasks)).toEqual(["t-done"]);
     const waiting = await c.call({ type: "waiting.list" });
-    expect(waiting.items.find((item: any) => item.botId === PROJECT)).toMatchObject({ text: "Publish now?", messageId: QUESTION, at: new Date(Date.UTC(2001, 0, 1) + asked * 1000).toISOString() });
+    expect(waiting.items.find((item: any) => item.botId === PROJECT)).toMatchObject({ text: "Publish now? — 1. Yes / 2. No", messageId: QUESTION, at: new Date(Date.UTC(2001, 0, 1) + asked * 1000).toISOString() });
   });
 });
 

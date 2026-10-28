@@ -1073,6 +1073,21 @@ First write a test that shows this, then fix it.`;
     const ignored = new Set(readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting));
     const out: WaitingView["items"] = [];
     const doing: WaitingView["doing"] = {};
+    // Use the recorded choices, not a possibly unrelated opening sentence. This is only a
+    // preview: the original question, recommendations and permission actions stay in chat.
+    const addQuestion = (botId: string, chat: Bot | null | undefined, question: { id: string; text: string }, groupId?: string) => {
+      const legacyText = firstLine(question.text).slice(0, 400);
+      // Older versions keyed an ignored item by its first line; changing the preview must not revive it.
+      if (ignored.has(`${botId}-${legacyText}`)) return;
+      const choices = chat?.line(question.id)?.choices;
+      const labels = Array.isArray(choices) ? choices.flatMap((choice, index) =>
+        typeof choice?.label === "string" && choice.label.trim() ? [`${index + 1}. ${choice.label.trim().replace(/\s+/g, " ")}`] : []) : [];
+      // Keep a directly stated question for context (e.g. Yes / No); never infer one from prose.
+      const questionLead = /[?？][*_`]*$/.test(legacyText.trim()) ? `${legacyText} — ` : "";
+      const preview = labels.length ? questionLead + labels.join(" / ") : legacyText;
+      const text = preview.length > 400 ? `${preview.slice(0, 399)}…` : preview;
+      out.push({ botId, text, messageId: question.id, ...(groupId ? { groupId } : {}), ...asked(chat, question.id) });
+    };
     for (const profile of this.profiles) {
       if (profile.role === "main") continue;
       // A manager's Now card: the first thing under "In progress" in its memory.md.
@@ -1081,14 +1096,14 @@ First write a test that shows this, then fix it.`;
         if (first) doing[profile.id] = first.slice(0, 400);
       }
       const question = this.bots.get(profile.id)?.openQuestion();
-      if (question) out.push({ botId: profile.id, text: firstLine(question.text).slice(0, 400), messageId: question.id, ...asked(this.bots.get(profile.id), question.id) });
+      if (question) addQuestion(profile.id, this.bots.get(profile.id), question);
       else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
-    for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) out.push({ botId: MAIN_BOT_ID, text: firstLine(question.text).slice(0, 400), messageId: question.id, ...asked(this.bots.get(MAIN_BOT_ID), question.id) });
+    for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) addQuestion(MAIN_BOT_ID, this.bots.get(MAIN_BOT_ID), question);
     // Questions in group chats: the member that asked (else the group), and the group (1.x's `inGroups`).
     for (const group of this.groups?.groups ?? []) {
       for (const question of this.groups.chat(group.id)?.openQuestions() ?? []) {
-        out.push({ botId: question.sourceID ?? group.id, text: firstLine(question.text).slice(0, 400), messageId: question.id, groupId: group.id, ...asked(this.groups.chat(group.id), question.id) });
+        addQuestion(question.sourceID ?? group.id, this.groups.chat(group.id), question, group.id);
       }
     }
     const acked = [...ignored].filter((key) => key.includes("-task:")).slice(-200);
