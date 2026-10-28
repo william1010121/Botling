@@ -5,6 +5,7 @@ import * as fs from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { bundlePrints, planInstall } from "../../src/main/hot-install";
+import { STORAGE_RESTART_REASON, type StorageContract } from "../../src/storage-contract";
 const { buildMain } = await import(resolve("build.mjs"));
 const { buildPreloads } = await import(resolve("build-preloads.mjs"));
 const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -38,16 +39,32 @@ it("stabilizes cache paths while preserving restart detection for real code chan
       if (fs.existsSync(join(root, "node_modules"))) fs.unlinkSync(join(root, "node_modules"));
       fs.symlinkSync(join(temp, identity, "node_modules"), join(root, "node_modules"), "dir");
     };
-    const prints = async (label: string) => {
+    // Match the release's approved package/core storage declaration without weakening the gate.
+    const storageContract: StorageContract = JSON.parse(fs.readFileSync(resolve("package.json"), "utf8")).botlingStorageContract;
+    const prints = async (label: string, coreStorage: StorageContract | null = storageContract) => {
       const app = join(temp, label);
       put(join(app, "Contents/Info.plist"), '<plist><dict><key>CFBundleIdentifier</key><string>test.bundle</string></dict></plist>');
       fs.cpSync(out, join(app, "Contents/Resources/app/out"), { recursive: true });
+      put(join(app, "Contents/Resources/app/package.json"), JSON.stringify({ botlingStorageContract: storageContract }));
+      if (coreStorage) put(join(app, "Contents/Resources/app/out/core/storage-contract.json"), JSON.stringify(coreStorage));
       return bundlePrints(app, fs);
     };
     link("cache-a"); await build(); const a = bytes(); const baseline = await prints("baseline");
     link("cache-b"); await build(); const b = bytes();
     for (const name of Object.keys(a)) expect(b[name].equals(a[name]), name).toBe(true);
+    expect(baseline.storageContract).toEqual(storageContract);
     expect(planInstall(baseline, await prints("other-cache"))).toEqual({ mode: "hot", parts: [] });
+    const storageRefusals = [];
+    for (const [label, coreStorage] of [
+      ["unknown-storage", null],
+      ["mismatched-storage", { ...storageContract, epoch: storageContract.epoch + 1 }],
+    ] as const) {
+      const candidate = await prints(label, coreStorage);
+      expect(candidate.storageContract).toBeNull();
+      const plan = planInstall(baseline, candidate);
+      expect(plan).toEqual({ mode: "restart", reasons: [STORAGE_RESTART_REASON] });
+      storageRefusals.push({ label, plan });
+    }
     for (const name of names) {
       expect(a[name].toString()).toContain("node_modules/zod/");
       expect(a[name].toString()).not.toMatch(/cache-[ab]/);
@@ -72,6 +89,6 @@ it("stabilizes cache paths while preserving restart detection for real code chan
     const ipc = bytes();
     for (const name of names) expect(ipc[name].equals(a[name]), name).toBe(false);
     changes.ipc = Object.fromEntries(names.map(name => [name, hash(ipc[name])])); restore();
-    console.log(JSON.stringify({ cachePaths: ["cache-a", "cache-b"], identical: Object.keys(a), sha256: Object.fromEntries(names.map(name => [name, hash(a[name])])), changedHashes: changes }));
+    console.log(JSON.stringify({ storageContract, storageRefusals, cachePaths: ["cache-a", "cache-b"], identical: Object.keys(a), sha256: Object.fromEntries(names.map(name => [name, hash(a[name])])), changedHashes: changes }));
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 }, 30_000);
