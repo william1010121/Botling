@@ -95,6 +95,12 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
   const boundsChanged=!lastBounds||(['x','y','width','height'] as const).some(key=>lastBounds![key]!==bounds[key]);
   lastBounds=bounds;view.setBounds(bounds);
   if(value.occluded===true){
+   // Quick settings must be usable before capture/PNG decode (or the 1s capture budget).
+   // The snapshot fills the background asynchronously; other overlays keep their handoff.
+   if(value.revealImmediately===true){
+    view.setVisible(false);
+    if(owner.isVisible()&&contents.isFocused())owner.webContents.focus();
+   }
    if(!occluded){occluded=true;laidOut=false;stopSnapshots();invalidateSnapshot();}
    else if(boundsChanged)invalidateSnapshot();
   }else{
