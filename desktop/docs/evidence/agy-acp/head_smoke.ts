@@ -17,7 +17,7 @@ async function turn(resume:boolean,text:string,allow=false){
  const r=await result;clearTimeout(timer);clearInterval(watcher);await h.terminate();await h.exited;evidence.turns.push(r);writeFileSync(join(root,'head-smoke-results.json'),JSON.stringify(evidence,null,2));return r;
 }
 await turn(false,'Use the botling write_file tool to create denied.txt containing hello. If permission is denied, stop without trying anything else.');
-if(!evidence.permissions.length||existsSync(marker)||evidence.turns[0].error)throw new Error('Deny smoke failed: '+JSON.stringify(evidence));
+if(!evidence.permissions.length||existsSync(marker)||(evidence.turns[0].ok!==false||evidence.turns[0].subtype!=="permission_denied"))throw new Error('Deny smoke failed: '+JSON.stringify(evidence));
 await turn(true,'Reply exactly ACP_RESUMED without using any tool.');
 if(evidence.turns[1].error||!evidence.turns[1].text.includes('ACP_RESUMED'))throw new Error('Resume smoke failed: '+JSON.stringify(evidence));
 await turn(true,'Use botling write_file once to create approved.txt containing exactly APPROVED. Do not use other tools.',true);

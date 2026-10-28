@@ -20,8 +20,8 @@ it('worker tools launch only dedicated ACP sessions and forward permission/refus
  w.h.onItem({kind:'permission',requestId:'acp:1',tool:'write',summary:'write file',input:{path:'x'}});
  expect(h.events.at(-1)).toMatchObject({requestId:`worker:${id}:1:acp:1`,workerId:id});expect(w.answers).toEqual([]);
  h.m.answer(`worker:${id}:1:acp:1`,false,{path:'x'});expect(w.answers[0][1]).toBe(false);
- w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});w.h.onItem({kind:'result',ok:true,text:'evidence',error:'',subtype:'end_turn'});
- expect(w.stopped).toBe(true);expect(h.reports[0].id).toBe(id);expect(h.reports[0].text).toContain('not acceptance');
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});w.h.onItem({kind:'result',ok:false,text:'operation refused',error:'Antigravity stopped: permission_denied',subtype:'permission_denied'});
+ expect(w.stopped).toBe(true);expect(h.reports[0].id).toBe(id);expect(h.reports[0].text).toContain('not acceptance');expect(h.reports[0].text).toContain('status="failed"');
  await h.m.tool('app_send_message',{task_id:id,message:'follow up'});expect(h.starts[1]!.config).toMatchObject({resume:true,sessionId:'11111111-2222-4333-8444-555555555555'});
  w.h.onExit({code:0,signal:null,stderr:'',expected:true,silent:false});expect(h.m.running).toEqual([id]);
  h.m.answer(`worker:${id}:1:acp:1`,true,{});expect(h.starts[1]!.answers).toEqual([]);

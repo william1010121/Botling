@@ -3,7 +3,8 @@
 2026-10-28. Base `0a24538d560bc7843152fe4cb5004a6f22d6737b` (installed .13).
 Branch `bot/agy-engine-20261028`, worktree
 `/Volumes/My-SSD/botling-work/agy-engine-20261028`.
-Source commit: `8b57c78f847b95e195d8538b85817ba8e52ae6b7`.
+Supersedes blocked review candidate `85c09565cf34c7992271a120d3d6905e28d9e0c7`.
+See `evidence/agy-acp/review-fixes.json` for the exact revised source commit.
 No merge, package, installation, restart, push or Claude launch. Installed .13
 still has no ACP integration. Independent review and a separately assigned
 cumulative integration/package pass remain required.
@@ -15,7 +16,9 @@ The user explicitly authorized one official OAuth login/consent in message
 success, then session/new succeeded. The official browser flow was observed;
 no credentials, tokens, codes or account identity were extracted/copied. Subsequent
 private test profiles reused this ACP login through the official credential store.
-This is distinct from CLI login. No API key, Vertex account or API/Vertex spend
+This is distinct from CLI login. The official server may initiate interactive OAuth
+when its cache is missing or cannot be refreshed, even from session/new; this is
+NOT a silent-only launch guarantee. No reauthentication was performed in this fix pass. No API key, Vertex account or API/Vertex spend
 was used. Subscription model smoke calls were made within the authorized scope.
 
 Official distribution and verification are recorded in [the historical
@@ -27,6 +30,25 @@ Set `BOTLING_AGY_ACP_PATH` to the verified `agy_acp_server.par` in a development
 runtime. No installer or downloader was added. A missing/mismatched runtime fails
 before process/task launch. Binary distribution is a separate packaging assignment.
 The existing cached runtime is under `desktop/.cache/agy-acp-dev/server/`.
+
+For this isolated development checkout, run `node scripts/build-agy-file-helper.mjs`
+from desktop/. It uses the existing Apple clang 21.0.0 to build only the small
+`src/core/agent/agy-file-helper.c` adapter into that same runtime directory; this
+is not an app build/install. The reproduced arm64 helper SHA256 is
+`1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403`.
+The adapter pins that digest with no override. A different compiler output needs
+separate review/pinning, never bypassing verification. Runtime/helper must be
+outside the agent workspace, with a canonical non-symlink helper path. Use
+`BOTLING_AGY_ACP_PATH=/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/server/agy_acp_server.par`
+for a separately authorized development core launch targeting another workspace.
+The private smoke scripts set the same path directly. Missing helper fails before
+ACP launch. No environment/settings were changed on the installed app.
+
+Official arm64 archive (server plus harness):
+https://dl.google.com/agy-extensions/releases/macos/agy-acp-server-1.4.3-darwin-arm64.zip
+Archive SHA256 `c57db0a9b8b712daa9c3c17cdb990a61842ea569f279e8bd79d7aa85a303b20b`;
+server/harness digests and signature verification are in `agy-acp.ts`.
+No new download or external plugin installation was needed in this pass.
 
 ## Before-task boundary
 
@@ -70,11 +92,18 @@ The test explicitly killed its own orphan afterwards. Evidence:
 This is a demonstrated limitation, not a conjecture or a passing cleanup test.
 
 Botling's MCP command tool owns its process group and registers it in the existing
-process ledger. Cancel, ACP failure, head shutdown and worker shutdown clean up
+process ledger. Cancel, ACP failure, head shutdown clean up
 app-owned commands. Commands run under macOS sandbox-exec with workspace/owned-temp
 writes only, ACP profile read/write denied, and home reads denied except the
-workspace. There is no unsandboxed fallback/escalation. File tools reject outside
-workspace and protected-profile paths. Tools retain explicit one-action approval.
+workspace. There is no unsandboxed fallback/escalation. File tools use a pinned native helper with workspace device/inode anchoring,
+openat directory traversal and O_NOFOLLOW on every component. Unresolved/existing
+symlinks, hardlinked/special files and protected-profile identities are rejected;
+existing files are never truncated before fstat. Directory FDs keep the originally
+authorized inode if another process renames a directory; they never follow its
+replacement into an unrelated target. The workspace root itself must still match
+its pinned identity. Both protected path names and identities are denied. This
+is inode-capability containment, not a claim that an external actor cannot move
+an already authorized inode. Helper children are killed and awaited on cancel. Tools retain explicit one-action approval.
 Commands time out at 120 seconds; output is bounded. Deliberately daemonizing
 commands can escape the existing process-group mechanism; no claim of arbitrary
 hostile-process containment is made. Native execution is not used to bypass these
@@ -90,32 +119,31 @@ limits. Tools needing additional folders/home credentials must report the denial
 - Session/load on subsequent wakes/app reconstruction. Failed resume retains
   agyConversation and agyRecovery; no replacement session or automatic replay.
   Engine switching retains agy identity. Intentional new chat clears it.
-- At most two explicitly selected engines, including Codex+agy or Claude+agy.
-  Partner routing and hand-back/limit-card choices use the actual pair. Existing
-  Claude/Codex prompt golden tests remain unchanged/passing.
-- App-owned ACP workers through MCP app_handoff, app_send_message and
-  app_cancel_task. Dedicated sessions, per-run permission IDs, visible subagent
-  activity/results, task association, correlated later report turns, capped
-  concurrency, process-ledger registration and cancellation. Worker sessions and
-  pending reports persist atomically; reports clear only after the matching run's
-  coordinator prompt completes. Interrupted workers are not silently restarted.
-  Workers cannot create nested workers. Worker completion is not goal acceptance.
+- Single agy only. New mixed selections are rejected before startup; persisted
+  mixed configurations normalize to single agy, and the UI selects agy exclusively.
+- Denial, cancellation, failed tools and unresolved approval cards survive a
+  server end_turn response. Bot receives failed completion; report acknowledgement
+  does not treat a blocked turn as successful. A fresh turn resets its outcome.
 
 ## Honest gates and validation limits
 
-Native subagent/`subagent_info` execution is disabled, not falsely mapped to a
-completed worker. `subagent_info` belongs to the old CLI event stream; native ACP
-subagent inheritance/cleanup has not been proven. App-controlled workers emit the
-app's existing subagent lifecycle events instead. Their routing, persistence,
-approval/refusal and cancellation were tested with offline child fixtures; no
-live delegated worker or other engine was launched by this execution worker.
+App-managed workers are actually disabled: the head never constructs a worker
+manager, worker:true startup is rejected, and the MCP inventory/dispatcher omit
+all worker tools even if a delegate is supplied. Offline worker code/tests remain
+for future review but are not live acceptance. Live worker approval isolation,
+report delivery, cancellation, crash cleanup and restart recovery were NOT tested;
+no delegated worker or other engine was launched. Mixed Codex+agy lifecycle is
+also unverified and disabled. These are unfinished integration requirements, not
+claims of an official ACP protocol limitation.
+
+Native subagent/`subagent_info` execution remains disabled; its inheritance and
+cleanup have not been proven. There is no fabricated subagent success event.
 
 Global/external plugins, Claude component-editor/team paths, native workflows,
 background monitors and native schedules remain unavailable. This is an explicit
 implementation gate, not a statement that ACP lacks all such capabilities. The
 built-in HTTP MCP bridge demonstrates the safe tool transport for future adapters.
-In-turn steering is unsupported: user messages queue; busy-worker follow-ups
-return an explicit error. Native approval modes auto_edit/yolo are unavailable.
+In-turn steering is unsupported: user messages queue. Native approval modes auto_edit/yolo are unavailable.
 
 The current adapter intentionally keeps the existing usage event shape. Concurrent
 Token Flow task543c6570 owns metering identity/event metadata/turn-purpose changes.
@@ -124,7 +152,28 @@ Same-function merge overlap is bot.ts onItem (agy init/recovery), plus nearby
 worker/routing logic. Preserve Token Flow metadata during sequential integration;
 no unrelated metering redesign is included.
 
-## Evidence and reproducibility
+## Review-fix evidence
+
+Both reviewer P1s were reproduced before editing implementation: the dangling
+symlink write resolved successfully, and denial + failed tool + end_turn emitted
+ok:true. The revised focused set passes 100 tests in 11 files; the final ACP
+late-permission/cancellation adjustment also passed its 12-test rerun. Typecheck
+passes. No full suite or package build was run.
+
+Current live evidence is saved with the `review-` prefix: head denial is
+permission_denied/ok:false, approved helper write exact, same-session load,
+active command cancellation, server SIGKILL command cleanup, and production Bot
+failed refusal status plus reconstruction/continuation. The first production Bot
+attempt correctly failed the denied turn but session/load timed out on restart;
+a single bounded retry passed. Both attempts are retained. This indicates a
+remaining official-session availability risk; it is not permission to replace a
+conversation, replay a task or reauthenticate silently.
+
+Worker/mixed-engine live validation is not included; the actual gates above stay
+closed. Full requested integration remains incomplete pending that validation,
+independent review and separate integration/package assignment.
+
+## Historical evidence and reproducibility
 
 `docs/evidence/agy-acp/` contains sanitized login and probe outcomes. Real tests:
 
@@ -148,13 +197,13 @@ was corrected and the actual public card selection/reconstruction probe passed.
 A failed rebuild was detected; output from its stale smoke bundle is not counted
 as final sandbox validation. The fresh separately named final bundle was rerun.
 
-Final focused run: **90 tests passed in 11 files**, `npm run typecheck` passed,
+Prior candidate focused run (not acceptance of the review fixes): **90 tests passed in 11 files**, `npm run typecheck` passed,
 and `node scripts/core-dev.mjs` passed. No swap/restart followed the core build.
 
 Focused offline tests cover the startup policy state machine, cancellation before
 prompt, exact MCP grants, outside/protected writes, process/child cleanup, persisted
 worker reports and stale-run isolation, existing resume regression, approval-rule
-isolation, engine pair routing, settings, legacy CLI fail-closed behavior and
+isolation, engine routing, settings, legacy CLI fail-closed behavior and
 existing permission/prompt contracts. Typecheck and a core-only bundle validate
 wiring. No full suite, packaging, installed native UI preview or live mixed-engine
 worker run was performed.
@@ -169,8 +218,8 @@ node .cache/agy-acp-dev/head-smoke-review.mjs
 node .cache/agy-acp-dev/bot-smoke-review.mjs
 ```
 
-These are model smoke runs, not offline unit tests. They never authenticate or
-copy tokens, never launch Claude, create only owned temporary workspaces, and
+These are model smoke runs, not offline unit tests. They do not call authenticate or
+copy tokens (the official server can still initiate OAuth on missing credentials), never launch Claude, create only owned temporary workspaces, and
 approve only their exact benign fixture writes/commands. Run each build only if
 it succeeded; do not run a stale bundle after a failed compilation. For the image
 probe, copy attachment-fixture.png into the owned cache first; extended_smoke.ts

@@ -37,7 +37,8 @@ const clamp = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(10, Math.max(1, Math.trunc(value))) : fallback;
 
 export function makeHeads(engines: Engine[], answerWith: AnswerTarget = "both", rest: Partial<Omit<Heads, "engines" | "answerWith">> = {}): Heads {
-  const kept = ENGINES.filter((engine) => engines.includes(engine)).slice(0, 2);
+  // Restore old mixed configurations as single agy; never start an unvalidated partner.
+  const kept = engines.includes("agy") ? ["agy" as Engine] : ENGINES.filter((engine) => engines.includes(engine)).slice(0, 2);
   const heads: Heads = { engines: kept.length ? kept : ["claude"], answerWith, limits: rest.limits ?? { ...DEFAULT_LIMITS }, handoffs: rest.handoffs ?? true, codexModel: rest.codexModel ?? null };
   heads.answerWith = fitted(heads, answerWith);
   return heads;

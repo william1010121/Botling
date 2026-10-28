@@ -7,9 +7,9 @@ import type { AgyConfig } from "./agy";
 import type { HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
 import { imageMediaType } from "../attachments";
-import { AgyWorkers } from "./agy-workers";
+import type { AgyWorkers } from "./agy-workers";
 import type { CodexItem } from "./codex";
-import { AgyMcpBridge } from "./agy-mcp";
+import { AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
 import { processTreeAdapter, type ManagedProcess, type TerminateResult } from "../process/tree";
 
 export const ACP_VERSION = "1.4.3";
@@ -34,6 +34,8 @@ export class AgyAcpProtocol {
   private ready = false;
   private busy = false;
   private cancelEpoch = 0;
+  private turnCancelled = false;
+  private turnFailure: "permission_denied" | "cancelled" | "tool_failed" | undefined;
   get initialized() { return this.ready; }
   private text = "";
   private sessionId = "";
@@ -85,6 +87,8 @@ export class AgyAcpProtocol {
     if (this.busy) throw new Error("ACP does not support in-turn steering; wait for this turn to finish.");
     if (/^\s*\/(logout|usage)\b/i.test(text)) throw new Error("ACP account slash commands are not available through Botling.");
     this.busy = true;
+    this.turnFailure = undefined;
+    this.turnCancelled = false;
     const epoch = this.cancelEpoch;
     try {
       await this.start();
@@ -105,7 +109,7 @@ export class AgyAcpProtocol {
       const usage = obj(result.usage);
       const count = (key: string) => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] as number : 0;
       if (result.usage) this.emit({kind:"usage",totalCost:0,tokens:{input:Math.max(0,count("inputTokens")-count("cachedReadTokens")),output:count("outputTokens")+count("thoughtTokens"),cacheRead:count("cachedReadTokens"),cacheWrite:count("cachedWriteTokens")}});
-      const reason = str(result.stopReason);
+      const reason = this.turnFailure ?? (epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason));
       this.emit({ kind: "result", ok: reason === "end_turn", text: this.text, error: reason === "end_turn" ? "" : `Antigravity stopped: ${reason || "unknown reason"}`, subtype: reason });
       return reason === "end_turn";
     } catch (error) {
@@ -145,6 +149,7 @@ export class AgyAcpProtocol {
           this.emit({ kind: "toolUse", id, tool: str(u.kind) || "ACP tool", title: str(u.title) || "Antigravity tool", detail: json(u.rawInput), input: obj(u.rawInput), parent: null });
         }
         if (["completed", "failed"].includes(u.status) && !this.completedTools.has(id)) {
+          if (u.status === "failed" && this.busy) this.turnFailure ??= "tool_failed";
           this.completedTools.add(id);
           this.emit({ kind: "toolResult", id, output: json(u.rawOutput ?? u.content), failed: u.status === "failed", parent: null, launch: null });
         }
@@ -156,7 +161,8 @@ export class AgyAcpProtocol {
     const allow = options.find((o: Obj) => o.kind === "allow_once" && o.optionId === "allow");
     const deny = options.find((o: Obj) => o.kind === "reject_once" && o.optionId === "deny");
     // Workspace-trust and ask_question are not tool approvals. Never convert their choices to allow.
-    if (!this.ready || !this.busy || p.sessionId !== this.sessionId || !allow || !deny) {
+    if (!this.ready || !this.busy || this.turnCancelled || p.sessionId !== this.sessionId || !allow || !deny) {
+      if (this.busy && p.sessionId === this.sessionId) this.turnFailure ??= "permission_denied";
       this.write({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } }); return;
     }
     const requestId = `acp:${String(message.id)}`;
@@ -168,10 +174,12 @@ export class AgyAcpProtocol {
   answer(requestId: string, allow: boolean) {
     const pending = this.approvals.get(requestId); if (!pending || this.closed) return;
     this.approvals.delete(requestId);
+    if (!allow) this.turnFailure = "permission_denied";
     if (allow) this.transport.onAllow?.(pending.title, pending.input);
     this.write({ jsonrpc: "2.0", id: pending.id, result: { outcome: { outcome: "selected", optionId: allow ? pending.allow : pending.deny } } });
   }
   private cancelApprovals() {
+    if (this.approvals.size && this.busy) this.turnFailure ??= "cancelled";
     for (const [requestId, pending] of this.approvals) {
       this.write({ jsonrpc: "2.0", id: pending.id, result: { outcome: { outcome: "cancelled" } } });
       this.emit({ kind: "permissionCancelled", requestId });
@@ -180,6 +188,7 @@ export class AgyAcpProtocol {
   }
   interrupt() {
     this.cancelEpoch++;
+    if (this.busy) { this.turnCancelled = true; this.turnFailure ??= "cancelled"; }
     if (this.sessionId && !this.closed) this.write({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: this.sessionId } });
     this.cancelApprovals();
   }
@@ -220,7 +229,9 @@ export class AgyAcpHead {
   get completionDependencies() { return this.workers?.completionDependencies ?? []; }
   get pid() { return this.process?.pid ?? -1; }
   start() {
+    if (this.config.worker) throw new Error("Antigravity app workers are disabled pending live lifecycle validation.");
     verifyAcpRuntime(this.config.command);
+    verifyAgyFileHelper(join(dirname(this.config.command), "botling-agy-file-helper"), this.config.cwd);
     if (!this.config.acpHome || !isAbsolute(this.config.acpHome)) throw new Error("ACP requires a private Botling profile.");
     const home = this.config.acpHome;
     mkdirSync(join(home, "antigravity-acp"), { recursive: true, mode: 0o700 });
@@ -233,10 +244,7 @@ export class AgyAcpHead {
     writeFileSync(join(home, "antigravity-acp/trusted_workspaces.json"), JSON.stringify({ trusted: [], untrusted: [cwd] }), { mode: 0o600 });
     const env: NodeJS.ProcessEnv = { GEMINI_HOME: home };
     for (const key of ["HOME", "USER", "PATH", "TMPDIR", "LANG"]) if (process.env[key]) env[key] = process.env[key];
-    if (!this.config.worker) this.workers = new AgyWorkers(this.config, this.handlers.onItem, (taskId, text, taskRun) => {
-      this.queue.push({ text, uuid: randomUUID(), images: [], taskId, taskRun }); void this.drain();
-    }, (config, handlers) => new AgyAcpHead(config, handlers));
-    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name, args) => this.workers!.tool(name, args) : undefined, this.config.processStarted);
+    this.bridge = new AgyMcpBridge(cwd, home, undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"));
     const mcpServers = this.bridge.start().then(server => [server]);
     void mcpServers.catch(() => {});
     this.process = processTreeAdapter().spawn(this.config.command, [], { cwd, env });

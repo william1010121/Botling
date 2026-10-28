@@ -45,3 +45,7 @@ it('engine switching retains agy identity; only an intentional new chat clears i
  (b as any).becomeEngine('agy');expect((b as any).session).toMatchObject({sessionId:session,started:true});
  (b as any).newSession();expect(h.saved().agyConversation).toBeUndefined();
 });
+
+it('rejects mixed-engine selection before runtime provisioning or partner startup',async()=>{
+ const h=harness(),b=h.make();await expect(b.setHeads(['codex','agy'])).rejects.toThrow('mixed-engine');expect(h.launches).toEqual([]);expect(b.settingsView().engines).toEqual(['agy']);
+});

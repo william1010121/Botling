@@ -1,12 +1,19 @@
 // Built-in, loopback-only tool transport. No external plugin installation or credentials.
 import { createServer, type Server } from 'node:http';
-import { randomUUID } from 'node:crypto';
-import { readFile, writeFile, realpath, stat } from 'node:fs/promises';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { execFile, type ChildProcess } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { resolve, dirname, relative, isAbsolute, join } from 'node:path';
+import { resolve, relative, isAbsolute, join } from 'node:path';
 import { processTreeAdapter, type ManagedProcess } from '../process/tree';
 
+export const AGY_FILE_HELPER_SHA = '1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403';
+export function verifyAgyFileHelper(path: string | undefined, workspace: string) {
+  if(!path || !isAbsolute(path) || realpathSync(path)!==resolve(path))throw new Error('Canonical verified file helper path required.');
+  const rel=relative(realpathSync(workspace),path);
+  if(rel!=='..'&&!rel.startsWith('../')&&!isAbsolute(rel))throw new Error('ACP runtime and file helper must be provisioned outside the agent workspace.');
+  if(createHash('sha256').update(readFileSync(path)).digest('hex')!==AGY_FILE_HELPER_SHA)throw new Error('File helper hash mismatch; nothing executed.');
+}
 type Args = Record<string, unknown>;
 export interface AgyTool { name: string; description: string; inputSchema: Args }
 const schema = (properties: Args, required: string[]) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -27,13 +34,22 @@ export class AgyMcpBridge {
   private server?: Server;
   private token = randomUUID();
   private grants = new Map<string, number[]>();
+  private fileProcesses = new Set<ChildProcess>();
   private commands = new Set<ManagedProcess>();
   private stopped = false;
   private epoch = 0;
   private scratch: string | undefined;
   readonly tools: AgyTool[];
-  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void) {
-    this.tools = [...AGY_LOCAL_TOOLS, ...(delegate ? AGY_WORKER_TOOLS : [])];
+  private base: string;
+  private rootIdentity: string[];
+  private protectedIdentity: string[];
+  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string) {
+    // Worker transport is deliberately unavailable until live isolation/recovery validation.
+    this.tools = [...AGY_LOCAL_TOOLS];
+    this.base = realpathSync(cwd);
+    const root = statSync(this.base, {bigint:true}), profile = statSync(protectedPath, {bigint:true});
+    this.rootIdentity = [String(root.dev), String(root.ino)];
+    this.protectedIdentity = [String(profile.dev), String(profile.ino)];
   }
   /** Called only from an explicit allow-once answer to ACP's matching tool card. */
   grant(title: string, args: Args) {
@@ -89,15 +105,21 @@ export class AgyMcpBridge {
     }
     if(name==='read_file'||name==='write_file') {
       if(typeof args.path!=='string')throw new Error('Path required.');
-      const base=await realpath(this.cwd),path=resolve(base,args.path);
-      let target:string;try{target=await realpath(path);}catch{target=resolve(await realpath(dirname(path)),path.split('/').at(-1)!);}
-      const protectedBase=await realpath(this.protectedPath).catch(()=>resolve(this.protectedPath));
-      const rel=relative(base,target),protectedRel=relative(protectedBase,target);
-      if(rel==='..'||rel.startsWith('../')||isAbsolute(rel)||protectedRel===''||(!protectedRel.startsWith('../')&&protectedRel!=='..'&&!isAbsolute(protectedRel)))throw new Error('Path is outside the workspace or is protected ACP state.');
+      const rel=relative(this.base,resolve(this.base,args.path));
+      if(!rel||rel==='..'||rel.startsWith('../')||isAbsolute(rel))throw new Error('Path is outside the workspace.');
+      const protectedRel=relative(this.base,resolve(this.protectedPath));
+      if(rel===protectedRel||rel.startsWith(protectedRel+'/'))throw new Error('Protected ACP state.');
       if(this.stopped||epoch!==this.epoch)throw new Error('Tool cancelled.');
-      if(name==='read_file'){if((await stat(target)).size>2_000_000)throw new Error('File exceeds the 2 MB read limit.');const text=await readFile(target,'utf8');return text.length>200_000?text.slice(0,200_000)+'\n[Truncated at 200000 characters]':text;}
-      if(typeof args.content!=='string'||args.content.length>2_000_000)throw new Error('File content required (maximum 2 MB).');
-      await writeFile(target,args.content,'utf8');return 'File written.';
+      if(name==='write_file'&&(typeof args.content!=='string'||Buffer.byteLength(args.content,'utf8')>2_000_000))throw new Error('File content required (maximum 2 MB).');
+      verifyAgyFileHelper(this.helperPath, this.base);
+      // openat walks anchored directory FDs, rejects every symlink and never truncates before fstat.
+      const output = await new Promise<string>((resolve,reject)=>{
+        const child=execFile(this.helperPath!,[name==='read_file'?'read':'write',this.base,...this.rootIdentity,...this.protectedIdentity,rel],{timeout:10_000,maxBuffer:2_100_000},(error,stdout)=>{this.fileProcesses.delete(child);error?reject(new Error('Workspace file access refused.')):resolve(stdout);});
+        this.fileProcesses.add(child);
+        child.stdin?.on("error",()=>{});
+        child.stdin?.end(name==='write_file'?args.content as string:undefined);
+      });
+      return name==='write_file'?'File written.':output.slice(0,200_000)+(output.length>200_000?'\n[Truncated at 200000 characters]':'');
     }
     if(!this.delegate)throw new Error('Workers unavailable.');
     return this.delegate(name,args);
@@ -127,6 +149,6 @@ export class AgyMcpBridge {
       child.child.once('error',()=>finish(null));child.child.once('close',finish);
     });
   }
-  async cancel() { this.revoke();await Promise.all([...this.commands].map(c=>c.terminate({graceMs:500}))); }
+  async cancel() { this.revoke();await Promise.all([...this.fileProcesses].map(child=>new Promise<void>(resolve=>{child.once("close",()=>resolve());child.kill("SIGKILL");})));await Promise.all([...this.commands].map(c=>c.terminate({graceMs:500}))); }
   async close() { this.stopped=true;await this.cancel();this.server?.closeAllConnections();await new Promise<void>(resolve=>{if(!this.server)return resolve();this.server.close(()=>resolve());});if(this.scratch){rmSync(this.scratch,{recursive:true,force:true});this.scratch=undefined;} }
 }

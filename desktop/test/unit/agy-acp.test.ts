@@ -39,7 +39,7 @@ it('streams tools/text, holds approval, rejects once and cancels pending cards',
  ask(102,'trust');expect(h.frames.at(-1).result.outcome.outcome).toBe('cancelled');
  update({sessionUpdate:'tool_call_update',toolCallId:'t',status:'failed',rawOutput:'refused'});
  h.client.receive({jsonrpc:'2.0',id:prompt,result:{stopReason:'cancelled'}});await done;
- expect(h.items).toContainEqual({kind:'delta',text:'hello'});expect(h.items.some(i=>i.kind==='toolResult'&&i.failed)).toBe(true);expect(h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'cancelled'});
+ expect(h.items).toContainEqual({kind:'delta',text:'hello'});expect(h.items.some(i=>i.kind==='toolResult'&&i.failed)).toBe(true);expect(h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'permission_denied'});
 });
 it('close during handshake prevents later task submission',async()=>{
  const h=harness(),done=h.client.send('task','u');h.client.close();await done;expect(h.frames.map(f=>f.method)).toEqual(['initialize']);
@@ -64,4 +64,30 @@ it('worker reports wait for the Bot scheduler and cannot consume a queued user t
   available=true;await vi.advanceTimersByTimeAsync(100);expect(sent).toEqual(['user message','worker report']);
   expect(events.filter(i=>i.kind==='backgroundTurn')).toEqual([{kind:'backgroundTurn',taskId:'task'}]);
  }finally{await head.terminate();vi.useRealTimers();}
+});
+
+it('denial and failed tools survive end_turn instead of reporting success',async()=>{
+ const h=harness(),done=h.client.send('write','u');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
+ h.client.receive({jsonrpc:'2.0',id:50,method:'session/request_permission',params:{sessionId:'new',toolCall:{title:'botling_write_file',rawInput:{path:'x'}},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'deny'}]}});
+ h.client.answer('acp:50',false);
+ h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call_update',toolCallId:'t',status:'failed'}}});
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});await done;
+ expect(h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'permission_denied'});
+});
+
+it('cancel survives end_turn and a subsequent turn starts clean',async()=>{
+ const h=harness();let sent=h.client.send('test','one');await h.init();h.policy();await tick();let id=h.frames.at(-1).id;
+ h.client.interrupt();h.client.receive({jsonrpc:'2.0',id:400,method:'session/request_permission',params:{sessionId:'new',options:[]}});h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);expect(h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'cancelled'});
+ sent=h.client.send('next','two');await tick();h.policy();await tick();id=h.frames.at(-1).id;
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(true);
+});
+it('failed tool alone cannot become a successful terminal result',async()=>{
+ const h=harness(),sent=h.client.send('test','one');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
+ h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call',toolCallId:'failed',status:'failed'}}});
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);expect(h.items.at(-1)).toMatchObject({ok:false,subtype:'tool_failed'});
+});
+
+it('worker entrypoint is blocked before any runtime or profile action',()=>{
+ const head=new AgyAcpHead({command:'/never-launched',cwd:'/never-created',sessionId:'old',resume:false,worker:true},{onItem(){},onExit(){}});
+ expect(()=>head.start()).toThrow('workers are disabled');expect(head.pid).toBe(-1);
 });

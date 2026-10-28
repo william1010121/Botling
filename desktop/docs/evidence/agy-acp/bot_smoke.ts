@@ -16,7 +16,8 @@ async function send(b:Bot,text:string){
 let bot=make();
 try{
  await bot.setHeads(['agy']);evidence.selection=bot.settingsView().engines;
- await send(bot,'Use botling write_file to create denied-core.txt containing hello. If permission is denied stop immediately without retry.');
+ const denied=await send(bot,'Use botling write_file to create denied-core.txt containing hello. If permission is denied stop immediately without retry.');
+ if(denied.status!=='failed'||!denied.error?.includes('permission_denied'))throw Error('Denied operation reported done');
  if(!evidence.cards.length||existsSync(join(cwd,'denied-core.txt')))throw Error('Core approval denial failed');
  const first=JSON.parse(readFileSync(join(profile.storeDir,'bot.json'),'utf8')).agyConversation;
  await bot.shutdown({tidy:false});bot=make();

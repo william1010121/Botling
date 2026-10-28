@@ -1639,6 +1639,7 @@ export class Bot {
   async setHeads(engines: Engine[]): Promise<ResultOf<"heads.set">> {
     if (this.options.primary) return this.options.primary.setHeads(engines);
     const kept = (["claude", "codex", "agy"] as Engine[]).filter((engine) => engines.includes(engine));
+    if (kept.includes("agy") && kept.length > 1) throw new ContractError("conflict", "Antigravity mixed-engine sessions are disabled pending lifecycle validation.");
     if (!kept.length) throw new ContractError("bad_request", "A bot needs a head.");
     if (kept.includes("codex") && !this.options.codexConfig) throw new ContractError("conflict", "Codex is not available here.");
     if (kept.length > 2) throw new ContractError("bad_request", "Choose at most two engines.");
