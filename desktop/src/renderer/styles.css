@@ -743,3 +743,12 @@ button { font: inherit; color: inherit; }
 .wb-card .wb-picture-frame { pointer-events: none; }
 .wb-picture-ask { padding: 12px; background: #16161A; border: 1px solid #2E2E35; border-radius: 12px; display: flex; align-items: center; gap: 12px; }
 .wb-picture-ask code { font-size: 12.5px; color: var(--text); background: var(--chip); padding: 1px 5px; border-radius: 5px; }
+
+/* Full-page reports cover the shell without unmounting its conversation. */
+.report-viewer { position: fixed; inset: 38px 0 0; z-index: 1000; display: flex; flex-direction: column; background: var(--ground); }
+.report-viewer header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.report-viewer header span { opacity: .65; }
+.report-viewer iframe { flex: 1; min-height: 0; width: 100%; border: 0; background: white; }
+.report-viewer header button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--chip); cursor: pointer; }
+.report-viewer header button:hover { background: var(--hover); }
+.report-viewer header button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }

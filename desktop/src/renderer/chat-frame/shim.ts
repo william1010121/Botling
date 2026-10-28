@@ -1,6 +1,7 @@
 // Runs before the Web/src chat page: the page talks to "the app" through WebKit's
 // `webkit.messageHandlers.ccb.postMessage` (Web/src/bridge.ts). Here that goes to the app page
 // (the React shell) instead, which owns the contract client.
+import { isReportAction } from "./report-action";
 import { nativeChat, toShell } from "./transport";
 import { keepDraft, pageDraftStore } from "./draft-keep";
 
@@ -23,7 +24,7 @@ function userLink(url:unknown):boolean {
         const component=event instanceof MessageEvent?[...document.querySelectorAll<HTMLIFrameElement>('iframe.component-frame')].find(frame=>frame.contentWindow===event.source):null;
         const linkPinId=component?(component as HTMLIFrameElement & {ccbPin?:string}).ccbPin:undefined;
         const linkMessageId=component&&!linkPinId?(component.closest<HTMLElement>('.row[data-id]')?.dataset.id||'unattributed-component'):undefined;
-        toShell({ botling: "action", action: action as {type:string;[key:string]:unknown}, linkSource, ...(linkMessageId?{linkMessageId}:{}), ...(linkPinId?{linkPinId}:{}) });
+        toShell({ botling: "action", action: action as {type:string;[key:string]:unknown}, linkSource, reportPreview: isReportAction(component, value), ...(linkMessageId?{linkMessageId}:{}), ...(linkPinId?{linkPinId}:{}) });
       },
     }),
   }),

@@ -4,6 +4,7 @@
 // what the user does (send, a pick on an approval, Stop); this page turns that into contract
 // commands. Only this page has the bridge to main.
 import { inputTrace } from "./input-trace";
+import { ReportViewer } from "./ReportViewer";
 import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
@@ -544,6 +545,7 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
 
 /** The reused chat page, in a frame. */
 function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void }) {
+  const [report, setReport] = useState<{botId: string; url: string} | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const placeholder = useRef<HTMLDivElement>(null);
   const [snapshot, setSnapshot] = useState<{image:string;revision:number} | null>(null);
@@ -554,6 +556,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
   const ready = useRef(false);
   const widthDragging = useRef(false);
   const view = useSyncExternalStore(store.subscribeChat, store.getChatView);
+  useEffect(() => { setReport(null); }, [view.chat?.botId]);
   // The line the next message answers (the page's Reply), per chat.
   const [replying, setReplying] = useState<{ botId: string; id: string } | null>(null);
   const replyingRef = useRef(replying);
@@ -916,7 +919,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
         case "openExternal":
         case "openURL":
         case "revealFile":
-          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(action.type === "revealFile" ? { reveal: true } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).catch(onError);
+          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(message.reportPreview === true && action.type === "openURL" ? {preview: true} : {}), ...(action.type === "revealFile" ? { reveal: true } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).then(result => { if (result.previewURL && store.getChatView().chat?.botId === chat.botId) setReport({botId: chat.botId, url: result.previewURL}); }).catch(onError);
           return;
         // A reply made into a component, and its spec's chip and card (Phase 5a).
         case "makeComponent":
@@ -1067,10 +1070,11 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     return () => window.removeEventListener("message", onMessage);
   }, [client, onError, onSent, onSelectTask, push, pushPlugins, store, channel]);
 
-  if (nativeEditor()) return <div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
+  const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)} /> : null;
+  if (nativeEditor()) return <>{viewer}<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
     {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
-  </div>;
-  return <iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} title="Chat" />;
+  </div></>;
+  return <>{viewer}<iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} title="Chat" /></>;
 }
 
 /**

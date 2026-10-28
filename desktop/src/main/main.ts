@@ -14,6 +14,7 @@ import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
+import { reportPreviewURL, shellReportNavigation } from "./report-preview";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
 import {blockingRecovery,persistentDataIdentity,dataVolumeError,recoveryCopies,deleteRecoveryCopies,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
@@ -537,12 +538,13 @@ async function openResult(botId: string, url: string): Promise<{ opened: boolean
   if (!access.result) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
   return openLink(url);
 }
-async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string,reveal=false): Promise<{opened:boolean}> {
+async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string,reveal=false,preview=false): Promise<{opened:boolean;previewURL?:string}> {
   // A file attached in this chat, as the chat page shows it (served by the chat origin): the file it
   // names, which the core accepts only when a line of this chat has it (1.x opens it like any link).
   url = attachmentFile(url, botId) ?? url;
   const access = await core.call({type:"link.authorize",source,botId,url,...(messageId?{messageId}:{}),...(pinId?{pinId}:{})});
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
+  if (preview && source === "component" && !reveal) return { opened: true, previewURL: reportPreviewURL(url) };
   return openLink(url, reveal);
 }
 /** `reveal`: the lightbox's "Show in Finder" (a local file only, shown in Finder rather than opened). */
@@ -623,7 +625,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
-    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true);
+    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true,cmd.preview===true);
     case "doctor.copy": return copyDoctorFix(cmd.tool, await core.call({ type: "doctor.view" }), text => clipboard.writeText(text));
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "chat.reloadPage": return { reloaded: await reloadNativeEditor(sender) };
@@ -713,9 +715,10 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     } else if (details.url.startsWith(CARD_PREFIX) || details.url.startsWith(PAGE_PREFIX)) {
       allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
     } else if (details.url.startsWith(PREVIEW_PREFIX)) {
-      // A result page in a preview card: only as a component page's own child, put there by that page (Phase 5c).
+      // A result page: a shell-owned full-page viewer, or a component-owned preview card child.
+      // The sandboxed report itself still cannot initiate navigation.
       const componentPage = (frame: Electron.WebFrameMain | null | undefined) => !!frame && frame.url.startsWith(PAGE_PREFIX) && chatFrame(frame.parent);
-      allowed = componentPage(parent) && (!initiator || initiator === parent);
+      allowed = shellReportNavigation(parent, initiator, mainFrame) || (componentPage(parent) && (!initiator || initiator === parent));
     }
     if (!allowed) {
       details.preventDefault();

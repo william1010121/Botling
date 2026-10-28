@@ -877,7 +877,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("results.list"), botId }),
   /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
   z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
-  z.strictObject({ type: z.literal("link.open"), reveal: z.boolean().optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("link.open"), preview: z.boolean().optional(), reveal: z.boolean().optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
   /** Core-only membership lookup: no chat payload or component rendering. */
   z.strictObject({ type: z.literal("link.authorize"), source:z.enum(["user","component"]).optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
@@ -1138,7 +1138,7 @@ export interface Results {
   "bots.remove": { removed: boolean };
   "results.list": { results: ResultView[] };
   "result.open": { opened: boolean };
-  "link.open": { opened: boolean };
+  "link.open": { opened: boolean; previewURL?: string };
   "link.authorize": { result: boolean; linked: boolean };
   /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
   "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };
