@@ -39,13 +39,21 @@ function authenticate(req: IncomingMessage, clients: Client[]): Client | undefin
 const assets: Record<string, string> = { 'index.html': 'text/html; charset=utf-8', 'web.js': 'text/javascript; charset=utf-8',
   'styles.css': 'text/css; charset=utf-8', 'web.css': 'text/css; charset=utf-8', 'chat.html': 'text/html; charset=utf-8',
   'chat.js': 'text/javascript; charset=utf-8', 'chat.css': 'text/css; charset=utf-8', 'frame.css': 'text/css; charset=utf-8',
-  'plugins/ccb-latex/katex.min.css': 'text/css; charset=utf-8', 'manifest.webmanifest': 'application/manifest+json', 'icon.svg': 'image/svg+xml' };
+  'plugins/ccb-latex/katex.min.css': 'text/css; charset=utf-8', 'frame-host.html': 'text/html; charset=utf-8', 'frame-host.js': 'text/javascript; charset=utf-8', 'manifest.webmanifest': 'application/manifest+json', 'icon.svg': 'image/svg+xml' };
 const FONT = /^plugins\/ccb-latex\/fonts\/[A-Za-z0-9_-]{1,80}\.woff2$/;
 /** The desktop's chat-page CSP (src/main/main.ts CHAT_CSP). The page runs in a sandboxed, opaque-origin
- * frame of the shell (no cookies, no storage, no bridge); only the shell may frame it. */
-export const WEB_CHAT_CSP = [
+ * frame of the shell (no cookies, no storage, no bridge); only the shell may frame it. Its only frames
+ * are component and card pages, drawn by the frame host (renderer/web-pages.ts). */
+export const webChatCSP = (origin: string) => [
   "default-src 'none'", "script-src 'self' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
-  "media-src 'self' data: blob:", "frame-src 'none'", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'", "frame-ancestors 'self'",
+  "media-src 'self' data: blob:", `frame-src ${origin}/mobile/frame-host.html`, "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'", "frame-ancestors 'self'",
+].join('; ');
+/** The frame host: always an opaque origin (`sandbox`, even opened or framed elsewhere), inline script for
+ * the component it is handed (which adds the desktop's COMPONENT_CSP/CARD_CSP), and no network, frames or forms. */
+export const frameHostCSP = (origin: string) => [
+  'sandbox allow-scripts', "default-src 'none'", `script-src ${origin}/mobile/frame-host.js 'unsafe-inline' blob:`, "style-src 'unsafe-inline'",
+  'img-src data: blob:', 'font-src data:', 'media-src data: blob:', "connect-src 'none'", "frame-src 'none'", "child-src 'none'", "worker-src 'none'",
+  "form-action 'none'", "base-uri 'none'",
 ].join('; ');
 function json(res: ServerResponse, status: number, value: unknown) { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); }
 export function handler(options: BridgeOptions) {
@@ -74,7 +82,8 @@ export function handler(options: BridgeOptions) {
       if (!Object.hasOwn(assets, name) && !font) return refuse(404);
       try {
         const body = readFileSync(join(options.assets, name));
-        if (name === 'chat.html') res.setHeader('Content-Security-Policy', WEB_CHAT_CSP);
+        if (name === 'chat.html') res.setHeader('Content-Security-Policy', webChatCSP(origin.origin));
+        if (name === 'frame-host.html') res.setHeader('Content-Security-Policy', frameHostCSP(origin.origin));
         if (font) res.setHeader('Access-Control-Allow-Origin', '*');
         res.writeHead(200, { 'Content-Type': font ? 'font/woff2' : assets[name] }); res.end(body);
       }

@@ -5,7 +5,7 @@ import { Readable } from 'node:stream';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Clients, handler, tokenHash, WEB_CHAT_CSP, type BridgeOptions } from './bridge';
+import { Clients, frameHostCSP, handler, tokenHash, webChatCSP, type BridgeOptions } from './bridge';
 import { mobileCommand, webSnapshot, type MobileAccess } from './adapter';
 import { ALL_BOTS, botAllowed } from './scope';
 import { MutationLedger } from './ledger';
@@ -77,7 +77,7 @@ it('the browser scope still has only the four mobile commands', async () => {
 
 function assetHandler() {
   const dir = mkdtempSync(join(tmpdir(), 'web-assets-')); dirs.push(dir);
-  for (const name of ['index.html', 'web.js', 'styles.css', 'web.css', 'chat.html', 'chat.js', 'chat.css', 'frame.css']) writeFileSync(join(dir, name), name);
+  for (const name of ['index.html', 'web.js', 'styles.css', 'web.css', 'chat.html', 'chat.js', 'chat.css', 'frame.css', 'frame-host.html', 'frame-host.js']) writeFileSync(join(dir, name), name);
   mkdirSync(join(dir, 'plugins/ccb-latex/fonts'), { recursive: true });
   writeFileSync(join(dir, 'plugins/ccb-latex/fonts/KaTeX_Main-Regular.woff2'), 'font');
   writeFileSync(join(dir, 'secret.txt'), 'no');
@@ -101,8 +101,21 @@ function assetHandler() {
 it('serves the web shell and sandboxed chat page, and nothing else', async () => {
   const { call } = assetHandler();
   const chat = await call('GET', '/mobile/chat.html');
-  expect(chat.status).toBe(200); expect(chat.headers['content-security-policy']).toBe(WEB_CHAT_CSP);
-  expect(WEB_CHAT_CSP).toContain("connect-src 'none'"); expect(WEB_CHAT_CSP).toContain("frame-ancestors 'self'");
+  const chatCSP = webChatCSP(origin);
+  expect(chat.status).toBe(200); expect(chat.headers['content-security-policy']).toBe(chatCSP);
+  expect(chatCSP).toContain("connect-src 'none'"); expect(chatCSP).toContain("frame-ancestors 'self'");
+  // The chat page may frame only the frame host (component and card pages); nothing else.
+  expect(chatCSP.split('; ').filter(rule => rule.startsWith('frame-src'))).toEqual([`frame-src ${origin}/mobile/frame-host.html`]);
+  // The frame host is an opaque origin by its own response, with no network, frames or forms.
+  const host = await call('GET', '/mobile/frame-host.html', { 'sec-fetch-site': 'cross-site' });
+  expect(host.status).toBe(200);
+  const hostCSP = String(host.headers['content-security-policy']);
+  expect(hostCSP).toBe(frameHostCSP(origin));
+  const rules = hostCSP.split('; ');
+  expect(rules[0]).toBe('sandbox allow-scripts');
+  for (const rule of ["connect-src 'none'", "frame-src 'none'", "form-action 'none'", "default-src 'none'", "worker-src 'none'"]) expect(rules).toContain(rule);
+  expect(hostCSP).not.toContain('allow-same-origin');
+  expect((await call('GET', '/mobile/frame-host.js', { 'sec-fetch-site': 'cross-site' })).status).toBe(200);
   const shell = await call('GET', '/mobile/');
   expect(shell.status).toBe(200); expect(shell.headers['content-security-policy']).toBe("frame-ancestors 'none'");
   for (const name of ['web.js', 'styles.css', 'web.css', 'chat.js', 'chat.css', 'frame.css']) expect((await call('GET', `/mobile/${name}`)).status).toBe(200);

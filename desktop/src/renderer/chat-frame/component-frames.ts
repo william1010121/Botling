@@ -8,7 +8,8 @@
 // what it posts goes through the app page and the core, which decide what it may do.
 //
 // Frames without scripts (`sandbox=""`, the Catch-up source snapshots) keep their srcdoc.
-import { type FrameMessage } from "./protocol";
+import { WEB, type FrameMessage } from "./protocol";
+import { componentHostPage, showInHost } from "../web-pages";
 import { toShell, fromShell, nativeChat } from "./transport";
 
 const native = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "srcdoc")!;
@@ -55,6 +56,8 @@ Object.defineProperty(HTMLIFrameElement.prototype, "srcdoc", {
     const value = String(html);
     pageOf.set(this, value);
     handed.count++;
+    // Botling Web: the bridge's sandboxed frame host draws it (no server page, no command).
+    if (WEB) { showInHost(this, componentHostPage(value)); return; }
     void page(value).then((url) => {
       // Only the latest page this frame was given.
       if (!url || pageOf.get(this) !== value) return;

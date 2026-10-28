@@ -15,7 +15,8 @@ import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
-import { type FrameMessage } from "./protocol";
+import { WEB, type FrameMessage } from "./protocol";
+import { cardHostPage, desktopCardURL, showInHost } from "../web-pages";
 import { toShell, fromShell, nativeChat, installNativeShellCommands } from "./transport";
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
@@ -68,7 +69,7 @@ const broker = new CardBroker({
 interface DrawnCard { element: HTMLElement; target: CardTarget; unregister: () => void; data: string | null; loaded: boolean }
 const cards = new Map<string, DrawnCard>();
 
-function cardElement(botId: string, messageId: string, cardId: string): DrawnCard {
+function cardElement(botId: string, messageId: string, cardId: string, html: string): DrawnCard {
   const element = document.createElement("div");
   element.className = "card";
   element.dataset.card = cardId;
@@ -77,7 +78,8 @@ function cardElement(botId: string, messageId: string, cardId: string): DrawnCar
   frame.setAttribute("referrerpolicy", "no-referrer");
   frame.title = "Card";
   frame.style.height = "80px";
-  frame.src = `botling-card://card/${encodeURIComponent(botId)}/${encodeURIComponent(messageId)}/${encodeURIComponent(cardId)}`;
+  if (WEB) showInHost(frame, cardHostPage(html));
+  else frame.src = desktopCardURL(botId, messageId, cardId);
   element.append(frame);
   const target: CardTarget = { botId, messageId, cardId, frame, onSize: (height) => { frame.style.height = `${Math.max(40, Math.min(height, 900))}px`; } };
   const drawn: DrawnCard = { element, target, unregister: broker.register(target), data: null, loaded: false };
@@ -124,7 +126,7 @@ function decorate(extras: FrameExtras) {
       keep.add(key);
       let drawn = cards.get(key);
       if (!drawn) {
-        drawn = cardElement(extras.botId, messageId, card.id);
+        drawn = cardElement(extras.botId, messageId, card.id, card.html);
         cards.set(key, drawn);
       }
       if (drawn.element.parentElement !== host) host.append(drawn.element);

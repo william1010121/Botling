@@ -34,7 +34,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   const asset = (from, to, tokens = false) => files.set(join(outdir, to), tokens
     ? inlineTokens(readFileSync(from, "utf8"), from) : readFileSync(from));
   if (webBuild) {
-    for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg"]) asset(join(root, "mobile", name), name);
+    for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "frame-host.html", "frame-host.js"]) asset(join(root, "mobile", name), name);
   } else asset(join(root, "src/renderer/index.html"), "index.html");
   asset(join(root, "src/renderer/styles.css"), "styles.css", true);
   asset(join(root, "src/renderer/chat-frame/chat.html"), "chat.html");

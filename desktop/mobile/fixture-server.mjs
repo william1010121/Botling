@@ -4,6 +4,7 @@
 // scope and the snapshot shape the bridge sends it (src/mobile-bridge/adapter.ts webSnapshot).
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 const root = fileURLToPath(new URL('./dist/', import.meta.url));
@@ -45,13 +46,33 @@ chats.set(MAIN, chat(MAIN, [
   message('question', 'bot', 'Which direction should we explore?', { ago: 20, choices: [{ label: 'Mobile first', detail: 'Start with the phone', recommended: true, action: null }, { label: 'Desktop first', detail: null, recommended: false, action: null }], chosen: null, answer: null }),
   message('unsafe', 'bot', '<img src=x onerror="alert(1)"> is displayed as text.', { ago: 10 }),
 ]));
+// Library components. FIXTURE_COMPONENTS_DIR may point at a local components folder (<name>/template.html)
+// to draw real templates; otherwise small synthetic ones that read ccb.data.
+const synthetic = {
+  choices: `<div id="q" style="display:flex;flex-direction:column;gap:6px"></div><script>const d = window.ccb.data; for (const [i, o] of d.options.entries()) {
+    const b = document.createElement('button'); b.textContent = o.label + (o.detail ? ' · ' + o.detail : ''); b.style.cssText = 'text-align:left;padding:8px 12px;border-radius:10px;border:1px solid #2E2E35;background:#1B1B1F;color:#EDEDF0;font:inherit';
+    b.onclick = () => window.ccb.answer({ index: i }); document.getElementById('q').append(b); }</script>`,
+  'cpu-load': `<div style="font-weight:600">Synthetic CPU card</div><div id="v" style="font-size:34px"></div><script>document.getElementById('v').textContent = window.ccb.data.cpuPercent + '%'</script>`,
+};
+const template = name => { try { return readFileSync(join(process.env.FIXTURE_COMPONENTS_DIR, name, 'template.html'), 'utf8'); } catch { return synthetic[name]; } };
+const components = Object.fromEntries(['choices', 'cpu-load'].map(name => [name, { template: template(name), version: 1, updated: false, sizes: ['2x2', '4x2'], icon: null, title: null }]));
+chats.get('proj-botling').messages.push(
+  message('cpu', 'bot', 'CPU looks busy; here is the load card (Run is the desktop\'s).', { ago: 2, engine: 'claude', displays: [{ name: 'cpu-load',
+    data: JSON.stringify({ headline: 'BTLEServer is using most of the CPU', cpuPercent: 83, loadAvg: [9.7, 11, 12.4], cores: 10,
+      processes: [{ name: 'BTLEServer', cpu: 87, note: 'Bluetooth reconnecting', flag: 'warn' }, { name: 'WindowServer', cpu: 24 }], nextStep: 'Turn Bluetooth off and watch BTLEServer.' }),
+    at: null, command: 'python3 ~/.claudecodebot/plugins/ccb-components/scripts/cpu-load.py', folder: null, detail: null, card: 'cpu/0', status: 'done', error: null,
+    ranAt: minutes(2), images: null, pinned: false, every: null }] }),
+  message('card0', 'bot', 'A Phase 0 card:', { ago: 1, engine: 'claude', cards: [{ id: 'c1', data: null,
+    html: '<div style="padding:10px;border:1px solid #444;border-radius:10px">Phase 0 card <b>rendered</b> <script>document.write(" (script ran)")</script></div>' }] }));
 const settings = { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: ['proj-jenytsian', 'proj-csit'] };
 const waiting = { items: [{ botId: 'proj-rl', text: 'Approve the training run budget', messageId: null }], doing: { 'proj-botling': 'Task 與報告重新設計' } };
 let seq = 0, authenticated = true, denied = false;
 const csrf = 'f'.repeat(43);
-const snapshot = botId => ({ epoch: 'fixture', seq, bots, imported: null, chat: chats.get(botId ?? MAIN) ?? null, components: {}, settings, waiting, teams: [] });
+const snapshot = botId => ({ epoch: 'fixture', seq, bots, imported: null, chat: chats.get(botId ?? MAIN) ?? null, components, settings, waiting, teams: [] });
 const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml', webmanifest: 'application/manifest+json', woff2: 'font/woff2' };
-const CHAT_CSP = "default-src 'none'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; frame-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self'";
+// The bridge's policies (src/mobile-bridge/bridge.ts webChatCSP, frameHostCSP) for this origin.
+const chatCSP = origin => `default-src 'none'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; frame-src ${origin}/mobile/frame-host.html; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self'`;
+const hostCSP = origin => `sandbox allow-scripts; default-src 'none'; script-src ${origin}/mobile/frame-host.js 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'`;
 const server = createServer(async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
@@ -91,8 +112,8 @@ const server = createServer(async (req, res) => {
     }
     const path = new URL(req.url, 'http://localhost').pathname;
     const name = path === '/' || path === '/mobile/' ? 'index.html' : path.replace(/^\/mobile\//, '');
-    if (!/^(?:[a-z]+\.(?:html|js|css|svg|webmanifest)|plugins\/ccb-latex\/katex\.min\.css|plugins\/ccb-latex\/fonts\/[A-Za-z0-9_-]+\.woff2)$/.test(name)) { res.writeHead(404).end(); return; }
-    res.writeHead(200, { 'Content-Type': types[name.split('.').at(-1)], 'Content-Security-Policy': name === 'chat.html' ? CHAT_CSP : "frame-ancestors 'none'",
+    if (!/^(?:[a-z-]+\.(?:html|js|css|svg|webmanifest)|plugins\/ccb-latex\/katex\.min\.css|plugins\/ccb-latex\/fonts\/[A-Za-z0-9_-]+\.woff2)$/.test(name)) { res.writeHead(404).end(); return; }
+    res.writeHead(200, { 'Content-Type': types[name.split('.').at(-1)], 'Content-Security-Policy': name === 'chat.html' ? chatCSP(`http://${req.headers.host}`) : name === 'frame-host.html' ? hostCSP(`http://${req.headers.host}`) : "frame-ancestors 'none'",
       ...(name.endsWith('.woff2') ? { 'Access-Control-Allow-Origin': '*' } : {}) }).end(await readFile(join(root, name)));
   } catch { if (!res.headersSent) res.writeHead(500).end(); }
 });
