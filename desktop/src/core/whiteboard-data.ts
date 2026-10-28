@@ -47,29 +47,39 @@ export function dayKey(at: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-/** When a done card became done (ms): closed by the user, else its last "done" on the timeline, else its last change. */
-export function doneAt(card: TaskCard): DoneEntry {
-  if (card.manuallyCompletedAt !== undefined) return { at: fromSwiftDate(card.manuallyCompletedAt), manual: true };
+/**
+ * When a done card became done (ms) and how: closed by the user (its `manuallyCompletedAt`), else its
+ * last "done" on the timeline; `known` is false when only its last change tells (a card with no timeline).
+ */
+export function doneAt(card: TaskCard): DoneEntry & { known: boolean } {
+  if (card.manuallyCompletedAt !== undefined) return { at: fromSwiftDate(card.manuallyCompletedAt), manual: true, known: true };
   const event = card.history?.findLast((entry) => entry.kind === "done" || entry.kind === "complete");
-  return { at: fromSwiftDate(event?.at ?? card.updatedAt), manual: false };
+  return event ? { at: fromSwiftDate(event.at), manual: false, known: true } : { at: fromSwiftDate(card.updatedAt), manual: false, known: false };
 }
 
 /**
- * Brings the log up to the cards: a shown card that is done and not logged yet is added; one logged
- * that is open again leaves (it is logged anew when it is done again); entries older than DONE_DAYS
- * go. A card gone from tasks.json stays logged. True when the log changed.
+ * Brings the log up to the cards, idempotently (one entry per task id): a shown done card is logged
+ * with when and how it was finished, and an entry follows its card when that changes (a done card you
+ * close by hand becomes manual, at the close); a card guessed from its last change keeps its first
+ * guess. One logged that is open again leaves (it is logged anew when done again). Nothing older than
+ * DONE_DAYS is added, and older entries go. A card gone from tasks.json stays logged. True when the log changed.
  */
 export function recordDone(log: DoneLog, cards: TaskCard[], now: number): boolean {
   let changed = false;
-  for (const card of shownTasks(cards)) {
-    if (card.state === "done") {
-      if (!log[card.id]) { log[card.id] = doneAt(card); changed = true; }
-    } else if (log[card.id]) {
-      delete log[card.id];
-      changed = true;
-    }
-  }
   const oldest = dayStart(now, DONE_DAYS - 1);
+  for (const card of shownTasks(cards)) {
+    const logged = log[card.id];
+    if (card.state !== "done") {
+      if (logged) { delete log[card.id]; changed = true; }
+      continue;
+    }
+    const { known, ...entry } = doneAt(card);
+    if (entry.at < oldest) {
+      if (logged) { delete log[card.id]; changed = true; }
+      continue;
+    }
+    if (!logged || (known && (logged.at !== entry.at || logged.manual !== entry.manual))) { log[card.id] = entry; changed = true; }
+  }
   for (const [id, entry] of Object.entries(log)) if (entry.at < oldest) { delete log[id]; changed = true; }
   return changed;
 }

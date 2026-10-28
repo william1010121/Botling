@@ -2,7 +2,7 @@
 // pruning, a bot's latest action, its one-line description and an approval's command; and, through
 // the core, `whiteboard.view` carrying them and `waiting` carrying when a question was asked.
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "../helpers";
 import { CoreHarness } from "../core-harness";
@@ -139,5 +139,72 @@ describe("whiteboard.view: the board's new data", () => {
     expect(Object.keys(saved.tasks)).toEqual(["t-done"]);
     const waiting = await c.call({ type: "waiting.list" });
     expect(waiting.items.find((item: any) => item.botId === PROJECT)).toMatchObject({ text: "Publish now?", messageId: QUESTION, at: new Date(Date.UTC(2001, 0, 1) + asked * 1000).toISOString() });
+  });
+});
+
+// Regressions from review (dc2a1c9): each failed before its fix.
+describe("done log: review regressions", () => {
+  it("does not add (then prune) a done card older than 14 days, so an unchanged read reports no change", () => {
+    const log: DoneLog = {};
+    const old = [card("old", "done", daysAgo(20), { history: [{ kind: "done", at: toSwiftDate(daysAgo(20)) }] })];
+    expect(recordDone(log, old, NOW)).toBe(false);
+    expect(recordDone(log, old, NOW)).toBe(false);
+    expect(log).toEqual({});
+  });
+
+  it("follows a done card closed by you afterwards: the entry becomes manual, at the close", () => {
+    const log: DoneLog = {};
+    const built = card("u", "done", daysAgo(2), { stage: "built", history: [{ kind: "done", at: toSwiftDate(daysAgo(2)) }] });
+    recordDone(log, [built], NOW);
+    expect(log.u).toEqual({ at: daysAgo(2), manual: false });
+    const closed = { ...built, manuallyCompletedAt: toSwiftDate(daysAgo(0, 9)), history: [...built.history!, { kind: "complete" as const, at: toSwiftDate(daysAgo(0, 9)) }] };
+    expect(recordDone(log, [closed], NOW)).toBe(true);
+    expect(log.u).toEqual({ at: daysAgo(0, 9), manual: true });
+    expect(recordDone(log, [closed], NOW)).toBe(false);
+  });
+});
+
+describe("done log in the bot: review regressions", () => {
+  const makeBot = async (tasks: unknown[]) => {
+    const { Bot } = await import("../../src/core/bot");
+    const { ProcessLedger } = await import("../../src/core/process/ledger");
+    const { mainProfile } = await import("../../src/core/store/workspace");
+    const dir = tempDir("done-log-bot");
+    const profile = mainProfile(dir);
+    mkdirSync(profile.storeDir, { recursive: true });
+    writeFileSync(join(profile.storeDir, "tasks.json"), JSON.stringify(tasks));
+    const bot = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 } as any);
+    return { bot: bot as any, file: join(profile.storeDir, "done-days.json") };
+  };
+  const doneCard = (n: number, at: number) => ({ id: `D${n}`, name: `Done ${n}`, state: "done", createdAt: toSwiftDate(at - 60_000), updatedAt: toSwiftDate(at), messageIDs: [`M${n}`], kept: true, declared: true,
+    history: [{ kind: "done", at: toSwiftDate(at) }] });
+  const logged = (file: string) => Object.keys(JSON.parse(readFileSync(file, "utf8")).tasks).length;
+
+  it("retries a done log it could not save, on the next read, instead of losing it", async () => {
+    const { bot, file } = await makeBot([doneCard(1, Date.now() - 3_600_000)]);
+    const save = bot.store.saveDoneLog.bind(bot.store);
+    let fail = true;
+    bot.store.saveDoneLog = (value: unknown) => { if (fail) { fail = false; throw new Error("disk full"); } save(value); };
+    expect(bot.doneDays().at(-1).done).toBe(1);
+    expect(existsSync(file)).toBe(false);
+    expect(bot.doneDays().at(-1).done).toBe(1);
+    expect(logged(file)).toBe(1);
+  });
+
+  it("saves once for a change and not again for unchanged reads (an expired card is not a change)", async () => {
+    const { bot } = await makeBot([doneCard(1, Date.now() - 3_600_000), doneCard(2, Date.now() - 20 * 86_400_000)]);
+    const save = bot.store.saveDoneLog.bind(bot.store);
+    let saves = 0;
+    bot.store.saveDoneLog = (value: unknown) => { saves++; save(value); };
+    bot.doneDays(); bot.doneDays(); bot.doneDays();
+    expect(saves).toBe(1);
+  });
+
+  it("logs the done cards it starts with before a new task trims tasks.json", async () => {
+    const { bot, file } = await makeBot(Array.from({ length: 100 }, (_, n) => doneCard(n, Date.now() - (100 - n) * 60_000)));
+    bot.tasks.begin("NEW", "Something new", null, toSwiftDate());
+    expect(bot.tasks.tasks).toHaveLength(100);
+    bot.saveTasks();
+    expect(logged(file)).toBe(100);
   });
 });

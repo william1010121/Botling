@@ -10,7 +10,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type BotView, type ResultOf, type TaskView, type WaitingView, type WhiteboardBotView, type WhiteboardView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
-import { CARD_LINE_WIDTH, SHELF_KEY, Whiteboard, ageLabel, boardLanes, boardWeek, botWeek, dayKey, doneByDay, highlight, lineWidth, shortLine, lastActive, nextSteps, openRanking, quietWeeks, taskCounts, waitingAsks, waitingCount } from "../../src/renderer/Whiteboard";
+import { CARD_LINE_WIDTH, SHELF_KEY, Whiteboard, ageLabel, askCount, boardLanes, boardWeek, botWeek, dayKey, doneByDay, highlight, lineWidth, shortLine, lastActive, nextSteps, openRanking, quietWeeks, taskCounts, waitingAsks, waitingCount } from "../../src/renderer/Whiteboard";
 import { tempDir } from "../helpers";
 
 const id = (n: number) => `6A0B0000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`;
@@ -149,10 +149,48 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
       ["approval", "npm publish", "2h", entry.id],
       ["question", "Ship it?", "1h", entry.id],
       ["call", "Pick a name", null, entry.id],
-      ["approval", "1 tool approval waiting", null, entry.id], // The core named one of two: the other is counted.
+      ["approval", "1 more tool approval waiting", null, entry.id], // The core named one of two: the other is counted.
     ]);
     expect(ageLabel(ago(0.1), now)).toBe("6m");
     expect(ageLabel(ago(50), now)).toBe("2d");
+  });
+
+  it("counts every tool approval, also those the core gives no details for (one row says how many)", () => {
+    const three = bot(54, "Three", "bot", { approvals: 3 });
+    const rows = waitingAsks(three, none, empty(three.id));
+    expect(rows).toHaveLength(1);
+    expect(askCount(rows)).toBe(3);
+    expect(askCount(rows)).toBe(waitingCount(three, none, empty(three.id)));
+    // 25 waiting, details for the first 20.
+    const many = bot(55, "Many", "bot", { approvals: 25 });
+    const listed = empty(many.id, [], { approvals: Array.from({ length: 20 }, (_, n) => ({ tool: "Bash", text: `cmd ${n}`, at: null })) });
+    expect(askCount(waitingAsks(many, none, listed))).toBe(25);
+    // Details for more than the view's count (the view is a moment older): all of them count.
+    const behind = bot(56, "Behind", "bot", { approvals: 1 });
+    const two = empty(behind.id, [], { approvals: [{ tool: "Bash", text: "a", at: null }, { tool: "Bash", text: "b", at: null }] });
+    expect(askCount(waitingAsks(behind, none, two))).toBe(2);
+    expect(waitingCount(behind, none, two)).toBe(2);
+  });
+
+  it("shows the whole approval count on the card, the lane and the number", async () => {
+    const host = document.createElement("div"); document.body.append(host);
+    const root = createRoot(host); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    let receive: (value: unknown) => void = () => {};
+    const quiet = new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
+      queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result: envelope.cmd.type === "whiteboard.view" ? { bots: [] } : {} }));
+    } });
+    const three = bot(57, "Three", "bot", { approvals: 3 });
+    try {
+      await act(async () => root.render(createElement(Whiteboard, {
+        client: quiet, bots: [main, three], waiting: none, components: {}, look: "original", now, mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+        statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
+      })));
+      expect(host.querySelector(`[data-bot="${three.id}"] .wb-pill`)?.textContent).toBe("3 waiting");
+      expect(host.querySelector('[data-metric="Waiting on you"] .wb-metric-n')?.textContent).toBe("3");
+      expect(host.querySelector(".lane-waiting .wb-section-meta")?.textContent).toContain("3 things");
+    } finally {
+      await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false;
+    }
   });
 
   it("ranks the open work by what waits on you, then what is under way", () => {

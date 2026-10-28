@@ -462,8 +462,10 @@ export class Bot {
   private pins: PinRecord[] = [];
   /** Its own picture on the main bot's whiteboard (whiteboard.json; the primary's). */
   private whiteboard: WhiteboardRecord | null = null;
-  /** When its tasks were finished (done-days.json; the primary's): read when first needed. */
-  private doneLog: DoneLog | null = null;
+  /** When its tasks were finished (done-days.json; the primary's), with what is not saved yet; filled at start, before any card is trimmed. */
+  private doneLog: DoneLog = {};
+  /** The done log as last saved (JSON): a log that differs is saved again at the next save or read. */
+  private doneLogSaved = "";
   /** Its own components (bot.json `components`, at most 20); null: not given yet. */
   private componentList: string[] | null = null;
   /** What this head's session has been told about components (null: tell it in full). */
@@ -481,6 +483,10 @@ export class Bot {
     this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard));
     this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set(this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }]))));
     if (!primary) {
+      // The done log, brought up to the cards now: a new task trims old ones before the next save.
+      this.doneLog = readDoneLog(this.store.loadDoneLog());
+      this.doneLogSaved = JSON.stringify(doneLogFile(this.doneLog));
+      recordDone(this.doneLog, this.tasks.tasks, Date.now());
       this.pins = this.readList("pins.json", readPin);
       this.whiteboard = readWhiteboard(this.store.loadWhiteboard());
       this.specList = this.readList("specs.json", readSpec);
@@ -1099,13 +1105,18 @@ export class Bot {
   }
   private lastOpenTasks = 0;
 
-  /** Logs tasks that became done (and drops ones open again) in done-days.json, so they outlive tasks.json's pruning. */
+  /**
+   * Logs tasks that became done (and drops ones open again) in done-days.json, so they outlive tasks.json's
+   * pruning. Saved only when it differs from what was saved; a save that fails is tried again next time.
+   */
   private keepDoneLog(now = Date.now()): DoneLog {
-    const log = this.doneLog ??= readDoneLog(this.store.loadDoneLog());
-    if (recordDone(log, this.tasks.tasks, now) && !this.readOnly) {
-      try { this.store.saveDoneLog(doneLogFile(log)); } catch (error) { this.log(`done-days.json: ${(error as Error).message}`); }
+    recordDone(this.doneLog, this.tasks.tasks, now);
+    const text = JSON.stringify(doneLogFile(this.doneLog));
+    if (text !== this.doneLogSaved && !this.readOnly) {
+      try { this.store.saveDoneLog(doneLogFile(this.doneLog)); this.doneLogSaved = text; }
+      catch (error) { this.log(`done-days.json not saved (tried again at the next change or read): ${(error as Error).message}`); }
     }
-    return log;
+    return this.doneLog;
   }
 
   /** Tasks finished on each of the last 14 days, oldest first (the whiteboard's chart). */

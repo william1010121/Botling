@@ -65,14 +65,20 @@ export function lastActive(bot: BotView, data: WhiteboardBotView | undefined): n
 /** What waits on you from one bot: its open questions or its memory's "Waiting on you" (as the right panel lists them). */
 export const waitingFor = (bot: BotView, waiting: WaitingView): WaitingItemView[] => waiting.items.filter((item) => item.botId === bot.id);
 
+/** Its tool approvals waiting: the bot's count, or more when the board's details (a moment newer) name more. */
+const approvalCount = (bot: BotView, data: WhiteboardBotView | undefined) => Math.max(bot.approvals, data?.approvals?.length ?? 0);
+
 /** How many things wait on you from the bot: those questions, its tasks waiting on you, its tool approvals. */
 export function waitingCount(bot: BotView, waiting: WaitingView, data: WhiteboardBotView | undefined): number {
-  return waitingFor(bot, waiting).length + (data?.tasks.filter((task) => task.state === "waiting" && task.name.trim()).length ?? 0) + bot.approvals;
+  return waitingFor(bot, waiting).length + (data?.tasks.filter((task) => task.state === "waiting" && task.name.trim()).length ?? 0) + approvalCount(bot, data);
 }
 
 export type AskKind = "question" | "call" | "approval";
-/** One thing waiting on you, as the Waiting lane lists it. `open`: the chat that answers it. */
-export interface Ask { key: string; kind: AskKind; text: string; code: string | null; at: string | null; open: string }
+/** One row of what waits on you, as the Waiting lane lists it. `open`: the chat that answers it; `count`: how many things the row stands for (approvals with no details share one row). */
+export interface Ask { key: string; kind: AskKind; text: string; code: string | null; at: string | null; open: string; count: number }
+
+/** How many things the rows stand for (what the pill, the lane and the number say). */
+export const askCount = (asks: Ask[]) => asks.reduce((sum, ask) => sum + ask.count, 0);
 
 /**
  * Every thing waiting on you from the bot, oldest first (the same as the report's "Your call" and
@@ -82,17 +88,17 @@ export interface Ask { key: string; kind: AskKind; text: string; code: string | 
 export function waitingAsks(bot: BotView, waiting: WaitingView, data: WhiteboardBotView | undefined): Ask[] {
   const out: Ask[] = [];
   for (const item of waitingFor(bot, waiting)) {
-    out.push({ key: `q:${item.messageId ?? item.text}`, kind: item.messageId ? "question" : "call", text: item.text, code: null, at: item.at ?? null, open: item.groupId ?? item.botId });
+    out.push({ key: `q:${item.messageId ?? item.text}`, kind: item.messageId ? "question" : "call", text: item.text, code: null, at: item.at ?? null, open: item.groupId ?? item.botId, count: 1 });
   }
   for (const task of named(data?.tasks ?? []).filter((candidate) => candidate.state === "waiting")) {
     const why = task.blocked ?? task.now;
     out.push({ key: `t:${task.id}`, kind: "call", text: why ? `${task.name} · ${why}` : task.name, code: null,
-      at: task.history?.findLast((event) => event.kind === "waiting")?.at ?? task.updatedAt, open: bot.id });
+      at: task.history?.findLast((event) => event.kind === "waiting")?.at ?? task.updatedAt, open: bot.id, count: 1 });
   }
-  const listed = (data?.approvals ?? []).slice(0, bot.approvals);
-  listed.forEach((approval, index) => out.push({ key: `a:${index}`, kind: "approval", text: approval.tool, code: approval.text, at: approval.at, open: bot.id }));
-  const rest = bot.approvals - listed.length;
-  if (rest > 0) out.push({ key: "a:rest", kind: "approval", text: `${rest} tool approval${rest === 1 ? "" : "s"} waiting`, code: null, at: null, open: bot.id });
+  const listed = data?.approvals ?? [];
+  listed.forEach((approval, index) => out.push({ key: `a:${index}`, kind: "approval", text: approval.tool, code: approval.text, at: approval.at, open: bot.id, count: 1 }));
+  const rest = approvalCount(bot, data) - listed.length;
+  if (rest > 0) out.push({ key: "a:rest", kind: "approval", text: `${rest}${listed.length ? " more" : ""} tool approval${rest === 1 ? "" : "s"} waiting`, code: null, at: null, open: bot.id, count: rest });
   const time = (ask: Ask) => (ask.at ? Date.parse(ask.at) : NaN);
   return out.map((ask, index) => ({ ask, index })).sort((a, b) => {
     const [x, y] = [time(a.ask), time(b.ask)];
@@ -440,7 +446,7 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
 
   // Layer A's numbers.
   const asks = new Map(lanes.waiting.map((bot) => [bot.id, waitingAsks(bot, waiting, byBot.get(bot.id))]));
-  const askTotal = [...asks.values()].reduce((sum, list) => sum + list.length, 0);
+  const askTotal = [...asks.values()].reduce((sum, list) => sum + askCount(list), 0);
   const oldestAsk = Math.min(...[...asks.values()].flat().map((ask) => (ask.at ? Date.parse(ask.at) : NaN)).filter((at) => !Number.isNaN(at)));
   const counts = cards.reduce((sum, bot) => { const each = taskCounts(byBot.get(bot.id)?.tasks ?? []); return { waiting: sum.waiting + each.waiting, active: sum.active + each.active, done: sum.done + each.done, total: sum.total + each.total }; }, { waiting: 0, active: 0, done: 0, total: 0 });
   const waitingBots = cards.filter((bot) => asks.has(bot.id)).length;
@@ -678,11 +684,11 @@ function WaitingCard({ bot, data, waiting, asks, now, face, onPress, onOpenChat 
   const status = bot.role === "group" ? { key: "", text: `${bot.members?.length ?? 0} bots` } : laneStatus(bot, data);
   const when = shortTime(bot.lastActivity, now);
   return (
-    <article className="wb-card ask-card waiting" data-bot={bot.id} aria-label={`${bot.name}: ${asks.length} waiting on you`}>
+    <article className="wb-card ask-card waiting" data-bot={bot.id} aria-label={`${bot.name}: ${askCount(asks)} waiting on you`}>
       <button type="button" className="wb-card-head wb-card-open" onClick={(event) => onPress(event.currentTarget)} title={bot.role === "group" ? `Open ${bot.name}` : `${bot.name}'s report`}>
         <img className="wb-face" src={face} alt="" />
         <span className="wb-card-name">{bot.name}</span>
-        <span className="wb-pill">{asks.length} waiting</span>
+        <span className="wb-pill">{askCount(asks)} waiting</span>
         <span className="wb-status"><span className="now-dot" data-status={status.key} aria-hidden="true" />{status.text}</span>
         {when && <span className="wb-card-time">{when}</span>}
       </button>
@@ -698,7 +704,7 @@ function WaitingCard({ bot, data, waiting, asks, now, face, onPress, onOpenChat 
             </li>
           );
         })}
-        {asks.length > MOST_ASKS && <li className="wb-ask-more">+{asks.length - MOST_ASKS} more in the report</li>}
+        {asks.length > MOST_ASKS && <li className="wb-ask-more">+{askCount(asks.slice(MOST_ASKS))} more in the report</li>}
       </ul>
       {bot.role !== "group" && (
         <span className="wb-card-foot">
