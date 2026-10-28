@@ -3,6 +3,7 @@ import { noTokens, plusTokens, totalTokens, type TokenUsage } from "./usage";
 import { meteredPurpose, type MeteredPurpose, type TokenFlowLedger } from "./token-flow-ledger";
 export interface MeteredGroup { id:string; workId?:string; head:string | null; workerId:string | null; taskId:string | null; purpose:MeteredPurpose; tokens:TokenUsage; turns:number; threadId?:string; parentThreadId?:string|null; missing?:number; partial?:number; messages?:number; attribution?:"task"|"chat"|"unresolved"|"historical"|"aggregated" }
 export function meteredSummary(ledger: TokenFlowLedger, botId: string, now=Date.now()) {
+ ledger.reconcileTasks();
  const today=new Date(now);today.setHours(0,0,0,0);const week=new Date(today);week.setDate(week.getDate()-6);
  const records=[...ledger.records.values()].filter(r=>r.botId===botId);
  const group=(start:number)=>{
@@ -24,5 +25,5 @@ export function meteredSummary(ledger: TokenFlowLedger, botId: string, now=Date.
   }
   return head;
  };
- return {since:records.length?Math.min(...records.map(r=>r.startedAt)):null,limited:ledger.limited,unreadable:ledger.unreadable,periods:{all:group(0),today:group(today.getTime()),'7d':group(week.getTime())}};
+ return {since:records.length?records.reduce((earliest,r)=>Math.min(earliest,r.startedAt),Infinity):null,limited:ledger.limited,unreadable:ledger.unreadable,error:ledger.error,periods:{all:group(0),today:group(today.getTime()),'7d':group(week.getTime())}};
 }

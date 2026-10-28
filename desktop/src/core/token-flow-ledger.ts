@@ -1,6 +1,7 @@
 // Identified, normalized metered turns. No prompts, tool arguments or report content.
-import { appendFileSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { TokenFlowJournal, TOKEN_SEGMENT_BYTES } from "./token-flow-journal";
+import { tokenFlowContexts } from "./token-flow-context";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { noTokens, plusTokens, type TokenUsage } from "./usage";
 
@@ -29,32 +30,45 @@ export function meteredPurpose(record: Pick<MeteredTurn, "activities" | "complet
   return record.activities.includes("coordination") ? "communication" : "execution";
 }
 export const meteredKey = (r: MeteredTurn) => JSON.stringify([r.botId, r.head, r.threadId, r.turnId]);
-const LIMIT = 16 * 1024 * 1024;
-/** Append-only snapshots, one atomic line per turn; replay replaces the same identity, never adds it.
- * A torn final line or a full journal fails closed; no eviction of dedupe identities. */
+
+/** Identified snapshots with generation compaction. Every identity survives compaction;
+ * torn/corrupt/failed storage stops collection visibly rather than discarding evidence. */
 export class TokenFlowLedger {
   readonly records = new Map<string, MeteredTurn>();
   limited = false;
   unreadable = false;
-  private bytes = 0;
-  constructor(readonly file: string) {
-    try {
-      this.bytes = statSync(file).size;
-      if (this.bytes > LIMIT) { this.limited = this.unreadable = true; return; }
-      const content = readFileSync(file, "utf8");
-      if (content && !content.endsWith("\n")) { this.unreadable = true; return; }
-      for (const line of content.split("\n")) {
-        if (!line) continue;
-        const record = MeteredTurn.parse(JSON.parse(line));
-        this.records.set(meteredKey(record), record);
-      }
-    } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") this.unreadable = true; }
+  error: string | null = null;
+  private journal: TokenFlowJournal;
+  private contexts() { return tokenFlowContexts(join(dirname(this.file),"token-flow-contexts.json")); }
+  private projection?: {book: ReturnType<typeof tokenFlowContexts>; revision: number};
+  reconcileTasks() {
+    const contexts=this.contexts();
+    if(contexts.unreadable){this.unreadable=true;this.error="Token attribution storage could not be read or written.";return;}
+    if(this.projection?.book===contexts&&this.projection.revision===contexts.aliasRevision)return;
+    for(const [key,r] of this.records)if(r.accountingVersion===2&&r.taskId){
+      const taskId=contexts.canonical(r.taskId);if(taskId!==r.taskId)this.records.set(key,{...r,taskId});
+    }
+    this.projection={book:contexts,revision:contexts.aliasRevision};
+  }
+  constructor(readonly file: string, segmentBytes=TOKEN_SEGMENT_BYTES) {
+    this.journal=new TokenFlowJournal(file,segmentBytes);
+    try{this.journal.load(line=>{const r=MeteredTurn.parse(JSON.parse(line));this.records.set(meteredKey(r),r);});}
+    catch(e){this.stop(e);}
+    this.reconcileTasks();
+  }
+  private stop(error:unknown) {
+    this.unreadable=true;
+    const code=(error as NodeJS.ErrnoException)?.code;
+    this.error=code?`Token storage I/O failed (${code}).`:`Token storage integrity failed. Preserve the ledger and restore a verified backup.`;
   }
   record(value: MeteredTurn): boolean {
+    this.reconcileTasks();
     if (this.unreadable || this.limited) return false;
     const parsed = MeteredTurn.safeParse(value);
     if (!parsed.success) return false;
-    const r = parsed.data, key = meteredKey(r), previous = this.records.get(key);
+    const r = parsed.data;
+    if(r.accountingVersion===2)r.taskId=this.contexts().canonical(r.taskId);
+    const key = meteredKey(r), previous = this.records.get(key);
     if (previous) {
       // Attribution is sticky across replay and restart. A later observer cannot steal a record.
       r.taskId = previous.taskId;
@@ -92,15 +106,13 @@ export class TokenFlowLedger {
     }
   }
   private append(r: MeteredTurn): boolean {
-    const key = meteredKey(r);
-    const line = JSON.stringify(r) + "\n";
-    if (this.bytes + Buffer.byteLength(line) > LIMIT) { this.limited = true; return false; }
-    try {
-      mkdirSync(dirname(this.file), { recursive: true });
-      const fd = openSync(this.file, "a", 0o600);
-      try { appendFileSync(fd, line); fsyncSync(fd); } finally { closeSync(fd); }
-      this.bytes += Buffer.byteLength(line); this.records.set(key, r); return true;
-    } catch { this.unreadable = true; return false; }
+    if(this.unreadable||this.limited)return false;
+    const line=JSON.stringify(r)+"\n";
+    try{
+      const records=this.records;
+      this.journal.append(line,function*(){for(const value of records.values())yield JSON.stringify(value)+"\n";});
+      this.records.set(meteredKey(r),r);return true;
+    }catch(e){this.stop(e);return false;}
   }
   totals(botId: string) {
     const days = new Map<string, TokenUsage>();

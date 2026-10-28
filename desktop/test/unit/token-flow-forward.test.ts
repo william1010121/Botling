@@ -1,6 +1,6 @@
 import { TokenFlowHistoryView } from "../../src/contract";
 import { expect, it } from "vitest";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { ClaudeHead } from "../../src/core/agent/head";
@@ -126,7 +126,9 @@ it("links only newly observed explicit app turns after task declaration; replay 
 it("routes Codex coordinator and app-managed child protocol events into the same explicit task without counting the child twice",async()=>{
  const {CodexSession}=await import("../../src/core/agent/codex");
  const dir=tempDir("forward-codex"),profile=mainProfile(dir);mkdirSync(profile.storeDir,{recursive:true});
+ writeFileSync(join(profile.storeDir,"bot.json"),JSON.stringify({engine:"codex",heads:{engines:["codex"],answerWith:"codex"}}));
  const bot=new Bot({profile,engine:"codex",deferStartup:true,welcome:false,ledger:new ProcessLedger(join(dir,"process.json")),headConfig(){throw Error("No CLI");},prompts(){throw Error("No model");},emit(){},log(){},approvalTimeoutMs:100,idleMs:100000,interruptGraceMs:100});
+ expect(bot.engine).toBe("codex");
  const head={} as any;(bot as any).head=head;
  const taskId=bot.tasks.begin("user","Task","codex",1);Object.assign(bot.tasks.task(taskId)!,{declared:true,name:"Task"});
  const turn=(bot as any).newTurn("user","Task","user");turn.head=head;turn.sent=true;(bot as any).turn=turn;

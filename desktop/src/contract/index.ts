@@ -496,7 +496,7 @@ const TokenFlowMeasuredGroup = z.strictObject({
 });
 export const TokenFlowHistoryView = z.strictObject({
   botId: BotId, asOf: z.number(), limited: z.literal(true), unreadable: z.boolean(),
-  metered: z.strictObject({since:z.number().nullable(),limited:z.boolean(),unreadable:z.boolean(),periods:z.strictObject({all:z.array(TokenFlowMeasuredGroup).max(200),today:z.array(TokenFlowMeasuredGroup).max(200),"7d":z.array(TokenFlowMeasuredGroup).max(200)})}).optional(),
+  metered: z.strictObject({error:z.string().nullable().optional(),since:z.number().nullable(),limited:z.boolean(),unreadable:z.boolean(),periods:z.strictObject({all:z.array(TokenFlowMeasuredGroup).max(200),today:z.array(TokenFlowMeasuredGroup).max(200),"7d":z.array(TokenFlowMeasuredGroup).max(200)})}).optional(),
   rows: z.array(DelegationRowView).max(500),
   tasks: z.array(z.strictObject({ id: z.string().max(200), name: z.string().max(400),
     workers: z.array(z.strictObject({ id: z.string().max(200), head: z.enum(["claude", "codex"]).nullable() })).max(500),

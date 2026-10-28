@@ -161,7 +161,7 @@ export function provisionalName(text: string): string {
 }
 
 export class TaskBook {
-  constructor(public tasks: TaskCard[] = []) {}
+  constructor(public tasks: TaskCard[] = [], private readonly onMerge?: (from: string, into: string) => void) {}
 
   task(id: string) { return this.tasks.find((card) => card.id === id); }
   /** The task a chat line belongs to (the newest, when it belongs to two). */
@@ -433,6 +433,7 @@ export class TaskBook {
       if (!target.helps?.some((h) => h.handoffID === help.handoffID)) target.helps = [...(target.helps ?? []), help];
     }
     for (const subagent of card.subagentIDs ?? []) this.link(subagent, into);
+    this.onMerge?.(card.id, into);
   }
 
   set(id: string, state: TaskState, at: number) {

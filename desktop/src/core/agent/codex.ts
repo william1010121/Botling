@@ -1054,6 +1054,7 @@ export class CodexSession {
       this.workers.set(task, { id: task, name, instructions, role: args.role, isolatedGit, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
       out.push(
         this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", run_in_background: true } }),
+        this.item({kind:"measurementDispatch",workerId:task,run:1}),
         this.item({ kind: "subagentStarted", id: task, description: name, type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
         ...this.startWorkerThread(task),
       );
@@ -1267,7 +1268,7 @@ export class CodexSession {
     worker.instructions = text;
     delete worker.ownershipInstructions;
     worker.turnId = null;
-    const out: CodexOutput[] = [this.item({ kind: "subagentStarted", id: task, description: worker.name, type: worker.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: text, background: true, execution: this.workerExecution(worker) })];
+    const out: CodexOutput[] = [this.item({kind:"measurementDispatch",workerId:task,run:worker.run}), this.item({ kind: "subagentStarted", id: task, description: worker.name, type: worker.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: text, background: true, execution: this.workerExecution(worker) })];
     out.push(...(worker.loaded && !worker.role ? this.startWorkerTurn(task, text) : this.startWorkerThread(task)));
     out.push(...this.pendingChanged());
     return out;
@@ -1320,7 +1321,7 @@ export class CodexSession {
           worker.messages = [];
           worker.run += 1;
           worker.instructions = text;
-          return [...closed, ...usage, this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true,
+          return [...closed, ...usage, this.item({kind:"measurementDispatch",workerId:task,run:worker.run,inheritRun:worker.run-1}), this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true,
             execution: { ...this.workerExecution(worker), turnId: null }, previousRunEnd: { status: status === "completed" ? "completed" : status === "failed" ? "failed" : "stopped", result: report } }), ...this.startWorkerTurn(task, text)];
         }
         worker.active = false;

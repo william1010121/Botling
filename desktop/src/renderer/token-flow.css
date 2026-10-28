@@ -172,3 +172,5 @@
 .tf-topology { --flow-color:var(--blue,#88aaff); }
 .tf-topology-group { border-top:2px solid #798cb0; }
 .tf-topology-group-title>span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+.tf-collection-stopped { padding:14px; border:1px solid #d99069; border-radius:10px; color:var(--text); font-size:13px; line-height:1.6; background:#d9906914; }

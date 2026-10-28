@@ -489,7 +489,7 @@ export class Bot {
     this.session = { sessionId: randomUUID(), started: false };
     this.alwaysAllowed = (primary ?? this).storeAlwaysAllowed();
     this.unread = primary ? 0 : this.store.loadUnread();
-    this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard));
+    this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard), (from,into) => this.measurementTaskMerged(from,into));
     this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set(this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }]))));
     if (!primary) {
       // The done log, brought up to the cards now: a new task trims old ones before the next save.
@@ -2537,6 +2537,7 @@ export class Bot {
 
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
+    if (item.kind === "measurementDispatch") { this.recordMeasurementDispatch(item); return; }
     if (item.kind === "measurement") { this.recordMeasurement(item.measurement, item.provider); return; }
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
@@ -2758,6 +2759,23 @@ export class Bot {
     }
   }
 
+  private measurementTaskMerged(from:string,into:string) {
+    if(this.readOnly)return;
+    this.measurementContexts().mergeTask(from,into);
+    tokenLedger(join(this.owner.profile.storeDir,"token-flow-turns.jsonl")).reconcileTasks();
+  }
+  private recordMeasurementDispatch(item: Extract<CodexItem,{kind:"measurementDispatch"}>) {
+    const contexts=this.measurementContexts();
+    if(item.inheritRun!==undefined){
+      const previous=contexts.get(this.engine,item.workerId,item.inheritRun);
+      if(previous)contexts.bind(this.engine,item.workerId,previous,item.run);
+      return;
+    }
+    const turn=this.turn;
+    if(!turn?.open||!turn.sent||turn.head!==this.head)return;
+    const base=this.tasks.base({head:this.engine,userMessage:turn.origin==="user"?turn.userId:null,handoffID:turn.handoffId,reporting:turn.ended});
+    contexts.bind(this.engine,item.workerId,{taskId:base?.id??null,appTurnId:turn.id},item.run);
+  }
   private measurementContexts() { return tokenFlowContexts(join(this.owner.profile.storeDir, "token-flow-contexts.json")); }
   private recordMeasurement(measurement: Omit<MeteredTurn, "botId" | "head" | "taskId">, provider?: "claude" | "codex") {
     if (this.engine !== "claude" && this.engine !== "codex") return;
@@ -2768,8 +2786,9 @@ export class Bot {
     let worker = measurement.workerId;
     while (worker && !chain.includes(worker)) { chain.push(worker); worker = this.subagents.get(worker)?.parentID ?? null; }
     const conflict = new Set(this.partner?.subagents.list.map(s => s.id) ?? []);
-    const binding = chain.map(id => this.measurementContexts().get(this.engine,id)).find(Boolean);
-    const taskId = binding?.taskId ?? meteredTask(this.tasks.tasks, this.engine, chain, conflict, base?.id);
+    const binding = chain.map(id => this.measurementContexts().get(this.engine,id,measurement.run)).find(Boolean);
+    // Codex runs require their exact dispatch receipt; bare worker-card membership can belong to a prior run.
+    const taskId = binding?.taskId ?? (measurement.workerId && measurement.run!==null ? null : meteredTask(this.tasks.tasks, this.engine, chain, conflict, base?.id));
     const appTurnId = measurement.workerId ? binding?.appTurnId : turn?.id;
     const attribution = taskId ? "task" : appTurnId ? "chat" : "unresolved";
     tokenLedger(join(this.owner.profile.storeDir, "token-flow-turns.jsonl")).record({ ...measurement,
@@ -2796,7 +2815,7 @@ export class Bot {
   private linkSubagent(turn: Turn, subagentId: string) {
     const base = this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null, handoffID: turn.handoffId, reporting: turn.ended });
     if (base) { this.tasks.link(subagentId, base.id, toSwiftDate()); this.saveTasks(); }
-    if (this.engine !== "agy") this.measurementContexts().bind(this.engine, subagentId, { taskId: base?.id ?? null, appTurnId: turn.id });
+    if (this.engine === "claude") this.measurementContexts().bind(this.engine, subagentId, { taskId: base?.id ?? null, appTurnId: turn.id });
   }
 
   /** Subagent bookkeeping (subagents.json). True when the item was the subagent's own (not the turn's). */

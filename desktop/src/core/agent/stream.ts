@@ -10,6 +10,7 @@ import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
 
 export type StreamItem =
+  | { kind: "measurementDispatch"; workerId: string; run: number; inheritRun?: number }
   | { kind: "measurement"; provider?: "claude" | "codex"; measurement: Omit<MeteredTurn, "botId" | "head" | "taskId"> }
   | { kind: "scheduleResult"; id: string; result: ScheduleResult }
   | { kind: "init"; sessionId: string }
