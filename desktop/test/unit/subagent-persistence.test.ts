@@ -270,7 +270,7 @@ it.skipIf(process.env.BOTLING_WORKER_MEASURE !== "1")("worker progress fixture m
   }
   const elapsedMs = performance.now() - start; const used = process.cpuUsage(cpu);
   expect(new BotStore(join(f.file, "..")).loadList("subagents.json")).toEqual(f.bot.subagents.list);
-  console.log("WORKER_FIXTURE", JSON.stringify({ baseBytes, deadlines: 15, events: 75, bytes, elapsedMs, cpuMs: (used.user + used.system) / 1000 }));
+  console.log("WORKER_FIXTURE", JSON.stringify({ baseBytes, deadlines: 15, events: 75, bytes, elapsedMs, cpuMs: (used.user + used.system) / 1000, cache: BotStore.workerHistoryCacheUsage() }));
 });
 
 it("keeps already-durable progress in the compatible checkpoint before handover", async () => {
