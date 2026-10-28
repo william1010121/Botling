@@ -8,8 +8,39 @@ type Cell = string | number | CellObj;
 type Table = { columns: string[]; rows: Cell[][]; highlight?: number; title?: string };
 const isNum = (c: Cell) => typeof c === 'number' || (typeof c === 'string' && /^[-+−]?[\d.,]+\s?[%a-zA-Z]{0,3}$/.test(c.trim()));
 
+function inferStatus(text: string): { status: Status; strike?: boolean } | null {
+  const s = text.trim().toLowerCase();
+  if (/^(已包含|已在|已完成|已修復|已交付|已部署|通過|pass|done|shipped|fixed)/i.test(s)) {
+    return { status: 'done' };
+  }
+  if (/^(待發布|待處理|待驗證|待量測|待驗收|未包含|審查中|pending|review|risk|unverified)/i.test(s)) {
+    return { status: 'pending' };
+  }
+  if (/^(受阻|失敗|阻塞|卡住|blocked|failed)/i.test(s)) {
+    return { status: 'blocked' };
+  }
+  if (/^(已取消|已終止|終止取消|已略過|停工|取消|skipped|cancelled|shelved)/i.test(s)) {
+    return { status: 'skipped', strike: true };
+  }
+  return null;
+}
+
 function CellView({ cell, ctx }: { cell: Cell; ctx: Ctx }) {
-  if (typeof cell !== 'object') return <>{typeof cell === 'number' ? cell.toLocaleString('en-US') : cell}</>;
+  if (typeof cell !== 'object') {
+    if (typeof cell === 'number') return <>{cell.toLocaleString('en-US')}</>;
+    const str = String(cell).trim();
+    const inferred = inferStatus(str);
+    if (inferred) {
+      return (
+        <span className={`cell-s t-${statusTone[inferred.status]}`}>
+          <i aria-hidden="true"/>
+          {inferred.strike ? <s>{str}</s> : str}
+          <span className="sr-only">（{ctx.t.status[inferred.status]}）</span>
+        </span>
+      );
+    }
+    return <>{cell}</>;
+  }
   const inner = cell.strong ? <b>{cell.text}</b> : cell.text;
   if (cell.status) return <span className={`cell-s t-${statusTone[cell.status]}`}><i aria-hidden="true"/>{inner}<span className="sr-only">（{ctx.t.status[cell.status]}）</span></span>;
   if (cell.tone) return <span className={`cell-s t-${cell.tone}`}><i aria-hidden="true"/>{inner}</span>;
