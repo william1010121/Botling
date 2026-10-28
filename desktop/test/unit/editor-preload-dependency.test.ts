@@ -28,6 +28,11 @@ it('production preload bundles ignore unrelated contract edits but change for re
    mkdirSync(contents,{recursive:true});
    writeFileSync(join(contents,'Info.plist'),'<plist><dict><key>CFBundleIdentifier</key><string>test.editor</string></dict></plist>');
    cpSync(outdir,join(contents,'Resources/app/out/preload'),{recursive:true});
+   // Preload-only comparisons still require known, matching package/core storage metadata.
+   const appRoot=join(contents,'Resources/app'),storageContract={version:1,epoch:2};
+   writeFileSync(join(appRoot,'package.json'),JSON.stringify({botlingStorageContract:storageContract}));
+   mkdirSync(join(appRoot,'out/core'),{recursive:true});
+   writeFileSync(join(appRoot,'out/core/storage-contract.json'),JSON.stringify(storageContract));
    return bundlePrints(app,fs);
   };
   const baseline=await bundle(),baselinePrints=await prints('baseline');
