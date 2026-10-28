@@ -409,6 +409,8 @@ export interface SubagentHeaderView {
   model?: string | null;
   /** Captured worker session settings. Missing/null is unknown, never a global fallback. */
   runtime?: { reasoningEffort?: string | null; serviceTier?: string | null } | null;
+  /** The parent head's effort, an inference for a subagent that reports none: shown marked. */
+  inheritedEffort?: string | null;
 }
 
 export interface ChatState {

@@ -185,6 +185,7 @@ export const zhHans: Dictionary = {
   "subagent.back": "返回 {bot} 的聊天",
   "subagent.of": "{bot} 的子代理",
   "subagent.unknown": "未知",
+  "subagent.effortInherited": "{effort}（沿用）",
   "subagent.effort": "思考：{effort}",
   "subagent.fastOn": "Fast：开",
   "subagent.fastOff": "Fast：关",

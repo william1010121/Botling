@@ -188,6 +188,7 @@ export const en = {
   "subagent.back": "Back to {bot}'s chat",
   "subagent.of": "Subagent of {bot}",
   "subagent.unknown": "unknown",
+  "subagent.effortInherited": "{effort} (inherited)",
   "subagent.effort": "Effort: {effort}",
   "subagent.fastOn": "Fast: on",
   "subagent.fastOff": "Fast: off",

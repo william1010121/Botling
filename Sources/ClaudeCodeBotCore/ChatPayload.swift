@@ -215,6 +215,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// subagent model.
         var model: String? = nil
         var runtime: WorkerRuntimeInfo? = nil
+        /// The parent head's effort, shown marked "inherited" when a Claude subagent reports none.
+        var inheritedEffort: String? = nil
         /// Reported output only; epoch milliseconds, frozen on completion.
         var outputTokens: Double? = nil
         var startedAt: Double? = nil
@@ -1023,6 +1025,9 @@ public struct ChatPayload: Encodable, Equatable {
             }
             pending = []
         }
+        let engine = subagent.runtime?.engine ?? bot.subagentEngine(subagent.id) ?? bot.engine
+        let reported = subagent.runtime?.reasoningEffort?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let inherited = engine == .claude && reported.isEmpty ? bot.effort?.rawValue : nil
         return ChatPayload(
             chatAvatarSize: chatAvatarSize.map(AppSettings.clampedChatAvatarSize),
             botID: "\(bot.id.uuidString)/\(subagent.id)",
@@ -1043,9 +1048,10 @@ public struct ChatPayload: Encodable, Equatable {
                 owner: bot.name,
                 status: subagent.status.rawValue,
                 type: subagent.type,
-                engine: (subagent.runtime?.engine ?? bot.subagentEngine(subagent.id) ?? bot.engine).rawValue,
+                engine: engine.rawValue,
                 model: bot.subagentModelName(subagent),
                 runtime: subagent.runtime,
+                inheritedEffort: inherited,
                 outputTokens: subagent.reportedOutputTokens,
                 startedAt: subagent.startedAt.timeIntervalSince1970 * 1000,
                 endedAt: subagent.endedAt.map { $0.timeIntervalSince1970 * 1000 }

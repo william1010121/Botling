@@ -86,7 +86,9 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
   badge.textContent = t(type === "codex-worker" && engine === "codex" ? "subagent.engine.codexWorker" : `subagent.engine.${engine}` as Key);
   const meta = document.createElement("span");
   meta.className = "meta";
-  const effort = header.runtime?.reasoningEffort?.trim() || t("subagent.unknown");
+  const reported = header.runtime?.reasoningEffort?.trim();
+  const inherited = !reported ? header.inheritedEffort?.trim() : "";
+  const effort = reported || (inherited ? t("subagent.effortInherited", { effort: inherited }) : t("subagent.unknown"));
   const tier = header.runtime?.serviceTier?.trim();
   // Only explicit standard/flex tiers establish Off; null/auto/unrecognized tiers are unknown.
   const fast = tier === "fast" || tier === "priority" ? t("subagent.fastOn")

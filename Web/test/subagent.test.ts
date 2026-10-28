@@ -82,6 +82,17 @@ describe("a subagent's view", () => {
     expect(bar().querySelector(".engine-badge")?.textContent).toBe("Codex worker");
   });
 
+  it("marks an inherited effort as inherited, and lets a reported one win", () => {
+    const state = watching();
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "claude", inheritedEffort: "high" } });
+    expect(bar().querySelector(".meta")!.textContent).toContain("Effort: high (inherited)");
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "claude", inheritedEffort: "high", runtime: { reasoningEffort: "low" } } });
+    expect(bar().querySelector(".meta")!.textContent).toContain("Effort: low");
+    expect(bar().querySelector(".meta")!.textContent).not.toContain("inherited");
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "claude" } });
+    expect(bar().querySelector(".meta")!.textContent).toContain("Effort: unknown");
+  });
+
   it.each([
     ["priority", "on"], ["fast", "on"], ["default", "off"], ["flex", "off"],
     [null, "unknown"], ["auto", "unknown"], ["future-tier", "unknown"],

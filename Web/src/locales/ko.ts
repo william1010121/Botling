@@ -185,6 +185,7 @@ export const ko: Dictionary = {
   "subagent.back": "{bot}의 채팅으로 돌아가기",
   "subagent.of": "{bot}의 서브에이전트",
   "subagent.unknown": "알 수 없음",
+  "subagent.effortInherited": "{effort} (상속)",
   "subagent.effort": "사고: {effort}",
   "subagent.fastOn": "Fast: 켜짐",
   "subagent.fastOff": "Fast: 꺼짐",

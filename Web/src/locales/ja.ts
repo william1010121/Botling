@@ -185,6 +185,7 @@ export const ja: Dictionary = {
   "subagent.back": "{bot} のチャットに戻る",
   "subagent.of": "{bot} のサブエージェント",
   "subagent.unknown": "不明",
+  "subagent.effortInherited": "{effort}(継承)",
   "subagent.effort": "思考: {effort}",
   "subagent.fastOn": "Fast: オン",
   "subagent.fastOff": "Fast: オフ",
