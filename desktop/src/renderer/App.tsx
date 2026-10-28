@@ -367,7 +367,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
               ...(replyTo ? { replyTo } : {}), ...(two && task.owner ? { to: task.owner } : {}) }).catch(fail);
           }}
           onSelect={selectBot}
-          onIgnore={(item) => void client.request({ type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
+          onIgnore={(item) => void client.request(item.messageId ? { type: "chat.ignoreQuestion", botId: item.groupId ?? item.botId, messageId: item.messageId } : { type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
           onOpenResult={openResult}
           onOpenSubagent={(row) => openSubagent(bot.id, row)}
           onUnsettle={(row) => settleSubagent(bot.id, row, false)}
@@ -850,6 +850,9 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           void client.request({ type: "chat.choose", botId: chat.botId, messageId: action.messageID, index: action.index, ...notes }).catch(onError);
           return;
         }
+        case "ignoreQuestion":
+          if (chat && typeof action.messageID === "string") void client.request({ type: "chat.ignoreQuestion", botId: chat.botId, messageId: action.messageID }).catch(onError);
+          return;
         case "answer": {
           // A component's answer may bring pictures (`{name, base64}`), kept as attachments by the core.
           const images = Array.isArray(action.images) ? (action.images as unknown[]).flatMap((entry) => {

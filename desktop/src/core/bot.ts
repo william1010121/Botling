@@ -612,6 +612,7 @@ export class Bot {
         const kept = this.records[at]!;
         if (kept.seenBy) record.seenBy = union(kept.seenBy, record.seenBy);
         if (kept.reactions) record.reactions = kept.reactions;
+        if (kept.ignoredAt) record.ignoredAt = kept.ignoredAt;
         if (kept.decisionID && !isOpenQuestion(kept)) { record.decisionID = kept.decisionID; record.choices = kept.choices; record.chosen = kept.chosen; record.answer = kept.answer; }
         this.records[at] = record;
       }
@@ -1007,6 +1008,33 @@ export class Bot {
   /** A line of its chat as it stands (a question's pick or answer), or null. */
   line(id: string): ChatRecord | null {
     return this.owner.records.find((candidate) => candidate.id === id) ?? null;
+  }
+
+  /** User dismissal, kept separate from chosen/answer. No callbacks, messages or task transitions. */
+  ignoreQuestion(id: string, at = new Date().toISOString()): ResultOf<"chat.ignoreQuestion"> {
+    if (this.options.primary) return this.options.primary.ignoreQuestion(id, at);
+    this.refuseIfClosed();
+    const view = this.records.find(record => record.id === id);
+    if (!view || !isOpenQuestion(view)) return { accepted: false };
+    const source = view.decisionID ? this.records.find(record => record.id === view.decisionID) : view;
+    if (!source || !isOpenQuestion(source)) return { accepted: false };
+    const records = source.decisionID ? this.records.filter(record => record.decisionID === source.decisionID) : [source];
+    // Authorization cards retain their pending decision and their existing Review flow.
+    if (records.some(record => record.permissionTool || this.denialAsks.has(record.id) || this.partner?.denialAsks.has(record.id)
+      || this.approvals.has(record.id) || this.partner?.approvals.has(record.id))) return { accepted: false };
+    for (const record of records) {
+      if (!isOpenQuestion(record)) continue;
+      record.ignoredAt = at;
+      this.appQuestions.delete(record.id);
+      this.appAnswers.delete(record.id);
+      this.cardPicks.delete(record.id);
+    }
+    this.persist();
+    this.partner?.persist();
+    for (const record of records) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
+    this.log(`Question ${source.id} ignored by user at ${at}; no answer or authorization.`);
+    this.updated();
+    return { accepted: true };
   }
 
   /** Closes one of the app's own questions in this chat without a pick going anywhere: shows `chosen` or `answer` (1.x's `markChosen` / `markAnswered`). */
@@ -2019,7 +2047,7 @@ export class Bot {
       const options = source.choices?.map((choice) => choice.label).join(" / ") ?? "";
       const selected = source.chosen != null ? source.choices?.[source.chosen]?.label : undefined;
       const actual = [selected, source.answer].filter((part): part is string => typeof part === "string").join("\nNotes: ");
-      return [`Decision ${id}: ${preview(source)}; options: ${options}; answer: ${actual || "unanswered"}`];
+      return [`Decision ${id}: ${preview(source)}; options: ${options}; answer: ${source.ignoredAt ? "ignored by user; notification only, unanswered and NOT authorized" : actual || "unanswered"}`];
     });
     return "\n\n(App: Shared handoff decisions. If your reply presents the SAME decision, use <decision-ref id=\"SOURCE-UUID\"/> with its ID below, without a choices block. The app copies the original options and actual answer; never recreate, reinterpret or re-ask it. Independent decisions must use their own choices block. Answering any linked view dispatches once to the original head; the other head must not duplicate decision application.)\n" + lines.join("\n");
   }
@@ -2036,6 +2064,7 @@ export class Bot {
     if (source.choices) record.choices = source.choices.map((choice) => ({ ...choice }));
     if (source.chosen !== undefined) record.chosen = source.chosen;
     if (source.answer !== undefined) record.answer = source.answer;
+    if (source.ignoredAt !== undefined) record.ignoredAt = source.ignoredAt;
   }
 
   /**
@@ -5233,6 +5262,7 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
     view.choices = record.choices.slice(0, 20).map(choiceView);
     view.chosen = typeof record.chosen === "number" && record.chosen >= 0 ? record.chosen : null;
     view.answer = typeof record.answer === "string" ? record.answer.slice(0, 4_000) : null;
+    if (record.ignoredAt) view.ignoredAt = record.ignoredAt;
   }
   if (record.permissionTool) view.approval = { tool: record.permissionTool.slice(0, 200), expires: approval ? new Date(approval.expires).toISOString() : null };
   if (record.steps?.length) view.steps = record.steps.slice(-500).map((step) => stepView(step, subagents));

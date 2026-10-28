@@ -7,6 +7,15 @@ const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square",
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 25, 8, minute)).toISOString();
 
 describe("chat state for the Web/src page", () => {
+  it("maps ignored questions to notifications and excludes approvals from Ignore", () => {
+    const question: MessageView = { id: "q", role: "bot", text: "Proceed?", time: at(0), choices: [{ label: "Yes", detail: null, recommended: true, action: "allowOnce" }] };
+    const messages = [question, { ...question, id: "ignored", ignoredAt: at(1) }, { ...question, id: "approval", approval: { tool: "Bash", expires: null } }];
+    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] });
+    expect(state.messages[0]).toMatchObject({ open: true, canIgnoreQuestion: true });
+    expect(state.messages[1]).toMatchObject({ open: false, ignoredAt: at(1), chosen: null, answer: null });
+    expect(state.messages[2]).toMatchObject({ open: true, canIgnoreQuestion: false });
+  });
+
   it("maps approvals, stopped replies, steps and the running reply", () => {
     const messages: MessageView[] = [
       { id: "u1", role: "user", text: "Clean up", time: at(0) },

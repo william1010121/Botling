@@ -3,6 +3,9 @@
 export type Word = string | readonly [one: string, other: string];
 
 export const en = {
+  "messages.ignoreQuestion": "Ignore",
+  "messages.ignoreQuestionHint": "Keep as a notification without answering or authorizing anything",
+  "messages.ignoredQuestion": "Notification · ignored, not answered",
   "messages.loadEarlier": "Load {n} earlier messages",
   "source.unknown": "Unknown source",
   "source.showChat": "Show in chat",

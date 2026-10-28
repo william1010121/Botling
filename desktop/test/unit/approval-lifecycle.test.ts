@@ -60,6 +60,17 @@ function harness(approvalTimeoutMs = 60_000) {
 }
 
 describe("Codex approval lifecycle across coordinator and worker turns", () => {
+  it("Ignore cannot settle or authorize an active worker approval", () => {
+    const h = harness(); h.ask(); const question = h.card();
+    const writes = h.writes.length;
+    expect(h.bot.ignoreQuestion(question.id)).toEqual({ accepted: false });
+    expect(h.writes).toHaveLength(writes);
+    expect(h.card()).toMatchObject({ id: question.id, chosen: null, answer: null });
+    expect(h.card().ignoredAt).toBeUndefined();
+    expect(h.bot.choose(question.id, 1).accepted).toBe(true);
+    expect(h.writes.filter(w => w.id === 700)).toEqual([{ jsonrpc: "2.0", id: 700, result: { decision: "decline" } }]);
+  });
+
   it("keeps an active worker approval through same-task steering and coordinator completion", () => {
     const h = harness(); h.ask(); const question = h.card();
     h.tool("app_send_message", { task_id: h.task, message: "Use the manual-completion commit as context" }, 101);

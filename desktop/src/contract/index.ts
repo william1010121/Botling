@@ -325,6 +325,7 @@ export const MessageView = z.strictObject({
   choices: z.array(ChoiceView).max(20).optional(),
   chosen: z.number().int().nonnegative().nullable().optional(),
   answer: z.string().max(4_000).nullable().optional(),
+  ignoredAt: z.string().datetime().optional(),
   /** A tool approval: which tool it asks for, and when it counts as "no" if nobody answers (ISO). */
   approval: z.strictObject({ tool: z.string().max(200), expires: z.string().nullable() }).optional(),
   backgroundTasks: z.array(BackgroundTaskView).optional(),
@@ -911,6 +912,8 @@ export const Command = z.discriminatedUnion("type", [
   /** Answers a bot's question in the user's own words instead of a button. */
   /** `images`: pictures a component sent with its answer (`{text, images}`), as `{name, base64}`; they go along as attachments. */
   z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().max(MESSAGE_TEXT_LIMIT), images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10).optional() }),
+  /** Explicitly dismiss a question as a notification; never dispatches an answer. */
+  z.strictObject({ type: z.literal("chat.ignoreQuestion"), botId, messageId: id }),
   /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */
   z.strictObject({ type: z.literal("chat.react"), botId, messageId: id, emoji: z.string().min(1).max(16), present: z.boolean() }),
   /** Marks one task card complete. Its workers keep running. */
@@ -1119,7 +1122,7 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
@@ -1205,6 +1208,7 @@ export interface Results {
   "rounds.stop": { stopped: boolean };
   "chat.choose": { accepted: boolean };
   "chat.answer": { accepted: boolean };
+  "chat.ignoreQuestion": { accepted: boolean };
   "chat.react": { changed: boolean };
   "task.output": { text: string };
   "subagent.view": { subagent: SubagentView };

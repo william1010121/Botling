@@ -72,6 +72,9 @@ export interface MessageView {
   choices: ChoiceView[] | null;
   chosen: number | null;
   answer: string | null;
+  ignoredAt?: string;
+  /** Desktop app-owned action; absent on older hosts. */
+  canIgnoreQuestion?: boolean;
   /** Still waiting for the user's pick. */
   open: boolean;
   /** Components it shows, each at `at` in `text` (a UTF-16 offset; null: after the text). */
@@ -537,6 +540,7 @@ export type Action =
   /** A chat's unsent text and caret changed (empty: none), for the app to keep over a restart. */
   | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number; text?: string; images?: { name: string; base64: string }[] }
+  | { type: "ignoreQuestion"; messageID: string }
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
   | { type: "setReaction"; messageID: string; emoji: string; present: boolean }
   | { type: "reply"; messageID: string }

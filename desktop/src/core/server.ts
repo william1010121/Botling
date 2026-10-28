@@ -1010,6 +1010,23 @@ First write a test that shows this, then fix it.`;
     this.refreshWaiting();
   }
 
+  /** Resolve copies to their original, then persist the informational disposition everywhere. */
+  private ignoreQuestion(botId: string, messageId: string): { accepted: boolean } {
+    let chat = this.bot(botId), record = chat.line(messageId);
+    const seen = new Set<string>();
+    while (record?.sourceID && record.sourceMessageID) {
+      const key = `${chat.id}:${record.id}`;
+      if (seen.has(key) || !isOpenQuestion(record)) return { accepted: false };
+      seen.add(key);
+      chat = this.bot(record.sourceID);
+      record = chat.line(record.sourceMessageID);
+    }
+    if (!record) return { accepted: false };
+    const result = chat.ignoreQuestion(record.id);
+    if (result.accepted) this.refreshWaiting();
+    return result;
+  }
+
   /** A pick on a copy goes to the question it copies; one settled or gone meanwhile closes the copy. */
   private pickOnCopy(copy: string, index: number) {
     const source = this.copies.get(copy);
@@ -1036,6 +1053,16 @@ First write a test that shows this, then fix it.`;
 
   /** A bot's question was settled in its own chat: so is its copy (`closeCopies`). */
   private closeCopiesOf(botId: string, messageId: string) {
+    const original = this.bots.get(botId)?.line(messageId) ?? this.groups.chat(botId)?.line(messageId);
+    if (original?.ignoredAt) {
+      const chats = [...this.bots.values(), ...this.groups.groups.flatMap(group => this.groups.chat(group.id) ?? [])];
+      for (const chat of chats) for (const copy of chat.openCopies(botId)) {
+        if (copy.sourceMessageID !== messageId) continue;
+        this.copies.delete(copy.id);
+        chat.ignoreQuestion(copy.id, original.ignoredAt);
+      }
+      return;
+    }
     for (const [copy, source] of [...this.copies]) {
       if (source.botId !== botId || source.questionId !== messageId) continue;
       const line = this.bots.get(botId)?.line(messageId);
@@ -1486,7 +1513,7 @@ First write a test that shows this, then fix it.`;
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
     // A question copied into the main bot's chat was settled in its own: so is the copy.
-    if (this.copies.size && event.type === "message.updated") this.closeCopiesOf(event.botId, event.message.id);
+    if (event.type === "message.updated" && (this.copies.size || event.message.ignoredAt)) this.closeCopiesOf(event.botId, event.message.id);
     // A question asked or answered, a bot added: what waits on you may have changed.
     if (event.type === "message.added" || event.type === "message.updated" || event.type === "message.removed" || event.type === "bot.updated") this.waitingSoon();
     // Your line closes an interval: it may be summarized by itself (`summarizeClosedInterval`).
@@ -1710,6 +1737,7 @@ First write a test that shows this, then fix it.`;
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
       case "rounds.stop": return this.bot(cmd.botId).stopRounds();
+      case "chat.ignoreQuestion": return this.ignoreQuestion(cmd.botId, cmd.messageId);
       case "chat.choose": return this.calledInPick(cmd.botId, cmd.messageId, cmd.index) ?? this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
       case "chat.answer": {
         // A component's pictures: written to incoming/, kept by the bot with the answer, then removed.

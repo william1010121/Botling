@@ -2,6 +2,9 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Simplified Chinese (keys as in `en.ts`). */
 export const zhHans: Dictionary = {
+  "messages.ignoreQuestion": "忽略",
+  "messages.ignoreQuestionHint": "保留为通知，不回答或授权任何操作",
+  "messages.ignoredQuestion": "通知 · 已忽略，未回答",
   "messages.loadEarlier": "加载更早的 {n} 条消息",
   "source.unknown": "未知来源",
   "source.showChat": "在聊天中显示",

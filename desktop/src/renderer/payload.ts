@@ -223,7 +223,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     const guest = guestOf(message);
     if (message.role === "bot" && message.sourceId && !guest) {
       // Said by a bot since removed.
-      return { id: message.id, role: message.role, text: message.text, stamp: stamp(shown, index, now), avatar: faceOf(message.engine), choices, chosen: message.chosen ?? null, answer: message.answer ?? null,
+      return { id: message.id, role: message.role, text: message.text, stamp: stamp(shown, index, now), avatar: faceOf(message.engine), choices, chosen: message.chosen ?? null, answer: message.answer ?? null, ignoredAt: message.ignoredAt,
         open: false, attachments: null, replyTo: null, replyPreview: null, openable: false, speaker: "A removed bot", steps: steps?.length ? steps.map(step) : null };
     }
     return {
@@ -235,7 +235,9 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       choices,
       chosen: message.chosen ?? null,
       answer: message.answer ?? null,
-      open: !!choices && message.chosen == null && message.answer == null,
+      ignoredAt: message.ignoredAt,
+      canIgnoreQuestion: !message.approval,
+      open: !!choices && message.chosen == null && message.answer == null && !message.ignoredAt,
       attachments: message.attachments?.map((file): FileView => ({ name: file.name, kind: file.kind, url: file.url.startsWith("file:") ? attachmentURL(bot.id, file.url) : file.url })) ?? null,
       replyTo: message.replyTo ?? null,
       replyPreview: message.replyPreview ?? null,

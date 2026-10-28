@@ -2,6 +2,9 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Japanese (keys as in `en.ts`). */
 export const ja: Dictionary = {
+  "messages.ignoreQuestion": "無視",
+  "messages.ignoreQuestionHint": "回答や許可をせず、通知として残す",
+  "messages.ignoredQuestion": "通知 · 無視済み、未回答",
   "messages.loadEarlier": "以前のメッセージを {n} 件読み込む",
   "source.unknown": "不明な参照元",
   "source.showChat": "チャットで表示",

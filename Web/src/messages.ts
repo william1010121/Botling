@@ -578,7 +578,9 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     note.textContent = t("messages.interrupted");
     bubble.append(note);
   }
-  if (message.choices) {
+  if (message.choices && message.ignoredAt) {
+    bubble.append(ignoredQuestion(message));
+  } else if (message.choices) {
     // Loose: the app leaves out a nil chosen or answer (undefined), not only null.
     const answered = message.chosen != null || message.answer != null;
     bubble.append(answered && !unfolded.has(message.id) ? foldedChoices(message, components) : choicesElement(message, components));
@@ -687,6 +689,32 @@ const unfolded = new Set<string>();
 
 const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
 
+/** App-owned dismissal next to the existing Answer UI; no plugin action is synthesized. */
+export function ignoreQuestionButton(messageId: string): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "folded-choice question-ignore";
+  button.textContent = t("messages.ignoreQuestion");
+  button.title = t("messages.ignoreQuestionHint");
+  button.addEventListener("click", () => post({ type: "ignoreQuestion", messageID: messageId }));
+  return button;
+}
+
+export function ignoredQuestion(message: MessageView): HTMLElement {
+  const notice = document.createElement("details");
+  notice.className = "ignored-question";
+  const summary = document.createElement("summary");
+  summary.textContent = t("messages.ignoredQuestion");
+  const options = document.createElement("ul");
+  for (const choice of message.choices ?? []) {
+    const item = document.createElement("li");
+    item.textContent = choice.label + (choice.detail ? ` — ${choice.detail}` : "");
+    options.append(item);
+  }
+  notice.append(summary, options);
+  return notice;
+}
+
 /** The question's options: the 「choices」 component, or plain buttons without one. */
 function choicesElement(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const choices = message.choices!;
@@ -698,7 +726,12 @@ function choicesElement(message: MessageView, components: Record<string, Compone
     : null;
   const component = componentElement("choices", components.choices, choicesData(choices, message.chosen ?? null, message.answer ?? null), onAnswer, message.id, null, null, undefined, "chat", false, null, true);
   const options = component ?? fallbackChoices(choices, message.chosen ?? null, message.answer ?? null, onAnswer ? (index) => onAnswer({ index }) : null);
-  if (message.open) return options;
+  if (message.open) {
+    if (!message.canIgnoreQuestion) return options;
+    const wrap = document.createElement("div");
+    wrap.append(options, ignoreQuestionButton(message.id));
+    return wrap;
+  }
   // Opened again after answering: a way to fold it back.
   const wrap = document.createElement("div");
   wrap.className = "unfolded";
