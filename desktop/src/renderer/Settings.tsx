@@ -472,14 +472,14 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
   const hasAgy = view.engines.includes("agy");
   return (
     <>
-      <Group title="Engines in this bot" note="With both, they work at the same time. Turning off the one it runs on hands its work to the other through memory.md, just before its next message. Antigravity is unavailable until a verified pre-task policy barrier exists.">
+      <Group title="Engines in this bot" note="With both, they work at the same time. Turning off the one it runs on hands its work to the other through memory.md, just before its next message. Antigravity requires the verified official ACP runtime and its Google sign-in. Choose up to two engines.">
         {(["claude", "codex", "agy"] as const).map((engine) => {
           const on = view.engines.includes(engine);
           const name = engine === "agy" ? "Antigravity" : engine === "claude" ? "Claude" : "Codex";
           // 1.x's "Engines in this bot": the only head cannot go; turning off the first of two runs the bot on the other, through a handoff.
           return (
-            <Toggle key={engine} label={name} checked={on} disabled={engine === "agy" || bot.phase === "switching" || (on && !two)}
-              onChange={(wanted) => setHeads(wanted ? (engine === "agy" || hasAgy ? [engine] : [...view.engines, engine]) : view.engines.filter((candidate) => candidate !== engine))} />
+            <Toggle key={engine} label={name} checked={on} disabled={bot.phase === "switching" || (on && !two) || (!on && two)}
+              onChange={(wanted) => setHeads(wanted ? [...view.engines, engine] : view.engines.filter((candidate) => candidate !== engine))} />
           );
         })}
       </Group>
@@ -500,8 +500,8 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           </Row>
         </Group>
       )}
-      {hasAgy && <Group title="Antigravity" note="Execution blocked: the CLI has no verified pre-task policy barrier. Choose another engine. Saved conversation and model configuration are retained.">
-        <Row label="Model" hint="Use a model ID from agy models. Leave empty for the CLI default.">
+      {hasAgy && <Group title="Antigravity" note="ACP uses single-action approval cards and app-managed tools. Native agents, workflows and global plugins are disabled.">
+        <Row label="Model" hint="Use an ACP model ID (for example gemini-3.8-flash-high). Leave empty for this account’s default.">
           <input aria-label="Antigravity model" key={view.agyModel ?? "default"} defaultValue={view.agyModel ?? ""} maxLength={200}
             onBlur={event => { const value = event.target.value.trim() || null; if (value !== (view.agyModel ?? null)) configure({ agyModel: value }); }} />
         </Row>

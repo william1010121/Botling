@@ -29,3 +29,19 @@ it('refuses engine selection and clears identity only on intentional new-session
  const h=harness(),b=h.make();await expect(b.setHeads(['agy'])).rejects.toThrow('pre-task policy barrier');
  (b as any).newSession();expect(h.saved().agyConversation).toBeUndefined();expect(h.saved().agyRecovery).toBeUndefined();
 });
+it('never imports persistent allow rules into ACP approval cards',async()=>{
+ const h=harness(),b=h.make(),answers:any[]=[];
+ (b as any).alwaysAllowed=['Antigravity tool'];
+ const head={running:true,answer:(...args:any[])=>answers.push(args)};
+ (b as any).ask(head,{kind:'permission',requestId:'acp:7',tool:'Antigravity tool',summary:'write a file',input:{}},null);
+ expect(answers).toEqual([]);
+ const card=(b as any).records.findLast((r:any)=>r.permissionTool==='Antigravity tool');
+ expect(card.choices.map((c:any)=>c.action)).toEqual(['allowOnce','deny']);
+ b.choose(card.id,1);expect(answers[0][1]).toBe(false);
+});
+
+it('engine switching retains agy identity; only an intentional new chat clears it',()=>{
+ const h=harness(),b=h.make();(b as any).becomeEngine('codex');expect(h.saved().agyConversation).toBe(session);
+ (b as any).becomeEngine('agy');expect((b as any).session).toMatchObject({sessionId:session,started:true});
+ (b as any).newSession();expect(h.saved().agyConversation).toBeUndefined();
+});

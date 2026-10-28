@@ -9,6 +9,12 @@ export const AGY_EXECUTION_BLOCKED = "Antigravity execution is blocked: the CLI 
 export const AGY_LIMITATIONS = AGY_EXECUTION_BLOCKED;
 export interface AgyConfig {
   command: string;
+  /** App-owned ACP profile; never the global CLI configuration. */
+  acpHome?: string;
+  transport?: "acp";
+  worker?: boolean;
+  processStarted?: (pid: number) => void;
+  canStartReport?: () => boolean;
   prefixArgs?: string[];
   cwd: string;
   env?: Record<string, string | undefined>;
