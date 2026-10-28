@@ -1,4 +1,4 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {readFileSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {Bot} from '../../src/core/bot';
@@ -48,4 +48,53 @@ it('engine switching retains agy identity; only an intentional new chat clears i
 
 it('rejects mixed-engine selection before runtime provisioning or partner startup',async()=>{
  const h=harness(),b=h.make();await expect(b.setHeads(['codex','agy'])).rejects.toThrow('mixed-engine');expect(h.launches).toEqual([]);expect(b.settingsView().engines).toEqual(['agy']);
+});
+
+it('successful agy handoff tags cannot route another engine',()=>{
+ const h=harness(),b=h.make() as any,routes:string[]=[];
+ const intercept=vi.spyOn(Bot.prototype as any,'route').mockImplementation(function(this:any,turn:any){routes.push(this.engine);turn.open=false;turn.resolve('stopped');return turn;});
+ try {
+  for(const target of ['claude','codex']){
+   const turn=b.newTurn('app','offline regression',null);turn.reply.add({kind:'delta',text:`<handoff to="${target}" kind="task">offline fixture</handoff>`});
+   b.finishTurn(turn,'done');
+  }
+  expect(routes).toEqual([]);expect(b.partner).toBeNull();expect(h.launches).toEqual([]);
+ }finally{intercept.mockRestore();}
+});
+it('restored conductor card actions cannot route Claude from agy',()=>{
+ const h=harness(),b=h.make() as any,routes:string[]=[];
+ const intercept=vi.spyOn(Bot.prototype as any,'route').mockImplementation(function(this:any,turn:any){routes.push(this.engine);turn.open=false;turn.resolve('stopped');return turn;});
+ try{
+  b.conduct([{type:'card',text:'restored choice',choices:[{label:'Go with Claude',pick:{goWith:'claude'}}]}]);
+  const card=b.records.findLast((r:any)=>r.text==='restored choice');b.choose(card.id,0);
+  expect(routes).toEqual([]);expect(b.partner).toBeNull();
+ }finally{intercept.mockRestore();}
+});
+
+it('direct and stale partner execution cannot bypass the agy route barrier',()=>{
+ const h=harness(),b=h.make() as any;
+ for(const target of ['claude','codex']){
+  expect(()=>b.makePartner(target)).toThrow('cross-engine');
+  expect(()=>b.deliverTo(target,'offline',null)).toThrow('cross-engine');
+ }
+ const stale=h.make() as any;stale.options.primary=b;stale.engine='claude';b.partner=stale;
+ expect(()=>b.makePartner('claude')).toThrow('cross-engine');
+ expect(()=>b.deliverTo('claude','offline',null)).toThrow('cross-engine');
+ expect(()=>stale.route(stale.newTurn('app','offline',null))).toThrow('cross-engine');
+ let sent=false;stale.head={running:true,send(){sent=true;}};expect(()=>stale.ensureHead()).toThrow('cross-engine');
+ const pending=stale.newTurn('app','offline',null);pending.sent=true;pending.head=stale.head;stale.turn=pending;
+ expect(stale.hearNow('must not steer',[])).toBe(false);b.tell('claude','must not queue',[]);expect(sent).toBe(false);expect(stale.pendingNote).toBeFalsy();stale.turn=null;stale.head=null;b.partner=null;stale.options.primary=null;
+ expect(h.launches).toEqual([]);
+});
+it('reverse Codex to agy routing is also blocked without affecting the legacy pair policy',()=>{
+ const h=harness(),b=h.make() as any;b.becomeEngine('codex');b.headsSettings.engines=['codex'];
+ expect(()=>b.deliverTo('agy','offline',null)).toThrow('cross-engine');
+ expect(b.allowsEngineRoute('claude','codex')).toBe(true);expect(h.launches).toEqual([]);
+});
+
+it('restored conductor handoffs stop rather than dispatching a forbidden engine',()=>{
+ const h=harness(),b=h.make() as any;
+ const actions=b.conductor.replied('agy','offline',{to:'claude',kind:'task',task:'offline',decisionId:null},false,null);
+ expect(actions.some((a:any)=>a.type==='ask')).toBe(true);
+ b.conduct(actions);expect(b.partner).toBeNull();expect(b.conductor.records.every((r:any)=>r.state==='stopped')).toBe(true);expect(b.rounds).toBeNull();expect(h.launches).toEqual([]);
 });

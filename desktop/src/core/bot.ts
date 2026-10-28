@@ -548,6 +548,17 @@ export class Bot {
     return owner.engine !== head ? owner.engine : owner.partner?.engine ?? otherHead(head, this.heads);
   }
 
+  /** Execution policy, including on-demand and restored routes (not just selected heads). */
+  private allowsEngineRoute(head: Engine, from: Engine = this.engine): boolean {
+    const owner = this.owner;
+    return head === from || !(head === "agy" || from === "agy" || owner.engine === "agy"
+      || owner.partner?.engine === "agy" || owner.headsSettings.engines.includes("agy"));
+  }
+
+  private requireEngineRoute(head: Engine, from: Engine = this.engine): void {
+    if (!this.allowsEngineRoute(head, from)) throw new ContractError("conflict", "Antigravity cross-engine execution is disabled pending lifecycle validation. Nothing was routed.");
+  }
+
   /** The bot that runs `head`: this one, or its partner. */
   private botFor(head: Engine): Bot | null {
     const owner = this.owner;
@@ -562,8 +573,9 @@ export class Bot {
    */
   private makePartner(onDemand?: Engine): Bot | null {
     if (this.options.primary) return null;
+    const other = onDemand ?? this.partner?.engine ?? otherHead(this.engine, this.heads);
+    this.requireEngineRoute(other);
     if (this.partner) return onDemand && this.partner.engine !== onDemand ? null : this.partner;
-    const other = onDemand ?? otherHead(this.engine, this.heads);
     if (other === this.engine) return null;
     if (onDemand ? onDemand !== other : !this.headsSettings.engines.includes(other)) return null;
     this.partner = new Bot({ ...this.options, primary: this, engine: other, lock: null, welcome: false });
@@ -1395,6 +1407,7 @@ export class Bot {
   /** A turn for `head` (this bot's or its partner's), routed there now. */
   private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin">> = {}): Turn {
     // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
+    this.requireEngineRoute(head);
     const bot = this.botFor(head) ?? this.owner.makePartner(head) ?? this;
     const turn = bot.newTurn(extra.origin ?? (userId ? "user" : "app"), words, userId);
     if (extra.conducted) turn.conducted = true;
@@ -1468,6 +1481,10 @@ export class Bot {
       hold.turn.words = `${words}\n\n${hold.turn.words}`;
       hold.turn.about.push(...about);
     }
+    if (!this.allowsEngineRoute(hold.held, hold.lead)) {
+      this.finishTurn(hold.turn, "failed", "Antigravity cross-engine held turn blocked; nothing was routed.");
+      return;
+    }
     this.log(`${displayName(hold.held)} gets the message${words ? " with what the other head said" : ""}`);
     this.botFor(hold.held)?.route(hold.turn);
   }
@@ -1484,6 +1501,7 @@ export class Bot {
    * wakes. (1.x also steers claude mid-turn; 2.0 keeps it for claude's next message.)
    */
   private tell(head: Engine, note: string, about: string[]) {
+    if (!this.allowsEngineRoute(head)) return;
     const target = this.botFor(head);
     if (!target || !target.head?.running) return;
     if (target.hearNow(note, about)) return;
@@ -1498,6 +1516,7 @@ export class Bot {
    * which counts as the app's: `<no-reply/>` shows nothing). False: no turn of ours to join.
    */
   private hearNow(note: string, about: string[]): boolean {
+    if (!this.allowsEngineRoute(this.engine, this.owner.engine)) return false;
     const turn = this.turn;
     const head = this.head;
     if (!turn?.open || !turn.sent || turn.origin === "tidy" || !head?.running || turn.head !== head || this.draining || this.ignoreResults > 0 || this.ending.has(head)) return false;
@@ -1519,6 +1538,7 @@ export class Bot {
     const owner = this.owner;
     if (!this.sharesChat || words.includes("<reaction")) return;
     const other = this.peerEngine(this.engine);
+    if (!this.allowsEngineRoute(other)) return;
     const note = wordsNote(this.engine, words);
     if (owner.claimHold?.lead === this.engine && owner.claimHold.held === other) {
       // The lead's first words say what it takes on: the other head starts with them.
@@ -1531,6 +1551,10 @@ export class Bot {
 
   /** A head showed a reply: the other head hears it, and the conductor carries any hand-off (`headReplied`). */
   private headReplied(record: ChatRecord, head: Engine, handoff: Handoff | null, handed: boolean, handoffId: string | null) {
+    if (!this.allowsEngineRoute(head) || (handoff && !this.allowsEngineRoute(handoff.to, head))) {
+      this.notice("Antigravity cross-engine handoff blocked; nothing was routed. Mixed-engine lifecycle validation is pending.");
+      return;
+    }
     const actions = this.conductor.replied(head, record.text, handoff, handed, handoffId);
     const decisions = new Set(handoffId ? this.handoffDecisions.get(handoffId) ?? [] : []);
     // An OPEN question gets an identity when it is actually handed over.
@@ -1561,6 +1585,13 @@ export class Bot {
     for (const action of actions) {
       switch (action.type) {
         case "ask":
+          if (!this.allowsEngineRoute(action.head, this.conductor.records.find(record => record.id === action.handoffId)?.from ?? this.engine)) {
+            if (action.handoffId) {
+              for (const stopped of this.conductor.stop(action.handoffId)) if (stopped.type === "progress") this.rounds = stopped.progress;
+            }
+            this.notice("Antigravity cross-engine action blocked; nothing was routed. Mixed-engine lifecycle validation is pending.");
+            break;
+          }
           this.deliverTo(action.head, action.text + this.decisionContext(action.handoffId ? this.handoffDecisions.get(action.handoffId) ?? new Set() : new Set()), null,
             { origin: "app", conducted: !!action.handoffId, handoffId: action.handoffId });
           break;
@@ -1987,6 +2018,7 @@ export class Bot {
 
   /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
   private route(turn: Turn): Turn {
+    this.requireEngineRoute(this.engine, this.owner.engine);
     const current = this.turn;
     // The core is being swapped (hot-swap.ts): nothing new begins; it waits and is handed over.
     if (this.swapHold) { this.queue.push(turn); return turn; }
@@ -2336,9 +2368,11 @@ export class Bot {
   }
 
   private ensureHead(): AgentHead {
+    this.requireEngineRoute(this.engine, this.owner.engine);
     if (this.head?.running) return this.head;
     // It fell asleep before its switch of engine was done: it wakes on the new one.
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
+    this.requireEngineRoute(this.engine, this.owner.engine);
     this.restartPending = false;
     this.restartForPluginsOnly = false;
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
