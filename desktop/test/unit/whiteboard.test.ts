@@ -241,6 +241,35 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
     })));
     const names = (selector: string) => [...host.querySelectorAll(`${selector} .wb-card-name`)].map((name) => name.textContent);
 
+    it.each([0, 1, 8])("expands all approval commands and ages even when the bot count is %i", async (count) => {
+      const entry = { ...approving, approvals: count };
+      const approvals = Array.from({ length: 5 }, (_, index) => ({ tool: "Bash", text: `command-${index + 1}`, at: new Date(now - (index + 1) * 3_600_000).toISOString() }));
+      await render(undefined, { bots: [empty(entry.id, [], { approvals })] }, [main, entry]);
+      const card = host.querySelector(".ask-card")!;
+      expect(card.querySelectorAll("code")).toHaveLength(4);
+      expect(card.querySelector(".wb-ask-more")?.textContent).toBe(`+${Math.max(5, count) - 4} more in the report`);
+      await act(async () => card.querySelector<HTMLButtonElement>(".wb-card-open")!.click());
+      const report = host.querySelector(".wb-report")!;
+      expect([...report.querySelectorAll('[data-part="ask"] code')].map(node => node.textContent).sort()).toEqual(approvals.map(item => item.text).sort());
+      expect([...report.querySelectorAll('[data-part="ask"] .wb-ask-age')].map(node => node.textContent).sort()).toEqual(["1h ago", "2h ago", "3h ago", "4h ago", "5h ago"]);
+      expect(report.querySelector(".wb-toc")?.textContent).toContain(`Your call ${Math.max(5, count)}`);
+      expect(report.querySelector(".wb-stat-n.waiting")?.textContent).toBe(String(Math.max(5, count)));
+      if (count > 5) expect(report.querySelector('[data-part="ask"]')?.textContent).toContain("3 more tool approvals waiting");
+      const before = opened.length;
+      await act(async () => report.querySelector<HTMLButtonElement>('[data-part="ask"] .wb-ask-open')!.click());
+      expect(opened.slice(before)).toEqual([entry.id]);
+    });
+
+    it.each(["persisted", "empty", "legacy"])("uses %s completion history in the expanded report", async (mode) => {
+      const tasks = mode === "persisted" ? [] : [task("finished", "Finished", "done", new Date(now).toISOString())];
+      const extra = mode === "legacy" ? {} : { doneDays: mode === "empty" ? [] : [{ day: dayKey(now), done: 7, manual: 0 }] };
+      await render(undefined, { bots: [empty(busy.id, tasks, extra)] }, [main, busy]);
+      await act(async () => host.querySelector<HTMLButtonElement>(".run-card")!.click());
+      const trend = host.querySelector('.wb-report [data-part="trend"]');
+      if (mode === "empty") expect(trend).toBeNull();
+      else expect(trend?.querySelector("svg")?.getAttribute("aria-label")).toContain(`Today ${mode === "persisted" ? 7 : 1}`);
+    });
+
     it("draws the numbers, the lanes and the quiet bots as dimmed pills; the waiting number scrolls to its lane", async () => {
       await render(undefined, { bots: [empty(approving.id, [], { approvals: [{ tool: "Bash", text: "npm publish --tag next", at: new Date(now - 20 * 60_000).toISOString() }] })] });
       const metric = (name: string) => host.querySelector(`[data-metric="${name}"]`)!;

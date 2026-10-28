@@ -889,23 +889,22 @@ function Report({ client, components, bot, data, waiting, look, now, origin, sta
   const article = useRef<HTMLElement>(null);
   const tasks = named(data?.tasks ?? []);
   const counts = taskCounts(tasks);
-  const asks = waitingFor(bot, waiting);
-  const waitingTasks = tasks.filter((task) => task.state === "waiting");
+  const asks = waitingAsks(bot, waiting, data);
+  const waitingTotal = askCount(asks);
   const done = finishedTasks(tasks, 12);
-  const days = doneByDay(tasks, now);
+  const days = boardWeek([data], now).days.map(({ label, count, today }) => ({ day: label, count, today }));
   const peak = Math.max(1, ...days.map((day) => day.count));
   const next = data ? nextSteps(data) : [];
   const status0 = data?.currentStatus ?? [];
   const has: Record<ReportSection, boolean> = {
     sum: status0.length > 0 || counts.total > 0 || asks.length > 0 || !!picture || !!asking,
-    ask: asks.length + waitingTasks.length + bot.approvals > 0,
+    ask: waitingTotal > 0,
     made: (data?.results.length ?? 0) > 0,
     trend: days.some((day) => day.count > 0),
     log: done.length > 0,
     decided: (data?.decided.length ?? 0) > 0,
     next: next.length > 0,
   };
-  const waitingTotal = asks.length + waitingTasks.length + bot.approvals;
   const shown = SECTIONS.filter(([id]) => has[id]);
   const [current, setCurrent] = useState<ReportSection | null>(shown[0]?.[0] ?? null);
   useLayoutEffect(() => { article.current?.focus({ preventScroll: true }); }, []);
@@ -959,24 +958,17 @@ function Report({ client, components, bot, data, waiting, look, now, origin, sta
         {has.ask && (
           <section data-part="ask" className="wb-part">
             <h4 className="wb-part-title ask">Your call</h4>
-            {asks.map((item) => (
-              <div key={`${item.botId}-${item.text}`} className="wb-ask">
-                <span className="wb-ask-text">{item.text}</span>
-                <button type="button" className="wb-ask-open" onClick={() => onOpenChat(item.groupId ?? item.botId)}>Answer in chat</button>
-              </div>
-            ))}
-            {waitingTasks.map((task) => (
-              <div key={task.id} className="wb-ask" data-task={task.id}>
-                <span className="wb-ask-text"><b>{task.name}</b>{task.blocked ?? task.now ? ` · ${task.blocked ?? task.now}` : ""}</span>
-                <button type="button" className="wb-ask-open" onClick={() => onOpenChat(bot.id)}>Answer in chat</button>
-              </div>
-            ))}
-            {bot.approvals > 0 && (
-              <div className="wb-ask">
-                <span className="wb-ask-text">{bot.approvals} tool approval{bot.approvals === 1 ? "" : "s"} waiting</span>
-                <button type="button" className="wb-ask-open" onClick={() => onOpenChat(bot.id)}>Answer in chat</button>
-              </div>
-            )}
+            {asks.map((ask) => {
+              const age = ageLabel(ask.at, now);
+              return (
+                <div key={ask.key} className={`wb-ask ${ask.kind}`} data-kind={ask.kind}>
+                  <span className="wb-ask-kind">{KIND_LABEL[ask.kind]}</span>
+                  {age && <span className="wb-ask-age">{age === "now" ? "just now" : `${age} ago`}</span>}
+                  <span className="wb-ask-text">{ask.code !== null ? <>{ask.text === "Bash" ? "Allow " : `Allow ${ask.text}: `}<code>{ask.code}</code></> : ask.text}</span>
+                  <button type="button" className="wb-ask-open" onClick={() => onOpenChat(ask.open)}>{KIND_BUTTON[ask.kind]}</button>
+                </div>
+              );
+            })}
           </section>
         )}
         {has.made && (
