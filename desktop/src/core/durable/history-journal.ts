@@ -13,6 +13,16 @@ const journals = new Map<string, WeakRef<HistoryJournal>>();
 const suffix = ".journal";
 const transactionName = (sequence: number) => String(sequence).padStart(16, "0") + ".json";
 
+// The watermark and rows MUST share one atomic rename. A separate sidecar can be torn
+// against the checkpoint, and replaying a covered patch can resurrect or lose trimmed rows.
+export function decodeHistoryCheckpoint(value: any): { rows: Row[]; sequence: number } {
+  if (Array.isArray(value)) return { rows: value, sequence: 0 }; // pre-journal format
+  if (value?.format === "botling-history-v1" && Number.isSafeInteger(value.sequence) && value.sequence >= 0 && Array.isArray(value.rows)) {
+    return { rows: value.rows, sequence: value.sequence };
+  }
+  throw new Error("Invalid history checkpoint");
+}
+
 // Atomic, fully written, fsynced journal entry. Unlike a replace-in-place log, a partial
 // transaction can never be mistaken for an acknowledged one after a crash.
 function commitTransaction(file: string, text: string) {
@@ -59,9 +69,9 @@ function changes(before: unknown, after: unknown, path: Patch["path"] = [], out:
   return out;
 }
 
-// Self-contained: also runs in the worker. Absolute assignments/deletions (never increments or
-// relative appends) make replay idempotent if a crash lands after checkpoint rename but before
-// journal pruning. Array lengths and complete row order are explicit for the same reason.
+// Self-contained: also runs in the worker. Only transactions newer than the checkpoint's
+// atomically stored watermark may be applied. Absolute patches alone are NOT replay-safe
+// across removal/readdition of a row, even if each assignment is individually idempotent.
 export function applyHistoryTransaction(rows: Map<string, any>, transaction: Transaction): any[] {
   for (const change of transaction.changes) {
     let row = rows.get(change.id);
@@ -99,6 +109,7 @@ function checkpointWorker() {
   const path = require("node:path");
   const crypto = require("node:crypto");
   const apply = (globalThis as any).applyHistoryTransaction as typeof applyHistoryTransaction;
+  const decode = (globalThis as any).decodeHistoryCheckpoint as typeof decodeHistoryCheckpoint;
   function syncDirectory(directory: string) {
     if (process.platform === "win32") return;
     const fd = fs.openSync(directory, "r");
@@ -109,16 +120,24 @@ function checkpointWorker() {
     try {
       const directory = file + ".journal";
       const names = fs.readdirSync(directory).filter((name: string) => /^\d{16}\.json$/.test(name) && Number(name.slice(0, 16)) <= sequence).sort();
-      let list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
-      if (!Array.isArray(list)) throw new Error("History checkpoint is not an array");
+      const base = decode(fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : []);
+      let list = base.rows;
+      let covered = base.sequence;
       const rows = new Map<string, any>(list.filter((row: any) => row && typeof row.id === "string").map((row: any) => [row.id, row]));
-      for (const name of names) list = apply(rows, JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")));
-      // Preserve the existing legacy array file. Journal replay remains authoritative until
-      // both this rename AND its directory fsync succeed; failed writes never prune entries.
+      for (const name of names) {
+        const next = Number(name.slice(0, 16));
+        if (next <= base.sequence) continue; // already covered, even if prune was interrupted
+        if (next !== covered + 1) throw new Error("History transaction sequence gap");
+        list = apply(rows, JSON.parse(fs.readFileSync(path.join(directory, name), "utf8")));
+        covered = next;
+      }
+      if (covered < sequence) throw new Error("History transaction missing before checkpoint");
+      // Watermark and rows commit together. No receipt is pruned until file AND directory
+      // fsync succeed. Recovery skips covered receipts regardless of partial prune order.
       temp = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
       const fd = fs.openSync(temp, "wx", 0o600);
       try {
-        const bytes = Buffer.from(JSON.stringify(list));
+        const bytes = Buffer.from(JSON.stringify({ format: "botling-history-v1", sequence: covered, rows: list }));
         for (let offset = 0; offset < bytes.length;) {
           const written = fs.writeSync(fd, bytes, offset, bytes.length - offset);
           if (!written) throw new Error("History checkpoint write made no progress");
@@ -142,7 +161,7 @@ let requestId = 0;
 const pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
 function checkpoint(file: string, sequence: number): Promise<void> {
   if (!worker) {
-    const started = new Worker(`globalThis.applyHistoryTransaction = ${applyHistoryTransaction.toString()}; (${checkpointWorker.toString()})();`, { eval: true });
+    const started = new Worker(`globalThis.decodeHistoryCheckpoint = ${decodeHistoryCheckpoint.toString()}; globalThis.applyHistoryTransaction = ${applyHistoryTransaction.toString()}; (${checkpointWorker.toString()})();`, { eval: true });
     worker = started;
     const fail = (error: Error) => {
       if (worker !== started) return;
@@ -179,18 +198,26 @@ export async function hasPendingHistory(file: string): Promise<boolean> {
 }
 
 /** Checkpoint plus committed transactions. Only used at load/recovery, never for each update. */
-export function readHistory(file: string): Row[] {
+export function readHistory(file: string): Row[] { return readHistoryState(file).rows; }
+
+export function readHistoryState(file: string): { rows: Row[]; sequence: number } {
   const stamp = () => { try { const s = statSync(file); return `${s.ino}:${s.mtimeMs}:${s.size}`; } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return "missing"; throw e; } };
   for (let attempt = 0; attempt < 4; attempt++) {
     const before = stamp();
     try {
-      let list = before === "missing" ? [] : JSON.parse(readFileSync(file, "utf8"));
-      if (!Array.isArray(list)) throw new Error("History checkpoint is not an array");
+      const base = decodeHistoryCheckpoint(before === "missing" ? [] : JSON.parse(readFileSync(file, "utf8")));
+      let list = base.rows, sequence = base.sequence;
       const rows = new Map<string, Row>(list.filter((row: any) => row && typeof row.id === "string").map((row: Row) => [row.id, row]));
       const directory = file + suffix;
       const names = existsSync(directory) ? readdirSync(directory).filter(name => /^\d{16}\.json$/.test(name)).sort() : [];
-      for (const name of names) list = applyHistoryTransaction(rows, JSON.parse(readFileSync(join(directory, name), "utf8")));
-      if (stamp() === before) return list;
+      for (const name of names) {
+        const next = Number(name.slice(0, 16));
+        if (next <= base.sequence) continue;
+        if (next !== sequence + 1) throw new Error("History transaction sequence gap");
+        list = applyHistoryTransaction(rows, JSON.parse(readFileSync(join(directory, name), "utf8")));
+        sequence = next;
+      }
+      if (stamp() === before) return { rows: list, sequence };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT" && stamp() === before) throw error;
     }
@@ -199,11 +226,11 @@ export function readHistory(file: string): Row[] {
 }
 
 export class HistoryJournal {
-  static forFile(file: string, initialRows?: Row[]): HistoryJournal {
+  static forFile(file: string, initial?: { rows: Row[]; sequence: number }): HistoryJournal {
     file = resolve(file);
     const existing = journals.get(file)?.deref(); if (existing && (!existing.closing || existing.inFlight || existing.completed < existing.sequence)) return existing;
     for (const [key, ref] of journals) if (!ref.deref()) journals.delete(key);
-    const journal = new HistoryJournal(file, initialRows); journals.set(file, new WeakRef(journal)); return journal;
+    const journal = new HistoryJournal(file, initial); journals.set(file, new WeakRef(journal)); return journal;
   }
   private state = new Map<string, unknown>();
   private order: string[] = [];
@@ -213,12 +240,15 @@ export class HistoryJournal {
   private inFlight: Promise<void> | null = null;
   private retryMs = 1_000;
   private closing = false;
-  private constructor(private file: string, initialRows?: Row[]) {
-    const rows = (initialRows ?? readHistory(file)).filter(row => row && typeof row.id === "string");
+  private constructor(private file: string, initial?: { rows: Row[]; sequence: number }) {
+    const recovered = initial ?? readHistoryState(file);
+    const rows = recovered.rows.filter(row => row && typeof row.id === "string");
+    this.sequence = recovered.sequence;
     for (const row of rows) this.state.set(row.id, snapshot(row));
     this.order = rows.map(row => row.id);
     const directory = file + suffix;
-    if (existsSync(directory)) this.sequence = Math.max(0, ...readdirSync(directory).filter(name => /^\d{16}\.json$/.test(name)).map(name => Number(name.slice(0, 16))));
+    // A clean checkpoint still defines the next receipt number; never reset after pruning.
+    this.completed = existsSync(directory) && readdirSync(directory).some(name => /^\d{16}\.json$/.test(name)) ? 0 : this.sequence;
   }
   commit(list: unknown[], changedIds?: ReadonlySet<string>): void {
     if (this.closing) throw new Error("History persistence is closing");
@@ -232,6 +262,7 @@ export class HistoryJournal {
     }
     if (!transaction.changes.length && transaction.order.length === this.order.length && transaction.order.every((id, i) => id === this.order[i])) return;
     const next = this.sequence + 1;
+    if (!Number.isSafeInteger(next)) throw new Error("History transaction sequence exhausted");
     const newDirectory = !existsSync(fileDirectory(this.file));
     mkdirSync(fileDirectory(this.file), { recursive: true });
     if (newDirectory && process.platform !== "win32") {

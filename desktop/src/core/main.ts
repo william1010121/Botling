@@ -338,14 +338,20 @@ if (parentPort) {
     if (value && typeof value === "object" && swapControl(value as { botling?: unknown }, (message) => process.stdout.write(JSON.stringify(message) + "\n"))) return;
     core.receive(value);
   });
-  lines.on("close", () => void core.shutdown().then(() => process.exit(0)));
+  lines.on("close", () => quit());
 }
 
 let quitting = false;
 const quit = () => {
   if (quitting) return;
   quitting = true;
-  void core.shutdown().finally(() => process.exit(0));
+  void core.shutdown().then(
+    () => process.exit(0),
+    error => {
+      try { process.stderr.write(`core shutdown failed: ${String(error)}${error?.cause ? `; cause: ${String(error.cause)}` : ""}\n`); }
+      finally { process.exit(1); }
+    },
+  );
 };
 process.on("SIGTERM", quit);
 process.on("SIGINT", quit);

@@ -8,7 +8,7 @@ import { drainBots } from "../../src/core/hot-swap";
 import { ProjectLock } from "../../src/core/store/lock";
 import type { CodexItem } from "../../src/core/agent/codex";
 import { BotStore } from "../../src/core/store/bot-store";
-import { readHistory } from "../../src/core/durable/history-journal";
+import { decodeHistoryCheckpoint, readHistory } from "../../src/core/durable/history-journal";
 import { mainProfile } from "../../src/core/store/workspace";
 import { ProcessLedger } from "../../src/core/process/ledger";
 
@@ -45,7 +45,7 @@ it('coalesces running progress at 500ms while critical state is durable before r
   await vi.advanceTimersByTimeAsync(100);
   expect(f.disk()).toEqual(f.bot.subagents.list);
   await f.bot.flushForSwap();
-  expect(JSON.parse(readFileSync(f.file,'utf8'))).toEqual(f.bot.subagents.list);
+  expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows).toEqual(f.bot.subagents.list);
 });
 it.each(['completed','failed','stopped'])('publishes %s only after its pending progress and terminal status commit',async status=>{
   const f=fixture();f.start();f.text('final evidence');
@@ -53,7 +53,7 @@ it.each(['completed','failed','stopped'])('publishes %s only after its pending p
   expect(f.disk()[0]).toMatchObject({status,result:'final report',steps:[{title:'final evidence'}]});
   expect(f.events.findLast(e=>e.type==='subagent.updated').subagent.status).toBe(status);
   await f.bot.shutdown({tidy:false});
-  expect(JSON.parse(readFileSync(f.file,'utf8'))).toEqual(f.bot.subagents.list);
+  expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows).toEqual(f.bot.subagents.list);
 });
 it('persists execution identity/tool completion and late ended-worker metadata',async()=>{
   const f=fixture();f.start();
@@ -71,7 +71,7 @@ it('failed durable commit throws before publishing; retry includes terminal stat
   const events=f.events.length;
   expect(()=>f.send({kind:'subagentEnded',id:'worker',status:'completed',summary:'final'})).toThrow();
   expect(f.events.slice(events).some(e=>e.type==='subagent.updated')).toBe(false);
-  expect(JSON.parse(readFileSync(f.file,'utf8')).find((r:any)=>r.id==='worker').status).toBe('running');
+  expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows.find((r:any)=>r.id==='worker')!.status).toBe('running');
   rmSync(f.journal);mkdirSync(f.journal);
   f.text('concurrent progress','other');await vi.advanceTimersByTimeAsync(1000);
   expect(f.disk()).toEqual(f.bot.subagents.list);
@@ -81,27 +81,26 @@ it('shutdown awaits checkpoint and flushes both heads before releasing their loc
   f.start();p.start();f.text('primary');p.text('partner');
   await f.bot.shutdown({tidy:false});
   for(const current of [f,p]){
-    expect(JSON.parse(readFileSync(current.file,'utf8'))).toEqual(current.bot.subagents.list);
+    expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(current.file,"utf8"))).rows).toEqual(current.bot.subagents.list);
     expect(current.release).toHaveBeenCalledTimes(1);
   }
 });
 it('a failed checkpoint rejects shutdown but preserves chat and releases both locks; explicit retry succeeds',async()=>{
   const f=fixture(),p=fixture(f.bot);f.bot.partner=p.bot;
   f.start();p.start();await f.bot.flushForSwap();f.text('primary');p.text('partner');
+  const savedCheckpoint=readFileSync(f.file);
   rmSync(f.file);mkdirSync(f.file);
   await expect(f.bot.shutdown({tidy:false})).rejects.toThrow();
   expect(f.release).toHaveBeenCalledTimes(1);expect(p.release).toHaveBeenCalledTimes(1);
   expect(existsSync(join(f.folder,'chat.json'))).toBe(true);
-  rmSync(f.file,{recursive:true});writeFileSync(f.file,'[]');
-  // This test removed the old base; the journal contains deltas, so restore that durable base.
-  writeFileSync(f.file,JSON.stringify([{id:'worker',description:'Worker',prompt:'Work',status:'running',background:false,startedAt:f.bot.subagents.list[0].startedAt,steps:[],type:'codex-worker'}]));
-  await f.bot.shutdown({tidy:false});expect(JSON.parse(readFileSync(f.file,'utf8'))).toEqual(f.bot.subagents.list);
+  rmSync(f.file,{recursive:true});writeFileSync(f.file,savedCheckpoint);
+  await f.bot.shutdown({tidy:false});expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows).toEqual(f.bot.subagents.list);
 });
 it('core handover waits for both heads and refuses success on persistence failure',async()=>{
   const f=fixture(),p=fixture(f.bot);f.bot.partner=p.bot;f.start();p.start();await f.bot.flushForSwap();
   f.text('pending');p.text('partner');rmSync(f.journal,{recursive:true});writeFileSync(f.journal,'blocked');
   await expect(drainBots([f.bot],{timeoutMs:0,boundaryMs:0})).rejects.toThrow();
-  expect(JSON.parse(readFileSync(p.file,'utf8'))).toEqual(p.bot.subagents.list);
+  expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(p.file,"utf8"))).rows).toEqual(p.bot.subagents.list);
   rmSync(f.journal);mkdirSync(f.journal);await f.bot.flushForSwap();expect(f.disk()).toEqual(f.bot.subagents.list);
 });
 it('message acceptance keeps durable chat and worker state without waiting for full-history checkpoint',async()=>{
@@ -112,7 +111,7 @@ it('message acceptance keeps durable chat and worker state without waiting for f
   expect(f.disk()[0].status).toBe('running');
   // No full-history checkpoint has run: the journal is the durable acceptance boundary.
   expect(existsSync(f.file)).toBe(false);
-  await f.bot.flushForSwap();expect(JSON.parse(readFileSync(f.file,'utf8'))).toEqual(f.bot.subagents.list);
+  await f.bot.flushForSwap();expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows).toEqual(f.bot.subagents.list);
 });
 it('chat write failures are not accepted and shutdown still releases the lock',async()=>{
   const f=fixture();f.bot.holdForSwap(true);
@@ -130,5 +129,5 @@ it('commits both parent step and child status/identity for nested Agent results'
   const disk=f.disk();
   expect(disk.find(row=>row.id==='child')).toMatchObject({status:'completed',result:'Nested report',agentID:'nested-agent'});
   expect(disk.find(row=>row.id==='parent').steps[0]).toMatchObject({done:true,output:'Nested report'});
-  await f.bot.flushForSwap();expect(JSON.parse(readFileSync(f.file,'utf8'))).toEqual(f.bot.subagents.list);
+  await f.bot.flushForSwap();expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows).toEqual(f.bot.subagents.list);
 });

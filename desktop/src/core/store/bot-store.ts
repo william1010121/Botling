@@ -1,7 +1,7 @@
 // One bot's files, in the same folder layout and formats as the Swift app's `BotStore`:
 //   chat.json        its chat lines (the newest HISTORY_LIMIT), an array of ChatMessage
 //   bot.json         its settings (model, alwaysAllowed, unread, …); keys 2.0 does not use are kept
-//   subagents.json + subagents.json.journal/   compatible checkpoint plus durable worker changes
+//   subagents.json + subagents.json.journal/   versioned checkpoint plus durable worker changes
 //   tasks.json, pins.json, specs.json          complete atomic files
 //   head.json        2.0 only: the claude session its head resumes
 //   done-days.json   2.0 only: when its tasks were finished, the last 14 days (the whiteboard's chart)
@@ -10,7 +10,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
-import { HistoryJournal, readHistory } from "../durable/history-journal";
+import { HistoryJournal, readHistoryState } from "../durable/history-journal";
 import { HISTORY_LIMIT, isChatRecord, type ChatRecord } from "./records";
 
 export class StoreError extends Error {
@@ -44,7 +44,7 @@ export class BotStore {
 
   private workerJournal?: HistoryJournal;
 
-  /** Flush the compatible array checkpoint before releasing a profile or handing it over. */
+  /** Flush the versioned checkpoint before releasing a profile or handing it over. */
   async flushWorkerHistory(): Promise<void> { await this.workerJournal?.flush(); }
   async closeWorkerHistory(): Promise<void> { await this.workerJournal?.close(); }
 
@@ -109,9 +109,9 @@ export class BotStore {
   /** A list file kept as it is (subagents.json, tasks.json, …): its entries, or [] when missing. */
   loadList(name: (typeof CHAT_FILES)[number]): unknown[] {
     if (name === "subagents.json") {
-      const rows = readHistory(this.path(name));
-      this.workerJournal = HistoryJournal.forFile(this.path(name), rows);
-      return rows;
+      const recovered = readHistoryState(this.path(name));
+      this.workerJournal = HistoryJournal.forFile(this.path(name), recovered);
+      return recovered.rows;
     }
     const value = readJSON(this.path(name));
     // subagents-progress.json belonged to an unreleased incompatible implementation.
@@ -133,7 +133,7 @@ export class BotStore {
 
   /** The synchronous return acknowledges a small fsynced transaction, not an unfinished write.
    * Only changed records are diffed; unchanged retained history is never JSON encoded here.
-   * readHistory replays the journal until the off-thread compatible checkpoint completes.
+   * readHistory replays the journal until the off-thread versioned checkpoint completes.
    */
   commitWorkerHistory(list: unknown[], changedIds?: ReadonlySet<string>): void {
     this.workerJournal ??= HistoryJournal.forFile(this.path("subagents.json"));

@@ -1,7 +1,7 @@
 // Read-only, bounded historical metadata. No CLI/session discovery, archive walk or prompt parsing.
 import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { hasPendingHistory } from "./durable/history-journal";
+import { decodeHistoryCheckpoint, hasPendingHistory } from "./durable/history-journal";
 import type { TokenFlowHistoryView } from "../contract";
 import type { Bot } from "./bot";
 import { readSubagent, SubagentBook, type SubagentRecord } from "./subagents";
@@ -32,8 +32,7 @@ async function savedRows(file: string): Promise<{ rows: SubagentRecord[]; unread
       value = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
     } finally { await handle.close(); }
     if (await hasPendingHistory(file)) return { rows: [], unreadable: true };
-    if (!Array.isArray(value)) throw new Error("Invalid saved worker list");
-    const rows = value.flatMap(raw => {
+    const rows = decodeHistoryCheckpoint(value).rows.flatMap(raw => {
       if (!raw || typeof raw !== "object") return [];
       // Retain only metadata/counters, never prompt, result, steps or session credentials.
       const row = readSubagent({ id: raw.id, description: raw.description, parentID: raw.parentID,

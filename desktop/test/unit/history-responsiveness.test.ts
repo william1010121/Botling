@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { decodeHistoryCheckpoint } from "../../src/core/durable/history-journal";
 import { BotStore } from "../../src/core/store/bot-store";
 import { ComposerRequests } from "../../src/renderer/chat-frame/composer-requests";
 import { tempDir } from "../helpers";
@@ -52,9 +53,9 @@ it('accepts a durable message while a large history checkpoint is running withou
     expect(commitMs).toBeLessThan(350);
     expect(ackAt-requestAt).toBeLessThan(350);
     expect(maxGap).toBeLessThan(350);
-    const recovered=JSON.parse(readFileSync(file,'utf8'));
+    const recovered=decodeHistoryCheckpoint(JSON.parse(readFileSync(file,"utf8"))).rows;
     expect(recovered).toHaveLength(384);
-    expect(recovered.at(-1).steps).toEqual(current.steps);
+    expect(recovered.at(-1)!.steps).toEqual(current.steps);
     expect(recovered[0].result).toBe(rows[0].result);
     expect(JSON.parse(readFileSync(join(root,'chat/chat.json'),'utf8'))[0].text).toBe('accepted synthetic message');
   }finally{

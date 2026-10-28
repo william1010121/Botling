@@ -1980,6 +1980,12 @@ First write a test that shows this, then fix it.`;
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
     // After a swap's drain the heads end without the tidy (it would end their sessions): the new core resumes them.
     const tidy = !this.swapping;
-    await Promise.all([...this.bots.values()].map((bot) => bot.shutdown({ tidy })).concat(this.plugins.shutdown(), this.teams.shutdown()));
+    // Invoke every participant even if one throws synchronously, and never let an early
+    // rejection reach the process exit boundary while another durable flush is pending.
+    const participants = [...this.bots.values()].map(bot => () => bot.shutdown({ tidy }));
+    participants.push(() => this.plugins.shutdown(), () => this.teams.shutdown());
+    const results = await Promise.allSettled(participants.map(stop => Promise.resolve().then(stop)));
+    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (failures.length) throw new AggregateError(failures, "Core shutdown failed", { cause: failures[0] });
   }
 }
