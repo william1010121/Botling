@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "lang": "zh-Hant",
+  "title": "Botling：交付狀態與待驗證事項",
+  "asOf": "2026-10-28 原始稽核快照",
+  "subtitle": "統一 React 報告範例 · 沿用歷史證據，未重新查核目前安裝狀態",
+  "summary": "設定分組已實作，但原始紀錄中的 .2 安裝回退至 .1；任務側欄分組則早已交付。先完成既有啟動／本機安裝修復，再驗收設定、23 張卡片遷移與已實作功能。這些是稽核當時的結論，不代表目前執行版本。",
+  "sections": [
+    {
+      "title": "版本與證據基線",
+      "blocks": [
+        {
+          "type": "table",
+          "caption": "2026-10-28 原始稽核記錄（非即時狀態）",
+          "columns": [
+            "項目",
+            "已觀察事實",
+            "不能據此推論"
+          ],
+          "rows": [
+            [
+              "Main",
+              "dd0316d；相對 0cc6f1c 僅 Settings.tsx 與 dropdown tests 改變。",
+              "不是目前執行程序的版本證據。"
+            ],
+            [
+              "最後 App 確認",
+              "27 October 20:30 回退至 2.0.0-dev.20261027.1 / 0cc6f1c。當日 plist 相同，BotlingGitDirty=1。",
+              "本機 bundle 存在不等於有效資料根、本機啟動或 SSD 獨立性已驗收。"
+            ],
+            [
+              "已備妥 .2",
+              "SSD 2x-settings-20261027-2/mac-arm64/Botling 2.app：dd0316d，dirty=0。",
+              "打包存在不等於安裝成功。"
+            ],
+            [
+              "原始共享 checkout",
+              "codex/app-managed-worker-sessions / 8e9fa8e，有其他未提交變動；原稽核透過 git show main 讀 2.x。",
+              "不能把共享 checkout 當 release source。"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "title": "尚待交付與驗收",
+      "blocks": [
+        {
+          "type": "finding",
+          "title": "P0 · Use the app without carrying the SSD",
+          "status": "blocked",
+          "evidence": "Implemented migration; delivery failed; independence unverified. a58c883 moves app installs local; 0cc6f1c migrates data. Prior startup investigation found .2 started in 3.226 seconds but inherited the wrong data root, while the installer waited for health elsewhere and rolled back.",
+          "next": "The existing startup owner must fix the updater used by the running installation, then verify app + effective data root + health acknowledgement locally. Merely replacing the new bundle or increasing the timeout is insufficient. Only a subsequent SSD-independent launch establishes the user’s outcome."
+        },
+        {
+          "type": "finding",
+          "title": "P1 · Separate Claude/Codex sidebar settings",
+          "status": "pending",
+          "evidence": "Implemented, not successfully installed. User approved this on 27 October 19:52. dd0316d, Settings.tsx around 480: Claude model and subagents model; Codex model; shared reasoning effort separately. No independent effort setting per engine was requested or implemented.",
+          "next": "Deliver this existing fix with the corrected install, then inspect the actual bot-settings sidebar. No redesign is justified by current evidence."
+        },
+        {
+          "type": "finding",
+          "title": "P1 · Grouped task sidebar",
+          "status": "unverified",
+          "evidence": "Implemented and historically delivered; current visual behavior unverified. 8e4a85d, merged ee6adfe; App’s .3 install acknowledgement at archive line 10874 explicitly includes grouped tasks and hover timeline. RightPanel.tsx:310 and task-sidebar-grouped.test.ts define foldable Needs you / Running / Done, Now→Next and hover timeline.",
+          "next": "If this is the sidebar the user means, establish the exact failing interaction after the installation issue is resolved. Do not label its problem as an uninstalled .2 feature."
+        },
+        {
+          "type": "finding",
+          "title": "P1 · Move all 23 cards to the component kit",
+          "status": "pending",
+          "evidence": "Not completed in the available record. Kit 09ff3cd/bba061d and Maintainer editor entry a685b19 (merge ca2f83d) exist. Archive lines 11121–11123 explicitly leave the 23-card migration pending; no later completion evidence was found in the relevant archive/memory.",
+          "next": "Verify the real App-created Maintainer entry, then have its existing owner finish and account for all 23 cards. Source library completion does not prove user-card migration."
+        },
+        {
+          "type": "finding",
+          "title": "P2 · Faster startup and lower CPU",
+          "status": "unverified",
+          "evidence": "Implemented in .1 lineage; benefit not measured after delivery. History window 5e923a6, state deltas aa5efea/4b5b3eb, watches/cache de08eba, idle ticker 8ce98b3, startup log d23b395. The earlier CPU samples included background work and are not pure idle baselines.",
+          "next": "After stable local installation, compare like-for-like startup and idle/workload CPU. Unselected-bot history deferral remains explicitly deferred in memory, not a proven necessary next optimization. Do not infer a Rust rewrite requirement."
+        },
+        {
+          "type": "finding",
+          "title": "P2 · Update without restarting",
+          "status": "unverified",
+          "evidence": "Implemented; real-use acceptance pending. Persistent renderer loader 84ced25, chat reload 958577c, core swap 6c9c96d, install selection 70a26cc. Memory says live renderer profile was not enabled and lists Cmd+R, Alt+Cmd+R, next hot install and real resume as unverified.",
+          "next": "Reuse existing test evidence; perform only the missing live scenarios after the installation baseline is stable, with user focus preserved. Kernel changes still require restart by design."
+        },
+        {
+          "type": "finding",
+          "title": "Later · Windows / Linux",
+          "status": "unverified",
+          "evidence": "Targets configured; native delivery and runtime unverified. desktop/README.md:1087 records no Windows/Linux build or execution. Memory records missing Windows environment.",
+          "next": "Keep separate from the immediate macOS delivery gap; native platform validation needs its own environment and authorization."
+        }
+      ]
+    },
+    {
+      "title": "不要把已完成工作重新列成新功能",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "Whiteboard B 已選定與實作（9df6f60），截圖遺漏已修正（0ffa620）；輸入所有權／overlay 修正 cf46473、d1a4ec8 早於使用者確認 .7 正常。舊 README spike/E3 記錄不足以證明目前輸入回歸。Image paste/drop（2094e39）、dropdown settings、editor entry 已有實作；部分 live checks 仍待完成，不能推論整套 2.x 尚未實作。"
+        }
+      ]
+    },
+    {
+      "title": "這份報告如何重用",
+      "blocks": [
+        {
+          "type": "paragraph",
+          "text": "內容以版本化 JSON 提供；既有 React 19 + React DOM 在產生時渲染共用元件，Zod 驗證缺欄、未知欄位與表格列寬。HTML 包含全部樣式、沒有 runtime、CDN 或圖片。下一份報告只需換資料；不需重寫 HTML/CSS。"
+        },
+        {
+          "type": "table",
+          "caption": "固定規格與選用內容",
+          "columns": [
+            "必要",
+            "選用",
+            "統一行為"
+          ],
+          "rows": [
+            [
+              "schemaVersion、title、asOf、summary",
+              "subtitle、段落、清單、狀態發現、表格、證據、下一步、限制",
+              "系統字型、8px 間距節奏、窄螢幕重排、深淺色、列印樣式。"
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "text": "產生方式：node desktop/scripts/report.mjs desktop/reports/examples/project-status-20261028.json /完整路徑/.bot/artifacts/report.html。把輸出的 file:// Markdown 連結放進回覆，既有 PagePreview 會自動產生卡片；2.x 透過 botling-card://preview 載入。瀏覽器列印可使用 print CSS；App 內是否提供列印入口依宿主功能，不宣稱新增 PDF 匯出。"
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "source": ".bot/artifacts/project-status-20261028.html",
+      "detail": "本範例的歷史事實來源；既有唯讀稽核，不是本次重新執行檢查。"
+    },
+    {
+      "source": ".bot/archive/2026-10.md:10874 / :11121–11123",
+      "detail": "原稽核引用：任務側欄已交付／23 卡遷移仍待完成。"
+    },
+    {
+      "source": ".bot/memory.md；botling-dev-20261027-2-startup-investigation.html；botling2-performance-research-20261027.html",
+      "detail": "原稽核引用：owner、待驗收、啟動診斷、附工作負載條件的效能量測。"
+    },
+    {
+      "source": "desktop/reports/；desktop/scripts/report.mjs；desktop/docs/react-reports.md",
+      "detail": "本次新增報告框架；與 Maintainer 聊天元件庫分開管理。"
+    }
+  ],
+  "nextSteps": [
+    "既有 startup owner 完成本機安裝／有效資料根／health acknowledgement 的驗收。",
+    "交付既有設定修正；Maintainer owner 清點並完成 23 卡遷移。",
+    "穩定安裝後補效能量測、熱更新／resume 的 live acceptance；Windows/Linux 另行驗證。"
+  ],
+  "limitations": [
+    "原稽核只讀 git、指定 source/test 定義、archive/memory、Info.plist；沒有重跑測試。沿用的 settings tests、typecheck、打包與簽章證據屬歷史紀錄。",
+    "原稽核的 ps 被 sandbox 拒絕，未確認 active process；原報告當時也只做結構檢查，未做 production preview。",
+    "本範例不重新驗證原稽核所述版本／安裝／效能，不改變其他工作 owner 或授權。報告框架測試與預覽證據由本次執行回報另列。"
+  ]
+}
