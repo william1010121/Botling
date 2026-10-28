@@ -1,11 +1,12 @@
 // One bot's files, in the same folder layout and formats as the Swift app's `BotStore`:
 //   chat.json        its chat lines (the newest HISTORY_LIMIT), an array of ChatMessage
 //   bot.json         its settings (model, alwaysAllowed, unread, …); keys 2.0 does not use are kept
-//   subagents.json, tasks.json, pins.json, specs.json   kept as they are (2.0 does not use them yet)
+//   subagents.json, tasks.json, pins.json, specs.json   compatible list checkpoints
+//   subagents-progress.json  running progress overlay bound to the subagents.json file identity
 //   head.json        2.0 only: the claude session its head resumes
 // Every write is atomic. A file that exists but cannot be read is never replaced: the bot is
 // reported as broken instead, and the file stays for the user (or 1.x) to look at.
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { HISTORY_LIMIT, isChatRecord, type ChatRecord } from "./records";
@@ -100,12 +101,54 @@ export class BotStore {
   /** A list file kept as it is (subagents.json, tasks.json, …): its entries, or [] when missing. */
   loadList(name: (typeof CHAT_FILES)[number]): unknown[] {
     const value = readJSON(this.path(name));
-    return Array.isArray(value) ? value : [];
+    const list = Array.isArray(value) ? value : [];
+    if (name !== "subagents.json" || value === undefined) return list;
+    const progress = readJSON(this.path("subagents-progress.json")) as WorkerProgress | undefined;
+    if (!progress || progress.base !== this.workerBase()) return list;
+    if (progress.version !== 1 || !Array.isArray(progress.rows)) throw new StoreError(this.path("subagents-progress.json"), "invalid worker progress");
+    if (progress.rows.some(row => !row || typeof row.id !== "string" || !Array.isArray(row.steps))) {
+      throw new StoreError(this.path("subagents-progress.json"), "invalid worker progress row");
+    }
+    const rows = new Map(progress.rows.map(row => [row.id, row]));
+    return list.map(value => {
+      const worker = value as Record<string, unknown> | null;
+      if (!worker || worker.status !== "running") return value;
+      const row = rows.get(worker.id as string);
+      if (!row) return value;
+      // Progress is never allowed to change status, execution identity, history or ownership.
+      const merged: Record<string, unknown> = { ...worker, steps: row.steps };
+      for (const key of ["runtime", "model", "outputTokenCounters"] as const) {
+        if (Object.hasOwn(row, key)) merged[key] = row[key];
+      }
+      return merged;
+    });
   }
 
   /** Writes a list file (tasks.json, subagents.json) whole, in 1.x's format. */
   saveList(name: (typeof CHAT_FILES)[number], list: unknown[]) {
     writeFileAtomic(this.path(name), JSON.stringify(list));
+  }
+
+  // Atomic replacement changes the base identity. An older overlay can never undo a
+  // terminal checkpoint, even if the process dies immediately after that checkpoint.
+  private workerBase(): string {
+    const stat = statSync(this.path("subagents.json"), { bigint: true });
+    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+  }
+
+  /** Only fields changed by running text/token/runtime events. History stays in the base.
+   * Called synchronously under the bot's existing project ownership, like saveList.
+   * There is no pending async write that could race a terminal checkpoint.
+   */
+  saveWorkerProgress(list: unknown[]): void {
+    if (!existsSync(this.path("subagents.json"))) { this.saveList("subagents.json", list); return; }
+    const rows = list.flatMap(value => {
+      const worker = value as Record<string, unknown>;
+      return worker?.status === "running" ? [{ id: worker.id as string, steps: worker.steps,
+        runtime: worker.runtime, model: worker.model, outputTokenCounters: worker.outputTokenCounters }] : [];
+    });
+    const progress: WorkerProgress = { version: 1, base: this.workerBase(), rows };
+    writeFileAtomic(this.path("subagents-progress.json"), JSON.stringify(progress));
   }
 
   /** The bot's picture on the main bot's whiteboard (whiteboard.json, 2.0 only), as kept; null: none. */
@@ -130,4 +173,10 @@ export class BotStore {
   saveHead(state: HeadState) {
     writeFileAtomic(this.path("head.json"), JSON.stringify(state));
   }
+}
+
+interface WorkerProgress {
+  version: 1;
+  base: string;
+  rows: { id: string; steps: unknown; runtime?: unknown; model?: unknown; outputTokenCounters?: unknown }[];
 }

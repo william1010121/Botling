@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { performance } from "node:perf_hooks";
 import { Bot } from "../../src/core/bot";
 import { drainBots } from "../../src/core/hot-swap";
 import { ProjectLock } from "../../src/core/store/lock";
@@ -36,7 +37,7 @@ function fixture(primary?: Bot) {
   bots.push(bot);
   const folder = primary ? join(primary.profile.storeDir, "partner-codex") : profile.storeDir;
   const file = join(folder, "subagents.json");
-  const disk = (): SubagentRecord[] => JSON.parse(readFileSync(file, "utf8"));
+  const disk = (): SubagentRecord[] => new BotStore(folder).loadList("subagents.json") as SubagentRecord[];
   const send = (item: CodexItem) => (bot as unknown as { onSubagentItem(item: CodexItem): boolean }).onSubagentItem(item);
   const start = () => send({ kind: "subagentStarted", id: "worker", description: "Worker", type: "codex-worker", prompt: "Work", background: false });
   const text = (value: string) => send({ kind: "subagentText", parent: "worker", text: value });
@@ -44,10 +45,15 @@ function fixture(primary?: Bot) {
 }
 function writes() {
   const original = BotStore.prototype.saveList;
+  const progressOriginal = BotStore.prototype.saveWorkerProgress;
   const completed: number[] = [];
   const spy = vi.spyOn(BotStore.prototype, "saveList").mockImplementation(function (this: BotStore, name, list) {
     original.call(this, name, list);
     if (name === "subagents.json") completed.push(statSync(join(this.directory, name)).size);
+  });
+  vi.spyOn(BotStore.prototype, "saveWorkerProgress").mockImplementation(function (this: BotStore, list) {
+    progressOriginal.call(this, list);
+    completed.push(statSync(join(this.directory, "subagents-progress.json")).size);
   });
   return { completed, spy };
 }
@@ -106,11 +112,11 @@ it("flushes on shutdown and leaves no delayed subagent write", async () => {
 });
 it("retains dirty progress after a failed timer write and retries the latest state", async () => {
   const f = fixture(); f.start(); f.text("first");
-  const original = BotStore.prototype.saveList;
+  const original = BotStore.prototype.saveWorkerProgress;
   let failures = 1;
-  const spy = vi.spyOn(BotStore.prototype, "saveList").mockImplementation(function (this: BotStore, name, list) {
-    if (name === "subagents.json" && failures-- > 0) throw new Error("disk unavailable");
-    original.call(this, name, list);
+  const spy = vi.spyOn(BotStore.prototype, "saveWorkerProgress").mockImplementation(function (this: BotStore, list) {
+    if (failures-- > 0) throw new Error("disk unavailable");
+    original.call(this, list);
   });
   await vi.advanceTimersByTimeAsync(500);
   expect(f.disk()[0]!.steps).toHaveLength(0);
@@ -141,15 +147,16 @@ it("bounds failed retries and flushes dirty progress after shutdown failure", as
     if (name === "subagents.json") throw new Error("disk unavailable");
     original.call(this, name, list);
   });
+  const progressSpy = vi.spyOn(BotStore.prototype, "saveWorkerProgress").mockImplementation(() => { throw new Error("disk unavailable"); });
   for (let i = 0; i < 50; i++) f.text(`delta-${i}`);
   await vi.advanceTimersByTimeAsync(30_500);
-  expect(spy).toHaveBeenCalledTimes(5);
+  expect(progressSpy).toHaveBeenCalledTimes(5);
   await expect(f.bot.shutdown({ tidy: false })).resolves.toBeUndefined();
   expect(f.log).toHaveBeenCalledWith(expect.stringContaining("save failed during shutdown"));
   const attempts = spy.mock.calls.length;
   await vi.advanceTimersByTimeAsync(60_000);
   expect(spy).toHaveBeenCalledTimes(attempts);
-  spy.mockRestore(); await f.bot.shutdown({ tidy: false });
+  spy.mockRestore(); progressSpy.mockRestore(); await f.bot.shutdown({ tidy: false });
   expect(f.disk()[0]!.steps).toHaveLength(50);
 });
 
@@ -235,4 +242,47 @@ it.skipIf(process.env.BOTLING_PERSISTENCE_MEASURE !== "1")("representative persi
   const result = { initialBytes, updates: 6, writes: w.completed.length, bytesWritten: w.completed.reduce((sum, bytes) => sum + bytes, 0), records: 81 };
   console.log("PERSISTENCE_MEASUREMENT", JSON.stringify(result));
   expect(result.writes).toBe(process.env.BOTLING_PERSISTENCE_EXPECT === "baseline" ? 6 : 1);
+});
+
+// Bounded synthetic replay: five active workers, retained reports, 15 persistence deadlines.
+it.skipIf(process.env.BOTLING_WORKER_MEASURE !== "1")("worker progress fixture measurement", async () => {
+  const f = fixture();
+  for (let i = 0; i < 5; i++) f.send({ kind: "subagentStarted", id: `w${i}`, description: "Worker", type: "codex-worker", prompt: "Work", background: false });
+  for (let i = 0; i < 40; i++) f.bot.subagents.list.push({ id: `history-${i}`, description: "History", prompt: "Keep", status: "completed", background: false, startedAt: 0, steps: [], result: "h".repeat(1_320_000) });
+  f.send({ kind: "subagentExecution", id: "w0", execution: { run: 1, threadId: "t", turnId: "u", ownerSessionId: "s" } });
+  const baseBytes = statSync(f.file).size;
+  const cpu = process.cpuUsage(); const start = performance.now();
+  let bytes = 0;
+  for (let tick = 0; tick < 15; tick++) {
+    for (let i = 0; i < 5; i++) f.send({ kind: "subagentText", parent: `w${i}`, text: `progress-${tick}` });
+    await vi.advanceTimersByTimeAsync(500);
+    const sidecar = join(f.file, "..", "subagents-progress.json");
+    bytes += statSync(process.env.BOTLING_WORKER_MEASURE_MODE === "baseline" ? f.file : sidecar).size;
+  }
+  const elapsedMs = performance.now() - start; const used = process.cpuUsage(cpu);
+  expect(new BotStore(join(f.file, "..")).loadList("subagents.json")).toEqual(f.bot.subagents.list);
+  console.log("WORKER_FIXTURE", JSON.stringify({ baseBytes, deadlines: 15, events: 75, bytes, elapsedMs, cpuMs: (used.user + used.system) / 1000 }));
+});
+
+it("checkpoints already-durable progress on handover, without another progress event", async () => {
+  const f = fixture(); f.start(); f.text("saved overlay"); await vi.advanceTimersByTimeAsync(500);
+  expect(JSON.parse(readFileSync(f.file, "utf8"))[0].steps).toEqual([]);
+  f.bot.flushForSwap();
+  expect(JSON.parse(readFileSync(f.file, "utf8"))[0].steps[0].title).toBe("saved overlay");
+});
+
+it("cannot downgrade a failed terminal checkpoint when another worker makes progress", async () => {
+  const f = fixture(); f.start();
+  f.send({ kind: "subagentStarted", id: "other", description: "Other", type: "codex-worker", prompt: "Work", background: false });
+  const original = BotStore.prototype.saveList;
+  const failed = vi.spyOn(BotStore.prototype, "saveList").mockImplementation(function (this: BotStore, name, list) {
+    if (name === "subagents.json") throw new Error("disk unavailable");
+    original.call(this, name, list);
+  });
+  expect(() => f.send({ kind: "subagentEnded", id: "worker", status: "completed", summary: "final" })).toThrow("disk unavailable");
+  failed.mockImplementation(function (this: BotStore, name, list) { original.call(this, name, list); });
+  f.send({ kind: "subagentText", parent: "other", text: "concurrent progress" });
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(JSON.parse(readFileSync(f.file, "utf8"))).toEqual(f.bot.subagents.list);
+  expect(f.disk().find(row => row.id === "worker")).toMatchObject({ status: "completed", result: "final" });
 });

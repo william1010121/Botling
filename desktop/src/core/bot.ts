@@ -343,6 +343,8 @@ export class Bot {
   // At most one pending write, retaining the book itself rather than queued snapshots.
   private subagentSaveTimer: NodeJS.Timeout | null = null;
   private subagentsDirty = false;
+  private subagentsCheckpointRequired = false;
+  private subagentsProgressSaved = false;
   private subagentSaveRetryMs = 1_000;
   private head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
@@ -1112,6 +1114,7 @@ export class Bot {
   private saveSubagents(progress = false) {
     if (this.readOnly) return;
     this.subagentsDirty = true;
+    if (!progress) this.subagentsCheckpointRequired = true;
     // Only running text/token/runtime progress may lag disk by 500 ms. Starts, tool events,
     // execution identity, terminal states and explicit user changes remain synchronous.
     if (progress && !this.shuttingDown) this.scheduleSubagentSave(500);
@@ -1122,21 +1125,27 @@ export class Bot {
     if (this.subagentSaveTimer || this.shuttingDown) return;
     this.subagentSaveTimer = setTimeout(() => {
       this.subagentSaveTimer = null;
-      try { this.flushSubagents(); }
+      try { this.flushSubagents(true); }
       catch (error) { this.log(`subagents save failed; retry pending: ${String(error)}`); }
     }, delay);
     this.subagentSaveTimer.unref?.();
   }
 
   /** A failed write stays dirty. Critical callers see the error; background retries are bounded. */
-  private flushSubagents() {
+  private flushSubagents(progress = false) {
     if (this.subagentSaveTimer) { clearTimeout(this.subagentSaveTimer); this.subagentSaveTimer = null; }
-    if (!this.subagentsDirty || this.readOnly) return;
+    if (this.readOnly || (!this.subagentsDirty && (progress || !this.subagentsProgressSaved))) return;
+    if (!progress) this.subagentsCheckpointRequired = true;
     try {
-      this.store.saveList("subagents.json", this.subagents.list);
+      const overlay = progress && !this.subagentsCheckpointRequired;
+      if (overlay) this.store.saveWorkerProgress(this.subagents.list);
+      else this.store.saveList("subagents.json", this.subagents.list);
+      this.subagentsProgressSaved = overlay;
+      this.subagentsCheckpointRequired = false;
       this.subagentsDirty = false;
       this.subagentSaveRetryMs = 1_000;
     } catch (error) {
+      this.subagentsDirty = true;
       this.scheduleSubagentSave(this.subagentSaveRetryMs);
       this.subagentSaveRetryMs = Math.min(this.subagentSaveRetryMs * 2, 30_000);
       throw error;
