@@ -13,6 +13,12 @@ import { fileURLToPath } from "node:url";
 
 const desktop = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
+// Explicit release path owns its frozen compilation and isolated assembly directories.
+if (args.some(arg => ["--release-variants", "--compile-only", "--reuse-built"].includes(arg))) {
+  const { releaseVariants } = await import("./release-variants.mjs");
+  await releaseVariants(desktop, args);
+  process.exit(0);
+}
 const { publicKey } = JSON.parse(readFileSync(join(desktop, "release-config.json"), "utf8"));
 if (!args.includes("--dir") && !publicKey && !args.includes("--unsigned-updates")) {
   console.error("Distribution requires configured update trust; for a development artifact explicitly pass --unsigned-updates.");
