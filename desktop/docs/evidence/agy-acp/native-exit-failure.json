@@ -1,0 +1,31 @@
+{
+  "workspace": "/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/exit-smoke-vw_neg9e/workspace",
+  "prompts": [],
+  "permissionRequests": [
+    {
+      "rawInput": {
+        "CommandLine": "sh -c 'echo $$ > active.pid; sleep 60'",
+        "Cwd": "/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/exit-smoke-vw_neg9e/workspace",
+        "WaitMsBeforeAsync": 1000
+      }
+    }
+  ],
+  "authenticated": true,
+  "modeVerifiedBeforePrompt": true,
+  "activeToolPid": 48217,
+  "serverPid": 47769,
+  "toolGroup": 48217,
+  "serverGroup": 47769,
+  "toolAliveAfterTerminate": true,
+  "updates": [
+    "available_commands_update",
+    "tool_call",
+    "tool_call_update",
+    "usage_update"
+  ],
+  "processExited": true,
+  "toolAliveAfterGroupCleanup": true,
+  "probeCompleted": true,
+  "nativeCleanupContractPassed": false,
+  "fixtureOrphanCleanupPerformed": true
+}

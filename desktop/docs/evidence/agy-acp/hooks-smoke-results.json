@@ -1,0 +1,28 @@
+{
+  "workspace": "/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/hooks-smoke-1relh8pe/workspace",
+  "prompts": [
+    {
+      "mode": "deny",
+      "stopReason": "end_turn",
+      "markerAbsent": true
+    }
+  ],
+  "permissionRequests": [
+    {
+      "tool": "Do you trust the authors of this workspace to execute automated agent hooks?",
+      "mode": "deny",
+      "markerAbsentWhilePending": true
+    }
+  ],
+  "authenticated": true,
+  "modeVerifiedBeforePrompt": true,
+  "updates": [
+    "agent_message_chunk",
+    "available_commands_update",
+    "tool_call",
+    "tool_call_update",
+    "usage_update"
+  ],
+  "passed": true,
+  "processExited": true
+}

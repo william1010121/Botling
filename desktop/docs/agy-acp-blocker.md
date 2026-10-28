@@ -1,3 +1,5 @@
+> Historical pre-consent evidence. Superseded on 2026-10-28: the user authorized one ACP OAuth consent; authenticate and session/new succeeded. Current implementation and limitations: [agy-engine.md](agy-engine.md). No new API/Vertex authentication or billing was used.
+
 # ACP 1.4.3: actual authentication blocker, 2026-10-28
 
 The official ACP route was investigated beyond architecture: the signed server

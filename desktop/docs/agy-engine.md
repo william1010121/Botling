@@ -1,100 +1,177 @@
-# Antigravity integration — blocked, not ready to ship
+# Antigravity ACP integration: isolated review candidate
 
-Latest: [ACP 1.4.3 runtime and authentication blocker](agy-acp-blocker.md).
+2026-10-28. Base `0a24538d560bc7843152fe4cb5004a6f22d6737b` (installed .13).
+Branch `bot/agy-engine-20261028`, worktree
+`/Volumes/My-SSD/botling-work/agy-engine-20261028`.
+Source commit: `8b57c78f847b95e195d8538b85817ba8e52ae6b7`.
+No merge, package, installation, restart, push or Claude launch. Installed .13
+still has no ACP integration. Independent review and a separately assigned
+cumulative integration/package pass remain required.
 
-Follow-up: see [transport feasibility](agy-transport-feasibility.md). An isolated
-SDK development install and offline policy checks are now complete; official
-ACP is an additional candidate for existing subscription authentication. The
-older investigation below predates that authorization and evidence.
+## Authentication and runtime
 
-Base: `0a24538d560bc7843152fe4cb5004a6f22d6737b` (installed .13).
-Isolated branch: `bot/agy-engine-20261028`. Never merged or installed.
+The user explicitly authorized one official OAuth login/consent in message
+`65E07740-FD39-44C2-B5A0-A2F779EDEE06`. Official ACP 1.4.3 authenticate returned
+success, then session/new succeeded. The official browser flow was observed;
+no credentials, tokens, codes or account identity were extracted/copied. Subsequent
+private test profiles reused this ACP login through the official credential store.
+This is distinct from CLI login. No API key, Vertex account or API/Vertex spend
+was used. Subscription model smoke calls were made within the authorized scope.
 
-Review of `71cf40c` demonstrated that init validation happened too late: a child
-could emit `always-proceed` and execute the submitted task before being killed.
-The old successful live smoke did not establish a permission boundary. It is
-superseded and its executable test has been removed.
+Official distribution and verification are recorded in [the historical
+investigation](agy-acp-blocker.md). Production launch pins BOTH server and harness
+SHA256 and verifies Apple code signatures. Only macOS arm64 1.4.3 is accepted.
+There is no fake executable/hash override in the executable adapter.
 
-## Current behavior
+Set `BOTLING_AGY_ACP_PATH` to the verified `agy_acp_server.par` in a development
+runtime. No installer or downloader was added. A missing/mismatched runtime fails
+before process/task launch. Binary distribution is a separate packaging assignment.
+The existing cached runtime is under `desktop/.cache/agy-acp-dev/server/`.
 
-AgyHead.start and send now fail before spawning any executable or submitting
-any task, including configured/fake executables. There is no bypass switch.
-Backend engine selection rejects agy; the UI disables its toggle with an
-explanation. Previously saved agy bots retain configuration and can select
-another engine. Full agy integration is NOT delivered.
+## Before-task boundary
 
-The retained protocol decoder requires validated init before any event, poisons
-itself on invalid init, rejects duplicate init and changed conversation IDs,
-and recognizes both request-review and strict. Decoder validation does not
-confer runtime execution authority. Soft-denied SUCCESS remains a failure;
-approval responses and direct image blocks remain explicitly rejected.
+The legacy `AgyHead`/headless CLI stays unconditionally blocked. Its strict/init
+parser tests remain, but an init line never authorizes legacy execution.
 
-Unexpected exits and blocked startup preserve the existing conversation ID and
-persist agyRecovery {sessionId, state: "resume-required", reason}. No immediate
-replay occurs. The next explicit message and app restart retain the same ID.
-Intentional new-session clears recovery and identity; valid init clears recovery.
+The new `AgyAcpHead`:
 
-## Why the CLI cannot presently be enabled
+1. Pins the official executable artifacts, builds a private app-owned GEMINI_HOME,
+   selects personal OAuth only, suppresses inherited hooks/global MCP, marks the
+   workspace untrusted for hooks, and uses a restricted environment. It does not
+   change the user's CLI/global settings, permission rules or instructions.
+2. Sends initialize and session/new or session/load with an explicit builtin
+   inventory containing only `finish`. Native shell/file mutation, native
+   subagents, workflows, scheduling, browser agents and image generation are NOT
+   exposed. There is no fallback to native tools when an app tool is refused.
+3. Awaits the pinned agent/version, session identity, model/effort selection and
+   explicit `default` approval-mode acknowledgements BEFORE sending a prompt.
+   Interrupt, timeout, malformed/premature success, bad mode, failed auth and
+   failed resume do not release queued prompts.
+4. Connects only the built-in loopback HTTP MCP endpoint `botling`. For each
+   action, the app records an exact tool+arguments grant ONLY after the user's
+   matching Allow once card. The bridge consumes it once, checks expiry and
+   revocation, and refuses calls without it—even a direct call to its endpoint.
+   ACP MCP's observed nested/flattened arguments are checked for consistency.
+5. Does not import shared Always allow rules. ACP cards offer Allow once / Don't
+   allow only; arbitrary questions/workspace-trust options are cancelled rather
+   than reinterpreted as an approval. No persistent ACP allow-always is sent.
 
-Official documentation reviewed 2026-10-28:
+This is an app-controlled action gate, not a claim that mutable settings or a
+harmless model prompt alone establishes safety. Pinning/source inspection
+establishes the native inventory and policy construction; offline fixtures and
+real deny/allow/cancel smoke establish the actual transport and tool path.
 
-- https://antigravity.google/docs/cli/headless/ — streamed user tasks trigger
-  execution; approval control messages and non-text blocks are rejected.
-- https://antigravity.google/docs/cli/modes/ — plan is a planning instruction,
-  not containment; modes do not replace explicit policy.
-- https://antigravity.google/docs/sandbox/ — terminal sandboxing alone does not
-  establish whole-execution containment; availability and configuration matter.
-- https://antigravity.google/docs/settings?tab=cli — strict asks even for reads
-  despite allow rules. It must not be downgraded to request-review.
+## Why native commands remain disabled
 
-No documented immutable per-execution tool policy flag or pre-task handshake
-was found in these documents or local CLI help. Reading mutable settings or
-sending a harmless probe cannot establish the necessary guarantee. No settings,
-login, permissions, global instructions, or installed dependencies were changed.
+A benign native run_command created a separate process group. ACP session/cancel
+stopped it, but terminating the ACP server's group left that command alive.
+The test explicitly killed its own orphan afterwards. Evidence:
+[evidence/agy-acp/native-exit-failure.json](evidence/agy-acp/native-exit-failure.json).
+This is a demonstrated limitation, not a conjecture or a passing cleanup test.
 
-## Official alternative and remaining implementation
+Botling's MCP command tool owns its process group and registers it in the existing
+process ledger. Cancel, ACP failure, head shutdown and worker shutdown clean up
+app-owned commands. Commands run under macOS sandbox-exec with workspace/owned-temp
+writes only, ACP profile read/write denied, and home reads denied except the
+workspace. There is no unsandboxed fallback/escalation. File tools reject outside
+workspace and protected-profile paths. Tools retain explicit one-action approval.
+Commands time out at 120 seconds; output is bounded. Deliberately daemonizing
+commands can escape the existing process-group mechanism; no claim of arbitrary
+hostile-process containment is made. Native execution is not used to bypass these
+limits. Tools needing additional folders/home credentials must report the denial.
 
-https://antigravity.google/docs/sdk/policies/ documents LocalAgentConfig policies
-with default deny, explicit allows and per-tool approval callbacks. This is a
-candidate transport for mapping Botling's approvals/refusals before execution.
-https://antigravity.google/docs/sdk/overview/ documents custom tools, MCP,
-subagents and multimodal input: an app-owned bridge could expose existing worker
-APIs through custom tools/MCP, without Claude plugin flags or global prompts.
+## Implemented app behavior
 
-The local Python environment has no google.antigravity package. The SDK documents
-Gemini API key or Vertex/ADC authentication; reuse of the existing agy CLI login
-is not established. This task prohibits installation/new authentication, so no
-SDK runtime or authorization callback smoke was attempted. Next step is a
-separately authorized isolated SDK dependency and verification of an existing
-supported credential path (never collecting credentials in chat). Alternative:
-a supported CLI immutable policy/approval API, or independently validated
-whole-execution containment covering every tool, child and sidecar.
+- Engine selection and stored model configuration; available-account model IDs
+  are validated by ACP. `low`, `medium`, `high` effort are supported; xhigh/max fail
+  explicitly. Blank model uses the account default.
+- Streamed text, tool activity/results, errors, turn completion, single-action
+  approval/refusal, token usage through the existing event shape, image blocks.
+- Session/load on subsequent wakes/app reconstruction. Failed resume retains
+  agyConversation and agyRecovery; no replacement session or automatic replay.
+  Engine switching retains agy identity. Intentional new chat clears it.
+- At most two explicitly selected engines, including Codex+agy or Claude+agy.
+  Partner routing and hand-back/limit-card choices use the actual pair. Existing
+  Claude/Codex prompt golden tests remain unchanged/passing.
+- App-owned ACP workers through MCP app_handoff, app_send_message and
+  app_cancel_task. Dedicated sessions, per-run permission IDs, visible subagent
+  activity/results, task association, correlated later report turns, capped
+  concurrency, process-ledger registration and cancellation. Worker sessions and
+  pending reports persist atomically; reports clear only after the matching run's
+  coordinator prompt completes. Interrupted workers are not silently restarted.
+  Workers cannot create nested workers. Worker completion is not goal acceptance.
 
-Mixed-head routing, app-managed worker lifecycle/delegation and native
-subagent_info visibility remain unimplemented app work, NOT inherent protocol
-limitations. They must be completed and tested after a safe transport is chosen.
-Neither model configuration nor CLI presence makes this engine usable.
+## Honest gates and validation limits
 
-## Focused evidence
+Native subagent/`subagent_info` execution is disabled, not falsely mapped to a
+completed worker. `subagent_info` belongs to the old CLI event stream; native ACP
+subagent inheritance/cleanup has not been proven. App-controlled workers emit the
+app's existing subagent lifecycle events instead. Their routing, persistence,
+approval/refusal and cancellation were tested with offline child fixtures; no
+live delegated worker or other engine was launched by this execution worker.
 
-The startup race and three decoder regressions all failed on the previous code;
-the race wrote the task marker before termination. The failed-resume regression
-also failed against the prior bot.ts because agyConversation was deleted.
-The new tests cover pre-spawn rejection, decoder state/policy, conversation
-identity through another explicit message and Bot reconstruction from disk (the
-app restart path), and disabled selection. All 23 focused tests below and the
-TypeScript check passed.
-Run from desktop:
+Global/external plugins, Claude component-editor/team paths, native workflows,
+background monitors and native schedules remain unavailable. This is an explicit
+implementation gate, not a statement that ACP lacks all such capabilities. The
+built-in HTTP MCP bridge demonstrates the safe tool transport for future adapters.
+In-turn steering is unsupported: user messages queue; busy-worker follow-ups
+return an explicit error. Native approval modes auto_edit/yolo are unavailable.
 
+The current adapter intentionally keeps the existing usage event shape. Concurrent
+Token Flow task543c6570 owns metering identity/event metadata/turn-purpose changes.
+No edits here to agent/codex.ts, agent/stream.ts or Bot's usage-handling branch. ACP head/worker usage uses only the existing event fields.
+Same-function merge overlap is bot.ts onItem (agy init/recovery), plus nearby
+worker/routing logic. Preserve Token Flow metadata during sequential integration;
+no unrelated metering redesign is included.
+
+## Evidence and reproducibility
+
+`docs/evidence/agy-acp/` contains sanitized login and probe outcomes. Real tests:
+
+- Official authentication + session/new.
+- Native file denial, pending-command cancellation, MCP denial/cancellation and
+  workspace hook trust rejection: markers absent. Native forced-exit cleanup
+  FAILED and led to the disabled native-command path above.
+- Implemented ACP head: refused write absent; approved write exact; process-restart
+  continuation same session; active app-owned command stopped on cancellation.
+- Selected model + medium effort, red-image input recognized as Red, usage emitted.
+- Unexpected SIGKILL of ACP: app-owned active command stopped. The sandbox version
+  is recorded separately in sandbox-crash-smoke-results.json.
+- Production Bot selection/cards/denial/reconstruction probe is recorded in
+  bot-smoke-results.json (passed).
+
+One initial initialize attempt exceeded the original 30-second limit. The bound
+was raised to 60 seconds; subsequent initialization/resume probes succeeded.
+The first Bot probe inspected an internal permission field instead of the public
+approval view; its card timed out and correctly denied the action. The fixture
+was corrected and the actual public card selection/reconstruction probe passed.
+A failed rebuild was detected; output from its stale smoke bundle is not counted
+as final sandbox validation. The fresh separately named final bundle was rerun.
+
+Final focused run: **90 tests passed in 11 files**, `npm run typecheck` passed,
+and `node scripts/core-dev.mjs` passed. No swap/restart followed the core build.
+
+Focused offline tests cover the startup policy state machine, cancellation before
+prompt, exact MCP grants, outside/protected writes, process/child cleanup, persisted
+worker reports and stale-run isolation, existing resume regression, approval-rule
+isolation, engine pair routing, settings, legacy CLI fail-closed behavior and
+existing permission/prompt contracts. Typecheck and a core-only bundle validate
+wiring. No full suite, packaging, installed native UI preview or live mixed-engine
+worker run was performed.
+
+To reproduce the head/Bot probes from desktop/, with the already-authenticated
+pinned runtime in `.cache/agy-acp-dev/server/`:
+
+```sh
+./node_modules/.bin/esbuild docs/evidence/agy-acp/head_smoke.ts --bundle --platform=node --format=esm --outfile=.cache/agy-acp-dev/head-smoke-review.mjs
+node .cache/agy-acp-dev/head-smoke-review.mjs
+./node_modules/.bin/esbuild docs/evidence/agy-acp/bot_smoke.ts --bundle --platform=node --format=esm --packages=external --outfile=.cache/agy-acp-dev/bot-smoke-review.mjs
+node .cache/agy-acp-dev/bot-smoke-review.mjs
 ```
-npx vitest run test/unit/agy-review.test.ts test/unit/agy.test.ts test/unit/agy-core.test.ts test/unit/agy-settings.test.ts test/unit/process-tree.test.ts test/unit/engine-permissions.test.ts
-npx tsc --noEmit -p tsconfig.json
-```
 
-Process-tree tests use benign Node fixtures with active children, including
-SIGTERM-resistant children. They are general group-cleanup evidence only: no
-real agy tool/subagent cancellation or detached sidecar cleanup is established.
-There is no active agy subprocess to cancel in the blocked adapter. No full
-suite, package, installed-app restart, real agent smoke or native preview is
-claimed for this revision. Review this safety correction together with 71cf40c;
-do not release the earlier runnable adapter alone.
+These are model smoke runs, not offline unit tests. They never authenticate or
+copy tokens, never launch Claude, create only owned temporary workspaces, and
+approve only their exact benign fixture writes/commands. Run each build only if
+it succeeded; do not run a stale bundle after a failed compilation. For the image
+probe, copy attachment-fixture.png into the owned cache first; extended_smoke.ts
+also supports --crash-only. Binary/token files are not committed.

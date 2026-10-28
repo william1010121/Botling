@@ -1,0 +1,13 @@
+{
+  "crashCleanup": {
+    "serverKilled": true,
+    "commandStopped": true,
+    "exit": {
+      "code": null,
+      "signal": "SIGKILL",
+      "stderr": "",
+      "expected": false,
+      "silent": true
+    }
+  }
+}
