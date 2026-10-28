@@ -36,9 +36,9 @@ export type ShellMessage =
   | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }
   | { botling: "widthRejected"; value: number | null; actual: number | null }
   | { botling: "widthPreview"; value: number | null | undefined }
-  | { botling: "state"; state: ChatState; revision?: number; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  | { botling: "state"; avatarSources?: string[]; state: ChatState; revision?: number; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
   /** Sequenced delta against the last full snapshot or delta in this page. */
-  | { botling: "stateDelta"; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  | { botling: "stateDelta"; avatarSources?: string[]; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
   | { botling: "response"; id: number; ok: boolean; error?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }

@@ -1,3 +1,4 @@
+import { packChatAvatars } from "./chat-avatar-wire";
 import { shellOverlayActive, shellOverlayRevealImmediately, subscribeShellOverlays } from "./ShellOverlay";
 import type { editorBridge } from "../preload/editor-bridge";
 import { CHAT_ORIGIN, type ShellMessage } from "./chat-frame/protocol";
@@ -9,7 +10,7 @@ export const nativeEditor = (): EditorBridge | undefined =>
 /** Business messages use the authenticated native pair when present, even while unbound. */
 export function postToChat(message: ShellMessage): void {
   const bridge = nativeEditor();
-  if (bridge) { bridge.post(message); return; }
+  if (bridge) { bridge.post(packChatAvatars(message)); return; }
   (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow?.postMessage(message, CHAT_ORIGIN);
 }
 

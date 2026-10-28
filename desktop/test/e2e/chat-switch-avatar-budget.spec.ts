@@ -29,7 +29,7 @@ test('switching to a long Cute chat keeps native messages, composer and pins on 
   const appData = join(root, 'appdata'); mkdirSync(appData);
   const bootstrap = join(root, 'bootstrap.cjs');
   writeFileSync(bootstrap, `require('electron').app.setPath('appData',${JSON.stringify(appData)});require(${JSON.stringify(join(desktop, 'out/main/main.cjs'))});`);
-  const env = { ...process.env, BOTLING_DATA_DIR: data, BOTLING_IMPORT_FROM: '', BOTLING_AGENT: 'fake', BOTLING_HIDDEN: '1', BOTLING_NO_EXTERNAL: '1', BOTLING_MOCK_KEYCHAIN: '1', BOTLING_QUIT_ON_CLOSE: '1' };
+  const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), BOTLING_DATA_DIR: data, BOTLING_IMPORT_FROM: '', BOTLING_AGENT: 'fake', BOTLING_HIDDEN: '1', BOTLING_NO_EXTERNAL: '1', BOTLING_MOCK_KEYCHAIN: '1', BOTLING_QUIT_ON_CLOSE: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ executablePath: require('electron'), args: [bootstrap], cwd: desktop, env });
   try {
@@ -47,7 +47,11 @@ test('switching to a long Cute chat keeps native messages, composer and pins on 
       await expect(chat.getByRole('textbox', { name: 'Message' })).toHaveAttribute('aria-placeholder', `Message ${name}…`);
       await expect(chat.locator(`.row[data-id="${id.slice(0,24)}${String(name === 'botling' ? 599 : 0).padStart(12,'0')}"]`)).toContainText(name === 'botling' ? 'botling message 599' : 'hotel message 0');
       if (name === 'botling') {
-        await expect(chat.locator('.pin-chip[data-id="33333333-3333-4333-8333-333333333333"]')).toBeVisible();
+        const pin = chat.locator('.pin-chip[data-id="33333333-3333-4333-8333-333333333333"]');
+        await expect(pin).toBeVisible();
+        await pin.click();
+        await expect(chat.frameLocator('.pin-sheet iframe.component-frame').locator('#ok')).toHaveText('OK');
+        await pin.click();
         await expect.poll(() => chat.locator('img.avatar').evaluateAll(imgs => imgs.length > 0 && imgs.every(i => (i as HTMLImageElement).complete && (i as HTMLImageElement).naturalWidth > 0))).toBe(true);
       }
     }
