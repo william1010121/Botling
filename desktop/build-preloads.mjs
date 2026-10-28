@@ -10,8 +10,11 @@ import { fileURLToPath } from "node:url";
 export const desktopRoot = dirname(fileURLToPath(import.meta.url));
 export const PRELOADS = { "preload.cjs": "src/preload/preload.ts", "editor-host.cjs": "src/preload/editor-host.ts" };
 export async function buildPreloads({ root = desktopRoot, outdir = join(root, "out/preload") } = {}) {
+  root = resolve(root);
   outdir = resolve(outdir);
   const results = await Promise.all(Object.entries(PRELOADS).map(([name, entry]) => build({
+    // Preserve the logical node_modules path instead of embedding the dependency cache root.
+    absWorkingDir: root, preserveSymlinks: true,
     bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof",
     entryPoints: [join(root, entry)], outfile: join(outdir, name), external: ["electron"], write: false,
   })));

@@ -8,13 +8,27 @@
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createPublicKey } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRenderer } from "./build-renderer.mjs";
 import { buildPreloads } from "./build-preloads.mjs";
 import { NOTICES_FILE, thirdPartyNotices } from "./reports/licenses.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+// Keep dependency module identities under node_modules even when link-deps.sh points to a
+// lockfile-specific cache. Fix the working directory too, so emitted paths do not depend on cwd.
+export function buildMain({ root = here, outfile = join(root, "out/main/main.cjs"), updatePublicKey = null } = {}) {
+  root = resolve(root);
+  outfile = resolve(outfile);
+  return build({
+    absWorkingDir: root, preserveSymlinks: true,
+    bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof",
+    entryPoints: [join(root, "src/main/main.ts")], outfile, external: ["electron", "original-fs"],
+    define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) },
+  });
+}
+
+async function buildAll() {
 const out = join(here, "out");
 if (process.argv.includes("--watch")) throw new Error("Use npm run renderer:watch; the full build is not a process watcher");
 // Trust is embedded at build time; runtime environment variables cannot replace it.
@@ -28,7 +42,7 @@ mkdirSync(join(out, "renderer"), { recursive: true });
 const web = join(here, "..", "Web");
 const node = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof" };
 await Promise.all([
-  build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron", "original-fs"], define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) } }),
+  buildMain({ updatePublicKey }),
   // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
   buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
@@ -59,3 +73,6 @@ for (const name of readdirSync(extractors).filter((name) => name.endsWith(".js")
   cpSync(join(extractors, name), join(out, "web-extractors", name));
 }
 console.log("built out/");
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await buildAll();
