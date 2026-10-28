@@ -260,8 +260,7 @@ const core = new Core({
 });
 // Disabled by default. Configuration and bind failures never terminate the desktop core.
 try {
-  const mobile = startConfiguredMobile(core, dataDir);
-  mobile?.on('error', () => log('mobile bridge unavailable: check local TLS/bind configuration'));
+  startConfiguredMobile(core, dataDir, () => log('mobile bridge unavailable: check local TLS/bind configuration'));
 } catch { log('mobile bridge disabled: invalid local configuration'); }
 
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);

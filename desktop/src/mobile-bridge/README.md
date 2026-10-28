@@ -95,3 +95,20 @@ cover socket response loss, persisted replay, parallel duplicate claims, changed
 crash uncertainty, client separation, authentication/revocation, Origin/Host, route/command/bot
 allowlists, snapshots and the atomic no-yield queue boundary. They do not start a live core/agent,
 claim physical phone access, or replace a cumulative integration test against real core hooks.
+
+## Core handover and mobile approvals (2026-10-28)
+
+Probe cores (BOTLING_CORE_PROBE=1) skip the bridge before reading configuration or
+creating a listener. During normal startup only EADDRINUSE is retried, on the same server:
+250, 500, 1000, 2000, 4000, 4000, 4000 ms (eight attempts, 15.75 seconds of waiting).
+A successful listen ends retries. Core shutdown cancels retries and pending listen, stops
+accepting connections and closes active connections before core teardown. Invalid config,
+TLS or other bind errors fail closed; exhaustion reports unavailability without endless timers.
+
+User decision 2026-10-28, message 42FBCEBB-A352-4A4C-A3A3-71120F245F1B:「允許手機核准」.
+A token holder may choose tool permissions (permissionTool), auto-mode denial overrides
+(denialAsks), and App questions including install confirmations. This uses the existing
+core handle/Bot.choose checks: valid unexpired/unrevoked token, explicitly allowed bot,
+activated core, existing open question and valid choice; tool permissions additionally need
+an outstanding approval. Accepted:false remains false. No new bypass or bot grant is added.
+The regression uses controlled approval callbacks, never a real tool approval or installer.

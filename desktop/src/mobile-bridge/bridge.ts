@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { RequestEnvelope, errorResponse, type ResponseEnvelope } from '../contract';
 import { MAIN_BOT_ID } from '../core/store/records';
 import { MutationLedger } from './ledger';
+import { listenWithHandover } from './lifecycle';
 
 export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
   botIds: z.array(z.string().min(1)).min(1), expiresAt: z.number().int().positive() });
@@ -87,7 +88,7 @@ export function handler(options: BridgeOptions) {
     } catch { json(res, 503, errorResponse(request.id, { code: 'core_unavailable', message: 'Mobile bridge unavailable. Check chat before sending again.' })); }
   };
 }
-export function startBridge(options: BridgeOptions) {
+export function startBridge(options: BridgeOptions, failed: (error: Error) => void) {
   const origin = new URL(options.origin);
   // Bind only a specific private IPv4 address, never 0.0.0.0 or a public interface.
   const octets = options.host.split('.').map(Number);
@@ -99,6 +100,5 @@ export function startBridge(options: BridgeOptions) {
   Clients.parse(options.clients());
   const server = createServer({ ...options.tls, minVersion: 'TLSv1.2' }, (req, res) => { void handler(options)(req, res).catch(() => { res.destroy(); }); });
   server.requestTimeout = 15_000; server.headersTimeout = 10_000; server.maxHeadersCount = 32; server.maxConnections = 32;
-  server.listen(options.port, options.host);
-  return server;
+  return listenWithHandover(server, options.port, options.host, failed);
 }

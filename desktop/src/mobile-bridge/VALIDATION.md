@@ -36,3 +36,25 @@ Claude review and findings resolution before merge; cumulative integration with 
 composer and Rust as separately authorized; actual private TLS/DNS/firewall/phone connectivity,
 real approval flows and live token revocation verification. No physical phone, live account,
 public deployment, app package/install/restart, main merge or push was performed.
+
+## Lifecycle correction and user decision — awaiting allocated validation
+
+Claude approved a34cf2 integration but identified probe binding and missed port handover.
+Correction adds probe skip, bounded EADDRINUSE backoff on one server and core-shutdown
+cancellation. Auth forwarding is unchanged; explicit user decision allows mobile approvals
+(message 42FBCEBB-A352-4A4C-A3A3-71120F245F1B).
+
+Authored NOT RUN: six lifecycle cases (probe no listen, transient recovery, shutdown retry
+cancellation, in-flight/active close, bounded permanent failure, non-retryable/config failure)
+and three table-driven approval cases using actual Core.handle/Bot.choose/decideDenial with
+controlled side-effect callbacks. Each approval case checks invalid token, wrong bot, absent
+question, invalid index, inactive core, accepted choice and settled-choice rejection; tool
+permission also checks an open-looking question without a live approval. Together with the
+original seven, the focused suite has sixteen cases. No test/typecheck was run for this
+correction while quota backend506574ee holds the serial slot.
+
+After explicit allocation, run the same two commands above sequentially, single worker and
+no file parallelism (already in vitest.config.ts). The original loopback HTTPS case requires
+sandbox listen permission; any EPERM must use normal approval, not a bypass. Reuse the prior
+seven-test/typecheck result only for a34cf2, not as evidence for this correction. Claude review
+of the corrected exact commit and separately authorized real-phone acceptance remain gates.
