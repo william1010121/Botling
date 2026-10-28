@@ -1,5 +1,5 @@
 import { test, expect, _electron as electron } from '@playwright/test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, cpSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { desktop, tempDir, swiftLine, until } from '../helpers';
@@ -7,7 +7,7 @@ import { writeLibrary } from '../fixtures/components';
 
 // Real shell -> native editor boundary -> Web chat, including pinned and floating cards.
 // Every writable path and project belongs to this fixture; no installed profile or agent is used.
-test('switching to a long Cute chat keeps native messages, composer and pins on the selected bot', async () => {
+for (const hotReload of [false, true]) test(`${hotReload ? 'cached chat reload then ' : ''}switching to a long Cute chat keeps native messages, composer and pins on the selected bot`, async () => {
   const root = tempDir('avatar-switch'), data = join(root, 'data'), core = join(data, 'core');
   const botling = '11111111-1111-4111-8111-111111111111', hotel = '22222222-2222-4222-8222-222222222222';
   const projects = [{ id: botling, name: 'botling' }, { id: hotel, name: 'hotel' }].map(p => {
@@ -28,10 +28,20 @@ test('switching to a long Cute chat keeps native messages, composer and pins on 
   ]));
   const appData = join(root, 'appdata'); mkdirSync(appData);
   const bootstrap = join(root, 'bootstrap.cjs');
-  writeFileSync(bootstrap, `require('electron').app.setPath('appData',${JSON.stringify(appData)});require(${JSON.stringify(join(desktop, 'out/main/main.cjs'))});`);
+  const renderer = join(root, 'renderer');
+  cpSync(join(desktop, 'out/renderer'), renderer, { recursive: true });
+  const chatScript = readFileSync(join(renderer, 'chat.js'), 'utf8');
+  writeFileSync(join(renderer, 'chat.js'), chatScript + ';window.__fixtureChatBuild="before";');
+  // Source launches always set no-store. Reproduce the shipped pre-hot-install headers
+  // on the real protocol response, without changing CSP, resource bytes or routing.
+  const packagedCache = hotReload ? `const e=require('electron');const handle=e.protocol.handle.bind(e.protocol);
+    globalThis.fixtureOldCache=true;
+    e.protocol.handle=(scheme,fn)=>handle(scheme,async request=>{const r=await fn(request);
+      if(scheme==='botling-chat'&&globalThis.fixtureOldCache){const h=new Headers(r.headers);h.delete('Cache-Control');return new Response(r.body,{status:r.status,headers:h});}return r;});` : '';
+  writeFileSync(bootstrap, `${packagedCache}require('electron').app.setPath('appData',${JSON.stringify(appData)});require(${JSON.stringify(join(desktop, 'out/main/main.cjs'))});`);
   const env: Record<string, string> = { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), BOTLING_DATA_DIR: data, BOTLING_IMPORT_FROM: '', BOTLING_AGENT: 'fake', BOTLING_HIDDEN: '1', BOTLING_NO_EXTERNAL: '1', BOTLING_MOCK_KEYCHAIN: '1', BOTLING_QUIT_ON_CLOSE: '1' };
   delete env.ELECTRON_RUN_AS_NODE;
-  const app = await electron.launch({ executablePath: require('electron'), args: [bootstrap], cwd: desktop, env });
+  const app = await electron.launch({ executablePath: require('electron'), args: [bootstrap, '--botling-renderer-dir=' + renderer], cwd: desktop, env });
   try {
     const shell = await until(() => app.context().pages().find(p => p.url() === 'app://botling/index.html'));
     const chat = await until(() => app.context().pages().find(p => p.url().includes('nativeHost=1')));
@@ -39,6 +49,22 @@ test('switching to a long Cute chat keeps native messages, composer and pins on 
     await shell.locator('.shell[data-ready="1"]').waitFor();
     expect(await app.evaluate(({ app }) => app.getPath('appData'))).toBe(appData);
     expect(await app.evaluate(({ app }) => app.getPath('userData'))).toBe(join(data, 'electron'));
+    if (hotReload) {
+      await chat.locator('html[data-chat]').waitFor({ state: 'attached' });
+      expect(await chat.evaluate(() => (window as any).__fixtureChatBuild)).toBe('before');
+      writeFileSync(join(renderer, 'chat.js'), chatScript + ';window.__fixtureChatBuild="after";');
+      // Same cache clearing and native reload command as hot install, followed by shell reload.
+      await app.evaluate(async ({ session }) => { await session.defaultSession.clearCache(); (globalThis as any).fixtureOldCache = false; });
+      const answer = await shell.evaluate(() => new Promise(resolve => {
+        const bridge = (window as any).botling;
+        const stop = bridge.subscribe((message: any) => { if (message?.id === 'reload-cached-chat') { stop(); resolve(message); } });
+        bridge.post({ v: 10, id: 'reload-cached-chat', cmd: { type: 'chat.reloadPage' } });
+      }));
+      expect(answer).toMatchObject({ ok: true, result: { reloaded: true } });
+      await expect.poll(() => chat.evaluate(() => (window as any).__fixtureChatBuild)).toBe('after');
+      await shell.reload();
+      await shell.locator('.shell[data-ready="1"]').waitFor();
+    }
     for (const name of ['hotel', 'botling', 'hotel', 'botling']) {
       await shell.locator('.bot-row').filter({ hasText: name }).first().click();
       const id = name === 'botling' ? botling : hotel;
