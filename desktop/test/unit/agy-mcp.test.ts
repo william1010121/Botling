@@ -1,11 +1,64 @@
-import {afterEach,expect,it} from 'vitest';
-import {mkdtempSync,mkdirSync,readFileSync,existsSync,symlinkSync,writeFileSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {afterAll,beforeAll,afterEach,expect,it} from 'vitest';
+import {mkdtempSync,mkdirSync,readFileSync,existsSync,symlinkSync,writeFileSync,realpathSync,rmSync} from 'node:fs';
+import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {AgyMcpBridge} from '../../src/core/agent/agy-mcp';
+import {execFileSync} from 'node:child_process';
+import {gunzipSync} from 'node:zlib';
+import {AgyMcpBridge,verifyAgyFileHelper} from '../../src/core/agent/agy-mcp';
+// Exact approved macOS arm64 Botling file helper, built from agy-file-helper.c with
+// scripts/build-agy-file-helper.mjs (Apple clang 21.0.0). Gzip preserves all signed
+// Mach-O bytes; the production verifier pins SHA256
+// 1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403.
+// Inline because this test must run from a clean checkout without a developer cache,
+// compiler-dependent output, downloads, an ACP server, or a live Google profile.
+const helperBytes = gunzipSync(Buffer.from(
+ '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' +
+ 'aXf5fH43yP5OT4f6PwtQ7sLFhAF3e6eifewpavyn6JC/TU5bYR/2SL1DNz1JsnrvvXq5/KQRLbm9FTvkcYdDHrkVs3sCkN3uwmHm' +
+ 'AQbElE8rTKEsxqmwZs/dTb9EyJ+d90LFV+/YTd/BK2iWslznV+v8Op1/UOc36/x2nR/U+Y/p/IjOf1rnf0/nH9P5Izp/VOf/ROe/' +
+ 'rvPf1vnndP6fdP4Vnc/eA/YNDPa9C7Yg7DsX7BsX7PsW7NsW7LsW7JsWbEXYtyzYGrNvWJj4O8XWpwjU+43Tudi3NLL+CznVd1he' +
+ 'YBvJyjb6Srw+avfg5ge5MfU0mV0bE5axU2cQRAN7Mdir0YlSz5/j1D51yipC7pc7DQ3x9Jva6A/5vB0t5a6W3nJ223V5q8fXibP6' +
+ '7K7QHRfyyk40jr+zQzAnzpb63514c3z9TOJso/z9n+46/ePDJ39W7z93tTlmeG9iok3cU5+Renz88ceOXnlroO6Zb/7oP33+7g/L' +
+ 'p96/2/S+teq3uZaHV27e+8GJ1cf2na6/48n7Gn4fb3/4f93+Q6/lnvn1xgpD4rm/GnZuaPzD5m5T9/GZyeyqT2ouRz86tp1N3j8B' +
+ 'hFSYlViGAAA=', 'base64'));
+let fixtureRoot:string;
+let helperPath:string;
+beforeAll(()=>{
+ fixtureRoot=realpathSync(mkdtempSync(join(tmpdir(),'botling-agy-helper-fixture-')));
+ helperPath=join(fixtureRoot,'botling-agy-file-helper');
+ writeFileSync(helperPath,helperBytes,{mode:0o700});
+ const workspace=join(fixtureRoot,'verification-workspace');mkdirSync(workspace);
+ // Neither verification nor the real bridge is mocked. Fail if fixture bytes or
+ // signatures differ; never repin production to accommodate a test artifact.
+ verifyAgyFileHelper(helperPath,workspace);
+ execFileSync('/usr/bin/codesign',['--verify','--strict',helperPath],{stdio:'pipe',timeout:10_000});
+});
+afterAll(()=>{if(fixtureRoot)rmSync(fixtureRoot,{recursive:true,force:true});});
 const bridges:AgyMcpBridge[]=[];
 afterEach(async()=>{await Promise.all(bridges.splice(0).map(b=>b.close()));});
-function setup(){const cwd=mkdtempSync(join(tmpdir(),'botling-agy-mcp-'));mkdirSync(join(cwd,'private-profile'));const b=new AgyMcpBridge(cwd,join(cwd,'private-profile'),undefined,undefined,resolve('.cache/agy-acp-dev/server/botling-agy-file-helper'));bridges.push(b);return {b,cwd};}
+function setup(){const cwd=mkdtempSync(join(tmpdir(),'botling-agy-mcp-'));mkdirSync(join(cwd,'private-profile'));const b=new AgyMcpBridge(cwd,join(cwd,'private-profile'),undefined,undefined,helperPath);bridges.push(b);return {b,cwd};}
 it('no direct invocation or altered arguments can execute without exact allow-once',async()=>{
  const {b,cwd}=setup();await expect(b.invoke('write_file',{path:'a',content:'one'})).rejects.toThrow('No matching');expect(existsSync(join(cwd,'a'))).toBe(false);
  b.grant('botling_write_file',{path:'a',content:'one'});
@@ -84,4 +137,17 @@ it('worker tools remain unavailable even when a caller supplies a delegate',asyn
 it('workspace directory replacement fails its pinned identity check',async()=>{
  const {b,cwd}=setup();const fs=await import('node:fs');fs.renameSync(cwd,cwd+'-original');mkdirSync(cwd);writeFileSync(join(cwd,'target'),'KEEP');
  b.grant('botling_write_file',{path:'target',content:'BAD'});await expect(b.invoke('write_file',{path:'target',content:'BAD'})).rejects.toThrow();expect(readFileSync(join(cwd,'target'),'utf8')).toBe('KEEP');
+});
+
+it('refuses tampered or symlinked provisioned helpers before a granted write',async()=>{
+ const {cwd}=setup();
+ const tampered=join(fixtureRoot,'tampered-helper'),linked=join(fixtureRoot,'linked-helper');
+ const bytes=Buffer.from(helperBytes);bytes[bytes.length-1]^=1;
+ writeFileSync(tampered,bytes,{mode:0o700});symlinkSync(helperPath,linked);
+ for(const [path,error] of [[tampered,'hash mismatch'],[linked,'Canonical verified']] as const){
+  const bridge=new AgyMcpBridge(cwd,join(cwd,'private-profile'),undefined,undefined,path);bridges.push(bridge);
+  bridge.grant('botling_write_file',{path:'blocked',content:'BAD'});
+  await expect(bridge.invoke('write_file',{path:'blocked',content:'BAD'})).rejects.toThrow(error);
+  expect(existsSync(join(cwd,'blocked'))).toBe(false);
+ }
 });
