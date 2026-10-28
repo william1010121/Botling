@@ -438,4 +438,5 @@ export const zhHant: Dictionary = {
   "catchup.rangeEnd": "摘要範圍結束",
   "whiteboard.showDetails": "顯示詳情",
   "whiteboard.showLess": "收起",
+  "whiteboard.notify": "我知道了",
 };

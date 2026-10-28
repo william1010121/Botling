@@ -438,4 +438,5 @@ export const ko: Dictionary = {
   "catchup.rangeEnd": "요약 범위 끝",
   "whiteboard.showDetails": "자세히 보기",
   "whiteboard.showLess": "접기",
+  "whiteboard.notify": "확인",
 };

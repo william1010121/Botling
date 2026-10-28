@@ -155,6 +155,15 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
     expect(ageLabel(ago(50), now)).toBe("2d");
   });
 
+  it("leaves out the tasks waiting on you that were acknowledged with Notify", () => {
+    const entry = bot(55, "Acked", "bot");
+    const wb = empty(entry.id, [task("w", "Domain", "waiting", new Date(now).toISOString(), { blocked: "Which domain?" })]);
+    const view: WaitingView = { items: [], doing: {}, acked: [`${entry.id}-task:w`] };
+    expect(waitingAsks(entry, view, wb)).toEqual([]);
+    expect(waitingCount(entry, view, wb)).toBe(0);
+    expect(waitingAsks(entry, none, wb).map((ask) => [ask.kind, ask.ack])).toEqual([["call", { botId: entry.id, text: "task:w" }]]);
+  });
+
   it("counts every tool approval, also those the core gives no details for (one row says how many)", () => {
     const three = bot(54, "Three", "bot", { approvals: 3 });
     const rows = waitingAsks(three, none, empty(three.id));
@@ -356,7 +365,14 @@ describe("whiteboard page", () => {
     expect(card.className).toContain("waiting");
     expect(card.querySelector(".wb-pill")?.textContent).toBe("2 waiting");
     expect([...card.querySelectorAll(".wb-ask-text")].map((text) => text.textContent)).toEqual(["Pick a domain · Which domain?", "Publish now?"]); // Oldest first; a memory line has no time.
-    expect([...card.querySelectorAll(".wb-ask-open")].map((button) => button.textContent)).toEqual(["Decide", "Decide"]);
+    expect([...card.querySelectorAll(".wb-ask-open")].map((button) => button.textContent)).toEqual(["Notify", "Notify"]);
+    // Notify only acknowledges (waiting.ignore): it opens no chat and answers nothing.
+    const opened0 = opened.length;
+    await act(async () => card.querySelectorAll<HTMLButtonElement>(".wb-ask-open")[1]!.click());
+    expect(commands.at(-1)).toEqual({ type: "waiting.ignore", botId: site.id, text: "Publish now?" });
+    await act(async () => card.querySelectorAll<HTMLButtonElement>(".wb-ask-open")[0]!.click());
+    expect(commands.at(-1)).toEqual({ type: "waiting.ignore", botId: site.id, text: `task:c` });
+    expect(opened).toHaveLength(opened0);
     expect(card.querySelector(".wb-latest .txt")?.textContent).toBe("The theme is live.");
     expect(card.querySelector(".wb-foot-count")?.textContent).toBe("1/3");
     expect(card.querySelector(".wb-ring")).toBeNull();
