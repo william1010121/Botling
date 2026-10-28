@@ -65,17 +65,21 @@ export function lastActive(bot: BotView, data: WhiteboardBotView | undefined): n
 /** What waits on you from one bot: its open questions or its memory's "Waiting on you" (as the right panel lists them). */
 export const waitingFor = (bot: BotView, waiting: WaitingView): WaitingItemView[] => waiting.items.filter((item) => item.botId === bot.id);
 
+/** The tasks waiting on you from the bot that you have not acknowledged with Notify. */
+const waitingTasks = (bot: BotView, waiting: WaitingView, data: WhiteboardBotView | undefined) =>
+  (data?.tasks ?? []).filter((task) => task.state === "waiting" && !(waiting.acked ?? []).includes(`${bot.id}-task:${task.id}`));
+
 /** Its tool approvals waiting: the bot's count, or more when the board's details (a moment newer) name more. */
 const approvalCount = (bot: BotView, data: WhiteboardBotView | undefined) => Math.max(bot.approvals, data?.approvals?.length ?? 0);
 
 /** How many things wait on you from the bot: those questions, its tasks waiting on you, its tool approvals. */
 export function waitingCount(bot: BotView, waiting: WaitingView, data: WhiteboardBotView | undefined): number {
-  return waitingFor(bot, waiting).length + (data?.tasks.filter((task) => task.state === "waiting" && task.name.trim()).length ?? 0) + approvalCount(bot, data);
+  return waitingFor(bot, waiting).length + waitingTasks(bot, waiting, data).filter((task) => task.name.trim()).length + approvalCount(bot, data);
 }
 
 export type AskKind = "question" | "call" | "approval";
 /** One row of what waits on you, as the Waiting lane lists it. `open`: the chat that answers it; `count`: how many things the row stands for (approvals with no details share one row). */
-export interface Ask { key: string; kind: AskKind; text: string; code: string | null; at: string | null; open: string; count: number }
+export interface Ask { key: string; kind: AskKind; text: string; code: string | null; at: string | null; open: string; count: number; ack?: { botId: string; text: string } | null }
 
 /** How many things the rows stand for (what the pill, the lane and the number say). */
 export const askCount = (asks: Ask[]) => asks.reduce((sum, ask) => sum + ask.count, 0);
@@ -88,12 +92,12 @@ export const askCount = (asks: Ask[]) => asks.reduce((sum, ask) => sum + ask.cou
 export function waitingAsks(bot: BotView, waiting: WaitingView, data: WhiteboardBotView | undefined): Ask[] {
   const out: Ask[] = [];
   for (const item of waitingFor(bot, waiting)) {
-    out.push({ key: `q:${item.messageId ?? item.text}`, kind: item.messageId ? "question" : "call", text: item.text, code: null, at: item.at ?? null, open: item.groupId ?? item.botId, count: 1 });
+    out.push({ key: `q:${item.messageId ?? item.text}`, kind: item.messageId ? "question" : "call", text: item.text, code: null, at: item.at ?? null, open: item.groupId ?? item.botId, count: 1, ack: item.messageId ? null : { botId: item.botId, text: item.text } });
   }
-  for (const task of named(data?.tasks ?? []).filter((candidate) => candidate.state === "waiting")) {
+  for (const task of named(waitingTasks(bot, waiting, data))) {
     const why = task.blocked ?? task.now;
     out.push({ key: `t:${task.id}`, kind: "call", text: why ? `${task.name} · ${why}` : task.name, code: null,
-      at: task.history?.findLast((event) => event.kind === "waiting")?.at ?? task.updatedAt, open: bot.id, count: 1 });
+      at: task.history?.findLast((event) => event.kind === "waiting")?.at ?? task.updatedAt, open: bot.id, count: 1, ack: { botId: bot.id, text: `task:${task.id}` } });
   }
   const listed = data?.approvals ?? [];
   listed.forEach((approval, index) => out.push({ key: `a:${index}`, kind: "approval", text: approval.tool, code: approval.text, at: approval.at, open: bot.id, count: 1 }));
@@ -423,6 +427,9 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
   // The first pictures on the Running lane are drawn; past MOST_PICTURES a card shows its line.
   const pictured = new Set(lanes.running.filter((bot) => drawnPicture(byBot.get(bot.id), components)).slice(0, MOST_PICTURES).map((bot) => bot.id));
 
+  // Notify: "I know". The item leaves the list (the same ignore as the right panel's x); nothing is sent to the bot.
+  const notify = (ask: Ask) => { if (ask.ack) void client.request({ type: "waiting.ignore", botId: ask.ack.botId, text: ask.ack.text }).catch(onError); };
+
   const press = (bot: BotView, element: HTMLElement) => {
     // The report grows out of the card: its scale starts at the card's place on the canvas.
     const box = canvas.current?.getBoundingClientRect();
@@ -502,8 +509,8 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
                   <span className="wb-section-meta"> · {askTotal} thing{askTotal === 1 ? "" : "s"} from {lanes.waiting.length} bot{lanes.waiting.length === 1 ? "" : "s"} · oldest first</span></h3>
                 <div className="lane-grid">
                   {lanes.waiting.map((bot) => (
-                    <WaitingCard key={bot.id} bot={bot} data={byBot.get(bot.id)} waiting={waiting} asks={asks.get(bot.id) ?? []} now={now} face={face(bot)}
-                      onPress={(element) => (bot.role === "group" ? onOpenChat(bot.id) : press(bot, element))} onOpenChat={onOpenChat} />
+                    <WaitingCard key={bot.id} bot={bot} data={byBot.get(bot.id)} waiting={waiting} asks={asks.get(bot.id) ?? []} now={now} face={face(bot)} lang={lang}
+                      onPress={(element) => (bot.role === "group" ? onOpenChat(bot.id) : press(bot, element))} onOpenChat={onOpenChat} onNotify={notify} />
                   ))}
                 </div>
               </section>
@@ -533,7 +540,7 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
         </div>
         {open && openBot && (
           <div className="wb-scrim" onPointerDown={(event) => { if (event.target === event.currentTarget) setOpen(null); }}>
-            <Report client={client} components={components} bot={openBot} data={byBot.get(openBot.id)} waiting={waiting} look={look} now={now} origin={open.origin} status={statusOf(openBot)}
+            <Report client={client} components={components} bot={openBot} data={byBot.get(openBot.id)} waiting={waiting} look={look} now={now} origin={open.origin} status={statusOf(openBot)} lang={lang} onNotify={notify}
               onAllow={(picture) => void client.request({ type: "whiteboard.allow", botId: openBot.id, command: picture.command!, folder: picture.folder! }).catch(onError)}
               onClose={() => setOpen(null)} onOpenChat={(id) => { setOpen(null); onOpenChat(id); }}
               onOpenResult={(result) => void client.request({ type: "result.open", botId: openBot.id, url: result.url }).catch(onError)} />
@@ -671,14 +678,19 @@ function Latest({ bot, data, waiting, one }: { bot: BotView; data: WhiteboardBot
 }
 
 const KIND_LABEL: Record<AskKind, string> = { question: "Question", call: "Your call", approval: "Approval" };
-const KIND_BUTTON: Record<AskKind, string> = { question: "Answer", call: "Decide", approval: "Review" };
+const KIND_BUTTON: Record<AskKind, string> = { question: "Answer", call: "Notify", approval: "Review" };
+/** An ask's button: Answer / Review open the chat; Notify (your call) only acknowledges it: it takes it off the list and answers nothing. */
+function AskButton({ ask, lang, onOpenChat, onNotify }: { ask: Ask; lang?: Lang | null; onOpenChat: (botId: string) => void; onNotify: (ask: Ask) => void }) {
+  if (ask.kind === "call" && ask.ack) return <button type="button" className="wb-ask-open notify" onClick={() => onNotify(ask)}>{say(lang, "whiteboard.notify")}</button>;
+  return <button type="button" className="wb-ask-open" onClick={() => onOpenChat(ask.open)}>{KIND_BUTTON[ask.kind]}</button>;
+}
 /** A card lists at most this many asks; the rest are counted. */
 const MOST_ASKS = 4;
 
 /** A bot with something waiting on you: each item with its kind, age and a button to answer it in its chat. */
-function WaitingCard({ bot, data, waiting, asks, now, face, onPress, onOpenChat }: {
-  bot: BotView; data: WhiteboardBotView | undefined; waiting: WaitingView; asks: Ask[]; now: number; face: string;
-  onPress: (element: HTMLElement) => void; onOpenChat: (botId: string) => void;
+function WaitingCard({ bot, data, waiting, asks, now, face, lang, onPress, onOpenChat, onNotify }: {
+  bot: BotView; data: WhiteboardBotView | undefined; waiting: WaitingView; asks: Ask[]; now: number; face: string; lang?: Lang | null;
+  onPress: (element: HTMLElement) => void; onOpenChat: (botId: string) => void; onNotify: (ask: Ask) => void;
 }) {
   const counts = taskCounts(data?.tasks ?? []);
   const status = bot.role === "group" ? { key: "", text: `${bot.members?.length ?? 0} bots` } : laneStatus(bot, data);
@@ -700,7 +712,7 @@ function WaitingCard({ bot, data, waiting, asks, now, face, onPress, onOpenChat 
               <span className="wb-ask-kind">{KIND_LABEL[ask.kind]}</span>
               {age && <span className="wb-ask-age">{age === "now" ? "just now" : `${age} ago`}</span>}
               <span className="wb-ask-text">{ask.code !== null ? <>{ask.text === "Bash" ? "Allow " : `Allow ${ask.text}: `}<code>{ask.code}</code></> : ask.text}</span>
-              <button type="button" className="wb-ask-open" onClick={() => onOpenChat(ask.open)}>{KIND_BUTTON[ask.kind]}</button>
+              <AskButton ask={ask} lang={lang} onOpenChat={onOpenChat} onNotify={onNotify} />
             </li>
           );
         })}
@@ -877,10 +889,10 @@ function MainSummary({ bots, look, messages, mainBotId }: { bots: BotView[]; loo
 const SECTIONS = [["sum", "Summary"], ["ask", "Your call"], ["made", "Results"], ["trend", "Progress"], ["log", "What I did"], ["decided", "My calls"], ["next", "Next"]] as const;
 type ReportSection = (typeof SECTIONS)[number][0];
 
-function Report({ client, components, bot, data, waiting, look, now, origin, status, onClose, onOpenChat, onOpenResult, onAllow }: {
+function Report({ client, components, bot, data, waiting, look, now, origin, status, lang, onClose, onOpenChat, onNotify, onOpenResult, onAllow }: {
   client: Client; components: Record<string, ComponentInfoView>;
-  bot: BotView; data: WhiteboardBotView | undefined; waiting: WaitingView; look: Look; now: number; origin: string; status: { key: string; text: string };
-  onClose: () => void; onOpenChat: (botId: string) => void; onOpenResult: (result: ResultView) => void; onAllow: (picture: WhiteboardPictureView) => void;
+  bot: BotView; data: WhiteboardBotView | undefined; waiting: WaitingView; look: Look; now: number; origin: string; status: { key: string; text: string }; lang?: Lang | null;
+  onClose: () => void; onOpenChat: (botId: string) => void; onNotify: (ask: Ask) => void; onOpenResult: (result: ResultView) => void; onAllow: (picture: WhiteboardPictureView) => void;
 }) {
   const picture = drawnPicture(data, components);
   // Its picture's command waits for your OK: what would run where, and Allow.
@@ -965,7 +977,7 @@ function Report({ client, components, bot, data, waiting, look, now, origin, sta
                   <span className="wb-ask-kind">{KIND_LABEL[ask.kind]}</span>
                   {age && <span className="wb-ask-age">{age === "now" ? "just now" : `${age} ago`}</span>}
                   <span className="wb-ask-text">{ask.code !== null ? <>{ask.text === "Bash" ? "Allow " : `Allow ${ask.text}: `}<code>{ask.code}</code></> : ask.text}</span>
-                  <button type="button" className="wb-ask-open" onClick={() => onOpenChat(ask.open)}>{KIND_BUTTON[ask.kind]}</button>
+                  <AskButton ask={ask} lang={lang} onOpenChat={onOpenChat} onNotify={onNotify} />
                 </div>
               );
             })}

@@ -438,4 +438,5 @@ export const ja: Dictionary = {
   "catchup.rangeEnd": "要約範囲の終わり",
   "whiteboard.showDetails": "詳細を表示",
   "whiteboard.showLess": "閉じる",
+  "whiteboard.notify": "了解",
 };

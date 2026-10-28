@@ -1091,7 +1091,8 @@ First write a test that shows this, then fix it.`;
         out.push({ botId: question.sourceID ?? group.id, text: firstLine(question.text).slice(0, 400), messageId: question.id, groupId: group.id, ...asked(this.groups.chat(group.id), question.id) });
       }
     }
-    return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing };
+    const acked = [...ignored].filter((key) => key.includes("-task:")).slice(-200);
+    return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
   }
 
   /**

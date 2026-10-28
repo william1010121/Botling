@@ -441,6 +441,7 @@ export const en = {
   "catchup.rangeEnd": "End of summary range",
   "whiteboard.showDetails": "Show details",
   "whiteboard.showLess": "Show less",
+  "whiteboard.notify": "Notify",
 } as const satisfies Record<string, Word>;
 
 export type Key = keyof typeof en;

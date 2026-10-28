@@ -179,6 +179,8 @@ export type WaitingItemView = z.infer<typeof WaitingItemView>;
 export const WaitingView = z.strictObject({
   items: z.array(WaitingItemView).max(200),
   doing: z.record(BotId, z.string().max(400)),
+  /** Tasks waiting on you that you acknowledged with Notify (`<botId>-task:<taskId>`); left out when there are none. */
+  acked: z.array(z.string().max(500)).max(200).optional(),
 });
 export type WaitingView = z.infer<typeof WaitingView>;
 export type PendingFileView = z.infer<typeof PendingFileView>;
