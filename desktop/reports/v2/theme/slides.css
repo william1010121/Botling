@@ -45,6 +45,17 @@ body{background:var(--side)}
 .m-quote>h2{font-size:22px;color:var(--faint);font-weight:600;margin-bottom:24px}
 .m-quote .blk-quote{font-size:30px;border-left-width:5px;padding-left:1em}
 
+/* statement: text-only sections, large type, centred */
+.m-statement{justify-content:center;padding:72px 112px 88px}
+.m-statement .kicker{font-size:19px}
+.m-statement>h2{font-size:48px;line-height:1.22;margin-bottom:36px;max-width:1000px}
+.m-statement .sev{flex:0 0 auto;display:block}
+.m-statement .evm{gap:24px;border-left:5px solid var(--blue);padding-left:32px}
+.m-statement .blk-prose{font-size:29px;line-height:1.6;color:var(--muted)}
+.m-statement .blk-prose strong{color:var(--text)}
+.m-statement .blk-callout{font-size:24px}
+.m-statement .blk-quote{font-size:26px;border-left:0;padding-left:0}
+
 /* closing */
 .m-closing>h2{margin-bottom:24px}
 .m-closing .cl{display:flex;flex-direction:column;gap:24px;font-size:22px}

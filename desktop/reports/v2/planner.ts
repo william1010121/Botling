@@ -43,7 +43,8 @@ export function planLayout(items: LayoutInput[], layout: 'auto' | 'stack' | 'spl
   return rows;
 }
 
-export type Master = 'cover' | 'kpi-grid' | 'assertion-evidence' | 'split' | 'table' | 'quote' | 'closing';
+export type Master = 'cover' | 'kpi-grid' | 'assertion-evidence' | 'split' | 'table' | 'quote' | 'statement' | 'closing';
+const TEXT = new Set(['prose', 'callout', 'quote']);
 export type SlidePlan = { master: Master; headline: string; kicker?: string; section?: number; main: AnyBlock[]; side: AnyBlock[]; continued?: boolean };
 
 const SIDE_FACTOR = 1.5;
@@ -85,6 +86,9 @@ export function planSlides(spec: ReportSpec, registry: Map<string, AnyBlockDef>,
   for (const s of slides) {
     if (s.master !== 'assertion-evidence') continue;
     if (s.side.length) s.master = 'split';
+    // Text-only slides would leave most of the canvas empty: a statement slide sets the
+    // takeaway and the text large and centred instead.
+    else if (s.main.every(b => TEXT.has(b.type))) s.master = 'statement';
     else if (s.main.every(b => b.type === 'kpi')) s.master = 'kpi-grid';
     else if (s.main.some(b => b.type === 'table' || b.type === 'options')) s.master = 'table';
   }

@@ -65,6 +65,18 @@ test('slide planner: cover first, masters chosen from content, overflow goes to 
   assert.equal(slides[6].headline, 'D');
 });
 
+test('slide planner: text-only sections get a dense statement slide, never a mostly empty page', () => {
+  const { spec: s } = api.validateSpec({ ...base, sections: [
+    { title: 'A', takeaway: '只有一段說明', blocks: [{ type: 'prose', text: '一句話的背景說明。' }] },
+    { title: 'B', takeaway: '說明加提醒', blocks: [{ type: 'prose', text: '背景。' }, { type: 'callout', tone: 'warn', text: '注意風險。' }] },
+    { title: 'C', takeaway: '圖加說明仍是分欄', blocks: [{ type: 'bar', title: 't', series: [{ name: 'n' }], rows: [{ label: 'a', values: [1] }] }, { type: 'prose', text: '短說明。' }] },
+  ] });
+  const slides = api.planSlides(s, api.registry, '（續）');
+  assert.deepEqual(slides.map(x => x.master), ['cover', 'statement', 'statement', 'split']);
+  assert.equal(slides[2].main.length, 2);
+  assert.ok(api.v2css.slides.includes('.m-statement'));
+});
+
 test('lint: handbook budgets produce warnings with paths', () => {
   const { spec: s } = api.validateSpec({ ...base, kind: 'decision', status: { level: 'at_risk' }, tldr: '一。二。三。四。', sections: [
     { title: 'x', blocks: [{ type: 'prose', text: Array.from({ length: 8 }, (_, i) => `- 點 ${i}`).join('\n') }] },
