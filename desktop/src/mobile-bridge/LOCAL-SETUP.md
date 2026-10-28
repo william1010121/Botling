@@ -109,7 +109,7 @@ allocated acceptance window: with no explicit environment override, verify the n
 only the selected profile's private config; a different unconfigured profile stays disabled.
 Probe must not bind; old core must release the port within the 15.75-second retry wait window,
 new core must serve again, and uncertain mutations must not duplicate. These are runtime acceptance
-checks, not established by the unit tests. Flux owns edge Access/rate-limit policy; app bearer
+checks, not established by the unit tests. Flux owns Tunnel/rate-limit configuration; Cloudflare Access is not used; app bearer
 verification remains required.
 On the physical phone check certificate trust, keyboard/composer layout, and Add to Home Screen.
 Viewport screenshots and synthetic browser fixtures cannot establish these device behaviors.

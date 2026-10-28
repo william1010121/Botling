@@ -7,6 +7,8 @@ import { PROTOCOL_VERSION } from '../src/contract';
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   sessionStorage.clear();
+  window.history.replaceState(null, "", "/mobile/");
+  Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   vi.useFakeTimers();
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(document, 'hidden', { configurable: true, value: false });
@@ -39,6 +41,7 @@ function browserFixture() {
   let status = 200, reads = 0, active = 0, maximum = 0;
   let gate: Promise<void> | undefined;
   const fetcher = vi.fn(async (url: unknown, init: RequestInit) => {
+    if (String(url).endsWith('/logout')) return new Response('{"loggedOut":true}');
     if (String(url).endsWith('/session')) return new Response(JSON.stringify({ principal, csrf, expiresAt: Date.now() + 3600000, botIds: ['main'] }));
     const request = JSON.parse(init.body as string); reads++; active++; maximum = Math.max(active, maximum);
     try {
@@ -94,4 +97,41 @@ it('does not overlap polls when online/visibility events arrive during an in-fli
   fixture.gate(); await act(async () => release());
   await act(async () => vi.advanceTimersByTimeAsync(5000));
   expect(fixture.maximum()).toBe(1);
+});
+it.each(['auth_required', 'access_denied', 'auth_unavailable'])('shows safe callback error %s without erasing drafts or automatic redirects', async code => {
+  browserFixture(); window.history.replaceState(null, '', '/mobile/?auth_error=' + code);
+  await act(async () => root.render(<App />));
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(container.textContent).toContain('Sign in with Google');
+  expect(window.location.search).toBe('');
+  expect(sessionStorage.getItem('botling-mobile-drafts')).toContain('unsent draft');
+});
+it('signs out through the app session endpoint, clears draft storage, and remains on the login screen', async () => {
+  const f = browserFixture(); await act(async () => root.render(<App />));
+  await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Sign out')!.click(); });
+  expect(f.fetcher.mock.calls.some(([url]) => url === '/api/mobile/logout')).toBe(true);
+  expect(sessionStorage.getItem('botling-mobile-drafts')).toBeNull();
+  expect(container.textContent).toContain('Sign in with Google'); expect(container.querySelector('#compose')).toBeNull();
+  expect(window.location.pathname).toBe('/mobile/');
+});
+it('preserves the draft on offline transition and resumes polling when online', async () => {
+  const f = browserFixture(); await act(async () => root.render(<App />));
+  Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+  await act(async () => { window.dispatchEvent(new Event('offline')); });
+  expect(container.textContent).toContain('Offline');
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+  const calls = f.fetcher.mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(10000)); expect(f.fetcher.mock.calls.length).toBe(calls);
+  Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
+  await act(async () => { window.dispatchEvent(new Event('online')); });
+  expect(f.fetcher.mock.calls.length).toBeGreaterThan(calls);
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+});
+it('keeps the session and draft when logout fails so the user can retry', async () => {
+  const f = browserFixture(); await act(async () => root.render(<App />));
+  f.fetcher.mockImplementationOnce(async () => new Response('{}', { status: 503 }));
+  await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Sign out')!.click(); });
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+  expect(sessionStorage.getItem('botling-mobile-drafts')).toContain('unsent draft');
 });

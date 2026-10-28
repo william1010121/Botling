@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConfiguredMobile } from './start';
@@ -59,4 +59,17 @@ describe('profile-local mobile opt-in', () => {
     const root = temp(); writeFileSync(config(root), 'not JSON'); vi.stubEnv('BOTLING_CORE_PROBE', '1');
     expect(startConfiguredMobile(core(), root, vi.fn())).toBeNull(); expect(startBridge).not.toHaveBeenCalled();
   });
+});
+it('loads owner-only OAuth credentials; refuses public credentials and wrong callback before listener creation', () => {
+  const root = temp(), file = config(root), credentialFile = join(root, 'oauth.json');
+  const cfg = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...cfg, google: { credentialsFile: credentialFile } }));
+  const credential = { client_id: 'fixture', client_secret: 'fixture-secret', project_id: 'fixture',
+    redirect_uri: cfg.origin + '/api/mobile/auth/google/callback', javascript_origin: cfg.origin, allowed_emails: ['owner@example.invalid'] };
+  writeFileSync(credentialFile, JSON.stringify(credential), { mode: 0o600 });
+  startConfiguredMobile(core(), root, vi.fn()); expect(vi.mocked(startBridge).mock.calls[0][0].google).toBeDefined();
+  vi.mocked(startBridge).mockClear(); chmodSync(credentialFile, 0o644);
+  expect(() => startConfiguredMobile(core(), root, vi.fn())).toThrow('auth_unavailable'); expect(startBridge).not.toHaveBeenCalled();
+  chmodSync(credentialFile, 0o600); writeFileSync(credentialFile, JSON.stringify({ ...credential, redirect_uri: 'https://other.invalid/' }));
+  expect(() => startConfiguredMobile(core(), root, vi.fn())).toThrow('auth_unavailable'); expect(startBridge).not.toHaveBeenCalled();
 });

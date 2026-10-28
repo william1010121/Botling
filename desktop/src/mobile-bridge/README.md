@@ -1,13 +1,13 @@
 # Private mobile bridge (review required)
 
-Google sign-in candidate: see [Access deployment contract](./ACCESS-CONTRACT.md). The browser now uses
-Google/Access sessions; the bearer setup below applies only to automation. This candidate
-requires coordinated edge configuration and private account policy before deployment.
+Google sign-in candidate: see [OAuth deployment contract](./OAUTH-CONTRACT.md). The browser now uses
+App-owned Google OAuth sessions; the bearer setup below applies only to automation. This candidate
+requires the private Google credentials opt-in before deployment; Cloudflare Access is not used.
 
 Protocol v10, `POST /api/mobile/command`, same-origin bearer authentication. Mobile assets are
 served at `/mobile/`; only the public application shell is unauthenticated. Every data/command
-request needs a current token and an explicit bot grant. There is no HTTP listener, public bind,
-CORS, reverse-proxy trust, cookie authentication, file endpoint or network token-issuance route.
+request needs a current token and an explicit bot grant. There is no default HTTP listener, public bind,
+CORS, reverse-proxy trust or file endpoint. Optional Google browser sessions are isolated from bearer authentication.
 No listener starts unless the local owner supplies `BOTLING_MOBILE_CONFIG`, or creates the
 owner-only `<selected core data>/mobile/config.json` opt-in before core startup.
 
@@ -55,7 +55,7 @@ live token issued, app installed/restarted or public route deployed by this chan
    `127.0.0.1:8443` and local Cloudflare Tunnel connector. The upstream certificate SAN must match
    the public hostname, and its issuer must be trusted by the connector; the phone separately
    verifies the public edge certificate. Wait for flux-k8s to confirm the connector/trust scheme
-   before creating production credentials/config. Flux owns edge Access/rate-limit policy;
+   before creating production credentials/config. Flux owns Tunnel/rate-limit configuration; Cloudflare Access is not used;
    app bearer/bot checks remain unchanged. No router port-forward, CA or device trust change.
 3. In a user-owned private directory (`chmod 700`), run the local setup command:
 

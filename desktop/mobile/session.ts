@@ -11,7 +11,7 @@ export async function sessionRequest(path: 'session' | 'logout', csrf?: string) 
   if (!response.ok) throw new MobileError('Sign-in is unavailable. Check the connection and try again.');
   return response.json();
 }
-// Draft text only. Never store Access assertions, bearer tokens, session cookies or CSRF values.
+// Draft text only. Never store Google tokens, bearer tokens, session cookies or CSRF values.
 const DRAFTS = 'botling-mobile-drafts';
 const DraftRecord = z.object({ principal: z.string(), drafts: z.record(z.string(), z.string().max(100000)) });
 export function loadDrafts(principal: string): Record<string, string> {

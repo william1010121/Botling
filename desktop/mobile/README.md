@@ -1,8 +1,8 @@
 # Botling mobile client
 
-Google sign-in candidate: see [Access deployment contract](../src/mobile-bridge/ACCESS-CONTRACT.md). The browser now uses
-Google/Access sessions; the bearer setup below applies only to automation. This candidate
-requires coordinated edge configuration and private account policy before deployment.
+Google sign-in candidate: see [OAuth deployment contract](../src/mobile-bridge/OAUTH-CONTRACT.md). The browser now uses
+App-owned Google OAuth sessions; the bearer setup below applies only to automation. This candidate
+requires the private Google credentials opt-in before deployment; Cloudflare Access is not used.
 
 Phone-browser client, isolated from Electron and the desktop composer. Provides chat/project
 navigation, text chat with refreshing replies, per-chat drafts, reply-to, engine selection,
@@ -48,12 +48,12 @@ Packaging does not set `BOTLING_MOBILE_CONFIG`, create credentials, or start a l
 ## Browser authentication
 
 The login button navigates only to `/api/mobile/login`; Google authentication belongs to
-Cloudflare Access. Session bootstrap and command requests use same-origin cookies without
+the app server. Session bootstrap and command requests use same-origin cookies without
 following API redirects. No bearer/token field is rendered. Automation still has its separate
-`/api/mobile/command` endpoint, subject to the coordinated Access policy.
+`/api/mobile/command` endpoint and its existing bearer/bot policy.
 
 Session/CSRF/identity checks and deployment inputs are in the
-[Access contract](../src/mobile-bridge/ACCESS-CONTRACT.md). Bot grants remain explicit and Main-only.
+[OAuth contract](../src/mobile-bridge/OAUTH-CONTRACT.md). Bot grants remain explicit and Main-only.
 Draft text survives reload/login in tab-scoped sessionStorage for the same verified principal;
 credentials and chat snapshots never go into storage. Explicit sign-out clears drafts.
 Storage-disabled browsers can retain drafts only in memory.

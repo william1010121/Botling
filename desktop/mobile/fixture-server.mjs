@@ -1,5 +1,5 @@
 // SYNTHETIC UI TEST FIXTURE ONLY. Never connects to a real Core or user data.
-// Binds loopback; simulated browser sessions never represent Google/Access validation.
+// Binds loopback; simulated browser sessions never represent Google validation.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -22,7 +22,6 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}'); return;
     }
     if (req.method === 'GET' && req.url === '/api/mobile/login') { authenticated = true; denied = false; res.writeHead(303, { Location: '/mobile/' }).end(); return; }
-    if (req.method === 'GET' && req.url === '/cdn-cgi/access/logout') { authenticated = false; res.writeHead(303, { Location: '/mobile/' }).end(); return; }
     if (req.method === 'POST' && ['/api/mobile/session', '/api/mobile/logout', '/api/mobile/browser/command'].includes(req.url)) {
       if (!authenticated) { res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":{"code":"auth_required"}}'); return; }
       if (req.url === '/api/mobile/session') {

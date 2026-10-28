@@ -68,11 +68,20 @@ export function App() {
     actionLock.current = true; setBusy(true);
     try {
       await sessionRequest('logout', session.csrf);
-      disconnect(); window.location.assign('/cdn-cgi/access/logout');
+      disconnect(); setError('');
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not sign out. Try again.'); }
     finally { actionLock.current = false; setBusy(false); }
   }
-  useEffect(() => { void connect(); }, []);
+  useEffect(() => {
+    const url = new URL(window.location.href), code = url.searchParams.get('auth_error');
+    if (code) {
+      const message = code === 'access_denied' ? 'This Google account is not authorized.'
+        : code === 'auth_unavailable' ? 'Google sign-in is temporarily unavailable. Try again.'
+        : 'Google sign-in was cancelled or expired. Try again.';
+      url.searchParams.delete('auth_error'); window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+      setError(message); setAuthState(code === 'access_denied' ? 'denied' : 'signedOut');
+    } else { void connect(); }
+  }, []);
   useEffect(() => { if (draftOwner.current) saveDrafts(draftOwner.current, drafts); }, [drafts]);
   useEffect(() => {
     const update = () => setOnline(navigator.onLine);
