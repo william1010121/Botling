@@ -1,0 +1,10 @@
+import { build } from 'esbuild';
+import { mkdir, copyFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+const root = fileURLToPath(new URL('.', import.meta.url));
+const out = join(root, 'dist');
+await mkdir(out, { recursive: true });
+await build({ entryPoints: [join(root, 'main.tsx')], outfile: join(out, 'mobile.js'), bundle: true, minify: true, platform: 'browser', target: ['safari16', 'chrome110'], define: { 'process.env.NODE_ENV': '"production"' } });
+for (const file of ['index.html', 'manifest.webmanifest', 'icon.svg']) await copyFile(join(root, file), join(out, file));
+console.log(`Mobile client built: ${out}`);
