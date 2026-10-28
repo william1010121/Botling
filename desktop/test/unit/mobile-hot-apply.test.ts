@@ -167,3 +167,26 @@ describe('whole-generation transaction recovery', () => {
     expect(await exactTree(f.target, fs)).toBe(old); expect(await tx.recover()).toBe(false);
   });
 });
+
+it('pins signed candidate to trial profile for ordinary subsequent launches', async () => {
+  const f = await fixture();
+  const appDataDir = join(f.root, 'Application Support');
+  const pin = { appDataDir, dataDir: join(appDataDir, 'Botling 2 Dev Trial'), devTrial: true };
+  fs.mkdirSync(pin.dataDir, { recursive: true }); fs.mkdirSync(join(appDataDir, 'Botling 2'));
+  const { VerifiedInstaller } = await import('../../src/main/update-install');
+  const installer = new VerifiedInstaller({ current: '2.0.0', appPath: f.target, dataDir: pin.dataDir,
+    publicKey: key, platform: 'darwin', arch: process.arch, profilePin: pin,
+    fetch: async () => { throw new Error('local only'); } });
+  await expect(authenticateLocalBuild(f.candidate, f.target, key, fs, run, process.arch, pin)).rejects.toThrow('profile');
+  await expect(installer.stageLocal(`${f.candidate}.zip`, '2.0.1')).rejects.toThrow('profile');
+  const source = join(dirname(f.candidate), 'src');
+  const pkg = JSON.parse(fs.readFileSync(join(source, 'package.json'), 'utf8'));
+  put(join(source, 'package.json'), JSON.stringify({ ...pkg, botlingDevTrial: true }));
+  await createPackage(source, join(f.candidate, 'Contents/Resources/app.asar')); await signed(f.candidate, '2.0.1');
+  await authenticateLocalBuild(f.candidate, f.target, key, fs, run, process.arch, pin);
+  await installer.stageLocal(`${f.candidate}.zip`, '2.0.1'); expect(installer.ready).toBe('2.0.1');
+  await installer.discard();
+  const { packagedDataDir } = await import('../../src/main/main-environment');
+  expect(packagedDataDir(appDataDir, pkg.botlingDevTrial === true)).not.toBe(pin.dataDir);
+  expect(packagedDataDir(appDataDir, true)).toBe(pin.dataDir);
+});

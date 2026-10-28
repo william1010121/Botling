@@ -62,14 +62,14 @@ async function fakeBundle(dir: string, spec: Spec = {}): Promise<string> {
   <key>ElectronAsarIntegrity</key><dict><key>Resources/app.asar</key><dict><key>algorithm</key><string>SHA256</string><key>hash</key><string>${version}-hash</string></dict></dict>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>`);
-  put(join(contents, "MacOS", "Botling 2"), `launcher signed for ${version}`, 0o755);
+  put(join(contents, "MacOS", "Botling 2"), `identical signed launcher`, 0o755);
   put(join(contents, "_CodeSignature", "CodeResources"), `seal ${version}`);
   const framework = join(contents, "Frameworks", "Electron Framework.framework", "Versions", "A");
   put(join(framework, "Electron Framework"), spec.electron ?? "electron 44.9.3", 0o755);
   put(join(framework, "Resources", "Info.plist"), `<plist><dict><key>CFBundleVersion</key><string>${(spec.electron ?? "44.9.3").replace(/\D+/g, ".")}</string></dict></plist>`);
   const helper = join(contents, "Frameworks", "Botling 2 Helper (Renderer).app", "Contents");
-  put(join(helper, "Info.plist"), `<plist><dict><key>CFBundleVersion</key><string>${version}</string></dict></plist>`);
-  put(join(helper, "MacOS", "Botling 2 Helper (Renderer)"), `helper signed for ${version}`, 0o755);
+  put(join(helper, "Info.plist"), `<plist><dict><key>CFBundleVersion</key><string>1</string></dict></plist>`);
+  put(join(helper, "MacOS", "Botling 2 Helper (Renderer)"), `identical signed helper`, 0o755);
   put(join(contents, "Resources", "icon.icns"), spec.icon ?? "icon");
   put(join(contents, "Resources/mobile/index.html"), "mobile");
   put(join(contents, "Resources/mobile/web.js"), "web");
@@ -324,5 +324,25 @@ describe("HotInstaller", () => {
     expect((await installer.plan(request.path)).plan).toEqual({ mode: "restart", reasons: ["could not compare with the running build: the app on disk changed since Botling started"] });
     const unbundled = new HotInstaller({ target: null, dataDir: tempDir("hot-install"), fs, run, notify: () => {}, ports: {} as never });
     expect((await unbundled.plan(request.path)).plan).toEqual({ mode: "restart", reasons: ["this Botling is not running from an app bundle"] });
+  });
+});
+
+
+describe("native kernel corrective boundary", () => {
+  it.each([
+    "MacOS/Botling 2",
+    "Frameworks/Botling 2 Helper (Renderer).app/Contents/MacOS/Botling 2 Helper (Renderer)",
+    "Frameworks/Botling 2 Helper (Renderer).app/Contents/Info.plist",
+    "Frameworks/Electron Framework.framework/Versions/A/Electron Framework",
+  ])("native bytes at %s require restart", async relative => {
+    const p = await pair({}, { version: "2.0.0-dev.1" });
+    const path = join(p.incoming, "Contents", relative);
+    fs.appendFileSync(path, "changed-native-identity");
+    expect(planInstall(await bundlePrints(p.running, fs), await bundlePrints(p.incoming, fs)).mode).toBe("restart");
+  });
+  it("UI/mobile bytes with identical native resources stay hot eligible", async () => {
+    const p = await pair({}, { version: "2.0.0-dev.1", files: { "out/renderer/renderer.js": "new UI" } });
+    writeFileSync(join(p.incoming, "Contents/Resources/mobile/web.js"), "new mobile");
+    expect(planInstall(await bundlePrints(p.running, fs), await bundlePrints(p.incoming, fs))).toEqual({ mode: "hot", parts: ["core", "shell", "mobile"] });
   });
 });

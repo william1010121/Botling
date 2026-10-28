@@ -28,7 +28,7 @@ declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { installCoreSwap } from "./core-swap-main";
-import { authorizeStorageStartup } from "./storage-startup";
+import { authorizeStorageStartup, checkStorageStartup } from "./storage-startup";
 import { authenticateLocalBuild } from "./hot-auth";
 import { HotTransaction, HOT_PENDING } from "./hot-transaction";
 import { HotInstaller } from "./hot-install";
@@ -74,6 +74,25 @@ if (reportAt >= 0) {
   const { runCli } = createRequire(__filename)(join(__dirname, "..", "report", "report.cjs")) as { runCli(args: string[]): number };
   process.exit(runCli(process.argv.slice(reportAt + 1)));
 }
+/** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
+const shotMode = isShotRequested(process.argv);
+const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
+  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? packagedDataDir(app.getPath("appData"), devTrial) : join(root, ".data")));
+const installedApp = dirname(dirname(dirname(process.execPath)));
+const installProfilePin = app.isPackaged && dataDir === packagedDataDir(app.getPath("appData"), devTrial)
+  ? { dataDir, appDataDir: app.getPath("appData"), devTrial } : undefined;
+// Refusal must precede renderer configuration, profile creation, and log setup.
+if (app.isPackaged && !shotMode) {
+  try {
+    checkStorageStartup({ dataDir, target: installedApp, version: app.getVersion(), argv: process.argv,
+      packageContract: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).botlingStorageContract,
+      coreContract: JSON.parse(readFileSync(join(root, "out/core/storage-contract.json"), "utf8")),
+      fs: originalFs as unknown as typeof import("node:fs") });
+  } catch (error) {
+    writeSync(2, `Storage startup refused: ${String(error)}\n`);
+    process.exit(1);
+  }
+}
 const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
 /** Where the shell and chat page come from; a hot install (hot-install.ts) points it at a copy of the new build's. */
 let rendererDir = renderer.directory;
@@ -82,11 +101,6 @@ let rendererNoStore = renderer.development;
 if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell, Alt+Cmd+R the chat page`);
 // Preloads re-run on each page reload; a developer build dir (--botling-preload-dir) can supply them.
 const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
-/** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
-const shotMode = isShotRequested(process.argv);
-const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
-  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? packagedDataDir(app.getPath("appData"), devTrial) : join(root, ".data")));
-const installedApp = dirname(dirname(dirname(process.execPath)));
 const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
 const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
 const startupRecovery = shotMode ? null : volumeRecovery() || blockingRecovery(dataDir,installedApp);
@@ -250,7 +264,7 @@ const run = promisify(execFile);
 const hotInstaller: HotInstaller = new HotInstaller({
   target: app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app") ? installedApp : null,
   dataDir,
-  authenticate: (path) => authenticateLocalBuild(path, installedApp, __UPDATE_PUBLIC_KEY__, originalFs as unknown as typeof import("node:fs"), (file, args) => run(file, args, { timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024 })),
+  authenticate: (path) => authenticateLocalBuild(path, installedApp, __UPDATE_PUBLIC_KEY__, originalFs as unknown as typeof import("node:fs"), (file, args) => run(file, args, { timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024 }), process.arch, installProfilePin),
   fs: originalFs as unknown as typeof import("node:fs"),
   run: (file, args) => run(file, args, { timeout: 10 * 60_000 }),
   notify: (report) => { note(`hot install: ${JSON.stringify({ ok: report.ok, applied: report.applied, disk: report.disk, error: report.error })}`); core.reportInstall(report); },
@@ -308,6 +322,7 @@ const hotInstaller: HotInstaller = new HotInstaller({
 const updatesFile = join(dataDir, "updates.json");
 const installer = new VerifiedInstaller({
   current: app.getVersion(), appPath: installedApp, dataDir,
+  profilePin: installProfilePin, bundleFs: originalFs as unknown as typeof import("node:fs"),
   publicKey: __UPDATE_PUBLIC_KEY__, platform: app.isPackaged ? process.platform : "development", arch: process.arch,
   fetch: (url) => net.fetch(url, { signal: AbortSignal.timeout(120_000) }),
   launchArgs: process.argv.filter(arg => arg === "--use-mock-keychain" || /^--remote-debugging-port=\d+$/.test(arg)),

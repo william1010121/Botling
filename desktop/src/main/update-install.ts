@@ -1,3 +1,4 @@
+import { validateProfilePin, verifyProfilePin, type InstallProfilePin } from './install-profile';
 // Ed25519 authenticates the ZIP before extraction, quarantine removal, or app replacement.
 // The shell helper needs no Node runtime (packaged Electron has RunAsNode disabled).
 import { validateZipLinks } from "./hot-auth";
@@ -24,6 +25,8 @@ export interface InstallOptions {
   /** Only dependency injection for tests, never a packaged environment knob. */
   assetURL?: (release: ReleaseView) => string;
   launchArgs?: string[];
+  profilePin?: InstallProfilePin;
+  bundleFs?: typeof nodeFs;
 }
 const run = promisify(execFile);
 // Native removal avoids Electron's ASAR virtual-filesystem recursion inside packaged bundles.
@@ -287,6 +290,7 @@ export class VerifiedInstaller {
   }
   async stage(release: ReleaseView): Promise<void> { return this.stageSource(release); }
   private async stageSource(release: ReleaseView, localZip?: string): Promise<void> {
+    if (this.options.profilePin) validateProfilePin(this.options.profilePin, this.options.dataDir);
     if (existsSync(join(this.options.dataDir, "hot-install-pending.json"))) throw new Error("Hot install needs completion or recovery first");
     if (this.busy) throw new Error("An update is already being prepared");
     const unavailable = this.unavailable(true);
@@ -333,6 +337,7 @@ export class VerifiedInstaller {
       if (!/^[A-Za-z0-9 ._-]+$/.test(executable) || !existsSync(join(app, "Contents", "MacOS", executable))) throw new Error("Invalid update executable");
       // Validate symlinks before xattr so even a signed archive cannot clear attributes outside the bundle.
       const digest = await treeDigest(app);
+      if (this.options.profilePin) await verifyProfilePin(app, this.options.profilePin, this.options.bundleFs ?? nodeFs);
       // This is the only quarantine removal, scoped to the authenticated extracted bundle.
       await run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", app]);
       // Probe actual staged-bundle rename, never move the live application for preflight.

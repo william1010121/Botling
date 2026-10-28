@@ -162,13 +162,6 @@ async function hashFile(path: string, fs: Fs): Promise<string> {
   return hash.digest("hex");
 }
 
-/** A signature or a file that embeds the version: only its presence counts. */
-function presenceOnly(path: string): boolean {
-  if (path.split("/").includes("_CodeSignature")) return true;
-  // Helper apps (Frameworks/Botling 2 Helper (Renderer).app): their Info.plist carries the app's version, and their executables are re-signed with it.
-  return /\.app\/Contents\/(Info\.plist|MacOS\/[^/]+)$/.test(path);
-}
-
 /** Everything in Contents/ outside the app's own files: Electron, the executable, Info.plist, other resources. */
 async function bundleKernel(bundle: string, fs: Fs, kernel: Record<string, [string, string][]>) {
   const add = (what: string, row: [string, string]) => (kernel[what] ??= []).push(row);
@@ -183,8 +176,7 @@ async function bundleKernel(bundle: string, fs: Fs, kernel: Record<string, [stri
       const stat = await fs.promises.lstat(path);
       if (stat.isSymbolicLink()) add(what, [rel, `link:${await fs.promises.readlink(path)}`]);
       else if (stat.isDirectory()) await visit(path, rel);
-      else if (what === "executable" || presenceOnly(rel)) add(what, [rel, `present:${stat.mode & 0o111 ? "x" : "-"}`]);
-      else add(what, [rel, await hashFile(path, fs)]);
+      else add(what, [rel, `${stat.mode & 0o777}:${await hashFile(path, fs)}`]);
     }
   };
   await visit(contents, "");

@@ -1,3 +1,4 @@
+import { verifyProfilePin, type InstallProfilePin } from './install-profile';
 // Local developer builds use the same signed ZIP authority as downloaded releases.
 // A user-selected .app is only a locator/comparison input, never the bytes installed.
 import { join, dirname, basename, sep, posix } from 'node:path';
@@ -35,7 +36,7 @@ export function requireNewer(version: string, current: string) {
   if (!a || !b || a.major !== 2 || compareVersions(a, b) <= 0) throw new Error('Candidate must be newer than the installed version');
 }
 export interface AuthenticatedBuild { app: string; digest: string; version: string; root: string; zip: string }
-export async function authenticateLocalBuild(path: string, target: string, publicKey: string | null, fs: Fs, run: Run, arch = process.arch): Promise<AuthenticatedBuild> {
+export async function authenticateLocalBuild(path: string, target: string, publicKey: string | null, fs: Fs, run: Run, arch = process.arch, profilePin?: InstallProfilePin): Promise<AuthenticatedBuild> {
   const real = await fs.promises.realpath(path);
   if (real !== path || !path.endsWith('.app') || path === target || path.startsWith(target + sep) || target.startsWith(path + sep)) throw new Error('Unsafe candidate path');
   const current = bundleVersion(await fs.promises.readFile(join(target, 'Contents/Info.plist'), 'utf8'));
@@ -82,6 +83,7 @@ export async function authenticateLocalBuild(path: string, target: string, publi
     const { openApp } = await import('./hot-install');
     const source = await openApp(app, fs);
     if (JSON.parse((await source.read('package.json')).toString('utf8')).version !== version) throw new Error('Signed package version mismatch');
+    if (profilePin) await verifyProfilePin(app, profilePin, fs);
     // Validate the entire mobile tree, including files outside the HTTP allowlist.
     const mobile = join(app, 'Contents/Resources/mobile');
     await visitMobile(mobile, fs);
