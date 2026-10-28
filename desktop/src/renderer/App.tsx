@@ -347,6 +347,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {bot && !site && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} />}
       {bot && !site && !openSpec && (
         <TaskDetails
+          onDrawerSettings={() => setBotSettings(true)} groupDialogOpen={editingGroup !== null}
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
           results={results} teams={view.teams} watching={watching} collapsed={collapsed}
