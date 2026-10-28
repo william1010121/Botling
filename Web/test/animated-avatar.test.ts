@@ -53,12 +53,61 @@ describe("actual GIF avatar lifecycle", () => {
     document.querySelector<HTMLButtonElement>(".row.bot .animated-avatar")!.click();
     expect(document.querySelectorAll(".avatar-library-grid button")).toHaveLength(12);
   });
-  it("animates only the latest visible reply; never 100 history avatars", () => {
-    window.ccb.setState(state({ botID: "initial-history", messages: Array.from({ length: 100 }, (_, i) => message(`m${i}`)) }));
-    expect(document.querySelectorAll(".animated-avatar")).toHaveLength(100);
+  it("keeps real engine avatars and only the latest reply animated across paged history", async () => {
+    const { refreshAvatarVisibility } = await import("../src/animated-avatar");
+    const messages = Array.from({ length: 2000 }, (_, i) => message(`m${i}`, { avatar: heads[i % 2].avatar }));
+    const avatars = () => [...document.querySelectorAll<HTMLElement>(".row.bot .animated-avatar")];
+    const expectPortraits = () => {
+      for (const avatar of avatars()) {
+        const index = Number(avatar.closest<HTMLElement>(".row")!.dataset.id!.slice(1));
+        expect(avatar.querySelector(".avatar-still")!.getAttribute("src")).toBe(heads[index % 2].avatar);
+      }
+    };
+    window.ccb.setState(state({ botID: "initial-history", messages }));
+    expect(avatars()).toHaveLength(50);
+    expect(avatars()[0].closest(".row")!.getAttribute("data-id")).toBe("m1950");
+    expectPortraits();
     expect(active()).toHaveLength(1);
-    expect(active()[0].src).toContain("blink.gif");
-    expect(active()[0].closest(".row")?.getAttribute("data-id")).toBe("m99");
+    expect(active()[0].src).toContain("codex/avatar/blink.gif");
+    expect(active()[0].closest(".row")!.getAttribute("data-id")).toBe("m1999");
+    const motion = active()[0];
+    const latestAvatar = motion.closest<HTMLElement>(".animated-avatar")!;
+
+    document.querySelector<HTMLButtonElement>(".history-more")!.click();
+    expect(avatars()).toHaveLength(100);
+    expect(avatars()[0].closest(".row")!.getAttribute("data-id")).toBe("m1900");
+    expectPortraits();
+    expect(active()).toEqual([motion]);
+    latestAvatar.dataset.offscreen = "true";
+    refreshAvatarVisibility();
+    expect(active()).toHaveLength(0);
+    latestAvatar.dataset.offscreen = "false";
+    refreshAvatarVisibility();
+    expect(active()).toEqual([motion]);
+
+    // Use the same reveal event as quote/task navigation, then the actual paging button.
+    document.dispatchEvent(new CustomEvent("ccb-reveal-message", { detail: "m800" }));
+    expect(avatars()).toHaveLength(150);
+    expect(avatars()[0].closest(".row")!.getAttribute("data-id")).toBe("m750");
+    expect(motion.isConnected).toBe(false);
+    expect(motion.hasAttribute("src")).toBe(false);
+    expect(active()).toHaveLength(0);
+    expectPortraits();
+    const released = avatars().at(-1)!;
+    document.querySelector<HTMLButtonElement>(".history-more")!.click();
+    expect(avatars()).toHaveLength(150);
+    expect(avatars()[0].closest(".row")!.getAttribute("data-id")).toBe("m700");
+    expect(released.isConnected).toBe(false);
+    expect(released.querySelector(".avatar-motion")!.hasAttribute("src")).toBe(false);
+    expect(active()).toHaveLength(0);
+    expectPortraits();
+
+    document.querySelector<HTMLButtonElement>(".history-latest")!.click();
+    expect(avatars()).toHaveLength(50);
+    expectPortraits();
+    expect(active()).toHaveLength(1);
+    expect(active()[0].closest(".row")!.getAttribute("data-id")).toBe("m1999");
+    expect(active()[0].src).toContain("codex/avatar/blink.gif");
   });
 
   it("keeps the live GIF node and source through stream patches; waiting uses static thinking art", () => {
