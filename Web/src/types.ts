@@ -144,6 +144,7 @@ export interface ArtifactCardView {
  * scheduled wake-up / cron job. Times in ms since 1970.
  */
 export interface TaskChipView {
+  monitor?: { ownerSession: string; threadId: string | null; turnId: string | null; execution: string; callback: string };
   id: string;
   kind: "command" | "agent" | "monitor" | "wakeup" | "cron";
   title: string;

@@ -1,3 +1,4 @@
+import { monitorTask, type CommandMonitor } from "./agent/monitors";
 import { AgyCodexHead } from "./agent/agy-codex-head";
 import { agyPairAllowed } from "./agent/agy-capabilities";
 import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
@@ -2611,6 +2612,7 @@ export class Bot {
       if (!item.pending && !this.turn && !this.queue.length) this.scheduleIdle();
       return;
     }
+    if (item.kind === "monitorState") return this.monitorState(item.record);
     if (item.kind === "monitorEnded") return this.monitorEnded(item.id, item.output, item.failed);
     if (item.kind === "routinesChanged") return this.routinesEdited();
     if (item.kind === "backgroundTurn") {
@@ -2792,6 +2794,28 @@ export class Bot {
     } else {
       this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
     }
+  }
+
+  /** Only app-owned coordinator records can update a coordinator's monitor chip. */
+  private monitorState(monitor: CommandMonitor) {
+    if (monitor.owner.toLowerCase() !== this.session.sessionId.toLowerCase()) return;
+    const task = monitorTask(monitor);
+    if (!task) return;
+    // Correlate to its existing coordinator step, never to descendants or a later reply.
+    if (this.turn?.steps.some(step => step.id === monitor.id && step.tool === "Monitor")) {
+      const tasks = this.turn.tasks ??= [];
+      const index = tasks.findIndex(candidate => candidate.id === monitor.id);
+      if (index < 0) tasks.push(task); else tasks[index] = task;
+      this.emitSteps(this.turn);
+      return;
+    }
+    const record = this.records.findLast(record => record.engine === "codex" && record.steps?.some(step => step.id === monitor.id && step.tool === "Monitor"));
+    if (!record) return;
+    const tasks = Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : [];
+    const index = tasks.findIndex(candidate => candidate.id === monitor.id);
+    if (index < 0) tasks.push(task); else tasks[index] = task;
+    record.backgroundTasks = tasks;
+    this.changed(record);
   }
 
   /** A monitored command ended: its step, in the reply of the turn that started it, is done. */
@@ -3624,7 +3648,15 @@ export class Bot {
     const turn = this.turn;
     const step = turn?.open ? turn.steps.findLast((candidate) => candidate.id === id) : undefined;
     if (!turn || !step || turn.tasks?.some((task) => task.id === id)) return;
-    (turn.tasks ??= []).push(backgroundTask(id, kind, title || this.subagents.get(id)?.description || step.title, step.detail));
+    const task = backgroundTask(id, kind, title || this.subagents.get(id)?.description || step.title, step.detail);
+    if (kind === "monitor") {
+      task.title = `Coordinator monitor: ${task.title}`;
+      task.detail = `Owner session: ${this.session.sessionId.toLowerCase()}\n${task.detail ?? ""}`;
+      // Claude reports the watch lifecycle, but no independent callback acknowledgement.
+      task.monitor = { ownerSession: this.session.sessionId.toLowerCase(), threadId: null, turnId: turn.id,
+        execution: "running", callback: "unknown" };
+    }
+    (turn.tasks ??= []).push(task);
   }
 
   /** A background task reported back (`endBackgroundTask`): in the turn under way, or in the reply it belongs to. */

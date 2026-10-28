@@ -231,6 +231,8 @@ lines.on("line", (line) => {
     if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text, ...(images.length ? { images } : {}) }) + "\n");
     queue.push({ text: text.trim(), uuid });
     wake?.();
+  } else if (message.type === "control_request" && message.request?.subtype === "initialize") {
+    out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } });
   } else if (message.type === "control_request" && message.request?.subtype === "interrupt") {
     if (process.env.FAKE_CLAUDE_INTERRUPTS) appendFileSync(process.env.FAKE_CLAUDE_INTERRUPTS, `${session}\n`);
     out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } });

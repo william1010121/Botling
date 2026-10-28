@@ -62,6 +62,10 @@ export function endTask(task: BackgroundTask, status: string, summary: string | 
   task.status = ENDS[status.toLowerCase()] ?? "killed";
   if (task.kind === "monitor" && task.status === "killed") task.status = "completed";
   task.endedAt = now;
+  if (task.kind === "monitor" && task.monitor && typeof task.monitor === "object" && "callback" in task.monitor && task.monitor.callback === "unknown") {
+    // A native watch ended; its task notification is not a callback-consumption receipt.
+    task.monitor = { ...task.monitor, execution: "ended" };
+  }
   if (summary) task.summary = shorten(summary);
 }
 

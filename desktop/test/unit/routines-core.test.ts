@@ -126,6 +126,9 @@ describe("command monitors", () => {
     const card = await until(async () => (await c.chat()).messages.find((m: any) => m.approval?.tool === "Monitored command"));
     expect(card.choices.map((choice: any) => choice.label)).toEqual(["Allow once", "Don't allow"]);
     expect(card.text).toContain("echo monitored; exit 3");
+    expect(codexLog(dir, "exec")).toHaveLength(0);
+    const awaiting = (await c.chat()).messages.flatMap((m: any) => m.backgroundTasks ?? []).find((t: any) => t.kind === "monitor");
+    expect(awaiting).toMatchObject({ title: expect.stringContaining("Coordinator"), monitor: { execution: "awaitingApproval", callback: "none" } });
     expect(card.text).toContain("Workspace sandbox; network disabled. Completion wakes this Codex bot once.");
     await sleep(300);
     expect((await c.chat()).messages.find((m: any) => m.id === card.id).answer).toBeNull();
@@ -135,12 +138,13 @@ describe("command monitors", () => {
     expect(woke.text).toBe("Monitor failed, exit 3: monitored");
     // It ran in the bot's folder, sandboxed, network off; the result went back as app_monitor_result.
     const exec = JSON.parse(codexLog(dir, "exec")[0].text);
-    expect(exec).toMatchObject({ cwd: join(dir, "main"), sandboxPolicy: { type: "workspaceWrite", writableRoots: [join(dir, "main")], networkAccess: false }, outputBytesCap: 8192 });
+    expect(exec).toMatchObject({ cwd: join(dir, "main"), sandboxPolicy: { type: "workspaceWrite", writableRoots: [join(dir, "main"), join(dir, "plugins", ".bot")], networkAccess: false }, outputBytesCap: 8192 });
     const result = JSON.parse(codexLog(dir, "monitor-result")[0].text);
     expect(result).toMatchObject({ status: "failed", exit_code: 3, stdout: "monitored\n", wake: "dispatching", output_bytes_cap_per_stream: 8192 });
     // Its step under the reply that started it is done, failed.
     const started = (await c.chat()).messages.find((m: any) => m.steps?.some((s: any) => s.tool === "Monitor"));
     expect(started.steps.find((s: any) => s.tool === "Monitor")).toMatchObject({ title: "Monitor echo monitored; exit 3", done: true, failed: true });
+    expect(started.backgroundTasks).toMatchObject([{ status: "failed", monitor: { execution: "failed", callback: "delivered" } }]);
     // Saved in 1.x's file: delivered once.
     const file = readdirSync(join(dir, "codex-threads")).find((name) => name.endsWith(".monitors.json"))!;
     expect(JSON.parse(readFileSync(join(dir, "codex-threads", file), "utf8"))).toMatchObject([{ command: "echo monitored; exit 3", state: "failed", exitCode: 3, wake: "delivered" }]);

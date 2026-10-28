@@ -207,7 +207,7 @@ describe("Codex head: app-managed workers", () => {
     expect(handed.of("subagentStarted")).toMatchObject([{ id: task, description: "Parser", type: "codex-worker", background: true }]);
     expect(handed.of("managedPending")).toEqual([{ kind: "managedPending", pending: true }]);
     const workerStart = handed.params("thread/start");
-    expect(workerStart).toMatchObject({ cwd: "/tmp/bot", approvalPolicy: "on-request", sandbox: "workspace-write", developerInstructions: "You are a worker.", model: "gpt-worker", config: { "features.multi_agent": false, "agents.enabled": false } });
+    expect(workerStart).toMatchObject({ cwd: "/tmp/bot", approvalPolicy: "on-request", sandbox: "workspace-write", developerInstructions: expect.stringContaining("You are a worker."), model: "gpt-worker", config: { "features.multi_agent": false, "agents.enabled": false } });
     expect(workerStart.dynamicTools).toBeUndefined();
     expect(session.workerRecords).toMatchObject([{ id: task, name: "Parser", run: 1, wasActive: true, reportPending: false }]);
     // The same request again (a retry) gets the same receipt and starts nothing.
@@ -401,4 +401,35 @@ it("reports worker session metadata and attributable absolute output without usi
   expect(usage.of("subagentOutput")).toEqual([{ kind: "subagentOutput", id: task, counter: "thread:worker-thread", tokens: 100 }]);
   expect(new Out(session.receive(note("thread/tokenUsage/updated", { threadId: COORD, tokenUsage: { total: { outputTokens: 9000 } } }))).of("subagentOutput")).toEqual([]);
   expect(new Out(session.receive(note("thread/tokenUsage/updated", { threadId: "worker-thread", tokenUsage: { total: { outputTokens: true } } }))).of("subagentOutput")).toEqual([]);
+});
+
+describe("monitor owner authorization", () => {
+  it("rejects worker start/status/cancel with intent, without approval, command or coordinator wake", () => {
+    const s = new CodexSession(config()); ready(s); s.send("authorized work");
+    s.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+    for (const tool of ["app_monitor_start", "app_monitor_status", "app_monitor_cancel"]) {
+      const call = JSON.parse(toolCall(tool, { command: "echo child", monitor_id: "other" }));
+      call.params.threadId = "child-thread";
+      const out = new Out(s.receive(JSON.stringify(call)));
+      expect(out.writes[0].result.success).toBe(false);
+      expect(receipt(out)).toMatchObject({ code: "coordinator_only_monitor", handback: { tool, input: { command: "echo child" }, owner_session_id: null, requester_thread_id: "child-thread" } });
+      expect(out.items).toEqual([]);
+      expect(out.methods).toEqual(["(answer)"]);
+    }
+    expect(s.monitorRecords).toEqual([]);
+  });
+});
+
+it.each([false, true])("coordinator monitor still requires Allow once with bypass=%s and cannot expand command sandbox", bypassPermissions => {
+  const s = new CodexSession(config({ bypassPermissions, autoMode: true, ownerSession: "OWNER", writableRoots: ["/tmp/authorized"] }));
+  ready(s); s.send("already authorized command");
+  s.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+  const started = new Out(s.receive(toolCall("app_monitor_start", { command: "echo ok", cwd: "/outside", networkAccess: true })));
+  const m = receipt(started);
+  expect(started.params("command/exec")).toBeUndefined();
+  expect(started.of("permission")).toHaveLength(1);
+  expect(m).toMatchObject({ status: "awaitingApproval", owner_role: "coordinator", owner_session_id: "owner", owner_thread_id: COORD, owner_turn_id: "t1", cwd: "/tmp/bot" });
+  const allowed = new Out(s.answer(`monitor:${m.monitor_id}`, true));
+  expect(allowed.params("command/exec")).toMatchObject({ cwd: "/tmp/bot", sandboxPolicy: { type: "workspaceWrite", writableRoots: ["/tmp/authorized", "/tmp/bot"], networkAccess: false } });
+  expect(new Out(s.answer(`monitor:${m.monitor_id}`, true)).writes).toEqual([]);
 });

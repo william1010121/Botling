@@ -1,3 +1,4 @@
+import { monitorHandback, MONITOR_HANDBACK } from "./monitor-policy";
 import { TokenFlowMeter } from "../token-flow-meter";
 import { codexAutoRiskConfig } from "./auto-risk-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
@@ -62,6 +63,7 @@ export type CodexItem =
   /** Workers at work or reports waiting: the bot must not sleep. */
   | { kind: "managedPending"; pending: boolean }
   /** A monitored command ended: its step (from an earlier turn) is done. */
+  | { kind: "monitorState"; record: CommandMonitor }
   | { kind: "monitorEnded"; id: string; output: string; failed: boolean }
   /** `app_routines` changed the bot's routines. */
   | { kind: "routinesChanged" }
@@ -878,7 +880,7 @@ export class CodexSession {
         return { payload: { error: "Monitor limit reached; cancel active monitors or resolve pending results." }, success: false, out: [] };
       }
       const id = randomUUID().toLowerCase();
-      const record: CommandMonitor = { id, owner: (this.config.ownerSession ?? "").toUpperCase(), command, cwd: this.config.cwd, state: "awaitingApproval", stdout: "", stderr: "", detail: "", wake: "none", createdAt: toSwiftDate() };
+      const record: CommandMonitor = { id, owner: (this.config.ownerSession ?? "").toUpperCase(), ownerRole: "coordinator", threadId: this.threadId ?? undefined, turnId: this.turn?.id ?? undefined, command, cwd: this.config.cwd, state: "awaitingApproval", stdout: "", stderr: "", detail: "", wake: "none", createdAt: toSwiftDate() };
       this.monitors.set(id, record);
       return {
         payload: monitorPayload(record), success: true, out: [
@@ -1009,14 +1011,21 @@ export class CodexSession {
     if (known) return [{ kind: "write", value: known }];
     const reply = (payload: unknown, success: boolean) => ({ jsonrpc: "2.0", id: rpcId, result: { success, contentItems: [{ type: "inputText", text: json(payload) }] } });
     const tool = typeof params.tool === "string" ? params.tool : null;
+    let args: any = params.arguments;
+    if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = null; } }
+    if (!args || typeof args !== "object") args = {};
+    if (tool?.startsWith("app_monitor_") && params.threadId !== this.threadId) {
+      const requester = [...this.workers.values()].find(worker => worker.thread === params.threadId);
+      const response = reply(monitorHandback(tool, args, { task_id: requester?.id ?? null, run: requester?.run ?? null, owner_session_id: this.config.ownerSession?.toLowerCase() ?? null,
+        requester_thread_id: params.threadId ?? null, requester_turn_id: params.turnId ?? null, cwd: this.config.cwd }), false);
+      this.toolReplies.set(id, response);
+      return [{ kind: "write", value: response }];
+    }
     if (!this.managed || this.stopped || (this.finishing && tool !== "app_task_checkpoint") || params.threadId !== this.threadId) {
       const response = reply({ error: "App handoff tools are available only to the active coordinator." }, false);
       this.toolReplies.set(id, response);
       return [{ kind: "write", value: response }];
     }
-    let args: any = params.arguments;
-    if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = null; } }
-    if (!args || typeof args !== "object") args = {};
     const out: CodexOutput[] = [];
     let response: Record<string, unknown>;
     if (tool === "app_routines") {
@@ -1099,12 +1108,12 @@ export class CodexSession {
       worker.thread ??= randomUUID();
       return [this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) }),
         this.item({ kind: "subagentRuntime", id: task, runtime: { engine: "claude", reasoningEffort: launch.effort ?? null, serviceTier: null }, model: launch.model ?? undefined }),
-        { kind: "componentEditor", action: { kind: "start", task, run: worker.run, config: { ...launch, sessionId: worker.thread, resume }, text: worker.instructions } }];
+        { kind: "componentEditor", action: { kind: "start", task, run: worker.run, config: { ...launch, monitorWorker: true, sessionId: worker.thread, resume }, text: worker.instructions } }];
     }
     if (worker.role !== undefined) return this.failWorker(task, "Unknown persisted worker role; no generic worker was substituted.");
     const params: Record<string, unknown> = {
       cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write",
-      developerInstructions: this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
+      developerInstructions: `${this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate."}\n\n${MONITOR_HANDBACK}`,
       config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) },
     };
     // The workers write where the coordinator may, as in 1.x (`writable_roots`).
@@ -1205,7 +1214,7 @@ export class CodexSession {
     const model = text(result.model);
     const metadata = this.item({ kind: "subagentRuntime", id: task, runtime: worker.runtime, ...(model ? { model } : {}) });
     const execution = this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) });
-    if (resumed) return [metadata, execution, this.refreshInstructions(this.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate.", thread, { kind: "workerInstructions", task })];
+    if (resumed) return [metadata, execution, this.refreshInstructions(`${this.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate."}\n\n${MONITOR_HANDBACK}`, thread, { kind: "workerInstructions", task })];
     return [metadata, execution, ...this.startWorkerTurn(task, worker.instructions)];
   }
 
@@ -1710,7 +1719,8 @@ export class CodexHead {
     // A monitor's state is written before what it leads to is done (its command, its wake).
     const monitors = this.session.monitorRecords;
     const monitorText = JSON.stringify(monitors);
-    if (monitorText !== this.savedMonitors) {
+    const monitorsChanged = monitorText !== this.savedMonitors;
+    if (monitorsChanged) {
       saveMonitors(this.config.threads.folder, this.config.sessionId, monitors);
       this.savedMonitors = monitorText;
     }
@@ -1743,6 +1753,7 @@ export class CodexHead {
           break;
       }
     }
+    if (monitorsChanged) for (const record of monitors) this.handlers.onItem({ kind: "monitorState", record });
   }
 
   private retireEditor(task: string, head: ClaudeHead) {

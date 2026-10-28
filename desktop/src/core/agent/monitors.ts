@@ -5,6 +5,7 @@
 // restart turns it into `interrupted` (its side effects unknown) and reports that instead.
 //
 // Kept in codex-threads/<session>.monitors.json (1.x's file and keys; dates as Swift dates).
+import type { BackgroundTask } from "../background-tasks";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
@@ -17,6 +18,10 @@ export interface CommandMonitor {
   id: string;
   /** The bot session (a UUID, as 1.x writes it: upper case). */
   owner: string;
+  /** Absent in legacy records: do not infer a coordinator owner from historical steps. */
+  ownerRole?: "coordinator";
+  threadId?: string;
+  turnId?: string;
   command: string;
   cwd: string;
   state: MonitorState;
@@ -48,12 +53,13 @@ export function monitorPayload(monitor: CommandMonitor): Record<string, unknown>
   return {
     monitor_id: monitor.id, run: 1, owner_session_id: monitor.owner.toLowerCase(), command: monitor.command, cwd: monitor.cwd, status: monitor.state,
     exit_code: monitor.exitCode ?? null, stdout: monitor.stdout, stderr: monitor.stderr, output_bytes_cap_per_stream: MONITOR_OUTPUT_LIMIT,
+    owner_role: monitor.ownerRole ?? "unknown", owner_thread_id: monitor.threadId ?? null, owner_turn_id: monitor.turnId ?? null,
     output_may_be_truncated: true, detail: monitor.detail, wake: monitor.wake,
   };
 }
 
 export function monitorSummary(monitor: CommandMonitor): Record<string, unknown> {
-  return { monitor_id: monitor.id, owner_session_id: monitor.owner.toLowerCase(), command: [...monitor.command].slice(0, 240).join(""), status: monitor.state, wake: monitor.wake, exit_code: monitor.exitCode ?? null };
+  return { monitor_id: monitor.id, owner_session_id: monitor.owner.toLowerCase(), owner_role: monitor.ownerRole ?? "unknown", command: [...monitor.command].slice(0, 240).join(""), status: monitor.state, wake: monitor.wake, exit_code: monitor.exitCode ?? null };
 }
 
 /** A record read back after a restart (`reconcile`): nothing is run again or reported twice. */
@@ -105,4 +111,16 @@ export function loadMonitors(folder: string, session: string): CommandMonitor[] 
 export function saveMonitors(folder: string, session: string, records: CommandMonitor[]) {
   mkdirSync(folder, { recursive: true });
   writeFileAtomic(file(folder, session), JSON.stringify(records));
+}
+
+/** Project only authoritative records, never a child tool's launch-return or old transcript. */
+export function monitorTask(record: CommandMonitor): BackgroundTask | null {
+  if (record.ownerRole !== "coordinator") return null;
+  const status = isActive(record) ? "running" : record.state === "succeeded" ? "completed"
+    : record.state === "interrupted" ? "interrupted" : record.state === "cancelled" ? "stopped" : "failed";
+  return { id: record.id, kind: "monitor", title: `Coordinator monitor: ${record.command.slice(0, 240)}`, status,
+    startedAt: record.createdAt, ...(record.endedAt === undefined ? {} : { endedAt: record.endedAt }), detail: record.command,
+    summary: JSON.stringify(monitorPayload(record), null, 2),
+    monitor: { ownerSession: record.owner.toLowerCase(), threadId: record.threadId ?? null, turnId: record.turnId ?? null,
+      execution: record.state, callback: record.wake } };
 }

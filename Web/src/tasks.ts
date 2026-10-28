@@ -251,6 +251,7 @@ const endWords: Record<string, Key> = {
 
 /** What a task's line says after its title: its time, or how it ended (and how long it took). */
 function status(task: TaskChipView, now: number): string {
+  if (task.monitor) return `${task.monitor.execution} · callback: ${task.monitor.callback}`;
   if (task.status === "running") return runningWords(runningOf(task), now);
   const words = t(endWords[task.status] ?? endWords.killed);
   if (task.status === "completed" && (task.kind === "wakeup" || task.kind === "cron")) {

@@ -210,7 +210,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
   // source ids. Finished work clears with your next line; an older task finishing after it still appears.
   const lastUser = chat.messages.findLastIndex((message) => message.role === "user");
   const background = chat.messages.flatMap((message, index) => (message.backgroundTasks ?? []).filter((task) =>
-    task.status === "running" || lastUser < 0 || index >= lastUser || (task.ended ?? -Infinity) > new Date(chat.messages[lastUser]!.time).getTime()
+    task.status === "running" || (task.monitor && ["pending", "dispatching", "uncertain"].includes(task.monitor.callback)) || lastUser < 0 || index >= lastUser || (task.ended ?? -Infinity) > new Date(chat.messages[lastUser]!.time).getTime()
   ).map((task) => ({ ...task, message: message.id })));
   const backgroundRow = shown.findLast((message) => message.role === "bot" || message.role === "notice")?.id;
   const lastYours = shown.findLastIndex((message) => message.role === "user");

@@ -63,3 +63,15 @@ it("passes scheduled metadata and all four buckets to Web's list; requests outpu
   taskOutput("origin", "agent", "Found 3 things.");
   expect(row.textContent).toContain("Found 3 things.");
 });
+
+it("keeps completed coordinator execution visible until its callback is resolved, without reviving it", () => {
+  const monitor = { ownerSession: "owner", threadId: "th", turnId: "turn", execution: "succeeded", callback: "pending" };
+  const records = [line("origin", "bot", now - 120_000, [task("monitor", { kind: "monitor", title: "Coordinator monitor: echo ok", status: "completed", endedAt: toSwiftDate(now - 60_000), monitor })]), line("next", "user", now), line("reply", "bot", now + 1000)];
+  const shown = draw(records).at(-1)!.tasks!;
+  expect(shown).toMatchObject([{ status: "completed", message: "origin", monitor: { callback: "pending" } }]);
+  const row = taskChips("reply", shown);
+  row.querySelector<HTMLButtonElement>(".task-group.done")!.click();
+  expect(row.textContent).toContain("succeeded · callback: pending");
+  monitor.callback = "delivered";
+  expect(draw(records).at(-1)!.tasks?.length ?? 0).toBe(0);
+});

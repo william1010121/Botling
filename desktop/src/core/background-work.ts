@@ -15,11 +15,19 @@ export function backgroundTaskView(value: unknown): BackgroundTaskView | null {
   const text = (field: unknown) => typeof field === "string" ? field : null;
   const started = ms(task.startedAt);
   if (started === null) return null;
+  const monitorResult = BackgroundTaskView.shape.monitor.safeParse(task.monitor);
+  let monitor = monitorResult.success ? monitorResult.data : undefined;
+  // Startup/stop reconciliation may run before an authoritative monitor snapshot arrives.
+  // Never display a cached running state as live after its owner process was interrupted.
+  if (monitor && task.status !== "running" && ["awaitingApproval", "running", "cancelling"].includes(monitor.execution)) {
+    monitor = { ...monitor, execution: "interrupted", callback: ["delivered", "suppressed", "unknown"].includes(monitor.callback) ? monitor.callback : "uncertain" };
+  }
   const parsed = BackgroundTaskView.safeParse({
     id: task.id, kind: task.kind, title: task.title, status: task.status,
     started, ended: ms(task.endedAt), detail: text(task.detail), fires: ms(task.fireAt),
     schedule: text(task.schedule), recurring: typeof task.recurring === "boolean" ? task.recurring : null,
     summary: text(task.summary),
+    ...(monitor ? { monitor } : {}),
   });
   return parsed.success ? parsed.data : null;
 }

@@ -1,3 +1,4 @@
+import { claudeMonitorDecision, MONITOR_HOOK } from "./monitor-policy";
 import { claudeAutoRiskSettings } from "./auto-risk-policy";
 // A bot's head: one long-lived `claude -p --input-format stream-json` process (as the Swift app's
 // `ClaudeAgentProcess`). Messages go in as JSON lines on stdin; replies, tool calls and permission
@@ -34,6 +35,8 @@ export interface HeadConfig {
   allowedTools: string[];
   /** Explicit tool inventory for an app execution role; omitted for ordinary heads. */
   tools?: string[];
+  /** App-managed child role, independent of model-supplied hook fields. */
+  monitorWorker?: boolean;
   /** Appended to claude's system prompt. */
   systemPrompt?: string | null;
   /**
@@ -136,6 +139,10 @@ export class ClaudeHead {
   /** Resolves when the CLI process has exited. */
   readonly exited = new Promise<void>((resolve) => (this.exitedResolve = resolve));
   running = false;
+  private monitorInit: string | null = null;
+  private monitorPolicyFailed = false;
+  private monitorInitTimer: ReturnType<typeof setTimeout> | null = null;
+  private queuedMessages: unknown[] = [];
 
   constructor(readonly config: HeadConfig, private handlers: HeadHandlers, private adapter: ProcessTreeAdapter = processTreeAdapter()) {}
 
@@ -159,6 +166,8 @@ export class ClaudeHead {
     const report = (code: number | null, signal: NodeJS.Signals | null, extra = "") => {
       if (reported) return;
       reported = true;
+      if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
+      this.queuedMessages = [];
       this.running = false;
       this.closed = true;
       if (this.buffer.trim()) this.line(this.buffer.trim());
@@ -168,6 +177,15 @@ export class ClaudeHead {
     };
     child.once("error", (error) => report(null, null, cliStartError("claude", this.config.command, error)));
     child.once("close", (code, signal) => report(code, signal));
+    // The SDK control hook runs before execution, including auto/bypass mode.
+    // Unsupported CLIs fail closed before any queued user input is sent.
+    if (!this.config.harmless && (!this.config.tools || this.config.tools.includes("Monitor"))) {
+      this.monitorInit = `monitor-policy-${randomUUID()}`;
+      this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), 10_000);
+      this.monitorInitTimer.unref();
+      this.write({ type: "control_request", request_id: this.monitorInit, request: { subtype: "initialize",
+        hooks: { PreToolUse: [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] } } });
+    }
   }
 
   private read(chunk: string) {
@@ -182,9 +200,32 @@ export class ClaudeHead {
   }
 
   private flowMeter?: ClaudeTokenFlowMeter;
+  private failMonitorPolicy() {
+    this.monitorPolicyFailed = true;
+    if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
+    this.queuedMessages = [];
+    this.stderrTail += "\nBotling could not register coordinator-only monitor enforcement; no queued user input was sent.";
+    void this.process?.terminate({ graceMs: 0 });
+  }
+
   private line(line: string) {
     this.flowMeter ??= new ClaudeTokenFlowMeter(this.config.sessionId);
     const measurements = this.flowMeter.observe(line);
+    let message: any;
+    try { message = JSON.parse(line); } catch { /* parseLine handles other input */ }
+    if (this.monitorInit && message?.type === "control_response" && message.response?.request_id === this.monitorInit) {
+      if (this.monitorPolicyFailed) return;
+      if (message.response.subtype !== "success") { this.failMonitorPolicy(); return; }
+      if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
+      this.monitorInit = null;
+      for (const queued of this.queuedMessages.splice(0)) this.write(queued);
+      return;
+    }
+    if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === MONITOR_HOOK) {
+      this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
+        response: claudeMonitorDecision(message.request.input, this.config.monitorWorker) } });
+      return;
+    }
     for (const item of parseLine(line)) {
       if (item.kind === "unsupportedRequest") {
         // A request the app does not handle gets an error at once, so claude does not wait.
@@ -207,6 +248,7 @@ export class ClaudeHead {
    * type, over 4.5 MB, unreadable) is left to the path the text already names.
    */
   send(text: string, uuid: string, images: string[] = []) {
+    if (this.monitorPolicyFailed) return;
     const blocks: Record<string, unknown>[] = [];
     for (const path of images) {
       const mediaType = imageMediaType(path);
@@ -217,7 +259,8 @@ export class ClaudeHead {
       blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: data.toString("base64") } });
     }
     const content = blocks.length ? [{ type: "text", text }, ...blocks] : text;
-    this.write({ type: "user", message: { role: "user", content }, uuid: uuid.toLowerCase() });
+    const message = { type: "user", message: { role: "user", content }, uuid: uuid.toLowerCase() };
+    if (this.monitorInit) this.queuedMessages.push(message); else this.write(message);
   }
 
   /** Answers a permission request: run it (with its input unchanged), or not (`message` says why to claude). */
@@ -233,6 +276,7 @@ export class ClaudeHead {
 
   /** Stops the turn under way; claude ends it with an error result and the session goes on. */
   interrupt(): string {
+    this.queuedMessages = [];
     const requestId = `interrupt-${randomUUID()}`;
     this.write({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } });
     return requestId;
@@ -240,6 +284,8 @@ export class ClaudeHead {
 
   /** Closes stdin: claude finishes what it is doing, then exits (going to sleep). */
   finish() {
+    if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
+    this.queuedMessages = [];
     this.expected = true;
     if (this.closed || !this.process) return;
     this.closed = true;
@@ -248,6 +294,8 @@ export class ClaudeHead {
 
   /** Ends the process and its whole tree now. */
   async terminate(graceMs = 1_500): Promise<TerminateResult> {
+    if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
+    this.queuedMessages = [];
     this.expected = true;
     this.closed = true;
     if (!this.process) return { killed: [], forced: false };
