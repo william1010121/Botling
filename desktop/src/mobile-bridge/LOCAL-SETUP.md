@@ -99,9 +99,11 @@ existing mobile feature contract; do not invent those features during this accep
 
 ## Preparation verification status
 
-This addition is local preparation, not mobile acceptance. Only syntax/JSON/diff static checks
-were run while Rust owns the sole build/test slot. No real certificate/config was supplied or
-validated. Before relying on the new preflight tool, allocate a small offline behavior check with
-a disposable certificate/config: valid case, wrong SAN/key, expired certificate, public/missing
-bind address, unsafe permissions, expired/missing Main grant, and missing assets. It requires no
-listener, app launch, dependency install, full build, or package. Production code is unchanged.
+This addition is local preparation, not mobile acceptance. On 2026-10-28 the allocated
+offline behavior check passed all 10/10 disposable certificate/config cases in 0.73 seconds:
+valid input, wrong SAN, wrong key, expired certificate, public bind address, missing bind
+address, unsafe permissions, expired Main grant, missing Main grant, and missing assets.
+Syntax/JSON/diff static checks also passed. These results are reused for this cumulative
+candidate; they do not validate a real endpoint, certificate/config, or physical phone.
+No listener, app launch, live token issuance, or production profile change was required.
+Phone DNS/TLS trust, device behavior, and live bridge/core acceptance remain unverified.
