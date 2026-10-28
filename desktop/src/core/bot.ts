@@ -99,7 +99,9 @@ import {
 } from "./routines";
 import { codexWorkerDefaults } from "./settings";
 import { PAGE_COMPONENT, previewCards } from "./page-preview";
-import { tokenLedger } from "./token-flow-ledger";
+import { tokenLedger, type MeteredTurn } from "./token-flow-ledger";
+import { tokenFlowContexts } from "./token-flow-context";
+import { meteredTask } from "./token-flow-task";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
@@ -2535,6 +2537,7 @@ export class Bot {
 
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
+    if (item.kind === "measurement") { this.recordMeasurement(item.measurement, item.provider); return; }
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
     if (item.kind === "connectionTrouble") {
@@ -2582,12 +2585,7 @@ export class Bot {
     }
     if (item.kind === "controlResponse") return;
     if (item.kind === "usage") {
-      if (item.measurement && this.engine === "codex") {
-        // Legacy task cards hold bare worker IDs, not a stable head/turn identity.
-        // Preserve unknown task ownership rather than borrowing a same-named/cross-head link.
-        tokenLedger(join(this.owner.profile.storeDir, "token-flow-turns.jsonl")).record({ ...item.measurement,
-          botId: this.owner.id, head: "codex", taskId: null });
-      }
+      if (item.measurement) this.recordMeasurement(item.measurement);
       // Claude's cost is a running total for its process: this turn's is the difference.
       const spent = Math.max(0, item.totalCost - this.sessionCost);
       this.sessionCost = Math.max(this.sessionCost, item.totalCost);
@@ -2760,6 +2758,24 @@ export class Bot {
     }
   }
 
+  private measurementContexts() { return tokenFlowContexts(join(this.owner.profile.storeDir, "token-flow-contexts.json")); }
+  private recordMeasurement(measurement: Omit<MeteredTurn, "botId" | "head" | "taskId">, provider?: "claude" | "codex") {
+    if (this.engine !== "claude" && this.engine !== "codex") return;
+    const turn = this.turn?.head === this.head && this.turn?.open && this.turn?.sent ? this.turn : null;
+    const base = turn ? this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null,
+      handoffID: turn.handoffId, reporting: turn.ended }) : undefined;
+    const chain: string[] = [];
+    let worker = measurement.workerId;
+    while (worker && !chain.includes(worker)) { chain.push(worker); worker = this.subagents.get(worker)?.parentID ?? null; }
+    const conflict = new Set(this.partner?.subagents.list.map(s => s.id) ?? []);
+    const binding = chain.map(id => this.measurementContexts().get(this.engine,id)).find(Boolean);
+    const taskId = binding?.taskId ?? meteredTask(this.tasks.tasks, this.engine, chain, conflict, base?.id);
+    const appTurnId = measurement.workerId ? binding?.appTurnId : turn?.id;
+    const attribution = taskId ? "task" : appTurnId ? "chat" : "unresolved";
+    tokenLedger(join(this.owner.profile.storeDir, "token-flow-turns.jsonl")).record({ ...measurement,
+      accountingVersion: 2, attribution, ...(appTurnId ? { appTurnId } : {}), botId: this.owner.id, head: provider ?? this.engine, taskId });
+  }
+
   /** The turn's first words or tool claim its task card; a tool makes it real work. */
   private noteWork(turn: Turn, tool: boolean) {
     if (turn.origin !== "user" || !turn.userId) return;
@@ -2779,9 +2795,8 @@ export class Bot {
 
   private linkSubagent(turn: Turn, subagentId: string) {
     const base = this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null, handoffID: turn.handoffId, reporting: turn.ended });
-    if (!base) return;
-    this.tasks.link(subagentId, base.id, toSwiftDate());
-    this.saveTasks();
+    if (base) { this.tasks.link(subagentId, base.id, toSwiftDate()); this.saveTasks(); }
+    if (this.engine !== "agy") this.measurementContexts().bind(this.engine, subagentId, { taskId: base?.id ?? null, appTurnId: turn.id });
   }
 
   /** Subagent bookkeeping (subagents.json). True when the item was the subagent's own (not the turn's). */
@@ -2990,6 +3005,11 @@ export class Bot {
         runningSubagents: new Set(this.subagents.running.map((subagent) => subagent.id)),
       }, parsed.tasks, toSwiftDate());
       if (touched[0]) this.owner.headTask.set(this.engine, touched[0]);
+      if (touched.length === 1 && this.engine !== "agy" && shownTasks(this.tasks.tasks).some(c => c.id === touched[0])) {
+        const ledger=tokenLedger(join(this.owner.profile.storeDir, "token-flow-turns.jsonl"));
+        // A Codex-owned dispatch can run the existing Claude component-editor role.
+        for (const provider of ["claude","codex"] as const) ledger.linkTurn(this.owner.id, provider, turn.id, touched[0]);
+      }
       this.saveTasks();
     }
     this.emit({

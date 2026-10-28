@@ -22,7 +22,8 @@ it("defaults to bot-wide saved history, collapses workers into task allocation g
   try {
     await act(async () => root.render(createElement(TokenFlow, { client, bot, bots: [bot], tasks: [] })));
     expect(host.querySelector(".tf-source button[aria-pressed=true]")?.textContent).toContain("Measured");
-    expect(host.querySelector('.tf-purpose-summary [data-purpose="execution"]')?.textContent).toContain("—");
+    expect(host.querySelector(".tf-purpose-summary")).toBeNull();
+    expect(host.querySelector(".tf-topology-root")?.textContent).toContain("No measured usage yet");
     await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".tf-source button")].find(button => button.textContent?.includes("Legacy"))!.click());
     expect(host.querySelector<HTMLSelectElement>('[aria-label="History period"]')!.value).toBe("all");
     expect(host.querySelector('.tf-purpose-summary [data-purpose="unknown"]')?.textContent).toContain("54K");

@@ -12,6 +12,7 @@ import { imageMediaType } from "../attachments";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import { childEnvironment } from "./runner";
 import { cliStartError, resolveExecutable } from "../process/executable";
+import { ClaudeTokenFlowMeter } from "../token-flow-claude";
 import { parseLine, type StreamItem } from "./stream";
 
 export interface HeadConfig {
@@ -180,7 +181,10 @@ export class ClaudeHead {
     }
   }
 
+  private flowMeter?: ClaudeTokenFlowMeter;
   private line(line: string) {
+    this.flowMeter ??= new ClaudeTokenFlowMeter(this.config.sessionId);
+    const measurements = this.flowMeter.observe(line);
     for (const item of parseLine(line)) {
       if (item.kind === "unsupportedRequest") {
         // A request the app does not handle gets an error at once, so claude does not wait.
@@ -189,6 +193,7 @@ export class ClaudeHead {
       }
       this.handlers.onItem(item);
     }
+    for (const measurement of measurements) this.handlers.onItem({ kind: "measurement", provider: "claude", measurement });
   }
 
   private write(value: unknown) {

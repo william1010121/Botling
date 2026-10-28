@@ -367,7 +367,16 @@ export class CodexSession {
       if ((!activeTurn || !suppliedTurn || activeTurn === suppliedTurn) && ((params.threadId === this.threadId && (this.turn || method === "thread/tokenUsage/updated")) || (worker && (worker.active || method === "thread/tokenUsage/updated")))) this.usageMeter.observe(method, params);
     }
     if (method && value.id !== undefined) return this.serverRequest(method, value.id, params);
-    if (method) return this.notification(method, params);
+    if (method) {
+      const out=this.notification(method, params);
+      if(method === "thread/tokenUsage/updated" && typeof params.threadId === "string") {
+        const worker=[...this.workers.values()].find(w=>w.thread===params.threadId&&!w.role);
+        const snapshot=this.usageMeter.snapshot(params.threadId);
+        if(snapshot && (!params.turnId || params.turnId===snapshot.turnId)) out.push(this.item({kind:"measurement",measurement:{...snapshot,
+          workerId:worker?.id??null,run:worker?.run??null,parentThreadId:worker?this.threadId:null}}));
+      }
+      return out;
+    }
     if (typeof value.id === "number") {
       const call = this.calls.get(value.id);
       if (!call) return [];
@@ -739,6 +748,8 @@ export class CodexSession {
     const measured = this.threadId && current.id ? this.usageMeter.finish(this.threadId, current.id) : null;
     if (totalTokens(used) > 0 || measured) out.push(this.item({ kind: "usage", totalCost: 0, tokens: used,
       ...(measured ? { measurement: { ...measured, workerId: null, run: null, parentThreadId: null } } : {}) }));
+    const gap = this.usageMeter.takeMissing();
+    if (gap) out.push(this.item({ kind: "measurement", measurement: { ...gap, workerId: null, run: null, parentThreadId: null } }));
     const final = current.said.findLast((said) => said.phase !== "commentary")?.text.trim() ?? "";
     switch (finished.status) {
       case "interrupted":
@@ -1128,6 +1139,10 @@ export class CodexSession {
   componentEditorItem(task: string, run: number, item: StreamItem): CodexOutput[] {
     const worker = this.workers.get(task);
     if (!worker || worker.role !== "component-editor" || worker.run !== run || worker.cancelled || this.stopped) return [];
+    if (item.kind === "measurement") return [this.item({ ...item, provider: "claude", measurement: {
+      ...item.measurement, workerId: item.measurement.workerId ? `${task}:${item.measurement.workerId}` : task,
+      run, parentThreadId: item.measurement.parentThreadId ?? this.threadId,
+    } })];
     if (item.kind === "usage") {
       this.editorCost += Math.max(0, item.totalCost - (worker.editorCost ?? 0));
       worker.editorCost = Math.max(worker.editorCost ?? 0, item.totalCost);
@@ -1337,8 +1352,11 @@ export class CodexSession {
     const used = minusTokens(now, worker.tokensAtRunStart ?? noTokens());
     worker.tokensAtRunStart = now;
     const measured = worker.thread && worker.turnId ? this.usageMeter.finish(worker.thread, worker.turnId) : null;
-    return totalTokens(used) > 0 || measured ? [this.item({ kind: "usage", totalCost: 0, tokens: used,
+    const gap = this.usageMeter.takeMissing();
+    const out: CodexOutput[] = totalTokens(used) > 0 || measured ? [this.item({ kind: "usage", totalCost: 0, tokens: used,
       ...(measured ? { measurement: { ...measured, workerId: worker.id, run: worker.run, parentThreadId: this.threadId } } : {}) })] : [];
+    if (gap) out.push(this.item({ kind: "measurement", measurement: { ...gap, workerId: worker.id, run: worker.run, parentThreadId: this.threadId } }));
+    return out;
   }
 
   private failWorker(task: string, report: string): CodexOutput[] {

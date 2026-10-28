@@ -120,3 +120,55 @@
 [data-purpose=unknown]{--purpose:var(--faint)}
 .tf-purpose-summary [data-purpose=unknown] i,.tf-edges [data-purpose=unknown],.tf-ring-value[data-purpose=unknown]{--purpose:var(--faint)}
 @container (max-width:500px){.tf-purpose-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.tf-contributors{grid-template-columns:1fr}}
+
+/* Prospective accounting topology: fixed semantic columns, constant relationship widths. */
+.tf-topology { margin-top: 18px; }
+.tf-topology-tools { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+.tf-topology-tools>div { display:flex; gap:6px; flex-wrap:wrap; }
+.tf-topology-tools button { border:1px solid var(--line,#343943); background:var(--panel,#20242b); color:inherit; border-radius:6px; padding:6px 10px; cursor:pointer; }
+.tf-topology-note { font-size:12px; color:var(--muted); line-height:1.5; max-width:850px; }
+.tf-topology-viewport { width:100%; overflow:auto; border:1px solid var(--line,#343943); border-radius:14px; max-height:720px; background:radial-gradient(circle, #7c84951c 1px, transparent 1px) 0 0/20px 20px; }
+.tf-topology-stage { position:relative; min-width:1010px; }
+.tf-topology-label { position:absolute; top:20px; font-size:10px; color:var(--muted); letter-spacing:1.5px; }
+.tf-topology-lines { position:absolute; top:0; left:0; pointer-events:none; overflow:visible; }
+.tf-topology-lines path { fill:none; stroke:var(--muted,#8d98ae); stroke-width:2; opacity:.5; }
+.tf-topology-lines path[data-related=false] { opacity:.08; }
+.tf-topology [data-purpose=execution] { --flow-color:#77bbd7; }
+.tf-topology [data-purpose=communication] { --flow-color:#a8a0e5; }
+.tf-topology [data-purpose=mixed] { --flow-color:#d6b878; }
+.tf-topology [data-purpose=unknown] { --flow-color:#9ca7b9; }
+.tf-topology-lines path[data-purpose] { stroke:var(--flow-color); }
+.tf-topology-root,.tf-topology-group,.tf-topology-activity { position:absolute; box-sizing:border-box; border:1px solid var(--line,#343943); border-radius:12px; background:var(--panel,#20242b); color:var(--text,#e4e8ed); }
+.tf-topology-root { width:250px; padding:22px; border-top:3px solid var(--blue,#88aaff); }
+.tf-topology-root small { font-size:9px; letter-spacing:1px; color:var(--muted); }
+.tf-topology-root h3 { font-size:17px; margin:14px 0; overflow-wrap:anywhere; }
+.tf-topology-root strong { font-size:36px; display:block; font-variant-numeric:tabular-nums; }
+.tf-topology-root>span,.tf-topology-root p { display:block; font-size:12px; line-height:1.7; color:var(--muted); }
+.tf-topology-group { width:330px; overflow:hidden; }
+.tf-topology-group-title { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; width:100%; height:112px; text-align:left; background:transparent; color:inherit; border:0; padding:18px; cursor:pointer; }
+.tf-topology-group-title>span { font-weight:600; overflow-wrap:anywhere; font-size:14px; }
+.tf-topology-group-title strong { font-size:23px; font-variant-numeric:tabular-nums; }
+.tf-topology-group-title small { grid-column:1/-1; color:var(--muted); font-size:11px; }
+.tf-topology-measurement { width:100%; height:74px; display:grid; grid-template-columns:1fr auto; align-items:center; gap:4px 10px; text-align:left; background:transparent; color:inherit; padding:12px 18px; border:0; border-top:1px solid var(--line,#343943); border-left:3px solid var(--flow-color); cursor:pointer; }
+.tf-topology-measurement>span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.tf-topology-measurement small { grid-column:1/-1; font-size:10px; color:var(--muted); }
+.tf-topology-measurement[aria-pressed=true],.tf-topology-measurement:hover { background:#8899bb18; }
+.tf-topology-activity { width:244px; height:102px; display:grid; grid-template-columns:1fr auto; gap:8px; text-align:left; padding:18px; cursor:pointer; border-left:3px solid var(--flow-color); }
+.tf-topology-activity strong { font-size:23px; font-variant-numeric:tabular-nums; }
+.tf-topology-activity span { font-size:13px; align-self:center; }
+.tf-topology-activity small { color:var(--muted); grid-column:1/-1; font-size:11px; }
+.tf-topology-activity[aria-pressed=true] { outline:2px solid var(--flow-color); outline-offset:2px; }
+.tf-topology article[data-related=false],.tf-topology button[data-related=false] { opacity:.4; }
+.tf-topology-detail { margin-top:16px; border:1px solid var(--line,#343943); border-radius:12px; padding:20px; }
+.tf-topology-detail>button { float:right; background:transparent; color:inherit; border:0; font-size:22px; cursor:pointer; }
+.tf-topology-detail h3 { margin:0; }
+.tf-topology-detail p { font-size:12px; color:var(--muted); line-height:1.6; }
+.tf-topology-detail dl { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; }
+.tf-topology-detail dt { font-size:11px; color:var(--muted); }
+.tf-topology-detail dd { margin:8px 0; font-size:18px; }
+.tf-evidence-id { overflow-wrap:anywhere; }
+.tf-coverage-note { padding:16px; font-size:13px; line-height:1.6; border:1px solid var(--line,#343943); border-radius:10px; }
+@media(max-width:600px) { .tf-topology-detail dl { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.tf-topology { --flow-color:var(--blue,#88aaff); }
+.tf-topology-group { border-top:2px solid #798cb0; }
+.tf-topology-group-title>span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }

@@ -13,6 +13,8 @@ interface Capture { threadId: string; turnId: string; startedAt: number; before:
 /** Retains only bounded metadata for active turns. Fresh threads start at zero; resumed threads
  * require a baseline notification. Missing baseline stays unmetered, never uses lifetime totals. */
 export class TokenFlowMeter {
+  private missing: TurnMeasurement | null = null;
+  takeMissing() { const value = this.missing; this.missing = null; return value; }
   private baselines = new Map<string, TokenUsage>();
   private active = new Map<string, Capture>();
   fresh(thread: string) { if (this.baselines.size >= 1024) this.baselines.delete(this.baselines.keys().next().value!); this.baselines.set(thread, noTokens()); }
@@ -34,7 +36,7 @@ export class TokenFlowMeter {
     if (current && typeof params.turnId === "string" && params.turnId !== current.turnId) return;
     if (method === "thread/tokenUsage/updated" && params.tokenUsage?.total) {
       const raw = params.tokenUsage.total;
-      if (![raw.inputTokens,raw.outputTokens,raw.cachedInputTokens ?? 0].every(x=>Number.isSafeInteger(x) && x>=0) || (raw.cachedInputTokens ?? 0)>raw.inputTokens) return;
+      if (![raw.inputTokens,raw.outputTokens,raw.cachedInputTokens ?? 0,raw.cacheWriteInputTokens ?? 0].every(x=>Number.isSafeInteger(x) && x>=0) || (raw.cachedInputTokens ?? 0)>raw.inputTokens) return;
       const tokens = codexTokens(raw);
       if (current) current.after = tokens;
       else {
@@ -47,16 +49,29 @@ export class TokenFlowMeter {
       if (item) { const kind=activityKind(item); if(kind) current.activities.add(kind); }
     }
   }
+  /** A crash must not erase already observed usage. Partial snapshots use the same final
+   * identity; the durable ledger replaces them rather than adding them to the completion. */
+  snapshot(thread: string, at = Date.now()): TurnMeasurement | null {
+    const current=this.active.get(thread);
+    if(!current) return null;
+    const tokens=current.before&&current.after?minusTokens(current.after,current.before):null;
+    const known=tokens&&Object.values(tokens).every(x=>Number.isSafeInteger(x)&&x>=0);
+    return {threadId:thread,turnId:current.turnId,startedAt:current.startedAt,endedAt:at,
+      source:"provider-turn",scope:"exclusive",tokens:known?tokens:noTokens(),
+      ...(known?{}:{missingUsage:true}),activities:[...current.activities].sort(),complete:false};
+  }
   coordination(thread: string) { this.active.get(thread)?.activities.add("coordination"); }
   finish(thread: string, turn: string, at = Date.now()): TurnMeasurement | null {
+    this.missing = null;
     const current = this.active.get(thread);
     if (!current || current.turnId !== turn) return null;
+    const gap = (): null => { this.missing = {threadId:thread,turnId:turn,startedAt:current.startedAt,endedAt:at,tokens:noTokens(),activities:[...current.activities].sort(),complete:false,missingUsage:true,source:"provider-turn",scope:"exclusive"}; return null; };
     this.active.delete(thread);
     if(current.after) this.baselines.set(thread,current.after);
     else this.baselines.delete(thread); // Missing end usage breaks the chain, including zero-based fresh threads.
-    if(!current.before || !current.after) return null;
+    if(!current.before || !current.after) return gap();
     const tokens=minusTokens(current.after,current.before);
-    if(!Object.values(tokens).every(x=>Number.isSafeInteger(x)&&x>=0)) return null;
+    if(!Object.values(tokens).every(x=>Number.isSafeInteger(x)&&x>=0)) return gap();
     if(this.baselines.size>1024) this.baselines.delete(this.baselines.keys().next().value!);
     return {threadId:thread,turnId:turn,startedAt:current.startedAt,endedAt:at,tokens,activities:[...current.activities].sort(),complete:current.observedStart,source:"provider-turn",scope:"exclusive"};
   }

@@ -10,7 +10,13 @@ export const MeteredTurn = z.strictObject({
   botId: identity, head: z.enum(["codex", "claude"]), threadId: identity, turnId: identity,
   workerId: identity.nullable(), run: count.nullable(), parentThreadId: identity.nullable(), taskId: identity.nullable(),
   startedAt: z.number().nonnegative(), endedAt: z.number().nonnegative(),
-  source: z.literal("provider-turn"), scope: z.literal("exclusive"),
+  source: z.enum(["provider-turn", "provider-message"]),
+  appTurnId: identity.optional(),
+  accountingVersion: z.literal(2).optional(),
+  attribution: z.enum(["task", "chat", "unresolved"]).optional(),
+  missingUsage: z.boolean().optional(),
+  conflicted: z.boolean().optional(),
+  scope: z.literal("exclusive"),
   tokens: z.strictObject({ input: count, output: count, cacheRead: count, cacheWrite: count }),
   activities: z.array(z.enum(["coordination", "execution", "unclassified"])).max(3),
   complete: z.boolean(),
@@ -50,13 +56,43 @@ export class TokenFlowLedger {
     if (!parsed.success) return false;
     const r = parsed.data, key = meteredKey(r), previous = this.records.get(key);
     if (previous) {
+      // Attribution is sticky across replay and restart. A later observer cannot steal a record.
+      r.taskId = previous.taskId;
+      r.attribution = previous.attribution;
+      r.accountingVersion = previous.accountingVersion;
+      r.appTurnId = previous.appTurnId ?? r.appTurnId;
+      r.parentThreadId = previous.parentThreadId ?? r.parentThreadId;
       const evidence = (record: MeteredTurn) => JSON.stringify({ ...record, startedAt: 0, endedAt: 0 });
       if (evidence(previous) === evidence(r)) return true;
+      if (!previous.conflicted && previous.source === r.source
+        && r.workerId === previous.workerId && r.parentThreadId === previous.parentThreadId) {
+        const keys = ["input", "output", "cacheRead", "cacheWrite"] as const;
+        // Both adapters emit snapshots of the same identified unit, never disjoint deltas.
+        if (keys.every(k => r.tokens[k] <= previous.tokens[k]) && (!r.complete || previous.complete) && r.activities.every(a => previous.activities.includes(a)) && !previous.missingUsage) return true;
+        if (keys.every(k => r.tokens[k] >= previous.tokens[k]) && !previous.complete) {
+          r.startedAt = previous.startedAt;
+          r.activities = [...new Set([...previous.activities, ...r.activities])].sort();
+          return this.append(r);
+        }
+      }
       // Conflicting replays cannot replace previously attributed evidence with a confident split.
-      r.complete = false; r.activities = ["unclassified"];
+      r.complete = false; r.conflicted = true; r.activities = ["unclassified"];
+      r.workerId = previous.workerId; r.run = previous.run; r.parentThreadId = previous.parentThreadId;
       // Keep one actually observed measurement, never manufacture a component-wise maximum.
+      r.missingUsage = previous.missingUsage;
       r.tokens = previous.tokens; r.startedAt = previous.startedAt; r.endedAt = previous.endedAt;
     }
+    return this.append(r);
+  }
+  /** Only an explicit app turn/task relationship can fill a previously unassigned new record. */
+  linkTurn(botId: string, head: MeteredTurn["head"], appTurnId: string, taskId: string) {
+    if (this.unreadable || this.limited || !identity.safeParse(taskId).success) return;
+    for (const r of this.records.values()) if (r.botId === botId && r.head === head && r.appTurnId === appTurnId && !r.taskId) {
+      this.append({ ...r, taskId, attribution: "task" });
+    }
+  }
+  private append(r: MeteredTurn): boolean {
+    const key = meteredKey(r);
     const line = JSON.stringify(r) + "\n";
     if (this.bytes + Buffer.byteLength(line) > LIMIT) { this.limited = true; return false; }
     try {
@@ -68,7 +104,7 @@ export class TokenFlowLedger {
   }
   totals(botId: string) {
     const days = new Map<string, TokenUsage>();
-    for (const r of this.records.values()) if (r.botId === botId) {
+    for (const r of this.records.values()) if (r.botId === botId && !r.missingUsage) {
       const day = new Date(r.endedAt).toISOString().slice(0, 10);
       days.set(day, plusTokens(days.get(day) ?? noTokens(), r.tokens));
     }
