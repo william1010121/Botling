@@ -1,247 +1,136 @@
-// Temporary synthetic stores only; child processes transpile source in memory, no app build.
-import { afterEach, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, statSync, copyFileSync, existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+// Real journal and checkpoint files: no app/profile, live CLI, or mocked worker.
+import { afterEach, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, statSync, readdirSync, mkdirSync, renameSync, existsSync } from "node:fs";
+import { tempDir } from "../helpers";
+import { join } from "node:path";
 import { BotStore } from "../../src/core/store/bot-store";
-import { SubagentBook, readSubagent } from "../../src/core/subagents";
-import { JobStore } from "../../src/core/durable/jobs";
+import { readHistory } from "../../src/core/durable/history-journal";
 
-const roots: string[] = [];
-const stores: BotStore[] = [];
-afterEach(() => {
-  vi.restoreAllMocks();
-  for (const store of stores.splice(0)) { try { store.loadList("subagents.json"); } catch { /* corrupt-base fixture; load still releases cache */ } }
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-});
-const fixture = () => { const root = mkdtempSync(join(tmpdir(), "worker-progress-")); roots.push(root); const store = new BotStore(root); stores.push(store); return { root, store }; };
-const worker = (id = "worker") => ({ id, status: "running", description: "Worker", prompt: "Keep prompt", startedAt: 1, background: false,
-  execution: { run: 1, ownerSessionId: "owner", threadId: "thread", turnId: "turn" },
-  steps: [] as { id: string; kind: string; title: string; done: boolean; failed: boolean }[],
-  previousRuns: [{ prompt: "Earlier", status: "completed", startedAt: 0, result: "complete historical report", steps: [] }], unknownField: { keep: true } });
-const step = (title: string) => ({ id: title, kind: "text", title, done: true, failed: false });
-
-it("recovers every worker's progress and history, in the compatible checkpoint without modifying task/queue files", () => {
-  const { root, store } = fixture(); const list = [worker("a"), worker("b")];
-  store.saveList("subagents.json", list); store.saveList("tasks.json", [{ id: "task", subagentIDs: ["a", "b"] }]);
-  const jobs = new JobStore(join(root, "jobs.json")); const job = jobs.create("request", "Task");
-  const base = readFileSync(join(root, "subagents.json")); const tasks = readFileSync(join(root, "tasks.json")); const queue = readFileSync(join(root, "jobs.json"));
-  list[0].steps.push(step("first")); store.saveWorkerProgress(list);
-  list[1].steps.push(step("second")); store.saveWorkerProgress(list);
-  expect(new BotStore(root).loadList("subagents.json")).toEqual(list);
-  expect(readFileSync(join(root, "subagents.json"))).not.toEqual(base);
-  expect(JSON.parse(readFileSync(join(root, "subagents.json"), "utf8"))).toEqual(list);
-  expect(readFileSync(join(root, "tasks.json"))).toEqual(tasks);
-  expect(readFileSync(join(root, "jobs.json"))).toEqual(queue);
-  expect(jobs.create("request", "Task").id).toBe(job.id); expect(jobs.list()).toHaveLength(1);
-  expect(statSync(join(root, "subagents.json")).mode & 0o777).toBe(0o600);
-});
-
-it.each(["completed", "failed", "stopped"])("a %s checkpoint retains concurrent progress, including for other running workers", status => {
-  const { root, store } = fixture(); const list = [worker("a"), worker("b")];
-  store.saveList("subagents.json", list); list[0].steps.push(step("old")); store.saveWorkerProgress(list);
-  const stale = "{malformed stale overlay";
-  writeFileSync(join(root, "subagents-progress.json"), stale);
-  list[0].status = status; list[0].steps.push(step("final")); list[1].steps.push(step("other"));
-  store.saveList("subagents.json", list);
-  // Leftover sidecar bytes never participate in authoritative checkpoint recovery.
-  expect(readFileSync(join(root, "subagents-progress.json"))).toEqual(Buffer.from(stale));
-  expect(new BotStore(root).loadList("subagents.json")).toEqual(list);
-  list[1].steps.push(step("new")); store.saveWorkerProgress(list);
-  expect(new BotStore(root).loadList("subagents.json")).toEqual(list);
-});
-
-it.each(["{malformed", JSON.stringify({ version: 1, rows: null }), JSON.stringify({ version: 1, rows: [{ status: "running" }] })])("ignores corrupt/non-authoritative sidecar %s and preserves terminal history", sidecar => {
-  const { root, store } = fixture(); const list = [worker()]; list[0].status = "completed";
-  store.saveList("subagents.json", list);
-  const path = join(root, "subagents-progress.json"); writeFileSync(path, sidecar);
-  const recovered = new BotStore(root).loadList("subagents.json"); expect(recovered).toEqual(list);
-  store.saveList("subagents.json", recovered);
-  expect(JSON.parse(readFileSync(join(root, "subagents.json"), "utf8"))).toEqual(list);
-  expect(readFileSync(path, "utf8")).toBe(sidecar);
-});
-
-it("reports a corrupt authoritative base without replacing it or trusting a sidecar", () => {
-  const { root, store } = fixture(); const base = join(root, "subagents.json");
-  writeFileSync(base, "{corrupt base"); writeFileSync(join(root, "subagents-progress.json"), "{corrupt sidecar");
-  expect(() => store.loadList("subagents.json")).toThrow("not valid JSON");
-  expect(readFileSync(base, "utf8")).toBe("{corrupt base");
-});
-
-it("invalidates cached history for explicit edits and preserves base-only copies used by legacy readers/importers", () => {
-  const { root, store } = fixture(); const list = [worker()]; list[0].status = "completed";
-  store.saveList("subagents.json", list);
-  list[0].previousRuns[0].result = "edited complete report";
-  store.saveList("subagents.json", list); store.saveWorkerProgress(list);
-  const copied = fixture(); copyFileSync(join(root, "subagents.json"), join(copied.root, "subagents.json"));
-  expect(new BotStore(copied.root).loadList("subagents.json")).toEqual(list);
-  expect(existsSync(join(root, "subagents-progress.json"))).toBe(false);
-});
-
-it.each(["progress", "terminal", "interrupted-progress", "interrupted-terminal"])("survives SIGKILL at %s", boundary => {
-  const terminal = boundary === "terminal";
-  const { root } = fixture();
-  const script = `
-    const fs = require('node:fs'); const ts = require('typescript');
-    require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, esModuleInterop: true }
-    }).outputText, file);
-    const { BotStore } = require(${JSON.stringify(resolve("src/core/store/bot-store.ts"))});
-    const store = new BotStore(${JSON.stringify(root)}); const list = ${JSON.stringify([worker()])};
-    store.saveList('subagents.json', list);
-    list[0].steps.push(${JSON.stringify(step("durable evidence"))}); list[0].outputTokenCounters = { run: 123 }; store.saveWorkerProgress(list);
-    const { JobStore } = require(${JSON.stringify(resolve("src/core/durable/jobs.ts"))});
-    const jobs = new JobStore(${JSON.stringify(join(root, "jobs.json"))});
-    jobs.create('request', 'Task'); const claimed = jobs.claimNext();
-    if (${terminal}) jobs.markDelivered(claimed.id);
-    if (${boundary.startsWith("interrupted")}) {
-      // Temp contents are written and fsynced; die before the atomic rename.
-      fs.renameSync = () => process.kill(process.pid, 'SIGKILL');
-      if (${boundary === "interrupted-progress"}) { list[0].steps.push(${JSON.stringify(step("uncommitted"))}); store.saveWorkerProgress(list); }
-      else { list[0].status = 'completed'; store.saveList('subagents.json', list); }
-    }
-    if (${terminal}) { list[0].status = 'completed'; list[0].result = 'full final report'; store.saveList('subagents.json', list); }
-    process.kill(process.pid, 'SIGKILL');
-  `;
-  const child = spawnSync(process.execPath, ["-e", script], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000 });
-  expect(child.stderr).toBe(""); expect(child.signal).toBe("SIGKILL");
-  if (boundary === "progress") {
-    // Exact released .8 BotStore source, not a hand-written approximation. Restart the
-    // old writer after the crash, stopRunning/full-save, then reupgrade below.
-    const downgrade = spawnSync(process.execPath, ["-e", `
-      const fs = require('node:fs'); const ts = require('typescript');
-      require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
-        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, esModuleInterop: true }
-      }).outputText, file);
-      const file = ${JSON.stringify(resolve("src/core/store/bot-store.ts"))};
-      const source = require('node:child_process').execFileSync('git', ['show', '30b8d78eef42da4677cf1111016ffbd9fb80e3b6:desktop/src/core/store/bot-store.ts'], { encoding: 'utf8' });
-      const legacy = new (require('node:module').Module)(file, module); legacy.filename = file; legacy.paths = module.paths;
-      legacy._compile(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, esModuleInterop: true } }).outputText, file);
-      const { SubagentBook, readSubagent } = require(${JSON.stringify(resolve("src/core/subagents.ts"))});
-      const store = new legacy.exports.BotStore(${JSON.stringify(root)});
-      const book = new SubagentBook(store.loadList('subagents.json').map(readSubagent));
-      require('node:assert/strict').equal(book.list[0].steps[0].title, 'durable evidence');
-      require('node:assert/strict').equal(book.list[0].outputTokenCounters.run, 123);
-      book.stopRunning(); store.saveList('subagents.json', book.list);
-    `], { encoding: "utf8", timeout: 10_000 });
-    expect(downgrade.stderr).toBe(""); expect(downgrade.status).toBe(0);
+const fixtures: { root: string; store: BotStore }[] = [];
+afterEach(async () => {
+  for (const { root, store } of fixtures.splice(0)) {
+    await store.closeWorkerHistory();
+    rmSync(root, { recursive: true, force: true });
   }
-  const jobs = new JobStore(join(root, "jobs.json"));
-  expect(jobs.recover()).toHaveLength(terminal ? 0 : 1);
-  expect(jobs.list()[0].state).toBe(terminal ? "delivered" : "delivery_uncertain");
-  expect(jobs.claimNext()).toBeNull();
-  expect(jobs.create("request", "Task").id).toBe(jobs.list()[0].id); expect(jobs.list()).toHaveLength(1);
-  const store = new BotStore(root); const recovered = new SubagentBook(store.loadList("subagents.json").map(value => readSubagent(value)!));
-  expect(recovered.list[0].steps).toEqual([step("durable evidence")]);
-  expect(recovered.list[0].previousRuns).toEqual(worker().previousRuns);
-  expect(recovered.list[0].outputTokenCounters).toEqual({ run: 123 });
-  expect(recovered.stopRunning()).toBe(!terminal && boundary !== "progress");
-  store.saveList("subagents.json", recovered.list);
-  expect(new BotStore(root).loadList("subagents.json")[0]).toMatchObject({ status: terminal ? "completed" : "stopped", ...(terminal ? { result: "full final report" } : {}) });
 });
-
-it("bounds aggregate cache across stores, evicts older stores, and writes exact history after eviction", () => {
-  expect(BotStore.workerHistoryCacheUsage().characters).toBe(0);
-  const blob = "h".repeat(24 * 1024 * 1024);
-  const active = Array.from({ length: 3 }, (_, i) => {
-    const f = fixture(); const history = worker(`history-${i}`); history.status = "completed";
-    history.previousRuns[0].result = blob;
-    return { ...f, list: [worker(`running-${i}`), history] };
-  });
-  const perStore = JSON.stringify(active[0].list[1]).length;
-  for (const f of active) {
-    f.store.saveList("subagents.json", f.list);
-    expect(BotStore.workerHistoryCacheUsage().characters).toBeLessThanOrEqual(BotStore.workerHistoryCacheUsage().limitCharacters);
-  }
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 2, items: 2, characters: 2 * perStore });
-  // First store has been evicted. Its next progress write must reconstruct all its history.
-  active[0].list[0].steps.push(step("after eviction")); active[0].store.saveWorkerProgress(active[0].list);
-  expect(readFileSync(join(active[0].root, "subagents.json"), "utf8")).toBe(JSON.stringify(active[0].list));
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 2, items: 2, characters: 2 * perStore });
-  // Reload explicitly releases exactly this store's reservation, not other live stores.
-  active[0].store.loadList("subagents.json");
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 1, items: 1, characters: perStore });
-});
-
-it("releases terminal and idle stores, including failed terminal writes, and accounts replacement/duplicates", () => {
-  const f = fixture(); const history = worker("history"); history.status = "completed";
-  const list = [worker(), history, history];
+function fixture(seed: unknown[] = []) {
+  const root = tempDir("worker-history");
+  const file = join(root, "subagents.json"); writeFileSync(file, JSON.stringify(seed));
+  const store = new BotStore(root); store.loadList("subagents.json");
+  fixtures.push({ root, store });
+  return { root, store, file, journal: file + ".journal", disk: () => readHistory(file) };
+}
+function worker(id = "worker") {
+  return { id, status: "running", prompt: "Keep", steps: [] as any[], previousRuns: [{ status: "completed", result: "keep history", steps: [] }], unknown: { retained: true } };
+}
+it("durably commits before returning; a fresh reader recovers every record before checkpoint, then the legacy array catches up", async () => {
+  const f = fixture(), list = [worker("a"), worker("b")];
+  writeFileSync(join(f.root, "tasks.json"), '[{"id":"unrelated"}]');
   f.store.saveList("subagents.json", list);
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 1, items: 1, characters: JSON.stringify(history).length });
-  history.previousRuns[0].result = "replacement report".repeat(100);
+  list[0].steps.push({ id: "step", done: false, detail: "first" }); f.store.saveWorkerProgress(list);
+  list[0].steps[0].done = true; list[0].steps[0].detail = "final";
+  list[1].status = "completed"; f.store.saveList("subagents.json", list);
+  expect(f.disk()).toEqual(list);
+  expect(JSON.parse(readFileSync(f.file, "utf8"))).toEqual([]);
+  await f.store.flushWorkerHistory();
+  expect(JSON.parse(readFileSync(f.file, "utf8"))).toEqual(list);
+  expect(readdirSync(f.journal)).toEqual([]);
+  expect(statSync(f.file).mode & 0o777).toBe(0o600);
+  expect(readFileSync(join(f.root, "tasks.json"), "utf8")).toBe('[{"id":"unrelated"}]');
+});
+it("orders commits from competing stores and includes writes arriving during checkpoint in the next flush", async () => {
+  const f = fixture(), a = worker("a"), b = worker("b"), list = [a,b];
   f.store.saveList("subagents.json", list);
-  expect(BotStore.workerHistoryCacheUsage().characters).toBe(JSON.stringify(history).length);
-  list[0].status = "completed"; f.store.saveList("subagents.json", list);
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 0, items: 0, characters: 0 });
-  f.store.saveWorkerProgress(list);
-  expect(BotStore.workerHistoryCacheUsage().characters).toBe(0);
-  // The six retained idle stores in the review must not acquire a cache at all.
-  for (let i = 0; i < 6; i++) {
-    const idle = fixture(); idle.store.saveList("subagents.json", Array.from({ length: 12 }, (_, n) => ({ ...history, id: `idle-${n}`, result: "x".repeat(262_144) })));
-  }
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 0, items: 0, characters: 0 });
-  list[0].status = "running"; f.store.saveList("subagents.json", list);
-  expect(BotStore.workerHistoryCacheUsage().stores).toBe(1);
-  list[0].status = "stopped";
-  // Serialize failure is before disk commit, but idle memory must still be released.
-  const stringify = vi.spyOn(JSON, "stringify").mockImplementationOnce(() => { throw new Error("serialization failed"); });
-  expect(() => f.store.saveList("subagents.json", list)).toThrow("serialization failed");
-  stringify.mockRestore();
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 0, items: 0, characters: 0 });
-  f.store.saveList("subagents.json", list);
-  expect(readFileSync(join(f.root, "subagents.json"), "utf8")).toBe(JSON.stringify(list));
+  const other = new BotStore(f.root); other.loadList("subagents.json");
+  const checkpoint = f.store.flushWorkerHistory();
+  a.steps.push({ id: "first", detail: "one" }); other.saveWorkerProgress(list);
+  a.status = "completed"; b.steps.push({ id: "second", detail: "two" }); f.store.saveList("subagents.json", list);
+  await checkpoint; await other.flushWorkerHistory();
+  expect(JSON.parse(readFileSync(f.file,"utf8"))).toEqual(list);
+  expect(f.disk()).toEqual(list);
+});
+it("failed journal commits throw and do not advance accepted state; retry preserves pending and later progress", async () => {
+  const f = fixture(), list = [worker()]; f.store.saveList("subagents.json", list); await f.store.flushWorkerHistory();
+  rmSync(f.journal, {recursive:true}); writeFileSync(f.journal, "not a directory");
+  list[0].status = "completed";
+  expect(() => f.store.saveList("subagents.json", list)).toThrow();
+  expect(JSON.parse(readFileSync(f.file,"utf8"))[0].status).toBe("running");
+  rmSync(f.journal); mkdirSync(f.journal);
+  list[0].steps.push({id:"late",detail:"retained"}); f.store.saveWorkerProgress(list);
+  await f.store.flushWorkerHistory(); expect(f.disk()).toEqual(list);
+});
+it("checkpoint failure does not discard an accepted journal; explicit flush rejects and retry recovers", async () => {
+  const f = fixture(), list=[worker()]; f.store.saveList("subagents.json",list);
+  renameSync(f.file,f.file+'.saved'); mkdirSync(f.file);
+  await expect(f.store.flushWorkerHistory()).rejects.toThrow();
+  expect(readdirSync(f.journal).filter(n=>n.endsWith('.json'))).toHaveLength(1);
+  rmSync(f.file,{recursive:true}); renameSync(f.file+'.saved',f.file);
+  await f.store.flushWorkerHistory(); expect(f.disk()).toEqual(list);
+});
+it("crash after checkpoint rename but before partial journal pruning replays idempotently", async () => {
+  const f=fixture(), a=worker('a'), b=worker('b'), list=[a,b];
+  f.store.saveList('subagents.json',list);
+  a.steps.push({id:'x',text:'old'},{id:'y',text:'keep'}); f.store.saveWorkerProgress(list);
+  a.steps[1].text='new'; a.steps.splice(0,1); f.store.saveWorkerProgress(list);
+  a.previousRuns.push({status:'completed',result:'next',steps:[]}); list.reverse(); f.store.saveList('subagents.json',list);
+  const saved=readdirSync(f.journal).sort().map(name=>({name,text:readFileSync(join(f.journal,name))}));
+  await f.store.flushWorkerHistory();
+  // A committed checkpoint plus an unpruned suffix is an allowed crash image.
+  for(const item of saved.slice(1))writeFileSync(join(f.journal,item.name),item.text);
+  expect(readHistory(f.file)).toEqual(list);
+  for(const item of saved.slice(1))rmSync(join(f.journal,item.name));
+});
+it("retains unknown fields and run history, removes fields/rows, and safely handles JSON property names", async () => {
+  const a=worker('a') as any, b=worker('b'); a.extra=JSON.parse('{"__proto__":{"safe":1}}');
+  const f=fixture([a,b]); a.extra.__proto__.safe=2; delete a.prompt; a.steps.push({id:'x'});
+  f.store.commitWorkerHistory([a],new Set(['a'])); expect(f.disk()).toEqual([a]);
+  await f.store.flushWorkerHistory(); expect(JSON.parse(readFileSync(f.file,'utf8'))).toEqual([a]);
+  expect(({} as any).safe).toBeUndefined();
+});
+it("corrupt authoritative files fail closed rather than overwriting history", () => {
+  const f=fixture(); writeFileSync(f.file,'{broken');
+  expect(()=>new BotStore(f.root).loadList('subagents.json')).toThrow();
+  expect(readFileSync(f.file,'utf8')).toBe('{broken');
+  writeFileSync(f.file,'[]');
+  mkdirSync(f.journal); writeFileSync(join(f.journal,'0000000000000001.json'),'{broken');
+  expect(()=>new BotStore(f.root).loadList('subagents.json')).toThrow();
+  rmSync(join(f.journal,'0000000000000001.json'));
 });
 
-it("bounds registry metadata for many tiny active stores and clearing an evicted store is harmless", () => {
-  const count = BotStore.workerHistoryCacheUsage().limitStores;
-  const active = Array.from({ length: count + 1 }, (_, i) => {
-    const f = fixture(); const history = worker(`old-${i}`); history.status = "completed";
-    f.store.saveList("subagents.json", [worker(`active-${i}`), history]); return f;
-  });
-  const before = BotStore.workerHistoryCacheUsage(); expect(before.stores).toBe(count);
-  active[0].store.loadList("subagents.json"); expect(BotStore.workerHistoryCacheUsage()).toEqual(before);
-  active.at(-1)!.store.saveList("subagents.json", []);
-  expect(BotStore.workerHistoryCacheUsage().stores).toBe(count - 1);
+it("the production CJS/node22 bundle runs its self-contained checkpoint worker and recovers on reopen", async () => {
+  const { build } = await import("esbuild");
+  const { createRequire } = await import("node:module");
+  const { desktop } = await import("../helpers");
+  const bundled = await build({ entryPoints:[join(desktop,"src/core/store/bot-store.ts")], bundle:true, platform:"node", format:"cjs", target:"node22", write:false });
+  const module = { exports:{} as any };
+  new Function("require","module","exports",bundled.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports);
+  const f=fixture(), store=new module.exports.BotStore(f.root), list=[worker()];
+  store.loadList("subagents.json"); store.saveList("subagents.json",list);
+  await store.closeWorkerHistory();
+  expect(JSON.parse(readFileSync(f.file,"utf8"))).toEqual(list);
+  const reopened=new module.exports.BotStore(f.root); expect(reopened.loadList("subagents.json")).toEqual(list);
+  list[0].status="completed"; reopened.saveList("subagents.json",list); await reopened.closeWorkerHistory();
+  expect(readHistory(f.file)).toEqual(list);
 });
 
-it("does not keep abandoned stores alive even when their source records remain live", () => {
-  const { root } = fixture();
-  const script = `
-    const fs = require('node:fs'); const ts = require('typescript'); const assert = require('node:assert/strict');
-    require.extensions['.ts'] = (mod, file) => mod._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2023, esModuleInterop: true }
-    }).outputText, file);
-    const { BotStore } = require(${JSON.stringify(resolve("src/core/store/bot-store.ts"))});
-    (async () => {
-      let store = new BotStore(${JSON.stringify(root)});
-      const records = ${JSON.stringify([worker("active"), { ...worker("history"), status: "completed" }])};
-      store.saveList('subagents.json', records);
-      assert.equal(BotStore.workerHistoryCacheUsage().stores, 1);
-      const reference = new WeakRef(store); store = null;
-      for (let attempt = 0; attempt < 50; attempt++) {
-        await new Promise(resolve => setImmediate(resolve)); global.gc();
-        await new Promise(resolve => setImmediate(resolve));
-        if (!reference.deref()) break;
-      }
-      assert.equal(reference.deref(), undefined, 'global cache must not retain its store');
-      assert.equal(BotStore.workerHistoryCacheUsage().characters, 0);
-      assert.equal(BotStore.workerHistoryCacheUsage().stores, 0);
-      assert.equal(records[1].previousRuns[0].result, 'complete historical report');
-    })().catch(error => { console.error(error); process.exitCode = 1; });
-  `;
-  const child = spawnSync(process.execPath, ["--expose-gc", "-e", script], { encoding: "utf8", timeout: 10_000 });
-  expect(child.stderr).toBe(""); expect(child.status).toBe(0);
+it("a new run retains prior reports and steps without replaying append operations",async()=>{
+  const original=worker();original.steps.push({id:"old",output:"old output"});
+  const f=fixture([original]);const row=JSON.parse(JSON.stringify(original));
+  row.previousRuns.push({status:"completed",result:"final",steps:row.steps});row.steps=[];
+  row.status="running";row.execution={run:2,threadId:"same-thread",turnId:"new-turn"};
+  f.store.commitWorkerHistory([row],new Set([row.id]));
+  row.steps.push({id:"new",output:"new output"});f.store.saveWorkerProgress([row]);
+  expect(f.disk()).toEqual([row]);await f.store.flushWorkerHistory();
+  expect(JSON.parse(readFileSync(f.file,"utf8"))).toEqual([row]);
 });
 
-it("bounds row metadata as well as strings and stores without dropping persisted rows", () => {
-  const f = fixture(); const count = BotStore.workerHistoryCacheUsage().limitItems;
-  const list = [worker(), ...Array.from({ length: count + 1 }, (_, i) => ({ ...worker(`history-${i}`), status: "completed" }))];
-  f.store.saveList("subagents.json", list);
-  expect(BotStore.workerHistoryCacheUsage().items).toBe(count);
-  const other = fixture(); other.store.saveList("subagents.json", [worker(), { ...worker("other-history"), status: "completed" }]);
-  expect(BotStore.workerHistoryCacheUsage()).toMatchObject({ stores: 1, items: 1 });
-  list[0].steps.push(step("progress with uncached history")); f.store.saveWorkerProgress(list);
-  expect(BotStore.workerHistoryCacheUsage().items).toBe(count);
-  expect(readFileSync(join(f.root, "subagents.json"), "utf8")).toBe(JSON.stringify(list));
+it("read-only recovery does not start a checkpoint or mutate a crash journal",async()=>{
+  const root=tempDir("history-read-only"),file=join(root,"subagents.json"),row=worker();
+  writeFileSync(file,"[]");mkdirSync(file+".journal");
+  const transaction=JSON.stringify({order:[row.id],changes:[{id:row.id,patches:[{path:[],value:row}]}]});
+  const entry=join(file+".journal","0000000000000001.json");writeFileSync(entry,transaction);
+  const store=new BotStore(root);fixtures.push({root,store});
+  expect(store.loadList("subagents.json")).toEqual([row]);
+  await new Promise(resolve=>setTimeout(resolve,550));
+  expect(readFileSync(file,"utf8")).toBe("[]");expect(readFileSync(entry,"utf8")).toBe(transaction);
 });

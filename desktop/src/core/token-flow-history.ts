@@ -1,6 +1,7 @@
 // Read-only, bounded historical metadata. No CLI/session discovery, archive walk or prompt parsing.
 import { open, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { hasPendingHistory } from "./durable/history-journal";
 import type { TokenFlowHistoryView } from "../contract";
 import type { Bot } from "./bot";
 import { readSubagent, SubagentBook, type SubagentRecord } from "./subagents";
@@ -15,6 +16,9 @@ const cache = new Map<string, { stamp: string; rows: SubagentRecord[]; unreadabl
 async function savedRows(file: string): Promise<{ rows: SubagentRecord[]; unreadable: boolean }> {
   let stamp = "";
   try {
+    // The bounded metadata reader must not label a stale materialized checkpoint as current.
+    // Keep the byte/content policy: mark this head unknown until durable checkpointing finishes.
+    if (await hasPendingHistory(file)) return { rows: [], unreadable: true };
     const info = await stat(file);
     if (!info.isFile() || info.size > LIMIT_BYTES) return { rows: [], unreadable: true };
     stamp = `${info.mtimeMs}:${info.size}`;
@@ -27,6 +31,7 @@ async function savedRows(file: string): Promise<{ rows: SubagentRecord[]; unread
       if (bytesRead > LIMIT_BYTES) return { rows: [], unreadable: true };
       value = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
     } finally { await handle.close(); }
+    if (await hasPendingHistory(file)) return { rows: [], unreadable: true };
     if (!Array.isArray(value)) throw new Error("Invalid saved worker list");
     const rows = value.flatMap(raw => {
       if (!raw || typeof raw !== "object") return [];

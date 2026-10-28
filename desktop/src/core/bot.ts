@@ -1084,7 +1084,7 @@ export class Bot {
     for (const bot of [this as Bot, this.partner].filter((candidate): candidate is Bot => !!candidate)) {
       if (!bot.subagents.get(id)) continue;
       const changed = bot.subagents.settle(id, settled);
-      if (changed) { bot.saveSubagents(); this.rowsChanged(true); }
+      if (changed) { bot.saveSubagents(false, bot.subagents.get(id)); this.rowsChanged(true); }
       return { changed };
     }
     throw new ContractError("not_found", "No such subagent.");
@@ -1245,12 +1245,19 @@ export class Bot {
     return { changed };
   }
 
-  private saveSubagents(progress = false) {
+  private readonly dirtySubagents = new Set<string>();
+  private allSubagentsDirty = false;
+
+  private saveSubagents(progress = false, changed?: SubagentRecord) {
     if (this.readOnly) return;
     this.subagentsDirty = true;
+    if (changed) {
+      this.dirtySubagents.add(changed.id);
+      if (changed.parentID) this.dirtySubagents.add(changed.parentID);
+    } else this.allSubagentsDirty = true;
     if (!progress) this.subagentsCheckpointRequired = true;
     // Only running text/token/runtime progress may lag disk by 500 ms. Starts, tool events,
-    // execution identity, terminal states and explicit user changes remain synchronous.
+    // execution identity, terminal states and explicit user changes durably journal before returning.
     if (progress && !this.shuttingDown) this.scheduleSubagentSave(500);
     else this.flushSubagents();
   }
@@ -1271,8 +1278,11 @@ export class Bot {
     if (this.readOnly || !this.subagentsDirty) return;
     if (!progress) this.subagentsCheckpointRequired = true;
     try {
-      if (progress && !this.subagentsCheckpointRequired) this.store.saveWorkerProgress(this.subagents.list);
-      else this.store.saveList("subagents.json", this.subagents.list);
+      const changed = this.allSubagentsDirty ? undefined : this.dirtySubagents;
+      if (progress && !this.subagentsCheckpointRequired) this.store.saveWorkerProgress(this.subagents.list, changed);
+      else this.store.commitWorkerHistory(this.subagents.list, changed);
+      this.dirtySubagents.clear();
+      this.allSubagentsDirty = false;
       this.subagentsCheckpointRequired = false;
       this.subagentsDirty = false;
       this.subagentSaveRetryMs = 1_000;
@@ -2902,7 +2912,11 @@ export class Bot {
         return item.parent !== null;
       case "toolResult": {
         const wasRunning = this.subagents.get(item.id)?.status === "running";
-        if (this.subagents.toolResult(item)) this.subagentChanged(this.subagents.get(item.parent ?? item.id));
+        if (this.subagents.toolResult(item)) {
+          // A nested Agent result changes both the parent's tool step and the child's record.
+          this.dirtySubagents.add(item.id);
+          this.subagentChanged(this.subagents.get(item.parent ?? item.id));
+        }
         if (wasRunning && this.subagents.get(item.id)?.status !== "running") this.subagentEnded(item.id);
         // The call that started it (not a SendMessage call's result) came back with claude's connection error.
         if (this.subagents.get(item.id)?.id === item.id) this.noteSubagentEnd(item.id, item.output);
@@ -2953,10 +2967,10 @@ export class Bot {
   /** It changed: saved, its view sent, and the step that sent it (status, count) drawn again. */
   private subagentChanged(subagent: SubagentRecord | undefined, progress = false) {
     if (!subagent) return;
-    this.saveSubagents(progress && subagent.status === "running");
+    this.saveSubagents(progress && subagent.status === "running", subagent);
     this.rowsChanged();
     this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) });
-    // Status/metadata are stored in subagents.json; publish the task projection without rewriting cards.
+    // Status/metadata are durably journaled; publish the task projection without rewriting cards.
     this.emit({ type: "tasks.updated", botId: this.id, tasks: this.owner.taskViews() });
     const top = subagent.parentID ? this.subagents.get(subagent.parentID) ?? subagent : subagent;
     if (this.turn?.steps.some((step) => step.id === top.id)) this.emitSteps(this.turn);
@@ -5046,14 +5060,16 @@ export class Bot {
     return entries;
   }
 
-  flushForSwap() {
+  async flushForSwap() {
     this.persist();
     this.partner?.persist();
-    for (const bot of [this, ...(this.partner ? [this.partner] : [])]) {
-      try { bot.flushSubagents(); }
-      catch (error) { bot.log(`subagents save failed during core swap: ${String(error)}`); }
-      if (bot.session.started) bot.store.saveHead(bot.session);
-    }
+    const saved = await Promise.allSettled([this, ...(this.partner ? [this.partner] : [])].map(async bot => {
+      try { bot.flushSubagents(); if (!bot.readOnly) await bot.store.flushWorkerHistory(); }
+      catch (error) { bot.log(`subagents save failed during core swap: ${String(error)}`); throw error; }
+      finally { if (bot.session.started) bot.store.saveHead(bot.session); }
+    }));
+    const failed = saved.find(result => result.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
   }
 
   /** At the new core's start: go on in the sessions the old core handed over (`--resume`), then what waited. */
@@ -5084,7 +5100,7 @@ export class Bot {
     // 1.x waits for each awake bot's tidy at quit with no time limit (`putEveryoneToSleep`).
     const tidyMs = tidy ? this.options.quitTidyMs ?? Number.POSITIVE_INFINITY : 0;
     if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.claimHold = null; }
-    const partner = this.partner ? this.partner.shutdown({ tidy }) : Promise.resolve();
+    const partner = (this.partner ? this.partner.shutdown({ tidy }) : Promise.resolve()).then(() => undefined, error => error);
     this.clearIdle();
     this.shuttingDown = true;
     // Messages still waiting never reached claude.
@@ -5102,11 +5118,14 @@ export class Bot {
       const ended = await Promise.race([last.exited.then(() => true), sleep(1_000).then(() => false)]);
       if (!ended) await last.terminate(1_000);
     }
-    await partner;
+    const partnerError = await partner;
     try {
-      try { this.flushSubagents(); }
-      catch (error) { this.log(`subagents save failed during shutdown: ${String(error)}`); }
+      let historyError: unknown;
+      try { this.flushSubagents(); if (!this.readOnly) await this.store.closeWorkerHistory(); }
+      catch (error) { historyError = error; this.log(`subagents save failed during shutdown: ${String(error)}`); }
       this.persist();
+      if (historyError) throw historyError;
+      if (partnerError) throw partnerError;
     } finally {
       this.options.lock?.release();
     }

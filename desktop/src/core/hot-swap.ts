@@ -48,7 +48,7 @@ export interface Drainable {
   /** Its heads' sessions and waiting turns. */
   swapEntries(cutOff: boolean): SwapEntry[];
   /** Writes its files out now. */
-  flushForSwap(): void;
+  flushForSwap(): void | Promise<void>;
 }
 
 export interface DrainOptions {
@@ -80,7 +80,9 @@ export async function drainBots(bots: Drainable[], options: DrainOptions): Promi
     await bot.swapInterrupt().catch((error) => options.log?.(`core swap: stopping ${bot.id}: ${(error as Error).message}`));
   }));
   const entries = bots.flatMap((bot) => bot.swapEntries(interrupted.includes(bot.id)));
-  for (const bot of bots) bot.flushForSwap();
+  const saved = await Promise.allSettled(bots.map(bot => Promise.resolve().then(() => bot.flushForSwap())));
+  const failure = saved.find(result => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
   return { entries, interrupted };
 }
 
