@@ -73,9 +73,13 @@ const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=
 // The bridge's policies (src/mobile-bridge/bridge.ts webChatCSP, frameHostCSP) for this origin.
 const chatCSP = origin => `default-src 'none'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; frame-src ${origin}/mobile/frame-host.html; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self'`;
 const hostCSP = origin => `sandbox allow-scripts; default-src 'none'; script-src ${origin}/mobile/frame-host.js 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'`;
+// Every request the fixture saw (for isolation-check.mjs: what actually reached the server).
+const hits = [];
 const server = createServer(async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
+    if (req.method === 'GET' && req.url === '/fixture/hits') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(hits)); return; }
+    hits.push({ method: req.method, url: req.url, origin: req.headers.origin ?? null, site: req.headers['sec-fetch-site'] ?? null, dest: req.headers['sec-fetch-dest'] ?? null });
     if (req.method === 'POST' && req.url === '/fixture/control') {
       let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 1024) throw Error(); }
       const control = JSON.parse(body); if (typeof control.authenticated === 'boolean') authenticated = control.authenticated;
