@@ -365,6 +365,8 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
 .worker-waiting { padding: 6px 16px 6px 52px; color: var(--muted); font-size: 13px; }
 .dots { display: flex; gap: 5px; padding: 16px; }
 .dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+.dots .think-note { font-size: 13px; font-style: normal; color: var(--muted); margin-left: 6px; white-space: nowrap; align-self: center; }
+.dots .think-note[hidden] { display: none; }
 .dots span:nth-child(2) { animation-delay: 0.2s; }
 .dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
@@ -541,6 +543,9 @@ body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
 /* Keep tool traces readable without pushing past the avatar on narrow chats. */
 .bubble.working { min-width: min(280px, calc(100% - var(--chat-avatar-size) - 10px)); }
 .bubble.working .dots { padding: 8px 0 0; }
+/* Codex waiting to try a refused request again (429): why the dots go on so long. */
+.bubble.working .retry-note { font-size: 13px; color: var(--orange-text); }
+.bubble.working > * + .retry-note { padding-top: 6px; }
 
 /* Watching a subagent (read only): "Main › Review PR #7  [Claude subagent]   Sonnet · …", no input box. */
 #subagent-bar {
@@ -1433,6 +1438,8 @@ body.spec-mode .float-layer { display: none; }
 .catchup-links li + li { margin-top: 6px; }
 .catchup-button:disabled { opacity: .55; cursor: default; }
 
+/* Before the mounted message window, using the same quiet action as summary cards. */
+.history-more { display: flex; margin: 16px auto 0; max-width: calc(100% - 32px); }
 .catchup-button[hidden] { display: none; }
 
 /* Interval summaries share the Catch-up card above. */

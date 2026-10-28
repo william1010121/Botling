@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
-import { feedback, messageElement, typingElement } from "../src/messages";
+import { feedback, messageElement, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
 import type { ChatState, MessageView, PinSize } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
@@ -743,6 +743,26 @@ describe("messages", () => {
     expect(second.querySelector<HTMLElement>(".steps-body")!.hidden).toBe(true);
     first.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
     expect(messageElement(message({ id: "fold-a", text: "Done.", steps }), {}).querySelector<HTMLElement>(".steps-body")!.hidden).toBe(true);
+  });
+
+  it("count the seconds the bot has had no new output while it works", () => {
+    const row = typingElement("", []);
+    const since = Number(row.dataset.since);
+    const note = row.querySelector<HTMLElement>(".think-note")!;
+    // Just started: nothing yet.
+    refreshThinkNote(row, since + 1000);
+    expect(note.hidden).toBe(true);
+    refreshThinkNote(row, since + 12_000);
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe("Thinking · 12 s");
+    // Minutes read as m:ss.
+    refreshThinkNote(row, since + 95_000);
+    expect(note.textContent).toBe("Thinking · 1:35");
+    // New output restarts the count.
+    const done = { id: "t1", kind: "tool" as const, tool: null, title: "Read a", detail: null, output: null, failed: false, done: true, status: null, count: null };
+    updateTypingElement(row, [done]);
+    expect(row.querySelector(".think-note")!.hasAttribute("hidden")).toBe(true);
+    expect(Number(row.dataset.since)).toBeGreaterThanOrEqual(since);
   });
 
   it("show the words between tool calls while the bot is still at work", () => {

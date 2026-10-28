@@ -217,6 +217,7 @@ export const ja: Dictionary = {
   "messages.answered": "回答済み",
   "messages.answeredLabel": "回答済み：{label}。選択肢を表示",
   "messages.working": "作業中",
+  "messages.thinking": "思考中 · {time}",
   "messages.waitingForWorkers": "ワーカーの報告待ち · チャットを続けられます",
   "messages.retryLimitedIn": "Codex がレート制限中 · 約 {wait}後に再試行（{attempt}/{max} 回目）",
   "messages.retryLimited": "Codex がレート制限中 · 再試行中（{attempt}/{max} 回目）",

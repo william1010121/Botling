@@ -794,16 +794,33 @@ export function refreshRetryNote(row: HTMLElement | null, retry: RetryView | nul
   if (note && retry) note.textContent = retryText(retry, now);
 }
 
+/** "Thinking · 12 s" / "Thinking · 1:35": how long the turn has gone without new output. Hidden for the first few seconds. */
+export function refreshThinkNote(row: HTMLElement | null, now = Date.now()): void {
+  const note = row?.querySelector<HTMLElement>(".think-note");
+  if (!row || !note) return;
+  const seconds = Math.floor((now - Number(row.dataset.since)) / 1000);
+  note.hidden = !(seconds >= 3);
+  if (note.hidden) return;
+  const time = seconds < 60 ? t("messages.retrySeconds", { n: seconds }) : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  note.textContent = t("messages.thinking", { time });
+}
+
 /** Updates the live content while keeping the active avatar's animation and DOM node. */
 export function updateTypingElement(row: HTMLElement, live: StepView[] = [], retry: RetryView | null = null): void {
   const key = JSON.stringify([live, retry]);
   if (row.dataset.live === key) return;
   row.dataset.live = key;
+  // The "thinking N s" count restarts whenever the steps change (new output).
+  const steps = JSON.stringify(live);
+  if (row.dataset.steps !== steps || !row.dataset.since) {
+    row.dataset.steps = steps;
+    row.dataset.since = String(Date.now());
+  }
   while (row.children.length > 1) row.lastElementChild!.remove();
   const dots = document.createElement("div");
   dots.className = "dots";
   dots.setAttribute("aria-label", t("messages.working"));
-  dots.innerHTML = "<span></span><span></span><span></span>";
+  dots.innerHTML = "<span></span><span></span><span></span><em class=\"think-note\" hidden></em>";
   if (!live.length && !retry) {
     dots.classList.add("bubble", "bot-bubble");
     row.append(dots);

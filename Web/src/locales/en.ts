@@ -220,6 +220,7 @@ export const en = {
   "messages.answered": "Answered",
   "messages.answeredLabel": "Answered: {label}. Show the options",
   "messages.working": "Working",
+  "messages.thinking": "Thinking · {time}",
   "messages.waitingForWorkers": "Waiting for workers · You can keep chatting",
   "messages.retryLimitedIn": "Codex is rate limited · retrying in about {wait} (attempt {attempt}/{max})",
   "messages.retryLimited": "Codex is rate limited · retrying (attempt {attempt}/{max})",

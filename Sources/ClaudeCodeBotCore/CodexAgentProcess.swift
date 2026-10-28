@@ -198,6 +198,8 @@ struct CodexSession {
     private var approvals: [String: (rpcID: Any, kind: Approval, thread: String?, turn: String?)] = [:]
     /// The files each file-change item touches, for its approval question.
     private var changedFiles: [String: [String]] = [:]
+    /// Reasoning items whose "Thinking" step is already showing (its first summary delta opened it).
+    private var thinkingOpen: Set<String> = []
     /// The thread's token totals as last reported, and as they were when this turn began.
     private var tokensTotal = TokenUsage()
     private var tokensAtTurnStart = TokenUsage()
@@ -462,6 +464,10 @@ struct CodexSession {
                 out.insert(.event(.commandStarted(started)), at: 0)
             }
             return out
+        case "item/reasoning/summaryTextDelta":
+            // Reasoning can run for minutes between tool calls: its first words open a step.
+            guard let id = params["itemId"] as? String, thinkingOpen.insert(id).inserted else { return [] }
+            return [.event(.trace(.toolUse(id: id, tool: "Thinking", title: "Thinking…", detail: "", parent: nil)))]
         case "item/started":
             guard let item = params["item"] as? [String: Any] else { return [] }
             return started(item).map { [.event(.trace($0))] } ?? []
@@ -1354,6 +1360,16 @@ struct CodexSession {
             // Words between tool calls are a step; the final answer is the reply.
             let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
             return phase == "commentary" && !words.isEmpty ? [.text(words, parent: nil)] : []
+        case "reasoning":
+            // The model's own summary of its thinking (empty for models that give none).
+            let summary = (item["summary"] as? [String] ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }.joined(separator: "\n\n")
+            let opened = thinkingOpen.remove(id) != nil
+            guard !summary.isEmpty else { return opened ? [.toolResult(id: id, output: "", failed: false, parent: nil)] : [] }
+            let result = TraceEvent.toolResult(id: id, output: summary, failed: false, parent: nil)
+            if opened { return [result] }
+            let heading = summary.split(whereSeparator: \.isNewline).first.map { $0.replacingOccurrences(of: "**", with: "") } ?? summary
+            return [.toolUse(id: id, tool: "Thinking", title: Self.firstLine(heading), detail: "", parent: nil), result]
         case "commandExecution":
             let failed = status != "completed" || ((item["exitCode"] as? NSNumber)?.intValue ?? 0) != 0
             return [.toolResult(id: id, output: item["aggregatedOutput"] as? String ?? "", failed: failed, parent: nil)]

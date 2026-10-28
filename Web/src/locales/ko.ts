@@ -217,6 +217,7 @@ export const ko: Dictionary = {
   "messages.answered": "답변함",
   "messages.answeredLabel": "답변함: {label}. 선택지 보기",
   "messages.working": "작업 중",
+  "messages.thinking": "생각 중 · {time}",
   "messages.waitingForWorkers": "워커 보고 대기 중 · 계속 대화할 수 있습니다",
   "messages.retryLimitedIn": "Codex 요청 한도 초과 · 약 {wait} 후 재시도 ({attempt}/{max}번째)",
   "messages.retryLimited": "Codex 요청 한도 초과 · 재시도 중 ({attempt}/{max}번째)",

@@ -217,6 +217,7 @@ export const zhHans: Dictionary = {
   "messages.answered": "已回答",
   "messages.answeredLabel": "已回答：{label}。显示选项",
   "messages.working": "处理中",
+  "messages.thinking": "思考中 · {time}",
   "messages.waitingForWorkers": "等待工作 agent 汇报 · 可以继续聊天",
   "messages.retryLimitedIn": "Codex 被限流，约 {wait}后重试（第 {attempt}/{max} 次）",
   "messages.retryLimited": "Codex 被限流，正在重试（第 {attempt}/{max} 次）",

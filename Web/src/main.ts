@@ -4,7 +4,7 @@ import { buildNear, detailReply, keepFrames, releaseFrames } from "./components"
 import { startTaskTicks, taskOutput } from "./tasks";
 import { jumpToTask } from "./task-cards";
 import { Composer, sendFile } from "./composer";
-import { extensions, feedback, makeComponents, messageElement, refreshRetryNote, typingElement, updateTypingElement } from "./messages";
+import { extensions, feedback, makeComponents, messageElement, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
@@ -61,6 +61,7 @@ class Chat {
   /** The components object `componentsText` was made from (a patch hands the same one back). */
   private componentsSeen: unknown = null;
   private typing: HTMLElement | null = null;
+  private thinkTimer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setInterval> | null = null;
   private workerWaiting: HTMLElement | null = null;
   private botID: string | null = null;
@@ -254,6 +255,12 @@ class Chat {
       }, 1000);
     }
     if (this.typing && this.list.lastElementChild !== this.typing) this.list.append(this.typing);
+    // "Thinking · 12 s" while the turn has no new output.
+    if (this.thinkTimer) { clearInterval(this.thinkTimer); this.thinkTimer = null; }
+    if (this.typing && state.working && !state.subagent) {
+      refreshThinkNote(this.typing);
+      this.thinkTimer = setInterval(() => refreshThinkNote(this.typing), 1000);
+    }
     // Workers have their own live cards. An idle coordinator has no thinking animation.
     if (state.waitingForWorkers && !state.working && !state.subagent) {
       if (!this.workerWaiting) {

@@ -307,6 +307,8 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
 .worker-waiting { padding: 6px 16px 6px 52px; color: var(--muted); font-size: 13px; }
 .dots { display: flex; gap: 5px; padding: 16px; }
 .dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+.dots .think-note { font-size: 13px; font-style: normal; color: var(--muted); margin-left: 6px; white-space: nowrap; align-self: center; }
+.dots .think-note[hidden] { display: none; }
 .dots span:nth-child(2) { animation-delay: 0.2s; }
 .dots span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
