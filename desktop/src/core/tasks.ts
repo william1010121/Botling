@@ -409,10 +409,15 @@ export class TaskBook {
     if (state !== was) noteState(card, at);
   }
 
-  /** Close the card, without changing its head, hand-offs or subagents. Repeated clicks are safe. */
+  /**
+   * Close the card, without changing its head, hand-offs or subagents. Repeated clicks are safe.
+   * Besides work under way, it closes work said done but not verified (a stage before verified).
+   */
   complete(id: string, at: number): boolean {
     const card = this.task(id);
-    if (!card || !isActive(card.state)) return false;
+    if (!card || card.manuallyCompletedAt !== undefined) return false;
+    const unverified = card.state === "done" && card.stage !== undefined && card.stage !== "verified";
+    if (!isActive(card.state) && !unverified) return false;
     card.state = "done";
     card.manuallyCompletedAt = at;
     card.updatedAt = at;
