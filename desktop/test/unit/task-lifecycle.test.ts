@@ -54,6 +54,27 @@ describe("task lifecycle and retained history", () => {
     expect(book.tasks).toHaveLength(1);
     expect(book.task(id)!.state).toBe("done");
   });
+  it("a named progress report updates existing work without renaming its unrelated declared base", () => {
+    const { book, id: original } = started();
+    const other = book.begin("other-user", "Sending diagnosis", "claude", 3);
+    book.replied("other-reply", { head: "claude", userMessage: "other-user" }, [{ name: "Sending diagnosis", state: "running" }], 4);
+    const before = structuredClone(book.task(other));
+    book.replied("progress", { head: "claude", userMessage: "other-user" }, [{ name: "Ship", state: "running", now: "Reviewing result" }], 5);
+    expect(book.task(other)).toEqual(before);
+    expect(book.task(original)).toMatchObject({ name: "Ship", now: "Reviewing result", updatedAt: 5 });
+    expect(book.tasks.filter(card => card.name === "Ship")).toHaveLength(1);
+    expect(book.task(original)!.messageIDs).toContain("progress");
+  });
+  it("a named progress-only report preserves an existing wait and its unrelated base", () => {
+    const { book, id } = started();
+    book.replied("wait", { head: "claude", userMessage: "u" }, [{ state: "waiting", blocked: "User decision" }], 3);
+    const other = book.begin("other-user", "Other work", "claude", 4);
+    book.replied("other-reply", { head: "claude", userMessage: "other-user" }, [{ name: "Other work", state: "running" }], 5);
+    const before = structuredClone(book.task(other));
+    book.replied("progress", { head: "claude", userMessage: "other-user" }, [{ name: "Ship", now: "Build ready" }], 6);
+    expect(book.task(other)).toEqual(before);
+    expect(book.task(id)).toMatchObject({ state: "waiting", blocked: "User decision", now: "Build ready" });
+  });
   it("cancellation survives untagged and progress-only delayed reports", () => {
     const { book, id } = started();
     book.link("worker", id);

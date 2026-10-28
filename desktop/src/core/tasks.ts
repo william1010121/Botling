@@ -293,12 +293,11 @@ export class TaskBook {
       if (base?.owner && base.owner !== turn.head) return;
       const continued = tag.continues ? this.named(tag.continues) : undefined;
       const named = tag.name ? this.named(tag.name) : undefined;
-      // Named terminal reports update the named original, never rename a current repair card.
+      // Named reports update existing work, never rename an unrelated declared base card.
       // Validate legacy continues ownership before it can merge the user's current card.
       if (continued?.owner && continued.owner !== turn.head) return;
       if (!tag.continues && named?.owner && named.owner !== turn.head && named.id !== base?.id) return;
-      if (!tag.continues && named && named.id !== base?.id && (tag.state === "done" || tag.state === "stopped")
-        && base && isDeclared(base)) {
+      if (!tag.continues && named && named.id !== base?.id && base && isDeclared(base)) {
         this.apply(tag, named, turn.head, message, !!turn.asks, at);
         touched.push(named.id);
         return;
