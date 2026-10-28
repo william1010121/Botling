@@ -326,11 +326,20 @@ export const withoutPartsNote = (text: string) => (text.startsWith(PARTS_NOTE) ?
 export const WHITEBOARD_PICTURE_LINE = "  To give your card on the main bot's whiteboard a small picture: add <whiteboard name=\"component name\" size=\"1x1\">JSON</whiteboard> to a reply (or command=\"…\" instead of JSON; size 1x1 or 2x1). The app draws it on your card and shows nothing in the chat; a later one replaces it and <whiteboard clear/> removes it. Pick a component that reads well tiny (a key number, a trend) and send a new one when it changes.";
 const SHOW_LINE = "  To show data with a component: add <show name=\"component name\">JSON matching its format</show> to your reply.";
 
-/** The instructions as 2.0 gives them: `botPrompts`, plus the whiteboard picture line (after the <show> line) for every bot but the main bot. */
+/** 2.0 only: the `<task>` line's optional `stage`, told right after its states, to every bot. */
+export const TASK_STAGE_SENTENCE = "stage (optional) is built, reviewed, installed or verified, for work that must still be installed or checked before it is really done.";
+const TASK_STATES_SENTENCE = "state is running, waiting (the user must act), done or stopped.";
+
+/**
+ * The instructions as 2.0 gives them: `botPrompts`, plus the `<task>` stage sentence (after its
+ * states) for every bot, and the whiteboard picture line (after the <show> line) for every bot but the main bot.
+ */
 export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role">): BotPrompts {
-  if (profile.role === "main") return prompts;
-  const system = prompts.system.includes(SHOW_LINE)
-    ? prompts.system.replace(SHOW_LINE, `${SHOW_LINE}\n${WHITEBOARD_PICTURE_LINE}`)
-    : `${prompts.system}\n${WHITEBOARD_PICTURE_LINE}`;
-  return { ...prompts, system };
+  let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
+  if (profile.role !== "main") {
+    system = system.includes(SHOW_LINE)
+      ? system.replace(SHOW_LINE, `${SHOW_LINE}\n${WHITEBOARD_PICTURE_LINE}`)
+      : `${system}\n${WHITEBOARD_PICTURE_LINE}`;
+  }
+  return system === prompts.system ? prompts : { ...prompts, system };
 }

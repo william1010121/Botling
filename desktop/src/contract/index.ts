@@ -105,6 +105,8 @@ export const TaskView = z.strictObject({
   now: z.string().max(2_000).nullable(),
   next: z.string().max(2_000).nullable(),
   blocked: z.string().max(2_000).nullable(),
+  /** How far finished work has got (`<task stage=…>`): built, reviewed, installed, verified. Absent: no stage. */
+  stage: z.enum(["built", "reviewed", "installed", "verified"]).optional(),
   /** The chat lines that belong to it, oldest first. */
   messageIds: z.array(id).max(1_000),
   /** ISO-8601. */

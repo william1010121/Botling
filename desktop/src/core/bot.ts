@@ -4898,6 +4898,7 @@ export function taskView(card: TaskCard, running: Set<string>): TaskView {
     now: clip(card.now, 2_000),
     next: clip(card.next, 2_000),
     blocked: clip(card.blocked, 2_000),
+    ...(card.stage ? { stage: card.stage } : {}),
     messageIds: card.messageIDs.filter((id) => /^[A-Za-z0-9_.:-]{1,64}$/.test(id)).slice(-1_000),
     updatedAt: iso(card.updatedAt),
     createdAt: iso(card.createdAt),

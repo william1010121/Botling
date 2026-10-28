@@ -35,8 +35,11 @@ export interface Choice { label: string; detail?: string; recommended: boolean }
 export interface Display { name: string; data: string; at?: number; command?: string; id?: string; refresh?: number; savedAt?: number; [key: string]: unknown }
 export interface ReactionAction { messageId: string; emoji: string; present: boolean }
 export type TaskState = "pending" | "running" | "waiting" | "done" | "stopped";
-/** `TaskTag`: undefined keeps a field, "" clears it. */
-export interface TaskTag { name?: string; continues?: string; now?: string; next?: string; blocked?: string; state?: TaskState }
+/** How far finished work has got (2.x): built, reviewed, installed, then verified. */
+export type TaskStage = "built" | "reviewed" | "installed" | "verified";
+export const TASK_STAGES: readonly TaskStage[] = ["built", "reviewed", "installed", "verified"];
+/** `TaskTag`: undefined keeps a field, "" clears it. `stage` is 2.x only; an unknown one is left out. */
+export interface TaskTag { name?: string; continues?: string; now?: string; next?: string; blocked?: string; state?: TaskState; stage?: TaskStage | "" }
 export interface CompletionSignal { kind: "end" | "block"; evidence: string }
 
 /** The bot's picture on the main bot's whiteboard (`<whiteboard name="x" size="2x1">JSON</whiteboard>`, or `<whiteboard clear/>`). */
@@ -133,6 +136,8 @@ function taskTagFrom(found: Record<string, string>): TaskTag {
   }
   const state = value("state")?.toLowerCase();
   if (state === "running" || state === "waiting" || state === "done" || state === "stopped") tag.state = state;
+  const stage = value("stage")?.toLowerCase();
+  if (stage === "" || TASK_STAGES.includes(stage as TaskStage)) tag.stage = stage as TaskStage | "";
   return tag;
 }
 
