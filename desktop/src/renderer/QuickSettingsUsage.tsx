@@ -8,6 +8,8 @@ import { asOf, countdown, hasReset, percent, resetDay, staleSince, type LimitWin
 type QuotaStatus = NonNullable<UsageView["quotaStatus"]>["claude"];
 const quotaProblems: Record<Exclude<QuotaStatus, "available">, string> = {
   auth_required: "sign-in required",
+  token_expired: "credentials expired",
+  auth_rejected: "quota authentication rejected; cause unknown",
   forbidden: "quota access denied",
   timeout: "quota request timed out",
   network_error: "quota network error",
@@ -44,8 +46,15 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
   const codex = usage?.codex ?? { fiveHour: null, week: null };
   const problem = (engine: "claude" | "codex") => {
     if (failed) return "quota refresh failed";
-    const status = usage?.quotaStatus?.[engine];
-    return status && status !== "available" ? quotaProblems[status] : null;
+    // Keep unknown future failure statuses visible alongside retained readings.
+    const status: string | undefined = usage?.quotaStatus?.[engine];
+    if (!status || status === "available") return null;
+    if (status === "token_expired" && engine === "claude") {
+      return "credentials expired; a normal Claude session may refresh them";
+    }
+    return Object.hasOwn(quotaProblems, status)
+      ? quotaProblems[status as keyof typeof quotaProblems]
+      : "quota readings unavailable";
   };
   const claudeProblem = problem("claude"), codexProblem = problem("codex");
   const since = (limits: typeof claude) => {
