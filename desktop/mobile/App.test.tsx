@@ -135,3 +135,43 @@ it('keeps the session and draft when logout fails so the user can retry', async 
   expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
   expect(sessionStorage.getItem('botling-mobile-drafts')).toContain('unsent draft');
 });
+
+function viewport(initial: boolean) {
+  const media = new EventTarget() as EventTarget & { matches: boolean };
+  media.matches = initial;
+  vi.stubGlobal('matchMedia', () => media);
+  return async (wide: boolean) => { await act(async () => { media.matches = wide; media.dispatchEvent(new Event('change')); }); };
+}
+it('keeps desktop navigation visible on selection and resets the phone drawer across resizing', async () => {
+  const resize = viewport(true); browserFixture(); await act(async () => root.render(<App />));
+  const toggle = container.querySelector('#chat-toggle') as HTMLButtonElement;
+  expect(toggle.hidden).toBe(true);
+  await act(async () => (container.querySelector('nav button') as HTMLButtonElement).click());
+  expect(container.querySelector('nav')!.className).toBe('open');
+  await resize(false); expect(toggle.hidden).toBe(false); expect(container.querySelector('nav')!.className).toBe('');
+  await act(async () => toggle.click()); expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  expect(container.querySelector('.conversation')!.hasAttribute('inert')).toBe(true);
+  await act(async () => container.querySelector('nav')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  expect(toggle.getAttribute('aria-expanded')).toBe('false'); expect(document.activeElement).toBe(toggle);
+  await act(async () => toggle.click());
+  await act(async () => (container.querySelector('nav button') as HTMLButtonElement).click());
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  expect((container.querySelector('#compose') as HTMLTextAreaElement).value).toBe('unsent draft');
+  await resize(true); expect(container.querySelector('nav')!.className).toBe('open');
+});
+it.each(['ctrlKey', 'metaKey'])('sends once with %s+Enter but not plain Enter or IME composition', async modifier => {
+  const f = browserFixture(); await act(async () => root.render(<App />));
+  const commands = () => f.fetcher.mock.calls.filter(([, init]) => init.body && JSON.parse(String(init.body)).cmd?.type === 'chat.send');
+  const input = container.querySelector('#compose')!;
+  for (const options of [{}, { [modifier]: true, isComposing: true }]) {
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, ...options })));
+  }
+  expect(commands()).toHaveLength(0);
+  f.fetcher.mockImplementationOnce(async (url, init) => {
+    const request = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({ v: PROTOCOL_VERSION, id: request.id, ok: true, result: { messageId: 'sent', turnId: null } }));
+  });
+  await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, [modifier]: true })));
+  expect(commands()).toHaveLength(1);
+  expect((input as HTMLTextAreaElement).value).toBe('');
+});

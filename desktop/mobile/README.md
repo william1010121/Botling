@@ -1,13 +1,13 @@
-# Botling mobile client
+# Botling web client — desktop and phone
 
 Google sign-in candidate: see [OAuth deployment contract](../src/mobile-bridge/OAUTH-CONTRACT.md). The browser now uses
 App-owned Google OAuth sessions; the bearer setup below applies only to automation. This candidate
 requires the private Google credentials opt-in before deployment; Cloudflare Access is not used.
 
-Phone-browser client, isolated from Electron and the desktop composer. Provides chat/project
+Responsive browser client, isolated from Electron and the desktop app composer. Provides chat/project
 navigation, text chat with refreshing replies, per-chat drafts, reply-to, engine selection,
 question choices/free-text answers, task status, and an Add-to-Home-Screen manifest.
-Rich cards, local files and attachments remain desktop-only. No service worker stores private
+Rich cards, local files and attachments still require the desktop app. No service worker stores private
 conversations or credentials. Drafts are retained per tab and verified principal, including across a page reload when storage is available.
 
 ## Build and checks
@@ -70,3 +70,26 @@ Exercise 320×568 and 390×844: login, return/reload, draft restoration, logout,
 bot denial, composer/keyboard-visible layout, and slow refresh with visibility/online events.
 Only read-only snapshots are allowed against the live bridge; mutation/fault cases stay isolated.
 Viewport interaction does not establish physical-phone or Add-to-Home-Screen acceptance.
+
+## Desktop and phone behavior
+
+The same `/mobile/` entry serves desktop and phone browsers; no second login or web-only
+route is needed. The configured hosted entry is `https://botling-bridge.driseam.com/mobile/`.
+The desktop layout candidate must be integrated and deployed before that URL serves these changes.
+OAuth callback and Main-only grants are unchanged.
+
+At 900 CSS pixels and wider, Chats stays visible while selecting a conversation. Below 900px,
+Chats opens a full-width drawer; selection or Escape closes it. The conversation is inert while
+the drawer is open. Resizing resets the drawer without clearing drafts. Desktop messages and
+composer share a bounded reading width. Phone controls retain 44px minimum touch targets.
+
+Enter inserts a newline. Ctrl+Enter or Command+Enter submits through the same guarded send
+path as the Send button; IME composition does not submit. Loading earlier messages retains
+the current reading position. History is limited to messages returned by the existing snapshot;
+this does not introduce server-side history pagination.
+
+Drafts, reconnect, refresh, sign-in and sign-out use the existing session flow on both sizes.
+The synthetic fixture includes extra bots only to exercise navigation; production browser
+sessions remain Main-only. Task status rendering and rich-report placeholders are unchanged;
+future approved design work can target `.conversation`, `.messages`, `.message`, `.composer`
+and `.answer` without changing the session/transport contract.
