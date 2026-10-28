@@ -1,6 +1,7 @@
+import { DeliveryUncertain, type DeliveryResult } from "../../../../Web/src/composer-host";
 // The wire permits 40,000,000 base64 characters. Keep originals unchanged and encode one at a time.
 export const MAX_UPLOAD_BYTES = 30_000_000;
-export interface UploadItem { botID: string; file: File; state: 'queued' | 'uploading' | 'failed'; error?: string }
+export interface UploadItem { botID: string; file: File; state: 'queued' | 'uploading' | 'failed' | 'uncertain'; error?: string; requestID?: string }
 export class UploadQueue {
   readonly items: UploadItem[] = [];
   private running = false;
@@ -13,6 +14,13 @@ export class UploadQueue {
   }
   retry(item: UploadItem): void { if (item.state !== 'failed' || !this.items.includes(item)) return; item.state = 'queued'; delete item.error; this.changed(); this.schedule(); }
   remove(item: UploadItem): void { if (item.state === 'uploading') return; const index = this.items.indexOf(item); if (index >= 0) this.items.splice(index, 1); this.changed(); }
+  settle(requestID: string, result: DeliveryResult): void {
+    const item = this.items.find(entry => entry.requestID === requestID && entry.state === 'uncertain');
+    if (!item) return;
+    if (result.ok) this.items.splice(this.items.indexOf(item), 1);
+    else { item.state = 'failed'; item.error = result.error || 'Request failed'; delete item.requestID; }
+    this.changed();
+  }
   private schedule(): void {
     if (this.running) return;
     this.running = true;
@@ -24,7 +32,11 @@ export class UploadQueue {
     while ((item = this.items.find(entry => entry.state === 'queued'))) {
       item.state = 'uploading'; this.changed();
       try { await this.upload(item.botID, item.file); this.items.splice(this.items.indexOf(item), 1); }
-      catch (error) { item.state = 'failed'; item.error = error instanceof Error ? error.message : String(error); }
+      catch (error) {
+        item.state = error instanceof DeliveryUncertain ? 'uncertain' : 'failed';
+        if (error instanceof DeliveryUncertain) item.requestID = error.requestID;
+        item.error = error instanceof Error ? error.message : String(error);
+      }
       this.changed();
     }
     this.running = false;

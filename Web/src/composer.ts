@@ -3,7 +3,7 @@ import { EditorState, Prec, StateEffect, Transaction, type Extension } from "@co
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
 import { Compartment } from "@codemirror/state";
 import { post } from "./bridge";
-import { composerHost } from "./composer-host";
+import { composerHost, DeliveryUncertain, type DeliveryResult } from "./composer-host";
 import { escapeRegExp, shared } from "./contract";
 import { language, t } from "./i18n";
 import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
@@ -52,6 +52,7 @@ export class Composer {
   private readonly sendButton: HTMLButtonElement;
   private hasFiles = false;
   private readonly sending = new Set<string>();
+  private readonly submissionStates = new Map<string, { text: string; uncertain?: string }>();
   private readonly submissionStatus = document.createElement("div");
   /**
    * "Answer with" in the box's toolbar, between + and send: Both / Claude / Codex as one
@@ -219,7 +220,7 @@ export class Composer {
     if (key === this.draftKey) return;
     if (this.draftKey !== null) this.saveDraft();
     this.draftKey = key;
-    this.submissionStatus.textContent = this.sending.has(key) ? "Sending…" : "";
+    this.drawSubmissionStatus();
     this.restoreDraft(key);
   }
 
@@ -389,6 +390,9 @@ export class Composer {
   update(state: ChatState): void {
     this.setWords();
     this.switchDraft(state.botID);
+    const unknown = composerHost?.uncertainSend?.(state.botID);
+    if (unknown && !this.sending.has(state.botID)) this.submissionStates.set(state.botID, { text: new DeliveryUncertain(unknown).message, uncertain: unknown });
+    this.drawSubmissionStatus();
     const mentions = mentionsOf(state.mentions);
     const allMentions = mentionsOf([...(state.mentions ?? []), ...(state.allMentions ?? [])]);
     const slashItems = slashItemsOf(state);
@@ -436,7 +440,7 @@ export class Composer {
     let text = this.text;
     if (text.trim() === "" && !this.hasFiles) return true;
     const key = this.draftKey;
-    if (key && this.sending.has(key)) return true;
+    if (key && (this.sending.has(key) || this.submissionStates.get(key)?.uncertain)) { this.drawSubmissionStatus(); return true; }
     const original = text;
     const typed = this.answer ? answerPrefix(text, this.answer) : null;
     if (typed) text = typed.rest;
@@ -444,30 +448,60 @@ export class Composer {
     if (composerHost && key) {
       this.saveDraft();
       this.sending.add(key);
-      this.submissionStatus.textContent = "Sending…";
+      this.submissionStates.delete(key);
+      this.drawSubmissionStatus();
       this.refreshSend();
       // Keep the text editable and recoverable until the core has actually accepted it.
       const finish = () => { this.sending.delete(key); this.refreshSend(); };
-      let request: Promise<void>;
-      try { request = composerHost.send({ type: "send", botID: key, text, ...(to ? { to } : {}) }); }
-      catch (error) { request = Promise.reject(error); }
-      void request.then(() => {
+      const accepted = () => {
+        this.submissionStates.delete(key);
         if (this.draftKey === key) {
           if (this.text === original) { this.setText(""); this.saveDraft(); }
-          this.submissionStatus.textContent = "";
         } else if (this.drafts.get(key)?.text === original) {
           this.drafts.delete(key);
           post({ type: "draft", botID: key, text: "", cursor: 0 });
         }
-      }, (error: unknown) => {
-        if (this.draftKey === key) this.submissionStatus.textContent = `Not sent: ${error instanceof Error ? error.message : String(error)}`;
-      }).finally(finish);
+        this.drawSubmissionStatus();
+      };
+      let uncertainID: string | undefined;
+      const lateResult = (result: DeliveryResult) => {
+        // A dismissed outcome or a newer attempt never owns the current draft/status.
+        if (!uncertainID || this.submissionStates.get(key)?.uncertain !== uncertainID) return;
+        if (result.ok) accepted();
+        else { this.submissionStates.set(key, { text: `Not sent: ${result.error || "Request failed"}` }); this.drawSubmissionStatus(); }
+      };
+      let request: Promise<void>;
+      try { request = composerHost.send({ type: "send", botID: key, text, ...(to ? { to } : {}) }, lateResult); }
+      catch (error) { request = Promise.reject(error); }
+      void request.then(accepted, (error: unknown) => {
+        uncertainID = error instanceof DeliveryUncertain ? error.requestID : undefined;
+        this.submissionStates.set(key, { text: uncertainID ? (error as DeliveryUncertain).message : `Not sent: ${error instanceof Error ? error.message : String(error)}`, ...(uncertainID ? { uncertain: uncertainID } : {}) });
+      }).finally(() => { finish(); this.drawSubmissionStatus(); });
       return true;
     }
     post({ type: "send", text, ...(to ? { to } : {}) });
     this.setText("");
     this.saveDraft();
     return true;
+  }
+
+  private drawSubmissionStatus(): void {
+    const key = this.draftKey;
+    this.submissionStatus.replaceChildren();
+    if (!key) return;
+    if (this.sending.has(key)) { this.submissionStatus.textContent = "Sending…"; return; }
+    const state = this.submissionStates.get(key); if (!state) return;
+    this.submissionStatus.append(document.createTextNode(state.text));
+    if (state.uncertain) {
+      const release = document.createElement("button");
+      release.textContent = "I checked the chat — allow another send";
+      release.onclick = () => {
+        if (this.submissionStates.get(key) !== state) return;
+        composerHost?.releaseUncertain?.(state.uncertain!);
+        this.submissionStates.delete(key); this.drawSubmissionStatus(); this.refreshSend();
+      };
+      this.submissionStatus.append(release);
+    }
   }
 
   /** A save belongs to one click: an older acknowledgement never clears a newer choice. */

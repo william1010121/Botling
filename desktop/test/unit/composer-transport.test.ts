@@ -3,6 +3,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import type { ShellMessage } from '../../src/renderer/chat-frame/protocol';
 const port = vi.hoisted(() => ({ receive: (_message: ShellMessage) => {}, sent: [] as any[] }));
 vi.mock('../../src/renderer/chat-frame/transport', () => ({
+  onTransportDisconnect: () => () => {},
   fromShell: (receive: typeof port.receive) => { port.receive = receive; return () => {}; },
   toShell: (message: unknown) => { port.sent.push(message); return true; },
 }));

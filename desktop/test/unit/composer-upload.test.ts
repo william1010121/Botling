@@ -26,3 +26,21 @@ it('rejects oversize files before reading and bounds total queued memory', () =>
   queue.add('A', file('one', MAX_UPLOAD_BYTES)); queue.add('A', file('two', MAX_UPLOAD_BYTES));
   expect(() => queue.add('A', file('three', 1))).toThrow(); expect(upload).not.toHaveBeenCalled();
 });
+it('does not retry an upload with an unknown outcome and releases it on a late acceptance', async () => {
+  const { DeliveryUncertain } = await import('../../../Web/src/composer-host');
+  const upload = vi.fn().mockRejectedValue(new DeliveryUncertain('upload-request'));
+  const queue = new UploadQueue(upload, () => {}); queue.add('A', file('picture'));
+  await vi.waitFor(() => expect(queue.items[0].state).toBe('uncertain'));
+  queue.retry(queue.items[0]); expect(upload).toHaveBeenCalledTimes(1);
+  expect(queue.blocked('A')).toBe(true); queue.settle('unrelated', { ok: true }); expect(queue.items).toHaveLength(1);
+  queue.settle('upload-request', { ok: true }); expect(queue.blocked('A')).toBe(false); expect(queue.items).toHaveLength(0);
+});
+it('keeps the original upload recoverable after a late rejection, retrying only on explicit action', async () => {
+  const { DeliveryUncertain } = await import('../../../Web/src/composer-host');
+  const original = file('picture'), upload = vi.fn().mockRejectedValueOnce(new DeliveryUncertain('upload-request')).mockResolvedValue(undefined);
+  const queue = new UploadQueue(upload, () => {}); queue.add('A', original);
+  await vi.waitFor(() => expect(queue.items[0].state).toBe('uncertain'));
+  queue.settle('upload-request', { ok: false, error: 'disk full' });
+  expect(queue.items[0]).toMatchObject({ file: original, state: 'failed', error: 'disk full' }); expect(upload).toHaveBeenCalledTimes(1);
+  queue.retry(queue.items[0]); await vi.waitFor(() => expect(queue.items).toHaveLength(0)); expect(upload).toHaveBeenCalledTimes(2);
+});
