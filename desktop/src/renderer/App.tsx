@@ -780,7 +780,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       if (message.botling !== "action") return;
       const action = message.action;
       const composerReply = (ok: boolean, error?: string) => {
-        if (typeof action.requestID === "string") postToChat({ botling: "composerResult", requestID: action.requestID, ok, ...(error ? { error } : {}) });
+        if (typeof action.requestID === "string") postToChat({ botling: "composerResult", requestID: action.requestID, ok, ...(error ? { error: error.slice(0, 4096) } : {}) });
       };
       const composerFailure = (error: unknown) => { composerReply(false, error instanceof Error ? error.message : String(error)); onError(error); };
       switch (action?.type) {
