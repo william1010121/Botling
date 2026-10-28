@@ -199,7 +199,8 @@ function shortTime(iso: string | null | undefined, now: number): string | null {
 /**
  * Asks the core for the board's data now and every few seconds while it is shown. Each ask carries the
  * stamp of the board it has, and the core answers `same` (no bots) while nothing changed: the page then
- * neither compares nor redraws. A core without stamps is still compared by its text.
+ * neither compares nor redraws. Hidden windows pause polling and refresh when shown again; slow
+ * replies cannot accumulate concurrent requests. A core without stamps is still compared by its text.
  */
 function useWhiteboardData(client: Client, refreshMs: number): WhiteboardView | null {
   const [data, setData] = useState<WhiteboardView | null>(null);
@@ -207,7 +208,13 @@ function useWhiteboardData(client: Client, refreshMs: number): WhiteboardView | 
   const stamp = useRef<string | undefined>(undefined);
   useEffect(() => {
     let live = true;
+    let pending = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
+      if (!live || document.hidden || pending) return;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      pending = true;
       void client.request({ type: "whiteboard.view", ...(stamp.current ? { since: stamp.current } : {}) }).then((view) => {
         if (!live || view.same) return;
         stamp.current = view.stamp;
@@ -215,11 +222,23 @@ function useWhiteboardData(client: Client, refreshMs: number): WhiteboardView | 
         if (text === last.current) return;
         last.current = text;
         setData(view);
-      }, () => {});
+      }, () => {}).finally(() => {
+        pending = false;
+        if (live && !document.hidden && refreshMs > 0) timer = setTimeout(load, refreshMs);
+      });
     };
+    const visibility = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      if (!document.hidden && refreshMs > 0) load();
+    };
+    document.addEventListener("visibilitychange", visibility);
     load();
-    const timer = refreshMs > 0 ? setInterval(load, refreshMs) : null;
-    return () => { live = false; if (timer) clearInterval(timer); };
+    return () => {
+      live = false;
+      if (timer !== undefined) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visibility);
+    };
   }, [client, refreshMs]);
   return data;
 }
