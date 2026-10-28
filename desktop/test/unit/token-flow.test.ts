@@ -51,32 +51,36 @@ it("renders states, selection and failures; coalesces updates and tears down wit
   const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
   let listener!: (envelope: EventEnvelope) => void;
   const off = vi.fn();
-  const request = vi.fn(async () => usage());
+  let currentBot = bot;
+  const request = vi.fn(async (cmd: { type: string }) => cmd.type === "usage.view" ? usage() : ({ botId: bot.id, asOf: Date.now(), limited: true, unreadable: false, rows: currentBot.subagentRows.map(row => ({ ...row, parentId: null })), tasks: [{ id: "task-id", name: "task-id", workers: [{ id: "worker", head: "codex" }] }] }));
   const client = { request, onEvent: (fn: typeof listener) => { listener = fn; return off; } } as unknown as Client;
-  const render = async (value = bot) => act(async () => root.render(createElement(TokenFlow, { client, bot: value, bots: [value], tasks: [task("task-id")] })));
+  const render = async (value = bot) => { currentBot = value; await act(async () => root.render(createElement(TokenFlow, { client, bot: value, bots: [value], tasks: [task("task-id")] }))); };
   try {
     await render();
     expect(request).toHaveBeenCalledWith({ type: "usage.view", localOnly: true });
     expect(host.textContent).not.toContain("PRIVATE PROMPT");
     await act(async () => host.querySelector<HTMLButtonElement>(".tf-worker")!.click());
     expect(host.querySelector(".tf-detail")?.textContent).toContain("task-id");
-    expect(host.querySelector(".tf-detail")?.textContent).toContain("Not tracked per worker");
+    expect(host.querySelector(".tf-detail svg[role=img]")).not.toBeNull();
     for (const status of ["completed", "failed", "stopped"] as const) {
       await render({ ...bot, subagentRows: [{ ...row, status, outputTokens: null }] });
-      expect(host.querySelector(".tf-worker")?.textContent).toContain(status);
-      expect(host.querySelector(".tf-worker-tokens")?.textContent).toContain("—");
+      await act(async () => { listener({ event: { type: "turn.finished", botId: bot.id } } as EventEnvelope); await vi.advanceTimersByTimeAsync(750); });
+      expect(host.querySelector(`.tf-detail [aria-label="State: ${status}"]`)).not.toBeNull();
+      expect(host.querySelector(".tf-node-usage")?.textContent).toContain("—");
     }
-    await act(async () => { for (let i = 0; i < 30; i++) listener({ event: { type: "turn.finished" } } as EventEnvelope); await vi.advanceTimersByTimeAsync(750); });
-    expect(request).toHaveBeenCalledTimes(2);
+    await act(async () => { for (let i = 0; i < 30; i++) listener({ event: { type: "turn.finished", botId: bot.id } } as EventEnvelope); await vi.advanceTimersByTimeAsync(750); });
+    expect(request).toHaveBeenCalledTimes(10);
+    await act(async () => { listener({ event: { type: "turn.finished", botId: "unrelated" } } as EventEnvelope); await vi.advanceTimersByTimeAsync(750); });
+    expect(request).toHaveBeenCalledTimes(10);
     await act(async () => vi.advanceTimersByTimeAsync(120_000));
-    expect(request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(10);
     request.mockRejectedValueOnce(new Error("offline"));
-    await act(async () => host.querySelector<HTMLButtonElement>(".tf-reading button")!.click());
-    expect(host.textContent).toContain("Refresh failed · last snapshot");
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Refresh ledger"]')!.click());
+    expect(host.querySelector(".tf-status")?.getAttribute("aria-label")).toContain("Refresh failed · last snapshot");
     await act(async () => root.unmount());
     expect(off).toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(120_000));
-    expect(request).toHaveBeenCalledTimes(3);
+    expect(request).toHaveBeenCalledTimes(12);
   } finally { host.remove(); vi.useRealTimers(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; }
 });
 
@@ -85,8 +89,8 @@ it("pauses hidden-page reads and ignores a late response after unmount", async (
   vi.useFakeTimers();
   const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
   const host = document.createElement("div"); const root = createRoot(host);
-  let resolve!: (value: UsageView) => void;
-  const request = vi.fn(() => new Promise<UsageView>(done => { resolve = done; }));
+  const resolves: ((value: UsageView) => void)[] = [];
+  const request = vi.fn(() => new Promise<UsageView>(done => { resolves.push(done); }));
   const off = vi.fn();
   const client = { request, onEvent: () => off } as unknown as Client;
   try {
@@ -94,12 +98,12 @@ it("pauses hidden-page reads and ignores a late response after unmount", async (
     expect(request).not.toHaveBeenCalled();
     hidden.mockReturnValue(false);
     await act(async () => document.dispatchEvent(new Event("visibilitychange")));
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(2);
     await act(async () => root.unmount());
-    await act(async () => resolve(usage()));
+    await act(async () => resolves.forEach(resolve => resolve(usage())));
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(2000);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(2);
     expect(off).toHaveBeenCalledTimes(1);
   } finally { hidden.mockRestore(); vi.useRealTimers(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; }
 });

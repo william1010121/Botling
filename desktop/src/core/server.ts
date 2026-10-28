@@ -1,3 +1,4 @@
+import { tokenFlowHistory } from "./token-flow-history";
 import { mobileCommand } from '../mobile-bridge/adapter';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
 // transport-agnostic: `receive` takes whatever arrived, `emit` is where answers and events go. It
@@ -1569,7 +1570,7 @@ First write a test that shows this, then fix it.`;
   }
 
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
-    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "web.state", "link.authorize"]).has(cmd.type)) {
+    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "tokenFlow.view", "doctor.view", "attachment.file", "card.image", "web.state", "link.authorize"]).has(cmd.type)) {
       throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
     }
     switch (cmd.type) {
@@ -1681,6 +1682,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.notice": this.plugins.webNotice(cmd.name, cmd.text); return {};
       case "plugins.file": return this.plugins.webFile(cmd.name, cmd.path);
       case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
+      case "tokenFlow.view": return tokenFlowHistory(this.bot(cmd.botId));
       case "usage.view": if (!cmd.localOnly) await this.usage.refresh(); return usageView(this.usage.view(), cmd.localOnly);
       case "doctor.view": return this.doctor.view();
       case "doctor.run": return this.doctor.run(cmd.includeLatest);

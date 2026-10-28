@@ -50,6 +50,25 @@ export function reportedOutputTokens(subagent: SubagentRecord): number | null {
   return Number.isSafeInteger(total) ? total : null;
 }
 
+/** Only the stream's own message/thread counters can be summed across records.
+ * Overlapping ownership excludes the entire record: never add a parent inclusive total to a child.
+ * No counter identifiers or content cross the renderer boundary. */
+export function exclusiveOutputTokens(records: SubagentRecord[]): ReadonlyMap<SubagentRecord, number | null> {
+  const owners = new Map<string, SubagentRecord | null>();
+  const keys = new Map<SubagentRecord, string[]>();
+  for (const record of records) {
+    const counters = record.outputTokenCounters;
+    const list = reportedOutputTokens(record) === null ? [] : Object.keys(counters as object);
+    keys.set(record, list);
+    for (const key of list) owners.set(key, owners.has(key) && owners.get(key) !== record ? null : record);
+  }
+  return new Map(records.map(record => {
+    const list = keys.get(record)!;
+    const exclusive = list.length > 0 && list.every(key => /^(thread|message):.+/.test(key) && owners.get(key) === record);
+    return [record, exclusive ? reportedOutputTokens(record) : null];
+  }));
+}
+
 export interface SubagentRecord {
   id: string;
   description: string;
@@ -288,6 +307,16 @@ export class SubagentBook {
     if (settled) subagent.dismissedAt = now;
     else { delete subagent.dismissedAt; subagent.unsettledAt = now; }
     return true;
+  }
+
+  /** Retained parent identities only; a missing parent stays missing, never becomes the bot. */
+  delegationRows(head: "claude" | "codex" | null, exclusive = exclusiveOutputTokens(this.list.slice(-500))): import("../contract").DelegationRowView[] {
+    return this.list.slice(-500).map(child => ({
+      id: child.id.slice(0, 200), parentId: child.parentID?.slice(0, 200) ?? null,
+      head, title: child.description.slice(0, 400), status: child.status,
+      outputTokens: reportedOutputTokens(child), attributableOutputTokens: exclusive.get(child) ?? null, startedAt: fromSwiftDate(child.startedAt),
+      endedAt: typeof child.endedAt === "number" ? fromSwiftDate(child.endedAt) : null,
+    }));
   }
 
   /** The rows the left column and "Settled" draw: the ones the bot sent itself (not a subagent's own). */

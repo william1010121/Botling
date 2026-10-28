@@ -473,7 +473,29 @@ function ordered<T extends Pick<SubagentRowView, "status" | "startedAt">>(shown:
 }
 
 /** A bot in the left column. */
+/** Bounded, read-only delegation metadata. No prompts, steps or results. */
+export const DelegationRowView = z.strictObject({
+  /** Own output counters with unique ownership; null when absent/shared or provenance is unknown. */
+  attributableOutputTokens: z.number().int().nonnegative().nullable().optional(),
+  id: z.string().max(200), parentId: z.string().max(200).nullable(),
+  head: z.enum(["claude", "codex"]).nullable(), title: z.string().max(400),
+  status: z.enum(["running", "completed", "failed", "stopped"]),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  startedAt: z.number(), endedAt: z.number().nullable(),
+});
+export type DelegationRowView = z.infer<typeof DelegationRowView>;
+
+export const TokenFlowHistoryView = z.strictObject({
+  botId: BotId, asOf: z.number(), limited: z.literal(true), unreadable: z.boolean(),
+  rows: z.array(DelegationRowView).max(500),
+  tasks: z.array(z.strictObject({ id: z.string().max(200), name: z.string().max(400),
+    workers: z.array(z.strictObject({ id: z.string().max(200), head: z.enum(["claude", "codex"]).nullable() })).max(500),
+  })).max(300),
+});
+export type TokenFlowHistoryView = z.infer<typeof TokenFlowHistoryView>;
+
 export const BotView = z.strictObject({
+  delegationRows: z.array(DelegationRowView).max(500).optional(),
   id: BotId,
   name: z.string().max(200),
   /** main: the front desk; manager: works in a project folder; bot: a bot of its own. */
@@ -1012,6 +1034,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("updates.check"), manual: z.boolean() }),
   /** What the bots used today and before, and the subscriptions' limits (Settings → Usage).
    * localOnly skips quota refresh and includes normalized per-name token buckets for Token Flow. */
+  z.strictObject({ type: z.literal("tokenFlow.view"), botId }),
   z.strictObject({ type: z.literal("usage.view"), localOnly: z.boolean().optional() }),
   z.strictObject({ type: z.literal("doctor.view") }),
   z.strictObject({ type: z.literal("doctor.copy"), tool: z.enum(["claude", "codex"]) }),
@@ -1091,7 +1114,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "tokenFlow.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "chat.reloadPage"]);
@@ -1215,6 +1238,7 @@ export interface Results {
   "settings.set": SettingsView;
   "updates.check": UpdateView;
   "usage.view": UsageView;
+  "tokenFlow.view": TokenFlowHistoryView;
   "doctor.view": DoctorView;
   "doctor.run": DoctorView;
   "doctor.copy": { copied: boolean };

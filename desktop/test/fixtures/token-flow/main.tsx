@@ -1,20 +1,37 @@
-// Bounded UI fixture: production renderer and synthetic metadata only; no core or engines.
+// Production components, synthetic historical metadata; no core or engines.
+import { useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TokenFlow } from '../../../src/renderer/TokenFlow';
 import '../../../src/renderer/styles.css';
 import '../../../src/renderer/token-flow.css';
-import type { BotView, UsageView, TaskView } from '../../../src/contract';
+import type { BotView, UsageView, TokenFlowHistoryView } from '../../../src/contract';
 import type { Client } from '../../../src/renderer/client';
 const params = new URLSearchParams(location.search);
 if (params.has('light')) document.documentElement.dataset.theme = 'light';
-const empty = params.has('empty');
-const bot: BotView = { id: 'main', name: 'Main', role: 'main', avatar: 'square', folder: '', phase: 'awake', working: true, approvals: 0, unread: 0, subagents: 1, problem: null, heads: ['codex'], job: null, subagentRows: empty ? [] : [
-  { id: 'build', title: 'Build Token Flow', status: 'completed', head: 'codex', startedAt: Date.now() - 120000, endedAt: Date.now(), settled: false, unsettledAt: null, prompt: '', outputTokens: 12400 },
-  { id: 'review', title: 'Independent review', status: 'running', head: 'codex', startedAt: Date.now() - 60000, endedAt: null, settled: false, unsettledAt: null, prompt: '', outputTokens: 3200 },
-  { id: 'check', title: 'Check narrow layouts', status: 'failed', head: 'codex', startedAt: Date.now() - 60000, endedAt: Date.now(), settled: false, unsettledAt: null, prompt: '', outputTokens: null },
+const empty = params.has('empty'), now = Date.now(), day = 86400000;
+const row = (id: string, title: string, output: number | null, age: number, parentId: string | null = null) => ({ id, title, parentId, head: 'codex' as const, status: age > 1 ? 'completed' as const : 'running' as const, startedAt: now - age * day, endedAt: age > 1 ? now - age * day + 3600000 : null, outputTokens: output, attributableOutputTokens: output });
+const bot: BotView = { id: 'main', name: 'Main', role: 'main', avatar: 'square', folder: '', phase: 'awake', working: true, approvals: 0, unread: 0, subagents: 1, problem: null, heads: ['codex'], job: null, subagentRows: [], delegationRows: empty ? [] : [
+  row('build', 'Build Token Flow', 12400, .002), row('review', 'Independent review', 3200, .001), row('check', 'Check narrow layouts', null, .001, 'review'),
 ] };
 const tokens = { input: 84000, output: 22000, cacheRead: 132000, cacheWrite: 0 };
-const usage: UsageView = { spendingStatus: empty ? 'missing' : 'available', day: '2026-10-28', spent: 0, tokens, byBot: [{ name: 'Main', tokens: 238000, spent: 0, breakdown: tokens }], history: [], claude: { fiveHour: null, week: null }, codex: { fiveHour: null, week: null } };
-const client = { request: async () => { if (params.has('failed')) throw new Error('fixture'); return usage; }, onEvent: () => () => {} } as unknown as Client;
-const tasks: TaskView[] = empty ? [] : [{ id: 'task-token-flow', name: 'Token Flow', state: 'running', owner: 'codex', now: null, next: null, blocked: null, messageIds: [], updatedAt: '', atWork: true, relatedAgents: bot.subagentRows.map(row => ({ id: row.id, title: row.title, engine: row.head, status: row.status, available: true, run: 1 })) }];
-createRoot(document.getElementById('root')!).render(<div style={{ height: '100%', display: 'flex', flexDirection: 'column', maxWidth: 960, margin: 'auto' }}><div className="board-switch-bar"><div className="board-switch"><button>Chat</button><button>Board</button><button aria-pressed="true">Token Flow</button></div></div><TokenFlow client={client} bot={bot} bots={[bot]} tasks={tasks} /></div>);
+const usage: UsageView = { spendingStatus: empty ? 'missing' : 'available', day: new Date().toLocaleDateString('en-CA'), spent: 0, tokens, byBot: [{ name: 'Main', tokens: 238000, spent: 0, breakdown: tokens }], history: [], claude: { fiveHour: null, week: null }, codex: { fiveHour: null, week: null } };
+function history(current: BotView): TokenFlowHistoryView {
+  return { botId: current.id, asOf: Date.now(), limited: true, unreadable: false,
+    rows: empty ? [] : [...current.delegationRows!, row('old-audit', 'Audit exports', 8800, 3), row('old-release', 'Release checks', 42000, 10)],
+    tasks: empty ? [] : [
+      { id: 'token-flow', name: 'Token Flow', workers: current.delegationRows!.map(record => ({ id: record.id, head: record.head })) },
+      { id: 'audit', name: 'Export audit', workers: [{ id: 'old-audit', head: 'codex' }] },
+      { id: 'release', name: 'Release', workers: [{ id: 'old-release', head: 'codex' }] },
+    ],
+  };
+}
+function Fixture() {
+  const [current, setCurrent] = useState(bot);
+  const client = useMemo(() => ({ request: async (command: { type: string }) => { if (params.has('failed')) throw new Error('fixture'); return command.type === 'tokenFlow.view' ? history(current) : usage; }, onEvent: () => () => {} }) as unknown as Client, [current]);
+  return <div style={{ height: '100%', display: 'flex', flexDirection: 'column', maxWidth: 1100, margin: 'auto' }}>
+    <div className="board-switch-bar"><div className="board-switch"><button>Chat</button><button>Board</button><button aria-pressed="true">Token Flow</button></div></div>
+    <button aria-label="Simulate telemetry update" style={{ position: 'fixed', bottom: 8, right: 8, fontSize: 10, zIndex: 10 }} onClick={() => setCurrent(value => ({ ...value, delegationRows: value.delegationRows!.map(record => record.id === 'review' ? { ...record, outputTokens: record.outputTokens! + 100, attributableOutputTokens: record.attributableOutputTokens! + 100 } : record) }))}>+ event</button>
+    <TokenFlow client={client} bot={current} bots={[current]} tasks={[]} />
+  </div>;
+}
+createRoot(document.getElementById('root')!).render(<Fixture />);

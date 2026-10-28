@@ -16,7 +16,7 @@ it("gates the production navigation, keeps Chat mounted, and tears down when dev
   const subscribe = (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); };
   const update = async (value: Partial<WorkspaceView>) => act(async () => { view = { ...view, ...value }; listeners.forEach(fn => fn()); });
   const store = { getView: () => view, getChatView: () => view, subscribe, subscribeChat: subscribe, showBoard(value: boolean) { view = { ...view, board: value }; listeners.forEach(fn => fn()); } } as unknown as WorkspaceStore;
-  const request = vi.fn(async () => ({ specs: [], spendingStatus: "missing", tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, byBot: [] }));
+  const request = vi.fn(async () => ({ botId: bot.id, asOf: Date.now(), limited: true, unreadable: false, rows: [], tasks: [], specs: [], spendingStatus: "missing", tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, byBot: [] }));
   const off = vi.fn(); const client = { request, onEvent: () => off } as unknown as Client;
   const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
