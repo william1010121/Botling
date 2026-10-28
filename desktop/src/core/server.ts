@@ -1,3 +1,4 @@
+import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
 // transport-agnostic: `receive` takes whatever arrived, `emit` is where answers and events go. It
@@ -91,6 +92,7 @@ export interface CoreOptions {
   /** How long a component brief may take (1.x: 120 s). */
   briefTimeoutMs?: number;
   /** How to run a Codex head (threads: <data>/codex-threads); null when Codex is not available. */
+  agyConfig?: ((profile: BotProfile, config: AgyConfig) => AgyConfig) | null;
   codexConfig?: ((profile: BotProfile, session: SessionStartCodex, threads: CodexThreads) => CodexHeadConfig) | null;
   /** How long the second head waits for the lead's first words (1.x: 20 s). */
   claimWaitMs?: number;
@@ -293,6 +295,7 @@ export class Core {
         profile,
         deferStartup: options.deferStartup && !this.activated,
         headConfig: options.headConfig,
+        agyConfig: options.agyConfig,
         codexConfig: codexConfig ? (p, session) => ({
           ...codexConfig(p, session, threads),
           componentEditor: group ? null : editorBinding(p, session),
@@ -1354,7 +1357,7 @@ First write a test that shows this, then fix it.`;
   }
 
   /** Your message through the plugins' beforeSend hooks first; one can change it or stop it (`Workspace.send`). */
-  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" }): Promise<ResultOf<"chat.send">> {
+  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }): Promise<ResultOf<"chat.send">> {
     const bot = this.bot(botId);
     // The files waiting in its input box go with the message (1.x sends them all).
     const files = this.pending.take(botId);
@@ -1369,7 +1372,7 @@ First write a test that shows this, then fix it.`;
     }
   }
 
-  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex"; files: string[] }): Promise<ResultOf<"chat.send">> {
+  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files: string[] }): Promise<ResultOf<"chat.send">> {
     if (!text.trim() && !options.files.length) throw new ContractError("bad_request", "Nothing to send.");
     // You wrote in a group (`postToGroup`, after the plugins' beforeSend).
     if (this.groups.group(bot.id)) {

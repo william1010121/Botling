@@ -461,7 +461,7 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
     onProblem(null);
     void client.request({ type: "bot.configure", botId: bot.id, ...change }).then(setView, (failure) => onProblem(why(failure)));
   };
-  const setHeads = (engines: ("claude" | "codex")[]) => {
+  const setHeads = (engines: ("claude" | "codex" | "agy")[]) => {
     onProblem(null);
     void client.request({ type: "heads.set", botId: bot.id, engines }).then(() => client.request({ type: "bot.settings", botId: bot.id })).then(setView, (failure) => onProblem(why(failure)));
   };
@@ -469,16 +469,17 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
   const two = view.engines.length > 1;
   const hasClaude = view.engines.includes("claude");
   const hasCodex = view.engines.includes("codex");
+  const hasAgy = view.engines.includes("agy");
   return (
     <>
       <Group title="Engines in this bot" note="With both, they work at the same time. Turning off the one it runs on hands its work to the other through memory.md, just before its next message.">
-        {(["claude", "codex"] as const).map((engine) => {
+        {(["claude", "codex", "agy"] as const).map((engine) => {
           const on = view.engines.includes(engine);
-          const name = engine === "claude" ? "Claude" : "Codex";
+          const name = engine === "agy" ? "Antigravity" : engine === "claude" ? "Claude" : "Codex";
           // 1.x's "Engines in this bot": the only head cannot go; turning off the first of two runs the bot on the other, through a handoff.
           return (
             <Toggle key={engine} label={name} checked={on} disabled={bot.phase === "switching" || (on && !two)}
-              onChange={(wanted) => setHeads(wanted ? [...view.engines, engine] : view.engines.filter((candidate) => candidate !== engine))} />
+              onChange={(wanted) => setHeads(wanted ? (engine === "agy" || hasAgy ? [engine] : [...view.engines, engine]) : view.engines.filter((candidate) => candidate !== engine))} />
           );
         })}
       </Group>
@@ -499,6 +500,12 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           </Row>
         </Group>
       )}
+      {hasAgy && <Group title="Antigravity" note="Runs independently using your existing agy login and CLI permissions. Tools requiring approval are refused; Botling cannot grant them. Shared-engine chats, managed workers, plugin injection and image input are unavailable.">
+        <Row label="Model" hint="Use a model ID from agy models. Leave empty for the CLI default.">
+          <input aria-label="Antigravity model" key={view.agyModel ?? "default"} defaultValue={view.agyModel ?? ""} maxLength={200}
+            onBlur={event => { const value = event.target.value.trim() || null; if (value !== (view.agyModel ?? null)) configure({ agyModel: value }); }} />
+        </Row>
+      </Group>}
       {/* Both heads use the bot's effort; keep this outside either engine's group. */}
       <Group title="Shared settings" note="A head already awake goes on in the same conversation on the new choice just before its next message.">
         <Row label="Reasoning effort" hint="Applies to every enabled engine.">

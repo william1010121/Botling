@@ -7,11 +7,11 @@
 import { randomUUID } from "node:crypto";
 import { characterCount, characterPrefix } from "./briefing";
 
-export type Engine = "claude" | "codex";
+export type Engine = "claude" | "codex" | "agy";
 export type AnswerTarget = Engine | "both";
-export const ENGINES: Engine[] = ["claude", "codex"];
-export const displayName = (engine: Engine) => (engine === "claude" ? "Claude" : "Codex");
-export const isEngine = (value: unknown): value is Engine => value === "claude" || value === "codex";
+export const ENGINES: Engine[] = ["claude", "codex", "agy"];
+export const displayName = (engine: Engine) => (engine === "agy" ? "Antigravity" : engine === "claude" ? "Claude" : "Codex");
+export const isEngine = (value: unknown): value is Engine => value === "claude" || value === "codex" || value === "agy";
 export const otherHead = (engine: Engine): Engine => (engine === "claude" ? "codex" : "claude");
 
 export interface RoundLimits {
@@ -37,7 +37,7 @@ const clamp = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(10, Math.max(1, Math.trunc(value))) : fallback;
 
 export function makeHeads(engines: Engine[], answerWith: AnswerTarget = "both", rest: Partial<Omit<Heads, "engines" | "answerWith">> = {}): Heads {
-  const kept = ENGINES.filter((engine) => engines.includes(engine));
+  const kept = engines.includes("agy") ? ["agy" as Engine] : ENGINES.filter((engine) => engines.includes(engine));
   const heads: Heads = { engines: kept.length ? kept : ["claude"], answerWith, limits: rest.limits ?? { ...DEFAULT_LIMITS }, handoffs: rest.handoffs ?? true, codexModel: rest.codexModel ?? null };
   heads.answerWith = fitted(heads, answerWith);
   return heads;

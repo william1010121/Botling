@@ -48,7 +48,7 @@ export interface TaskCardView {
   name: string;
   /** "stale": running, but maybe stuck. */
   state: "pending" | "running" | "waiting" | "done" | "stopped" | "stale";
-  owner?: "claude" | "codex" | null;
+  owner?: "claude" | "codex" | "agy" | null;
   /** On the task's latest reply only: what it does now, or what it waits on. */
   detail?: string | null;
   /** The right panel shows this task open. */

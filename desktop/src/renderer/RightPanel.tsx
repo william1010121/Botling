@@ -262,7 +262,7 @@ export function taskLine(task: TaskView, stale: boolean, now: number, quiet = fa
   }
 }
 
-const headName = (engine: string) => (engine === "codex" ? "Codex" : "Claude");
+const headName = (engine: string) => (engine === "agy" ? "Antigravity" : engine === "codex" ? "Codex" : "Claude");
 const isActiveTask = (task: TaskView) => task.state === "pending" || task.state === "running" || task.state === "waiting";
 const minutes = (from: string, now: number) => Math.max(1, Math.floor((now - new Date(from).getTime()) / 60_000));
 

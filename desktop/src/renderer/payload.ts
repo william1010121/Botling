@@ -85,9 +85,9 @@ export function placeholder(bot: BotView): string {
   return bot.role === "main" ? "Make a wish, or ask how things are going…" : `Message ${bot.name}…`;
 }
 
-const headName = (engine: string) => (engine === "codex" ? "Codex" : "Claude");
+const headName = (engine: string) => (engine === "agy" ? "Antigravity" : engine === "codex" ? "Codex" : "Claude");
 /** `ChatPayload.markLetter`. */
-const markLetter = (engine: string) => (engine === "claude" ? "C" : "X");
+const markLetter = (engine: string) => (engine === "agy" ? "A" : engine === "claude" ? "C" : "X");
 
 /** The two-head parts of the page (`ChatPayload.AnswerWith`, `Rounds`, `Handoff`). */
 export function headsParts(heads: HeadsView | null | undefined): Pick<ChatState, "answerWith" | "rounds" | "handoffs"> {

@@ -7,7 +7,7 @@
 import type { DoctorView, SpecStateView, TeamRunView, WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
-export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex"; live: StepView[] }
+export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex" | "agy"; live: StepView[] }
 
 export interface ChatView {
   botId: string;

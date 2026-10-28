@@ -11,12 +11,12 @@ import { fromSwiftDate, toSwiftDate, type StepRecord } from "./store/records";
 export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
 
 /** A row for the left column / "Settled" (the contract's SubagentRowView). */
-export interface SubagentRow { id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string }
+export interface SubagentRow { id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | "agy" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string }
 
 export { LISTED_AFTER_ENDING_MS, LISTED_AT_MOST, listedRows, settledRows } from "../contract";
 
 export interface SubagentRuntime {
-  engine?: "claude" | "codex" | null;
+  engine?: "claude" | "codex" | "agy" | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
 }
@@ -291,7 +291,7 @@ export class SubagentBook {
   }
 
   /** The rows the left column and "Settled" draw: the ones the bot sent itself (not a subagent's own). */
-  rows(head: "claude" | "codex" | null): SubagentRow[] {
+  rows(head: "claude" | "codex" | "agy" | null): SubagentRow[] {
     return this.list.filter((subagent) => !subagent.parentID).map((subagent) => ({
       id: subagent.id.slice(0, 200),
       title: subagent.description.slice(0, 400),
