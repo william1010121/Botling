@@ -79,6 +79,7 @@ export class WorkspaceStore {
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
+  private selectionGeneration = 0;
   private again = false;
   private wanted: string | undefined;
   private buffer: EventEnvelope[] = [];
@@ -132,6 +133,12 @@ export class WorkspaceStore {
 
   /** Shows another bot's chat (fetched fresh). */
   select(botId: string) {
+    // A navigation must not wait behind an older snapshot (which may never reply).
+    // Its eventual response must not overwrite the newer chat or release its buffer.
+    this.selectionGeneration++;
+    this.syncing = false;
+    this.again = false;
+    this.buffer = [];
     this.wanted = botId;
     if (this.view.subagent) this.set({ ...this.view, subagent: null });
     return this.resync();
@@ -157,17 +164,24 @@ export class WorkspaceStore {
       return;
     }
     this.syncing = true;
+    const generation = this.selectionGeneration;
     try {
       const snapshot = await this.fetchSnapshot(this.wanted);
+      if (generation !== this.selectionGeneration) return;
       this.epoch = snapshot.epoch;
       this.seq = snapshot.seq;
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ ...run })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
       this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null, coreSwap: null });
+    } catch (error) {
+      // A failed obsolete request must not discard a later user's selection.
+      if (generation !== this.selectionGeneration) return;
+      throw error;
     } finally {
-      this.syncing = false;
+      if (generation === this.selectionGeneration) this.syncing = false;
     }
+    if (generation !== this.selectionGeneration) return;
     const buffered = this.buffer;
     this.buffer = [];
     for (const envelope of buffered) this.receive(envelope);
