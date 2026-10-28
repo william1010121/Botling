@@ -141,7 +141,18 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
   if(closed||!host.loaded||contents.isDestroyed())return Promise.resolve(false);
   const hadFocus=contents.isFocused();
   host.loaded=false;boundary.revoke(contents);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);
-  reloading=contents.loadURL(EDITOR_URL).then(()=>{
+  // loadURL of the same URL can reuse renderer memory-cache scripts even after
+  // session.clearCache(). Hot install must replace chat.js before the new shell runs.
+  const loaded=new Promise<void>((resolve,reject)=>{
+   const cleanup=()=>{clearTimeout(timer);contents.removeListener('did-finish-load',finished);contents.removeListener('did-fail-load',failed);contents.removeListener('destroyed',destroyed);};
+   const finished=()=>{cleanup();resolve();};
+   const failed=(_event:Electron.Event,code:number,description:string,_url:string,main:boolean)=>{if(main){cleanup();reject(new Error(`Chat reload failed (${code}): ${description}`));}};
+   const destroyed=()=>{cleanup();reject(new Error('Chat closed during reload'));};
+   const timer=setTimeout(()=>{cleanup();reject(new Error('Chat reload timed out'));},30_000);
+   contents.once('did-finish-load',finished);contents.on('did-fail-load',failed);contents.once('destroyed',destroyed);
+   try{contents.reloadIgnoringCache();}catch(error){cleanup();reject(error);}
+  });
+  reloading=loaded.then(()=>{
    if(closed||owner.isDestroyed())return false;
    host.loaded=true;
    // A shell that is itself mid-navigation is bound again by its own did-finish-load.

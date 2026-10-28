@@ -52,6 +52,11 @@ for (const hotReload of [false, true]) test(`${hotReload ? 'cached chat reload t
     if (hotReload) {
       await chat.locator('html[data-chat]').waitFor({ state: 'attached' });
       expect(await chat.evaluate(() => (window as any).__fixtureChatBuild)).toBe('before');
+      const cdp = await chat.context().newCDPSession(chat);
+      await cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true });
+      await chat.locator('.composer .cm-content').focus();
+      await cdp.send('Input.insertText', { text: 'unsent fixture draft' });
+      await expect(chat.locator('.composer .cm-content')).toHaveText('unsent fixture draft');
       writeFileSync(join(renderer, 'chat.js'), chatScript + ';window.__fixtureChatBuild="after";');
       // Same cache clearing and native reload command as hot install, followed by shell reload.
       await app.evaluate(async ({ session }) => { await session.defaultSession.clearCache(); (globalThis as any).fixtureOldCache = false; });
@@ -62,6 +67,7 @@ for (const hotReload of [false, true]) test(`${hotReload ? 'cached chat reload t
       }));
       expect(answer).toMatchObject({ ok: true, result: { reloaded: true } });
       await expect.poll(() => chat.evaluate(() => (window as any).__fixtureChatBuild)).toBe('after');
+      await expect(chat.locator('.composer .cm-content')).toHaveText('unsent fixture draft');
       await shell.reload();
       await shell.locator('.shell[data-ready="1"]').waitFor();
     }

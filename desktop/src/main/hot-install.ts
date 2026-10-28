@@ -381,7 +381,10 @@ export async function applyHot(parts: HotPart[], ports: ApplyPorts): Promise<App
   }
   if (staged.renderer) {
     previousRenderer = ports.useRenderer(staged.renderer);
-    if (parts.includes("chat")) { await ports.reloadChat().catch(() => false); applied.push("chat"); }
+    if (parts.includes("chat")) {
+      applied.push("chat"); // A failed attempt also needs the previous page restored.
+      if (!(await ports.reloadChat().catch(() => false))) return undo("the new chat page did not come up");
+    }
     if (parts.includes("shell")) {
       applied.push("shell");
       if (!(await ports.reloadShell().catch(() => false))) return undo("the new shell did not come up");
