@@ -274,3 +274,40 @@ describe("deferred work details", () => {
     expect(live.querySelectorAll("pre")).toHaveLength(0);
   });
 });
+
+
+it("bounds old-message navigation and retains its context and selection through incoming updates", () => {
+  const previous = HTMLElement.prototype.scrollIntoView;
+  const scroll = vi.fn();
+  HTMLElement.prototype.scrollIntoView = scroll;
+  try {
+    const messages = history(2000);
+    window.ccb.setState(state(messages));
+    expect(rows()).toHaveLength(50);
+    jumpTo("m20");
+    expect(row("m20")).not.toBeNull();
+    expect(row("m19")).not.toBeNull();
+    expect(row("m21")).not.toBeNull();
+    expect(scroll).toHaveBeenCalled();
+    expect(rows().length).toBeLessThanOrEqual(150);
+    const target = row("m20");
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(target.querySelector(".text") ?? target);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const selected = selection.toString();
+    expect(selected).toContain("Reply 20");
+    window.ccb.patchState({
+      order: [...messages.map(m => m.id), "m2000"],
+      changed: [message(1999, { text: "stream update" }), message(2000)],
+    });
+    expect(rows().length).toBeLessThanOrEqual(150);
+    expect(row("m20")).toBe(target);
+    expect(selection.toString()).toBe(selected);
+    jumpTo("m1999");
+    expect(row("m1999").textContent).toContain("stream update");
+    expect(row("m2000")).not.toBeNull();
+    expect(rows().length).toBeLessThanOrEqual(150);
+  } finally { HTMLElement.prototype.scrollIntoView = previous; }
+});
