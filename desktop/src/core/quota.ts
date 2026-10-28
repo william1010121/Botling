@@ -33,9 +33,9 @@ async function claudeToken(env: NodeJS.ProcessEnv): Promise<string> {
     const credentials = JSON.parse(raw)?.claudeAiOauth;
     const token = credentials?.accessToken;
     if (typeof token !== "string" || !token) throw new Error();
-    // expiresAt is epoch milliseconds. Unknown/malformed expiry is not evidence of expiration.
+    // Claude stores epoch milliseconds. Small/ambiguous values are not evidence of expiration.
     const expiresAt = credentials?.expiresAt;
-    if (typeof expiresAt === "number" && Number.isSafeInteger(expiresAt) && expiresAt >= 0 && expiresAt <= Date.now()) {
+    if (typeof expiresAt === "number" && Number.isSafeInteger(expiresAt) && expiresAt >= 1e11 && expiresAt <= Date.now()) {
       throw new QuotaError("token_expired");
     }
     return token;

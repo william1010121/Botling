@@ -120,7 +120,7 @@ function claudeFixture(expiresAt?: unknown) {
   return { CLAUDE_CONFIG_DIR: dir };
 }
 
-it.each([0, 1793145599999, 1793145600000])("rejects known expired Claude token %s before any request", async expiresAt => {
+it.each([1e11, 1793145599999, 1793145600000])("rejects known expired Claude token %s before any request", async expiresAt => {
   vi.spyOn(Date, "now").mockReturnValue(1793145600000);
   const request = vi.fn(async () => new Response('{"seven_day":{"utilization":22}}'));
   const env = claudeFixture(expiresAt);
@@ -155,7 +155,7 @@ it("uses an unexpired Claude token normally and reports 401 as rejection with un
   expect(rejected).toHaveBeenCalledTimes(1);
 });
 
-it.each([undefined, null, "1793145599999", "invalid", -1, 1.5, {}, [], 1e100])("keeps unknown/malformed Claude expiry %j compatible", async expiresAt => {
+it.each([undefined, null, "1793145599999", "invalid", -1, 0, 1.5, 1793145599, 1793145601, 1e11 - 1, {}, [], 1e100])("keeps unknown/malformed Claude expiry %j compatible", async expiresAt => {
   vi.spyOn(Date, "now").mockReturnValue(1793145600000);
   const request = vi.fn(async () => new Response('{"seven_day":{"utilization":22}}'));
   expect((await readClaudeQuota(claudeFixture(expiresAt), request as typeof fetch)).week?.used).toBe(.22);
