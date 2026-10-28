@@ -1,23 +1,14 @@
-// Installing a developer build (`<install-build>`, core/self-update.ts) without an app restart when only
-// swappable parts changed (docs/core-hot-swap.md, "Installing a build"). Electron-free so it can be tested
-// with fake bundles; main/hot-install-main.ts supplies the real ports.
-//
-// The decision compares the running bundle with the new one part by part. The kernel, which only an app
-// restart replaces, is: the main process bundle (out/main, which also carries the IPC contract and its
-// protocol version), the preloads (a window's preload is fixed when it opens, and main reads it through
-// Electron's archive cache of the running app.asar), package.json (all but version and description),
-// native modules, any other app file, and outside app.asar: Electron (Contents/Frameworks), the
-// executable, Info.plist and the app's other resources. The swappable parts: the core (out/core,
-// out/host, out/web-extractors), the chat page's files and the shell's (out/renderer).
-//
-// Hot path: copy the changed parts out of the new bundle to <data>/hot-builds/<stamp>/ (verified against
-// the fingerprints the decision used), install the bundle on disk (old one moved to a backup, the copy
-// verified), then core swap, chat page reload, shell reload. Any failure puts back what was applied and
-// the old bundle on disk; when that cannot be done the report says a restart is required.
+// Signed developer hot installs. The complete candidate bundle is authenticated from its ZIP,
+// compared against the running kernel/storage epoch, then atomically exchanged on disk with a
+// durable rollback journal. Core/renderer parts run from immutable copies; mobile snapshots are
+// generation-bound and fenced until runtime activation commits. Main supplies real process/UI ports.
+// The first installation of this infrastructure changes main and therefore requires restart.
 import { parseStorageContract, storageCompatible, STORAGE_RESTART_REASON, type StorageContract } from "../storage-contract";
+import { visitMobile, exactTree, bundleVersion, requireNewer, type AuthenticatedBuild } from "./hot-auth";
+import { HotTransaction } from "./hot-transaction";
 import type * as NodeFs from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { CHAT_FILES } from "./renderer-loading";
 import { HOT_PARTS, PART_NAMES, type HotPart, type HotReport, type InstallPlan } from "../hot-install-plan";
 import type { SwapOutcome } from "./core-swap";
@@ -186,6 +177,7 @@ async function bundleKernel(bundle: string, fs: Fs, kernel: Record<string, [stri
     for (const name of (await fs.promises.readdir(dir)).sort()) {
       const path = join(dir, name), rel = prefix ? `${prefix}/${name}` : name;
       if (rel === "Info.plist" || rel === "_CodeSignature" || rel === "CodeResources" || rel === "embedded.provisionprofile") continue;
+      if (rel === "Resources/mobile") continue;
       if (rel === "Resources/app.asar" || rel === "Resources/app.asar.unpacked" || rel === "Resources/app") continue;
       const what = rel.startsWith("Frameworks/") ? "Electron" : rel.startsWith("MacOS/") ? "executable" : "app resources";
       const stat = await fs.promises.lstat(path);
@@ -207,7 +199,7 @@ export async function bundlePrints(bundle: string, fs: Fs): Promise<BundlePrints
   const info = await bundleKernel(bundle, fs, kernel);
   const source = await openApp(bundle, fs);
   let declaredStorage: StorageContract | null = null;
-  const files = { core: {}, chat: {}, shell: {} } as Record<HotPart, Record<string, string>>;
+  const files = { core: {}, chat: {}, shell: {}, mobile: {} } as Record<HotPart, Record<string, string>>;
   for (const [path, entry] of source.files) {
     const place = classify(path);
     if (!place) continue;
@@ -222,8 +214,7 @@ export async function bundlePrints(bundle: string, fs: Fs): Promise<BundlePrints
     else if (path === "package.json") {
       const json = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
       declaredStorage = parseStorageContract(json.botlingStorageContract);
-      // Keep the storage declaration in the kernel digest: even old planners must restart
-      // on the first upgrade, before any envelope-writing candidate can touch live data.
+      // Retain in the kernel digest so even pre-gate planners restart on initial migration.
       delete json.version; delete json.description;
       (kernel["package.json"] ??= []).push([path, JSON.stringify(sorted(json))]);
     } else (kernel[place.kernel] ??= []).push([path, sha(bytes)]);
@@ -233,6 +224,9 @@ export async function bundlePrints(bundle: string, fs: Fs): Promise<BundlePrints
   if (metadata && !metadata.link && metadata.size <= 4096) {
     try { coreStorage = parseStorageContract(JSON.parse((await source.read("out/core/storage-contract.json")).toString("utf8"))); } catch { /* unknown: restart */ }
   }
+  const mobile = join(bundle, "Contents/Resources/mobile");
+  if (fs.existsSync(mobile)) files.mobile = await visitMobile(mobile, fs);
+  for (const [path, hash] of Object.entries(files.mobile)) if (path.endsWith(".node")) (kernel["native modules"] ??= []).push([`mobile/${path}`, hash]);
   return {
     storageContract: storageCompatible(declaredStorage, coreStorage) ? declaredStorage : null,
     kernel: Object.fromEntries(Object.entries(kernel).map(([what, rows]) => [what, digest(rows)])),
@@ -250,9 +244,10 @@ export function planInstall(running: BundlePrints, incoming: BundlePrints): Inst
   const names = [...new Set([...Object.keys(running.kernel), ...Object.keys(incoming.kernel)])].sort();
   const changed = names.filter((name) => running.kernel[name] !== incoming.kernel[name]);
   if (incoming.kernel["native modules"] || running.kernel["native modules"]) if (!changed.includes("native modules")) changed.push("native modules");
+  if (running.parts.mobile && !incoming.parts.mobile) return { mode: "restart", reasons: ["missing mobile resources"] };
   if (changed.length) return { mode: "restart", reasons: [`kernel changed: ${changed.join(", ")}`] };
   if (!storageCompatible(running.storageContract, incoming.storageContract)) return { mode: "restart", reasons: [STORAGE_RESTART_REASON] };
-  return { mode: "hot", parts: HOT_PARTS.filter((part) => running.parts[part] !== incoming.parts[part]) };
+  return { mode: "hot", parts: HOT_PARTS.filter((part) => running.parts[part] !== incoming.parts[part] || (part === "core" && running.parts.mobile !== incoming.parts.mobile)) };
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -268,11 +263,12 @@ export async function stageParts(bundle: string, prints: BundlePrints, parts: Ho
   const wanted: HotPart[] = parts.includes("chat") || parts.includes("shell") ? [...new Set<HotPart>([...parts, "chat", "shell"])] : parts;
   const dir = join(stagingRoot, stamp), partial = `${dir}.partial`;
   await fs.promises.rm(partial, { recursive: true, force: true });
+  await fs.promises.mkdir(partial, { recursive: true });
   for (const part of wanted) {
     for (const [path, expected] of Object.entries(prints.files[part])) {
-      const bytes = await source.read(`out/${path}`);
+      const bytes = part === "mobile" ? await fs.promises.readFile(join(bundle, "Contents/Resources/mobile", path)) : await source.read(`out/${path}`);
       if (sha(bytes) !== expected) throw new Error(`out/${path} changed since the build was compared (was it rebuilt?)`);
-      const target = join(partial, ...path.split("/"));
+      const target = join(partial, ...(part === "mobile" ? ["mobile"] : []), ...path.split("/"));
       if (!resolve(target).startsWith(resolve(partial) + sep)) throw new Error(`unsafe path ${path}`);
       await fs.promises.mkdir(dirname(target), { recursive: true });
       await fs.promises.writeFile(target, bytes);
@@ -371,25 +367,26 @@ export async function applyHot(parts: HotPart[], ports: ApplyPorts): Promise<App
   const undo = async (error: string): Promise<ApplyResult> => {
     ports.log(`hot install: ${error}; putting back what was applied (${applied.map((part) => PART_NAMES[part]).join(", ") || "nothing"})`);
     const still = [...applied];
+    let disk: HotReport["disk"] = "restored";
+    try { await ports.restore(); } catch (failure) { disk = "stuck"; ports.log(`hot install: restore failed: ${message(failure)}`); }
+    if (disk === "stuck") return { ok: false, applied: still, error, disk };
     if (previousRenderer !== null) {
       ports.useRenderer(previousRenderer);
-      if (still.includes("chat")) await ports.reloadChat().catch(() => false);
-      if (still.includes("shell")) await ports.reloadShell().catch(() => false);
-      for (const part of ["chat", "shell"] as const) if (still.includes(part)) still.splice(still.indexOf(part), 1);
+      for (const part of ["chat", "shell"] as const) {
+        if (still.includes(part) && await (part === "chat" ? ports.reloadChat() : ports.reloadShell()).catch(() => false)) still.splice(still.indexOf(part), 1);
+      }
     }
     if (previousCore !== null) {
       const back = await ports.swapCore(previousCore).catch((failure) => ({ ok: false as const, stage: "start" as const, error: message(failure) }));
-      if (back.ok) still.splice(still.indexOf("core"), 1);
-      else ports.log(`hot install: the previous core could not be swapped back: ${back.error}`);
+      if (back.ok && still.includes("core")) still.splice(still.indexOf("core"), 1);
+      else if (!back.ok) { if (!still.includes("core")) still.push("core"); ports.log(`hot install: the previous core could not be swapped back: ${back.error}`); }
     }
-    let disk: HotReport["disk"] = "restored";
-    try { await ports.restore(); } catch (failure) { disk = "stuck"; ports.log(`hot install: the previous bundle could not be put back: ${message(failure)}`); }
     return { ok: false, applied: still, error, disk };
   };
   if (parts.includes("core")) {
     const before = ports.coreScript();
     const outcome = await ports.swapCore(staged.core!).catch((error) => ({ ok: false as const, stage: "start" as const, error: message(error), rolledBack: false }));
-    if (!outcome.ok) return undo(swapFailure(outcome));
+    if (!outcome.ok) { if (outcome.stage === "start") previousCore = before; return undo(swapFailure(outcome)); }
     previousCore = before;
     applied.push("core");
   }
@@ -404,6 +401,7 @@ export async function applyHot(parts: HotPart[], ports: ApplyPorts): Promise<App
       if (!(await ports.reloadShell().catch(() => false))) return undo("the new shell did not come up");
     }
   }
+  if (parts.includes("mobile")) applied.push("mobile");
   return { ok: true, applied, disk: "installed" };
 }
 
@@ -413,7 +411,9 @@ export async function applyHot(parts: HotPart[], ports: ApplyPorts): Promise<App
 export interface HotInstallerOptions {
   /** The running app bundle (null: not running from one). */
   target: string | null;
-  /** Main's data folder: copies in <data>/hot-builds, bundle backups in <data>/core/self-update/backups. */
+  /** Real entry must authenticate a signed ZIP; no unsigned production fallback. */
+  authenticate?: (path: string) => Promise<AuthenticatedBuild>;
+  /** Main data folder for runtime copies and the durable transaction journal. Whole-bundle backups remain beside the app in owned .botling-hot-* roots. */
   dataDir: string;
   fs: Fs;
   run: Run;
@@ -434,24 +434,26 @@ function diskIdentity(bundle: string, fs: Fs): string {
 
 export class HotInstaller {
   private readonly staging: string;
-  private readonly backups: string;
   /** The bundle on disk as this process knows it (null until first compared). */
   private running: BundlePrints | null = null;
   private identity: string | null;
   /** Set when the bundle on disk no longer matches what runs (a failed put-back); every later install restarts. */
   private stuck: string | null = null;
   private busy = false;
+  private authenticated = new Map<string, AuthenticatedBuild>();
   /** Folders the running process uses under the staging root. */
   private inUse: { core: string | null; renderer: string | null } = { core: null, renderer: null };
 
   constructor(private readonly options: HotInstallerOptions) {
     this.staging = join(options.dataDir, "hot-builds");
-    this.backups = join(options.dataDir, "core", "self-update", "backups");
     // Taken at start: the bundle this process was launched from.
     this.identity = options.target ? diskIdentity(options.target, options.fs) : null;
     // Copies from an earlier run are not used by this one.
-    void options.fs.promises.rm(this.staging, { recursive: true, force: true }).catch(() => {});
+    // Do not race a new staging operation or delete pending recovery evidence.
   }
+
+  get installing() { return this.busy; }
+  verified(path: string) { return this.authenticated.get(this.options.fs.realpathSync(path)); }
 
   private async runningPrints(): Promise<BundlePrints> {
     const target = this.options.target!;
@@ -465,16 +467,30 @@ export class HotInstaller {
     const restart = (reason: string) => ({ plan: { mode: "restart", reasons: [reason] } as InstallPlan });
     const target = this.options.target;
     if (!target) return restart("this Botling is not running from an app bundle");
-    if (this.stuck) return restart(this.stuck);
+    if (this.stuck) return { plan: { mode: "restart", blocked: true, reasons: [this.stuck] } };
+    if (this.options.fs.existsSync(join(this.options.dataDir, "hot-install-pending.json"))) return { plan: { mode: "restart", blocked: true, reasons: ["A hot-install transaction needs completion or recovery"] } };
+    if (this.options.fs.existsSync(join(this.options.dataDir, "update-pending.json"))) return { plan: { mode: "restart", blocked: true, reasons: ["A verified restart update is pending"] } };
     let build: string;
     try { build = this.options.fs.realpathSync(path); } catch { return restart(`there is no build at ${path}`); }
+    if (build !== resolve(path)) return { plan: { mode: "restart", blocked: true, reasons: ["Candidate path cannot traverse symlinks"] } };
     if (!build.endsWith(".app") || build === target || build.startsWith(target + sep) || target.startsWith(build + sep)) return restart(`${path} cannot be installed in place`);
+    if (!this.options.authenticate) return { plan: { mode: "restart", blocked: true, reasons: ["Signed candidate verification is unavailable"] } };
+    let verified: AuthenticatedBuild;
+    try {
+      const fs = this.options.fs;
+      const cached = this.authenticated.get(build);
+      requireNewer(bundleVersion(await fs.promises.readFile(join(build, "Contents/Info.plist"), "utf8")), bundleVersion(await fs.promises.readFile(join(target, "Contents/Info.plist"), "utf8")));
+      if (cached && await exactTree(build, fs) === cached.digest && await exactTree(cached.app, fs) === cached.digest) verified = cached;
+      else verified = await this.options.authenticate(build);
+      this.authenticated.set(build, verified);
+    } catch (error) { return { plan: { mode: "restart", blocked: true, reasons: [message(error)] } }; }
     let running: BundlePrints;
     try { running = await this.runningPrints(); } catch (error) { return restart(`could not compare with the running build: ${message(error)}`); }
     let incoming: BundlePrints;
-    try { incoming = await bundlePrints(build, this.options.fs); } catch (error) { return restart(`could not read the new build: ${message(error)}`); }
+    try { incoming = await bundlePrints(verified.app, this.options.fs); } catch (error) { return restart(`could not read the new build: ${message(error)}`); }
     if (incoming.bundleID !== running.bundleID) return restart(`${path} is another app (${incoming.bundleID})`);
-    return { plan: planInstall(running, incoming), build, incoming };
+    const plan = planInstall(running, incoming);
+    return { plan, build, incoming };
   }
 
   /**
@@ -487,28 +503,40 @@ export class HotInstaller {
     let planned: Awaited<ReturnType<HotInstaller["plan"]>>;
     try { planned = await this.plan(request.path); } catch (error) { this.busy = false; return { ok: false, error: message(error) }; }
     const { plan, build, incoming } = planned;
-    if (plan.mode !== "hot" || !build || !incoming) { this.busy = false; return { ok: false, error: `It needs a restart: ${plan.mode === "restart" ? plan.reasons.join("; ") : ""}`, plan }; }
-    void this.apply(request, build, incoming, plan.parts).finally(() => { this.busy = false; });
+    if (plan.mode !== "hot" || !build || !incoming) { this.busy = false; return { ok: false, error: `${plan.blocked ? "Build refused" : "It needs a restart"}: ${plan.mode === "restart" ? plan.reasons.join("; ") : ""}`, plan }; }
+    void this.apply(request, build, incoming, plan.parts).catch(error => {
+      this.stuck = message(error);
+      this.options.notify({ ok: false, applied: [], disk: "stuck", error: this.stuck, requester: request.requester, note: request.note, from: request.from, to: request.to });
+    }).finally(() => { this.busy = false; });
     return { ok: true, plan };
   }
 
   private async apply(request: InstallRequest, build: string, incoming: BundlePrints, parts: HotPart[]) {
     const { fs, run, ports } = this.options;
+    const verified = this.authenticated.get(build)!;
+    build = verified.app;
+    const transaction = new HotTransaction(this.options.dataDir, fs, run);
     const target = this.options.target!;
     const stamp = `${Date.now()}`;
-    const backup = join(this.backups, `Botling-2-${request.from.replace(/[^0-9A-Za-z.-]/g, "_").slice(0, 60)}-${stamp}.hot.app`);
     let staged: { dir: string; core?: string; renderer?: string } | null = null;
     ports.log(`hot install: ${build} (${parts.map((part) => PART_NAMES[part]).join(", ") || "no parts"})`);
+    const old = await stageParts(target, await this.runningPrints(), ["core"], this.staging, fs, `${stamp}-previous`);
     const result = await applyHot(parts, {
       ...ports,
-      stage: async (wanted) => { staged = await stageParts(build, incoming, wanted, this.staging, fs, stamp); return staged; },
+      coreScript: () => old.core!,
+      stage: async (wanted) => {
+        if (await exactTree(build, fs) !== verified.digest) throw new Error("Authenticated candidate changed");
+        staged = await stageParts(build, incoming, wanted, this.staging, fs, stamp);
+        return staged;
+      },
       install: async () => {
-        await installBundle(build, target, backup, incoming, fs, run);
+        await transaction.prepare(target, build, verified.digest);
+        try { await transaction.activate(); } catch (error) { await transaction.recover(); throw error; }
         this.identity = diskIdentity(target, fs);
         this.running = incoming;
       },
       restore: async () => {
-        await restoreBundle(target, backup, run);
+        await transaction.rollback();
         this.identity = diskIdentity(target, fs);
         this.running = null;
       },
@@ -519,19 +547,18 @@ export class HotInstaller {
       },
       useRenderer: (dir) => { this.inUse.renderer = dir; return ports.useRenderer(dir); },
     });
-    if (result.disk === "stuck") this.stuck = "an earlier install left the app on disk different from the running build; restart Botling first";
-    else if (result.ok) await this.pruneBackups(backup);
-    // A failed install leaves no copy in use; a good one keeps its own.
-    await pruneStaging(this.staging, [this.inUse.core, this.inUse.renderer], fs).catch(() => {});
+    if (!result.ok && result.disk === "untouched" && fs.existsSync(transaction.file)) result.disk = "stuck";
+    if (result.disk === "stuck" || (!result.ok && result.applied.length)) this.stuck = "an earlier install left the app on disk different from the running build; restart Botling first";
+    else if (result.ok) {
+      try { await transaction.commit(); }
+      catch (error) { result.ok = false; result.disk = "stuck"; result.error = `Could not finalize hot install: ${message(error)}`; this.stuck = result.error; }
+    }
+    if (!result.ok && result.disk === "restored" && result.applied.length === 0) await transaction.recover();
+    // An uncertain rollback may still have a process using either generation. Preserve both.
+    if (result.ok || (result.disk !== "stuck" && result.applied.length === 0)) await pruneStaging(this.staging, [this.inUse.core, this.inUse.renderer], fs).catch(() => {});
     void staged;
+    this.authenticated.delete(request.path);
     this.options.notify({ ...result, requester: request.requester, note: request.note, from: request.from, to: request.to });
   }
 
-  /** Keeps this install's backup and the one before (backups of restart installs are left alone). */
-  private async pruneBackups(keep: string) {
-    const fs = this.options.fs;
-    const names = (await fs.promises.readdir(this.backups).catch(() => [] as string[])).filter((name) => name.endsWith(".hot.app") && name !== basename(keep));
-    const dated = names.map((name) => ({ name, at: Number(/-(\d+)\.hot\.app$/.exec(name)?.[1] ?? 0) })).sort((a, b) => b.at - a.at);
-    for (const old of dated.slice(1)) await this.options.run("/bin/rm", ["-rf", join(this.backups, old.name)]).catch(() => {});
-  }
 }

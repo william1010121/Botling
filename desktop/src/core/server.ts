@@ -509,7 +509,7 @@ export class Core {
       installRelease: app ? () => app.request("installRelease") : undefined,
       planBuild: app ? async (path) => {
         const answer = await app.request("planBuild", { path });
-        return (answer.ok ? parsePlan(answer.plan) : null) ?? { mode: "restart", reasons: [answer.error ?? "main could not compare the builds"] };
+        return (answer.ok ? parsePlan(answer.plan) : null) ?? { mode: "restart", blocked: true, reasons: [answer.error ?? "main could not authenticate the build"] };
       } : undefined,
       hotInstall: app ? (request) => app.request("installBuild", request) : undefined,
       captureWindow: async () => {

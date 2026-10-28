@@ -26,6 +26,10 @@ export function endpointURL(input: string, origin: string): URL {
   return url;
 }
 
+export function mobileGeneration(): Record<string, string> {
+  const id = typeof location !== 'undefined' ? /^\/mobile\/g\/([a-f0-9]{64})\//.exec(location.pathname)?.[1] : undefined;
+  return id ? { 'X-Botling-Generation': id } : {};
+}
 export class MobileTransport {
   private token: string;
   private csrf: string;
@@ -48,10 +52,12 @@ export class MobileTransport {
     try {
       const fetcher = this.fetcher; // Native browser fetch must not receive the transport as `this`.
       const response = await fetcher(this.endpoint, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...(this.csrf ? { 'X-Botling-CSRF': this.csrf } : { Authorization: `Bearer ${this.token}` }) },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...mobileGeneration(), ...(this.csrf ? { 'X-Botling-CSRF': this.csrf } : { Authorization: `Bearer ${this.token}` }) },
         body: JSON.stringify({ v: PROTOCOL_VERSION, id, cmd: command }), signal: controller.signal,
         cache: 'no-store', credentials: this.csrf ? 'same-origin' : 'omit', redirect: this.csrf ? 'manual' : 'error', referrerPolicy: 'no-referrer',
       });
+      if (response.status === 409) throw new MobileError('Botling was updated. Open /mobile/ again to load the current version; keep your draft before reloading.', false, false, true);
+      if (response.status === 503 && (await response.clone().json().catch(() => null))?.error?.code === 'generation_updating') throw new MobileError('Botling is updating. Try again shortly; this request was not dispatched.');
       if (response.type === 'opaqueredirect' || response.status === 401) throw new MobileError('Your session expired or is unavailable. Connect again; drafts remain in this tab.', true);
       if (response.status === 403) {
         // Only a matching bridge envelope identifies a bot denial; edge HTML is not trusted.

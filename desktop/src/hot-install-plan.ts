@@ -6,11 +6,11 @@
 // quits and the install script opens the new build.
 
 /** The parts that can change without an app restart, in the order they are applied. */
-export const HOT_PARTS = ["core", "chat", "shell"] as const;
+export const HOT_PARTS = ["core", "chat", "shell", "mobile"] as const;
 export type HotPart = typeof HOT_PARTS[number];
-export const PART_NAMES: Record<HotPart, string> = { core: "core", chat: "chat page", shell: "shell" };
+export const PART_NAMES: Record<HotPart, string> = { core: "core", chat: "chat page", shell: "shell", mobile: "mobile" };
 
-export type InstallPlan = { mode: "hot"; parts: HotPart[] } | { mode: "restart"; reasons: string[] };
+export type InstallPlan = ({ mode: "hot"; parts: HotPart[] } | { mode: "restart"; reasons: string[] }) & { blocked?: boolean };
 
 /** "hot-apply: core, chat page" / "restart (kernel changed: main process, Electron)". */
 export function planText(plan: InstallPlan): string {
@@ -41,10 +41,10 @@ const text = (value: unknown, max: number) => (typeof value === "string" ? value
 export function parsePlan(raw: unknown): InstallPlan | null {
   const value = raw as { mode?: unknown; parts?: unknown; reasons?: unknown } | null;
   if (!value || typeof value !== "object") return null;
-  if (value.mode === "hot" && Array.isArray(value.parts) && value.parts.every((part) => PART_SET.has(part as string))) {
+  if (value.mode === "hot" && !(raw as InstallPlan).blocked && Array.isArray(value.parts) && value.parts.every((part) => PART_SET.has(part as string))) {
     return { mode: "hot", parts: HOT_PARTS.filter((part) => (value.parts as string[]).includes(part)) };
   }
-  if (value.mode === "restart" && Array.isArray(value.reasons)) return { mode: "restart", reasons: value.reasons.slice(0, 20).map((reason) => text(reason, 300)).filter(Boolean) };
+  if (value.mode === "restart" && Array.isArray(value.reasons)) return { mode: "restart", reasons: value.reasons.slice(0, 20).map((reason) => text(reason, 300)).filter(Boolean), ...((raw as InstallPlan).blocked ? { blocked: true } : {}) };
   return null;
 }
 

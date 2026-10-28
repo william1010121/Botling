@@ -8,6 +8,9 @@ import * as fs from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { generateKeyPairSync, sign, createHash } from "node:crypto";
+import { payload } from "../../scripts/release-manifest.mjs";
+import { authenticateLocalBuild } from "../../src/main/hot-auth";
 import { createPackage } from "@electron/asar";
 import { tempDir } from "../helpers";
 import {
@@ -68,6 +71,8 @@ async function fakeBundle(dir: string, spec: Spec = {}): Promise<string> {
   put(join(helper, "Info.plist"), `<plist><dict><key>CFBundleVersion</key><string>${version}</string></dict></plist>`);
   put(join(helper, "MacOS", "Botling 2 Helper (Renderer)"), `helper signed for ${version}`, 0o755);
   put(join(contents, "Resources", "icon.icns"), spec.icon ?? "icon");
+  put(join(contents, "Resources/mobile/index.html"), "mobile");
+  put(join(contents, "Resources/mobile/web.js"), "web");
   const files: Record<string, string | null> = { ...BASE_FILES, ...spec.files };
   files["package.json"] = JSON.stringify({ ...JSON.parse(files["package.json"]!), version });
   const appFiles = spec.asar === false ? join(contents, "Resources", "app") : join(dir, "app-src");
@@ -248,7 +253,7 @@ describe("applying", () => {
     expect(result).toEqual({ ok: false, applied: [], error: "the new shell did not come up", disk: "restored" });
     expect(calls).toEqual([
       "stage core,shell", "install", "swap /data/hot-builds/1/core/main.cjs", "renderer /data/hot-builds/1/renderer", "reload shell",
-      "renderer /app/out/renderer", "reload shell", "swap /app/out/core/main.cjs", "restore",
+      "restore", "renderer /app/out/renderer", "reload shell", "swap /app/out/core/main.cjs",
     ]);
   });
 
@@ -264,11 +269,17 @@ describe("applying", () => {
 describe("HotInstaller", () => {
   async function setup(incoming: Spec) {
     const { root, running, incoming: build } = await pair({}, incoming);
+    const keys = generateKeyPairSync("ed25519");
+    await run("/usr/bin/ditto", ["-c", "-k", "--keepParent", build, `${build}.zip`]);
+    const bytes = readFileSync(`${build}.zip`);
+    const manifest = { version: incoming.version ?? "2.0.0-dev.2", sha256: createHash("sha256").update(bytes).digest("hex"), size: bytes.length };
+    writeFileSync(`${build}.zip.manifest.json`, JSON.stringify({ ...manifest, signature: sign(null, payload(manifest), keys.privateKey).toString("base64") }));
     const reports: HotReport[] = [];
     const swaps: string[] = [];
     let renderer = "/bundled/renderer";
     const installer = new HotInstaller({
       target: running, dataDir: join(root, "data"), fs, run,
+      authenticate: path => authenticateLocalBuild(path, running, keys.publicKey.export({ type: "spki", format: "pem" }).toString(), fs, run),
       notify: (report) => reports.push(report),
       ports: {
         coreScript: () => "/bundled/core/main.cjs",
@@ -283,7 +294,7 @@ describe("HotInstaller", () => {
 
   it("hot: installs the new bundle on disk, swaps to the core copied to <data>/hot-builds, serves the new pages, and reports", async () => {
     const { root, running, installer, reports, swaps, request, renderer } = await setup({ files: { "out/core/main.cjs": "core v2", "out/renderer/renderer.js": "shell v2" } });
-    expect((await installer.plan(request.path)).plan).toEqual({ mode: "hot", parts: ["core", "shell"] });
+    expect((await installer.plan(request.path)).plan).toMatchObject({ mode: "hot", parts: ["core", "shell"] });
     expect(await installer.install(request)).toMatchObject({ ok: true });
     await expect.poll(() => reports.length).toBe(1);
     expect(reports[0]).toEqual({ ok: true, applied: ["core", "shell"], disk: "installed", requester: "DEV", note: "Faster", from: "2.0.0-dev.1", to: "2.0.0-dev.2" });
@@ -292,14 +303,14 @@ describe("HotInstaller", () => {
     expect(readFileSync(swaps[0]!, "utf8")).toBe("core v2");
     expect(readFileSync(join(renderer(), "renderer.js"), "utf8")).toBe("shell v2");
     expect((await bundlePrints(running, fs)).parts.core).toBe((await bundlePrints(request.path, fs)).parts.core);
-    expect(fs.readdirSync(join(root, "data", "core", "self-update", "backups")).filter((name) => name.endsWith(".hot.app"))).toHaveLength(1);
-    // The same build again: the running one is now the new build, nothing differs.
-    expect((await installer.plan(request.path)).plan).toEqual({ mode: "hot", parts: [] });
+    expect(fs.readdirSync(dirname(running)).filter(name => name.startsWith(".botling-hot-"))).not.toHaveLength(0);
+    // Reinstall/downgrade is refused by the signed entry, even if no parts differ.
+    expect((await installer.plan(request.path)).plan).toMatchObject({ mode: "restart", blocked: true, reasons: [expect.stringMatching(/newer/)] });
   });
 
   it("kernel changed: refuses to hot-install (the core restarts as before)", async () => {
     const { installer, reports, request } = await setup({ files: { "out/main/main.cjs": "main v2" } });
-    expect(await installer.install(request)).toEqual({ ok: false, error: "It needs a restart: kernel changed: main process", plan: { mode: "restart", reasons: ["kernel changed: main process"] } });
+    expect(await installer.install(request)).toMatchObject({ ok: false, error: "It needs a restart: kernel changed: main process", plan: { mode: "restart", reasons: ["kernel changed: main process"] } });
     expect(reports).toHaveLength(0);
   });
 

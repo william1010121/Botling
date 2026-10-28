@@ -1,4 +1,5 @@
 /** Private HTTPS transport. No Electron IPC, local file or approval bypass routes. */
+import { generationBytes, type MobileGeneration } from './generation';
 import { createServer, type ServerOptions } from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -21,6 +22,7 @@ export const mobileTypes = new Set(['chat.snapshot', 'chat.send', 'chat.choose',
 export interface MobileCore { mobileCommand(raw: unknown, allowedBots: readonly string[]): Promise<ResponseEnvelope> }
 export interface BridgeOptions {
   origin: string; host: string; port: number; tls: ServerOptions; assets: string;
+  generation?: MobileGeneration; ready?: () => void; updating?: () => boolean;
   google?: GoogleAuth; clients: () => Client[]; ledger: MutationLedger; core: MobileCore;
 }
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -76,14 +78,26 @@ export function handler(options: BridgeOptions) {
     // The sandboxed chat frame's CORS loads (KaTeX fonts) say `Origin: null`; only public assets accept it.
     if (req.headers.host !== origin.host || (req.headers.origin && req.headers.origin !== origin.origin && !(publicAsset && req.headers.origin === 'null'))
       || (req.headers['sec-fetch-site'] === 'cross-site' && !login && !callback && !publicAsset)) return forbidden();
+    if (options.updating?.()) return json(res, 503, { error: { code: 'generation_updating' } });
+    const generation = options.generation;
     if (publicAsset) {
-      const name = url.pathname.slice('/mobile/'.length) || 'index.html';
+      let name = url.pathname.slice('/mobile/'.length) || 'index.html';
+      if (generation) {
+        const prefix = `g/${generation.id}/`;
+        if (name === 'index.html') { res.writeHead(302, { Location: `/mobile/${prefix}` }); res.end(); return; }
+        if (!name.startsWith(prefix)) {
+          if (/^g\/[a-f0-9]{64}\/(?:index.html)?$/.test(name)) { res.writeHead(302, { Location: '/mobile/' }); res.end(); return; }
+          return refuse(410);
+        }
+        name = name.slice(prefix.length) || 'index.html';
+      }
       const font = FONT.test(name);
       if (!Object.hasOwn(assets, name) && !font) return refuse(404);
       try {
-        const body = readFileSync(join(options.assets, name));
-        if (name === 'chat.html') res.setHeader('Content-Security-Policy', webChatCSP(origin.origin));
-        if (name === 'frame-host.html') res.setHeader('Content-Security-Policy', frameHostCSP(origin.origin));
+        const body = generation ? generationBytes(generation, name) : readFileSync(join(options.assets, name));
+        if (!body) return refuse(404);
+        if (name === 'chat.html') res.setHeader('Content-Security-Policy', webChatCSP(origin.origin).replaceAll("/mobile/", generation ? `/mobile/g/${generation.id}/` : "/mobile/"));
+        if (name === 'frame-host.html') res.setHeader('Content-Security-Policy', frameHostCSP(origin.origin).replaceAll("/mobile/", generation ? `/mobile/g/${generation.id}/` : "/mobile/"));
         if (font) res.setHeader('Access-Control-Allow-Origin', '*');
         res.writeHead(200, { 'Content-Type': font ? 'font/woff2' : assets[name] }); res.end(body);
       }
@@ -124,6 +138,10 @@ export function handler(options: BridgeOptions) {
         }
       }
     }
+    // Browser clients must match the page generation. Bearer automation without a browser
+    // Origin keeps its existing versioned protocol contract; browser bearer clients are fenced too.
+    const stale = () => generation && (browser || !!req.headers.origin) && req.headers['x-botling-generation'] !== generation.id;
+    if (stale()) return json(res, 409, { error: { code: 'generation_changed' } });
     if (!browser && req.url !== '/api/mobile/command') return refuse(404);
     if (req.method !== 'POST') return refuse(405);
     let client: Pick<Client, 'id' | 'botIds' | 'expiresAt'> | undefined;
@@ -159,8 +177,13 @@ export function handler(options: BridgeOptions) {
       || (cmd.type === 'chat.answer' && cmd.images?.length)) {
       return json(res, 403, errorResponse(request.id, { code: 'forbidden', message: 'Command or bot not authorized.' }));
     }
+    if (options.updating?.()) return json(res, 503, { error: { code: 'generation_updating' } });
+    if (stale()) return json(res, 409, { error: { code: 'generation_changed' } });
     try {
-      const dispatch = () => options.core.mobileCommand(request, client!.botIds);
+      const dispatch = () => {
+        if (options.updating?.()) throw new Error('Generation activation in progress');
+        return options.core.mobileCommand(request, client!.botIds);
+      };
       const response = cmd.type === 'chat.snapshot' ? await dispatch() : await options.ledger.run(client.id, request, dispatch);
       json(res, 200, response);
     } catch { json(res, 503, errorResponse(request.id, { code: 'core_unavailable', message: 'Mobile bridge unavailable. Check chat before sending again.' })); }
@@ -178,7 +201,8 @@ export function startBridge(options: BridgeOptions, failed: (error: Error) => vo
     || !Number.isInteger(options.port) || options.port < 1 || options.port > 65535
     || !options.tls.key || !options.tls.cert) throw new Error('Explicit private bind address, valid listener port and HTTPS origin/TLS certificate required.');
   Clients.parse(options.clients());
-  const server = createServer({ ...options.tls, minVersion: 'TLSv1.2' }, (req, res) => { void handler(options)(req, res).catch(() => { res.destroy(); }); });
+  const handle = handler(options);
+  const server = createServer({ ...options.tls, minVersion: 'TLSv1.2' }, (req, res) => { void handle(req, res).catch(() => { res.destroy(); }); });
   server.requestTimeout = 15_000; server.headersTimeout = 10_000; server.maxHeadersCount = 32; server.maxConnections = 32;
-  return listenWithHandover(server, options.port, options.host, failed);
+  return listenWithHandover(server, options.port, options.host, failed, options.ready);
 }

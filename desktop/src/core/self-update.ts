@@ -387,8 +387,8 @@ export interface DevBuildDeps {
    * shell changed. Absent: every install restarts, as before.
    */
   planBuild?: (path: string) => Promise<InstallPlan>;
-  /** Main installs a build in place (hot); it answers at once and reports to the core running at the end (`hotOutcome`). */
-  hotInstall?: (request: { path: string; requester: string; note: string; from: string; to: string }) => Promise<{ ok: boolean; error?: string }>;
+  /** Main authenticates the confirmed mode: hot apply, or snapshot-protected restart. */
+  hotInstall?: (request: { mode: "hot" | "restart"; path: string; requester: string; note: string; from: string; to: string }) => Promise<{ ok: boolean; error?: string }>;
   /** Main downloads and verifies the newer release, then quits for its install (`update-install.ts`). */
   installRelease?: () => Promise<{ ok: boolean; error?: string }>;
   log: (line: string) => void;
@@ -463,12 +463,12 @@ export class DevBuilds {
     if (!build) return refuse(`there is no app bundle at ${path}.`);
     if (build.bundleID !== running.bundleID) return refuse(`${path} is not Botling 2 (${build.bundleID}).`);
     if (build.path === running.path) return refuse("that is the build running now; build into desktop/dist/ and point at that.");
-    // Moving either the app or its data requires a restart, even for core-only changes.
-    if (!this.deps.planBuild || this.moves(running) || this.dataMove(running)) return this.card(build, running, note, from, null);
+    // Main must authenticate the candidate even when a restart is expected.
+    if (!this.deps.planBuild) return refuse("signed build verification is unavailable.");
     // Main compares the builds first, so the card can say whether the app restarts.
     return this.deps.planBuild(build.path).then(
-      (plan) => this.card(build, running, note, from, plan),
-      (error) => this.card(build, running, note, from, { mode: "restart", reasons: [`could not compare the builds: ${(error as Error).message}`] }),
+      (plan) => plan.blocked ? refuse(plan.mode === "restart" ? plan.reasons.join("; ") : "Build verification failed") : this.card(build, running, note, from, plan),
+      (error) => refuse(`could not authenticate the build: ${(error as Error).message}`),
     );
   }
 
@@ -478,9 +478,9 @@ export class DevBuilds {
     const hot = plan?.mode === "hot";
     const lines = [hot ? `**${from.profile.name}** wants to install a new Botling build without restarting.` : `**${from.profile.name}** wants to install a new Botling build and restart.`, "", `- New: ${buildLabel(build)}`, `- Running: ${buildLabel(running)}`];
     if (plan) lines.push(`- Expected: ${planText(plan)}`);
-    if (this.moves(running)) lines.push(`- Installed to: ${this.target(running)} (this Mac's own disk). The copy running from ${externalVolume(running.path)} is left as it is.`);
-    const data = this.dataMove(running);
-    if (data) lines.push(`- Data: copied to ${data} if this Mac's disk has room for it (else it stays on the drive). The data on ${externalVolume(physicalPath(this.deps.appDataDir!))} is left as it is and is used again if the new build does not come up.`);
+    // Authenticated installs use the snapshot-protected main installer in place; never promise
+    // the legacy helper's implicit app/data relocation on this card.
+    lines.push(`- Installed in place: ${running.path}. Existing data stays in its current location.`);
     const what = note.trim();
     if (what) lines.push("", what);
     if (build.dirty) lines.push("", "It was built from uncommitted changes.");
@@ -520,32 +520,23 @@ export class DevBuilds {
     }
     const running = this.deps.runningBuild();
     if (!running || !this.deps.appPid) return;
-    if (!shown || !this.deps.planBuild || this.moves(running) || this.dataMove(running)) return this.restart(running, build, requester, note, shown);
+    if (!this.deps.planBuild) { asker?.queueNote("(App: Signed build verification is unavailable. Nothing was installed.)"); return; }
     return this.deps.planBuild(build.path).then(async (plan) => {
-      if (plan.mode !== shown.mode) {
+      if (plan.blocked) { this.deps.mainBot().appNotice(`Build refused: ${plan.mode === "restart" ? plan.reasons.join("; ") : "verification failed"}`); return; }
+      if (shown && plan.mode !== shown.mode) {
         const why = `${buildLabel(build)} changed since the card was shown (it now means ${planText(plan)}), so nothing was installed.`;
         this.deps.mainBot().appNotice(`${why} Ask again to see it.`, undefined, undefined, { sourceID: requester });
         asker?.queueNote(`(App: ${why} Ask again with <install-build> if it should be installed.)`);
         return;
       }
-      if (plan.mode === "restart") { this.restart(running, build, requester, note, plan); return; }
-      const answer = await this.deps.hotInstall!({ path: build.path, requester, note, from: buildLabel(running), to: buildLabel(build) })
+      // Main routes incompatible storage/kernel generations through the signed restart installer,
+      // which snapshots quiescent data before candidate boot. Never use the legacy developer helper.
+      const answer = await this.deps.hotInstall!({ mode: plan.mode, path: build.path, requester, note, from: buildLabel(running), to: buildLabel(build) })
         .catch((error) => ({ ok: false, error: (error as Error).message }));
-      if (answer.ok) { this.deps.log(`hot-installing ${buildLabel(build)} for ${requester}`); return; }
+      if (answer.ok) { this.deps.log(`installing ${buildLabel(build)} for ${requester} (${plan.mode})`); return; }
       this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${answer.error ?? "main refused"}. Nothing was installed.`, undefined, undefined, { sourceID: requester });
       asker?.queueNote(`(App: ${buildLabel(build)} was not installed: ${answer.error ?? "main refused"}.)`);
     }, (error) => { this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${(error as Error).message}`); });
-  }
-
-  /** The restart path (1.x's): the script outside the app swaps the bundle once the app has quit. */
-  private restart(running: BuildInfo, build: BuildInfo, requester: string, note: string, plan: InstallPlan | null) {
-    try {
-      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid!, this.deps.appDataDir ?? "", new Date(), plan ? planText(plan) : undefined, this.target(running), this.dataMove(running) ?? "");
-      this.deps.log(`installing ${buildLabel(build)} for ${requester}`);
-      this.deps.launchInstaller(command, installLog(this.deps.root));
-    } catch (error) {
-      this.deps.mainBot().appNotice(`Couldn't start installing ${buildLabel(build)}: ${(error as Error).message}`);
-    }
   }
 
   /** Main's report of a hot install (main/hot-install.ts), to this core whether it is the new one or the one that stayed. */

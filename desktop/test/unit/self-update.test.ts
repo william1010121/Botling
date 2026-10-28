@@ -134,25 +134,12 @@ describe("<install-build>", () => {
     expect(main2.notices.at(-1)!.text).toMatch(/not running from an app bundle/);
   });
 
-  it("a card in the main bot's chat; Install starts the script, Not now tells the bot", () => {
-    const root = tempDir("self-update");
-    const { builds, main, dev, launched } = desk(root);
+  it("missing verifier refuses developer installation instead of launching an unsigned helper", async () => {
+    const root = tempDir("self-update"); const { builds, main, dev, launched } = desk(root);
     const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
-    builds.propose(built, "Faster startup.", dev);
-    const card = main.notices.at(-1)!;
-    expect(card.text).toContain("**botling** wants to install a new Botling build and restart.");
-    expect(card.text).toContain("- New: 2.0.1 (bbbbbbb)\n- Running: 2.0.1 (aaaaaaa)\n\nFaster startup.");
-    expect(card.text).toMatch(/within 90 seconds, the running one comes back by itself/);
-    expect(card.choices!.map((choice) => choice.label)).toEqual(["Install and restart", "Not now"]);
-    expect(dev.notes.at(-1)).toMatch(/sees a card asking to install 2\.0\.1 \(bbbbbbb\)/);
-    card.onPick!(1);
-    expect(launched).toHaveLength(0);
-    expect(dev.notes.at(-1)).toBe("(App: The user chose not to install 2.0.1 (bbbbbbb) now.)");
-    builds.propose(built, "Faster startup.", dev);
-    main.notices.at(-1)!.onPick!(0);
-    expect(launched).toHaveLength(1);
-    expect(launched[0]!.slice(3, 6)).toEqual(["4242", join(root, "Applications", "Botling 2.app"), join(root, "dist", "Botling 2.app")]);
-    expect(launched[0]!.slice(-2)).toEqual([join(root, "data"), join(root, "Applications", "Botling 2.app")]);
+    await builds.propose(built, "Faster startup.", dev);
+    expect(main.notices.at(-1)!.text).toContain("signed build verification is unavailable");
+    expect(main.notices.at(-1)!.choices).toBeUndefined(); expect(launched).toHaveLength(0);
   });
 
   it("after the restart: up counts as up after a while, and the asker hears it; a roll-back is told and counted", () => {
@@ -195,26 +182,16 @@ describe("where a build is installed", () => {
     expect(installTarget("/Applications/Botling 2.app", "/Users/me")).toBe("/Applications/Botling 2.app");
   });
 
-  it("a build replacing one on an external volume always restarts into ~/Applications; the drive's copy is the one reopened on failure", async () => {
-    const root = tempDir("self-update");
-    const local = join(root, "home", "Applications", "Botling 2.app");
-    let planned = 0;
-    const { builds, main, dev, running, launched } = desk(root, {
-      installTarget: () => local,
-      planBuild: async () => { planned++; return { mode: "hot", parts: ["core"] }; },
-    });
+  it("signed updates on external volumes explicitly stay in place, without legacy relocation", async () => {
+    const root = tempDir("self-update"), local = join(root, "home/Applications/Botling 2.app");
+    const hotInstall = vi.fn(async () => ({ ok: true }));
+    const { builds, main, dev, running, launched } = desk(root, { installTarget: () => local,
+      planBuild: async () => ({ mode: "restart", reasons: ["kernel changed"] }), hotInstall });
     const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
     await builds.propose(built, "", dev);
-    const card = main.notices.at(-1)!;
-    expect(planned).toBe(0);
-    expect(card.text).toContain("wants to install a new Botling build and restart.");
-    expect(card.text).toContain(`- Installed to: ${local} (this Mac's own disk).`);
-    await card.onPick!(0);
-    expect(launched).toHaveLength(1);
-    const command = launched[0]!;
-    expect(command[4]).toBe(local);
-    expect(command[5]).toBe(built);
-    expect(command.at(-1)).toBe(running.path);
+    expect(main.notices.at(-1)!.text).toContain(`Installed in place: ${running.path}`);
+    await main.notices.at(-1)!.onPick!(0);
+    expect(hotInstall).toHaveBeenCalledOnce(); expect(launched).toHaveLength(0);
   });
 
   it("the script installs to the new place and leaves the running copy; a build that does not come up is set aside and the old copy reopened", () => {
@@ -294,21 +271,15 @@ describe("the data moves with a build that moves off an external volume", () => 
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 
-  it("the card says where the data goes, and the script is handed that folder", async () => {
-    const root = tempDir("self-update");
-    const target = "/Users/me/Applications/Botling 2.app"; // this Mac's own disk (the test folder may be on a drive)
-    const { builds, main, dev, launched } = desk(root, {
-      installTarget: () => target, appDataDir: `${drive}/development-data`, localDataDir: local,
-      // The running build is on the drive.
-      runningBuild: () => ({ path: `${drive}/Botling 2.app`, bundleID: BUNDLE_ID, version: "2.0.1", commit: "aaaaaaa1111", dirty: false }),
-    });
+  it("signed install cards preserve the existing profile instead of promising legacy data relocation", async () => {
+    const root = tempDir("self-update"), hotInstall = vi.fn(async () => ({ ok: true }));
+    const { builds, main, dev, launched } = desk(root, { appDataDir: `${drive}/development-data`, localDataDir: local,
+      planBuild: async () => ({ mode: "restart", reasons: ["storage compatibility is unknown"] }), hotInstall });
     const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
     await builds.propose(built, "", dev);
-    const card = main.notices.at(-1)!;
-    expect(card.text).toContain(`- Data: copied to ${local} if this Mac's disk has room for it (else it stays on the drive). The data on /Volumes/My-SSD is left as it is`);
-    await card.onPick!(0);
-    const command = launched[0]!;
-    expect(command.slice(-3)).toEqual([`${drive}/development-data`, `${drive}/Botling 2.app`, local]);
+    expect(main.notices.at(-1)!.text).toContain("Existing data stays in its current location");
+    await main.notices.at(-1)!.onPick!(0);
+    expect(hotInstall).toHaveBeenCalledOnce(); expect(launched).toHaveLength(0);
   });
 
   /** A data folder on "the drive", an install of a build to "this Mac's disk", and a fake `open` (no app is opened). */
@@ -392,20 +363,13 @@ describe("the data moves with a build that moves off an external volume", () => 
     expect(installOutcome(core)?.kind).toBe("rolledBack");
   });
 
-  it("requires a restart for data migration even if the app is already local and changes are hot-applicable", async () => {
-    const root = tempDir("self-update-local-app");
-    const target = "/Users/me/Applications/Botling 2.app";
+  it("in-place hot install does not silently move an external profile", async () => {
+    const root = tempDir("self-update-local-app"), hotInstall = vi.fn(async () => ({ ok: true }));
     const planBuild = vi.fn(async () => ({ mode: "hot" as const, parts: ["core" as const] }));
-    const { builds, main, dev, launched } = desk(root, {
-      installTarget: () => target, appDataDir: `${drive}/development-data`, localDataDir: local, planBuild,
-      runningBuild: () => ({ path: target, bundleID: BUNDLE_ID, version: "2.0.1", commit: "aaaaaaa1111", dirty: false }),
-    });
+    const { builds, main, dev, launched } = desk(root, { appDataDir: `${drive}/development-data`, localDataDir: local, planBuild, hotInstall });
     const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
-    await builds.propose(built, "", dev);
-    expect(main.notices.at(-1)!.text).toContain("install a new Botling build and restart");
-    await main.notices.at(-1)!.onPick!(0);
-    expect(planBuild).not.toHaveBeenCalled();
-    expect(launched[0]!.at(-1)).toBe(local);
+    await builds.propose(built, "", dev); await main.notices.at(-1)!.onPick!(0);
+    expect(planBuild).toHaveBeenCalledTimes(2); expect(hotInstall).toHaveBeenCalledOnce(); expect(launched).toHaveLength(0);
   });
 
   it("without room on this Mac's disk the data stays on the drive and the new build opens with it", () => {
@@ -498,22 +462,27 @@ describe("<install-build> without a restart", () => {
     const hot = hotDesk([hotPlan, hotPlan]);
     await hot.builds.propose(hot.built, "Faster startup.", hot.dev);
     await hot.main.notices.at(-1)!.onPick!(0);
-    expect(hot.asked).toEqual([{ path: join(hot.root, "dist", "Botling 2.app"), requester: "DEV", note: "Faster startup.", from: "2.0.1 (aaaaaaa)", to: "2.0.1 (bbbbbbb)" }]);
+    expect(hot.asked).toEqual([{ mode: "hot", path: join(hot.root, "dist", "Botling 2.app"), requester: "DEV", note: "Faster startup.", from: "2.0.1 (aaaaaaa)", to: "2.0.1 (bbbbbbb)" }]);
     expect(hot.launched).toHaveLength(0);
   });
 
-  it("Install on a restart card restarts as before and the report afterwards says why", async () => {
-    vi.useFakeTimers();
+  it("Install on a restart card delegates to main's authenticated snapshot-protected installer", async () => {
     const restart = hotDesk([restartPlan, restartPlan]);
     await restart.builds.propose(restart.built, "", restart.dev);
     await restart.main.notices.at(-1)!.onPick!(0);
-    expect(restart.asked).toHaveLength(0);
-    expect(restart.launched).toHaveLength(1);
-    expect(installOutcome(join(restart.root, "core"))).toMatchObject({ kind: "installed", state: { mode: "restart (kernel changed: main process)" } });
-    restart.builds.check(8_000);
-    vi.advanceTimersByTime(8_000);
-    expect(restart.main.notices.at(-1)!.text).toBe("Botling restarted on 2.0.1 (bbbbbbb) (was 2.0.1 (aaaaaaa)), installed for botling — restarted (kernel changed: main process).");
-    expect(restart.dev.relays.at(-1)!.text).toMatch(/the build you asked to install — restarted \(kernel changed: main process\)\. Read your memory file/);
+    expect(restart.asked).toHaveLength(1);
+    expect(restart.launched).toHaveLength(0);
+  });
+
+  it("failed authentication cannot fall back to the legacy restart helper", async () => {
+    const blocked = { mode: "restart", blocked: true, reasons: ["Invalid release signature"] };
+    const first = hotDesk([blocked]);
+    await first.builds.propose(first.built, "", first.dev);
+    expect(first.main.notices.at(-1)!.choices).toBeUndefined();
+    const changed = hotDesk([hotPlan, blocked]);
+    await changed.builds.propose(changed.built, "", changed.dev);
+    await changed.main.notices.at(-1)!.onPick!(0);
+    expect(changed.asked).toHaveLength(0); expect(changed.launched).toHaveLength(0);
   });
 
   it("a build that changed since the card (now needs a restart) is not installed; the bot is told to ask again", async () => {

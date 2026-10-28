@@ -1,5 +1,6 @@
-import { lstatSync, readFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { loadMobileGeneration } from './generation';
+import { existsSync, lstatSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { Clients, privateJSON, startBridge, type MobileCore } from './bridge';
 import { MutationLedger } from './ledger';
@@ -28,7 +29,18 @@ export function startConfiguredMobile(core: MobileCore & { shutdown(): Promise<v
   }
   if (!file) return null;
   const config = Config.parse(privateJSON(file));
-  const mobile = startBridge({ ...config, tls: { cert: readFileSync(config.certFile), key: readFileSync(config.keyFile) },
+  // Packaged assets belong to the authenticated app generation, never an arbitrary stale config path.
+  const assets = process.env.BOTLING_APP_BUNDLE ? join(process.env.BOTLING_APP_BUNDLE, 'Contents/Resources/mobile') : config.assets;
+  const generation = loadMobileGeneration(assets);
+  const receipt = join(dataDir, 'mobile-ready.json');
+  rmSync(receipt, { force: true });
+  const mobile = startBridge({ ...config, assets, generation,
+    ready: () => {
+      const temp = `${receipt}.${process.pid}.tmp`;
+      writeFileSync(temp, JSON.stringify({ pid: process.pid, generation: generation.id, assets }), { mode: 0o600 });
+      renameSync(temp, receipt);
+    },
+    updating: () => existsSync(join(dirname(dataDir), 'hot-install-pending.json')), tls: { cert: readFileSync(config.certFile), key: readFileSync(config.keyFile) },
     google: config.google ? new GoogleAuth(config.origin, () => GoogleCredentials.parse(privateJSON(config.google!.credentialsFile))) : undefined,
     clients: () => Clients.parse(privateJSON(config.clientsFile)), ledger: new MutationLedger(join(dataDir, 'mobile-mutations')), core }, failed);
   closeWithCore(core, mobile);

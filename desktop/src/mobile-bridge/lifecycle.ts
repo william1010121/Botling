@@ -2,7 +2,7 @@ import type { Server } from 'node:https';
 
 // Seven retries, at most 15.75 seconds of waiting; only port handover is retryable.
 const delays = [250, 500, 1000, 2000, 4000, 4000, 4000];
-export function listenWithHandover(server: Server, port: number, host: string, failed: (error: Error) => void) {
+export function listenWithHandover(server: Server, port: number, host: string, failed: (error: Error) => void, ready?: () => void) {
   const abort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retries = 0, stopped = false, listening = false;
@@ -35,6 +35,7 @@ export function listenWithHandover(server: Server, port: number, host: string, f
   server.on('listening', () => {
     if (stopped) { server.close(); return; }
     listening = true;
+    ready?.();
   });
   listen();
   return { close };

@@ -1,5 +1,8 @@
 // Ed25519 authenticates the ZIP before extraction, quarantine removal, or app replacement.
 // The shell helper needs no Node runtime (packaged Electron has RunAsNode disabled).
+import { validateZipLinks } from "./hot-auth";
+import * as nodeFs from "node:fs";
+import { Readable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
 import { accessSync, chmodSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readlinkSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
@@ -278,7 +281,13 @@ export class VerifiedInstaller {
     return error;
   }
   get ready(): string | null { return this.staged?.manifest.version ?? null; }
-  async stage(release: ReleaseView): Promise<void> {
+  /** Explicit local developer install; same signature, extraction, snapshot and recovery as releases. */
+  async stageLocal(zip: string, version: string): Promise<void> {
+    return this.stageSource({ version, name: version, url: `${RELEASE_PAGE}tag/v${version}`, publishedAt: null, asset: `Botling-2-${version}-mac-${this.options.arch}.zip` }, zip);
+  }
+  async stage(release: ReleaseView): Promise<void> { return this.stageSource(release); }
+  private async stageSource(release: ReleaseView, localZip?: string): Promise<void> {
+    if (existsSync(join(this.options.dataDir, "hot-install-pending.json"))) throw new Error("Hot install needs completion or recovery first");
     if (this.busy) throw new Error("An update is already being prepared");
     const unavailable = this.unavailable(true);
     if (unavailable) throw new Error(unavailable);
@@ -292,7 +301,10 @@ export class VerifiedInstaller {
     try {
       await this.discard();
       const url = this.options.assetURL?.(release) ?? `${RELEASE_PAGE}download/v${encodeURIComponent(release.version)}/${encodeURIComponent(release.asset)}`;
-      const manifest = verifyManifest(JSON.parse((await readBounded(await this.options.fetch(`${url}.manifest.json`), 16_384)).toString("utf8")), this.options.publicKey);
+      const fetchSource = async (manifest: boolean) => localZip
+        ? new Response(Readable.toWeb(createReadStream(localZip + (manifest ? '.manifest.json' : ''))) as ReadableStream<Uint8Array>)
+        : this.options.fetch(url + (manifest ? '.manifest.json' : ''));
+      const manifest = verifyManifest(JSON.parse((await readBounded(await fetchSource(true), 16_384)).toString("utf8")), this.options.publicKey);
       if (manifest.version !== release.version) throw new Error("Signed version does not match release");
       newer(manifest.version, this.options.current);
       await requireSpace(dirname(this.options.appPath),manifest.size);
@@ -301,7 +313,7 @@ export class VerifiedInstaller {
       chmodSync(root, 0o700);
       writeFileSync(join(root, "owner.json"), JSON.stringify({ pid: process.pid, target: this.options.appPath, dataDir: this.options.dataDir, token }), { mode: 0o600 });
       const zip = join(root, "download.zip");
-      await readBounded(await this.options.fetch(url), manifest.size, zip);
+      await readBounded(await fetchSource(false), manifest.size, zip);
       await verifyArchive(zip, manifest);
       const entries = (await run("/usr/bin/unzip", ["-Z1", zip], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })).stdout.trim().split("\n");
       if (entries.some((entry) => !entry.startsWith("Botling 2.app/") || entry.split("/").some((part) => part === "..") || entry.includes("\\") || entry.includes("\r"))) throw new Error("Unsafe update archive paths");
@@ -311,6 +323,7 @@ export class VerifiedInstaller {
       const snapshot=await dataBytes(this.options.dataDir);
       await requireSpace(root,expanded+snapshot*2);
       await fs.mkdir(this.options.dataDir,{recursive:true});await requireSpace(this.options.dataDir,snapshot);
+      await validateZipLinks(zip, nodeFs, (file, args) => run(file, args, { maxBuffer: 16 * 1024 * 1024 }));
       await run("/usr/bin/ditto", ["-x", "-k", zip, root]);
       const app = join(root, "Botling 2.app");
       const plist = join(app, "Contents", "Info.plist");
@@ -333,6 +346,7 @@ export class VerifiedInstaller {
   }
   /** Called ONLY by the explicit Restart to update IPC. No quit hook auto-installs. */
   async restart(parentPid: number): Promise<void> {
+    if (existsSync(join(this.options.dataDir, "hot-install-pending.json"))) throw new Error("Hot install needs completion or recovery first");
     if (this.busy) throw new Error("An update is already being prepared");
     this.busy = true;
     try {

@@ -28,6 +28,9 @@ declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { installCoreSwap } from "./core-swap-main";
+import { authorizeStorageStartup } from "./storage-startup";
+import { authenticateLocalBuild } from "./hot-auth";
+import { HotTransaction, HOT_PENDING } from "./hot-transaction";
 import { HotInstaller } from "./hot-install";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -172,17 +175,28 @@ const core: CoreClient = new CoreClient({
       const { plan } = await hotInstaller.plan(args.path ?? "");
       return { ok: true, plan };
     }
-    if (op === "installBuild") {
+    if (op === "installBuild") return withInstallRequest(async () => {
       // The user confirmed a hot install on the card. Main compares again and only installs in place when the kernel is the same.
+      const planned = await hotInstaller.plan(args.path ?? "");
+      if (planned.plan.blocked) return { ok: false, error: planned.plan.mode === "restart" ? planned.plan.reasons.join("; ") : "Build verification failed" };
+      if (args.mode !== planned.plan.mode) return { ok: false, error: "Install mode changed since confirmation. Ask again with the current build." };
+      if (planned.plan.mode === "restart") {
+        const verified = hotInstaller.verified(args.path ?? "");
+        if (!verified) return { ok: false, error: "Verified restart candidate unavailable" };
+        await installer.stageLocal(verified.zip, verified.version);
+        await installer.restart(process.pid);
+        setImmediate(() => app.quit());
+        return { ok: true };
+      }
       return hotInstaller.install({ path: args.path ?? "", requester: args.requester ?? "", note: args.note ?? "", from: args.from ?? "", to: args.to ?? "" });
-    }
+    });
     if (op === "quit") {
       // An install of a developer build: the script outside the app waits for it to quit.
       note("quitting to install a developer build");
       setTimeout(() => app.quit(), 100);
       return { ok: true };
     }
-    if (op === "installRelease") {
+    if (op === "installRelease") return withInstallRequest(async () => {
       // The user picked Install and restart on the update notice in the main bot's chat (core/self-update.ts):
       // download and verify the newer release unless it is already, then restart on it.
       try {
@@ -196,7 +210,7 @@ const core: CoreClient = new CoreClient({
       } catch (error) {
         return { ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) };
       }
-    }
+    });
     // A picture of the main window as it is (no focus change, nothing shown).
     const window = mainWindow;
     if (!window || window.isDestroyed()) return { ok: false, error: "No window." };
@@ -216,6 +230,14 @@ const core: CoreClient = new CoreClient({
 });
 
 let lastEpoch: string | null = null;
+// Serialize signed developer/release requests; a hot apply continues after its immediate reply.
+let installRequestBusy = false;
+let hotRecoveryReady = !existsSync(join(dataDir, HOT_PENDING));
+async function withInstallRequest<T>(action: () => Promise<T>): Promise<T> {
+  if (installRequestBusy || hotInstaller.installing) throw new Error("Another install is in progress");
+  installRequestBusy = true;
+  try { return await action(); } finally { installRequestBusy = false; }
+}
 // Core hot swap (docs/core-hot-swap.md): a newer core build replaces the running one without an app restart.
 const coreSwap = installCoreSwap({ core, root, dataDir, packaged: app.isPackaged, devTrial, argv: process.argv, note });
 
@@ -228,12 +250,27 @@ const run = promisify(execFile);
 const hotInstaller: HotInstaller = new HotInstaller({
   target: app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app") ? installedApp : null,
   dataDir,
+  authenticate: (path) => authenticateLocalBuild(path, installedApp, __UPDATE_PUBLIC_KEY__, originalFs as unknown as typeof import("node:fs"), (file, args) => run(file, args, { timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024 })),
   fs: originalFs as unknown as typeof import("node:fs"),
   run: (file, args) => run(file, args, { timeout: 10 * 60_000 }),
   notify: (report) => { note(`hot install: ${JSON.stringify({ ok: report.ok, applied: report.applied, disk: report.disk, error: report.error })}`); core.reportInstall(report); },
   ports: {
     coreScript: (): string => core.script,
-    swapCore: (script) => coreSwap.swap({ script }),
+    swapCore: async (script) => {
+      const outcome = await coreSwap.swap({ script });
+      if (!outcome.ok) return outcome;
+      const configured = process.env.BOTLING_MOBILE_CONFIG !== undefined ? !!process.env.BOTLING_MOBILE_CONFIG : existsSync(join(dataDir, "core/mobile/config.json"));
+      if (!configured) return outcome;
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline) {
+        try {
+          const receipt = JSON.parse(readFileSync(join(dataDir, "core/mobile-ready.json"), "utf8"));
+          if (receipt.pid === core.pid && receipt.assets === join(installedApp, "Contents/Resources/mobile") && /^[a-f0-9]{64}$/.test(receipt.generation)) return outcome;
+        } catch { /* Wait for this generation's private TLS listener, never accept an older receipt. */ }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return { ok: false, stage: "start", rolledBack: false, error: "Mobile generation did not become ready" };
+    },
     useRenderer: (dir) => { const before = rendererDir; rendererDir = dir; rendererNoStore = true; return before; },
     reloadChat: async () => {
       const window = mainWindow;
@@ -653,18 +690,18 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
       if(confirmation.response!==1)return{deleted:false};
       await deleteRetainedUpdateCopy(dataDir,installedApp,cmd.id,await runningAppBundles());return{deleted:true};
     }
-    case "updates.stage": {
+    case "updates.stage": return withInstallRequest(async () => {
       const state = await updater.check(true);
       if (!state.newer) throw new Error("There is no newer release to download");
       await installer.stage(state.newer);
       return updater.view(state.enabled);
-    }
-    case "updates.restart": {
+    });
+    case "updates.restart": return withInstallRequest(async () => {
       await installer.restart(process.pid);
       // Let the explicit click's response reach the renderer before normal core shutdown.
       setImmediate(() => app.quit());
       return { restarting: true };
-    }
+    });
     case "updates.open": {
       const page = updater.releasePage();
       if (!page) throw Object.assign(new Error("There is no newer release to open."), { code: "not_found" });
@@ -961,8 +998,15 @@ app.whenReady().then(async () => {
     if(issue.code!==27)recoveryIssue={...issue,...issueFor(issue.dataDir,issue.target,issue.root,issue.code,issue.id.slice(0,issue.id.lastIndexOf(':')),issue.at)};
     void renderRecovery(error).catch(error=>note('Recovery display: '+String(error)));
   };
-  app.on("activate", () => { if (!mainWindow) {const blocked=volumeRecovery()||blockingRecovery(dataDir,installedApp);if(blocked)showRecovery(blocked);else if(recoveryMode)restartNormal();else createWindow();} });
+  app.on("activate", () => { if (!hotRecoveryReady) return; if (!mainWindow) {const blocked=volumeRecovery()||blockingRecovery(dataDir,installedApp);if(blocked)showRecovery(blocked);else if(recoveryMode)restartNormal();else createWindow();} });
   if(startupRecovery){showRecovery(startupRecovery);return;}
+  // A hot transaction can have crashed after the atomic exchange but before runtime acceptance.
+  // Do not start a core or serve pages from a recovered on-disk generation in this process.
+  try {
+    const restored = await new HotTransaction(dataDir, originalFs as unknown as typeof import("node:fs"), (file, args) => run(file, args)).recover(installedApp);
+    if (restored) { app.relaunch(); app.quit(); return; }
+    hotRecoveryReady = true;
+  } catch (error) { note(`Hot-install recovery blocked startup: ${String(error)}`); app.quit(); return; }
   await recoverUpdates(dataDir, installedApp, false);
   const blocked=blockingRecovery(dataDir,installedApp);
   if(blocked){showRecovery(blocked);return;}
@@ -970,6 +1014,19 @@ app.whenReady().then(async () => {
   if(traceContext){try{traceWriter=await InputTraceWriter.open(traceContext);}catch(error){note('Synthetic trace disabled: '+String(error));}}
   const collect=()=>void recoverUpdates(dataDir,installedApp).catch(error=>note('Update cleanup: '+String(error)));
   const sweep=setInterval(collect,30_000);sweep.unref();
+  if (app.isPackaged) {
+    try {
+      await authorizeStorageStartup({ dataDir, target: installedApp, version: app.getVersion(), argv: process.argv,
+        packageContract: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).botlingStorageContract,
+        coreContract: JSON.parse(readFileSync(join(root, "out/core/storage-contract.json"), "utf8")),
+        fs: originalFs as unknown as typeof import("node:fs") });
+    } catch (error) {
+      hotRecoveryReady = false;
+      note(`Storage startup refused: ${String(error)}`);
+      dialog.showErrorBox("Protected storage update required", String((error as Error).message));
+      app.quit(); return;
+    }
+  }
   startup.mark("core.start");
   core.start();
   createWindow();

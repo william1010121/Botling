@@ -94,3 +94,22 @@ describe('mobile authentication and protocol', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+
+it('binds commands to the document generation and identifies a stale refusal as not dispatched', async () => {
+  const generation = 'a'.repeat(64);
+  vi.stubGlobal('location', { pathname: `/mobile/g/${generation}/` });
+  try {
+    const fetcher = vi.fn(async (_url: unknown, init: RequestInit) => {
+      expect(init.headers).toMatchObject({ 'X-Botling-Generation': generation });
+      return new Response(JSON.stringify({ error: { code: 'generation_changed' } }), { status: 409 });
+    });
+    const transport = new MobileTransport(endpoint, 'secret', fetcher as typeof fetch);
+    await expect(transport.request({ type: 'chat.snapshot' })).rejects.toMatchObject({ uncertain: false, message: expect.stringContaining('updated') });
+  } finally { vi.unstubAllGlobals(); }
+});
+it('activation barrier refusal is not treated as uncertain delivery', async () => {
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ error: { code: 'generation_updating' } }), { status: 503 }));
+  const transport = new MobileTransport(endpoint, 'secret', fetcher as typeof fetch);
+  await expect(transport.request({ type: 'chat.snapshot' })).rejects.toMatchObject({ uncertain: false, message: expect.stringContaining('not dispatched') });
+});

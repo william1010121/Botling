@@ -128,6 +128,16 @@ describe.skipIf(process.platform !== "darwin")("verified update from a local rel
     await expect(f.installer.stage(f.release)).rejects.toThrow("downgrade");
     expect(f.requests).toEqual([]);
   });
+  it("local signed ZIP uses verified release staging without downloading or touching the installed app", async () => {
+    const f = await fixture();
+    const zip = join(f.base, "release.zip");
+    writeFileSync(`${zip}.manifest.json`, JSON.stringify(signature(readFileSync(zip), f.release.version, f.keys.privateKey)));
+    await f.installer.stageLocal(zip, f.release.version);
+    expect(f.installer.ready).toBe(f.release.version);
+    expect(f.requests).toHaveLength(0);
+    expect(readFileSync(join(f.target, "Contents/Info.plist"), "utf8")).toContain("2.0.0");
+  });
+
   it("missing trust fails closed before any download", async () => {
     const f = await fixture({ trust: null });
     await expect(f.installer.stage(f.release)).rejects.toThrow("trust is not configured");

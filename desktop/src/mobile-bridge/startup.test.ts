@@ -13,12 +13,13 @@ function config(root: string) {
   const cert = join(dir, 'cert.pem'), key = join(dir, 'key.pem');
   // startBridge is mocked: these tests cover discovery, not TLS validity or sockets.
   writeFileSync(cert, 'fixture'); writeFileSync(key, 'fixture');
+  writeFileSync(join(dir, 'index.html'), 'mobile'); writeFileSync(join(dir, 'web.js'), 'web');
   const file = join(dir, 'config.json');
   writeFileSync(file, JSON.stringify({ origin: 'https://botling-bridge.driseam.com', host: '127.0.0.1', port: 8443,
     certFile: cert, keyFile: key, clientsFile: join(dir, 'clients.json'), assets: dir }), { mode: 0o600 });
   return file;
 }
-beforeEach(() => { vi.stubEnv('BOTLING_MOBILE_CONFIG', undefined); vi.stubEnv('BOTLING_CORE_PROBE', undefined); vi.mocked(startBridge).mockClear(); });
+beforeEach(() => { vi.stubEnv('BOTLING_APP_BUNDLE', undefined); vi.stubEnv('BOTLING_MOBILE_CONFIG', undefined); vi.stubEnv('BOTLING_CORE_PROBE', undefined); vi.mocked(startBridge).mockClear(); });
 afterEach(() => { vi.unstubAllEnvs(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 describe('profile-local mobile opt-in', () => {
   it('leaves an absent configuration disabled without creating profile files', () => {
