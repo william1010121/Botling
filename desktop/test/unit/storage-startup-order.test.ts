@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import * as url from 'node:url';
 import * as storage from '../../src/main/storage-startup';
+import { beginMaintenance, invalidateMaintenance } from '../../src/main/update-maintenance';
 import { blockingRecovery } from '../../src/main/update-state';
 import * as environment from '../../src/main/main-environment';
 import { StartupMarks } from '../../src/startup-marks';
@@ -11,7 +12,7 @@ import { transpileModule, ModuleKind, ScriptTarget } from 'typescript';
 import { runInNewContext } from 'node:vm';
 import { tempDir } from '../helpers';
 
-it.each(['refuse', 'recovery', 'maintenance'] as const)('actual main bootstrap %s uses no real profile or renderer before storage authorization', async mode => {
+it.each(['refuse', 'recovery', 'maintenance', 'revoked-launch'] as const)('actual main bootstrap %s uses no real profile or renderer before storage authorization', async mode => {
   const root = tempDir('startup-order'), data = path.join(root, 'trial'), bundle = path.join(root, 'Botling 2.app');
   const appRoot = path.join(bundle, 'Contents/Resources/app');
   fs.mkdirSync(path.join(appRoot, 'out/core'), { recursive: true }); fs.mkdirSync(path.join(data, 'core'), { recursive: true });
@@ -31,6 +32,19 @@ it.each(['refuse', 'recovery', 'maintenance'] as const)('actual main bootstrap %
     fs.writeFileSync(path.join(transaction, 'result'), 'failed:15');
     fs.writeFileSync(path.join(data, 'installed-storage-contract.json'), '{"version":1,"epoch":1}');
     expect(blockingRecovery(data, bundle)).toMatchObject({ code: 15, blocked: true });
+  }
+  const argv = ['Botling'];
+  if (mode === 'revoked-launch') {
+    const r = await beginMaintenance({ target: bundle, dataDir: data, planSha256: 'a'.repeat(64) }, async () => {});
+    fs.mkdirSync(path.join(r.root, 'data-before'));
+    fs.writeFileSync(path.join(r.root, 'snapshot.complete'), 'complete');
+    fs.writeFileSync(path.join(r.root, 'maintenance-phase'), 'launching');
+    fs.writeFileSync(path.join(data, 'update-pending.json'), JSON.stringify({ root: r.root, token: r.token, target: bundle, version: '2.0.1' }));
+    fs.writeFileSync(path.join(data, 'installed-storage-contract.json'), '{"version":1,"epoch":2}');
+    argv.push('--botling-update-token=' + r.token, '--botling-maintenance-launch=' + r.token);
+    expect(() => storage.checkStorageStartup({ dataDir: data, target: bundle, version: '2.0.1', packageContract: { version: 1, epoch: 2 }, coreContract: { version: 1, epoch: 2 }, argv, fs })).not.toThrow();
+    await invalidateMaintenance(r);
+    expect(fs.existsSync(path.join(r.root, 'maintenance-invalidated'))).toBe(true);
   }
   const before = fs.readdirSync(data, { recursive: true });
   const profiles: string[] = []; let renderReads = 0, exitCode: number | undefined, marks: StartupMarks | undefined;
@@ -53,7 +67,7 @@ it.each(['refuse', 'recovery', 'maintenance'] as const)('actual main bootstrap %
   const script = transpileModule(prefix, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } }).outputText;
   try {
     runInNewContext(script, { exports: {}, require: (id: string) => modules[id] ?? {}, __dirname: path.join(appRoot, 'out/main'), __filename: path.join(appRoot, 'out/main/main.cjs'), console,
-      process: { argv: ['Botling'], env: { BOTLING_DATA_DIR: data }, execPath: path.join(bundle, 'Contents/MacOS/Botling 2'), exit: (code: number) => { exitCode = code; throw STOP; } } });
+      process: { argv, env: { BOTLING_DATA_DIR: data }, execPath: path.join(bundle, 'Contents/MacOS/Botling 2'), exit: (code: number) => { exitCode = code; throw STOP; } } });
   } catch (error) { if (error !== STOP) throw error; }
   await marks?.flush();
   expect(exitCode).toBe(mode === 'recovery' ? undefined : 1);

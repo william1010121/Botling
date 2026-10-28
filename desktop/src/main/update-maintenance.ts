@@ -82,6 +82,7 @@ export function checkMaintenanceStartup(dataDir: string, target: string, argv: s
   const r = readMaintenance(dataDir, target); if (!r) return false;
   if (maintenancePhase(r) !== 'launching' || !argv.includes('--botling-update-token=' + r.token)
     || !argv.includes('--botling-maintenance-launch=' + r.token)) throw new Error('Maintenance is active; use explicit offline launch or rollback');
+  if (fs.existsSync(join(r.root, 'maintenance-invalidated'))) throw new Error('Maintenance snapshot invalidated; offline recovery required');
   return true; // caller must still validate snapshot provenance and signed storage contract
 }
 /** Clean environment at the actual helper spawn, not a promise about the caller's environment. */

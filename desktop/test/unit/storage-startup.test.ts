@@ -3,7 +3,8 @@ import * as fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { tempDir } from '../helpers';
-import { authorizeStorageStartup } from '../../src/main/storage-startup';
+import { beginMaintenance, invalidateMaintenance } from '../../src/main/update-maintenance';
+import { authorizeStorageStartup, checkStorageStartup } from '../../src/main/storage-startup';
 function put(path: string, value: unknown) { fs.mkdirSync(dirname(path), { recursive: true }); fs.writeFileSync(path, JSON.stringify(value)); }
 function fixture() {
   const root = fs.realpathSync(tempDir('storage-startup')), dataDir = join(root, 'data'), target = join(root, 'Botling 2.app');
@@ -51,4 +52,21 @@ it('maintenance refuses even compatible storage and a forged token before writes
   await expect(authorizeStorageStartup(f.options)).rejects.toThrow(/maintenance/i);
   await expect(authorizeStorageStartup({ ...f.options, argv: ['--botling-update-token=forged'] })).rejects.toThrow(/maintenance/i);
   expect(fs.readFileSync(f.history)).toEqual(before);
+});
+
+it.each(['before-authorization', 'during-receipt-write'] as const)('pre-core authorization rejects revocation %s', async boundary => {
+  const f = fixture(); fs.mkdirSync(f.options.target);
+  const r = await beginMaintenance({ target: f.options.target, dataDir: f.options.dataDir, planSha256: 'b'.repeat(64) }, async () => {});
+  put(join(f.options.dataDir, 'update-pending.json'), { root: r.root, target: r.target, token: r.token, version: f.options.version });
+  fs.mkdirSync(join(r.root, 'data-before')); fs.writeFileSync(join(r.root, 'snapshot.complete'), 'complete');
+  fs.writeFileSync(join(r.root, 'maintenance-phase'), 'launching');
+  f.options.argv = ['--botling-update-token=' + r.token, '--botling-maintenance-launch=' + r.token];
+  expect(() => checkStorageStartup(f.options)).not.toThrow();
+  if (boundary === 'before-authorization') await invalidateMaintenance(r);
+  else f.options.fs = { ...fs, promises: { ...fs.promises, rename: async (from, to) => {
+    await fs.promises.rename(from, to);
+    if (to === join(f.options.dataDir, 'installed-storage-contract.json')) await invalidateMaintenance(r);
+  } } } as typeof fs;
+  await expect(authorizeStorageStartup(f.options)).rejects.toThrow(/invalidated/i);
+  expect(fs.readFileSync(f.history, 'utf8')).toBe('[{"text":"retained"}]');
 });

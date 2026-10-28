@@ -49,4 +49,6 @@ export async function authorizeStorageStartup(options: StorageStartupOptions): P
   const candidate = checkStorageStartup(options);
   // Included in the protected updater snapshot and restored with the profile.
   await durableJSON(join(options.dataDir, RECEIPT), candidate, options.fs);
+  // The receipt write yields: revocation during it must still prevent the caller starting core.
+  checkMaintenanceStartup(options.dataDir, options.target, options.argv);
 }
