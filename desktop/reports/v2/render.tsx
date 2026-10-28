@@ -24,15 +24,15 @@ else if(k==='Home'){e.preventDefault();go(0)}else if(k==='End'){e.preventDefault
 
 export const css = { tokens, base, blocks: blockCss, slides: slideCss };
 
-/** Compute async layouts (elkjs) once; a failing layout turns that block into an ErrorBlock. */
-async function prepare(spec: ReportSpec, mode: Mode): Promise<{ prepared: Prepared; errors: Issue[] }> {
+/** Compute layouts (elkjs) once; a failing layout turns that block into an ErrorBlock. */
+function prepare(spec: ReportSpec, mode: Mode): { prepared: Prepared; errors: Issue[] } {
   const prepared: Prepared = new WeakMap();
   const errors: Issue[] = [];
   for (const [si, sec] of spec.sections.entries()) {
     for (const [bi, b] of sec.blocks.entries()) {
       const def = registry.get(b.type);
       if (!def?.prepare) continue;
-      try { prepared.set(b, await def.prepare(b, mode)); } catch (e) {
+      try { prepared.set(b, def.prepare(b, mode)); } catch (e) {
         const path = `sections[${si}].blocks[${bi}]`, message = `layout failed: ${(e as Error).message}`;
         errors.push({ path, message });
         sec.blocks[bi] = { type: '__error', original: b.type, path, message } satisfies BrokenBlock;
@@ -47,11 +47,11 @@ function page(title: string, lang: string, style: string, body: string, script?:
   return `<!doctype html><html lang="${lang}"><meta charset="utf-8">${head}<style>${style}</style>${body}${script ? `<script>${script}</script>` : ''}`;
 }
 
-export async function renderV2(input: unknown, opts: { mode?: Mode } = {}): Promise<RenderResult> {
+export function renderV2(input: unknown, opts: { mode?: Mode } = {}): RenderResult {
   const mode = opts.mode ?? 'doc';
   const { spec, errors } = validateSpec(input);
   if (!spec) return { ok: false, errors, warnings: [] };
-  const { prepared, errors: layoutErrors } = await prepare(spec, mode);
+  const { prepared, errors: layoutErrors } = prepare(spec, mode);
   errors.push(...layoutErrors);
   const slides: SlidePlan[] = planSlides(spec, registry, labels[spec.lang].continued);
   const warnings = lintSpec(spec, registry, slides);
@@ -62,11 +62,11 @@ export async function renderV2(input: unknown, opts: { mode?: Mode } = {}): Prom
 }
 
 /** Render one block on its own (gallery, tests). */
-export async function renderBlock(block: unknown, opts: { mode?: Mode; lang?: 'zh-Hant' | 'en' } = {}): Promise<{ html: string; errors: Issue[] }> {
+export function renderBlock(block: unknown, opts: { mode?: Mode; lang?: 'zh-Hant' | 'en' } = {}): { html: string; errors: Issue[] } {
   const spec = { version: 2, lang: opts.lang ?? 'zh-Hant', title: 'x', asOf: 'x', tldr: 'x', sections: [{ title: 'x', blocks: [block] }] };
   const { spec: s, errors } = validateSpec(spec);
   if (!s) return { html: '', errors };
-  const { prepared } = await prepare(s, opts.mode ?? 'doc');
+  const { prepared } = prepare(s, opts.mode ?? 'doc');
   const html = renderToStaticMarkup(<BlockView block={s.sections[0].blocks[0]} ctx={{ lang: s.lang, t: labels[s.lang], mode: opts.mode ?? 'doc', id: 'g' + Math.abs(hash(JSON.stringify(block))).toString(36) }} prepared={prepared}/>);
   return { html, errors };
 }

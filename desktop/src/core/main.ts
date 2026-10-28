@@ -196,6 +196,10 @@ const node = hostNode();
 const checkNode: HostCommand | null = process.env.BOTLING_NODE_PATH ? { command: process.env.BOTLING_NODE_PATH }
   : process.versions.electron ? { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } } : { command: process.execPath };
 // Under Electron, main names the app's own `--check-plugin` (BOTLING_CHECK_COMMAND); a headless core runs the script.
+// The report command every bot builds report pages with: main's `--render-report`, or the bundled script.
+const reportScript = join(__dirname, "..", "report", "report.cjs");
+const reportCommand = process.env.BOTLING_REPORT_COMMAND ? process.env.BOTLING_REPORT_COMMAND : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(reportScript)}` : null;
+const reportDocs = process.env.BOTLING_REPORT_DOCS || join(__dirname, "..", "report", "report-blocks.md");
 const checkCommand = process.env.BOTLING_CHECK_COMMAND ? process.env.BOTLING_CHECK_COMMAND : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(checkScript)}` : null;
 
 function groupTiming(text: string | undefined) {
@@ -247,6 +251,7 @@ const core = new Core({
   plugins: { node, hostScript, sealer },
   checkCommand,
   shotCommand: process.env.BOTLING_SHOT_COMMAND || null,
+  reports: reportCommand ? { command: reportCommand, docs: reportDocs } : null,
   // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
   firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
   // The app's copy of the web AIs' page readers (build.mjs copies 1.x's Resources/web-extractors).

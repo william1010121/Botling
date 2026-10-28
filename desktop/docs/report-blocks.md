@@ -17,9 +17,13 @@ A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick
 
 ## Generate
 
+Use the report command your instructions name (the app's `--render-report`; in the Botling repo also `node desktop/scripts/report.mjs`). The output must be an `.html` path inside an `artifacts` folder (created if missing).
+
 ```sh
-node desktop/scripts/report.mjs spec.json /abs/.bot/artifacts/report.html          # document (no JavaScript)
-node desktop/scripts/report.mjs spec.json /abs/.bot/artifacts/report-slides.html --slides  # 16:9 slides
+<report command> spec.json /abs/.bot/artifacts/report.html                   # document (no JavaScript)
+<report command> spec.json /abs/.bot/artifacts/report-slides.html --slides    # 16:9 slides
+<report command> spec.json /abs/.bot/artifacts/report.html --force           # replace an existing page
+<report command> --check spec.json                                             # validate only
 ```
 
 The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "warnings": [{path, message}], "htmlPath", "link"}`. Fix every error (the `example` is a valid block of that type); fix warnings when you can, then render again (≤ 2 retries). A block with errors renders as a visible placeholder; the rest of the report still renders. Put `link` in your reply.

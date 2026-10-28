@@ -39,7 +39,13 @@ await Promise.all([
   // `ccb plugin check` for Maintainer (the checks the registry runs), as a small command.
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(out, "host/check-plugin.cjs") }),
   buildRenderer({ root: here }),
+  // The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.
+  build({ ...node, entryPoints: [join(here, "reports/cli-main.ts")], outfile: join(out, "report/report.cjs"), minify: true, jsx: "automatic", loader: { ".css": "text" }, define: { "process.env.NODE_ENV": '"production"' }, tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } }),
 ]);
+// The bots' guide to report pages and the layout engine's licence notice, next to the command
+// (electron-builder copies them outside app.asar, where bots can read them).
+cpSync(join(here, "docs", "report-blocks.md"), join(out, "report", "report-blocks.md"));
+cpSync(join(here, "reports", "v2", "NOTICE"), join(out, "report", "NOTICE"));
 // The web AIs' page readers as 1.x ships them (Sources/ClaudeCodeBot/Resources/web-extractors, read
 // only): the core puts them in the plugin library's ccb-web-extractors and falls back to them.
 const extractors = join(here, "..", "Sources", "ClaudeCodeBot", "Resources", "web-extractors");

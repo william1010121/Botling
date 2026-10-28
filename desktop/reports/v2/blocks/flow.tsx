@@ -64,9 +64,9 @@ export const flow = defineBlock({
   examples: [{ title: '卡在安裝：新版 .2 裝上後退回 .1', nodes: [{ id: 'impl', label: '實作', status: 'done' }, { id: 'review', label: '複審', status: 'done' }, { id: 'pack', label: '打包', status: 'done' }, { id: 'install', label: '安裝', sub: '退回 .1', status: 'blocked' }, { id: 'accept', label: '驗收', status: 'pending' }], edges: [{ from: 'impl', to: 'review' }, { from: 'review', to: 'pack' }, { from: 'pack', to: 'install' }, { from: 'install', to: 'accept' }] }],
   fit: b => (b.nodes.length <= 6 && b.dir === 'TB' ? 'visual' : 'full'),
   visual: true,
-  prepare: async (b: Flow, mode): Promise<Prepared> => {
-    const main = await layoutGraph(b.nodes, b.edges, b.dir);
-    const narrow = mode === 'doc' && b.dir === 'LR' && main.w > 360 ? await layoutGraph(b.nodes, b.edges, 'TB') : undefined;
+  prepare: (b: Flow, mode): Prepared => {
+    const main = layoutGraph(b.nodes, b.edges, b.dir);
+    const narrow = mode === 'doc' && b.dir === 'LR' && main.w > 360 ? layoutGraph(b.nodes, b.edges, 'TB') : undefined;
     return { main, narrow };
   },
   Doc: ({ block, ctx }) => {

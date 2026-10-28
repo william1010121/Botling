@@ -38,6 +38,7 @@ import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPE
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { attachmentFile, attachmentTarget } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
+import { createRequire } from "node:module";
 import {
   AccountView, MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
   type Command, type EventEnvelope, type ResponseEnvelope, type UpdateView,
@@ -61,6 +62,14 @@ if (checkAt >= 0) {
   if (report.stdout) writeSync(1, report.stdout);
   if (report.stderr) writeSync(2, report.stderr);
   process.exit(report.code);
+}
+// `--render-report <spec.json> <…/artifacts/page.html> [--slides] [--force] | --check <spec.json>`: the report
+// command bots run (desktop/reports/cli.ts, bundled to out/report/report.cjs), then exit; synchronous,
+// no window, no data folder.
+const reportAt = process.argv.indexOf("--render-report");
+if (reportAt >= 0) {
+  const { runCli } = createRequire(__filename)(join(__dirname, "..", "report", "report.cjs")) as { runCli(args: string[]): number };
+  process.exit(runCli(process.argv.slice(reportAt + 1)));
 }
 const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
 /** Where the shell and chat page come from; a hot install (hot-install.ts) points it at a copy of the new build's. */
@@ -341,6 +350,9 @@ function coreEnvironment(): Record<string, string> {
   env.BOTLING_SHOT_COMMAND ??= `${self} --component-shot`;
   // And its plugin check (1.x: "'<botling>' --check-plugin"); a packaged build cannot run Electron as Node.
   env.BOTLING_CHECK_COMMAND ??= `${self} --check-plugin`;
+  // The report command every bot builds report pages with, and its guide (outside app.asar so bots can read it).
+  env.BOTLING_REPORT_COMMAND ??= `${self} --render-report`;
+  env.BOTLING_REPORT_DOCS ??= app.isPackaged ? join(process.resourcesPath, "report", "report-blocks.md") : join(root, "docs", "report-blocks.md");
   // The fake CLIs are development's (a packaged build ships neither and always runs the real ones).
   if (!app.isPackaged) {
     env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");

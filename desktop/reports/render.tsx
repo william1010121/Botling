@@ -21,7 +21,7 @@ export function renderReport(input: unknown): string {
 }
 
 /** Version dispatch: `version: 2` specs use the block system; everything else is a v1 report. */
-export async function renderAny(input: unknown, opts: { mode?: 'doc' | 'slide' } = {}): Promise<RenderResult> {
+export function renderAny(input: unknown, opts: { mode?: 'doc' | 'slide' } = {}): RenderResult {
   if (input && typeof input === 'object' && (input as { version?: unknown }).version === 2) return renderV2(input, opts);
   if (opts.mode === 'slide') return { ok: false, errors: [{ path: 'version', message: 'Slides need a version 2 spec.' }], warnings: [] };
   try {

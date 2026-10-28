@@ -37,7 +37,7 @@ import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
 import type { Engine, Heads } from "./heads";
-import { botPrompts, desktopPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
+import { botPrompts, desktopPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts, type ReportTool } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
@@ -137,6 +137,8 @@ export interface CoreOptions {
   checkCommand?: string | null;
   /** The component-shot command Maintainer is given (Phase 5a; null: none, it reads the template). */
   shotCommand?: string | null;
+  /** The report command and its guide every bot is told to build report pages with (null: not told). */
+  reports?: ReportTool | null;
   /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
   firstSnapshotDelayMs?: number;
   /** The app's own copy of the web AIs' page readers (1.x's Resources/web-extractors); null: none. */
@@ -1446,7 +1448,7 @@ First write a test that shows this, then fix it.`;
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
       engine,
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
-    }), profile);
+    }), profile, this.options.reports ?? null);
   }
 
   private event(event: Event) {

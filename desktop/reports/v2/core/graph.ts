@@ -1,6 +1,9 @@
 // Graph layout via elkjs (EPL-2.0 OR GPL-3.0, used unmodified; see reports/v2/NOTICE).
 // Runs once at generation time in Node; the HTML only receives finished SVG coordinates.
-import ELK from 'elkjs/lib/elk.bundled.js';
+// The layout engine is driven synchronously through elkjs's in-process worker dispatcher (the same
+// code path ELK's own FakeWorker runs, minus its setTimeout), so a whole report renders in one
+// synchronous call — the app can run it like its other one-shot commands (`--render-report`).
+import { Worker as ElkWorker } from 'elkjs/lib/elk-worker.min.js';
 import type { ElkExtendedEdge, ElkNode } from 'elkjs/lib/elk-api';
 import { textWidth, wrapText, r1 } from './text';
 
@@ -11,7 +14,19 @@ export type PlacedEdge = GEdge & { points: Array<[number, number]>; lx?: number;
 export type GraphLayout = { w: number; h: number; nodes: PlacedNode[]; edges: PlacedEdge[] };
 
 export const NODE_FONT = 14, SUB_FONT = 12, LINE = 18;
-const elk = new ELK();
+let worker: { dispatcher: { saveDispatch(e: { data: unknown }): void }; onmessage?: (e: { data: { error?: unknown; data?: ElkNode } }) => void } | null = null;
+function elkLayout(graph: ElkNode): ElkNode {
+  let reply: { error?: unknown; data?: ElkNode } | undefined;
+  if (!worker) {
+    worker = new (ElkWorker as unknown as new () => NonNullable<typeof worker>)();
+    worker.onmessage = e => { reply = e.data; };
+    worker.dispatcher.saveDispatch({ data: { cmd: 'register', algorithms: ['layered'], id: 0 } });
+  }
+  worker.onmessage = e => { reply = e.data; };
+  worker.dispatcher.saveDispatch({ data: { cmd: 'layout', graph, id: 1 } });
+  if (!reply || reply.error || !reply.data) throw new Error(`elk layout failed: ${String((reply?.error as Error)?.message ?? reply?.error ?? 'no reply')}`);
+  return reply.data;
+}
 
 export function nodeSize(n: GNode, maxW: number): { w: number; h: number; lines: string[] } {
   const pad = n.kind === 'decision' ? 44 : 28;
@@ -23,10 +38,10 @@ export function nodeSize(n: GNode, maxW: number): { w: number; h: number; lines:
   return { w, h, lines };
 }
 
-export async function layoutGraph(nodes: GNode[], edges: GEdge[], dir: 'LR' | 'TB'): Promise<GraphLayout> {
+export function layoutGraph(nodes: GNode[], edges: GEdge[], dir: 'LR' | 'TB'): GraphLayout {
   const maxW = dir === 'LR' ? 176 : 220;
   const sized = new Map(nodes.map(n => [n.id, nodeSize(n, maxW)]));
-  const graph: ElkNode = await elk.layout({
+  const graph: ElkNode = elkLayout({
     id: 'root',
     layoutOptions: {
       'elk.algorithm': 'layered',
