@@ -1,3 +1,4 @@
+/// <reference path="./elk-worker.d.ts" />
 // Graph layout via elkjs (EPL-2.0 OR GPL-3.0, used unmodified; see reports/v2/NOTICE).
 // Runs once at generation time in Node; the HTML only receives finished SVG coordinates.
 // The layout engine is driven synchronously through elkjs's in-process worker dispatcher (the same
@@ -14,11 +15,11 @@ export type PlacedEdge = GEdge & { points: Array<[number, number]>; lx?: number;
 export type GraphLayout = { w: number; h: number; nodes: PlacedNode[]; edges: PlacedEdge[] };
 
 export const NODE_FONT = 14, SUB_FONT = 12, LINE = 18;
-let worker: { dispatcher: { saveDispatch(e: { data: unknown }): void }; onmessage?: (e: { data: { error?: unknown; data?: ElkNode } }) => void } | null = null;
+let worker: ElkWorker | null = null;
 function elkLayout(graph: ElkNode): ElkNode {
   let reply: { error?: unknown; data?: ElkNode } | undefined;
   if (!worker) {
-    worker = new (ElkWorker as unknown as new () => NonNullable<typeof worker>)();
+    worker = new ElkWorker();
     worker.onmessage = e => { reply = e.data; };
     worker.dispatcher.saveDispatch({ data: { cmd: 'register', algorithms: ['layered'], id: 0 } });
   }
