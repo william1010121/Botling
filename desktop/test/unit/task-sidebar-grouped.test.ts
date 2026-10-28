@@ -179,11 +179,46 @@ describe("Quiet and To verify", () => {
     const row = group(host, "quiet")!.querySelector<HTMLElement>(".task-row")!;
     expect(row.dataset.state).toBe("quiet");
     expect(row.querySelector(".task-line")!.textContent).toBe("No news for 2 h");
+    expect(row.querySelector(".task-check")).not.toBeNull();
     expect(group(host, "running")!.querySelector('[data-task="old"]')).toBeNull();
     await cleanup!(); cleanup = null;
     const { host: open } = await mount("old", { bot: idle, tasks: staged, onAskForReport: report });
-    await act(async () => group(open, "quiet")!.querySelector<HTMLButtonElement>(".task-report")!.click());
+    const card = group(open, "quiet")!.querySelector<HTMLElement>(".task-card")!;
+    expect(card.dataset.state).toBe("quiet");
+    const note = card.querySelector<HTMLElement>(".task-stale")!;
+    expect(note.classList.contains("quiet")).toBe(true);
+    expect(note.textContent).toContain("No news for 2 h");
+    expect(note.textContent).not.toContain("May be stuck");
+    await act(async () => card.querySelector<HTMLButtonElement>(".task-report")!.click());
     expect(report).toHaveBeenCalled();
+  });
+
+  it("outside Quiet, a stale task keeps its red May be stuck", async () => {
+    const stuck = task({ id: "stuck", name: "Stuck", state: "running", stage: "built", updatedAt: at(30) });
+    const { host } = await mount("stuck", { bot: idle, tasks: [stuck] });
+    const note = group(host, "verify")!.querySelector<HTMLElement>(".task-card .task-stale")!;
+    expect(note.classList.contains("quiet")).toBe(false);
+    expect(note.textContent).toContain("May be stuck");
+  });
+
+  it("To verify work said done can be marked complete from its row and its open card", async () => {
+    const complete = vi.fn();
+    const { host } = await mount(null, { bot: idle, tasks: staged, onCompleteTask: complete });
+    for (const id of ["built", "rev", "inst"]) {
+      await act(async () => group(host, "verify")!.querySelector<HTMLButtonElement>(`.task-row[data-task="${id}"] .task-check`)!.click());
+    }
+    expect(complete.mock.calls.map(([id]) => id)).toEqual(["built", "rev", "inst"]);
+    await act(async () => group(host, "done")!.querySelector<HTMLButtonElement>(".task-group-fold")!.click());
+    // Verified, unstaged, closed and stopped work has no check, as before.
+    expect(group(host, "done")!.querySelector(".task-check")).toBeNull();
+    await cleanup!(); cleanup = null;
+    const { host: open } = await mount("rev", { bot: idle, tasks: staged, onCompleteTask: complete });
+    await act(async () => group(open, "verify")!.querySelector<HTMLButtonElement>(".task-card .task-complete")!.click());
+    expect(complete).toHaveBeenLastCalledWith("rev");
+    // Once closed by you, it lists under Done.
+    await cleanup!(); cleanup = null;
+    const closed = staged.map((item) => (item.id === "rev" ? { ...item, manuallyCompletedAt: at(0) } : item));
+    expect(taskGroups(closed, false, Date.now()).done.map((item) => item.id)).toContain("rev");
   });
 
   it("a To verify row shows its four-step bar and label; its card shows the four steps", async () => {

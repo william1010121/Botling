@@ -113,6 +113,29 @@ describe("<task stage=…> (2.x)", () => {
     expect(readTaskCard({ id: "A", name: "X", createdAt: 1, stage: "bogus" })!.stage).toBeUndefined();
   });
 
+  it("lets you close work said done but not verified; other finished cards stay as they are", () => {
+    const book = new TaskBook();
+    const turn: TaskTurn = { head: "claude", userMessage: "m1", started: 0, usedTools: true };
+    const tags: [string, Parameters<TaskBook["replied"]>[2][number]][] = [
+      ["Built", { name: "Built", state: "done", stage: "built" }],
+      ["Verified", { name: "Verified", state: "done", stage: "verified" }],
+      ["Plain", { name: "Plain", state: "done" }],
+      ["Stopped", { name: "Stopped", state: "stopped", stage: "built" }],
+    ];
+    tags.forEach(([name, tag], index) => { book.begin(`m${index}`, name, null, 1); book.replied(`r${index}`, { ...turn, userMessage: `m${index}` }, [tag], 2); });
+    const id = (name: string) => book.named(name)!.id;
+    expect(book.complete(id("Built"), 3)).toBe(true);
+    expect(book.named("Built")).toMatchObject({ state: "done", manuallyCompletedAt: 3, stage: "built" });
+    expect(book.named("Built")!.history!.at(-1)).toEqual({ kind: "complete", at: 3 });
+    // Repeated clicks are safe; verified, unstaged and stopped cards are not closed again.
+    expect(book.complete(id("Built"), 4)).toBe(false);
+    expect(book.named("Built")!.manuallyCompletedAt).toBe(3);
+    for (const name of ["Verified", "Plain", "Stopped"]) {
+      expect(book.complete(id(name), 5), name).toBe(false);
+      expect(book.named(name)!.manuallyCompletedAt, name).toBeUndefined();
+    }
+  });
+
   it("is told to every bot in one sentence after the <task> line's states", () => {
     for (const role of ["main", "manager", "bot"] as const) {
       const profile = { name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null };

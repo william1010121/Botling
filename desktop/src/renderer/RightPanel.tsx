@@ -362,7 +362,7 @@ function TaskGroups(props: TaskListProps) {
                 {lists[group.key].map((task) => {
                   const stale = isStale(task, working, now);
                   return task.id === selected
-                    ? <TaskCard key={task.id} {...props} task={task} stale={stale} folded={isFoldedIntoSummary(task, props.messages, props.summarized)} />
+                    ? <TaskCard key={task.id} {...props} task={task} stale={stale} quiet={group.key === "quiet"} folded={isFoldedIntoSummary(task, props.messages, props.summarized)} />
                     : <TaskRow key={task.id} task={task} now={now} stale={stale} quiet={group.key === "quiet"} hovered={hover?.id === task.id} onSelect={(id) => { leave(); props.onSelect(id); }} onComplete={props.onComplete} onEnter={enter} onLeave={leave} />;
                 })}
               </div>
@@ -394,7 +394,7 @@ function TaskRow({ task, now, stale, quiet, hovered, onSelect, onComplete, onEnt
           : <span className="task-line">{line}</span>}
       </button>
       {task.owner && <span className="task-owner-dot" data-head={task.owner} title={headName(task.owner)} />}
-      {isActiveTask(task) && <CheckButton className="task-check" onClick={() => onComplete(task.id)} />}
+      {(isActiveTask(task) || verify) && <CheckButton className="task-check" onClick={() => onComplete(task.id)} />}
     </div>
   );
 }
@@ -418,7 +418,7 @@ export function isFoldedIntoSummary(task: TaskView, messages: MessageView[], sum
 }
 
 /** The open task: its head and age, what blocks it, Now → Next, its subagents, and the way to its latest line (`TaskCardView`). */
-function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onReport, onComplete, onOpenSubagent }: TaskListProps & { task: TaskView; stale: boolean; folded: boolean }) {
+function TaskCard({ task, now, stale, quiet, folded, messages, onSelect, onJump, onReport, onComplete, onOpenSubagent }: TaskListProps & { task: TaskView; stale: boolean; quiet: boolean; folded: boolean }) {
   const mine = new Set(task.messageIds);
   const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id ?? null;
   const started = task.createdAt ?? messages.find((message) => mine.has(message.id))?.time ?? task.updatedAt;
@@ -429,11 +429,11 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
   // Only the steps that say something: an empty Now or Next is left out.
   const steps = ([["now", "Now", task.now], ["next", "Next", task.next]] as const).filter(([, , value]) => !!value?.trim());
   return (
-    <div className="task-card" data-task={task.id} data-state={stale ? "stale" : task.state} data-active={active ? "1" : "0"}>
+    <div className="task-card" data-task={task.id} data-state={quiet ? "quiet" : stale ? "stale" : task.state} data-active={active ? "1" : "0"}>
       {/* The name, and Mark complete in the card's top-right corner. */}
       <div className="task-card-top">
         <button type="button" className="task-card-head" title="Close" onClick={() => onSelect(task.id)}><span className="task-name bold">{task.name}</span></button>
-        {active && <CheckButton className="task-complete" onClick={() => onComplete(task.id)} />}
+        {(active || toVerify(task)) && <CheckButton className="task-complete" onClick={() => onComplete(task.id)} />}
       </div>
       <div className="task-meta">
         {task.state === "pending" ? <span className="task-claiming">Claiming…</span>
@@ -480,9 +480,9 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
         </details>
       )}
       {(stale || folded) && (
-        <div className="task-stale">
+        <div className={`task-stale${quiet ? " quiet" : ""}`}>
           {folded && <span className="task-summary-tag">In the summary</span>}
-          {stale && <span>May be stuck</span>}
+          {stale && <span>{quiet ? `No news for ${silence(task, now)}` : "May be stuck"}</span>}
           {stale && <button type="button" className="task-report" onClick={() => onReport(task, latest)}>Ask it to report</button>}
         </div>
       )}
