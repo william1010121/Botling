@@ -1307,10 +1307,17 @@ export class Bot {
   taskViews(): TaskView[] {
     const sources = [{ engine: this.engine, list: this.subagents.list }, ...(this.partner ? [{ engine: this.partner.engine, list: this.partner.subagents.list }] : [])];
     // Only declared work is a task in the panel; a plain message's provisional card is not.
-    return shownTasks(this.tasks.tasks).slice(-100).map((card) => {
+    const workingCards = new Set([this, ...(this.partner ? [this.partner] : [])].flatMap((bot) => {
+      const turn = bot.shownTurn;
+      if (!turn?.open) return [];
+      const card = this.tasks.base({ head: bot.engine, userMessage: turn.origin === "user" ? turn.userId : null,
+        handoffID: turn.handoffId, reporting: turn.ended });
+      return card ? [card.id] : [];
+    }));
+    return shownTasks(this.tasks.tasks).map((card) => {
       const relatedAgents = relatedTaskAgents(card, this.records, sources);
       return { ...taskView(card, new Set(relatedAgents.filter((agent) => agent.status === "running").map((agent) => agent.id))),
-        atWork: relatedAgents.some((agent) => agent.status === "running"), relatedAgents,
+        atWork: workingCards.has(card.id) || relatedAgents.some((agent) => agent.status === "running"), relatedAgents,
         agentLinks: Array.isArray(card.subagentIDs) && !card.agentLinkHistoryIncomplete ? "recorded" as const : "unknown" as const };
     });
   }

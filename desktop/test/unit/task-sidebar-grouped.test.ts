@@ -158,8 +158,8 @@ describe("Quiet and To verify", () => {
     expect(ids(lists.quiet)).toEqual(["old"]);
     expect(ids(lists.verify)).toEqual(["built", "rev", "inst"]);
     expect(ids(lists.done)).toEqual(["ok", "plain", "closed", "stop"]);
-    // While the bot works, nothing is quiet.
-    expect(ids(taskGroups(staged, true, Date.now()).quiet)).toEqual([]);
+    // Unrelated work does not make an idle card active.
+    expect(ids(taskGroups(staged, true, Date.now()).quiet)).toEqual(["old"]);
   });
 
   it("orders the groups Needs you, Running, To verify, Quiet, Done; Quiet and Done start folded", async () => {
@@ -178,7 +178,7 @@ describe("Quiet and To verify", () => {
     await act(async () => group(host, "quiet")!.querySelector<HTMLButtonElement>(".task-group-fold")!.click());
     const row = group(host, "quiet")!.querySelector<HTMLElement>(".task-row")!;
     expect(row.dataset.state).toBe("quiet");
-    expect(row.querySelector(".task-line")!.textContent).toBe("No news for 2 h");
+    expect(row.querySelector(".task-line")!.textContent).toBe("Awaiting owner update · No news for 2 h");
     expect(row.querySelector(".task-check")).not.toBeNull();
     expect(group(host, "running")!.querySelector('[data-task="old"]')).toBeNull();
     await cleanup!(); cleanup = null;
@@ -264,4 +264,16 @@ it("registers folded-panel floating cards for their lifetime while brief status 
   await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
   expect(host.querySelector(".strip-flyout")).toBeNull();
   expect(shellOverlayActive()).toBe(false);
+});
+
+// The archive uses the existing folded Done group, without a second copy of task data.
+it("keeps over 100 completed cards in an expandable history", async () => {
+  const history = Array.from({ length: 106 }, (_, i) => task({ id: `old-${i}`, name: `Completed ${i}`, state: i % 2 ? "done" : "stopped" }));
+  const { host, render } = await mount(null, { tasks: history });
+  expect(group(host, "done")!.querySelectorAll(".task-row")).toHaveLength(0);
+  await act(async () => group(host, "done")!.querySelector<HTMLButtonElement>(".task-group-fold")!.click());
+  expect(group(host, "done")!.querySelectorAll(".task-row")).toHaveLength(106);
+  expect(group(host, "done")!.textContent).toContain("kept here as history");
+  await render({ tasks: [...history, task({ id: "new", name: "New work", state: "running", atWork: true })] });
+  expect(group(host, "done")!.querySelectorAll(".task-row")).toHaveLength(106);
 });

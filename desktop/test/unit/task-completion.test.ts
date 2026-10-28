@@ -48,12 +48,12 @@ describe("manual task closure", () => {
     expect(book.task(next)).toMatchObject({ state: "running", messageIDs: ["new-user", "new-reply"] });
   });
 
-  it("does not change ordinary owner reconciliation or reopening of automatically completed cards", () => {
+  it("requires owner completion and allows explicit reopening of owner-completed cards", () => {
     const { book, id } = make();
     book.claim("user", "claude", 2);
     book.replied("other", { head: "codex", userMessage: "user" }, [{ state: "done" }], 3);
     expect(book.task(id)!.state).toBe("running");
-    book.replied("owner", { head: "claude", userMessage: "user", usedTools: true }, [], 30);
+    book.replied("owner", { head: "claude", userMessage: "user", usedTools: true }, [{ state: "done" }], 30);
     expect(book.task(id)!.state).toBe("done");
     book.replied("continue", { head: "claude" }, [{ continues: "Docs", state: "running" }], 31);
     expect(book.task(id)!.state).toBe("running");

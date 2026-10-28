@@ -158,7 +158,7 @@ describe("4. no bare card without a name", () => {
   });
 
   it("while a named task runs, the panel shows it rather than a bare \"Writing…\" card", async () => {
-    const { host, done } = await panel([view({ now: "writing" })], null);
+    const { host, done } = await panel([{ ...view({ now: "writing" }), atWork: true }], null);
     try {
       expect(host.querySelector(".now-card")).toBeNull();
       expect(host.querySelector('.task-group[data-group="running"] .task-row .task-row-name')!.textContent).toBe("Docs");

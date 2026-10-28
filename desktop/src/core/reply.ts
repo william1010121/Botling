@@ -39,7 +39,7 @@ export type TaskState = "pending" | "running" | "waiting" | "done" | "stopped";
 export type TaskStage = "built" | "reviewed" | "installed" | "verified";
 export const TASK_STAGES: readonly TaskStage[] = ["built", "reviewed", "installed", "verified"];
 /** `TaskTag`: undefined keeps a field, "" clears it. `stage` is 2.x only; an unknown one is left out. */
-export interface TaskTag { name?: string; continues?: string; now?: string; next?: string; blocked?: string; state?: TaskState; stage?: TaskStage | "" }
+export interface TaskTag { id?: string; expectedUpdatedAt?: number; name?: string; continues?: string; now?: string; next?: string; blocked?: string; state?: TaskState; stage?: TaskStage | "" }
 export interface CompletionSignal { kind: "end" | "block"; evidence: string }
 
 /** The bot's picture on the main bot's whiteboard (`<whiteboard name="x" size="2x1">JSON</whiteboard>`, or `<whiteboard clear/>`). */
@@ -126,6 +126,12 @@ export function saysNoReply(reply: string): boolean {
 function taskTagFrom(found: Record<string, string>): TaskTag {
   const value = (key: string) => (found[key] === undefined ? undefined : trimAll(found[key]!));
   const tag: TaskTag = {};
+  const id = value("id");
+  if (id !== undefined) tag.id = id;
+  const expected = value("expected-updated-at");
+  // Swift-date seconds from the saved snapshot. Keep invalid supplied tokens as NaN so
+  // the book rejects them instead of silently dropping the compare-and-swap condition.
+  if (expected !== undefined) tag.expectedUpdatedAt = expected ? Number(expected) : NaN;
   const name = value("name");
   if (name) tag.name = name;
   const continues = value("continues");

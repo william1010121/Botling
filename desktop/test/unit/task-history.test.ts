@@ -31,7 +31,7 @@ describe("task history", () => {
     ]);
   });
 
-  it("records Mark complete and a settled turn", () => {
+  it("records Mark complete without inferring acceptance from a silent state", () => {
     const book = new TaskBook();
     book.begin("m1", "ship", null, 1);
     book.replied("r1", turn("m1"), [{ name: "Ship", now: "tagging", state: "running" }], 2);
@@ -39,8 +39,9 @@ describe("task history", () => {
     expect(kinds(book, "Ship").at(-1)).toEqual(["complete", 3, null]);
     const other = new TaskBook();
     other.begin("m1", "docs", null, 1);
-    other.replied("r1", turn("m1"), [{ name: "Docs", now: "writing" }], 2); // left running without saying so: settled done
-    expect(kinds(other, "Docs").at(-1)).toEqual(["done", 2, null]);
+    other.replied("r1", turn("m1"), [{ name: "Docs", now: "writing" }], 2); // No explicit completion: retain the work state.
+    expect(kinds(other, "Docs").at(-1)).toEqual(["now", 2, "writing"]);
+    expect(other.named("Docs")!.state).toBe("running");
   });
 
   it("keeps a bounded history and survives a reload; bad entries are dropped", () => {

@@ -202,9 +202,9 @@ function Overview({ bot, bots, waiting, look, status, results, teams, watching, 
 // ---------------------------------------------------------------------------------------------
 // Tasks (1.x 1.20's TaskPanel.swift)
 
-/** A running task with no news for this long, nothing of it at work, the bot idle: "May be stuck". */
+/** Old work without its own live execution needs an owner update, even if another task runs. */
 const STALE_MS = 10 * 60_000;
-const isStale = (task: TaskView, working: boolean, now: number) => task.state === "running" && !working && !task.atWork && now - new Date(task.updatedAt).getTime() >= STALE_MS;
+const isStale = (task: TaskView, _working: boolean, now: number) => task.state === "running" && !task.atWork && now - new Date(task.updatedAt).getTime() >= STALE_MS;
 
 /** Tasks under way: running (and just sent) first, newest first, then those waiting on you (`TaskSection.active`). */
 export function activeTasks(tasks: TaskView[]): TaskView[] {
@@ -251,7 +251,7 @@ export function toVerify(task: TaskView): boolean {
 /** How a task stands, in its row's second line (`TaskRowView.line`; design R2-3). */
 export function taskLine(task: TaskView, stale: boolean, now: number, quiet = false): string {
   if (toVerify(task)) return STAGE_LABELS[task.stage!];
-  if (quiet) return `No news for ${silence(task, now)}`;
+  if (quiet) return `Awaiting owner update · No news for ${silence(task, now)}`;
   if (stale) return `May be stuck · No news for ${Math.floor((now - new Date(task.updatedAt).getTime()) / 60_000)} min`;
   switch (task.state) {
     case "pending": return "New message · waiting for a head";
@@ -359,6 +359,7 @@ function TaskGroups(props: TaskListProps) {
             </div>
             {open && (
               <div className="task-list">
+                {group.key === "done" && <p className="task-line">Completed and stopped tasks are kept here as history.</p>}
                 {lists[group.key].map((task) => {
                   const stale = isStale(task, working, now);
                   return task.id === selected

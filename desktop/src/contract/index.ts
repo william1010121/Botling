@@ -224,7 +224,7 @@ export const WhiteboardBotView = z.strictObject({
   currentStatus: z.array(z.string().max(400)).max(20),
   inProgress: z.array(z.string().max(400)).max(20),
   decided: z.array(z.string().max(400)).max(20),
-  tasks: z.array(TaskView).max(100),
+  tasks: z.array(TaskView),
   results: z.array(z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) })).max(12),
   /** The picture it gave its card (<whiteboard>), drawn as a Board tile of that size; null: none (the card shows its tasks ring). */
   picture: WhiteboardPictureView.nullable(),
@@ -1301,7 +1301,7 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("message.updated"), botId, message: MessageView }),
   /** A line went (a reply with nothing to show: only <no-reply/> or reactions; a cut-off turn that had said nothing). */
   z.strictObject({ type: z.literal("message.removed"), botId, messageId: id }),
-  z.strictObject({ type: z.literal("tasks.updated"), botId, tasks: z.array(TaskView).max(100) }),
+  z.strictObject({ type: z.literal("tasks.updated"), botId, tasks: z.array(TaskView) }),
   z.strictObject({ type: z.literal("subagent.updated"), botId, subagent: SubagentView }),
   // Identity is available before the reply record exists; optional for older event producers.
   z.strictObject({ type: z.literal("turn.started"), botId, turnId: id, messageId: id, head: Engine.optional() }),

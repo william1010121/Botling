@@ -82,7 +82,12 @@ describe("task book: the Swift TaskBook's cards", () => {
         }),
       }));
     };
-    expect(normalize(results)).toEqual(normalize(golden.taskScenario));
+    // Intentional departure from Swift: silence/worker completion is not owner acceptance.
+    const expected = structuredClone(golden.taskScenario);
+    for (const step of expected) for (const card of step.tasks) {
+      if (["research", "Two", "Background"].includes(card.name) && card.state === "done") card.state = "running";
+    }
+    expect(normalize(results)).toEqual(normalize(expected));
   });
 });
 

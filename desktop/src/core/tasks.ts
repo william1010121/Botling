@@ -1,8 +1,8 @@
 // A chat's task cards, ported from the Swift `TaskBook` / `TaskCard` (TaskCards.swift), kept in
 // tasks.json in 1.20's format: one card per piece of work, opened when the user sends a message,
-// named and kept current by the head's hidden `<task …/>` lines, settled when its turn ends.
-// Pure bookkeeping: the bot says what happened, the book updates its cards. 2.0 has one head
-// (claude), so `owner` is always "claude" here; a card 1.x wrote for "codex" is kept as it is.
+// named and kept current by the owner's hidden `<task …/>` lines. Declared work requires
+// explicit completion; completed/stopped cards remain accessible in the folded history.
+// Pure bookkeeping: an execution ending alone does not establish task acceptance.
 //
 // Dates are Swift dates (seconds since 2001), ids upper-case UUIDs; keys 2.0 does not know are
 // kept on each card.
@@ -271,13 +271,44 @@ export class TaskBook {
     const touched: string[] = [];
     tags.forEach((tag, number) => {
       let target: TaskCard | undefined;
+      // Explicit identity wins over mutable names; an unknown id must not update the base.
+      if (tag.expectedUpdatedAt !== undefined && tag.id === undefined) return;
+      if (tag.id !== undefined) {
+        const identified = this.task(tag.id);
+        // Reject before links, names, timestamps, or provisional routing can change.
+        if (!identified || identified.owner !== turn.head) return;
+        if (tag.expectedUpdatedAt !== undefined && (!Number.isFinite(tag.expectedUpdatedAt)
+          || identified.updatedAt !== tag.expectedUpdatedAt || identified.manuallyCompletedAt !== undefined)) return;
+        if (tag.expectedUpdatedAt === undefined && number === 0 && base && base.id !== identified.id && !isDeclared(base) && !hasWork(base)
+          && base.manuallyCompletedAt === undefined && identified.manuallyCompletedAt === undefined
+          && base.startedByMessageID === turn.userMessage && (!base.owner || base.owner === turn.head)
+          && (!identified.owner || identified.owner === turn.head)) {
+          this.merge(this.index(base.id)!, identified.id);
+          base = undefined;
+        }
+        this.apply(tag, identified, turn.head, message, !!turn.asks, at);
+        touched.push(identified.id);
+        return;
+      }
       const continued = tag.continues ? this.named(tag.continues) : undefined;
+      const named = tag.name ? this.named(tag.name) : undefined;
+      // Named terminal reports update the named original, never rename a current repair card.
+      // Validate legacy continues ownership before it can merge the user's current card.
+      if (continued?.owner && continued.owner !== turn.head) return;
+      if (!tag.continues && named?.owner && named.owner !== turn.head && named.id !== base?.id) return;
+      if (!tag.continues && named && named.id !== base?.id && (tag.state === "done" || tag.state === "stopped")
+        && base && isDeclared(base)) {
+        this.apply(tag, named, turn.head, message, !!turn.asks, at);
+        touched.push(named.id);
+        return;
+      }
       // A new user request gets its own card after manual closure; delayed reports still find
       // the closed card by name and cannot resurrect it (or create a duplicate).
       const earlier = continued?.manuallyCompletedAt !== undefined && base && base.manuallyCompletedAt === undefined ? undefined : continued;
       if (tag.continues && earlier && earlier.id !== base?.id) {
         // It carries on an earlier task: this message, and what its own card had, join it.
-        if (number === 0 && turn.userMessage && base && base.manuallyCompletedAt === undefined && base.startedByMessageID === turn.userMessage) {
+        if (number === 0 && turn.userMessage && base && base.manuallyCompletedAt === undefined && base.startedByMessageID === turn.userMessage
+          && (!base.owner || base.owner === turn.head) && (!earlier.owner || earlier.owner === turn.head)) {
           const from = this.index(base.id);
           if (from !== null) this.merge(from, earlier.id);
           base = undefined;
@@ -286,7 +317,7 @@ export class TaskBook {
       } else if (number === 0 && base) {
         // The same task named again from a new message: that message joins the card it has.
         const same = tag.name ? this.named(tag.name) : undefined;
-        if (same && same.id !== base.id && isDeclared(same) && isActive(same.state) && same.manuallyCompletedAt === undefined
+        if (same && same.id !== base.id && isDeclared(same) && (isActive(same.state) || tag.state === "done" || tag.state === "stopped") && same.manuallyCompletedAt === undefined
           && !isDeclared(base) && base.manuallyCompletedAt === undefined && (!same.owner || same.owner === turn.head)) {
           const from = this.index(base.id);
           if (from !== null) this.merge(from, same.id);
@@ -309,7 +340,7 @@ export class TaskBook {
       touched.push(target.id);
     });
     for (const id of touched) this.settle(id, turn, at);
-    this.trim();
+    if (touched.length) this.trim();
     return touched;
   }
 
@@ -319,7 +350,7 @@ export class TaskBook {
     if (!card.owner) card.owner = head;
     if (card.owner !== head) return;
     if (asks && isActive(card.state)) { card.state = "waiting"; noteState(card, at); }
-    else if (card.state === "pending" || card.state === "waiting") card.state = "running";
+    else if (card.state === "pending") card.state = "running";
     card.updatedAt = at;
   }
 
@@ -340,17 +371,19 @@ export class TaskBook {
     }
     if (tag.stage) card.stage = tag.stage;
     else if (tag.stage === "") delete card.stage;
-    card.state = tag.state ?? (asks ? "waiting" : "running");
+    card.state = tag.state ?? (asks && isActive(card.state) ? "waiting" : card.state === "pending" ? "running" : card.state);
     if (tag.state) card.stateFromTag = tag.state;
     card.updatedAt = at;
     if (card.now && card.now !== before.now) note(card, "now", at, card.now);
     if (card.state !== before.state || (card.state === "waiting" && card.blocked !== before.blocked)) noteState(card, at);
   }
 
-  /** The owner's turn is over: a card it left running without saying so, with nothing of it at work, is done. */
+  /** Settle only disposable message bookkeeping; real work requires owner acceptance. */
   private settle(id: string, turn: TaskTurn, at: number) {
     const card = this.task(id);
-    if (!card || card.owner !== turn.head || card.state !== "running" || card.stateFromTag === "running" || turn.handsOff) return;
+    // Silence, lack of workers, or a completed worker is not acceptance of declared work.
+    if (!card || isDeclared(card) || hasWork(card) || card.manuallyCompletedAt !== undefined
+      || card.owner !== turn.head || card.state !== "running" || turn.handsOff) return;
     if (card.subagentIDs?.some((sub) => turn.runningSubagents?.has(sub))) return;
     if (card.helps?.some((help) => turn.runningHandoffs?.has(help.handoffID))) return;
     card.state = "done";
@@ -426,18 +459,21 @@ export class TaskBook {
     return true;
   }
 
-  /** Lines gone from the chat leave their cards; cards with none of their lines left go. */
+  /** Prune chat links, preserving work and its history even when the chat window moves on. */
   keepOnly(present: Set<string>): boolean {
     const before = JSON.stringify(this.tasks);
     for (const card of this.tasks) card.messageIDs = card.messageIDs.filter((id) => present.has(id));
-    this.tasks = this.tasks.filter((card) => card.messageIDs.length > 0);
+    this.tasks = this.tasks.filter((card) => card.messageIDs.length > 0 || isDeclared(card) || hasWork(card) || card.manuallyCompletedAt !== undefined);
     return JSON.stringify(this.tasks) !== before;
   }
 
   private trim() {
     while (this.tasks.length > LIMIT) {
-      const at = this.tasks.findIndex((card) => !isActive(card.state));
-      this.tasks.splice(at >= 0 ? at : 0, 1);
+      // Only disposable bookkeeping is bounded. Declared work and its history are never
+      // deleted to make room: completed/stopped cards live in the panel's folded Done archive.
+      const at = this.tasks.findIndex((card) => !isDeclared(card) && !hasWork(card) && card.manuallyCompletedAt === undefined && !isActive(card.state));
+      if (at < 0) break;
+      this.tasks.splice(at, 1);
     }
   }
 }
