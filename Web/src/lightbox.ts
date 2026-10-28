@@ -124,7 +124,7 @@ export function handleMediaClicks(root: Document): void {
   });
   root.addEventListener("keydown", (event) => {
     if (!(event.target instanceof Element)) return;
-    const target = (event.target as HTMLElement).closest<HTMLElement>('img.media[role="button"][data-url]');
+    const target = (event.target as HTMLElement).closest<HTMLElement>('img.media[role="button"][data-url], img.thumb[role="button"][data-url]');
     if (!target || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
     if (!event.repeat) target.click();

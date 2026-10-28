@@ -197,3 +197,30 @@ it("keeps media formats and safe Markdown rendering intact", () => {
   root.innerHTML = renderMarkdown('![bad](javascript:alert%281%29) <script>alert(1)</script>');
   expect(root.querySelector("img, script")).toBeNull();
 });
+
+
+describe("attachment image keyboard entry", () => {
+  it.each(["Enter", " "])("opens a thumbnail with %s and returns focus on Escape", (key) => {
+    const row = messageElement(message({ role: "user", text: "look", attachments: [
+      { name: 'Photo "one".png', kind: "image", url: "file:///tmp/a.png" },
+    ] }), {});
+    document.body.append(row);
+    const thumb = row.querySelector<HTMLImageElement>(".thumb")!;
+    expect(thumb.getAttribute("role")).toBe("button");
+    expect(thumb.getAttribute("aria-label")).toBe('Photo "one".png');
+    expect(thumb.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(thumb.parentElement!.closest('button, a, [role="button"]')).toBeNull();
+    expect(thumb.tabIndex).toBe(0);
+    thumb.focus();
+    const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+    thumb.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.querySelectorAll(".lightbox")).toHaveLength(1);
+    expect(document.activeElement).toBe(document.querySelector(".lightbox-close"));
+    expect(document.querySelector(".lightbox-caption")!.textContent).toBe('Photo "one".png');
+    document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".lightbox")).toBeNull();
+    expect(document.activeElement).toBe(thumb);
+    expect(sent).toEqual([]);
+  });
+});

@@ -1169,7 +1169,7 @@ body.spec-mode { background: #141417; }
 
 /* A picture seen large over the chat: dimmed behind, fit to the window, caption below. */
 img.media { cursor: zoom-in; }
-img.media[role="button"]:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+img.media[role="button"]:focus-visible, img.thumb[role="button"]:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 .lightbox {
   position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
   background: rgba(0, 0, 0, 0.82); animation: lightbox-in 120ms ease-out;

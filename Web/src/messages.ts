@@ -745,7 +745,7 @@ export function attachmentStrip(files: FileView[]): HTMLElement {
   strip.className = "attachments";
   for (const file of files) {
     if (file.kind === "image") {
-      strip.insertAdjacentHTML("beforeend", `<img class="thumb" src="${escapeHTML(mediaSrc(file.url))}" alt="${escapeHTML(file.name)}" data-url="${escapeHTML(file.url)}" data-label="${escapeHTML(file.name)}">`);
+      strip.insertAdjacentHTML("beforeend", `<img class="thumb" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${escapeHTML(file.name || t("lightbox.picture"))}" src="${escapeHTML(mediaSrc(file.url))}" alt="${escapeHTML(file.name)}" data-url="${escapeHTML(file.url)}" data-label="${escapeHTML(file.name)}">`);
     } else if (file.kind === "video") {
       strip.insertAdjacentHTML("beforeend", mediaHTML(file.url, file.name));
     } else {
