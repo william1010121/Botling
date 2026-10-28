@@ -50,7 +50,10 @@ export function createProcessOwnership({ inspect = nativeInspect } = {}) {
   };
   const scans = new Set(), waiting = new Set();
   const register = (child, file, args, gateArgs, scope) => {
-    child.once('error', () => {});
+    // Inspection/validation can fail before registration; cleanup may then emit
+    // pipe/child errors asynchronously. Install both handlers before any of it.
+    child.on('error', () => {});
+    child.stdin?.on('error', () => {});
     try {
       if (!Number.isSafeInteger(child.pid) || child.pid < 2) throw new Error('Owned subprocess failed to spawn');
       let identity = inspect(child.pid);
@@ -67,13 +70,13 @@ export function createProcessOwnership({ inspect = nativeInspect } = {}) {
       if (scope.helper) record.scriptDigest = digest(args[0]);
       records.set(child.pid, record);
       child.once('exit', () => { record.exited = true; waiting.delete(record); });
-      child.stdin.on('error', () => {});
       record.release = accepted => { if (!record.exited) child.stdin.end(accepted ? 'go\n' : undefined); waiting.delete(record); };
       // Registration is visible before this JS turn yields. A running census
       // may observe the gate; release waits for all active censuses to accept.
       if (scans.size) waiting.add(record); else record.release(true);
     } catch (error) {
-      child.stdin?.end(); // bounded gate exits without running the command
+      try { child.stdin?.end(); } // close without sending the gate's go token
+      catch { try { child.stdin?.destroy(); } catch { /* retain the original failure; gate timeout remains bounded */ } }
       throw error;
     }
     return child;
