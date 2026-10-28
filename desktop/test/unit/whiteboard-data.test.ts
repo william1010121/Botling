@@ -174,7 +174,7 @@ describe("done log in the bot: review regressions", () => {
     mkdirSync(profile.storeDir, { recursive: true });
     writeFileSync(join(profile.storeDir, "tasks.json"), JSON.stringify(tasks));
     const bot = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 } as any);
-    return { bot: bot as any, file: join(profile.storeDir, "done-days.json") };
+    return { bot: bot as any, file: join(profile.storeDir, "done-days.json"), tasksFile: join(profile.storeDir, "tasks.json") };
   };
   const doneCard = (n: number, at: number) => ({ id: `D${n}`, name: `Done ${n}`, state: "done", createdAt: toSwiftDate(at - 60_000), updatedAt: toSwiftDate(at), messageIDs: [`M${n}`], kept: true, declared: true,
     history: [{ kind: "done", at: toSwiftDate(at) }] });
@@ -200,11 +200,37 @@ describe("done log in the bot: review regressions", () => {
     expect(saves).toBe(1);
   });
 
-  it("logs the done cards it starts with before a new task trims tasks.json", async () => {
-    const { bot, file } = await makeBot(Array.from({ length: 100 }, (_, n) => doneCard(n, Date.now() - (100 - n) * 60_000)));
-    bot.tasks.begin("NEW", "Something new", null, toSwiftDate());
-    expect(bot.tasks.tasks).toHaveLength(100);
+  it("retains and logs all 100 declared done cards when new work exceeds the bookkeeping cap", async () => {
+    const history = Array.from({ length: 100 }, (_, n) => doneCard(n, Date.now() - (100 - n) * 60_000));
+    const { bot, file, tasksFile } = await makeBot(history);
+    const fresh = bot.tasks.begin("NEW", "Something new", null, toSwiftDate());
+    expect(bot.tasks.tasks).toHaveLength(101);
+    expect(bot.tasks.tasks.slice(0, 100)).toEqual(history);
+    expect(bot.tasks.task(fresh)).toMatchObject({ state: "pending", messageIDs: ["NEW"] });
     bot.saveTasks();
+    const persisted = JSON.parse(readFileSync(tasksFile, "utf8"));
+    expect(persisted).toEqual(bot.tasks.tasks);
     expect(logged(file)).toBe(100);
+    expect(Object.keys(JSON.parse(readFileSync(file, "utf8")).tasks).sort()).toEqual(history.map(task => task.id).sort());
+  });
+
+  it("prunes only terminal disposable bookkeeping while retaining declared history and unresolved work", async () => {
+    const now = Date.now();
+    const retained = [
+      ...Array.from({ length: 97 }, (_, n) => doneCard(n, now - (100 - n) * 60_000)),
+      card("stopped", "stopped", now, { owner: "codex", stateFromTag: "stopped" }),
+      card("waiting", "waiting", now, { owner: "codex", stateFromTag: "waiting", blocked: "Install approval" }),
+      card("running", "running", now, { owner: "codex", stateFromTag: "running" }),
+    ];
+    const disposable = card("bookkeeping", "done", now, { declared: false, kept: false });
+    const { bot, file, tasksFile } = await makeBot([disposable, ...retained]);
+    const fresh = bot.tasks.begin("NEW", "Something new", "codex", toSwiftDate(now));
+    expect(bot.tasks.task(disposable.id)).toBeUndefined();
+    expect(bot.tasks.tasks).toHaveLength(101);
+    expect(bot.tasks.tasks.slice(0, 100)).toEqual(retained);
+    expect(bot.tasks.task(fresh)).toMatchObject({ owner: "codex", state: "pending" });
+    bot.saveTasks();
+    expect(JSON.parse(readFileSync(tasksFile, "utf8"))).toEqual(bot.tasks.tasks);
+    expect(logged(file)).toBe(97);
   });
 });
