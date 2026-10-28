@@ -1,12 +1,11 @@
 // One bot's files, in the same folder layout and formats as the Swift app's `BotStore`:
 //   chat.json        its chat lines (the newest HISTORY_LIMIT), an array of ChatMessage
 //   bot.json         its settings (model, alwaysAllowed, unread, …); keys 2.0 does not use are kept
-//   subagents.json, tasks.json, pins.json, specs.json   compatible list checkpoints
-//   subagents-progress.json  running progress overlay bound to the subagents.json file identity
+//   subagents.json, tasks.json, pins.json, specs.json   kept as they are (2.0 does not use them yet)
 //   head.json        2.0 only: the claude session its head resumes
 // Every write is atomic. A file that exists but cannot be read is never replaced: the bot is
 // reported as broken instead, and the file stays for the user (or 1.x) to look at.
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { HISTORY_LIMIT, isChatRecord, type ChatRecord } from "./records";
@@ -39,6 +38,11 @@ export function readJSON(file: string): unknown {
 
 export class BotStore {
   constructor(readonly directory: string) {}
+
+  // Only the progress-only API may reuse ended rows. All critical/user edits go through
+  // saveList, which serializes every row afresh. Bound retained encoded history per store.
+  private workerHistory = new Map<object, string>();
+
 
   private path(name: string) {
     return join(this.directory, name);
@@ -100,55 +104,45 @@ export class BotStore {
 
   /** A list file kept as it is (subagents.json, tasks.json, …): its entries, or [] when missing. */
   loadList(name: (typeof CHAT_FILES)[number]): unknown[] {
+    if (name === "subagents.json") this.workerHistory.clear();
     const value = readJSON(this.path(name));
-    const list = Array.isArray(value) ? value : [];
-    if (name !== "subagents.json" || value === undefined) return list;
-    const progress = readJSON(this.path("subagents-progress.json")) as WorkerProgress | undefined;
-    if (!progress || progress.base !== this.workerBase()) return list;
-    if (progress.version !== 1 || !Array.isArray(progress.rows)) throw new StoreError(this.path("subagents-progress.json"), "invalid worker progress");
-    if (progress.rows.some(row => !row || typeof row.id !== "string" || !Array.isArray(row.steps))) {
-      throw new StoreError(this.path("subagents-progress.json"), "invalid worker progress row");
-    }
-    const rows = new Map(progress.rows.map(row => [row.id, row]));
-    return list.map(value => {
-      const worker = value as Record<string, unknown> | null;
-      if (!worker || worker.status !== "running") return value;
-      const row = rows.get(worker.id as string);
-      if (!row) return value;
-      // Progress is never allowed to change status, execution identity, history or ownership.
-      const merged: Record<string, unknown> = { ...worker, steps: row.steps };
-      for (const key of ["runtime", "model", "outputTokenCounters"] as const) {
-        if (Object.hasOwn(row, key)) merged[key] = row[key];
-      }
-      return merged;
-    });
+    // subagents-progress.json belonged to an unreleased incompatible implementation.
+    // It is not authoritative and is deliberately never read or removed: even malformed
+    // leftovers must not hide a valid checkpoint or trigger Bot's empty-list fallback.
+    return Array.isArray(value) ? value : [];
   }
 
   /** Writes a list file (tasks.json, subagents.json) whole, in 1.x's format. */
   saveList(name: (typeof CHAT_FILES)[number], list: unknown[]) {
-    writeFileAtomic(this.path(name), JSON.stringify(list));
+    if (name === "subagents.json") this.saveWorkers(list, false);
+    else writeFileAtomic(this.path(name), JSON.stringify(list));
   }
 
-  // Atomic replacement changes the base identity. An older overlay can never undo a
-  // terminal checkpoint, even if the process dies immediately after that checkpoint.
-  private workerBase(): string {
-    const stat = statSync(this.path("subagents.json"), { bigint: true });
-    return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  }
-
-  /** Only fields changed by running text/token/runtime events. History stays in the base.
-   * Called synchronously under the bot's existing project ownership, like saveList.
-   * There is no pending async write that could race a terminal checkpoint.
+  /** Running text/token/runtime changes only. Ended rows must be unchanged since the
+   * last saveList; callers editing history/status/identity must use saveList instead.
+   * Every successful call still durably writes the COMPLETE legacy-compatible JSON array.
    */
   saveWorkerProgress(list: unknown[]): void {
-    if (!existsSync(this.path("subagents.json"))) { this.saveList("subagents.json", list); return; }
-    const rows = list.flatMap(value => {
-      const worker = value as Record<string, unknown>;
-      return worker?.status === "running" ? [{ id: worker.id as string, steps: worker.steps,
-        runtime: worker.runtime, model: worker.model, outputTokenCounters: worker.outputTokenCounters }] : [];
+    this.saveWorkers(list, true);
+  }
+
+  private saveWorkers(list: unknown[], progress: boolean): void {
+    if (!progress) this.workerHistory.clear();
+    const next = new Map<object, string>();
+    let cachedCharacters = 0;
+    const parts = Array.from(list, row => {
+      const ended = row && typeof row === "object" && !Array.isArray(row)
+        && ["completed", "failed", "stopped"].includes((row as { status: string }).status);
+      const text = (progress && ended ? this.workerHistory.get(row) : undefined) ?? JSON.stringify(row) ?? "null";
+      // At most 64M UTF-16 code units (~128 MiB), irrespective of historical list size.
+      if (ended && cachedCharacters + text.length <= 64 * 1024 * 1024) {
+        next.set(row, text); cachedCharacters += text.length;
+      }
+      return text;
     });
-    const progress: WorkerProgress = { version: 1, base: this.workerBase(), rows };
-    writeFileAtomic(this.path("subagents-progress.json"), JSON.stringify(progress));
+    writeFileAtomic(this.path("subagents.json"), `[${parts.join(",")}]`);
+    // Failed writes must never establish a cache for a checkpoint that did not commit.
+    this.workerHistory = next;
   }
 
   /** The bot's picture on the main bot's whiteboard (whiteboard.json, 2.0 only), as kept; null: none. */
@@ -173,10 +167,4 @@ export class BotStore {
   saveHead(state: HeadState) {
     writeFileAtomic(this.path("head.json"), JSON.stringify(state));
   }
-}
-
-interface WorkerProgress {
-  version: 1;
-  base: string;
-  rows: { id: string; steps: unknown; runtime?: unknown; model?: unknown; outputTokenCounters?: unknown }[];
 }

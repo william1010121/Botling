@@ -344,7 +344,6 @@ export class Bot {
   private subagentSaveTimer: NodeJS.Timeout | null = null;
   private subagentsDirty = false;
   private subagentsCheckpointRequired = false;
-  private subagentsProgressSaved = false;
   private subagentSaveRetryMs = 1_000;
   private head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
@@ -1134,13 +1133,11 @@ export class Bot {
   /** A failed write stays dirty. Critical callers see the error; background retries are bounded. */
   private flushSubagents(progress = false) {
     if (this.subagentSaveTimer) { clearTimeout(this.subagentSaveTimer); this.subagentSaveTimer = null; }
-    if (this.readOnly || (!this.subagentsDirty && (progress || !this.subagentsProgressSaved))) return;
+    if (this.readOnly || !this.subagentsDirty) return;
     if (!progress) this.subagentsCheckpointRequired = true;
     try {
-      const overlay = progress && !this.subagentsCheckpointRequired;
-      if (overlay) this.store.saveWorkerProgress(this.subagents.list);
+      if (progress && !this.subagentsCheckpointRequired) this.store.saveWorkerProgress(this.subagents.list);
       else this.store.saveList("subagents.json", this.subagents.list);
-      this.subagentsProgressSaved = overlay;
       this.subagentsCheckpointRequired = false;
       this.subagentsDirty = false;
       this.subagentSaveRetryMs = 1_000;

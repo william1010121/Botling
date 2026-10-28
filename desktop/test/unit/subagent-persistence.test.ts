@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writeFileAtomic } from "../../src/core/durable/atomic";
 import { performance } from "node:perf_hooks";
 import { Bot } from "../../src/core/bot";
 import { drainBots } from "../../src/core/hot-swap";
@@ -53,7 +54,7 @@ function writes() {
   });
   vi.spyOn(BotStore.prototype, "saveWorkerProgress").mockImplementation(function (this: BotStore, list) {
     progressOriginal.call(this, list);
-    completed.push(statSync(join(this.directory, "subagents-progress.json")).size);
+    completed.push(statSync(join(this.directory, "subagents.json")).size);
   });
   return { completed, spy };
 }
@@ -246,6 +247,15 @@ it.skipIf(process.env.BOTLING_PERSISTENCE_MEASURE !== "1")("representative persi
 
 // Bounded synthetic replay: five active workers, retained reports, 15 persistence deadlines.
 it.skipIf(process.env.BOTLING_WORKER_MEASURE !== "1")("worker progress fixture measurement", async () => {
+  // Replay the exact .8 write expression under the same event/timer fixture.
+  if (process.env.BOTLING_WORKER_MEASURE_MODE === "baseline") {
+    vi.spyOn(BotStore.prototype, "saveList").mockImplementation(function (this: BotStore, name, list) {
+      writeFileAtomic(join(this.directory, name), JSON.stringify(list));
+    });
+    vi.spyOn(BotStore.prototype, "saveWorkerProgress").mockImplementation(function (this: BotStore, list) {
+      writeFileAtomic(join(this.directory, "subagents.json"), JSON.stringify(list));
+    });
+  }
   const f = fixture();
   for (let i = 0; i < 5; i++) f.send({ kind: "subagentStarted", id: `w${i}`, description: "Worker", type: "codex-worker", prompt: "Work", background: false });
   for (let i = 0; i < 40; i++) f.bot.subagents.list.push({ id: `history-${i}`, description: "History", prompt: "Keep", status: "completed", background: false, startedAt: 0, steps: [], result: "h".repeat(1_320_000) });
@@ -256,17 +266,16 @@ it.skipIf(process.env.BOTLING_WORKER_MEASURE !== "1")("worker progress fixture m
   for (let tick = 0; tick < 15; tick++) {
     for (let i = 0; i < 5; i++) f.send({ kind: "subagentText", parent: `w${i}`, text: `progress-${tick}` });
     await vi.advanceTimersByTimeAsync(500);
-    const sidecar = join(f.file, "..", "subagents-progress.json");
-    bytes += statSync(process.env.BOTLING_WORKER_MEASURE_MODE === "baseline" ? f.file : sidecar).size;
+    bytes += statSync(f.file).size;
   }
   const elapsedMs = performance.now() - start; const used = process.cpuUsage(cpu);
   expect(new BotStore(join(f.file, "..")).loadList("subagents.json")).toEqual(f.bot.subagents.list);
   console.log("WORKER_FIXTURE", JSON.stringify({ baseBytes, deadlines: 15, events: 75, bytes, elapsedMs, cpuMs: (used.user + used.system) / 1000 }));
 });
 
-it("checkpoints already-durable progress on handover, without another progress event", async () => {
+it("keeps already-durable progress in the compatible checkpoint before handover", async () => {
   const f = fixture(); f.start(); f.text("saved overlay"); await vi.advanceTimersByTimeAsync(500);
-  expect(JSON.parse(readFileSync(f.file, "utf8"))[0].steps).toEqual([]);
+  expect(JSON.parse(readFileSync(f.file, "utf8"))[0].steps[0].title).toBe("saved overlay");
   f.bot.flushForSwap();
   expect(JSON.parse(readFileSync(f.file, "utf8"))[0].steps[0].title).toBe("saved overlay");
 });
@@ -285,4 +294,13 @@ it("cannot downgrade a failed terminal checkpoint when another worker makes prog
   await vi.advanceTimersByTimeAsync(1_000);
   expect(JSON.parse(readFileSync(f.file, "utf8"))).toEqual(f.bot.subagents.list);
   expect(f.disk().find(row => row.id === "worker")).toMatchObject({ status: "completed", result: "final" });
+});
+
+it("late text/token/runtime events on ended workers invalidate cached history synchronously", () => {
+  const f = fixture(); f.start();
+  f.send({ kind: "subagentEnded", id: "worker", status: "completed", summary: "full report" });
+  f.text("late evidence");
+  f.send({ kind: "subagentOutput", id: "worker", counter: "run", tokens: 456 });
+  f.send({ kind: "subagentRuntime", id: "worker", runtime: { engine: "codex" }, model: "model" });
+  expect(JSON.parse(readFileSync(f.file, "utf8"))).toEqual(f.bot.subagents.list);
 });
