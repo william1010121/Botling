@@ -1,6 +1,7 @@
 import { post } from "./bridge";
 import { escapeRegExp, shared } from "./contract";
 import { t } from "./i18n";
+import { isComposingEnter, isComposingKey } from "./ime";
 import { escapeHTML } from "./util";
 import { mediaSrc } from "./markdown";
 
@@ -133,6 +134,7 @@ export function handleMediaClicks(root: Document): void {
     openMedia(url, label);
   });
   root.addEventListener("keydown", (event) => {
+    if (isComposingKey(event) || isComposingEnter(event)) return;
     if (!(event.target instanceof Element)) return;
     const target = (event.target as HTMLElement).closest<HTMLElement>('img.media[role="button"][data-url], img.thumb[role="button"][data-url]');
     if (!target || (event.key !== "Enter" && event.key !== " ")) return;

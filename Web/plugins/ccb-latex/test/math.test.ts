@@ -63,8 +63,24 @@ describe("LaTeX in bot replies", () => {
 
   it("shows images and plays videos", () => {
     const html = renderMarkdown("![panel](file:///tmp/p.png)\n\n![demo](file:///tmp/d.mp4)");
-    expect(html).toContain('<img class="media" src="file:///tmp/p.png"');
-    expect(html).toContain('<video class="media" src="file:///tmp/d.mp4"');
+    const root = document.createElement("div");
+    root.innerHTML = html;
+    const images = root.querySelectorAll<HTMLImageElement>("img.media");
+    expect(images).toHaveLength(1);
+    const image = images[0];
+    expect(image.getAttribute("src")).toBe("file:///tmp/p.png");
+    expect(image.alt).toBe("panel");
+    expect(image.getAttribute("role")).toBe("button");
+    expect(image.getAttribute("aria-label")).toBe("panel");
+    expect(image.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(image.tabIndex).toBe(0);
+    expect(image.dataset.url).toBe("file:///tmp/p.png");
+    const videos = root.querySelectorAll<HTMLVideoElement>("video.media");
+    expect(videos).toHaveLength(1);
+    expect(videos[0].getAttribute("src")).toBe("file:///tmp/d.mp4");
+    expect(videos[0].controls).toBe(true);
+    expect(videos[0].preload).toBe("metadata");
+    expect(videos[0].getAttribute("aria-label")).toBe("demo");
   });
 });
 

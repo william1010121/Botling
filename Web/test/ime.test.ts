@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sent } from "../src/bridge";
+import { closeLightbox, handleMediaClicks } from "../src/lightbox";
+import { attachmentStrip } from "../src/messages";
 import { Composer } from "../src/composer";
 import { componentPage } from "../src/components";
 import { compositionGrace, imeGuardScript, installImeGuard, isComposingEnter, isComposingKey } from "../src/ime";
@@ -315,5 +317,43 @@ describe("every Enter handler in Web/src", () => {
     const helper = /\bis(ComposingEnter|ComposingKey|SendEnter)\(/;
     const bad = `box.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) send(); });`;
     expect(enterCheck.test(bad) && !helper.test(bad)).toBe(true);
+  });
+});
+
+
+describe("image previews with the production window IME guard", () => {
+  function thumbnail() {
+    handleMediaClicks(document);
+    document.body.append(attachmentStrip([{name:"Photo",kind:"image",url:"file:///tmp/photo.png"}]));
+    const image=document.querySelector<HTMLImageElement>("img.thumb")!;
+    image.focus();
+    return image;
+  }
+  it.each(["chrome", "webkit", "webkit13"] as const)("preserves %s candidate Return and grace, then accepts ordinary Enter", kind => {
+    const image=thumbnail();
+    try {
+      commitWithReturn(image,kind);
+      expect(document.querySelector(".lightbox")).toBeNull();
+      expect(document.activeElement).toBe(image);
+      expect(sent).toEqual([]);
+      later();
+      key(image,{key:"Enter",keyCode:13});
+      expect(document.querySelector(".lightbox")).not.toBeNull();
+      expect(document.activeElement).toBe(document.querySelector(".lightbox-close"));
+    } finally {closeLightbox();}
+  });
+  it.each([{isComposing:true},{keyCode:229}])("leaves composing Space to the input method (%j), then accepts ordinary Space", flags => {
+    const image=thumbnail();
+    try {
+      compose(image,"compositionstart");
+      const during=key(image,{key:" ",...flags});
+      expect(document.querySelector(".lightbox")).toBeNull();
+      expect(during.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(image);
+      expect(sent).toEqual([]);
+      compose(image,"compositionend");later();
+      key(image,{key:" "});
+      expect(document.querySelector(".lightbox")).not.toBeNull();
+    } finally {compose(image,"compositionend");closeLightbox();}
   });
 });

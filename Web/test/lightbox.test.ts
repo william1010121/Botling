@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { closeLightbox, handleMediaClicks, isImageURL, openLightbox } from "../src/lightbox";
 import { messageElement } from "../src/messages";
@@ -22,6 +22,7 @@ function key(name: string): void {
 }
 
 handleMediaClicks(document);
+afterEach(() => closeLightbox());
 
 beforeEach(() => {
   closeLightbox();
@@ -249,4 +250,25 @@ it("does not swallow keyboard input after an unexpected preview DOM removal", ()
  const escape=new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true});
  document.dispatchEvent(escape);
  expect(escape.defaultPrevented).toBe(false);
+});
+
+
+describe("standalone media keyboard handler IME safety", () => {
+  it.each([
+    {key:"Enter",isComposing:true}, {key:"Enter",keyCode:229},
+    {key:" ",isComposing:true}, {key:" ",keyCode:229},
+  ])("leaves composition key %j untouched without a window capture guard", init => {
+    // This file installs only handleMediaClicks; production-window coverage is in ime.test.ts.
+    const root=document.createElement("div");root.innerHTML=mediaHTML("file:///tmp/photo.png","Photo");document.body.append(root);
+    const image=root.querySelector<HTMLImageElement>("img")!;image.focus();
+    const event=new KeyboardEvent("keydown",{...init,bubbles:true,cancelable:true});
+    image.dispatchEvent(event);
+    expect(document.querySelector(".lightbox")).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(image);
+    expect(sent).toEqual([]);
+    image.dispatchEvent(new KeyboardEvent("keydown",{key:init.key,bubbles:true,cancelable:true}));
+    expect(document.querySelector(".lightbox")).not.toBeNull();
+    closeLightbox();expect(document.activeElement).toBe(image);
+  });
 });
