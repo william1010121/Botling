@@ -330,16 +330,49 @@ const SHOW_LINE = "  To show data with a component: add <show name=\"component n
 export const TASK_STAGE_SENTENCE = "stage (optional) is built, reviewed, installed or verified, for work that must still be installed or checked before it is really done.";
 const TASK_STATES_SENTENCE = "state is running, waiting (the user must act), done or stopped.";
 
+/** A POSIX shell single-quoted word (paths with spaces or quotes stay one argument). */
+export const shellQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
+/** The app's report command and its guide (core/main.ts: `Botling --render-report`, docs/report-blocks.md as shipped). */
+export interface ReportTool { command: string; docs: string }
+
+/**
+ * 2.0 only: how a report page is built (ReportSpec v2 + the app's report command). It does not
+ * change where results go or how they are published; that stays the results rule's.
+ */
+export function reportPageLine(tool: ReportTool, artifacts: string): string {
+  return `- Build every report page (status, decision, investigation, comparison, plan, results, explainer) from a ReportSpec v2 JSON, never hand-written HTML: read ${shellQuote(tool.docs)} for the format, the blocks and the writing rules; write the spec; run ${tool.command} spec.json ${shellQuote(`${artifacts}/<english-name>.html`)} exactly as quoted (add --slides for a 16:9 deck, --force to replace). It prints one JSON line {ok, errors, warnings, htmlPath, link}: fix each error (it gives a path and a valid example) and the warnings you can, run it again (at most twice), then deliver the page at htmlPath as the results rule says.`;
+}
+
+/** Puts `line` after the first line of `text` that contains `anchor` (at the end when none does). */
+function insertAfterLine(text: string, anchor: string, line: string): string {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => l.includes(anchor));
+  if (at < 0) return `${text}\n${line}`;
+  lines.splice(at + 1, 0, line);
+  return lines.join("\n");
+}
+const RESULTS_ANCHOR = "Results meant for the user";
+const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
+
 /**
  * The instructions as 2.0 gives them: `botPrompts`, plus the `<task>` stage sentence (after its
- * states) for every bot, and the whiteboard picture line (after the <show> line) for every bot but the main bot.
+ * states) for every bot, the whiteboard picture line (after the <show> line) for every bot but the
+ * main bot, and — when the app has its report command — the report page line after the results rule
+ * for every bot and Codex worker.
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role">): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder">>, reports: ReportTool | null = null): BotPrompts {
   let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
   if (profile.role !== "main") {
     system = system.includes(SHOW_LINE)
       ? system.replace(SHOW_LINE, `${SHOW_LINE}\n${WHITEBOARD_PICTURE_LINE}`)
       : `${system}\n${WHITEBOARD_PICTURE_LINE}`;
   }
-  return system === prompts.system ? prompts : { ...prompts, system };
+  let codexWorkerSystem = prompts.codexWorkerSystem;
+  if (reports) {
+    const artifacts = profile.folder ? join(profile.folder, profile.role === "main" ? "artifacts" : ".bot/artifacts") : "<your artifacts folder>";
+    const line = reportPageLine(reports, artifacts);
+    system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, line);
+    codexWorkerSystem = insertAfterLine(codexWorkerSystem, RESULTS_ANCHOR, line);
+  }
+  return system === prompts.system && codexWorkerSystem === prompts.codexWorkerSystem ? prompts : { ...prompts, system, codexWorkerSystem };
 }

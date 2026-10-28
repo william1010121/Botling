@@ -1,0 +1,79 @@
+/* Slide mode: every slide is a fixed 1280×720 canvas scaled to its frame with pure CSS
+   (tan(atan2(100cqw,1280px)) = frame width / 1280), so text never reflows or shrinks unevenly. */
+html{scroll-snap-type:y proximity;background:var(--side)}
+body{background:var(--side)}
+.deck{display:flex;flex-direction:column;align-items:center;gap:24px;padding:24px 16px 40px}
+.sv{position:relative;width:min(100%,calc((100vh - 48px) * 16 / 9));aspect-ratio:16/9;container-type:inline-size;scroll-snap-align:center;flex:none}
+.sl{position:absolute;left:0;top:0;width:1280px;height:720px;transform-origin:0 0;transform:scale(tan(atan2(100cqw,1280px)));
+  background:var(--ground);border:1px solid var(--border);border-radius:18px;overflow:hidden;padding:52px 72px 64px;display:flex;flex-direction:column;font-size:20px}
+.sl h1,.sl h2,.sl p{margin:0}
+.sl .kicker{font-size:17px;margin-bottom:6px!important}
+.sl>h2{font-size:38px;font-weight:650;line-height:1.28;letter-spacing:-.015em;text-wrap:balance;margin-bottom:28px;max-width:1080px}
+.sf{position:absolute;left:72px;right:72px;bottom:22px;display:flex;justify-content:space-between;font-size:14px;color:var(--faint)}
+.sev{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);gap:28px}
+.m-split .sev{grid-template-columns:minmax(0,7fr) minmax(0,5fr);align-items:start}
+.evm,.evs{display:flex;flex-direction:column;gap:20px;min-height:0}
+.evs{justify-content:center;align-self:stretch}
+.sl .blk{font-size:19px}
+.sl .blk-prose{font-size:24px;line-height:1.55;max-width:none}
+.m-split .evs .blk-prose{font-size:22px}
+.sl .blk-callout{font-size:21px}
+.sl .blk-quote{font-size:22px}
+.sl .blk-sources{font-size:17px}
+.m-kpi-grid .sev{align-content:center;padding-bottom:40px}
+.m-kpi-grid .blk-kpi{font-size:30px}
+.m-kpi-grid .blk-kpi:not(.plain){padding:1.1em 1.3em}
+.m-kpi-grid .blk-kpi .kpis{gap:1.2em 1.6em}
+.sl .vb,.sl .tr{grid-template-rows:12.5em auto}
+.sl .qd{width:min(100%,25em)}
+.sl .dnc{width:11em;height:11em}
+.sl .fl-wrap{max-height:430px}
+
+/* cover */
+.m-cover{justify-content:center;padding:72px 96px 80px}
+.m-cover .eyebrow{font-size:18px}
+.m-cover h1{font-size:60px;font-weight:650;letter-spacing:-.025em;line-height:1.15;margin:10px 0 0;text-wrap:balance}
+.m-cover .subtitle{font-size:22px;margin-top:14px!important}
+.m-cover .verdict{margin-top:40px;padding:26px 32px 24px;border-radius:20px}
+.m-cover .vlabel{font-size:16px}
+.m-cover .vline{font-size:28px;line-height:1.45}
+.m-cover .vreason{font-size:17px}
+.m-cover .pill{font-size:15px}
+
+/* quote */
+.m-quote{justify-content:center}
+.m-quote>h2{font-size:22px;color:var(--faint);font-weight:600;margin-bottom:24px}
+.m-quote .blk-quote{font-size:30px;border-left-width:5px;padding-left:1em}
+
+/* statement: text-only sections, large type, centred */
+.m-statement{justify-content:center;padding:72px 112px 88px}
+.m-statement .kicker{font-size:19px}
+.m-statement>h2{font-size:48px;line-height:1.22;margin-bottom:36px;max-width:1000px}
+.m-statement .sev{flex:0 0 auto;display:block}
+.m-statement .evm{gap:24px;border-left:5px solid var(--blue);padding-left:32px}
+.m-statement .blk-prose{font-size:29px;line-height:1.6;color:var(--muted)}
+.m-statement .blk-prose strong{color:var(--text)}
+.m-statement .blk-callout{font-size:24px}
+.m-statement .blk-quote{font-size:26px;border-left:0;padding-left:0}
+
+/* closing */
+.m-closing>h2{margin-bottom:24px}
+.m-closing .cl{display:flex;flex-direction:column;gap:24px;font-size:22px}
+.m-closing .plan{margin-top:0!important;padding-top:0;border-top:0;gap:14px;flex-wrap:wrap}
+.m-closing .plabel{font-size:18px}
+.m-closing .pstep{font-size:22px;min-height:52px;padding:8px 20px 8px 10px;border-radius:14px;gap:12px}
+.m-closing .pstep i{width:32px;height:32px;font-size:17px}
+.m-closing .asks{margin-top:0;padding:24px 30px;font-size:22px;border-radius:18px}
+.m-closing .asks h2{font-size:16px}
+.m-closing .asks li i{width:30px;height:30px;font-size:16px}
+.m-closing .asks li span{font-size:17px}
+.m-closing .blk-sources{margin-top:auto}
+
+@media print{
+  @page{size:1280px 720px;margin:0}
+  html,body{background:var(--ground)}
+  .deck{padding:0;gap:0}
+  .sv{width:1280px;break-after:page}
+  .sl{border:0;border-radius:0}
+}
+.sl .ba{gap:.75em}.sl .bar-row{gap:.2em}.sl .bt{height:.6em}

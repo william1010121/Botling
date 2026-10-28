@@ -6,12 +6,13 @@
 // from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install and its
 // own build output (Sources/ClaudeCodeBot/Resources) is never touched.
 import { build } from "esbuild";
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createPublicKey } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRenderer } from "./build-renderer.mjs";
 import { buildPreloads } from "./build-preloads.mjs";
+import { NOTICES_FILE, thirdPartyNotices } from "./reports/licenses.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "out");
@@ -40,6 +41,16 @@ await Promise.all([
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(out, "host/check-plugin.cjs") }),
   buildRenderer({ root: here }),
 ]);
+// The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.
+// Its bundled packages' licences go next to it (THIRD_PARTY_LICENSES.txt, from the build's metafile).
+const report = await build({ ...node, entryPoints: [join(here, "reports/cli-main.ts")], outfile: join(out, "report/report.cjs"), minify: true, metafile: true, jsx: "automatic", loader: { ".css": "text" }, define: { "process.env.NODE_ENV": '"production"' }, tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } });
+const notices = thirdPartyNotices(report.metafile, here);
+if (notices.missing.length) throw new Error(`No licence text for bundled packages: ${notices.missing.join(", ")}`);
+writeFileSync(join(out, "report", NOTICES_FILE), notices.text);
+// The bots' guide to report pages and the layout engine's licence notice, next to the command
+// (electron-builder copies them outside app.asar, where bots can read them).
+cpSync(join(here, "docs", "report-blocks.md"), join(out, "report", "report-blocks.md"));
+cpSync(join(here, "reports", "v2", "NOTICE"), join(out, "report", "NOTICE"));
 // The web AIs' page readers as 1.x ships them (Sources/ClaudeCodeBot/Resources/web-extractors, read
 // only): the core puts them in the plugin library's ccb-web-extractors and falls back to them.
 const extractors = join(here, "..", "Sources", "ClaudeCodeBot", "Resources", "web-extractors");

@@ -1,0 +1,50 @@
+{
+  "version": 2,
+  "lang": "zh-Hant",
+  "kind": "decision",
+  "title": "報告的圖表要用哪一套",
+  "asOf": "2026-10-28 · 本機實測",
+  "status": { "level": "info" },
+  "tldr": "建議自己畫 SVG（d3-scale、d3-shape，流程圖用 elkjs）：它是唯一能在產生時畫好、輸出不帶 JavaScript 的方案。請在 10/30 前確認。",
+  "next": ["確認方案", "完成 22 個區塊", "補實機截圖"],
+  "sections": [
+    {
+      "title": "要決定什麼",
+      "takeaway": "報告要離線可讀，圖表必須在產生時畫好",
+      "blocks": [
+        { "type": "prose", "text": "報告是單一 HTML 檔，在 App 的預覽框裡打開，**不保證能執行 JavaScript**。所以圖表要在 bot 產生報告時就變成 SVG，顏色也要跟著 App 主題走。" }
+      ]
+    },
+    {
+      "title": "三個方案",
+      "takeaway": "只有自己畫 SVG 同時做到離線與輕量",
+      "blocks": [
+        { "type": "options", "title": "同一組條件比較三個方案", "criteria": ["離線輸出", "多帶的執行檔", "圖表種類", "跟 App 主題", "維護成本"], "options": [
+          { "name": "自己畫 SVG", "summary": "d3 算座標，React 輸出", "recommended": true, "cells": [
+            { "text": "產生時就畫好", "tone": "good" }, { "text": "0 KB", "tone": "good" }, { "text": "22 種，要自己做", "tone": "warn" }, { "text": "直接用 CSS 變數", "tone": "good" }, { "text": "中", "tone": "warn" } ] },
+          { "name": "Vega-Lite", "summary": "宣告式規格", "cells": [
+            { "text": "要 headless 瀏覽器", "tone": "warn" }, { "text": "約 400 KB", "tone": "bad" }, { "text": "最齊全", "tone": "good" }, { "text": "要另外轉主題", "tone": "warn" }, { "text": "低", "tone": "good" } ] },
+          { "name": "Recharts", "summary": "React 元件", "cells": [
+            { "text": "靜態輸出是空白", "tone": "bad" }, { "text": "約 450 KB", "tone": "bad" }, { "text": "常見圖表", "tone": "good" }, { "text": "要包一層", "tone": "warn" }, { "text": "低", "tone": "good" } ] }
+        ], "verdict": "選自己畫：其他兩個都要在讀報告時執行 JavaScript。" }
+      ]
+    },
+    {
+      "title": "取捨",
+      "takeaway": "代價是圖要自己做，但只做一次",
+      "blocks": [
+        { "type": "bar", "title": "輸出要多帶的執行檔", "unit": "KB", "horizontal": true, "highlight": "自己畫 SVG", "series": [{ "name": "大小" }], "rows": [
+          { "label": "自己畫 SVG", "values": [0] }, { "label": "Vega-Lite", "values": [400] }, { "label": "Recharts", "values": [450] } ] },
+        { "type": "proscons", "title": "自己畫 SVG 的得失", "pros": ["輸出零 JavaScript，預覽框一定能看", "快照測試穩定，畫面每次一樣", "顏色全部來自 App tokens"], "cons": ["每種圖都要自己寫", "做不到滑鼠提示這類互動"] }
+      ]
+    },
+    {
+      "title": "風險",
+      "takeaway": "elkjs 授權要附聲明",
+      "blocks": [
+        { "type": "callout", "tone": "warn", "title": "授權", "text": "流程圖用的 elkjs 是 EPL-2.0；不改原始碼就能用，但要附 NOTICE。若有疑慮，可改用 MIT 授權的 dagre。" }
+      ]
+    }
+  ],
+  "asks": [ { "what": "選定圖表方案", "who": "William", "by": "10/30" } ]
+}

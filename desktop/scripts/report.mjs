@@ -1,33 +1,20 @@
 #!/usr/bin/env node
-import { build } from 'esbuild';
-import { mkdtemp, readFile, rm, realpath, open } from 'node:fs/promises';
-import { constants } from 'node:fs';
-import { dirname, resolve, extname, sep, join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createRequire } from 'node:module';
+// Development entry of the report command (see reports/cli.ts for the contract):
+//   node desktop/scripts/report.mjs spec.json /abs/.bot/artifacts/report.html [--force] [--slides]
+//   node desktop/scripts/report.mjs --check spec.json      validate + lint only, writes nothing
+//   node desktop/scripts/report.mjs --docs                 regenerate docs/report-blocks.md + JSON Schema
+// The app ships the same command bundled (out/report/report.cjs, `Botling --render-report`).
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { loadReports, root } from '../reports/load.mjs';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-async function main() {
-  const [input, output, option, ...extra] = process.argv.slice(2);
-  if (!input || !output || (option && option !== '--force') || extra.length) throw Error('Usage: node desktop/scripts/report.mjs input.json /path/.bot/artifacts/report.html [--force]');
-  const destination = resolve(output);
-  const parent = await realpath(dirname(destination));
-  if (!parent.split(sep).includes('artifacts') || extname(destination).toLowerCase() !== '.html') throw Error('Output must be an .html file inside an existing artifacts folder.');
-  const data = JSON.parse(await readFile(resolve(input), 'utf8'));
-  const temp = await mkdtemp(join(tmpdir(), 'botling-report-'));
-  try {
-    // Bundle only this generator; no app build, server, CDN or runtime assets.
-    const bundle = join(temp, 'render.cjs');
-    await build({ entryPoints: [join(root, 'reports/render.tsx')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', loader: { '.css': 'text' }, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent' });
-    const { renderReport } = createRequire(import.meta.url)(bundle);
-    const html = renderReport(data);
-    // Explicit replacement only; never follow a pre-existing output symlink.
-    const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_NOFOLLOW
-      | (option === '--force' ? constants.O_TRUNC : constants.O_EXCL);
-    const handle = await open(destination, flags, 0o600);
-    try { await handle.writeFile(html); } finally { await handle.close(); }
-    console.log(`[${data.title.replace(/[\[\]\n\r]/g, ' ')}](${pathToFileURL(destination).href})`);
-  } finally { await rm(temp, { recursive: true, force: true }); }
+const args = process.argv.slice(2);
+const api = await loadReports();
+if (args.includes('--docs')) {
+  const doc = join(root, 'docs/report-blocks.md'), schema = join(root, 'reports/v2/report-spec.schema.json');
+  await writeFile(doc, api.promptDoc());
+  await writeFile(schema, JSON.stringify(api.jsonSchema(), null, 2) + '\n');
+  console.log(JSON.stringify({ ok: true, written: [doc, schema] }));
+} else {
+  process.exitCode = api.runCli(args);
 }
-main().catch(error => { console.error(`report: ${error.message}`); process.exitCode = 1; });

@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "lang": "zh-Hant",
+  "kind": "results",
+  "title": "Botling .11 的效能變化",
+  "asOf": "2026-10-27 · 同一台 Mac，5 次取中位數",
+  "status": { "level": "on_track" },
+  "tldr": "改成事件喚醒後，閒置 CPU 從 9.8% 降到 2.1%，冷啟動從 2.4 秒降到 1.4 秒。記憶體多了 6%，在可接受範圍。",
+  "next": ["到使用者電腦再量一次", "記憶體再看一週"],
+  "sections": [
+    {
+      "title": "數字",
+      "takeaway": "CPU 和啟動都大幅改善，記憶體略增",
+      "blocks": [
+        { "type": "kpi", "items": [
+          { "label": "閒置 CPU", "value": "2.1%", "delta": "-79%", "deltaDir": "down_good", "target": "目標 ≤ 3%", "spark": [9.6, 9.9, 9.2, 8.8, 4.1, 2.6, 2.2, 2.1] },
+          { "label": "冷啟動", "value": 1.4, "unit": "s", "delta": "-42%", "deltaDir": "down_good", "spark": [2.5, 2.4, 2.4, 2.3, 1.7, 1.5, 1.4, 1.4] },
+          { "label": "記憶體", "value": 412, "unit": "MB", "delta": "+6%", "deltaDir": "down_good" }
+        ] }
+      ]
+    },
+    {
+      "title": "趨勢",
+      "takeaway": "閒置 CPU 在 10/24 改版當天就掉下來",
+      "blocks": [
+        { "type": "trend", "title": "閒置 CPU 降到目標以下", "unit": "%", "x": "date", "area": true, "target": { "value": 3, "label": "目標 3%" }, "marks": [{ "x": "2026-10-24", "label": "改為事件喚醒" }], "series": [
+          { "name": "閒置 CPU", "points": [["2026-10-20", 9.6], ["2026-10-21", 9.9], ["2026-10-22", 9.2], ["2026-10-23", 8.8], ["2026-10-24", 4.1], ["2026-10-25", 2.6], ["2026-10-26", 2.2], ["2026-10-27", 2.1]] }
+        ] },
+        { "type": "prose", "text": "**很可能（80–95%）**是停掉背景輪詢的效果：下降正好落在改版當天，其他設定沒變。" }
+      ]
+    },
+    {
+      "title": "前後比較",
+      "takeaway": "四項指標三項變好，記憶體多 24 MB",
+      "blocks": [
+        { "type": "beforeafter", "title": ".10 與 .11 同條件比較", "labels": { "before": ".10", "after": ".11" }, "rows": [
+          { "label": "閒置 CPU", "before": 9.8, "after": 2.1, "unit": "%", "better": "lower" },
+          { "label": "冷啟動", "before": 2.4, "after": 1.4, "unit": "s", "better": "lower" },
+          { "label": "每秒訊息", "before": 140, "after": 210, "better": "higher" },
+          { "label": "記憶體", "before": 388, "after": 412, "unit": "MB", "better": "lower" }
+        ] },
+        { "type": "donut", "title": "剩下的啟動時間一半在載入紀錄", "unit": "ms", "center": { "value": "1.4s", "label": "冷啟動" }, "parts": [
+          { "label": "聊天紀錄", "value": 620 }, { "label": "主程序", "value": 380 }, { "label": "外掛與側欄", "value": 230 }, { "label": "其他", "value": 170 } ] }
+      ]
+    },
+    {
+      "title": "依據",
+      "blocks": [
+        { "type": "sources", "items": [
+          { "ref": "perf-run:1027", "text": "同一台 Mac，各量 5 次取中位數" },
+          { "ref": "c41e9a2", "text": "背景輪詢改為事件喚醒" }
+        ] }
+      ]
+    }
+  ],
+  "asks": []
+}
