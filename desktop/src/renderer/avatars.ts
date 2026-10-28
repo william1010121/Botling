@@ -93,7 +93,7 @@ export function avatarURL(shape: string, eyes: Eyes = "open"): string {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Bot look "Cute" (Chibi.swift): the head's character (Claude's, or Codex's — the archive's `gpt`)
+// Bot look "Cute" (Chibi.swift): the head's character (Claude, Codex/gpt, or Antigravity/gemini)
 // in the mood of the moment, wearing the bot's own face as a hat so bots stay apart. The pictures
 // are 1.x's CharacterArt/avatars-static, bundled in at build time.
 
@@ -115,7 +115,9 @@ export function characterURL(engine: string, moodNow: Mood = "normal", shape: st
   const key = `chibi/${engine}/${moodNow}/${shape ?? ""}`;
   const cached = cache.get(key);
   if (cached) return cached;
-  const art = (typeof __CHARACTERS__ === "object" ? __CHARACTERS__ : {})[engine === "codex" ? "gpt" : "claude"]?.[EXPRESSION[moodNow]];
+  // Antigravity is the engine ID; Gemini is the supplied character asset name.
+  const character = engine === "codex" ? "gpt" : engine === "agy" || engine === "gemini" ? "gemini" : "claude";
+  const art = (typeof __CHARACTERS__ === "object" ? __CHARACTERS__ : {})[character]?.[EXPRESSION[moodNow]];
   if (!art) return avatarURL(shape ?? "circle", moodNow === "sleep" ? "closed" : "open");
   // Room at the top for the hat without cropping hair (as Chibi.svg: y 18, height 46).
   const y = shape ? 18 : 0;

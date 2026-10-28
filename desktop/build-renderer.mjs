@@ -15,7 +15,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     format: "esm", target: "chrome130", minify: true, legalComments: "eof", write: false, nodePaths });
   const characters = {};
   const art = join(root, "../Sources/ClaudeCodeBotCore/Resources/CharacterArt/avatars-static");
-  for (const character of ["claude", "gpt"]) {
+  for (const character of ["claude", "gpt", "gemini"]) {
     characters[character] = {};
     for (const expression of ["idle", "working", "thinking", "sleepy"]) {
       try { characters[character][expression] = readFileSync(join(art, character, `${expression}.png`)).toString("base64"); } catch { /* original look */ }
