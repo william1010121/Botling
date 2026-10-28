@@ -13,7 +13,7 @@ export function isImageURL(url: string): boolean {
   return imageExtensions.test(url.split(/[?#]/)[0]);
 }
 
-let current: { box: HTMLElement; restore: Element | null } | null = null;
+let current: { box: HTMLElement; restore: Element | null; cleanup: () => void } | null = null;
 
 /**
  * Shows a picture over the chat, dimmed behind it: fit to the window with its caption below.
@@ -63,14 +63,41 @@ export function openLightbox(url: string, label: string): void {
 
   const restore = document.activeElement;
   (document.querySelector("dialog.summary-source-viewer[open]") ?? document.body).append(box);
-  current = { box, restore };
-  box.querySelector<HTMLButtonElement>(".lightbox-close")!.focus();
+  const close = box.querySelector<HTMLButtonElement>(".lightbox-close")!;
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeLightbox();
+    } else if (event.key === "Tab") {
+      const buttons = Array.from(box.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (!box.contains(document.activeElement) ||
+          (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+      event.stopPropagation();
+    }
+  };
+  const onFocus = (event: FocusEvent) => {
+    if (!box.contains(event.target as Node)) close.focus();
+  };
+  document.addEventListener("keydown", onKey, true);
+  document.addEventListener("focusin", onFocus, true);
+  current = { box, restore, cleanup: () => {
+    document.removeEventListener("keydown", onKey, true);
+    document.removeEventListener("focusin", onFocus, true);
+  } };
+  close.focus();
 }
 
 export function closeLightbox(): void {
   if (!current) return;
-  const { box, restore } = current;
+  const { box, restore, cleanup } = current;
   current = null;
+  cleanup();
   box.remove();
   if (restore instanceof HTMLElement && restore.isConnected) restore.focus();
 }
@@ -96,10 +123,10 @@ export function handleMediaClicks(root: Document): void {
     openMedia(url, label);
   });
   root.addEventListener("keydown", (event) => {
-    if (current && event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeLightbox();
-    }
-  }, true);
+    if (!(event.target instanceof Element)) return;
+    const target = (event.target as HTMLElement).closest<HTMLElement>('img.media[role="button"][data-url]');
+    if (!target || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    if (!event.repeat) target.click();
+  });
 }

@@ -80,7 +80,7 @@ export function mediaHTML(src: string, label: string): string {
   if (videoExtensions.test(src.split("?")[0])) {
     return `<video class="media" src="${shown}" controls preload="metadata" aria-label="${name || escapeHTML(t("markdown.video"))}"></video>`;
   }
-  return `<img class="media" src="${shown}" alt="${name}" data-url="${url}" data-label="${name}" loading="lazy">`;
+  return `<img class="media" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${name || escapeHTML(t("lightbox.picture"))}" src="${shown}" alt="${name}" data-url="${url}" data-label="${name}" loading="lazy">`;
 }
 
 /** About how many Latin letters fit across a bot bubble at the table's 14px. */
