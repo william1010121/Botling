@@ -59,3 +59,20 @@ export function saveFlowLayout(botId: string, positions: Record<string, Point>, 
     localStorage.setItem("token-flow-layout-v2", JSON.stringify(bounded));
   } catch { /* Storage unavailable: retain the in-memory layout. */ }
 }
+
+export const ALLOCATION_COLUMNS = ["Project", "Tasks", "Activity"] as const;
+export const ALLOCATION_COLUMN_STEP = 340;
+/** Semantic columns include disconnected/unknown buckets. Amounts and input order never affect placement. */
+export function allocationPositions(ids: string[], edges: FlowEdge[]): Record<string, Point> {
+  const purposes = ["execution", "communication", "mixed", "unknown"].map(p => `purpose:${p}`);
+  const rank = (id: string) => {
+    const targets = edges.filter(edge => edge.source === id).map(edge => purposes.indexOf(edge.target)).filter(i => i >= 0);
+    return targets.length ? targets.reduce((a, b) => a + b, 0) / targets.length : purposes.length;
+  };
+  // Barycentric task order reduces crossings without letting changing token weights reshuffle rows.
+  const groups = ids.filter(id => id.startsWith("group:")).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const result: Record<string, Point> = { coordinator: { x: 0, y: 48 + Math.max(0, groups.length - 1) * 70 } };
+  groups.forEach((id, i) => { result[id] = { x: ALLOCATION_COLUMN_STEP, y: 48 + i * 140 }; });
+  purposes.forEach((id, i) => { if (ids.includes(id)) result[id] = { x: ALLOCATION_COLUMN_STEP * 2, y: 48 + i * 140 }; });
+  return result;
+}

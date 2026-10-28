@@ -1,9 +1,10 @@
+import { TokenFlowAllocationCanvas } from "./TokenFlowAllocationCanvas";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { BotView } from "../contract";
 import { flowCount, flowPurpose, type FlowWorker } from "./token-flow-model";
 import { addPositions, readFlowLayout, saveFlowLayout, fitCamera, layoutFlow, NODE_HEIGHT, NODE_WIDTH, zoomCamera, type Camera, type Point } from "./token-flow-layout";
 
-export function TokenFlowCanvas({ bot, workers, selected, onSelect, allocationEdges, rootOutput, rootLabel, basis = "output" }: {
+function DelegationCanvas({ bot, workers, selected, onSelect, allocationEdges, rootOutput, rootLabel, basis = "output" }: {
   bot: BotView; workers: FlowWorker[]; selected: string | null; onSelect: (key: string | null) => void;
   allocationEdges?: import("./token-flow-history-model").AllocationEdge[]; rootOutput?: number | null; rootLabel?: string; basis?: "tokens" | "output";
 }) {
@@ -152,4 +153,10 @@ export function TokenFlowCanvas({ bot, workers, selected, onSelect, allocationEd
       {!workers.length && <p className="tf-canvas-empty">No worker records yet</p>}
     </div>
   </div>;
+}
+
+export function TokenFlowCanvas(props: Parameters<typeof DelegationCanvas>[0]) {
+  return props.allocationEdges !== undefined
+    ? <TokenFlowAllocationCanvas {...props} allocationEdges={props.allocationEdges} />
+    : <DelegationCanvas {...props} />;
 }
