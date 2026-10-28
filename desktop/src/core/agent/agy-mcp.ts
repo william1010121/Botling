@@ -25,8 +25,8 @@ export const AGY_LOCAL_TOOLS: AgyTool[] = [
 ];
 export const AGY_WORKER_TOOLS: AgyTool[] = [
   { name:'app_handoff', description:'Assign an authorized task to an app-managed Antigravity worker. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.', inputSchema:schema({instructions:text,name:text},['instructions']) },
-  { name:'app_send_message', description:'Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.', inputSchema:schema({task_id:text,message:text},['task_id','message']) },
-  { name:'app_cancel_task', description:'Stop one app-managed worker and its active tools.', inputSchema:schema({task_id:text},['task_id']) },
+  { name:'app_send_message', description:'Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},message:text},['task_id','run','message']) },
+  { name:'app_cancel_task', description:'Stop one app-managed worker and its active tools.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1}},['task_id','run']) },
 ];
 const canonical = (v: any): string => v && typeof v === 'object' ? Array.isArray(v) ? '['+v.map(canonical).join(',')+']' : '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}' : JSON.stringify(v);
 

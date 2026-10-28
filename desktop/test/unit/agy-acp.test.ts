@@ -56,6 +56,7 @@ it('interrupt while awaiting startup acknowledgements cannot release a queued ta
 it('worker reports wait for the Bot scheduler and cannot consume a queued user turn',async()=>{
  vi.useFakeTimers();let available=false;const sent:string[]=[],events:any[]=[];
  const head=new AgyAcpHead({command:'never-spawned',cwd:'/owned',sessionId:'s',resume:false,canStartReport:()=>available},{onItem:i=>events.push(i),onExit(){}});
+ (head as any).workers={beginReport:()=>true,acknowledgeReport(){},running:[],async close(){}};
  (head as any).protocol={send:async(text:string)=>{sent.push(text);return true;},close(){}};
  (head as any).queue.push({text:'worker report',uuid:'r',images:[],taskId:'task',taskRun:1});
  try{
@@ -90,4 +91,21 @@ it('failed tool alone cannot become a successful terminal result',async()=>{
 it('worker entrypoint is blocked before any runtime or profile action',()=>{
  const head=new AgyAcpHead({command:'/never-launched',cwd:'/never-created',sessionId:'old',resume:false,worker:true},{onItem(){},onExit(){}});
  expect(()=>head.start()).toThrow('workers are disabled');expect(head.pid).toBe(-1);
+});
+
+it('stale report runs never submit a prompt or open a background turn',async()=>{
+ const sent:string[]=[],events:any[]=[];
+ const head=new AgyAcpHead({command:'never-spawned',cwd:'/owned',sessionId:'s',resume:false},{onItem:i=>events.push(i),onExit(){}});
+ (head as any).protocol={send:async(t:string)=>{sent.push(t);return true;},close(){}};
+ (head as any).workers={beginReport:()=>false,async close(){}};
+ (head as any).queue.push({text:'stale report',uuid:'r',images:[],taskId:'task',taskRun:1});
+ await (head as any).drain();expect(sent).toEqual([]);expect(events.some(e=>e.kind==='backgroundTurn')).toBe(false);await head.terminate();
+});
+it('failed worker cleanup still attempts parent and tool cleanup and reports failure',async()=>{
+ const cleaned:string[]=[];
+ const head=new AgyAcpHead({command:'never-spawned',cwd:'/owned',sessionId:'s',resume:false},{onItem(){},onExit(){}});
+ (head as any).workers={async close(){cleaned.push('workers');throw Error('fixture failure');}};
+ (head as any).bridge={async close(){cleaned.push('tools');}};
+ (head as any).process={async terminate(){cleaned.push('parent');return {killed:[],forced:false};}};
+ await expect(head.terminate()).rejects.toThrow('cleanup incomplete');expect(cleaned.sort()).toEqual(['parent','tools','workers']);
 });

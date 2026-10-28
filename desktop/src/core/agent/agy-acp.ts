@@ -271,7 +271,8 @@ export class AgyAcpHead {
     const report = (code: number | null, signal: NodeJS.Signals | null) => {
       if (reported) return; reported = true; this.running = false;
       this.protocol?.close(); this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined;
-      void Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs: 500 })]).then(() => {
+      void Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs: 500 })]).then(results => {
+        if (results.some(result => result.status === "rejected")) this.failure ||= "ACP cleanup incomplete.";
         this.exitedResolve();
         this.handlers.onExit({ code, signal, stderr: this.failure, expected: this.expected, silent: true });
       });
@@ -295,7 +296,11 @@ export class AgyAcpHead {
       return;
     }
     clearTimeout(this.reportTimer); this.reportTimer = undefined;
-    this.queue.shift(); this.sending = true;
+    this.queue.shift();
+    if (request.taskId && (request.taskRun === undefined || !this.workers?.beginReport(request.taskId, request.taskRun))) {
+      void this.drain(); return; // stale, duplicate or uncertain report; never submit a model task.
+    }
+    this.sending = true;
     if (request.taskId) this.handlers.onItem({kind:"backgroundTurn", taskId:request.taskId});
     try { const completed = await this.protocol.send(request.text, request.uuid, request.images);
       if (completed && request.taskId && request.taskRun !== undefined) this.workers?.acknowledgeReport(request.taskId, request.taskRun);
@@ -314,5 +319,7 @@ export class AgyAcpHead {
   allow(_rules: string[]): never { throw new Error("ACP accepts single-action approval only; persistent allow rules are unavailable."); }
   interrupt(): string { clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.interrupt(); void this.bridge?.cancel(); void this.workers?.cancel(); if (!this.protocol?.initialized) void this.terminate(500); return randomUUID(); }
   finish() { void this.terminate(500); }
-  async terminate(graceMs = 1500): Promise<TerminateResult> { this.expected = true; this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.close(); await this.workers?.close(); await this.bridge?.close(); return this.process?.terminate({ graceMs }) ?? { killed: [], forced: false }; }
+  async terminate(graceMs = 1500): Promise<TerminateResult> { this.expected = true; this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.close(); const cleanup = await Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs })]);
+    if (cleanup.some(result => result.status === "rejected")) { this.failure ||= "ACP cleanup incomplete."; throw new Error(this.failure); }
+    const processResult = cleanup[2]; return processResult?.status === "fulfilled" && processResult.value ? processResult.value : { killed: [], forced: false }; }
 }

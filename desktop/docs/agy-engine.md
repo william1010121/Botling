@@ -224,3 +224,59 @@ approve only their exact benign fixture writes/commands. Run each build only if
 it succeeded; do not run a stale bundle after a failed compilation. For the image
 probe, copy attachment-fixture.png into the owned cache first; extended_smoke.ts
 also supports --crash-only. Binary/token files are not committed.
+
+
+## Worker contract staging after approved restricted baseline 1c61405
+
+The restricted single-agy baseline remains enabled as reviewed. The next worker
+implementation is staged behind the existing gates; this is not full integration.
+`agy-workers.ts` now owns pending approvals per task/run/request, checks the exact
+input and consumes each answer once. Late events cannot cross terminal/run
+boundaries. Resume/cancel tools require the current run, refuse busy steering,
+and cannot replace an unacknowledged report. A cleanup operation holds its worker
+slot and handback dependency; cleanup failure cannot produce successful completion.
+
+Worker state v2 is bound to its coordinator conversation. Legacy or foreign state
+is preserved and refused. Worker ACP/command process identities are captured via
+the existing process-start callback before task submission. Restored active state
+never starts a job automatically. Explicit continuation requires acknowledgement
+of the interruption report and evidence that the recorded process groups are
+gone (a different leader start time means the old PID was reused). Missing process
+identity remains a recovery blocker. No new PID is killed merely on the basis of
+model output. The existing app process ledger remains responsible for crash cleanup.
+
+Report delivery is durably marked before an ACP prompt is submitted. Task/run
+mismatches and duplicate queued reports do not create a background turn. After a
+crash during delivery, the report is uncertain, not automatically replayed. An
+explicit reconciliation UI/API is still needed for that state. Reports remain
+data; they do not grant permission or establish acceptance of the user's goal.
+
+Validation at this stage uses offline protocol fixtures plus real owned Node
+process groups, not real Codex/agy worker models. This execution worker's governing
+rule prohibits delegation to another bot. Consequently no real app-managed worker
+was launched, and no live mixed-engine acceptance is claimed. The source gates,
+including all Claude routes involving agy, remain closed. A test environment that
+permits product-worker lifecycle probes is required for the next live stage; no
+new user OAuth/API-key/billing decision is needed for already-authorized tests.
+
+Before enabling: wire explicit recovery/reconciliation into the app; connect a
+Codex/agy transport with independently checked per-worker permissions, scoped
+profiles and no native/external delegation fallback; validate real approval
+isolation, correlated reports, stale runs, concurrency, cancel/crash/restart and
+handback/stop. No Codex adapter or Token Flow source was changed in this stage.
+
+### Subsequent candidate provisioning (review only; no package built)
+
+The candidate must provision the reviewed official arm64 ACP server and harness
+plus the pinned file helper outside every agent workspace. Their current verified
+local paths and hashes are listed above. Private worker profiles/state belong
+under app-managed storage, not the shared workspace or CLI settings. The app's
+process ledger must run recovery before worker restoration.
+
+The current helper digest is for the verified clang-produced Mach-O bytes. A
+release-signing step can change those bytes: pin/review the actual helper that
+will ship, then verify the final embedded artifact before enabling it. Do not
+silently relax the digest check or re-sign the pinned Google binaries and assume
+the old digests still apply. No downloader, global install, external plugin,
+account change, package, merge or app restart was performed here. Model/vision and
+native/plugin limitations from the single-head review remain unchanged.

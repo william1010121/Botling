@@ -1,0 +1,85 @@
+{
+  "approvedBaseline": "1c61405d1368c72dcafaeb929ccb7d430cd89432",
+  "status": "worker contracts implemented behind existing gates; full integration incomplete",
+  "beforeFix": {
+    "tests": 6,
+    "passed": 3,
+    "failed": 3,
+    "observed": [
+      "late terminal events still forwarded",
+      "new run overwrote an unacknowledged report",
+      "unknown/cross-worker approval input was forwarded"
+    ]
+  },
+  "implemented": [
+    "per-worker/run/request pending approval ownership and exact input comparison",
+    "one-shot answers and cancellation of pending cards",
+    "sticky refused/unresolved worker completion",
+    "required current run on followup/cancel; stale output/exit/process registration rejected",
+    "four-slot concurrency including cleanup; followup limit and busy-steering rejection",
+    "cleanup completion required before report/handback; failure retains dependency and reports error",
+    "owner-bound v2 persisted state; malformed/legacy/foreign state preserved and refused",
+    "registered process-group identity verification before explicit post-crash continuation",
+    "durable begin-report marker; stale/duplicate/uncertain reports never submit a prompt",
+    "all parent/tool cleanup attempted even if worker cleanup fails"
+  ],
+  "validation": {
+    "focused": {
+      "passed": 39,
+      "files": [
+        "agy-workers.test.ts",
+        "agy-acp.test.ts",
+        "agy-core.test.ts",
+        "agy-routing.test.ts"
+      ]
+    },
+    "finalWorkerRerun": {
+      "passed": 14
+    },
+    "gateProbe": {
+      "passed": 1,
+      "intentionallySkipped": 10,
+      "file": "agy-mcp.test.ts",
+      "test": "worker tools remain unavailable even when a caller supplies a delegate"
+    },
+    "typecheck": "passed",
+    "diffCheck": "passed",
+    "realOSFixture": "Private Node process groups representing a server and tool were started, recorded, stopped and checked absent; reconstructed manager refused continuation while original groups existed, then allowed explicit same-session continuation after cleanup. These were not agents/model calls.",
+    "realCodexAgyWorkers": "NOT RUN",
+    "priorEvidence": "Reviewer-approved single-agy file-helper/terminal/resume/routing evidence reused, not claimed as worker acceptance"
+  },
+  "gates": [
+    "production ACP worker startup disabled",
+    "worker MCP inventory/dispatch disabled",
+    "all cross-engine routes involving agy disabled, including Claude",
+    "native subagents and external plugins remain disabled"
+  ],
+  "remaining": [
+    "real Codex/agy worker approval isolation and full app lifecycle acceptance",
+    "Codex<->agy transport/routing connection; not implemented or enabled by this stage",
+    "explicit UI/API reconciliation of uncertain report delivery",
+    "safe model-level restart/concurrency/handback/stop verification",
+    "independent review before capability enablement",
+    "subsequent separate runtime provisioning/package assignment"
+  ],
+  "executionBlocker": {
+    "source": "execution worker developer instructions",
+    "instruction": "Do not delegate to native subagents, app_handoff, app_send_message, another bot ...",
+    "impact": "No real app-managed worker was launched. Requires an execution environment permitting product-worker lifecycle probes; this is not missing user consent, OAuth, API key or billing authorization."
+  },
+  "provisioningReview": "agy-engine.md worker staging section covers runtime outside workspace, app-managed worker state/process ledger, and re-verification of exact signed helper bytes before later packaging. No installer/plugin/account change performed.",
+  "ownership": [
+    "agy-workers.ts",
+    "agy-acp.ts lifecycle/report scheduling only",
+    "agy-mcp.ts dormant worker schemas only",
+    "focused worker/ACP tests",
+    "agy-engine.md and this evidence file"
+  ],
+  "untouched": [
+    "bot.ts and approved routing gate",
+    "codex.ts",
+    "stream.ts",
+    "Token Flow usage/onItem",
+    "Gemini/main/shared checkout source"
+  ]
+}
