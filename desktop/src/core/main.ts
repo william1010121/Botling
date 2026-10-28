@@ -1,3 +1,4 @@
+import { startConfiguredMobile } from '../mobile-bridge/start';
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
@@ -257,6 +258,12 @@ const core = new Core({
     process: process.env.BOTLING_1X_PROCESS ? new RegExp(process.env.BOTLING_1X_PROCESS) : DEFAULT_ONE_X_PROCESS,
   },
 });
+// Disabled by default. Configuration and bind failures never terminate the desktop core.
+try {
+  const mobile = startConfiguredMobile(core, dataDir);
+  mobile?.on('error', () => log('mobile bridge unavailable: check local TLS/bind configuration'));
+} catch { log('mobile bridge disabled: invalid local configuration'); }
+
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
 // Main's startup log (src/startup-marks.ts): how long after this process began its bots and chats were loaded.
 if (process.env.BOTLING_STARTUP_LOG) new StartupMarks({ file: process.env.BOTLING_STARTUP_LOG }).mark("core.loaded");

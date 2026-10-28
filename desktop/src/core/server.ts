@@ -1,3 +1,4 @@
+import { mobileCommand } from '../mobile-bridge/adapter';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
 // transport-agnostic: `receive` takes whatever arrived, `emit` is where answers and events go. It
 // validates everything it receives itself — main validating first is defense in depth, not the
@@ -1461,6 +1462,15 @@ First write a test that shows this, then fix it.`;
       const bot = this.bots.get(event.botId);
       if (bot) this.catchUps.closedInterval(bot.catchUpChat(), event.message.id);
     }
+  }
+
+  /** Private mobile transport: the guard and handle's synchronous send prefix share this loop. */
+  mobileCommand(raw: unknown, allowedBots: readonly string[]) {
+    return mobileCommand({
+      pending: botId => this.pending.views(botId),
+      snapshot: botId => this.snapshot(botId),
+      handle: command => this.handle(command, new AbortController().signal),
+    }, raw, allowedBots);
   }
 
   /** Handles one message from main. Exactly one response per request id, cancelled or not. */
