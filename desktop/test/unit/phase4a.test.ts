@@ -4,7 +4,7 @@
 // parts for the chat page (specs, the last version that worked, which of their files are served).
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
@@ -120,12 +120,29 @@ describe("attachments (Models.swift Attachment, Bot.keep)", () => {
     mkdirSync(join(dir, "main"), { recursive: true });
     writeFileSync(join(dir, "main", "bot.json"), JSON.stringify({ engine: "codex" }));
     const c = core(dir);
-    await c.call({ type: "files.data", botId: MAIN, name: "diagram.png", base64: PNG.toString("base64") });
+    const { files: [pending] } = await c.call({ type: "files.data", botId: MAIN, name: "diagram.png", base64: PNG.toString("base64") });
+    expect(pending).toMatchObject({ name: "diagram.png", kind: "image" });
+    expect(pending.id).toMatch(/^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/);
+    const incoming = join(dir, "incoming", `${pending.id}-${pending.name}`);
+    expect(readFileSync(incoming)).toEqual(PNG);
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "what is this" });
     await until(() => c.of("turn.finished").find((e) => (e.event as any).turnId === turnId));
     const images = logged(join(dir, "codex-input.log")).filter((line) => line.kind === "images");
     expect(images).toHaveLength(1);
-    expect(images[0].text).toMatch(/main\/attachments\/\d{8}-\d{6}-[0-9A-F]{6}-diagram\.png$/);
+    const imagePath: string = images[0].text;
+    expect(dirname(imagePath)).toBe(join(dir, "main", "attachments"));
+    // Uploads keep their full pending UUID when copied into the bot's owned folder.
+    expect(basename(imagePath)).toMatch(/^\d{8}-\d{6}-/);
+    expect(basename(imagePath).replace(/^\d{8}-\d{6}-/, "")).toBe(`${pending.id}-${pending.name}`);
+    expect(readFileSync(imagePath)).toEqual(PNG);
+    const chat = await c.chat();
+    const mine = chat.messages.find((message: any) => message.role === "user");
+    expect(mine.attachments).toHaveLength(1);
+    expect(mine.attachments[0]).toMatchObject({ url: pathToFileURL(imagePath).href, kind: "image" });
+    expect(await c.call({ type: "attachment.file", botId: MAIN, ref: mine.attachments[0].url }))
+      .toEqual({ path: imagePath, type: "image/png" });
+    expect(chat.pendingFiles).toEqual([]);
+    expect(existsSync(incoming)).toBe(false);
   });
 
   it("a component's answer with pictures goes to the bot as attachments", async () => {
