@@ -1,6 +1,6 @@
 # Botling report blocks (ReportSpec v2)
 
-> Generated from `desktop/reports/v2/blocks` by `node desktop/scripts/report.mjs --docs`. Do not edit by hand.
+> Generated from `desktop/reports/v2/promptdoc.ts` and `desktop/reports/v2/blocks` by `node desktop/scripts/report.mjs --docs`. Do not edit by hand.
 
 A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick the blocks; layout, colours, fonts and the slide version are decided by the renderer. Write key points only.
 
@@ -10,10 +10,13 @@ A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick
 2. **Headline = takeaway.** Every section has `takeaway`: its conclusion as one sentence (≈ 22 CJK chars / 15 words). Reading only takeaways gives the argument. `title` is the short topic label.
 3. **One idea per section, ≤ 2 charts per section, ≤ 8 in the report.** Visuals for data, prose for reasoning, bullets only for lists (≤ 6, ≤ 2 levels).
 4. **Every chart has an action title** (`title`: what it shows, not what it is) and direct labels; never repeat a KPI as a chart.
-5. **Evidence is short.** One line per claim (number + source); ≤ 4 `sources`; long logs stay out of the report. Never hide a risk or a decision in detail.
-6. **Uncertainty with words + %:** almost certain 95–99, very likely 80–95, likely 55–80, roughly even 45–55, unlikely 20–45, very unlikely 5–20. Mark verified vs inferred vs not checked.
+5. **Evidence is short.** Give each claim a short source and a number when relevant; ≤ 4 `sources`. Keep long paths, hashes, and logs out of prose. Use short source references; keep full evidence in the internal handback. Never hide a risk or a decision in detail.
+6. **Explain uncertainty.** Separate verified facts from pending inferences. Give the reason for each inference and state what remains unchecked. Do not assign mechanical confidence percentages. Use numerical probabilities only when supported by a stated method and evidence.
 7. **End with `asks`** (what, who, by) — or `"asks": []` for "No action needed". `status.level` at_risk / off_track needs `status.reason` (cause + fix).
 8. **Forbidden:** topic-only headings, narrating your process chronologically, the conclusion at the end, evidence dumps, decorative charts, one-sided options, vague hedging, mixing report kinds.
+9. **Use ASD-STE100-informed plain language.** Use active voice, direct verbs, and consistent terms. Aim for at most 20 English words or 30 Chinese characters per sentence. Keep useful technical names. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese.
+10. **Explain causes visually.** For multistep causes, prefer a flow plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
+11. **Write for the reader.** Omit routine defensive boilerplate and internal coordination jargon. Keep research-only handback details, test commands, and preview-tool details in the internal handback. State material uncertainty and failed checks that affect the decision, with their practical effect. Never conceal defects or claim unperformed validation.
 
 ## Generate
 
@@ -117,8 +120,8 @@ Where things stand and what needs attention.
 What broke, why, and whether it is fixed.
 
 1. tldr = impact + fixed now? + the cause in one sentence
-2. timeline (events) — what happened when
-3. flow or sequence — the causal chain, failing step status=blocked
+2. flow plus a table — show the multistep cause and the evidence for each link; mark pending inferences
+3. timeline (events) — only when timing explains the cause
 4. beforeafter or trend — the metric before/after the fix
 5. checklist — actions with owners (blameless)
 6. sources ≤ 4
@@ -150,7 +153,7 @@ What the numbers say after a change.
 2. kpi vs baseline (delta, target)
 3. trend with marks at the change, target line
 4. beforeafter or bar — segment breakdown
-5. prose: interpretation with likelihood words + %
+5. prose: verified facts and pending inferences, with the reason and what remains unchecked
 6. sources ≤ 4
 
 ### explainer
@@ -158,8 +161,8 @@ What the numbers say after a change.
 What it is and how it works.
 
 1. tldr = one sentence what + why
-2. flow or sequence — the mechanism
-3. steps or table — 3–5 concepts
+2. flow plus a table — show the multistep mechanism and explain each link
+3. steps — only for an ordered procedure
 4. image — a worked example
 5. callout — limits
 
