@@ -296,8 +296,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.name}</span>}
-          {bot && (bot.heads.length > 1 || bot.heads[0] === "codex") && (
-            <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => (head === "codex" ? "Codex" : "Claude")).join(" & ")}</span>
+          {bot && bot.heads.length > 0 && (
+            <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => ({ claude: "Claude", codex: "Codex", agy: "Antigravity" }[head])).join(" & ")}</span>
           )}
           {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
           {bot && chat && !web && (
