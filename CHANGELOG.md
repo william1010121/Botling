@@ -4,6 +4,23 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 2.0.2
+
+### New
+
+- **Antigravity bots can delegate to app-managed workers**, like Claude and Codex bots. An
+  Antigravity bot now acts as a coordinator and can start workers for research and
+  implementation tasks, report checkpoints, and resume or cancel them. Every worker file write
+  and command, and every handoff and checkpoint, still asks for your approval in a card, and
+  full permission for local tools does not skip it. Delegation between Codex and Antigravity
+  bots stays off.
+
+### Fixed
+
+- Antigravity quota shows as ring cards in every state, including while the bot is busy.
+- Recovered worker cleanup obligations are kept after a report checkpoint, so a restart cannot
+  lose track of a worker process.
+
 ## 2.0.1
 
 The first release of the Electron app (Botling 2). It replaces the 1.x Swift app and covers

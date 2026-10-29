@@ -3,9 +3,11 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AgyMcpBridge} from '../../src/core/agent/agy-mcp';
 import {afterEach,expect,it,vi} from 'vitest';
+const gate=vi.hoisted(()=>({workers:true}));
+vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>gate.workers,agyMixedRuntimeEnabled:()=>false,agyPairAllowed:()=>false}));
 import {AgyAcpProtocol,AgyAcpHead,ACP_TOOLS,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
 const clients:AgyAcpProtocol[]=[];
-afterEach(()=>clients.splice(0).forEach(c=>c.close()));
+afterEach(()=>{gate.workers=true;clients.splice(0).forEach(c=>c.close());});
 const tick=async()=>{for(let i=0;i<15;i++)await Promise.resolve();};
 function harness(resume=false, full=false, localToolEvents=false){
  const frames:any[]=[],items:any[]=[],errors:Error[]=[];
@@ -92,9 +94,11 @@ it('failed tool alone cannot become a successful terminal result',async()=>{
  h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);expect(h.items.at(-1)).toMatchObject({ok:false,subtype:'tool_failed'});
 });
 
-it('worker entrypoint is blocked before any runtime or profile action',()=>{
+it('worker entrypoint is blocked before any runtime or profile action when the worker gate is closed',()=>{
+ gate.workers=false;try{
  const head=new AgyAcpHead({command:'/never-launched',cwd:'/never-created',sessionId:'old',resume:false,worker:true},{onItem(){},onExit(){}});
  expect(()=>head.start()).toThrow('workers are disabled');expect(head.pid).toBe(-1);
+ }finally{gate.workers=true;}
 });
 
 it('stale report runs never submit a prompt or open a background turn',async()=>{
@@ -173,6 +177,7 @@ it('unsupported approval after a failed tool still revokes full permission',asyn
 });
 
 it('uses bridge-owned execution cards instead of stale ACP command results',async()=>{
+ gate.workers=false;
  const h=harness(false,true,true),sent=h.client.send('task','one');await h.init();h.policy();await tick();const prompt=h.frames.at(-1).id;
  const root=mkdtempSync(join(tmpdir(),'agy-result-cards-'));
  const head=new AgyAcpHead({command:join(root,'unused-acp'),cwd:root,sessionId:'new',resume:false},{onItem:i=>h.items.push(i),onExit(){}});
