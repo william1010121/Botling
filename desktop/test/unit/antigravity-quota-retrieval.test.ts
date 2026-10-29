@@ -78,3 +78,49 @@ it('cancelling while a user message waits for quota never submits that message',
  expect((await q).status).toBe('error');expect(await task).toBe(false);
  expect(h.frames.filter(f=>f.method==='session/prompt')).toHaveLength(1);expect(h.items).toEqual([]);
 });
+
+
+it('refreshes immediately after an active turn ends without repeating other provider requests', async () => {
+ vi.useFakeTimers();
+ const h = await harness('/busy-core/agy-acp/profile');
+ const retrieve = vi.fn(async () => { throw Error('offline'); });
+ const book = new UsageBook('/busy-core', undefined, undefined, retrieve);
+ const task = h.c.send('task', 'busy-turn'); await tick();
+ h.reply({configOptions:[{id:'mode',currentValue:'default'}]}); await tick();
+ const prompts = () => h.frames.filter(f => f.method === 'session/prompt');
+ await book.refresh();
+ expect(book.antigravity).toMatchObject({reason:'busy'});
+ expect(prompts()).toHaveLength(1);
+ h.reply({stopReason:'end_turn'}); await task;
+ const refresh = book.refresh(); await tick();
+ expect(prompts()).toHaveLength(2);
+ expect(prompts().at(-1).params.prompt[0].text).toBe('/usage');
+ h.update(report); h.reply({stopReason:'end_turn'}); await refresh;
+ expect(book.antigravity.status).toBe('available');
+ await book.refresh(); expect(prompts()).toHaveLength(2);
+ expect(retrieve).toHaveBeenCalledTimes(2);
+});
+
+it('coalesces concurrent busy checks and rate limits real quota requests, including errors', async () => {
+ vi.useFakeTimers();
+ let settle!: (value:any) => void;
+ const reader = vi.fn(() => new Promise<any>(resolve => {settle = resolve;}));
+ const release = registerAntigravityQuotaReader('/busy-retries', reader);
+ try {
+  const book = new UsageBook('/busy-retries');
+  const first = book.refresh(), same = book.refresh();
+  expect(reader).toHaveBeenCalledTimes(1);
+  settle({status:'unavailable',reason:'busy',source:'antigravity_acp'});
+  await Promise.all([first,same]);
+  const next = book.refresh();
+  expect(reader).toHaveBeenCalledTimes(2);
+  settle({status:'error',reason:'request_failed',source:'antigravity_acp'}); await next;
+  await book.refresh();
+  expect(reader).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(60000);
+  const retry = book.refresh();
+  expect(reader).toHaveBeenCalledTimes(3);
+  settle(parseAntigravityUsage(report)); await retry;
+  await book.refresh(); expect(reader).toHaveBeenCalledTimes(3);
+ } finally {release();}
+});

@@ -178,6 +178,9 @@ export class UsageBook {
   antigravity = readAntigravityQuota();
   private refreshPending?: Promise<void>;
   private lastRefresh = -Infinity;
+  private antigravityPending?: Promise<void>;
+  private quotaRefreshPending?: Promise<void>;
+  private lastAntigravityRefresh = -Infinity;
   quotaStatus: Record<"claude" | "codex", QuotaStatus> = { claude: "missing", codex: "missing" };
   spending: Spending;
   claude: RateLimits;
@@ -197,10 +200,26 @@ export class UsageBook {
 
   /** Deduplicate concurrent opens and bound provider traffic, including failed requests. */
   refresh(): Promise<void> {
+    if (this.quotaRefreshPending) return this.quotaRefreshPending;
+    // Busy is a local guard, not a provider request. It must not consume the
+    // provider cooldown or suppress the first read after a turn finishes.
+    if (!this.antigravityPending && Date.now() - this.lastAntigravityRefresh >= 60_000) {
+      this.lastAntigravityRefresh = Date.now();
+      this.antigravityPending = refreshAntigravityQuota(this.dir).then(value => {
+        this.antigravity = value;
+        if (value.status === "unavailable" && value.reason === "busy") this.lastAntigravityRefresh = -Infinity;
+        this.changed();
+      }).finally(() => { this.antigravityPending = undefined; });
+    }
+    this.quotaRefreshPending = Promise.all([this.antigravityPending, this.refreshOtherProviders()]).then(() => {}).finally(() => { this.quotaRefreshPending = undefined; });
+    return this.quotaRefreshPending;
+  }
+
+  private refreshOtherProviders(): Promise<void> {
     if (this.refreshPending) return this.refreshPending;
     if (Date.now() - this.lastRefresh < 60_000) return Promise.resolve();
     this.lastRefresh = Date.now();
-    this.refreshPending = Promise.all([refreshAntigravityQuota(this.dir).then(value => { this.antigravity = value; this.changed(); }), ...(["claude", "codex"] as const).map(async engine => {
+    this.refreshPending = Promise.all((["claude", "codex"] as const).map(async engine => {
       if (!this.retrieve) return;
       try {
         const limits = await this.retrieve(engine);
@@ -214,7 +233,7 @@ export class UsageBook {
         this.quotaStatus[engine] = error instanceof QuotaError ? error.status : "network_error";
         this.changed();
       }
-    })]).then(() => {}).finally(() => { this.refreshPending = undefined; });
+    })).then(() => {}).finally(() => { this.refreshPending = undefined; });
     return this.refreshPending;
   }
 

@@ -26,12 +26,19 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let live = true, pending = false, again = false;
+    let busyRetry: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
       setNow(Date.now());
       if (pending) { again = true; return; }
+      clearTimeout(busyRetry);
       pending = true;
       void client.request({ type: "usage.view" }).then(value => {
-        if (live) { setUsage(value); setFailed(false); }
+        if (live) {
+          setUsage(value); setFailed(false);
+          if (value.antigravity?.status === "unavailable" && value.antigravity.reason === "busy") {
+            busyRetry = setTimeout(load, 2_000);
+          }
+        }
       }, () => { if (live) setFailed(true); }).finally(() => {
         pending = false;
         if (live && again) { again = false; load(); }
@@ -40,7 +47,7 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
     load();
     const timer = setInterval(load, 60_000);
     const off = client.onEvent(({ event }) => { if (event.type === "turn.finished") load(); });
-    return () => { live = false; clearInterval(timer); off(); };
+    return () => { live = false; clearTimeout(busyRetry); clearInterval(timer); off(); };
   }, [client, retry]);
 
   const claude = usage?.claude ?? { fiveHour: null, week: null };
@@ -77,7 +84,7 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
     {codexProblem && <p className="quick-usage-note" role="status">Codex: {codexProblem}.</p>}
     {since({ fiveHour: null, week: codex.week })}
     <h3>Antigravity</h3>
-    <AntigravityQuota quota={usage?.antigravity} loading={!usage && !failed} failed={failed} />
+    <AntigravityQuota quota={usage?.antigravity} loading={!usage && !failed} failed={failed} onRetry={() => setRetry(value => value + 1)} />
     {failed && <p className="quick-usage-note" role="alert">
       Quota readings unavailable.{" "}
       <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button>
