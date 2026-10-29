@@ -145,3 +145,32 @@ it('lets settings remove the storage owner while retaining two selected recipien
  expect(h.b.heads.answerWith).toBe('codex');h.b.send('selected remaining owner');await until(()=>fixture.heads.some(x=>x.sent.length));
  expect(fixture.heads.filter(x=>x.sent.length).map(x=>x.engine)).toEqual(['codex']);fixture.heads[0].finish('done');
 });
+
+// Combined integration: real Bot peer routing and durable journal, offline provider events.
+import {RestartJournal, RESTART_FILE} from '../../src/core/restart-continuation';
+it.each(['claude','codex','agy'] as const)('recovers all original peer sessions once with %s as storage owner',async owner=>{
+ const h=bot(owner);
+ for(const to of ['claude','codex','agy'] as const)h.b.send('unfinished authorized research '+to,{to});
+ await until(()=>fixture.heads.filter(x=>x.sent.length).length===3);
+ for(const head of fixture.heads){head.restartTurn='original-provider-turn';head.emit({kind:'stepText',text:'Confirmed original work'});}
+ const entries=h.b.restartEntries();expect(entries).toHaveLength(3);expect(entries.every(e=>!e.blocked)).toBe(true);
+ const journal=new RestartJournal(h.folder);journal.prepare(entries);journal.ready();
+ await h.b.shutdown({tidy:false});bots.splice(bots.indexOf(h.b),1);
+ const before=fixture.heads.length,resumed=bot(owner,h.folder),notice=vi.fn();
+ journal.recover(entry=>{
+  const durable=JSON.parse(readFileSync(join(h.folder,RESTART_FILE),'utf8'));
+  expect(durable.entries.find((e:any)=>e.engine===entry.engine).state).toBe('claimed');
+  resumed.b.adoptRestart(entry);
+ },notice);
+ await until(()=>fixture.heads.slice(before).filter(x=>x.sent.length).length===3);
+ expect(notice).not.toHaveBeenCalled();
+ for(const entry of entries){
+  const head=fixture.heads.slice(before).find(x=>x.engine===entry.engine);
+  expect(head.config).toMatchObject({sessionId:entry.sessionId,resume:true});
+  expect(head.sent).toHaveLength(1);expect(head.sent[0]).toContain('permissions and cancellations');
+  head.finish('recovered original work');
+ }
+ await settle();
+ const duplicate=vi.fn();new RestartJournal(h.folder).recover(duplicate,notice);expect(duplicate).not.toHaveBeenCalled();
+ expect(resumed.b.peers).toHaveLength(2);
+});
