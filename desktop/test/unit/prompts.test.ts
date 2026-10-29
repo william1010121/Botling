@@ -81,6 +81,22 @@ describe("prompts: the Swift app's strings", () => {
     });
   }
 
+  it("gives agy both app-managed delegation and, in a multi-engine bot, the peer handoff protocol", () => {
+    const profile = { name: "Probe", role: "bot" as const, folder: "/fixture", memoryPath: ".bot/memory.md", job: null };
+    const heads = { engines: ["claude", "codex", "agy"] as const, handoffs: true, limits: { discussion: 2, review: 3, handoffs: 7 } };
+    const multi = botPrompts({ profile, engine: "agy", heads: { ...heads, engines: [...heads.engines] } });
+    expect(multi.system).toContain("app_task_checkpoint");
+    expect(multi.system).toContain("coordinator");
+    expect(multi.system).toContain("<handoff to=");
+    expect(multi.system).toContain("7 hand-offs, 3 of them reviews and 2 discussion rounds");
+    expect(multi.system).not.toContain("peer handoff tags are unavailable");
+    expect(multi.headsRule).toContain("<handoff to=");
+    const single = botPrompts({ profile, engine: "agy" });
+    expect(single.system).toContain("app_task_checkpoint");
+    expect(single.system).not.toContain("<handoff to=");
+    expect(single.headsRule).toBe("");
+  });
+
   it("tells every engine to respect the primary, peer scope, decisions and handoff budget", () => {
     for (const engine of ["claude", "codex", "agy"] as const) {
       const rule = headsRule({engines:["claude","codex","agy"],handoffs:true,limits:{discussion:1,review:4,handoffs:9}},engine);
