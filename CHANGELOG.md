@@ -4,6 +4,15 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 2.0.3
+
+### Fixed
+
+- **Antigravity keeps peer handoff.** In a bot that uses several engines, Antigravity can start
+  its own workers and can also hand work to Claude or Codex, like the other engines.
+- **Terminal tabs close quietly.** When a shell exits, its tab closes without an error. Closing
+  the last tab hides the terminal panel.
+
 ## 2.0.2
 
 ### New
