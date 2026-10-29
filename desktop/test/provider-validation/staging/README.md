@@ -30,7 +30,7 @@ Keychain metadata (no credential contents). Failure stops before provider startu
 Each runner permits only one case and shuts down after five minutes. Cards expire
 at the production timeout of two minutes. Never approve an unexpected action.
 
-1. Select **Start scratch-write case**. This contacts ACP and uses model quota.
+1. Select **開始寫檔驗收**. This contacts ACP and uses model quota.
    Inspect the official worker handoff card; allow only one agy worker with the
    displayed implementation contract for private `allow-marker.txt`.
 2. Inspect the worker's exact `write_file` card: relative path `allow-marker.txt`,
@@ -40,9 +40,8 @@ at the production timeout of two minutes. Never approve an unexpected action.
    actual task ID/run and concrete evidence. Allow complete only when the exact
    marker exists with the expected content; denial must produce blocked evidence.
    The UI displays marker contents. Extra read requests are outside the fixture.
-4. End and close the runner. Launch a fresh runner for **Start bounded-command
-   case**. Inspect its handoff and command card; allow only `sleep 30`.
-5. While that command is active, click **Cancel all and end staging run**.
+4. End and close the runner. Launch a fresh runner for the **sleep 30 與取消** case under **案例與技術資訊**, then **開始取消驗收**. Inspect its handoff and command card; allow only `sleep 30`.
+5. While that command is active, click **停止**.
    This invokes production Bot.shutdown and the private ProcessLedger recovery
    path. It is a whole-run cancellation check, not an `app_cancel_task` card test.
    Record actual process identities and disappearance before accepting cleanup.
@@ -92,3 +91,33 @@ and agy-only concurrency/isolation evidence pass review. The prepared UI supplie
 the real human-card path; it does not claim those checks passed. Mixed-engine
 validation is required only before enabling the separate mixed gate. Activation
 requires a separately reviewed enabling commit. No integration or packaging here.
+
+## UI regression and safe preview
+
+```sh
+node desktop/test/provider-validation/staging/prepare.mjs
+./desktop/.cache/agy-staging-prepared/launch.command --ui-regression
+./desktop/.cache/agy-staging-prepared/launch.command --ui-preview
+```
+
+Both flags select SafeController instead of constructing Bot. It cannot start a
+provider, access authentication, create an approval card or accept a choice.
+The regression sends Chromium native input through the actual bundled renderer,
+preload and main IPC handlers. It covers rejected synthetic clicks, immediate
+busy feedback, errors, keyboard focus/activation, retry, cancellation and disabled
+states. The deliberately rejected first Start logs an expected prerequisite error.
+The preview is for visual review only; its main action says 測試介面回應.
+Neither mode is live acceptance or real approval evidence.
+
+The original click guard used a capture-phase boolean cleared in a microtask.
+Chromium drains that microtask before delivering native events to target handlers,
+so Start and Stop never reached IPC. Regression first reproduced zero Start calls.
+The fix checks isTrusted on each control's own event; production approval buttons
+retain fallbackChoices/Bot.choose, with an ancestor capture guard rejecting only
+untrusted events. No approval is generated or clicked by the UI regression.
+
+The UI uses the existing Web tokens, concise live status, initially disabled
+controls until bridge readiness, visible errors, keyboard focus outlines, one
+primary action and collapsed technical details. Live five-minute cleanup and
+shipping gates remain unchanged. The actual corrected window was inspected only
+in safe preview; real provider acceptance remains pending.
