@@ -290,6 +290,15 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     pendingFiles: (chat.pendingFiles ?? []).map((file) => ({ id: file.id, name: file.name, kind: file.kind, url: attachmentURL(bot.id, `pending:${file.id}`) })),
     components: componentInfos(components),
     live: running && !runningShown ? chat.live.map(step) : [],
+    ...(!answering ? { liveRuns: runs.map((run) => {
+      const head = run.head ?? chat.messages.find((message) => message.id === run.messageId)?.engine ?? "claude";
+      return { id: run.turnId,
+        avatar: look === "cute" ? faceURL(bot, "cute", { engine: head, working: true, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
+        label: two ? `${bot.name} · ${headName(head)}` : bot.name,
+        // Reply history may be collapsed; current activity must stay visible independently.
+        live: run.live.map(step),
+        retrying: head === "codex" ? bot.codexRetry ?? null : null };
+    }) } : {}),
     // The / menu: the app's commands, then the bot's own components, then the rest of the library (`ChatPayload`).
     slashCommands: share ? [...SLASH_COMMANDS, SHARE_COMMAND] : SLASH_COMMANDS,
     ...slashLists(bot, Object.keys(components).sort()),

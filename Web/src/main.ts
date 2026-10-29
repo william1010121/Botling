@@ -61,9 +61,8 @@ class Chat {
   private componentsMark = 0;
   /** The components object `componentsText` was made from (a patch hands the same one back). */
   private componentsSeen: unknown = null;
-  private typing: HTMLElement | null = null;
+  private typing = new Map<string, HTMLElement>();
   private thinkTimer: ReturnType<typeof setInterval> | null = null;
-  private retryTimer: ReturnType<typeof setInterval> | null = null;
   private workerWaiting: HTMLElement | null = null;
   private botID: string | null = null;
   private subagentID: string | null = null;
@@ -142,11 +141,13 @@ class Chat {
     releaseFrames(this.list);
     this.list.innerHTML = "";
     this.drawn.clear();
-    this.typing = null;
+    this.typing.clear();
+    if (this.thinkTimer) { clearInterval(this.thinkTimer); this.thinkTimer = null; }
     this.workerWaiting = null;
   }
 
   setState(state: ChatState, redrawing = false): void {
+    const previousState = this.last;
     this.last = state;
     // Root style updates existing rows and the typing face without replacing their DOM.
     if (typeof state.chatAvatarSize === "number" && Number.isFinite(state.chatAvatarSize)) {
@@ -174,6 +175,12 @@ class Chat {
     // Bot look Cute: the seen marks show the heads' tiny characters (a style rule, so lines drawn already follow).
     setSeenHeads(state.seenHeads);
     configureAnimatedHeads(state.animatedHeads);
+
+    // An initially empty concurrent reply can become visible before the first shown row.
+    // If the whole chat was visible, keep that newly visible reply in the window too.
+    if (!this.navigatingHistory && this.firstID === previousState?.messages[0]?.id) {
+      this.firstID = state.messages[0]?.id ?? null;
+    }
 
     // Resolve a deleted boundary while retained rows still exist, before a settings redraw.
     if (this.firstID !== null) this.firstID = state.messages[this.historyStart(state.messages)]?.id ?? null;
@@ -263,28 +270,61 @@ class Chat {
 
     this.catchUp.update(state, (id) => this.drawn.get(id)?.element ?? null);
 
-    const retry = state.working && !state.subagent ? state.retrying ?? null : null;
-    if (state.working && !state.subagent && this.typing?.dataset.avatar === state.avatar) {
-      updateTypingElement(this.typing, state.live ?? [], retry);
-    } else {
-      this.typing?.remove();
-      this.typing = !state.working ? null : state.subagent ? subagentLiveElement(state.live ?? []) : typingElement(state.avatar, state.live ?? [], retry);
+    const runs = !state.working ? [] : !state.subagent && state.liveRuns ? state.liveRuns : [{
+      id: "legacy", avatar: state.avatar, label: "", live: state.live ?? [],
+      retrying: state.subagent ? null : state.retrying,
+    }];
+    const keepRuns = new Set(runs.map((run) => run.id));
+    for (const [id, row] of this.typing) {
+      if (!keepRuns.has(id)) { row.remove(); this.typing.delete(id); }
     }
-    // Its "about 40 s" counts down while it waits.
-    if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
-    const retryAt = retry?.retryAt;
-    if (retry && retryAt != null && retryAt > Date.now()) {
-      this.retryTimer = setInterval(() => {
-        refreshRetryNote(this.typing, retry);
-        if (Date.now() >= retryAt && this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
-      }, 1000);
+    for (const run of runs) {
+      let row = this.typing.get(run.id);
+      if (row && !state.subagent && row.dataset.avatar === run.avatar) {
+        updateTypingElement(row, run.live, run.retrying);
+      } else {
+        row?.remove();
+        row = state.subagent ? subagentLiveElement(run.live) : typingElement(run.avatar, run.live, run.retrying);
+        this.typing.set(run.id, row);
+      }
+      row.dataset.runId = run.id;
+      if (run.label) row.setAttribute("aria-label", run.label);
+      let label = row.querySelector<HTMLElement>(".live-run-label");
+      if (run.label && !label) {
+        label = document.createElement("div");
+        label.className = "live-run-label speaker";
+        let bubble = row.querySelector<HTMLElement>(".bubble");
+        if (bubble?.classList.contains("dots")) {
+          const dots = bubble;
+          dots.classList.remove("bubble", "bot-bubble");
+          bubble = document.createElement("div");
+          bubble.className = "bubble bot-bubble working";
+          dots.replaceWith(bubble);
+          bubble.append(dots);
+        }
+        bubble?.prepend(label);
+      }
+      if (label) label.textContent = run.label;
     }
-    if (this.typing && this.list.lastElementChild !== this.typing) this.list.append(this.typing);
-    // "Thinking · 12 s" while the turn has no new output.
+    // Preserve the nodes and their order when an unrelated run updates.
+    let nextRow: HTMLElement | null = null;
+    for (const run of [...runs].reverse()) {
+      const row = this.typing.get(run.id)!;
+      if (row.parentElement !== this.list || row.nextElementSibling !== nextRow) this.list.insertBefore(row, nextRow);
+      nextRow = row;
+    }
+    // Each row keeps its own thinking clock. Retry text belongs only to its run.
     if (this.thinkTimer) { clearInterval(this.thinkTimer); this.thinkTimer = null; }
-    if (this.typing && state.working && !state.subagent) {
-      refreshThinkNote(this.typing);
-      this.thinkTimer = setInterval(() => refreshThinkNote(this.typing), 1000);
+    if (runs.length && !state.subagent) {
+      const refresh = () => {
+        for (const run of runs) {
+          const row = this.typing.get(run.id) ?? null;
+          refreshThinkNote(row);
+          refreshRetryNote(row, run.retrying);
+        }
+      };
+      refresh();
+      this.thinkTimer = setInterval(refresh, 1000);
     }
     // Workers have their own live cards. An idle coordinator has no thinking animation.
     if (state.waitingForWorkers && !state.working && !state.subagent) {
@@ -305,7 +345,7 @@ class Chat {
     this.floats.update(state);
     this.composer.update(state);
     // Live activity belongs at the latest end, not after an older window.
-    if (this.typing) this.typing.style.display = this.historyLatest.hidden ? "" : "none";
+    for (const row of this.typing.values()) row.style.display = this.historyLatest.hidden ? "" : "none";
     if (this.workerWaiting) this.workerWaiting.style.display = this.historyLatest.hidden ? "" : "none";
     // Something you just sent always shows, even if you had scrolled up.
     if (switched || sentNow) {

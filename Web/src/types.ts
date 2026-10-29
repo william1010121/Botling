@@ -446,6 +446,8 @@ export interface ChatState {
   slashLibrary?: string[];
   /** What it is doing right now, while it works. */
   live?: StepView[];
+  /** Independent conversation runs; absent for legacy hosts and worker detail pages. */
+  liveRuns?: { id: string; avatar: string; label: string; live: StepView[]; retrying?: ChatState["retrying"] }[];
   /** Set while you watch one of its subagents: the page has no input box then. */
   subagent?: SubagentHeaderView | null;
   /** Developer mode: a bot's replies can be flagged as not right. */
