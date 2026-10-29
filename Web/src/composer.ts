@@ -161,6 +161,9 @@ export class Composer {
             keydown: (event, view) => isComposingKey(event) || isComposingEnter(event) || view.composing || this.mentionKey(event) || this.answerKey(event) || this.onKey(event) || this.enterKey(event),
           })),
           EditorView.domEventHandlers({
+            // Suppress CodeMirror's file-to-text insertion, but let the drop bubble to
+            // watchFileDrops, which attaches each file once for the whole chat.
+            drop: (event) => (event.dataTransfer?.files.length ?? 0) > 0,
             paste: (event) => this.takeFiles(event.clipboardData),
             // Leaving the box (another bot clicked, the app closing) saves the draft now.
             blur: () => { if (this.draftTimer !== null) this.saveDraft(); return false; },
