@@ -206,7 +206,10 @@ export class UsageBook {
     if (!this.antigravityPending && Date.now() - this.lastAntigravityRefresh >= 60_000) {
       this.lastAntigravityRefresh = Date.now();
       this.antigravityPending = refreshAntigravityQuota(this.dir).then(value => {
-        this.antigravity = value;
+        const previous = this.antigravity;
+        const lastKnown = previous.status === "available" ? {seen: previous.seen, buckets: previous.buckets} : previous.lastKnown;
+        this.antigravity = value.status === "unavailable" && value.reason === "busy" && lastKnown
+          ? {...value, lastKnown} : value;
         if (value.status === "unavailable" && value.reason === "busy") this.lastAntigravityRefresh = -Infinity;
         this.changed();
       }).finally(() => { this.antigravityPending = undefined; });

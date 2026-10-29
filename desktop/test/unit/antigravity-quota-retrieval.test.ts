@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgyAcpProtocol } from '../../src/core/agent/agy-acp';
 import { parseAntigravityUsage, registerAntigravityQuotaReader, refreshAntigravityQuota } from '../../src/core/antigravity-quota';
+import { AntigravityQuotaView } from '../../src/contract';
 import { UsageBook, usageView } from '../../src/core/usage';
 const report = '### Session Usage\n- **Session total:** 999 tokens\n\n### Quota Limits\n- **Gemini Models**\n  - **Weekly:** 91% remaining (resets Oct 02, 2026, 08:22 UTC)\n- **Claude and GPT models**\n  - **Daily:** 1,234 units remaining\n  - **Other:** Available\n  - **Restricted:** Disabled';
 const clients: AgyAcpProtocol[] = [];
@@ -122,5 +123,28 @@ it('coalesces concurrent busy checks and rate limits real quota requests, includ
   expect(reader).toHaveBeenCalledTimes(3);
   settle(parseAntigravityUsage(report)); await retry;
   await book.refresh(); expect(reader).toHaveBeenCalledTimes(3);
+ } finally {release();}
+});
+
+
+it('serializes the original successful quota and timestamp through repeated busy results, then replaces it on success', async () => {
+ vi.useFakeTimers();
+ const original = parseAntigravityUsage(report, 123000);
+ let value = original;
+ const release = registerAntigravityQuotaReader('/retained-quota', async () => value);
+ try {
+  const book = new UsageBook('/retained-quota');
+  await book.refresh();
+  await vi.advanceTimersByTimeAsync(60000);
+  value = {status:'unavailable',reason:'busy',source:'antigravity_acp'};
+  await book.refresh(); await book.refresh();
+  const decoded = AntigravityQuotaView.parse(JSON.parse(JSON.stringify(usageView(book.view()).antigravity)));
+  expect(decoded).toMatchObject({status:'unavailable',reason:'busy',lastKnown:{seen:123000}});
+  if (decoded.status === 'available' || original.status !== 'available') throw Error('wrong quota state');
+  expect(decoded.lastKnown?.buckets).toEqual(original.buckets);
+  value = parseAntigravityUsage(report.replace('91%', '85%'), Date.now());
+  await book.refresh();
+  expect(book.antigravity).toEqual(value);
+  expect(book.antigravity).not.toHaveProperty('lastKnown');
  } finally {release();}
 });

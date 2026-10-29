@@ -793,7 +793,8 @@ export const AntigravityQuotaView = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("available"), source: z.literal("antigravity_acp"),
     seen: z.number().finite(), buckets: z.array(AntigravityQuotaBucket).min(1) }),
   z.strictObject({ status: z.enum(["unavailable", "error"]), source: z.literal("antigravity_acp"),
-    reason: z.enum(["unsupported_connection", "no_connection", "busy", "missing_data", "request_failed", "invalid_response"]) }),
+    reason: z.enum(["unsupported_connection", "no_connection", "busy", "missing_data", "request_failed", "invalid_response"]),
+    lastKnown: z.strictObject({ seen: z.number().finite(), buckets: z.array(AntigravityQuotaBucket).min(1) }).optional() }),
 ]);
 export type AntigravityQuotaView = z.infer<typeof AntigravityQuotaView>;
 export const UsageView = z.strictObject({

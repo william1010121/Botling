@@ -19,36 +19,64 @@ const quotaProblems: Record<Exclude<QuotaStatus, "available">, string> = {
   cli_unavailable: "CLI unavailable",
 };
 
-export function QuickSettingsUsage({ client }: { client: Client }) {
-  const [usage, setUsage] = useState<UsageView | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [failed, setFailed] = useState(false);
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    let live = true, pending = false, again = false;
-    let busyRetry: ReturnType<typeof setTimeout> | undefined;
-    const load = () => {
-      setNow(Date.now());
-      if (pending) { again = true; return; }
-      clearTimeout(busyRetry);
-      pending = true;
-      void client.request({ type: "usage.view" }).then(value => {
-        if (live) {
-          setUsage(value); setFailed(false);
-          if (value.antigravity?.status === "unavailable" && value.antigravity.reason === "busy") {
-            busyRetry = setTimeout(load, 2_000);
-          }
+// One refresh loop per renderer client, shared by both quota surfaces. Closing
+// the final surface removes the listener and timer; the core owns quota history.
+type UsageState = { usage: UsageView | null; now: number; failed: boolean; loading: boolean };
+const usageSessions = new WeakMap<Client, ReturnType<typeof createUsageSession>>();
+function createUsageSession(client: Client) {
+  let state: UsageState = {usage: null, now: Date.now(), failed: false, loading: true};
+  const listeners = new Set<(state: UsageState) => void>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let off: (() => void) | undefined;
+  let pending = false, again = false, lastAttempt = -Infinity;
+  const publish = () => { for (const listener of listeners) listener(state); };
+  const load = (turnFinished = false) => {
+    if (pending) { if (turnFinished) again = true; return; }
+    // Manual retry cannot create a tight loop. A completed turn may retry now.
+    if (!turnFinished && Date.now() - lastAttempt < 2_000) return;
+    clearTimeout(timer);
+    lastAttempt = Date.now(); pending = true;
+    state = {...state, now: Date.now(), loading: true}; publish();
+    void client.request({type: "usage.view"}).then(usage => {
+      state = {...state, usage, failed: false};
+    }, () => { state = {...state, failed: true}; }).finally(() => {
+      pending = false; state = {...state, loading: false}; publish();
+      if (!listeners.size) { again = false; return; }
+      if (again) { again = false; load(true); return; }
+      const quota = state.usage?.antigravity;
+      timer = setTimeout(() => load(), !state.failed && quota?.status === "unavailable" && quota.reason === "busy" ? 2_000 : 60_000);
+    });
+  };
+  return {
+    get: () => state,
+    retry: () => load(),
+    subscribe(listener: (state: UsageState) => void) {
+      listeners.add(listener); listener(state);
+      if (listeners.size === 1) {
+        off = client.onEvent(({event}) => { if (event.type === "turn.finished") load(true); });
+        // Reopening is not a new polling loop or a reason to bypass retry bounds.
+        if (!pending) {
+          const delay = Math.max(0, 2_000 - (Date.now() - lastAttempt));
+          if (delay) timer = setTimeout(() => load(), delay); else load();
         }
-      }, () => { if (live) setFailed(true); }).finally(() => {
-        pending = false;
-        if (live && again) { again = false; load(); }
-      });
-    };
-    load();
-    const timer = setInterval(load, 60_000);
-    const off = client.onEvent(({ event }) => { if (event.type === "turn.finished") load(); });
-    return () => { live = false; clearTimeout(busyRetry); clearInterval(timer); off(); };
-  }, [client, retry]);
+      }
+      return () => {
+        listeners.delete(listener);
+        if (!listeners.size) { clearTimeout(timer); off?.(); off = undefined; }
+      };
+    },
+  };
+}
+export function useUsageRefresh(client: Client) {
+  let session = usageSessions.get(client);
+  if (!session) { session = createUsageSession(client); usageSessions.set(client, session); }
+  const [state, setState] = useState(session.get);
+  useEffect(() => session.subscribe(setState), [session]);
+  return {...state, retry: session.retry};
+}
+
+export function QuickSettingsUsage({ client }: { client: Client }) {
+  const {usage, now, failed, loading, retry} = useUsageRefresh(client);
 
   const claude = usage?.claude ?? { fiveHour: null, week: null };
   const codex = usage?.codex ?? { fiveHour: null, week: null };
@@ -84,10 +112,10 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
     {codexProblem && <p className="quick-usage-note" role="status">Codex: {codexProblem}.</p>}
     {since({ fiveHour: null, week: codex.week })}
     <h3>Antigravity</h3>
-    <AntigravityQuota quota={usage?.antigravity} loading={!usage && !failed} failed={failed} onRetry={() => setRetry(value => value + 1)} />
+    <AntigravityQuota quota={usage?.antigravity} loading={loading} failed={failed} onRetry={retry} />
     {failed && <p className="quick-usage-note" role="alert">
       Quota readings unavailable.{" "}
-      <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button>
+      <button type="button" onClick={retry}>Retry</button>
     </p>}
   </section>;
 }

@@ -1,3 +1,4 @@
+import { useUsageRefresh } from "./QuickSettingsUsage";
 import { AntigravityQuota } from "./AntigravityQuota";
 import { ModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
@@ -115,29 +116,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
  * Codex last reported them (they come with bots' turns only), by bot, and the days before. Read again each minute.
  */
 function Usage({ client }: { client: Client }) {
-  const [usage, setUsage] = useState<UsageView | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    let live = true, pending = false;
-    const load = () => {
-      if (pending) return;
-      pending = true;
-      setLoading(true);
-      setNow(Date.now());
-      void client.request({ type: "usage.view" }).then(value => {
-        if (live) { setUsage(value); setFailed(false); }
-      }, () => { if (live) setFailed(true); }).finally(() => {
-        pending = false;
-        if (live) setLoading(false);
-      });
-    };
-    load();
-    const timer = setInterval(load, 60_000);
-    return () => { live = false; clearInterval(timer); };
-  }, [client, retry]);
+  const {usage, now, loading, failed, retry} = useUsageRefresh(client);
   const tokens = usage?.tokens;
   const available = usage?.spendingStatus === "available";
   return (
@@ -145,7 +124,7 @@ function Usage({ client }: { client: Client }) {
       {loading && !usage && <p className="settings-note" role="status">Loading usage…</p>}
       {failed && <div className="settings-note" role="alert">
         Usage is unavailable.{" "}
-        <button type="button" disabled={loading} onClick={() => setRetry(value => value + 1)}>Retry</button>
+        <button type="button" disabled={loading} onClick={retry}>Retry</button>
       </div>}
       {usage && <>
         <Group title="Usage today" note={available && tokens
@@ -160,7 +139,7 @@ function Usage({ client }: { client: Client }) {
           <LimitRow name="Claude" limits={usage.claude} now={now} />
           <LimitRow name="Codex" limits={usage.codex} now={now} />
           <Row label="Antigravity">
-            <AntigravityQuota quota={usage.antigravity} failed={failed} />
+            <AntigravityQuota quota={usage.antigravity} failed={failed} loading={loading} onRetry={retry} />
           </Row>
         </Group>
         {available && <Group title="By bot">
