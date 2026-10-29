@@ -1,7 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {request} from 'node:http';
@@ -104,4 +104,33 @@ it('full permission rejects missing or conflicting file paths without changing f
  expect(readFileSync(join(cwd,'keep'),'utf8')).toBe('KEEP');
  await bridge.invoke('write_file',{path:'keep',filePath:'keep',content:'same explicit path'});
  expect(readFileSync(join(cwd,'keep'),'utf8')).toBe('same explicit path');
+});
+
+it('finds installed Node from a Finder PATH without importing shell startup or secrets',async()=>{
+ const {bridge,root}=setup(()=>true);const home=join(root,'user');mkdirSync(join(home,'.local','bin'),{recursive:true});
+ symlinkSync(process.execPath,join(home,'.local','bin','node'));
+ vi.stubEnv('HOME',home);vi.stubEnv('PATH','/usr/bin:/bin:/usr/sbin:/sbin');vi.stubEnv('BOTLING_TEST_SECRET','must-not-inherit');
+ try {
+  const result=await bridge.invoke('run_command',{command:`node -e 'process.stdout.write("node-ok:" + String(process.env.BOTLING_TEST_SECRET))'`});
+  expect(result).toEqual({exitCode:0,output:'node-ok:undefined'});
+ }finally{vi.unstubAllEnvs();}
+});
+
+it('keeps repeated concurrent command results on their own bridge cards',async()=>{
+ const spawned:any[]=[],items:any[]=[];
+ vi.spyOn(tree,'processTreeAdapter').mockReturnValue({platform:'darwin',verified:true,spawn:()=>{
+  const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough()});
+  spawned.push(child);return {pid:123,child,terminate:async()=>({killed:[],forced:false})} as any;
+ }});
+ const {cwd,home}=setup();const bridge=new AgyMcpBridge(cwd,home,undefined,undefined,undefined,()=>true,i=>items.push(i));bridges.push(bridge);bridge.beginTurn();const endpoint=await bridge.start();
+ const call=()=>fetch(endpoint.url,{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'run_command',arguments:{command:'same exact command'}}})});
+ const first=call();for(let i=0;i<100&&spawned.length<1;i++)await new Promise(r=>setTimeout(r,1));
+ const second=call();for(let i=0;i<100&&spawned.length<2;i++)await new Promise(r=>setTimeout(r,1));
+ expect(spawned).toHaveLength(2);const uses=items.filter(i=>i.kind==='toolUse');
+ spawned[1].stdout.write('second');spawned[1].emit('close',7);await second;
+ spawned[0].stdout.write('first');spawned[0].emit('close',0);await first;
+ expect(items.filter(i=>i.kind==='toolResult')).toMatchObject([
+  {id:uses[1].id,failed:true,output:JSON.stringify({exitCode:7,output:'second'})},
+  {id:uses[0].id,failed:false,output:JSON.stringify({exitCode:0,output:'first'})},
+ ]);
 });

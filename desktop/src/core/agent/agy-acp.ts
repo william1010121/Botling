@@ -12,7 +12,7 @@ import { agyWorkerRuntimeEnabled } from "./agy-capabilities";
 import { createAgyWorkerHead } from "./agy-worker-router";
 import { AgyWorkers } from "./agy-workers";
 import type { CodexItem } from "./codex";
-import { AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
+import { AGY_LOCAL_TOOLS, AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
 import { processTreeAdapter, type ManagedProcess, type TerminateResult } from "../process/tree";
 
 export const ACP_VERSION = "1.4.3";
@@ -33,6 +33,7 @@ export class AgyAcpProtocol {
   private approvals = new Map<string, { id: string | number; allow: string; deny: string; title: string; input: Obj }>();
   private tools = new Set<string>();
   private completedTools = new Set<string>();
+  private bridgeTools = new Set<string>();
   private closed = false;
   private ready = false;
   private busy = false;
@@ -48,7 +49,7 @@ export class AgyAcpProtocol {
   private text = "";
   private sessionId = "";
   private initialization: Promise<void> | null = null;
-  constructor(private config: AgyConfig, private write: (message: Obj) => void, private emit: (item: StreamItem) => void, private fatal: (error: Error) => void, private transport: { mcpServers?: Promise<Obj[]>; onAllow?: (title: string, args: Obj) => void; onPolicy?: (state: "negotiating" | "ready" | "active" | "stopped" | "error", message: string) => void; revoke?: () => void } = {}) { this.mode = config.bypassPermissions === true ? "yolo" : "default"; }
+  constructor(private config: AgyConfig, private write: (message: Obj) => void, private emit: (item: StreamItem) => void, private fatal: (error: Error) => void, private transport: { localToolEvents?: boolean; mcpServers?: Promise<Obj[]>; onAllow?: (title: string, args: Obj) => void; onPolicy?: (state: "negotiating" | "ready" | "active" | "stopped" | "error", message: string) => void; revoke?: () => void } = {}) { this.mode = config.bypassPermissions === true ? "yolo" : "default"; }
   private call(method: string, params: Obj, timeout = 30_000): Promise<Obj> {
     if (this.closed) return Promise.reject(new Error("ACP connection closed."));
     const id = ++this.seq;
@@ -112,7 +113,7 @@ export class AgyAcpProtocol {
       await this.start();
       await this.verifyMode();
       if (!this.ready || this.closed || epoch !== this.cancelEpoch) throw new Error("ACP cancelled before task submission.");
-      this.text = ""; this.tools.clear(); this.completedTools.clear();
+      this.text = ""; this.tools.clear(); this.completedTools.clear(); this.bridgeTools.clear();
       const prompt: Obj[] = [{ type: "text", text }];
       for (const path of images) {
         const mimeType = imageMediaType(path);
@@ -164,6 +165,13 @@ export class AgyAcpProtocol {
       }
       if (["tool_call", "tool_call_update"].includes(u.sessionUpdate)) {
         const id = str(u.toolCallId); if (!id) throw new Error("ACP tool has no identity.");
+        if (this.transport.localToolEvents && AGY_LOCAL_TOOLS.some(tool => u.title === `botling_${tool.name}`)) this.bridgeTools.add(id);
+        if (this.bridgeTools.has(id)) {
+          // Keep ACP's conservative turn/permission failure semantics, but never
+          // overwrite bridge-owned execution cards with its mirrored results.
+          if (u.status === "failed" && this.busy) this.turnFailure ??= "tool_failed";
+          return;
+        }
         if (!this.tools.has(id)) {
           this.tools.add(id); this.emit({ kind: "textBlock" });
           this.emit({ kind: "toolUse", id, tool: str(u.kind) || "ACP tool", title: str(u.title) || "Antigravity tool", detail: json(u.rawInput), input: obj(u.rawInput), parent: null });
@@ -280,7 +288,7 @@ export class AgyAcpHead {
     const child = this.process.child; this.running = true;
     this.protocol = new AgyAcpProtocol(this.config, value => { if (child.stdin.writable) child.stdin.write(JSON.stringify(value) + "\n"); }, item => { if (item.kind === "init") { this.config.sessionId = item.sessionId; updateAgyPermissions(this, {sessionId:item.sessionId}); } this.handlers.onItem(item); }, error => {
       this.failure = error.message; this.stopped = true; void this.workers?.close(); void this.bridge?.close(); void this.process?.terminate({ graceMs: 500 });
-    }, { mcpServers, onAllow: (title, args) => this.bridge?.grant(title, args), revoke: () => this.bridge?.revoke(), onPolicy: (state,message) => { if (state === "active") this.bridge?.beginTurn(); updateAgyPermissions(this,{state,message}); } });
+    }, { localToolEvents: true, mcpServers, onAllow: (title, args) => this.bridge?.grant(title, args), revoke: () => this.bridge?.revoke(), onPolicy: (state,message) => { if (state === "active") this.bridge?.beginTurn(); updateAgyPermissions(this,{state,message}); } });
     child.stdin.on("error", () => {});
     child.stdout.setEncoding("utf8");
     // Official ACP stderr can contain OAuth entry URLs; never expose it in chat/logs.
@@ -318,7 +326,7 @@ export class AgyAcpHead {
     if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.handlers.onItem,
       (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
       (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h)));
-    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true);
+    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item));
     return this.bridge.start().then(server => [server]);
   }
   send(text: string, uuid: string, images: string[] = []) {

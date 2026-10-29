@@ -1,4 +1,6 @@
 // Built-in, loopback-only tool transport. No external plugin installation or credentials.
+import type { StreamItem } from './stream';
+import { executableEnvironment } from '../process/executable';
 import { agyWorkerRuntimeEnabled } from './agy-capabilities';
 import { createServer, type Server } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
@@ -58,7 +60,7 @@ export class AgyMcpBridge {
   private base: string;
   private rootIdentity: string[];
   private protectedIdentity: string[];
-  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false) {
+  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void) {
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
     this.tools = [...AGY_LOCAL_TOOLS, ...(delegate && agyWorkerRuntimeEnabled() ? AGY_WORKER_TOOLS : [])];
     this.base = realpathSync(cwd);
@@ -108,8 +110,19 @@ export class AgyMcpBridge {
     if(method==='tools/list')return {tools:this.tools};
     if(method!=='tools/call')throw new Error('Unsupported MCP method.');
     const name=String(params.name),args=(params.arguments??{}) as Args;
-    try { const result=await this.invoke(name,args);return {isError:name==='run_command'&&(result as {exitCode:number|null}).exitCode!==0,content:[{type:'text',text:typeof result==='string'?result:JSON.stringify(result)}]}; }
-    catch(error){return {isError:true,content:[{type:'text',text:(error as Error).message}]};}
+    // These cards describe the operation this bridge actually executes. ACP's
+    // mirrored tool updates can attribute a previous tool's error to this call.
+    const id = `botling-mcp:${randomUUID()}`;
+    const observed = this.onToolEvent && AGY_LOCAL_TOOLS.some(tool => tool.name === name);
+    if (observed) {
+      this.onToolEvent!({kind:'textBlock'});
+      this.onToolEvent!({kind:'toolUse',id,tool:'other',title:`botling_${name}`,detail:JSON.stringify(args),input:args,parent:null});
+    }
+    let output: string, failed: boolean;
+    try { const result=await this.invoke(name,args);failed=name==='run_command'&&(result as {exitCode:number|null}).exitCode!==0;output=typeof result==='string'?result:JSON.stringify(result); }
+    catch(error){failed=true;output=(error as Error).message;}
+    if (observed) this.onToolEvent!({kind:'toolResult',id,output,failed,parent:null,launch:null});
+    return {isError:failed,content:[{type:'text',text:output}]};
   }
   /** Exact grants by default; local tools alone may use this head's negotiated active-turn capability. */
   async invoke(name:string,args:Args):Promise<unknown> {
@@ -159,7 +172,8 @@ export class AgyMcpBridge {
     return this.delegate(name,args);
   }
   private command(command:string, full = false):Promise<{exitCode:number|null;output:string}> {
-    const env:NodeJS.ProcessEnv={};for(const key of ['HOME','PATH','USER','TMPDIR','LANG'])if(process.env[key])env[key]=process.env[key];
+    const inherited:Record<string,string>={};for(const key of ['HOME','PATH','USER','TMPDIR','LANG'])if(process.env[key])inherited[key]=process.env[key]!;
+    const env = executableEnvironment(inherited);
     if(process.platform!=='darwin')return Promise.reject(new Error('Verified macOS command containment is required.'));
     this.scratch??=realpathSync(mkdtempSync(join(tmpdir(),'botling-agy-command-')));
     env.TMPDIR=this.scratch;

@@ -7,9 +7,9 @@ import {AgyAcpProtocol,AgyAcpHead,ACP_TOOLS,verifyAcpRuntime} from '../../src/co
 const clients:AgyAcpProtocol[]=[];
 afterEach(()=>clients.splice(0).forEach(c=>c.close()));
 const tick=async()=>{for(let i=0;i<15;i++)await Promise.resolve();};
-function harness(resume=false, full=false){
+function harness(resume=false, full=false, localToolEvents=false){
  const frames:any[]=[],items:any[]=[],errors:Error[]=[];
- const client=new AgyAcpProtocol({command:'never-launched',cwd:'/owned',sessionId:'old',resume,bypassPermissions:full},m=>frames.push(m),i=>items.push(i),e=>errors.push(e));clients.push(client);
+ const client=new AgyAcpProtocol({command:'never-launched',cwd:'/owned',sessionId:'old',resume,bypassPermissions:full},m=>frames.push(m),i=>items.push(i),e=>errors.push(e),{localToolEvents});clients.push(client);
  const reply=(result:any)=>client.receive({jsonrpc:'2.0',id:frames.findLast(f=>f.method&&f.id).id,result});
  const policy=()=>reply({configOptions:[{id:'mode',currentValue:full?'yolo':'default'}]});
  const init=async()=>{reply({protocolVersion:1,agentInfo:{name:'antigravity-acp',version:'1.4.3'},agentCapabilities:{loadSession:true}});await tick();reply({sessionId:resume?'old':'new'});await tick();policy();await tick();policy();await tick();};
@@ -170,4 +170,36 @@ it('unsupported approval after a failed tool still revokes full permission',asyn
  expect(h.client.fullPermissionActive).toBe(false);
  h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});await sent;
  expect(h.items.at(-1)).toMatchObject({ok:false,subtype:'permission_denied'});
+});
+
+it('uses bridge-owned execution cards instead of stale ACP command results',async()=>{
+ const h=harness(false,true,true),sent=h.client.send('task','one');await h.init();h.policy();await tick();const prompt=h.frames.at(-1).id;
+ const root=mkdtempSync(join(tmpdir(),'agy-result-cards-'));
+ const head=new AgyAcpHead({command:join(root,'unused-acp'),cwd:root,sessionId:'new',resume:false},{onItem:i=>h.items.push(i),onExit(){}});
+ (head as any).protocol=h.client;
+ try {
+  const [endpoint]=await (head as any).connectTools(root,root);(head as any).bridge.beginTurn();
+  const update=(u:any)=>h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:u}});
+  const call=async(name:string,args:any)=>{const r=await fetch(endpoint.url,{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})});return (await r.json() as any).result;};
+  for(const [id,command] of [['provider-command-1',"printf 'first-ok'"],['provider-command-2',"printf 'second-ok'"]]){
+   update({sessionUpdate:'tool_call',toolCallId:id,title:'botling_run_command',rawInput:{arguments:{command},command},status:'pending'});
+   expect((await call('run_command',{command})).isError).toBe(false);
+   // Persisted cards repeat another tool's error, while runtime commands are DONE.
+   update({sessionUpdate:'tool_call_update',toolCallId:id,status:'failed',rawOutput:'Error in MCP tool execution: Path required.'});
+  }
+  await call('write_file',{content:'no destination'});
+  const uses=h.items.filter(i=>i.kind==='toolUse'),results=h.items.filter(i=>i.kind==='toolResult');
+  expect(uses.map(i=>i.title)).toEqual(['botling_run_command','botling_run_command','botling_write_file']);
+  expect(new Set(uses.map(i=>i.id)).size).toBe(3);
+  expect(results.map(i=>({id:i.id,failed:i.failed,output:i.output}))).toEqual([
+   {id:uses[0].id,failed:false,output:JSON.stringify({exitCode:0,output:'first-ok'})},
+   {id:uses[1].id,failed:false,output:JSON.stringify({exitCode:0,output:'second-ok'})},
+   {id:uses[2].id,failed:true,output:'Path required.'},
+  ]);
+  // Mirrored errors cannot change the authoritative command cards; a genuine
+  // missing path and ACP's conservative failed-turn result are still retained.
+  expect(h.client.fullPermissionActive).toBe(true);
+  h.client.receive({jsonrpc:'2.0',id:prompt,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);
+  expect(h.items.at(-1)).toMatchObject({kind:'result',subtype:'tool_failed'});
+ }finally{await head.terminate();await sent;rmSync(root,{recursive:true,force:true});}
 });
