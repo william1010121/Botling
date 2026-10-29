@@ -72,6 +72,18 @@ function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boole
       if (active === tab.sessionId) setActive(tabs.find(x => x.sessionId !== tab.sessionId)?.sessionId || '');
     } catch (e) { closing.current.delete(tab.sessionId); fail(e); }
   };
+  /** A shell that exited on its own just closes its tab; no error, no hint. The last tab also hides the panel. */
+  const exited = (tab: TerminalState) => {
+    if (closing.current.has(tab.sessionId)) return;
+    closing.current.add(tab.sessionId);
+    void api.request({ type: 'close', botId, sessionId: tab.sessionId }).catch(() => {});
+    setTabs(t => {
+      const rest = t.filter(x => x.sessionId !== tab.sessionId);
+      setActive(a => a === tab.sessionId ? rest[0]?.sessionId || '' : a);
+      if (!rest.length) queueMicrotask(hide);
+      return rest;
+    });
+  };
   const restart = async (tab: TerminalState) => {
     closing.current.add(tab.sessionId);
     try {
@@ -113,15 +125,16 @@ function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boole
       <button onClick={hide} aria-label="Hide terminal panel">−</button>
     </div>
     {error && <div role="alert">{error}</div>}
-    {tabs.map(tab => <TerminalTab key={tab.sessionId} tab={tab} visible={visible && active === tab.sessionId} onError={e => { if (!closing.current.has(tab.sessionId)) fail(e); }} restart={() => void restart(tab)} />)}
+    {tabs.map(tab => <TerminalTab key={tab.sessionId} tab={tab} visible={visible && active === tab.sessionId} onError={e => { if (!closing.current.has(tab.sessionId)) fail(e); }} onExit={() => exited(tab)} />)}
     {!tabs.length && <div className="terminal-empty">Use + to open a shell in this bot’s project.</div>}
   </section>;
 }
-function TerminalTab({ tab, visible, onError, restart }: { tab: TerminalState; visible: boolean; onError: (e: unknown) => void; restart: () => void }) {
+function TerminalTab({ tab, visible, onError, onExit }: { tab: TerminalState; visible: boolean; onError: (e: unknown) => void; onExit: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
-  const [exit, setExit] = useState(tab.exitCode);
+  const onExitRef = useRef(onExit); onExitRef.current = onExit;
+  useEffect(() => { if (tab.exitCode !== null) onExitRef.current(); }, []);
   useEffect(() => {
     const api = bridge()!;
     const term = new Terminal({ allowProposedApi: true, cursorBlink: true, fontSize: 13, fontFamily: '"Botling Terminal", "MesloLGS NF", "SFMono-Regular", Menlo, monospace', scrollback: 5000, theme: { background: '#111318', foreground: '#e5e7eb' } });
@@ -137,7 +150,7 @@ function TerminalTab({ tab, visible, onError, restart }: { tab: TerminalState; v
         if (event.offset <= offset) return;
         offset = event.offset;
         term.write(event.data, () => { if (!disposed) send({ type: 'ack', botId: tab.botId, sessionId: tab.sessionId, offset: event.offset }); });
-      } else setExit(event.exitCode);
+      } else onExitRef.current();
     };
     const unsub = api.subscribe(event => {
       if (event.botId !== tab.botId || event.sessionId !== tab.sessionId) return;
@@ -145,7 +158,7 @@ function TerminalTab({ tab, visible, onError, restart }: { tab: TerminalState; v
     });
     void api.request({ type: 'attach', botId: tab.botId, sessionId: tab.sessionId }).then(value => {
       if (disposed) return;
-      const state = value as TerminalState; offset = state.offset; setExit(state.exitCode);
+      const state = value as TerminalState; offset = state.offset; if (state.exitCode !== null) { onExitRef.current(); return; }
       term.write(state.output, () => { if (!disposed) send({ type: 'ack', botId: tab.botId, sessionId: tab.sessionId, offset: state.offset }); });
       attached = true; pending.forEach(accept); pending.length = 0;
     }).catch(onError);
@@ -162,7 +175,6 @@ function TerminalTab({ tab, visible, onError, restart }: { tab: TerminalState; v
   }, [tab.sessionId]);
   useEffect(() => { if (visible) { fit.current?.fit(); terminal.current?.focus(); } }, [visible]);
   return <div className="terminal-tab" hidden={!visible}>
-    {exit !== null && <div role="status">Shell exited ({exit}). <button onClick={restart}>Restart terminal</button></div>}
     <div className="terminal-emulator" ref={host} />
   </div>;
 }

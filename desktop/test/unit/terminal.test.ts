@@ -42,7 +42,8 @@ describe('terminal lifecycle and ownership', () => {
     expect(processes[0].written).toBe('\x03中文\r'); expect(processes[0].sizes).toEqual([[100, 30]]);
     expect(() => manager.restart(7, 'A', a.sessionId, process.cwd())).toThrow();
     processes[0].exit({ exitCode: 3 }); expect(manager.list(7, 'A')[0].exitCode).toBe(3);
-    expect(() => manager.input(7, 'A', a.sessionId, 'bad')).toThrow();
+    expect(() => manager.input(7, 'A', a.sessionId, 'bad')).not.toThrow();
+    expect(processes[0].written).toBe('\x03中文\r');
     const next = manager.restart(7, 'A', a.sessionId, process.cwd()); expect(next.sessionId).not.toBe(a.sessionId);
     expect(processes[1].written).toBe(''); manager.closeOwner(7); expect(processes[1].killed).toBe(true);
   });

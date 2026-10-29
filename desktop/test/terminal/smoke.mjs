@@ -50,9 +50,8 @@ try {
   await page.getByLabel('Shell for new terminal').filter({visible:true}).selectOption('/opt/homebrew/bin/fish');
   await page.getByRole('button',{name:'New terminal',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.terminal-panel:not([hidden]) [role=tab]').length===3);await type("printf 'FISH_INTERACTIVE=%s\\n' $version");await waitText('FISH_INTERACTIVE=');
   await page.screenshot({path:join(evidence,'fish.png')});checks.push('real fish interactive tab');
-  await type('exit 7');await page.getByRole('status').filter({hasText:'Shell exited (7)'}).waitFor();
-  await page.getByRole('button',{name:'Restart terminal',exact:true}).click();await page.getByRole('button',{name:'Restart terminal',exact:true}).waitFor({state:'hidden'});await type("printf 'FISH_RESTARTED\\n'");await waitText('FISH_RESTARTED');checks.push('exit status and explicit restart');
-  await page.getByRole('button',{name:'Close terminal 3',exact:true}).click();await page.getByRole('button',{name:'Close terminal 3',exact:true}).waitFor({state:'hidden'});assert.equal(await page.getByRole('tab').filter({visible:true}).count(),2);checks.push('close selected tab preserves siblings');
+  await type('exit 7');await page.waitForFunction(()=>document.querySelectorAll('.terminal-panel:not([hidden]) [role=tab]').length===2);assert.equal(await page.getByRole('alert').count(),0);checks.push('exited shell closes its tab quietly');
+  await page.getByRole('button',{name:'Close terminal 2',exact:true}).click();await page.getByRole('button',{name:'Close terminal 2',exact:true}).waitFor({state:'hidden'});assert.equal(await page.getByRole('tab').filter({visible:true}).count(),1);checks.push('close selected tab preserves siblings');
   assert.deepEqual(errors,[]);
   const versions=await app.evaluate(()=>process.versions);
   writeFileSync(join(evidence,'result.json'),JSON.stringify({checks,versions,p10k:existsSync(p10k),errors},null,2));console.log(JSON.stringify({checks,versions:{electron:versions.electron,modules:versions.modules,napi:versions.napi},evidence},null,2));

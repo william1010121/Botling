@@ -63,7 +63,7 @@ export class BotTerminals {
     if (s.paused && s.state.offset - offset < 64 * 1024) { s.paused = false; s.pty.resume(); }
   }
   input(owner: number, botId: string, id: string, data: string, binary = false) {
-    const s = this.owned(owner, botId, id); if (s.state.exitCode !== null) throw new Error('Shell exited. Restart the terminal.'); s.pty.write(binary ? Buffer.from(data, 'binary') : data);
+    const s = this.owned(owner, botId, id); if (s.state.exitCode !== null) return; s.pty.write(binary ? Buffer.from(data, 'binary') : data);
   }
   resize(owner: number, botId: string, id: string, cols: number, rows: number) {
     const s = this.owned(owner, botId, id); if (s.state.exitCode === null) s.pty.resize(cols, rows);
