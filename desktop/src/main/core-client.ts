@@ -11,7 +11,7 @@ import type { HotReport } from "../hot-install-plan";
 export type AppOp = "screenshot" | "quit" | "installRelease" | "planBuild" | "installBuild";
 const APP_OPS = new Set<string>(["screenshot", "quit", "installRelease", "planBuild", "installBuild"]);
 /** Which strings each op may carry (anything else is dropped). */
-const APP_ARGS: Record<string, string[]> = { planBuild: ["path"], installBuild: ["path", "requester", "note", "from", "to"] };
+const APP_ARGS: Record<string, string[]> = { planBuild: ["path"], installBuild: ["path", "requester", "note", "from", "to", "mode"] };
 
 /** The plugin host that goes with a core build: `<build>/host/host-utility.mjs` beside `<build>/core/main.cjs`, when it is there. */
 export function hostScriptFor(script: string): string | null {
