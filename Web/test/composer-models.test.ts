@@ -26,7 +26,7 @@ it('opens each engine without selecting a recipient, preserving the draft and sa
  button('Runtime choice').click(); await settle();
  expect(configure).toHaveBeenCalledWith('A',{codexModel:'runtime'});
  expect(composer.text).toBe('Keep my draft');
- expect(document.querySelector('.model-popover')?.textContent).toContain('Next message');
+ expect(button('Runtime choice').getAttribute('aria-pressed')).toBe('true');
  document.querySelector<HTMLButtonElement>('.answer-chip[data-head="agy"]')!.click();
  expect(sent).toContainEqual(expect.objectContaining({type:'setAnswerWith',to:'agy'}));
 });
@@ -65,7 +65,7 @@ it('keeps confirmed selection on save failure and blocks a send while saving',as
 });
 it('shows a catalog failure without losing default and saved selections, then retries',async()=>{
  catalog={status:'unavailable',models:[],message:'Engine is unavailable'};await open();
- expect(button('Engine default')).toBeDefined();expect(document.querySelector('.model-popover')?.textContent).toContain('old');
+ expect(button('Default')).toBeDefined();expect(document.querySelector('.model-popover')?.textContent).toContain('old');
  expect(document.querySelector('.model-popover')?.textContent).toContain('Engine is unavailable');
  catalog={status:'ready',message:'',models:[{id:'recovered',name:'Recovered runtime model',isDefault:true,efforts:['low','high']}]};
  button('Retry').click();await settle();expect(button('Recovered runtime model')).toBeDefined();expect(configure).not.toHaveBeenCalled();
@@ -78,4 +78,31 @@ it('preserves expanded state across streaming updates and restores focus after E
 it('lets an unsupported saved effort reset to default even when capabilities are unavailable',async()=>{
  settings.effort='max';catalog={status:'error',models:[],message:'Offline'};await open();button('Use default').click();await settle();
  expect(configure).toHaveBeenCalledWith('A',{effort:null});
+});
+it('keeps only model rows and compact effort controls in the normal menu',async()=>{
+ settings.codexModel=null;await open();
+ const panel=document.querySelector('.model-popover')!;
+ expect(button('Default')).toBeDefined();
+ expect(panel.querySelector('.model-heading')).toBeNull();
+ expect(panel.querySelector('.model-footer')).toBeNull();
+ expect(panel.querySelector('.effort-caption')?.textContent).toBe('Effort');
+ expect(panel.querySelector('.effort-value')?.textContent).toBe('Medium');
+ const refresh=button('Refresh models');expect(refresh).toBeDefined();expect(refresh.textContent).toBe('');
+ expect(refresh.querySelector('svg')).not.toBeNull();
+ button('Runtime choice').click();await settle();
+ expect(button('Runtime choice').getAttribute('aria-pressed')).toBe('true');
+ expect(panel.querySelector('.model-footer')).toBeNull();
+});
+it('reveals shared effort scope on keyboard focus without adding a permanent explanation',async()=>{
+ settings.codexModel=null;await open();
+ const caption=button('Effort');const tooltip=document.querySelector<HTMLElement>('[role=tooltip]')!;
+ expect(tooltip).not.toBeNull();expect(tooltip.hidden).toBe(true);
+ expect(caption.getAttribute('aria-describedby')).toBe(tooltip.id);
+ caption.focus();expect(tooltip.hidden).toBe(false);expect(tooltip.textContent).toBe('Shared by this bot');
+ button('Default').focus();expect(tooltip.hidden).toBe(true);
+});
+it('renders every runtime model name, including a name that looks like fixture copy',async()=>{
+ catalog.models.push({id:'unusual-runtime-name',name:'Runtime catalog fixture',isDefault:false,efforts:null});await open();
+ expect(button('Runtime catalog fixture')).toBeDefined();button('Runtime catalog fixture').click();await settle();
+ expect(configure).toHaveBeenCalledWith('A',{codexModel:'unusual-runtime-name'});
 });

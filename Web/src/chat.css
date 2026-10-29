@@ -1471,15 +1471,18 @@ body.spec-mode .float-layer { display: none; }
 .answer-menu:hover { color: var(--text); background: color-mix(in srgb,var(--text) 8%,transparent); }
 .answer-menu:focus-visible, .model-popover button:focus-visible, .model-popover input:focus-visible { outline: 2px solid var(--codex); outline-offset: -2px; }
 .model-popover { position: absolute; z-index: 30; bottom: 49px; left: 8px; width: 260px; max-width: calc(100% - 16px); padding: 10px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--raised); color: var(--text); box-shadow: 0 8px 30px #0005; font-size: 12.5px; }
-.model-heading { font-weight: 600; padding: 2px 6px 8px; }
 .model-choices { max-height: 220px; overflow-y: auto; }
 .model-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; text-align: left; width: 100%; padding: 7px 6px; border: 0; border-radius: 6px; color: inherit; background: transparent; font: inherit; overflow-wrap: anywhere; cursor: pointer; }
 .model-choice:hover, .model-choice[aria-pressed=true] { background: color-mix(in srgb,var(--text) 7%,transparent); }
 .model-check { width: 12px; flex: none; }
 .model-choice small { width: 100%; padding-left: 18px; color: var(--muted); }
-.model-effort { display: grid; grid-template-columns: 1fr auto; gap: 10px 6px; border-top: 1px solid var(--border); margin-top: 8px; padding: 12px 6px 4px; }
-.effort-value { color: var(--muted); font-size: 11px; }
-.model-effort small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+.model-effort { display: grid; gap: 8px; border-top: 1px solid var(--border); margin-top: 8px; padding: 12px 6px 4px; }
+.effort-heading { position: relative; display: flex; align-items: center; gap: 5px; min-height: 24px; }
+.effort-caption, .model-refresh { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.effort-value, .effort-separator { color: var(--muted); }
+.model-refresh { display: grid; place-items: center; width: 24px; height: 24px; margin-left: auto; color: var(--muted); border-radius: 5px; flex: none; }
+.model-refresh:hover { color: var(--text); background: color-mix(in srgb,var(--text) 7%,transparent); }
+.effort-tooltip { position: absolute; z-index: 4; bottom: calc(100% + 4px); left: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bubble); color: var(--text); font-size: 11px; white-space: nowrap; }
 .effort-track { position: relative; grid-column: 1 / -1; height: 22px; --progress: 0%; }
 .effort-track input { appearance: none; -webkit-appearance: none; width: 100%; height: 14px; margin: 4px 0; border-radius: 20px; background: transparent; cursor: pointer; position: relative; z-index: 3; }
 .effort-track input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; height: 22px; width: 22px; background: white; border: 1px solid #0001; border-radius: 50%; box-shadow: 0 1px 3px #0003; }

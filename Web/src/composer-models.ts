@@ -19,12 +19,10 @@ export class ComposerModels {
  private generation=0;
  private bot='';
  private engine: ModelEngine='claude';
- private label='';
  private settings: ModelPreferences|null=null;
  private catalogs: Partial<Record<ModelEngine,ModelCatalog>>={};
  private loading=false;
  private error='';
- private saved=false;
  private pending=new Set<string>();
  constructor(private root:HTMLElement, private changed:()=>void) {}
  isOpen(bot:string,engine:string):boolean {return !!this.panel && this.bot===bot && this.engine===engine;}
@@ -37,8 +35,8 @@ export class ComposerModels {
  }
  async open(bot:string,engine:ModelEngine,label:string):Promise<void> {
   if(this.panel && bot===this.bot && engine===this.engine){this.close();return;}
-  this.close(false);this.bot=bot;this.engine=engine;this.label=label;
-  this.settings=null;this.catalogs={};this.error='';this.saved=false;
+  this.close(false);this.bot=bot;this.engine=engine;
+  this.settings=null;this.catalogs={};this.error='';
   this.panel=document.createElement('div');this.panel.className='model-popover';
   this.panel.setAttribute('role','dialog');this.panel.setAttribute('aria-label',`${label} model and effort`);
   this.panel.tabIndex=-1; this.root.append(this.panel);
@@ -80,10 +78,10 @@ export class ComposerModels {
   const bot=this.bot,epoch=this.generation;
   const focus=(document.activeElement as HTMLElement)?.dataset.focus;
   if(this.pending.has(bot))return;
-  this.pending.add(bot);this.error='';this.saved=false;this.changed();this.draw();
+  this.pending.add(bot);this.error='';this.changed();this.draw();
   try {
    const settings=await composerHost!.configureModels!(bot,change);
-   if(epoch===this.generation){this.settings=settings;this.saved=true;}
+   if(epoch===this.generation){this.settings=settings;}
   }catch(error){if(epoch===this.generation)this.error=error instanceof Error?error.message:String(error);}
   finally{
    this.pending.delete(bot);this.changed();
@@ -95,7 +93,6 @@ export class ComposerModels {
   const panel=this.panel;if(!panel)return;
   const focused=(document.activeElement as HTMLElement)?.dataset.focus;
   panel.replaceChildren();
-  const title=document.createElement('div');title.className='model-heading';title.textContent=this.label;panel.append(title);
   const busy=this.pending.has(this.bot);
   const button=(label:string,run:()=>void,focus:string)=>{const el=document.createElement('button');el.type='button';el.textContent=label;el.setAttribute('aria-label',label);el.dataset.focus=focus;el.disabled=busy;el.onclick=run;return el;};
   const settings=this.settings;
@@ -111,13 +108,20 @@ export class ComposerModels {
     if(missing){const note=document.createElement('small');note.textContent=this.loading?'Saved':'Saved · not in current list';row.append(note);}
     rows.append(row);
    };
-   choice(null,'Engine default');
+   choice(null,'Default');
    if(value && !models.some(m=>m.id===value))choice(value,value,true);
    models.forEach(m=>choice(m.id,m.name));
    const levels=supportedEfforts(settings,this.catalogs);
    const selected=levels.indexOf(settings.effort);
    const section=document.createElement('div');section.className='model-effort';
-   const caption=document.createElement('label');caption.htmlFor='composer-effort';caption.textContent='Reasoning effort';
+   const heading=document.createElement('div');heading.className='effort-heading';
+   const caption=button('Effort',()=>{},'effort-scope');caption.className='effort-caption';
+   const scope=document.createElement('span');scope.id='composer-effort-scope';scope.className='effort-tooltip';scope.setAttribute('role','tooltip');scope.textContent='Shared by this bot';scope.hidden=true;
+   caption.setAttribute('aria-describedby',scope.id);
+   caption.onfocus=caption.onmouseenter=()=>{scope.hidden=false;};
+   caption.onblur=()=>{scope.hidden=!caption.matches(':hover');};
+   caption.onmouseleave=()=>{scope.hidden=document.activeElement!==caption;};
+   const separator=document.createElement('span');separator.className='effort-separator';separator.textContent='·';separator.setAttribute('aria-hidden','true');
    const output=document.createElement('span');output.className='effort-value';
    const current=labels[settings.effort??'default']??settings.effort;
    const unavailable=settings.engines.includes('agy') && ['xhigh','max'].includes(settings.effort??'') ? 'unsupported' : 'not reported';
@@ -134,17 +138,24 @@ export class ComposerModels {
     if(next===null || slider.disabled)return;event.preventDefault();slider.value=String(Math.max(0,Math.min(levels.length-1,next)));reflect();void this.save({effort:levels[Number(slider.value)]});
    };
    const dots=document.createElement('div');dots.className='effort-dots';dots.setAttribute('aria-hidden','true');levels.forEach(()=>dots.append(document.createElement('i')));
-   track.append(slider,dots);section.append(caption,output,track);
-   const scope=document.createElement('small');scope.textContent='Shared by this bot';section.append(scope);
+   heading.append(caption,separator,output,scope);
+   track.append(slider,dots);section.append(heading,track);
    if(selected<0 && !this.loading) section.append(button('Use default',()=>void this.save({effort:null}),'default-effort'));
    panel.append(section);
   }
-  const footer=document.createElement('div');footer.className='model-footer';
-  const status=document.createElement('span');status.setAttribute('role','status');
   const catalog=this.catalogs[this.engine];
-  status.textContent=busy?'Saving…':this.error|| (this.loading?'Loading…':this.saved?'Next message':catalog?.status!=='ready'?catalog?.message??'':catalog.models.length?'':'No models returned');
-  const refresh=button(this.error || (catalog && catalog.status!=='ready')?'Retry':'Refresh',()=>void this.load(),'refresh');refresh.disabled=busy||this.loading;
-  footer.append(status,refresh);panel.append(footer);
+  const message=busy?'Saving…':this.error|| (this.loading?'Loading…':catalog?.status!=='ready'?catalog?.message??'':catalog.models.length?'':'No models returned');
+  const retry=!!this.error || !!(catalog && catalog.status!=='ready');
+  const refresh=button(retry?'Retry':'Refresh models',()=>void this.load(),'refresh');refresh.disabled=busy||this.loading;
+  if(!retry){
+   refresh.className='model-refresh';refresh.title='Refresh models';
+   refresh.innerHTML='<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 6a5 5 0 1 0 .2 3M13 2v4H9"/></svg>';
+  }
+  if(message){
+   const footer=document.createElement('div');footer.className='model-footer';
+   const status=document.createElement('span');status.setAttribute('role','status');status.textContent=message;
+   footer.append(status,refresh);panel.append(footer);
+  } else panel.querySelector('.effort-heading')?.append(refresh);
   if(focused) [...panel.querySelectorAll<HTMLElement>('[data-focus]')].find(el=>el.dataset.focus===focused)?.focus();
  }
 }
