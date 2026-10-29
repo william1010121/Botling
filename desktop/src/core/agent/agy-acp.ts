@@ -43,7 +43,8 @@ export class AgyAcpProtocol {
   private submitting = false;
   private readonly mode: "default" | "yolo";
   get initialized() { return this.ready; }
-  get fullPermissionActive() { return this.mode === "yolo" && this.confirmed && this.ready && this.submitting && !this.closed && !this.turnCancelled && !this.turnFailure && this.approvals.size === 0; }
+  // Tool errors affect the result, not authorization to inspect or recover in this turn.
+  get fullPermissionActive() { return this.mode === "yolo" && this.confirmed && this.ready && this.submitting && !this.closed && !this.turnCancelled && (!this.turnFailure || this.turnFailure === "tool_failed") && this.approvals.size === 0; }
   private text = "";
   private sessionId = "";
   private initialization: Promise<void> | null = null;
@@ -181,7 +182,7 @@ export class AgyAcpProtocol {
     const deny = options.find((o: Obj) => o.kind === "reject_once" && o.optionId === "deny");
     // Workspace-trust and ask_question are not tool approvals. Never convert their choices to allow.
     if (!this.ready || !this.busy || this.turnCancelled || p.sessionId !== this.sessionId || !allow || !deny) {
-      if (this.busy && p.sessionId === this.sessionId) this.turnFailure ??= "permission_denied";
+      if (this.busy && p.sessionId === this.sessionId && (!this.turnFailure || this.turnFailure === "tool_failed")) this.turnFailure = "permission_denied";
       this.write({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } }); return;
     }
     const requestId = `acp:${String(message.id)}`;

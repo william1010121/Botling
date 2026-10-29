@@ -1,3 +1,7 @@
+import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {AgyMcpBridge} from '../../src/core/agent/agy-mcp';
 import {afterEach,expect,it,vi} from 'vitest';
 import {AgyAcpProtocol,AgyAcpHead,ACP_TOOLS,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
 const clients:AgyAcpProtocol[]=[];
@@ -136,4 +140,34 @@ it('foreign session updates and unexpected mode changes fail closed in full perm
   const h=harness(false,true),sent=h.client.send('task','one');await h.init();h.policy();await tick();
   h.client.receive({jsonrpc:'2.0',method:'session/update',params});await sent;expect(h.errors).toHaveLength(1);expect(h.client.fullPermissionActive).toBe(false);
  }
+});
+
+// Replay the T3 research failure: find returned useful output with exit 1,
+// then ACP reported a failed tool before the model attempted another read.
+it('ordinary tool failure retains negotiated full permission for recovery tools',async()=>{
+ const h=harness(false,true),sent=h.client.send('research and create report','one');
+ await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
+ h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call_update',toolCallId:'find',status:'failed',rawOutput:{exitCode:1,output:'/fixture/t3'}}}});
+ expect(h.client.fullPermissionActive).toBe(true);
+ const dir=mkdtempSync(join(tmpdir(),'agy-recovery-'));
+ const bridge=new AgyMcpBridge(dir,dir,undefined,undefined,undefined,()=>h.client.fullPermissionActive);
+ try {
+  writeFileSync(join(dir,'source.txt'),'research evidence');bridge.beginTurn();
+  await expect(bridge.invoke('read_file',{path:'source.txt'})).resolves.toBe('research evidence');
+  await expect(bridge.invoke('write_file',{path:'report.json',content:'{}'})).resolves.toBe('File written.');
+ } finally {await bridge.close();rmSync(dir,{recursive:true,force:true});}
+ h.client.receive({jsonrpc:'2.0',id:79,method:'session/request_permission',params:{sessionId:'new',toolCall:{title:'administrator review'},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'deny'}]}});
+ expect(h.client.fullPermissionActive).toBe(false);
+ h.client.answer('acp:79',false);expect(h.client.fullPermissionActive).toBe(false);
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);
+ expect(h.items.at(-1)).toMatchObject({subtype:'permission_denied'});
+});
+
+it('unsupported approval after a failed tool still revokes full permission',async()=>{
+ const h=harness(false,true),sent=h.client.send('task','one');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
+ h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call',toolCallId:'bad',status:'failed'}}});
+ h.client.receive({jsonrpc:'2.0',id:80,method:'session/request_permission',params:{sessionId:'new',options:[]}});
+ expect(h.client.fullPermissionActive).toBe(false);
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});await sent;
+ expect(h.items.at(-1)).toMatchObject({ok:false,subtype:'permission_denied'});
 });
