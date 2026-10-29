@@ -36,10 +36,11 @@ function Graph({ g, ctx, cls, maxW }: { g: GraphLayout; ctx: Ctx; cls: string; m
   </svg>;
 }
 
-export const flow = defineBlock({
-  type: 'flow',
-  description: 'Flowchart laid out automatically (elkjs): boxes with optional status colour, decisions, start/end pills, labelled arrows; left→right or top→bottom.',
-  when: 'A process, pipeline, causal chain or state change where the arrows are the point (where it is stuck, what caused what). ≤12 nodes in a report; mark the bottleneck with status blocked.',
+// Both public names share fields, validation, layout and rendering.
+const defineFlowchart = (type: 'flowchart' | 'flow') => defineBlock({
+  type,
+  description: type === 'flow' ? 'Compatibility alias for flowchart. Existing reports remain supported; use flowchart for new reports.' : 'Flowchart and architecture diagram: connected boxes and labelled arrows, laid out automatically. Supports status colours, decisions and start/end nodes.',
+  when: 'Use flowchart for system architecture relationships, dependencies, processes, pipelines or causal chains. Nodes are components or steps; arrows show connections. Use sequence for messages ordered over time. ≤12 nodes in a report; mark bottlenecks with status blocked. The old type flow remains an alias.',
   fields: {
     dir: z.enum(['LR', 'TB']).default('LR'),
     nodes: z.array(z.strictObject({
@@ -71,14 +72,18 @@ export const flow = defineBlock({
   },
   Doc: ({ block, ctx }) => {
     const p = ctx.prepared as Prepared;
-    return <Card type="flow" block={block} ctx={ctx} className={p.narrow ? 'has-narrow' : undefined}>
+    return <Card type={type} block={block} ctx={ctx} className={p.narrow ? 'has-narrow' : undefined}>
       <div className="fl-wrap"><Graph g={p.main} ctx={ctx} cls="wide"/>{p.narrow && <Graph g={p.narrow} ctx={ctx} cls="narrow"/>}</div>
     </Card>;
   },
   Slide: ({ block, ctx }) => {
     const p = ctx.prepared as Prepared;
     const fitW = Math.min(p.main.w * 1.25, 1136, (400 * p.main.w) / p.main.h);
-    return <Card type="flow" block={block} ctx={ctx}><div className="fl-wrap"><Graph g={p.main} ctx={ctx} cls="wide" maxW={Math.round(fitW)}/></div></Card>;
+    return <Card type={type} block={block} ctx={ctx}><div className="fl-wrap"><Graph g={p.main} ctx={ctx} cls="wide" maxW={Math.round(fitW)}/></div></Card>;
   },
   slide: { weight: b => (b.dir === 'TB' ? 0.8 : 0.6) },
 });
+
+export const flowchart = defineFlowchart('flowchart');
+/** Legacy ReportSpec v2 name; keep existing JSON and imports working. */
+export const flow = defineFlowchart('flow');

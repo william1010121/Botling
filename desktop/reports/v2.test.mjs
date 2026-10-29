@@ -308,3 +308,44 @@ test('results lint suggests evidence without claiming mandatory comparisons or i
   const { spec: measured } = api.validateSpec(spec([{ type: 'kpi', items: [{ label: 'Observed latency', value: 12 }] }], { kind: 'results' }));
   assert.deepEqual(api.lintSpec(measured, api.registry), []);
 });
+
+test('flowchart and legacy flow share validation, rendering and investigation lint', async () => {
+  const payload = {
+    title: 'The API connects clients to storage',
+    nodes: [{ id: 'client', label: 'Client' }, { id: 'api', label: 'API' }, { id: 'db', label: 'Database' }],
+    edges: [{ from: 'client', to: 'api', label: 'request' }, { from: 'api', to: 'db' }],
+  };
+  const report = type => spec([{ type, ...payload }], { kind: 'investigation', asks: [] });
+  for (const mode of ['doc', 'slide']) {
+    const old = await api.renderV2(report('flow'), { mode });
+    const current = await api.renderV2(report('flowchart'), { mode });
+    assert.equal(old.ok, true); assert.equal(current.ok, true);
+    assert.deepEqual(current.warnings, []); assert.deepEqual(old.warnings, []);
+    assert.equal(current.html.replaceAll('blk-flowchart', 'blk-flow'), old.html);
+    assert.equal(current.slides, old.slides);
+  }
+  for (const type of ['flowchart', 'flow']) {
+    const valid = { type, ...payload };
+    const schema = api.registry.get(type).schema;
+    assert.equal(schema.safeParse(valid).success, true);
+    for (const invalid of [
+      { ...valid, nodes: [payload.nodes[0], payload.nodes[0]] },
+      { ...valid, edges: [{ from: 'client', to: 'missing' }] },
+      { ...valid, dir: 'invalid' },
+      { ...valid, extra: true },
+    ]) {
+      assert.equal(schema.safeParse(invalid).success, false, type);
+      assert.equal(api.validateSpec(spec([invalid])).errors.length > 0, true, type);
+    }
+    const large = { ...valid, nodes: Array.from({ length: 13 }, (_, i) => ({ id: `n${i}`, label: `Node ${i}` })), edges: [] };
+    const result = await api.renderV2(spec([large], { kind: 'investigation', asks: [] }));
+    assert.equal(result.ok, true);
+    assert.equal(result.warnings.length, 1);
+    assert.match(result.warnings[0].message, /13 nodes/);
+  }
+  const mixed = await api.renderV2(spec([{ type: 'flow', ...payload }, { type: 'flowchart', ...payload }], { asks: [] }));
+  assert.equal(mixed.ok, true);
+  assert.deepEqual(mixed.warnings, []);
+  const d = dom(mixed.html);
+  assert.equal(d.querySelectorAll('.blk-flow, .blk-flowchart').length, 2);
+});

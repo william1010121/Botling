@@ -8,7 +8,7 @@ type Step = { title: string; text?: string; status?: Status };
 export const steps = defineBlock({
   type: 'steps',
   description: 'An ordered sequence of 2–6 steps, each a short title with an optional one-line detail.',
-  when: 'A procedure, a fix plan or "what happens next" in order. If the steps branch, use flow instead.',
+  when: 'A procedure, a fix plan or "what happens next" in order. If the steps branch, use flowchart instead.',
   fields: {
     items: z.array(z.strictObject({
       title: z.string().trim().min(1).max(24),

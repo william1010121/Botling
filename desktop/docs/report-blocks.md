@@ -15,7 +15,7 @@ A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick
 7. **End with `asks`** (what, who, by) — or `"asks": []` for "No action needed". `status.level` at_risk / off_track needs `status.reason` (cause + fix).
 8. **Forbidden:** topic-only headings, narrating your process chronologically, the conclusion at the end, evidence dumps, decorative charts, one-sided options, vague hedging, mixing report kinds.
 9. **Use ASD-STE100-informed plain language.** Use active voice, direct verbs, and consistent terms. Aim for at most 20 English words or 30 Chinese characters per sentence. Keep useful technical names. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese.
-10. **Explain causes visually.** For multistep causes, prefer a flow plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
+10. **Explain causes visually.** For multistep causes, prefer a flowchart plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
 11. **Write for the reader.** Omit routine defensive boilerplate and internal coordination jargon. Keep research-only handback details, test commands, and preview-tool details in the internal handback. State material uncertainty and failed checks that affect the decision, with their practical effect. Never conceal defects or claim unperformed validation.
 
 ## Generate
@@ -83,7 +83,7 @@ The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "war
   - `title`: string ≤24 — Short topic label, shown small above the takeaway.
   - `takeaway?`: string ≤60 — The section's conclusion as one sentence; becomes the slide headline.
   - `layout?`: "auto" | "stack" | "split" | "grid"
-  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
+  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
 - `asks?`: { what, who?, by? }[] (≤3) — What the reader must do (owner, deadline). [] renders "No action needed".
   - `what`: string ≤60
   - `who?`: string ≤20
@@ -100,7 +100,7 @@ Where things stand and what needs attention.
 
 1. tldr + status.level (at_risk/off_track need status.reason: cause + fix)
 2. kpi (target vs actual, delta, spark) — stack:true for status counts
-3. checklist or table (Done / Next / Blocked) or flow (where each item is stuck)
+3. checklist or table (Done / Next / Blocked) or flowchart (where each item is stuck)
 4. timeline (milestones) or roadmap (now/next/later) — optional
 5. asks (owner, deadline) — or [] for "No action needed"
 
@@ -120,7 +120,7 @@ Where things stand and what needs attention.
 What broke, why, and whether it is fixed.
 
 1. tldr = impact + fixed now? + the cause in one sentence
-2. flow plus a table — show the multistep cause and the evidence for each link; mark pending inferences
+2. flowchart plus a table — show the multistep cause and the evidence for each link; mark pending inferences
 3. timeline (events) — only when timing explains the cause
 4. beforeafter or trend — the metric before/after the fix
 5. checklist — actions with owners (blameless)
@@ -141,7 +141,7 @@ Goal, definition of done, path there.
 
 1. tldr = goal + definition of done + date
 2. timeline (gantt with lanes, today) or roadmap
-3. flow — dependencies / critical path
+3. flowchart — dependencies / critical path
 4. callout tone=bad for the top risk
 5. steps — the first step; asks — decision needed
 
@@ -161,7 +161,7 @@ What the numbers say after a change.
 What it is and how it works.
 
 1. tldr = one sentence what + why
-2. flow plus a table — show the multistep mechanism and explain each link
+2. flowchart plus a table — show the multistep mechanism and explain each link
 3. steps — only for an ordered procedure
 4. image — a worked example
 5. callout — limits
@@ -183,7 +183,8 @@ Every block takes optional `title` (action title), `note` (faint caption: unit, 
 | `quadrant` | 2×2 chart: items placed by two 0–1 scores (e.g. effort × impact), with the four quadrants named. |
 | `timeline` | Either a vertical event log (items without end) or a gantt chart (items with start and end dates, optional lanes and a today line). |
 | `roadmap` | Two to four columns (e.g. Now / Next / Later) of short items with optional status. |
-| `flow` | Flowchart laid out automatically (elkjs): boxes with optional status colour, decisions, start/end pills, labelled arrows; left→right or top→bottom. |
+| `flowchart` | Flowchart and architecture diagram: connected boxes and labelled arrows, laid out automatically. Supports status colours, decisions and start/end nodes. |
+| `flow` | Compatibility alias for flowchart. Existing reports remain supported; use flowchart for new reports. |
 | `sequence` | Sequence diagram: 2–5 actors as columns, numbered messages between them (call, dashed reply, or a note on one actor). |
 | `table` | A compact table; cells can carry a status or tone dot. Numeric columns align right. |
 | `options` | Options compared on the same criteria (2–4 options incl. "do nothing", 2–7 criteria), each cell rated good / warn / bad, with the recommended option marked. |
@@ -416,11 +417,36 @@ Two to four columns (e.g. Now / Next / Later) of short items with optional statu
 {"type":"roadmap","title":"這週收尾兩條線，下週開始 Windows","columns":[{"title":"現在","items":[{"label":"Rust 後端 IPC","status":"active","note":"剩 3 個指令"},{"label":"手機版 bot 清單","status":"blocked"}]},{"title":"下一步","items":[{"label":"報告區塊定稿"},{"label":"安裝器簽章"}]},{"title":"之後","items":[{"label":"Windows / Linux 打包"}]}]}
 ```
 
+### `flowchart`
+
+Flowchart and architecture diagram: connected boxes and labelled arrows, laid out automatically. Supports status colours, decisions and start/end nodes.
+
+**When:** Use flowchart for system architecture relationships, dependencies, processes, pipelines or causal chains. Nodes are components or steps; arrows show connections. Use sequence for messages ordered over time. ≤12 nodes in a report; mark bottlenecks with status blocked. The old type flow remains an alias.
+
+- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
+- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
+- `dir?`: "LR" | "TB"
+- `nodes`: { id, label, sub?, status?, kind? }[] (≥2 ≤25)
+  - `id`: string ≤24
+  - `label`: string ≤30
+  - `sub?`: string ≤24
+  - `status?`: "done" | "active" | "pending" | "blocked" | "risk" | "unverified" | "skipped" — done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)
+  - `kind?`: "step" | "decision" | "start" | "end"
+- `edges`: { from, to, label?, kind? }[] (≤40)
+  - `from`: string
+  - `to`: string
+  - `label?`: string ≤16
+  - `kind?`: "solid" | "dashed"
+
+```json
+{"type":"flowchart","title":"卡在安裝：新版 .2 裝上後退回 .1","nodes":[{"id":"impl","label":"實作","status":"done"},{"id":"review","label":"複審","status":"done"},{"id":"pack","label":"打包","status":"done"},{"id":"install","label":"安裝","sub":"退回 .1","status":"blocked"},{"id":"accept","label":"驗收","status":"pending"}],"edges":[{"from":"impl","to":"review"},{"from":"review","to":"pack"},{"from":"pack","to":"install"},{"from":"install","to":"accept"}]}
+```
+
 ### `flow`
 
-Flowchart laid out automatically (elkjs): boxes with optional status colour, decisions, start/end pills, labelled arrows; left→right or top→bottom.
+Compatibility alias for flowchart. Existing reports remain supported; use flowchart for new reports.
 
-**When:** A process, pipeline, causal chain or state change where the arrows are the point (where it is stuck, what caused what). ≤12 nodes in a report; mark the bottleneck with status blocked.
+**When:** Use flowchart for system architecture relationships, dependencies, processes, pipelines or causal chains. Nodes are components or steps; arrows show connections. Use sequence for messages ordered over time. ≤12 nodes in a report; mark bottlenecks with status blocked. The old type flow remains an alias.
 
 - `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
 - `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
@@ -553,7 +579,7 @@ One to eight labelled progress bars (value of max).
 
 An ordered sequence of 2–6 steps, each a short title with an optional one-line detail.
 
-**When:** A procedure, a fix plan or "what happens next" in order. If the steps branch, use flow instead.
+**When:** A procedure, a fix plan or "what happens next" in order. If the steps branch, use flowchart instead.
 
 - `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
 - `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.

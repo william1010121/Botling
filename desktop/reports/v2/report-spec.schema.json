@@ -1252,6 +1252,135 @@
                   "properties": {
                     "type": {
                       "type": "string",
+                      "const": "flowchart"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "dir": {
+                      "default": "LR",
+                      "type": "string",
+                      "enum": [
+                        "LR",
+                        "TB"
+                      ]
+                    },
+                    "nodes": {
+                      "minItems": 2,
+                      "maxItems": 25,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 24,
+                            "pattern": "^[A-Za-z0-9_-]+$"
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 30
+                          },
+                          "sub": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 24
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "done",
+                              "active",
+                              "pending",
+                              "blocked",
+                              "risk",
+                              "unverified",
+                              "skipped"
+                            ],
+                            "description": "done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "step",
+                              "decision",
+                              "start",
+                              "end"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "edges": {
+                      "maxItems": 40,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "string"
+                          },
+                          "to": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 16
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "solid",
+                              "dashed"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "to"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "nodes",
+                    "edges"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Flowchart and architecture diagram: connected boxes and labelled arrows, laid out automatically. Supports status colours, decisions and start/end nodes."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
                       "const": "flow"
                     },
                     "title": {
@@ -1374,7 +1503,7 @@
                     "edges"
                   ],
                   "additionalProperties": false,
-                  "description": "Flowchart laid out automatically (elkjs): boxes with optional status colour, decisions, start/end pills, labelled arrows; left→right or top→bottom."
+                  "description": "Compatibility alias for flowchart. Existing reports remain supported; use flowchart for new reports."
                 },
                 {
                   "type": "object",

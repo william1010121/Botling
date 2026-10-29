@@ -40,7 +40,7 @@ export function lintSpec(spec: ReportSpec, registry: Map<string, AnyBlockDef>, s
       }
       if (b.type === 'table' && any.rows.length > budgets.tableRows) warn(`${bp}.rows`, `${any.rows.length} rows; keep ≤ ${budgets.tableRows} in the body.`);
       if (b.type === 'timeline' && any.items.length > budgets.timelineItems) warn(`${bp}.items`, `${any.items.length} events; keep ≤ ${budgets.timelineItems}.`);
-      if (b.type === 'flow' && any.nodes.length > budgets.flowNodes) warn(`${bp}.nodes`, `${any.nodes.length} nodes; keep ≤ ${budgets.flowNodes} or split the flow.`);
+      if ((b.type === 'flowchart' || b.type === 'flow') && any.nodes.length > budgets.flowNodes) warn(`${bp}.nodes`, `${any.nodes.length} nodes; keep ≤ ${budgets.flowNodes} or split the flowchart.`);
       if (b.type === 'options' && any.options.length < 2) warn(`${bp}.options`, 'Show at least two options (include "do nothing").');
     });
     if (visuals > budgets.visualsPerSection) warn(`${p}.blocks`, `${visuals} charts in one section; keep ≤ ${budgets.visualsPerSection} (one idea per section).`);
@@ -52,7 +52,7 @@ export function lintSpec(spec: ReportSpec, registry: Map<string, AnyBlockDef>, s
   });
   if (total > budgets.visualsPerReport) warn('sections', `${total} charts in the report; keep ≤ ${budgets.visualsPerReport}. Too many visuals hide the point.`);
   if (spec.kind === 'decision' && !kindsUsed.has('options') && !kindsUsed.has('proscons')) warn('sections', 'Decision report without an options or proscons block; compare the options on the same criteria.');
-  if ((spec.kind === 'investigation') && !kindsUsed.has('timeline') && !kindsUsed.has('flow') && !kindsUsed.has('sequence')) warn('sections', 'Investigation without a timeline, flow or sequence; show what happened and why.');
+  if ((spec.kind === 'investigation') && !kindsUsed.has('timeline') && !kindsUsed.has('flowchart') && !kindsUsed.has('flow') && !kindsUsed.has('sequence')) warn('sections', 'Investigation without a timeline, flowchart or sequence; show what happened and why.');
   if (spec.kind === 'results' && !kindsUsed.has('beforeafter') && !kindsUsed.has('bar') && !kindsUsed.has('trend') && !kindsUsed.has('kpi')) warn('sections', 'Results report without beforeafter, bar, trend, or kpi block; consider showing measured evidence when available; state missing measurements or baselines explicitly.');
   return w;
 }

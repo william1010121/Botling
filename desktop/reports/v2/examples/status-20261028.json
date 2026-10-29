@@ -37,7 +37,7 @@
       "title": "交付流程",
       "takeaway": "手機版卡在驗收：清單只回傳 Main",
       "blocks": [
-        { "type": "flow", "title": "手機版 .4 在驗收被擋下", "dir": "LR", "nodes": [
+        { "type": "flowchart", "title": "手機版 .4 在驗收被擋下", "dir": "LR", "nodes": [
           { "id": "impl", "label": "實作", "status": "done" },
           { "id": "review", "label": "複審", "status": "done" },
           { "id": "pack", "label": "打包", "status": "done" },
