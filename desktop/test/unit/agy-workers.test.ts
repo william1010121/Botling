@@ -10,7 +10,7 @@ const settle=()=>new Promise<void>(r=>setImmediate(r));
 afterEach(async()=>{for(const m of managers.splice(0))await m.close();});
 function harness(home=mkdtempSync(join(tmpdir(),'botling-agy-workers-')),resume=false){
  const events:any[]=[],reports:any[]=[],starts:{config:AgyConfig,h:HeadHandlers,sent:any[],answers:any[],stopped:boolean,cleanup?:Promise<void>,cleanupError?:boolean}[]=[];
- const m=new AgyWorkers({command:'not-executed',cwd:home,acpHome:home,sessionId:'owner',resume},i=>events.push(i),(id,text)=>reports.push({id,text}),(config,h)=>{
+ const m=new AgyWorkers({command:'not-executed',cwd:home,acpHome:home,sessionId:'owner',resume,systemPrompt:'You are the coordinator',workerInstructions:'Execution fixture context'},i=>events.push(i),(id,text)=>reports.push({id,text}),(config,h)=>{
   const state:{config:AgyConfig,h:HeadHandlers,sent:any[],answers:any[],stopped:boolean,cleanup?:Promise<void>,cleanupError?:boolean}={config,h,sent:[],answers:[],stopped:false};starts.push(state);
   const head:AgyWorkerHead={start(){},send(...args){state.sent.push(args);},answer(...args){state.answers.push(args);},async terminate(){state.stopped=true;await state.cleanup;if(state.cleanupError)throw Error("fixture cleanup failed");return {killed:[],forced:false};}};return head;
  });managers.push(m);return {m,events,reports,starts,home};
@@ -23,7 +23,7 @@ it('worker tools launch only dedicated ACP sessions and forward permission/refus
  h.m.answer(`worker:${id}:1:acp:1`,false,{path:'x'});expect(w.answers[0][1]).toBe(false);
  w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});w.h.onItem({kind:'result',ok:false,text:'operation refused',error:'Antigravity stopped: permission_denied',subtype:'permission_denied'});
  await settle();expect(w.stopped).toBe(true);expect(h.reports[0].id).toBe(id);expect(h.reports[0].text).toContain('not acceptance');expect(h.reports[0].text).toContain('status="failed"');
- h.m.beginReport(id,1);h.m.acknowledgeReport(id,1);await h.m.tool('app_send_message',{task_id:id,run:1,message:'follow up'});expect(h.starts[1]!.config).toMatchObject({resume:true,sessionId:'11111111-2222-4333-8444-555555555555'});
+ h.m.beginReport(id,1);await h.m.tool('app_task_checkpoint',{task_id:id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});await h.m.tool('app_send_message',{task_id:id,run:1,message:'follow up'});expect(h.starts[1]!.config).toMatchObject({resume:true,sessionId:'11111111-2222-4333-8444-555555555555'});
  w.h.onExit({code:0,signal:null,stderr:'',expected:true,silent:false});expect(h.m.running).toEqual([id]);
  h.m.answer(`worker:${id}:1:acp:1`,true,{});expect(h.starts[1]!.answers).toEqual([]);
 });
@@ -41,8 +41,8 @@ it('durably queues correlated reports until the matching run is acknowledged',as
  w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
  w.h.onItem({kind:'result',ok:true,text:'verified report',error:'',subtype:'end_turn'});await h.m.close();
  const restored=harness(h.home,true);expect(restored.starts).toEqual([]);expect(restored.reports[0].id).toBe(a.task_id);
- restored.m.acknowledgeReport(a.task_id,99);expect(restored.m.completionDependencies[0]?.state).toBe('reportQueued');
- expect(restored.m.beginReport(a.task_id,1)).toBe(true);restored.m.acknowledgeReport(a.task_id,1);expect(restored.m.completionDependencies).toEqual([]);
+ restored.m.finishReport(a.task_id,99,true);expect(restored.m.completionDependencies[0]?.state).toBe('reportQueued');
+ expect(restored.m.beginReport(a.task_id,1)).toBe(true);await restored.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});expect(restored.m.completionDependencies).toEqual([]);
  const again=harness(h.home,true);expect(again.reports).toEqual([]);
 });
 
@@ -83,7 +83,7 @@ it('holds concurrency and report delivery until process cleanup finishes',async(
  await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'race'})).rejects.toThrow('busy');
  clean();await settle();expect(h.reports).toHaveLength(1);expect(h.m.running).toHaveLength(3);
  expect(h.m.beginReport(a.task_id,2)).toBe(false);expect(h.m.beginReport(a.task_id,1)).toBe(true);expect(h.m.beginReport(a.task_id,1)).toBe(false);
- h.m.acknowledgeReport(a.task_id,1);await h.m.tool('app_handoff',{instructions:'fill fourth slot'});
+ await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});await h.m.tool('app_handoff',{instructions:'fill fourth slot'});
  await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'})).rejects.toThrow('Four');
  await h.m.tool('app_cancel_task',{task_id:h.m.running[0],run:1});
  await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'});
@@ -112,7 +112,7 @@ it('crashed active state restores identity but cannot resume before cleanup reco
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
  w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
  const restored=harness(h.home,true);expect(restored.starts).toEqual([]);expect(restored.reports[0].text).toContain('interrupted');
- expect(restored.m.beginReport(a.task_id,1)).toBe(true);restored.m.acknowledgeReport(a.task_id,1);
+ expect(restored.m.beginReport(a.task_id,1)).toBe(true);await restored.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
  await expect(restored.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('cleanup');
 });
 it('denial remains failed even if a worker incorrectly emits successful completion',async()=>{
@@ -133,7 +133,7 @@ it('cleans real owned process groups and verifies reconstructed-manager recovery
  const m=make(false);
  try{
   const a=await m.tool('app_handoff',{instructions:'offline protocol fixture'});const restored=make(true);
-  expect(restored.beginReport(a.task_id,1)).toBe(true);restored.acknowledgeReport(a.task_id,1);
+  expect(restored.beginReport(a.task_id,1)).toBe(true);await restored.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
   await expect(restored.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('cleanup');
   // The original app-owned manager stops both its server-shaped and tool-shaped groups.
   await m.cancel();for(const p of groups)expect(()=>process.kill(-p.pid,0)).toThrow();
@@ -153,4 +153,76 @@ it('worker crash produces one failed report only after cleanup',async()=>{
  w.h.onExit({code:1,signal:null,stderr:'fixture crashed',expected:false,silent:false});await settle();expect(h.reports).toEqual([]);
  clean();await settle();expect(h.reports).toHaveLength(1);expect(h.reports[0].text).toContain('status="failed"');
  w.h.onExit({code:1,signal:null,stderr:'late exit',expected:false,silent:false});await settle();expect(h.reports).toHaveLength(1);expect(h.m.completionDependencies[0]).toMatchObject({id:a.task_id,run:1,state:'reportQueued'});
+});
+
+it('keeps coordinator instructions out of execution workers',async()=>{
+ const h=harness();await h.m.tool('app_handoff',{instructions:'research only'});
+ expect(h.starts[0]!.config.systemPrompt).toContain('research/design-only');
+ expect(h.starts[0]!.config.systemPrompt).toContain('Execution fixture context');
+ expect(h.starts[0]!.config.systemPrompt).not.toContain('You are the coordinator');
+});
+it('requires a task/run checkpoint or same-task continuation, not mere report delivery',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'research only'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'evidence',error:'',subtype:'end_turn'});await settle();
+ expect(h.m.beginReport(a.task_id,1)).toBe(true);
+ await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:2,outcome:'complete',evidence:'wrong run'})).rejects.toThrow('Stale');
+ await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:''})).rejects.toThrow();
+ await h.m.tool('app_handoff',{instructions:'independent'});
+ expect(h.m.completionDependencies.some(x=>x.id===a.task_id)).toBe(true);
+ await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:'research findings satisfy scope; no implementation authorized'});
+ expect(h.m.completionDependencies.some(x=>x.id===a.task_id)).toBe(false);
+});
+it('continues the same task during its report turn and rejects stale checkpoint',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'research'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'one missing fact',error:'',subtype:'end_turn'});await settle();
+ expect(h.m.beginReport(a.task_id,1)).toBe(true);
+ const next=await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'same scope: supply missing fact'});
+ expect(next).toMatchObject({task_id:a.task_id,run:2});
+ await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:'stale'})).rejects.toThrow('Stale');
+});
+it('allows one reconciliation turn then retains unresolved evidence without looping',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'research'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ h.m.beginReport(a.task_id,1);h.m.finishReport(a.task_id,1,true);
+ expect(h.reports).toHaveLength(2);expect(h.m.beginReport(a.task_id,1)).toBe(true);
+ h.m.finishReport(a.task_id,1,true);
+ expect(h.reports).toHaveLength(2);expect(h.m.beginReport(a.task_id,1)).toBe(false);
+ expect(h.m.completionDependencies).toHaveLength(1);
+ expect(h.events.some(e=>e.summary?.includes('unresolved'))).toBe(true);
+ await h.m.close();const restored=harness(h.home,true);
+ expect(restored.reports).toEqual([]);expect(restored.m.completionDependencies).toHaveLength(1);
+ await restored.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'missing acceptance evidence; authorized alternatives exhausted'});
+ expect(restored.m.completionDependencies).toEqual([]);
+});
+it('requires an active other task for a dependency checkpoint',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'research'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();h.m.beginReport(a.task_id,1);
+ await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'waiting_dependency',evidence:'missing',dependency_task_id:a.task_id})).rejects.toThrow();
+ const b=await h.m.tool('app_handoff',{instructions:'separate authorized prerequisite'});
+ await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'waiting_dependency',evidence:'await prerequisite',dependency_task_id:b.task_id});
+ expect(h.m.completionDependencies.map(x=>x.id)).toEqual([b.task_id]);
+});
+it('stale or duplicate report-turn completion cannot consume another run or exhaust reconciliation',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ h.m.beginReport(a.task_id,1);h.m.finishReport(a.task_id,99,true);
+ await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'same scope'});
+ h.starts[1]!.h.onItem({kind:'result',ok:true,text:'next',error:'',subtype:'end_turn'});await settle();
+ h.m.beginReport(a.task_id,2);h.m.finishReport(a.task_id,1,true);
+ h.m.finishReport(a.task_id,2,true);h.m.finishReport(a.task_id,2,true);
+ expect(h.reports).toHaveLength(3);expect(h.m.beginReport(a.task_id,2)).toBe(true);
+});
+it('uncertain-delivery acknowledgement is not task acceptance and cannot bypass a checkpoint',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'research only'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();h.m.beginReport(a.task_id,1);
+ await expect(h.m.tool('app_reconcile_report',{task_id:a.task_id,run:1,action:'acknowledge'})).rejects.toThrow('active');
+ h.m.finishReport(a.task_id,1,false);
+ await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:'not confirmed'})).rejects.toThrow('delivered');
+ await h.m.tool('app_reconcile_report',{task_id:a.task_id,run:1,action:'acknowledge'});
+ expect(h.m.completionDependencies).toHaveLength(1);
+ const reconstructed=harness(h.home,true);expect(reconstructed.reports).toEqual([]);expect(reconstructed.m.completionDependencies).toHaveLength(1);
+ await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'waiting_user',evidence:'Need explicit implementation authorization; research complete'});
+ expect(h.m.completionDependencies).toEqual([]);
+ const persisted=JSON.parse(readFileSync(join(h.home,'workers.json'),'utf8'));
+ expect(persisted.workers[0].checkpoint).toMatchObject({outcome:'waiting_user'});
 });

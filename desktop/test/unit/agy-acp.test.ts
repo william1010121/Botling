@@ -60,7 +60,7 @@ it('interrupt while awaiting startup acknowledgements cannot release a queued ta
 it('worker reports wait for the Bot scheduler and cannot consume a queued user turn',async()=>{
  vi.useFakeTimers();let available=false;const sent:string[]=[],events:any[]=[];
  const head=new AgyAcpHead({command:'never-spawned',cwd:'/owned',sessionId:'s',resume:false,canStartReport:()=>available},{onItem:i=>events.push(i),onExit(){}});
- (head as any).workers={beginReport:()=>true,acknowledgeReport(){},running:[],async close(){}};
+ (head as any).workers={beginReport:()=>true,finishReport(){},running:[],completionDependencies:[],async close(){}};
  (head as any).protocol={send:async(text:string)=>{sent.push(text);return true;},close(){}};
  (head as any).queue.push({text:'worker report',uuid:'r',images:[],taskId:'task',taskRun:1});
  try{

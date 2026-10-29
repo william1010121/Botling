@@ -391,12 +391,12 @@ export class AgyAcpHead {
     this.sending = true;
     if (request.taskId) this.handlers.onItem({kind:"backgroundTurn", taskId:request.taskId});
     try { const completed = await this.protocol.send(request.text, request.uuid, request.images);
-      if (completed && request.taskId && request.taskRun !== undefined) this.workers?.acknowledgeReport(request.taskId, request.taskRun);
+      if (request.taskId && request.taskRun !== undefined) this.workers?.finishReport(request.taskId, request.taskRun, completed === true);
     }
     catch (error) { this.failure = (error as Error).message; await this.terminate(); }
     finally {
       this.bridge?.revoke(); this.sending = false;
-      this.handlers.onItem({kind:"managedPending",pending:!!this.workers?.running.length || this.queue.some(q=>!!q.taskId)});
+      this.handlers.onItem({kind:"managedPending",pending:!!this.workers?.completionDependencies.length || this.queue.some(q=>!!q.taskId)});
       void this.drain();
     }
   }

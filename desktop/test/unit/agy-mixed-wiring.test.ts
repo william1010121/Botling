@@ -75,7 +75,7 @@ it('worker transport selection pins engine, permissions, report/run identity and
  m.answer(`worker:${a.task_id}:1:p`,true,{path:'c'});expect(agy.answers).toEqual([]);
  m.answer(`worker:${a.task_id}:1:p`,false,{path:'a'});m.answer(`worker:${c.task_id}:1:p`,false,{path:'c'});
  agy.finish('refused',false);codex.finish('refused',false);await settle();expect(reports.map(r=>r.run)).toEqual([1,1]);
- expect(m.beginReport(c.task_id,1)).toBe(true);m.acknowledgeReport(c.task_id,1);
+ expect(m.beginReport(c.task_id,1)).toBe(true);await m.tool('app_task_checkpoint',{task_id:c.task_id,run:1,outcome:'complete',evidence:'fixture acceptance passed'});
  await expect(m.tool('app_send_message',{task_id:c.task_id,run:1,engine:'agy',message:'wrong'})).rejects.toThrow('engine identity');
  await m.close();const resumed=make(true);await resumed.tool('app_send_message',{task_id:c.task_id,run:1,message:'explicit followup'});await settle();
  expect(fixture.heads.at(-1).engine).toBe('codex');expect(fixture.heads.at(-1).config).toMatchObject({resume:true,sessionId:codex.config.sessionId});

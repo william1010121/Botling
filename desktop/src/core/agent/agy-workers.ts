@@ -1,3 +1,4 @@
+import {AGY_WORKER_POLICY} from '../prompts-agy';
 import {randomUUID} from 'node:crypto';
 import {readFileSync,mkdirSync} from 'node:fs';
 import {writeFileAtomic} from '../durable/atomic';
@@ -17,6 +18,7 @@ export interface AgyWorkerHead {
 interface Worker {
   id:string;engine:"agy"|"codex";name:string;instructions:string;sessionId:string;run:number;active:boolean;
   cleaning:boolean;denied:boolean;recoveryRequired?:boolean;reportDispatching?:boolean;report?:string;status:string;reportPending:boolean;
+  reportDelivered?:boolean; reviewAttempts?:number; checkpoint?:{outcome:string;evidence:string;dependency_task_id?:string};
   head?:AgyWorkerHead;cleanup?:Promise<void>;discardReport?:boolean;
   approvals:Map<string,Record<string,unknown>>;processes:{pid:number;started:string}[];
 }
@@ -26,6 +28,7 @@ const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export class AgyWorkers {
   private workers=new Map<string,Worker>();
   private closed=false;
+  private activeReports=new Map<string,number>();
   constructor(private config:AgyConfig,private emit:(i:CodexItem)=>void,private report:(id:string,text:string,run:number)=>void,private factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead){
     if(!config.acpHome)throw new Error('Worker profile required.');
     if(!config.resume)return;
@@ -35,8 +38,9 @@ export class AgyWorkers {
       // Validate the complete state before any callback. Legacy/foreign state is preserved, never adopted.
       const restored:Worker[]=saved.workers.map((r:any)=>{
         if(!r||typeof r.id!=='string'||!uuid.test(r.id)||(r.engine!==undefined&&r.engine!=='agy'&&r.engine!=='codex')||typeof r.sessionId!=='string'||!Number.isSafeInteger(r.run)||r.run<1||typeof r.name!=='string'||typeof r.instructions!=='string'||typeof r.status!=='string'||typeof r.active!=='boolean'||typeof r.cleaning!=='boolean'||typeof r.reportPending!=='boolean'||(r.report!==undefined&&typeof r.report!=='string'))throw Error('Invalid worker state');
+        if((r.reviewAttempts!==undefined&&(!Number.isSafeInteger(r.reviewAttempts)||r.reviewAttempts<0||r.reviewAttempts>2))||(r.reportDelivered!==undefined&&typeof r.reportDelivered!=='boolean'))throw Error('Invalid report review state');
         if(!Array.isArray(r.processes)||r.processes.some((p:any)=>!Number.isSafeInteger(p.pid)||p.pid<=0||typeof p.started!=='string'||!p.started))throw Error('Invalid process identity');
-        return {id:r.id,engine:r.engine??"agy",name:r.name,instructions:r.instructions,sessionId:r.sessionId,run:r.run,active:false,cleaning:false,denied:false,approvals:new Map(),processes:r.processes,status:r.status,report:r.report,reportPending:r.reportPending,recoveryRequired:r.recoveryRequired===true||r.active||r.cleaning,reportDispatching:r.reportDispatching===true,
+        return {id:r.id,engine:r.engine??"agy",name:r.name,instructions:r.instructions,sessionId:r.sessionId,run:r.run,active:false,cleaning:false,denied:false,approvals:new Map(),processes:r.processes,status:r.status,report:r.report,reportPending:r.reportPending,recoveryRequired:r.recoveryRequired===true||r.active||r.cleaning,reportDispatching:r.reportDispatching===true,reportDelivered:r.reportDelivered===true,reviewAttempts:r.reviewAttempts??0,checkpoint:r.checkpoint,
           ...(r.active||r.cleaning?{status:'stopped',report:'Worker interrupted before confirmed cleanup/result. Process-ledger recovery is required before any explicit continuation; no task was replayed.',reportPending:true}:{})};
       });
       if(new Set(restored.map(w=>w.id)).size!==restored.length)throw Error('Duplicate worker identity');
@@ -44,7 +48,8 @@ export class AgyWorkers {
       this.save();
       for(const w of restored)if(w.reportPending){
         if(w.reportDispatching)this.emit({kind:'subagentEnded',id:w.id,status:'failed',summary:'Worker report delivery is uncertain after restart. No report prompt was replayed; explicit reconciliation is required.'});
-        else this.deliverReport(w);
+        else if((w.reviewAttempts??0)<2)this.deliverReport(w);
+        else this.unresolved(w);
       }
     }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new Error('ACP worker state is unreadable or belongs to another conversation; preserved for recovery.');}
   }
@@ -67,15 +72,27 @@ export class AgyWorkers {
     if(name==='app_reconcile_report'){
       if(w.active||w.cleaning||!w.reportPending||!w.reportDispatching)throw new Error('No uncertain report available for reconciliation.');
       if(args.action!=='acknowledge'&&args.action!=='retry')throw new Error('Explicit report reconciliation action required.');
-      w.reportDispatching=false;w.reportPending=args.action==='retry';this.save();
-      if(w.reportPending)this.deliverReport(w);
+      if((this.activeReports.get(w.id)===w.run))throw new Error('Report turn is still active.');
+      w.reportDispatching=false;w.reportDelivered=args.action==='acknowledge';w.reviewAttempts=args.action==='acknowledge'?2:0;this.save();
+      if(args.action==='retry')this.deliverReport(w);
       return {task_id:w.id,run:w.run,action:args.action,taskReplayed:false};
+    }
+    if(name==='app_task_checkpoint'){
+      if(w.active||w.cleaning||w.cleanup||!w.reportPending||(!(this.activeReports.get(w.id)===w.run)&&(!w.reportDelivered||w.reportDispatching)))throw new Error('No delivered report available for a checkpoint.');
+      if(!['complete','waiting_user','waiting_dependency','blocked'].includes(String(args.outcome))||typeof args.evidence!=='string'||!args.evidence.trim()||args.evidence.length>16000)throw new Error('Checkpoint outcome and concrete evidence required.');
+      if(args.outcome==='waiting_dependency'){
+        const dependency=this.workers.get(String(args.dependency_task_id));
+        if(!dependency||dependency===w||!dependency.active)throw new Error('Checkpoint needs another actively running dependency_task_id.');
+      }else if(args.dependency_task_id!==undefined)throw new Error('dependency_task_id requires waiting_dependency.');
+      w.checkpoint={outcome:String(args.outcome),evidence:args.evidence,...(args.outcome==='waiting_dependency'?{dependency_task_id:String(args.dependency_task_id)}:{})};
+      w.reportPending=false;w.reportDispatching=false;this.activeReports.delete(w.id);this.save();
+      return {task_id:w.id,run:w.run,...w.checkpoint};
     }
     if(name==='app_cancel_task'){await this.stop(w,true);if(w.cleaning)throw new Error('Worker cleanup incomplete; task remains blocked.');return {task_id:w.id,run:w.run,status:w.status};}
     if(name==='app_send_message'){
       if(w.recoveryRequired){if(!this.processesGone(w))throw new Error('Worker crash cleanup has not been verified; continuation blocked.');w.recoveryRequired=false;this.save();}
       if(w.active||w.cleaning||w.cleanup)throw new Error('This ACP worker is busy or cleaning up; in-turn steering is unsupported.');
-      if(w.reportPending)throw new Error('The prior worker report must be acknowledged before continuation.');
+      if(w.reportPending&&!(this.activeReports.get(w.id)===w.run)&&(!w.reportDelivered||w.reportDispatching))throw new Error('The prior worker report must be acknowledged before continuation.');
       if(this.running.length>=4)throw new Error('Four ACP workers are already running or cleaning up.');
       if(typeof args.message!=='string'||!args.message.trim()||args.message.length>64_000)throw new Error('Message required (maximum 64000 characters).');
       this.launch(w,args.message);return {accepted:true,task_id:w.id,run:w.run};
@@ -83,6 +100,7 @@ export class AgyWorkers {
     throw new Error('Unsupported worker tool.');
   }
   private launch(w:Worker,text:string){
+    this.activeReports.delete(w.id);w.reportDelivered=false;w.reviewAttempts=0;delete w.checkpoint;
     w.processes=[];w.active=true;w.run++;const run=w.run;w.status='running';w.denied=false;w.discardReport=false;w.reportPending=false;w.reportDispatching=false;delete w.report;this.save();
     this.emit({kind:'managedPending',pending:true});
     this.emit({kind:'toolUse',id:w.id,tool:'Agent',title:`Delegate ${w.name}`,detail:text,parent:null,input:{description:w.name,prompt:text,subagent_type:`${w.engine}-worker`,run_in_background:true}});
@@ -121,7 +139,7 @@ export class AgyWorkers {
         if(w.run!==run||!w.active)throw Error('Stale worker process registration.');
         const started=processStartTime(pid);if(!started)throw Error('Cannot record worker process identity.');
         this.config.processStarted?.(pid);w.processes.push({pid,started});this.save();
-      },acpHome:join(this.config.acpHome!,'workers',w.id),sessionId:w.sessionId||randomUUID(),resume:!!w.sessionId,systemPrompt:`${this.config.systemPrompt??''}\nYou are an execution worker, not the coordinator. Execute only the assigned authorized scope. Do not delegate or emit handoff/team/plugin tags. Preserve permission protections. Return concrete results, tests, and blockers. Worker report is not acceptance of the overall task.`},{onItem,onExit:e=>{if(w.run===run&&w.active)finish(e.expected?'stopped':'failed',e.stderr||'ACP worker exited before a result.');}});
+      },acpHome:join(this.config.acpHome!,'workers',w.id),sessionId:w.sessionId||randomUUID(),resume:!!w.sessionId,systemPrompt:`${this.config.workerInstructions??''}\n${AGY_WORKER_POLICY}`},{onItem,onExit:e=>{if(w.run===run&&w.active)finish(e.expected?'stopped':'failed',e.stderr||'ACP worker exited before a result.');}});
       w.head.start();w.head.send(text,randomUUID());
     }catch(error){finish('failed',(error as Error).message);}
   }
@@ -142,13 +160,23 @@ export class AgyWorkers {
   }
   private cancelApprovals(w:Worker){for(const id of w.approvals.keys())this.emit({kind:'permissionCancelled',requestId:`worker:${w.id}:${w.run}:${id}`});w.approvals.clear();}
   private deliverReport(w:Worker){
-    this.report(w.id,`<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${(w.report??'').replaceAll('<','&lt;')}\n</app_task_result>\nWorker completion is execution evidence, not acceptance of the user's full objective. Assess the result and continue authorized work as needed.`,w.run);
+    this.report(w.id,`<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${(w.report??'').replaceAll('<','&lt;')}\n</app_task_result>\nWorker completion is execution evidence, not acceptance of the user's full objective. Resolve this exact task_id and run with app_task_checkpoint (outcome and concrete evidence) or same-task app_send_message before ending this report turn. Research-only scope and existing permissions remain unchanged.`,w.run);
   }
   beginReport(id:string,run:number):boolean {
-    const w=this.workers.get(id);if(this.closed||!w||w.run!==run||!w.reportPending||w.reportDispatching||w.active||w.cleaning||w.cleanup)return false;
-    w.reportDispatching=true;this.save();return true;
+    const w=this.workers.get(id);if(this.closed||!w||w.run!==run||!w.reportPending||w.reportDispatching||w.active||w.cleaning||w.cleanup||(w.reviewAttempts??0)>=2)return false;
+    w.reportDispatching=true;this.activeReports.set(id,run);this.save();return true;
   }
-  acknowledgeReport(id:string,run:number){if(this.closed)return;const w=this.workers.get(id);if(w?.run===run&&w.reportPending&&w.reportDispatching&&!w.cleaning&&!w.cleanup){w.reportPending=false;w.reportDispatching=false;this.save();}}
+  /** Delivery is not acceptance. A successful report turn must make a decision. */
+  finishReport(id:string,run:number,completed:boolean){
+    if(this.activeReports.get(id)!==run)return;
+    this.activeReports.delete(id);
+    const w=this.workers.get(id);if(this.closed||!w||w.run!==run||!w.reportPending)return;
+    if(!completed)return; // uncertain delivery remains durable; never replay automatically
+    w.reportDelivered=true;w.reportDispatching=false;w.reviewAttempts=(w.reviewAttempts??0)+1;this.save();
+    if(w.reviewAttempts===1)this.deliverReport(w);
+    else this.unresolved(w);
+  }
+  private unresolved(w:Worker){this.emit({kind:'subagentEnded',id:w.id,status:'failed',summary:'Worker report unresolved: no task/run checkpoint or same-task continuation after one reconciliation turn. Evidence retained; explicit decision required.'});}
   answer(id:string,allow:boolean,input:Record<string,unknown>,message?:string){
     const match=/^worker:([a-f0-9-]{36}):(\d+):(.+)$/.exec(id);if(!match||this.closed)return;
     const w=this.workers.get(match[1]!);if(!w?.active||w.run!==Number(match[2]))return;
@@ -157,6 +185,7 @@ export class AgyWorkers {
   }
   private async stop(w:Worker,discard:boolean){
     w.discardReport=discard;
+    this.activeReports.delete(w.id);
     if(!w.active&&!w.cleaning){if(discard){w.reportPending=false;this.save();}return;}
     w.active=false;this.cancelApprovals(w);w.status='stopped';w.report='Stopped by the app; work was not completed.';
     await this.clean(w);

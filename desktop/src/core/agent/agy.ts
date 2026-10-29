@@ -28,6 +28,8 @@ export interface AgyConfig {
   model?: string | null;
   effort?: string | null;
   systemPrompt?: string;
+  /** Separate execution instructions; never inherit the coordinator policy. */
+  workerInstructions?: string;
 }
 export function agyArguments(config: AgyConfig): string[] {
   const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];

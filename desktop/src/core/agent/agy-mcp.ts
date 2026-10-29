@@ -1,7 +1,7 @@
 // Built-in, loopback-only tool transport. No external plugin installation or credentials.
 import type { StreamItem } from './stream';
 import { executableEnvironment } from '../process/executable';
-import { agyWorkerRuntimeEnabled } from './agy-capabilities';
+import { agyWorkerRuntimeEnabled, agyMixedRuntimeEnabled } from './agy-capabilities';
 import { createServer, type Server } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, type ChildProcess } from 'node:child_process';
@@ -27,6 +27,7 @@ export const AGY_LOCAL_TOOLS: AgyTool[] = [
   { name:'run_command', description:'Run a shell command in this workspace, waiting for completion (maximum 120 seconds). Requires approval unless Full permission is active. Stop cancels its process group.', inputSchema:schema({command:text},['command']) },
 ];
 export const AGY_WORKER_TOOLS: AgyTool[] = [
+  { name:'app_task_checkpoint', description:'Resolve this task/run report with concrete acceptance evidence or a specific blocker. Does not grant authorization.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},outcome:{type:'string',enum:['complete','waiting_user','waiting_dependency','blocked']},evidence:text,dependency_task_id:text},['task_id','run','outcome','evidence']) },
   { name:'app_reconcile_report', description:'After explicit user approval, acknowledge an uncertain report as received, or retry only its delivery. Never replays the worker task.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},action:{type:'string',enum:['acknowledge','retry']}},['task_id','run','action']) },
   { name:'app_handoff', description:'Assign an authorized task to an app-managed agy or Codex worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.', inputSchema:schema({instructions:text,name:text,engine:{type:'string',enum:['agy','codex']}},['instructions']) },
   { name:'app_send_message', description:'Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},message:text},['task_id','run','message']) },
@@ -62,7 +63,10 @@ export class AgyMcpBridge {
   private protectedIdentity: string[];
   constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void) {
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
-    this.tools = [...AGY_LOCAL_TOOLS, ...(delegate && agyWorkerRuntimeEnabled() ? AGY_WORKER_TOOLS : [])];
+    this.tools = delegate && agyWorkerRuntimeEnabled()
+      ? AGY_WORKER_TOOLS.map(tool => tool.name === 'app_handoff' && !agyMixedRuntimeEnabled()
+        ? {...tool, inputSchema:schema({instructions:text,name:text,engine:{type:'string',enum:['agy']}},['instructions'])} : tool)
+      : [...AGY_LOCAL_TOOLS];
     this.base = realpathSync(cwd);
     const root = statSync(this.base, {bigint:true}), profile = statSync(protectedPath, {bigint:true});
     this.rootIdentity = [String(root.dev), String(root.ino)];
@@ -169,6 +173,7 @@ export class AgyMcpBridge {
       return name==='write_file'?'File written.':output.slice(0,200_000)+(output.length>200_000?'\n[Truncated at 200000 characters]':'');
     }
     if(!agyWorkerRuntimeEnabled() || !this.delegate)throw new Error('Workers unavailable.');
+    if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy' && !agyMixedRuntimeEnabled())throw new Error('Cross-engine workers unavailable.');
     return this.delegate(name,args);
   }
   private command(command:string, full = false):Promise<{exitCode:number|null;output:string}> {
