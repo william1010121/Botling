@@ -189,6 +189,12 @@ button { font: inherit; color: inherit; }
 .settings-control button, .settings-actions button { background: var(--chip); border: 0; border-radius: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
 .settings-actions { padding: 6px 0; }
 .settings-actions button:disabled { opacity: 0.5; cursor: default; }
+.agy-runtime-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.agy-runtime-actions button { min-height: 28px; }
+.agy-runtime-actions button:not(.settings-done) { box-shadow: inset 0 0 0 1px var(--border); }
+.agy-runtime-actions .settings-done { background: var(--blue); color: #fff; }
+.agy-runtime-actions button:hover:not(:disabled) { filter: brightness(1.1); }
+.agy-runtime-actions button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .settings-prompt { padding: 8px 0; font-size: 13px; }
 .settings-prompt textarea { width: 100%; margin-top: 6px; resize: vertical; font: inherit; font-size: 12.5px; }
 .settings-tag { font-size: 11px; color: var(--muted); background: var(--chip); border-radius: 6px; padding: 0 6px; margin-left: 6px; }

@@ -423,8 +423,10 @@ function AntigravityRuntime({ client, settings, change }: { client: Client; sett
       <input aria-label="Official ACP runtime path" type="text" value={path} disabled={busy} placeholder="/absolute/path/agy_acp_server.par" onChange={event => { setPath(event.target.value); setStatus(null); }} />
     </Row>
     <p className="settings-hint">Takes effect on the next Antigravity launch. BOTLING_AGY_ACP_PATH takes priority over this saved path. Clear the field and save to remove the saved choice.</p>
-    <button type="button" disabled={busy} onClick={() => void run(true)}>{busy ? "Verifying…" : "Save and verify"}</button>{" "}
-    <button type="button" disabled={busy} onClick={() => void run(false)}>Check active runtime</button>
+    <div className="settings-actions agy-runtime-actions">
+      <button type="button" className="settings-done" disabled={busy} onClick={() => void run(true)}>{busy ? "Verifying…" : "Save and verify"}</button>
+      <button type="button" disabled={busy} onClick={() => void run(false)}>Check active runtime</button>
+    </div>
     {status?.override && <p className="settings-hint">Environment override active: {status.override}. To use the saved path, remove BOTLING_AGY_ACP_PATH and restart the app.</p>}
     {status?.effective && <p className="settings-hint">Active path: {status.effective}</p>}
     {status?.message && <p className={status.valid ? "settings-hint" : "settings-problem"} role={status.valid ? "status" : "alert"}>{status.message}</p>}
