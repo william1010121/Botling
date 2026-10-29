@@ -8,5 +8,5 @@ await build({entryPoints:['test/terminal/harness.ts'],bundle:true,platform:'node
 await build({entryPoints:['src/preload/preload.ts'],bundle:true,platform:'node',format:'cjs',external:['electron'],outfile:out+'/preload.cjs'});
 await build({entryPoints:['test/terminal/renderer.tsx'],bundle:true,platform:'browser',jsx:'automatic',outfile:out+'/renderer.js'});
 cpSync('src/renderer/terminal-assets',out+'/terminal-assets',{recursive:true});
-cpSync('src/renderer/styles.css',out+'/styles.css'); cpSync('node_modules/@xterm/xterm/css/xterm.css',out+'/xterm.css');
+await build({entryPoints:['src/renderer/styles.css'],bundle:true,outfile:out+'/styles.css',loader:{'.ttf':'file'}}); cpSync('node_modules/@xterm/xterm/css/xterm.css',out+'/xterm.css');
 writeFileSync(out+'/index.html',`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self';"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="xterm.css"><div id="root"></div><script src="renderer.js"></script>`);

@@ -37,6 +37,7 @@ export interface WebChrome { headerLead?: ReactNode; railFooter: ReactNode }
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const [error, setError] = useState<string | null>(null);
+  const [terminalControls, setTerminalControls] = useState<HTMLSpanElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
@@ -300,6 +301,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => ({ claude: "Claude", codex: "Codex", agy: "Antigravity" }[head])).join(" & ")}</span>
           )}
           {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
+          {!web && <span className="terminal-controls" ref={setTerminalControls} />}
           {bot && chat && !web && (
             <span className="chat-actions">
               {bot.role !== "group" && <RoutinesButton client={client} botId={bot.id} />}
@@ -337,7 +339,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} />
-        {!web && <TerminalPanels onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} />}
+        {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} />}
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>

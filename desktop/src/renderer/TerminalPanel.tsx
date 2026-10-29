@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -6,7 +7,7 @@ import type { TerminalBridge, TerminalState, TerminalEvent } from '../contract/t
 const bridge = () => (window as unknown as { botling?: { terminal?: TerminalBridge } }).botling?.terminal;
 
 /** Mounted for the lifetime of the shell page; hiding never destroys a PTY or emulator. */
-export function TerminalPanels({ botId, botIds, onHide }: { botId?: string; botIds: string[]; onHide?: () => void }) {
+export function TerminalPanels({ botId, botIds, onHide, toggleHost }: { botId?: string; botIds: string[]; onHide?: () => void; toggleHost?: HTMLElement | null }) {
   const [opened, setOpened] = useState<string[]>([]);
   const [visible, setVisible] = useState<Record<string, boolean>>({});
   const toggle = () => {
@@ -18,11 +19,21 @@ export function TerminalPanels({ botId, botIds, onHide }: { botId?: string; botI
   useEffect(() => bridge()?.onToggle(toggle), [botId, visible]);
   if (!bridge()) return null;
   return <>
-    <button className="terminal-toggle" onClick={toggle} title="Toggle terminal (⌘J)">Terminal</button>
+    {toggleHost && createPortal(<button className="terminal-toggle" disabled={!botId} aria-expanded={!!botId && !!visible[botId]} onClick={toggle} title="Toggle terminal (⌘J)">Terminal</button>, toggleHost)}
     {opened.filter(id => botIds.includes(id)).map(id => <TerminalPanel key={id} botId={id} visible={id === botId && !!visible[id]} hide={() => { setVisible(v => ({ ...v, [id]: false })); requestAnimationFrame(() => onHide?.()); }} />)}
   </>;
 }
 function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boolean; hide: () => void }) {
+  const [height, setHeight] = useState(300);
+  const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
+  useEffect(() => {
+    const update = () => setViewportHeight(window.innerHeight);
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  const panel = useRef<HTMLElement>(null);
+  const drag = useRef<{ y: number; height: number } | null>(null);
+  const resize = (next: number) => setHeight(Math.max(Math.min(120, window.innerHeight * .7), Math.min(window.innerHeight * .7, next)));
   const [tabs, setTabs] = useState<TerminalState[]>([]);
   const [active, setActive] = useState('');
   const [shells, setShells] = useState<string[]>([]);
@@ -66,7 +77,28 @@ function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boole
       setTabs(t => t.map(x => x.sessionId === tab.sessionId ? next : x)); setActive(next.sessionId);
     } catch (e) { closing.current.delete(tab.sessionId); fail(e); }
   };
-  return <section className="terminal-panel" hidden={!visible} aria-label="Bot terminal">
+  return <section ref={panel} className="terminal-panel" style={{ height }} hidden={!visible} aria-label="Bot terminal">
+    <div className="terminal-divider" role="separator" aria-label="Resize terminal panel" aria-orientation="horizontal" tabIndex={0}
+      aria-valuemin={Math.min(120, Math.round(viewportHeight * .7))} aria-valuemax={Math.round(viewportHeight * .7)} aria-valuenow={Math.round(Math.min(height, viewportHeight * .7))}
+      onPointerDown={event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        drag.current = { y: event.clientY, height: panel.current!.getBoundingClientRect().height };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => { if (drag.current) resize(drag.current.height + drag.current.y - event.clientY); }}
+      onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+      onLostPointerCapture={() => { drag.current = null; }}
+      onPointerCancel={() => { drag.current = null; }}
+      onKeyDown={event => {
+        const current = panel.current!.getBoundingClientRect().height;
+        if (event.key === 'ArrowUp') resize(current + 20);
+        else if (event.key === 'ArrowDown') resize(current - 20);
+        else if (event.key === 'Home') resize(120);
+        else if (event.key === 'End') resize(window.innerHeight * .7);
+        else return;
+        event.preventDefault(); event.stopPropagation();
+      }} />
     <div className="terminal-toolbar">
       <div role="tablist" aria-label="Terminals">{tabs.map((tab, i) => <span key={tab.sessionId}>
         <button role="tab" aria-selected={active === tab.sessionId} onClick={() => setActive(tab.sessionId)}>{i + 1}: {tab.shell.split('/').pop()}</button>
