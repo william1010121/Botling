@@ -114,6 +114,7 @@ it('crashed active state restores identity but cannot resume before cleanup reco
  const restored=harness(h.home,true);expect(restored.starts).toEqual([]);expect(restored.reports[0].text).toContain('interrupted');
  expect(restored.m.beginReport(a.task_id,1)).toBe(true);await restored.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
  await expect(restored.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('cleanup');
+ await expect(restored.m.close()).rejects.toThrow('cleanup');managers.splice(managers.indexOf(restored.m),1);
 });
 it('denial remains failed even if a worker incorrectly emits successful completion',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
@@ -225,4 +226,42 @@ it('uncertain-delivery acknowledgement is not task acceptance and cannot bypass 
  expect(h.m.completionDependencies).toEqual([]);
  const persisted=JSON.parse(readFileSync(join(h.home,'workers.json'),'utf8'));
  expect(persisted.workers[0].checkpoint).toMatchObject({outcome:'waiting_user'});
+});
+
+it('retains the recovery obligation after checkpoint while a reconstructed process group is live',async()=>{
+ const {processTreeAdapter}=await import('../../src/core/process/tree');
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'});
+ const processGroup=processTreeAdapter().spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{cwd:h.home,env:{PATH:process.env.PATH}});
+ let restored:ReturnType<typeof harness>|undefined;
+ try{
+  h.starts[0]!.config.processStarted?.(processGroup.pid);
+  h.starts[0]!.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+  restored=harness(h.home,true);
+  expect(restored.m.beginReport(a.task_id,1)).toBe(true);
+  await restored.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'execution interrupted; cleanup remains unverified'});
+  expect(restored.m.running).toEqual([a.task_id]);
+  expect(restored.m.completionDependencies).toMatchObject([{id:a.task_id,state:'running'}]);
+  for(let i=0;i<3;i++)await restored.m.tool('app_handoff',{instructions:'independent'});
+  await expect(restored.m.tool('app_handoff',{instructions:'fifth'})).rejects.toThrow('Four');
+  await expect(restored.m.tool('app_cancel_task',{task_id:a.task_id,run:1})).rejects.toThrow('cleanup');
+  expect(restored.m.completionDependencies.some(d=>d.id===a.task_id)).toBe(true);
+  await processGroup.terminate({graceMs:50});
+  await restored.m.tool('app_cancel_task',{task_id:a.task_id,run:1});
+  expect(restored.m.running).not.toContain(a.task_id);
+  expect(restored.m.completionDependencies.some(d=>d.id===a.task_id)).toBe(false);
+ }finally{await processGroup.terminate({graceMs:50});}
+});
+it('retains the recovery obligation with missing process registration and refuses cancellation',async()=>{
+ const h=harness();for(let i=0;i<4;i++)await h.m.tool('app_handoff',{instructions:'crash before registration'});
+ const restored=harness(h.home,true),id=h.m.running[0]!;
+ try{
+  expect(restored.m.beginReport(id,1)).toBe(true);
+  await restored.m.tool('app_task_checkpoint',{task_id:id,run:1,outcome:'complete',evidence:'assessment does not prove process cleanup'});
+  expect(restored.m.running).toHaveLength(4);expect(restored.m.completionDependencies).toHaveLength(4);
+  await expect(restored.m.tool('app_handoff',{instructions:'fifth'})).rejects.toThrow('Four');
+  await expect(restored.m.tool('app_cancel_task',{task_id:id,run:1})).rejects.toThrow('cleanup');
+  await expect(restored.m.tool('app_send_message',{task_id:id,run:1,message:'continue'})).rejects.toThrow('cleanup');
+  await expect(restored.m.close()).rejects.toThrow('cleanup');
+  expect(restored.m.completionDependencies).toHaveLength(4);
+ }finally{managers.splice(managers.indexOf(restored.m),1);}
 });

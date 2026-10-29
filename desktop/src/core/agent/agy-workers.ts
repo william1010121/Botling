@@ -53,8 +53,8 @@ export class AgyWorkers {
       }
     }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new Error('ACP worker state is unreadable or belongs to another conversation; preserved for recovery.');}
   }
-  get running(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup).map(w=>w.id);}
-  get completionDependencies(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.reportPending).map(w=>({id:w.id,run:w.run,task:w.instructions,state:w.active||w.cleaning?'running' as const:'reportQueued' as const,callback:'app_task_result' as const,taskTruncated:false}));}
+  get running(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired).map(w=>w.id);}
+  get completionDependencies(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired||w.reportPending).map(w=>({id:w.id,run:w.run,task:w.instructions,state:w.active||w.cleaning||w.cleanup||w.recoveryRequired?'running' as const:'reportQueued' as const,callback:'app_task_result' as const,taskTruncated:false}));}
   private save(){mkdirSync(this.config.acpHome!,{recursive:true});writeFileAtomic(join(this.config.acpHome!,'workers.json'),JSON.stringify({version:2,ownerSessionId:this.config.sessionId,workers:[...this.workers.values()].map(({head,cleanup,approvals,discardReport,...w})=>w)}));}
   async tool(name:string,args:Record<string,unknown>){
     if(this.closed)throw new Error('Worker manager closed.');
@@ -90,7 +90,7 @@ export class AgyWorkers {
     }
     if(name==='app_cancel_task'){await this.stop(w,true);if(w.cleaning)throw new Error('Worker cleanup incomplete; task remains blocked.');return {task_id:w.id,run:w.run,status:w.status};}
     if(name==='app_send_message'){
-      if(w.recoveryRequired){if(!this.processesGone(w))throw new Error('Worker crash cleanup has not been verified; continuation blocked.');w.recoveryRequired=false;this.save();}
+      this.verifyRecovery(w);
       if(w.active||w.cleaning||w.cleanup)throw new Error('This ACP worker is busy or cleaning up; in-turn steering is unsupported.');
       if(w.reportPending&&!(this.activeReports.get(w.id)===w.run)&&(!w.reportDelivered||w.reportDispatching))throw new Error('The prior worker report must be acknowledged before continuation.');
       if(this.running.length>=4)throw new Error('Four ACP workers are already running or cleaning up.');
@@ -183,7 +183,15 @@ export class AgyWorkers {
     const original=w.approvals.get(match[3]!);if(!original||canonical(original)!==canonical(input))return;
     w.approvals.delete(match[3]!);if(!allow)w.denied=true;w.head?.answer(match[3]!,allow,original,message);
   }
+  private verifyRecovery(w:Worker){
+    if(!w.recoveryRequired)return;
+    if(!this.processesGone(w))throw new Error('Worker crash cleanup has not been verified; process registration is missing or an owned group may survive. Cancellation and continuation remain blocked.');
+    w.recoveryRequired=false;this.save();
+  }
   private async stop(w:Worker,discard:boolean){
+    // A checkpoint records assessment, never cleanup. Reconstructed workers
+    // have no live head to terminate; require evidence before releasing them.
+    this.verifyRecovery(w);
     w.discardReport=discard;
     this.activeReports.delete(w.id);
     if(!w.active&&!w.cleaning){if(discard){w.reportPending=false;this.save();}return;}
@@ -191,6 +199,6 @@ export class AgyWorkers {
     await this.clean(w);
     w.reportPending=!discard;this.save();this.emit({kind:'subagentEnded',id:w.id,status:w.status,summary:w.report??''});
   }
-  async cancel(discardReports=true){await Promise.all([...this.workers.values()].map(w=>this.stop(w,discardReports)));this.emit({kind:'managedPending',pending:this.completionDependencies.length>0});if([...this.workers.values()].some(w=>w.cleaning))throw new Error('Worker cleanup incomplete; live dependencies retained.');}
+  async cancel(discardReports=true){const stopped=await Promise.allSettled([...this.workers.values()].map(w=>this.stop(w,discardReports)));this.emit({kind:'managedPending',pending:this.completionDependencies.length>0});if(stopped.some(r=>r.status==='rejected')||this.running.length)throw new Error('Worker cleanup incomplete; live or recovery dependencies retained.');}
   async close(){this.closed=true;await this.cancel(false);}
 }
