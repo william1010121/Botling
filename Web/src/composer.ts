@@ -1,3 +1,5 @@
+import { renderFilePreview, fileReference, emphasizePath } from "./file-preview";
+import type { ProjectFile, FilePreview } from "./composer-host";
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from "@codemirror/commands";
 import { EditorState, Prec, StateEffect, Transaction, type Extension } from "@codemirror/state";
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
@@ -81,6 +83,14 @@ export class Composer {
   private mentionActive = 0;
   /** Where the "@…" or "/…" being typed starts. */
   private mentionFrom = -1;
+  private fileQueryKey = "";
+  private fileResults: ProjectFile[] = [];
+  private fileLimited = false;
+  private fileError = false;
+  private fileLoading = false;
+  private previewKey = "";
+  private preview: FilePreview | null = null;
+  private fileTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement("div");
@@ -281,7 +291,7 @@ export class Composer {
     const bots = this.allMentions.length > 0;
     // Like the app: an @ right after Chinese text counts; one inside a word (a@b) does not.
     const atAt = bots ? /(?:^|[^A-Za-z0-9_@])@@([^@\n]{0,40})$/.exec(before) : null;
-    const at = bots && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\n]{0,40})$/.exec(before) : null;
+    const at = (bots || composerHost?.searchFiles) && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\n]{0,40})$/.exec(before) : null;
     // A / starts a word (after a space, a bracket or quote, or Chinese); a/b and ~/x are paths.
     const slash = !atAt && !at && this.slashItems.length ? slashQuery.exec(before) : null;
     const match = atAt ?? at ?? slash;
@@ -297,21 +307,50 @@ export class Composer {
       const short = new Set(this.mentions.map((mention) => mention.name.toLowerCase()));
       found.sort((a, b) => Number(short.has(b.name.toLowerCase())) - Number(short.has(a.name.toLowerCase())));
     }
-    this.mentionMatches = atAt ? found : found.slice(0, slash ? SLASH_ROWS : 8);
+    const fileKey = at && !complete && this.draftKey && composerHost?.searchFiles ? `${this.draftKey}:${head}:${query}` : "";
+    if (fileKey !== this.fileQueryKey) {
+      this.fileQueryKey = fileKey; this.previewKey = ""; this.preview = null; this.fileResults = []; this.fileError = false; this.fileLimited = false;
+      this.fileLoading = !!fileKey; this.mentionActive = 0;
+      if (this.fileTimer) clearTimeout(this.fileTimer);
+      if (fileKey) {
+        const botID = this.draftKey!;
+        this.fileTimer = setTimeout(() => {
+          if (this.fileQueryKey !== fileKey) return;
+          void composerHost!.searchFiles!(botID, query ?? "").then(result => {
+            if(this.fileQueryKey !== fileKey) return;
+            this.fileResults = result.files; this.fileLimited = result.limited; this.fileLoading = false; this.refreshMentions();
+          }, () => { if(this.fileQueryKey === fileKey) { this.fileLoading = false; this.fileError = true; this.refreshMentions(); } });
+        }, 120);
+      }
+    }
+    this.mentionMatches = atAt ? found : [...found.slice(0, slash ? SLASH_ROWS : 8),
+      ...(fileKey ? this.fileResults.map(file => ({name: file.path, kind: "file" as const, file})) : [])];
     this.mentionFrom = match ? head - match[1].length - (atAt ? 2 : 1) : -1;
     this.mentionActive = Math.min(this.mentionActive, Math.max(0, this.mentionMatches.length - 1));
-    this.mentionList.hidden = this.mentionMatches.length === 0;
+    this.mentionList.hidden = this.mentionMatches.length === 0 && !fileKey;
     this.mentionList.classList.toggle("slash", !!slash);
+    this.mentionList.classList.toggle("with-files", !!fileKey);
+    this.mentionList.setAttribute("role", fileKey ? "group" : "listbox");
+    const previousPreview = this.mentionList.querySelector(".file-preview");
+    const scrollTop = previousPreview?.scrollTop ?? 0;
     this.mentionList.innerHTML = "";
+    const results = document.createElement("div"); results.className = "mention-results";
+    if(fileKey) results.setAttribute("role", "listbox");
+    this.mentionList.append(results);
     this.mentionMatches.forEach((mention, index) => {
       const option = document.createElement("button");
       option.setAttribute("role", "option");
       option.className = index === this.mentionActive ? "active" : "";
       const label = document.createElement("span");
       label.className = "mention-name";
-      label.textContent = sigil(mention) + mention.name;
+      if(mention.kind === "file") {
+        option.classList.add("mention-file"); option.title = mention.name;
+        emphasizePath(label, mention.name, query ?? "");
+        const tag = document.createElement("small"); tag.textContent = t("composer.kindFile"); option.append(tag);
+      } else label.textContent = sigil(mention) + mention.name;
+      option.setAttribute("aria-selected", String(index === this.mentionActive));
       option.append(label);
-      if (mention.kind !== "bot") {
+      if (mention.kind !== "bot" && mention.kind !== "file") {
         // No tag: a command keeps a faint hint of what it does, a component only its name.
         if (mention.about) {
           const hint = document.createElement("span");
@@ -328,10 +367,35 @@ export class Composer {
         event.preventDefault();
         this.pickMention(mention);
       });
-      this.mentionList.append(option);
+      results.append(option);
       // @@ can list more than fit: keep the chosen one in view.
       if (index === this.mentionActive) option.scrollIntoView?.({ block: "nearest" });
     });
+    if(fileKey) {
+      if(this.fileLoading || this.fileError || this.fileLimited || !this.fileResults.length) {
+        const status = document.createElement("div"); status.className = "file-picker-status"; status.setAttribute("role", "status");
+        status.textContent = t(this.fileLoading ? "composer.filesLoading" : this.fileError ? "composer.filesUnavailable" : this.fileLimited ? "composer.filesLimited" : "composer.filesEmpty"); results.append(status);
+      }
+      const pane = document.createElement("pre"); pane.className = "file-preview"; pane.tabIndex = 0;
+      pane.setAttribute("aria-label", t("composer.filePreview")); this.mentionList.append(pane);
+      const file = this.mentionMatches[this.mentionActive]?.file;
+      const previewKey = file ? `${this.draftKey}:${file.path}` : "";
+      if(previewKey !== this.previewKey) {
+        this.previewKey = previewKey; this.preview = null;
+        if(file && composerHost?.previewFile) void composerHost.previewFile(this.draftKey!, file.path).then(preview => {
+          if(this.previewKey !== previewKey || this.fileQueryKey !== fileKey) return;
+          this.preview = preview; this.refreshMentions();
+        }, () => { if(this.previewKey === previewKey && this.fileQueryKey === fileKey) { this.preview = {text:"",status:"unavailable"}; this.refreshMentions(); } });
+      }
+      if(!file) pane.textContent = t("composer.filePreview");
+      else if(!this.preview) pane.textContent = t("composer.filesLoading");
+      else {
+        if(this.preview.status !== "text") { const note = document.createElement("div"); note.className = "file-picker-status"; note.textContent = t(this.preview.status === "binary" ? "composer.fileBinary" : this.preview.status === "truncated" ? "composer.fileTruncated" : "composer.filesUnavailable"); pane.append(note); }
+        renderFilePreview(pane, this.preview.text);
+      }
+      if(previousPreview && previewKey === previousPreview.getAttribute("data-preview")) pane.scrollTop = scrollTop;
+      pane.setAttribute("data-preview", previewKey);
+    } else { this.previewKey = ""; this.preview = null; }
   }
 
   /** Return alone sends (Shift-Return is a new line); an input method's Return never does. */
@@ -345,7 +409,8 @@ export class Composer {
 
   /** Up/Down choose, Return or Tab put the name in, Escape closes the list. */
   private mentionKey(event: KeyboardEvent): boolean {
-    if (this.mentionMatches.length === 0) return false;
+    if (this.mentionList.hidden) return false;
+    if (this.mentionMatches.length === 0 && event.key !== "Escape") return false;
     if (isComposingKey(event) || isComposingEnter(event)) return false;
     // Shift-Return is a new line, Cmd-… a shortcut: not for the list.
     if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return false;
@@ -356,6 +421,7 @@ export class Composer {
     } else if (event.key === "Enter" || event.key === "Tab") {
       this.pickMention(this.mentionMatches[this.mentionActive]);
     } else if (event.key === "Escape") {
+      this.fileQueryKey = ""; this.previewKey = "";
       this.mentionMatches = [];
       this.mentionList.hidden = true;
     } else {
@@ -371,7 +437,7 @@ export class Composer {
     // Picked in the middle of a word: the rest of the word goes too.
     const line = this.view.state.doc.lineAt(head);
     const rest = /^[A-Za-z0-9_\-]*/.exec(line.text.slice(head - line.from))?.[0].length ?? 0;
-    const insert = `${sigil(mention)}${mention.name} `;
+    const insert = mention.file ? fileReference(mention.file.path, mention.file.url) : `${sigil(mention)}${mention.name} `;
     this.view.dispatch({ changes: { from: this.mentionFrom, to: head + rest, insert }, selection: { anchor: this.mentionFrom + insert.length } });
     this.mentionMatches = [];
     this.mentionList.hidden = true;
@@ -604,7 +670,8 @@ const SLASH_ROWS = 5;
 /** Something the list offers: a bot (after @), or a command or component (after /). */
 interface Mention {
   name: string;
-  kind: "bot" | "command" | "component";
+  kind: "bot" | "command" | "component" | "file";
+  file?: ProjectFile;
   about?: string;
   /** A component on the shared library's shelf, not on this bot's own list. */
   library?: boolean;

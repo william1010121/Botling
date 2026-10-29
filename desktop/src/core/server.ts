@@ -1,3 +1,4 @@
+import { ProjectFiles } from "./project-files";
 import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
 import { tokenFlowHistory } from "./token-flow-history";
@@ -204,6 +205,7 @@ export class Core {
   readonly plugins: Plugins;
   /** Every bot's profile, in the left column's order (Maintainer last). */
   private profiles: BotProfile[] = [];
+  private readonly projectFiles = new ProjectFiles();
   private newBot!: (profile: BotProfile) => Bot;
   /** "Add as project?" cards waiting for your pick, by their line in the main chat. */
   private projectQuestions = new Map<string, { folder: string; task: string }[]>();
@@ -1729,6 +1731,18 @@ First write a test that shows this, then fix it.`;
       case "files.add": this.bot(cmd.botId); return { files: this.pending.addPaths(cmd.botId, cmd.paths) };
       case "files.data": this.bot(cmd.botId); return { files: await this.pending.addData(cmd.botId, cmd.name, cmd.base64) };
       case "files.remove": return { files: this.pending.remove(cmd.botId, cmd.id) };
+      case "project.files": {
+        this.bot(cmd.botId);
+        const profile = this.profiles.find(p => p.id === cmd.botId);
+        if (!profile) throw new ContractError("not_found", "No project.");
+        return this.projectFiles.search(profile.folder, cmd.query);
+      }
+      case "project.preview": {
+        this.bot(cmd.botId);
+        const profile = this.profiles.find(p => p.id === cmd.botId);
+        if (!profile) throw new ContractError("not_found", "No project.");
+        return this.projectFiles.preview(profile.folder, cmd.path);
+      }
       case "attachment.file": return this.attachmentFile(cmd.botId, cmd.ref);
       case "plugins.loaded": this.plugins.webLoaded(cmd.name); return {};
       case "plugins.failed": this.plugins.webFailed(cmd.name, cmd.message); return {};

@@ -26,6 +26,13 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(!object(value))return false;
  const file=direction==='up'?fileData(value):null;
  if(!bounded(file??value,direction==='up'?1024*1024:16*1024*1024))return false;
+ if(direction==='down'&&value.botling==='projectFilesResult') {
+  if(!Number.isSafeInteger(value.requestID)||value.requestID<1||Object.keys(value).some(key=>!['botling','requestID','value','error'].includes(key)))return false;
+  if(value.error!==undefined)return typeof value.error==='string'&&value.error.length<=4096&&value.value===undefined;
+  const result=value.value;if(!object(result))return false;
+  if(Array.isArray(result.files))return result.files.length<=40&&typeof result.limited==='boolean'&&result.files.every((file:unknown)=>object(file)&&typeof file.path==='string'&&file.path.length<=4096&&typeof file.url==='string'&&file.url.startsWith('file:')&&file.url.length<=16384);
+  return typeof result.text==='string'&&result.text.length<=32768&&['text','truncated','binary','unavailable'].includes(result.status);
+ }
  if(direction==='down'&&value.botling==='composerResult')return Object.keys(value).every(key=>['botling','requestID','ok','error'].includes(key))&&typeof value.requestID==='string'&&value.requestID.length>0&&value.requestID.length<=80&&typeof value.ok==='boolean'&&(value.error===undefined||typeof value.error==='string'&&value.error.length<=4096);
  if(direction==='down')return ['widthRejected','widthPreview','state','stateDelta','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
  switch(value.botling){

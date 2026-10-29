@@ -1437,3 +1437,16 @@ body.spec-mode .float-layer { display: none; }
 /* Keep fixed dialog chrome above composited source-card frames in WKWebView. */
 .source-header,.source-nav,.source-footer {position:relative;z-index:1;}
 .source-header,.source-footer {background:#0E0E10;}
+
+/* Project file completion: both panes scroll without moving the composer. */
+.mention-list.with-files { display: grid; grid-template-columns: minmax(150px, 2fr) minmax(180px, 3fr); width: min(760px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: min(350px, 45vh); overflow: hidden; }
+.mention-list.with-files[hidden] { display: none; }
+.mention-results { overflow-y: auto; min-width: 0; }
+.with-files .mention-results { max-height: min(350px, 45vh); }
+.mention-file .mention-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; text-align: left; }
+.mention-file small { opacity: .65; font-size: 10px; }
+.mention-file mark { background: transparent; color: #ffc66d; font-weight: 700; }
+.file-preview { margin: 0; padding: 12px; overflow: auto; min-width: 0; max-height: min(350px, 45vh); border-left: 1px solid #444; font: 12px/1.5 ui-monospace, monospace; text-align: left; white-space: pre; user-select: text; }
+.file-picker-status { padding: 8px; font: 12px/1.4 system-ui; color: var(--muted); white-space: normal; }
+.file-comment { color: #8d9b89; } .file-string { color: #b6d78a; } .file-keyword { color: #cba7ef; } .file-number { color: #e4bb89; }
+@media (max-width: 480px) { .mention-list.with-files { grid-template-columns: minmax(110px, 1fr) minmax(130px, 1fr); } .file-preview { padding: 6px; font-size: 11px; } }

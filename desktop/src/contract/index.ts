@@ -882,6 +882,8 @@ export const WebBounds = z.strictObject({
 });
 
 export const Command = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("project.files"), botId, query: z.string().max(200) }),
+  z.strictObject({ type: z.literal("project.preview"), botId, path: z.string().min(1).max(4096) }),
   z.strictObject({ type: z.literal("boot.commit") }),
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
@@ -1125,7 +1127,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "catchup.retry", "catchup.interval",
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
-  "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
+  "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
@@ -1274,6 +1276,8 @@ export interface Results {
   "plugins.failed": Record<string, never>;
   "plugins.notice": Record<string, never>;
   "plugins.file": { path: string; type: string };
+  "project.files": { files: { path: string; url: string }[]; limited: boolean };
+  "project.preview": { text: string; status: "text" | "truncated" | "binary" | "unavailable" };
   "files.pick": { files: PendingFileView[] };
   "files.add": { files: PendingFileView[] };
   "files.data": { files: PendingFileView[] };

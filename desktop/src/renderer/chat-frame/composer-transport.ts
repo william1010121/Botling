@@ -4,6 +4,21 @@ import { UploadQueue } from './upload-queue';
 import { ComposerRequests, ACCEPTANCE_TIMEOUT_MS } from './composer-requests';
 import { pageDraftStore } from './draft-keep';
 
+let fileRequestID = 0;
+const fileRequests = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+function projectRequest(botID: string, type: string, value: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const requestID = ++fileRequestID;
+    const timer = setTimeout(() => { fileRequests.delete(requestID); reject(new Error('File request timed out')); }, 10000);
+    fileRequests.set(requestID, { resolve: result => { clearTimeout(timer); resolve(result); }, reject: error => { clearTimeout(timer); reject(error); } });
+    toShell({botling: 'action', action: {type, botID, requestID, value}});
+  });
+}
+fromShell(message => {
+  if(message.botling !== 'projectFilesResult') return;
+  const pending = fileRequests.get(message.requestID); fileRequests.delete(message.requestID);
+  if(message.error) pending?.reject(new Error(message.error)); else pending?.resolve(message.value);
+});
 const sending = new Set<string>();
 let selected: string | undefined;
 let picker = false;
@@ -74,6 +89,8 @@ fromShell(message => {
   }
 });
 setComposerHost({
+  searchFiles: (botID, query) => projectRequest(botID, "searchProjectFiles", query),
+  previewFile: (botID, path) => projectRequest(botID, "previewProjectFile", path),
   uncertainSend(botID) { return requests.unknown(botID).find(item => item.type === 'send')?.requestID; },
   releaseUncertain(requestID) { requests.forget(requestID); },
   async send(action, lateResult) {

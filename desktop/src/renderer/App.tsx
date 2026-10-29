@@ -797,6 +797,16 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       };
       const composerFailure = (error: unknown) => { composerReply(false, error instanceof Error ? error.message : String(error)); onError(error); };
       switch (action?.type) {
+        case "searchProjectFiles":
+        case "previewProjectFile": {
+          if (!chat || action.botID !== chat.botId || typeof action.requestID !== "number" || typeof action.value !== "string") return;
+          const requestID = action.requestID;
+          const cmd = action.type === "searchProjectFiles"
+            ? { type: "project.files" as const, botId: chat.botId, query: action.value.slice(0, 200) }
+            : { type: "project.preview" as const, botId: chat.botId, path: action.value.slice(0, 4096) };
+          void client.request(cmd).then(value => postToChat({botling: "projectFilesResult", requestID, value}), error => postToChat({botling: "projectFilesResult", requestID, error: String(error).slice(0,4096)}));
+          return;
+        }
         case "shellCommand":
           if (nativeEditor() && ["settings", "rightPanel", "sidebar", "search"].includes(String(action.command))) {
             window.dispatchEvent(new CustomEvent("botling:chat-command", { detail: action.command }));
