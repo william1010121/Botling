@@ -944,6 +944,7 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 .report-viewer header button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 .terminal-panel { height: 300px; min-height: min(120px, 70vh); max-height: 70vh; overflow: hidden; display: flex; flex-direction: column; flex-shrink: 0; background: #111318; color: #e5e7eb; border-top: 1px solid #454850; }
+.terminal-drag-shield { position: fixed; inset: 0; z-index: 10000; cursor: ns-resize; -webkit-app-region: no-drag; }
 .terminal-divider { height: 7px; flex-shrink: 0; cursor: ns-resize; touch-action: none; user-select: none; background: transparent; }
 .terminal-divider:hover, .terminal-divider:active, .terminal-divider:focus-visible { background: var(--selected); outline: none; }
 .terminal-divider::after { content: ""; display: block; width: 32px; height: 2px; margin: 2px auto; border-radius: 2px; background: var(--muted); opacity: .5; }
@@ -952,18 +953,26 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 .terminal-toolbar { display: flex; gap: 4px; align-items: center; min-width: 0; padding: 4px 8px; flex-shrink: 0; border-bottom: 1px solid var(--line); }
 .terminal-toolbar [role=tablist] { display: flex; flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
 .terminal-toolbar [role=tablist] > span { display: inline-flex; flex-shrink: 0; align-items: center; }
-.terminal-toolbar button, .terminal-toolbar select, .terminal-toggle {
+.terminal-toolbar button, .terminal-toolbar select, .terminal-toggle, .terminal-tab [role=status] button {
   height: 24px; margin: 0; padding: 0 8px; border: 0; border-radius: 5px;
   background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 24px;
   cursor: pointer; -webkit-app-region: no-drag;
 }
 .terminal-toolbar > button { flex-shrink: 0; width: 26px; padding: 0; font-size: 17px; }
-.terminal-toolbar button:hover, .terminal-toggle:hover { background: var(--hover); color: var(--text); }
+.terminal-toolbar button:hover, .terminal-toggle:hover, .terminal-tab [role=status] button:hover { background: var(--hover); color: var(--text); }
 .terminal-toolbar button[aria-selected=true], .terminal-toggle[aria-expanded=true] { background: var(--selected); color: var(--text); }
-.terminal-toolbar button:focus-visible, .terminal-toolbar select:focus-visible, .terminal-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
+.terminal-toolbar button:focus-visible, .terminal-toolbar select:focus-visible, .terminal-toggle:focus-visible, .terminal-tab [role=status] button:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .terminal-toolbar button:disabled, .terminal-toggle:disabled { opacity: .4; cursor: default; }
 .terminal-toolbar select { flex-shrink: 0; width: clamp(80px, 20vw, 160px); max-width: 30%; background: var(--bubble); }
 .terminal-controls { display: inline-flex; flex-shrink: 0; }
+/* Keep the terminal toggle and routines reachable alongside long engine labels. */
+.chat-column > .chat-header { padding-left: 12px; padding-right: 12px; }
+.chat-column > .chat-header .chat-title, .chat-column > .chat-header .chat-heads { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-column > .chat-header .chat-title { flex-shrink: 1; }
+.chat-column > .chat-header .chat-heads { flex-shrink: 2; }
+.chat-column > .chat-header .chat-status, .chat-column > .chat-header .chat-actions { flex-shrink: 0; }
+.chat-column > .chat-header .chat-actions { position: static; }
+@media (max-width: 860px) { .chat-column > .chat-header { padding-right: 84px; } }
 .terminal-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 8px; }
 .terminal-emulator { flex: 1; min-height: 0; }
 .terminal-empty { padding: 20px; }

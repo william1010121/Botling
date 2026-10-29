@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ShellOverlay } from './ShellOverlay';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -32,6 +33,7 @@ function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boole
     return () => window.removeEventListener('resize', update);
   }, []);
   const panel = useRef<HTMLElement>(null);
+  const [dragging, setDragging] = useState(false);
   const drag = useRef<{ y: number; height: number } | null>(null);
   const resize = (next: number) => setHeight(Math.max(Math.min(120, window.innerHeight * .7), Math.min(window.innerHeight * .7, next)));
   const [tabs, setTabs] = useState<TerminalState[]>([]);
@@ -78,18 +80,20 @@ function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boole
     } catch (e) { closing.current.delete(tab.sessionId); fail(e); }
   };
   return <section ref={panel} className="terminal-panel" style={{ height }} hidden={!visible} aria-label="Bot terminal">
+    {dragging && <ShellOverlay revealImmediately><div className="terminal-drag-shield" /></ShellOverlay>}
     <div className="terminal-divider" role="separator" aria-label="Resize terminal panel" aria-orientation="horizontal" tabIndex={0}
       aria-valuemin={Math.min(120, Math.round(viewportHeight * .7))} aria-valuemax={Math.round(viewportHeight * .7)} aria-valuenow={Math.round(Math.min(height, viewportHeight * .7))}
       onPointerDown={event => {
         if (event.button !== 0) return;
         event.preventDefault();
+        setDragging(true);
         drag.current = { y: event.clientY, height: panel.current!.getBoundingClientRect().height };
         event.currentTarget.setPointerCapture(event.pointerId);
       }}
       onPointerMove={event => { if (drag.current) resize(drag.current.height + drag.current.y - event.clientY); }}
-      onPointerUp={event => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
-      onLostPointerCapture={() => { drag.current = null; }}
-      onPointerCancel={() => { drag.current = null; }}
+      onPointerUp={event => { drag.current = null; setDragging(false); if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+      onLostPointerCapture={() => { drag.current = null; setDragging(false); }}
+      onPointerCancel={() => { drag.current = null; setDragging(false); }}
       onKeyDown={event => {
         const current = panel.current!.getBoundingClientRect().height;
         if (event.key === 'ArrowUp') resize(current + 20);
