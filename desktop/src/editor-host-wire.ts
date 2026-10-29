@@ -26,6 +26,13 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
  if(!object(value))return false;
  const file=direction==='up'?fileData(value):null;
  if(!bounded(file??value,direction==='up'?1024*1024:16*1024*1024))return false;
+ if(direction==='down'&&value.botling==='composerModelsResult') {
+  if(!Number.isSafeInteger(value.requestID)||value.requestID<1||Object.keys(value).some(key=>!['botling','requestID','value','error'].includes(key)))return false;
+  if(value.error!==undefined)return typeof value.error==='string'&&value.error.length<=4096&&value.value===undefined;
+  const result=value.value;if(!object(result))return false;
+  if(Array.isArray(result.models))return ['ready','signed-out','unsupported','unavailable','error'].includes(result.status)&&typeof result.message==='string'&&result.models.length<=500&&result.models.every((m:unknown)=>object(m)&&typeof m.id==='string'&&typeof m.name==='string'&&typeof m.isDefault==='boolean'&&(m.efforts===null||Array.isArray(m.efforts)&&m.efforts.every((e:unknown)=>typeof e==='string')));
+  return typeof result.botId==='string'&&Array.isArray(result.engines)&&result.engines.every((e:unknown)=>['claude','codex','agy'].includes(String(e)))&&['model','codexModel','agyModel','effort'].every(key=>result[key]===null||typeof result[key]==='string');
+ }
  if(direction==='down'&&value.botling==='projectFilesResult') {
   if(!Number.isSafeInteger(value.requestID)||value.requestID<1||Object.keys(value).some(key=>!['botling','requestID','value','error'].includes(key)))return false;
   if(value.error!==undefined)return typeof value.error==='string'&&value.error.length<=4096&&value.value===undefined;

@@ -4,6 +4,24 @@ import { UploadQueue } from './upload-queue';
 import { ComposerRequests, ACCEPTANCE_TIMEOUT_MS } from './composer-requests';
 import { pageDraftStore } from './draft-keep';
 
+let modelRequestID = 0;
+const modelRequests = new Map<number, {resolve: (value: any) => void; reject: (error: Error) => void}>();
+function modelRequest(botID: string, operation: string, value?: unknown): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const requestID = ++modelRequestID;
+    // A configure acknowledgement must settle before another user turn can be sent.
+    const timer = operation === 'save' ? undefined : setTimeout(() => {
+      modelRequests.delete(requestID); reject(new Error('Model request timed out. Retry.'));
+    }, 15000);
+    modelRequests.set(requestID, {resolve: result => {clearTimeout(timer); resolve(result);}, reject: error => {clearTimeout(timer); reject(error);}});
+    toShell({botling:'action',action:{type:'composerModels',botID,requestID,operation,value}});
+  });
+}
+fromShell(message => {
+  if(message.botling !== 'composerModelsResult') return;
+  const pending=modelRequests.get(message.requestID); modelRequests.delete(message.requestID);
+  if(message.error) pending?.reject(new Error(message.error)); else pending?.resolve(message.value);
+});
 let fileRequestID = 0;
 const fileRequests = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
 function projectRequest(botID: string, type: string, value: string): Promise<any> {
@@ -89,6 +107,9 @@ fromShell(message => {
   }
 });
 setComposerHost({
+  modelSettings: botID => modelRequest(botID, 'settings'),
+  modelCatalog: (botID, engine) => modelRequest(botID, 'catalog', engine),
+  configureModels: (botID, change) => modelRequest(botID, 'save', change),
   searchFiles: (botID, query) => projectRequest(botID, "searchProjectFiles", query),
   previewFile: (botID, path) => projectRequest(botID, "previewProjectFile", path),
   uncertainSend(botID) { return requests.unknown(botID).find(item => item.type === 'send')?.requestID; },

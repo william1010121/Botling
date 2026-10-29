@@ -8,7 +8,14 @@ export class DeliveryUncertain extends Error {
 }
 export interface ProjectFile { path: string; url: string }
 export interface FilePreview { text: string; status: "text" | "truncated" | "binary" | "unavailable" }
+export type ModelEngine = 'claude' | 'codex' | 'agy';
+export interface ModelPreferences { botId: string; engines: ModelEngine[]; model: string | null; codexModel: string | null; agyModel: string | null; effort: string | null }
+export type ModelChange = Partial<Pick<ModelPreferences, 'model' | 'codexModel' | 'agyModel' | 'effort'>>;
+export interface ModelCatalog { status: string; message: string; models: {id: string; name: string; isDefault: boolean; efforts: string[] | null}[] }
 export interface ComposerHost {
+  modelSettings?(botID: string): Promise<ModelPreferences>;
+  modelCatalog?(botID: string, engine: ModelEngine): Promise<ModelCatalog>;
+  configureModels?(botID: string, change: ModelChange): Promise<ModelPreferences>;
   searchFiles?(botID: string, query: string): Promise<{files: ProjectFile[]; limited: boolean}>;
   previewFile?(botID: string, path: string): Promise<FilePreview>;
   send(action: { type: 'send'; botID: string; text: string; to?: string }, lateResult?: (result: DeliveryResult) => void): Promise<void>;

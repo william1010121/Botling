@@ -43,6 +43,7 @@ export type FrameMessage =
 
 /** Shell → frame. */
 export type ShellMessage =
+  | { botling: "composerModelsResult"; requestID: number; value?: unknown; error?: string }
   | { botling: "projectFilesResult"; requestID: number; value?: unknown; error?: string }
   | { botling: "composerResult"; requestID: string; ok: boolean; error?: string }
   | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }

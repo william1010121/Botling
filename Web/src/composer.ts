@@ -1,3 +1,4 @@
+import { ComposerModels } from './composer-models';
 import { renderFilePreview, fileReference, emphasizePath } from "./file-preview";
 import type { ProjectFile, FilePreview } from "./composer-host";
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from "@codemirror/commands";
@@ -63,6 +64,7 @@ export class Composer {
   private readonly answerRow: HTMLElement;
   private readonly answerHint: HTMLElement;
   private answer: AnswerWithView | null = null;
+  private readonly models: ComposerModels;
   /** Explicit choices awaiting the app's saved state, keyed so switching chats keeps them. */
   private readonly answerPicks = new Map<string, { id: string; requestID: number; saved: boolean }>();
   private answerRequest = 0;
@@ -95,6 +97,7 @@ export class Composer {
   constructor(parent: HTMLElement) {
     this.root = document.createElement("div");
     this.root.className = "composer";
+    this.models = new ComposerModels(this.root, () => this.refreshSend());
     this.submissionStatus.setAttribute("role", "status");
     this.submissionStatus.className = "composer-submission-status";
     this.root.append(this.submissionStatus);
@@ -506,6 +509,7 @@ export class Composer {
 
   /** Sends what is typed (and any files). Returns true so Return does not also add a line. */
   submit(): boolean {
+    if (this.draftKey && this.models.blocked(this.draftKey)) return false;
     let text = this.text;
     if (text.trim() === "" && !this.hasFiles) return true;
     const key = this.draftKey;
@@ -587,6 +591,7 @@ export class Composer {
 
   /** Native state owns saved choices; keep a click visible until its save is acknowledged. */
   private setAnswer(answer: AnswerWithView | null, chat: string): void {
+    this.models.update(chat, answer?.options.map(option => option.id) ?? []);
     this.answerChat = chat;
     const pending = this.answerPicks.get(chat);
     if (pending && ((pending.saved && answer?.chosen === pending.id) || !answer?.options.some((option) => option.id === pending.id))) {
@@ -616,12 +621,23 @@ export class Composer {
       chip.setAttribute("aria-pressed", String(option.id === picked));
       chip.title = `${t("composer.answerWith")} ${option.label} · ⌥${index + 1}`;
       chip.addEventListener("click", () => this.pickAnswer(option.id));
-      this.answerRow.append(chip);
+      if (composerHost?.modelSettings && ['claude','codex','agy'].includes(option.id)) {
+        const segment = document.createElement('span');
+        segment.className = 'answer-segment' + (option.id === picked ? ' picked' : '');
+        const menu = document.createElement('button');
+        menu.className = 'answer-menu'; menu.type = 'button'; menu.dataset.engine = option.id;
+        menu.setAttribute('aria-label', `${option.label} model and effort`);
+        menu.setAttribute('aria-haspopup', 'dialog'); menu.setAttribute('aria-expanded', String(this.models.isOpen(this.answerChat, option.id)));
+        menu.innerHTML = '<svg width="8" height="5" viewBox="0 0 8 5" aria-hidden="true"><path d="m1 1 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>';
+        menu.onclick = () => void this.models.open(this.answerChat, option.id as 'claude'|'codex'|'agy', option.label);
+        segment.append(chip, menu); this.answerRow.append(segment);
+      } else this.answerRow.append(chip);
     });
     this.answerHint.textContent = t("composer.answerHint", { keys: answer.options.map((_, index) => `⌥${index + 1}`).join(" ") });
   }
 
   private pickAnswer(id: string): void {
+    this.models.close(false);
     if (!this.answer?.options.some((option) => option.id === id)) return;
     if (id === this.answer.chosen && !this.answerPicks.has(this.answerChat)) {
       this.view.focus();
@@ -646,7 +662,7 @@ export class Composer {
   }
 
   private refreshSend(): void {
-    this.sendButton.disabled = !!(this.draftKey && this.sending.has(this.draftKey)) || (this.text.trim() === "" && !this.hasFiles);
+    this.sendButton.disabled = !!(this.draftKey && (this.sending.has(this.draftKey) || this.models.blocked(this.draftKey))) || (this.text.trim() === "" && !this.hasFiles);
   }
 
   /** Pasted or dropped files (screenshots too) go to Swift; plain text pastes as text. */

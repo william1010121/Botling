@@ -418,6 +418,7 @@ export class Bot {
   private briefing = true;
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   private restartPending = false;
+  private modelSettingsPending = false;
   /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
   private restartReason: { told: string; shown: string } | null = null;
   /** The restart waiting is only for plugins: when they changed back, it is not needed (1.x's `pendingRestartForPluginsOnly`). */
@@ -1856,23 +1857,24 @@ export class Bot {
     const heads = owner.members;
     const name = (model: string) => ({ haiku: "Haiku", sonnet: "Sonnet", opus: "Opus" } as Record<string, string>)[model] ?? model;
     const effortName = (level: string | null) => (level ? ({ low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" } as Record<string, string>)[level] ?? level : "default");
-    if (change.model !== undefined && change.model !== before.model && change.model) {
+    if (change.model !== undefined && change.model !== before.model) {
       const claude = heads.find((bot) => bot.engine === "claude");
-      if (claude?.head?.running) claude.restartFor({ told: name(change.model), shown: name(change.model) });
-      else if (claude) owner.add({ id: newId(), role: "divider", text: `Switched to ${name(change.model)}`, date: toSwiftDate() });
+      const model = change.model ? name(change.model) : "Claude's default model";
+      if (claude?.head?.running) claude.restartFor({ told: model, shown: model }, true);
+      else if (claude) owner.add({ id: newId(), role: "divider", text: `Switched to ${model}`, date: toSwiftDate() });
     }
     if (change.effort !== undefined && change.effort !== before.effort) {
-      for (const bot of heads) bot.restartFor({ told: `${change.effort ?? "default"} effort`, shown: `${effortName(change.effort)} effort` });
+      for (const bot of heads) bot.restartFor({ told: `${change.effort ?? "default"} effort`, shown: `${effortName(change.effort)} effort` }, true);
     }
     if (change.subagentModel !== undefined && change.subagentModel !== before.subagentModel) {
       const model = change.subagentModel;
       for (const bot of heads) if (bot.engine === "claude") bot.restartFor({ told: `subagents on ${model ? name(model) : "the same model"}`, shown: model ? `subagents on ${name(model)}` : "subagents on the same model" });
     }
     if (change.codexModel !== undefined && change.codexModel !== before.codexModel) {
-      for (const bot of heads) if (bot.engine === "codex") bot.restartFor({ told: `Codex model ${change.codexModel ?? "default"}`, shown: change.codexModel ?? "Codex's default model" });
+      for (const bot of heads) if (bot.engine === "codex") bot.restartFor({ told: `Codex model ${change.codexModel ?? "default"}`, shown: change.codexModel ?? "Codex's default model" }, true);
     }
     if (change.agyModel !== undefined && change.agyModel !== before.agyModel) {
-      for (const bot of heads) if (bot.engine === "agy") bot.restartFor({ told: `Antigravity model ${change.agyModel ?? "default"}`, shown: change.agyModel ?? "Antigravity default" });
+      for (const bot of heads) if (bot.engine === "agy") bot.restartFor({ told: `Antigravity model ${change.agyModel ?? "default"}`, shown: change.agyModel ?? "Antigravity default" }, true);
     }
     return owner.settingsView();
   }
@@ -2119,6 +2121,8 @@ export class Bot {
     // A switch of engine waits for this message: the handoff first, then the message (`restartsBeforeMessage`).
     if (!current && this.switchReady) { this.queue.push(turn); void this.handOver(); return turn; }
     if (!current && !this.tidying && !this.switching) { this.begin(turn); return turn; }
+    // A saved model/effort belongs to a new turn, never to steering the old configuration.
+    if (current && this.modelSettingsPending) { this.queue.push(turn); return turn; }
     if (current && this.canPause(current, turn)) return this.pause(current, turn);
     if (current && this.canSteer(current, turn) && this.steerInto(current, turn)) return current;
     this.queue.push(turn);
@@ -2273,10 +2277,11 @@ export class Bot {
   }
 
   /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
-  private restartFor(reason: { told: string; shown: string } | null) {
+  private restartFor(reason: { told: string; shown: string } | null, modelSettings = false) {
     this.restartForPluginsOnly = false;
     if (!this.head?.running) { this.restartPending = false; return; }
     this.restartPending = true;
+    this.modelSettingsPending ||= modelSettings;
     if (reason) this.restartReason = reason;
   }
 
@@ -2315,6 +2320,12 @@ export class Bot {
       this.restartPending = false;
       this.restartForPluginsOnly = false;
       this.restartReason = null;
+    }
+    // Keep workers alive, but never accept a user turn under a known stale model/effort.
+    if (!given && turn.origin === "user" && this.modelSettingsPending && old?.running
+      && (this.subagents.running.length || this.managedPending || this.backgroundWorkRunning || this.outage)) {
+      this.finishTurn(turn, "failed", "Model or effort change is waiting for active work to finish. Send this message again when it finishes.");
+      return;
     }
     if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending && !this.backgroundWorkRunning && !this.outage) {
       this.restartPending = false;
@@ -2474,6 +2485,7 @@ export class Bot {
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
     this.requireEngineRoute(this.engine, this.owner.engine);
     this.restartPending = false;
+    this.modelSettingsPending = false;
     this.restartForPluginsOnly = false;
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
     const resume = this.session.started && !this.briefing;

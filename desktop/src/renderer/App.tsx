@@ -801,6 +801,27 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       };
       const composerFailure = (error: unknown) => { composerReply(false, error instanceof Error ? error.message : String(error)); onError(error); };
       switch (action?.type) {
+        case "composerModels": {
+          const requestID = action.requestID;
+          if (!Number.isSafeInteger(requestID) || typeof requestID !== 'number' || requestID < 1) return;
+          const reply = (value?: unknown, error?: string) => postToChat({botling:'composerModelsResult',requestID,...(error ? {error:error.slice(0,4096)} : {value})});
+          if (!chat || action.botID !== chat.botId) {reply(undefined,'Chat changed. Reopen the selector.');return;}
+          const botId = chat.botId;
+          const run = async () => {
+            if (action.operation === 'settings') return client.request({type:'bot.settings',botId});
+            if (action.operation === 'catalog' && ['claude','codex','agy'].includes(String(action.value)))
+              return client.request({type:'engine.models',botId,engine:action.value as 'claude'|'codex'|'agy'});
+            if (action.operation === 'save') {
+              const change = action.value;
+              if (!change || typeof change !== 'object' || Array.isArray(change) || !Object.keys(change).length || Object.keys(change).some(key=>!['model','codexModel','agyModel','effort'].includes(key))) throw new Error('Invalid model setting');
+              // Core command validation remains authoritative for IDs and effort values.
+              return client.request({type:'bot.configure',botId,...change});
+            }
+            throw new Error('Invalid model operation');
+          };
+          void run().then(value=>reply(value),error=>reply(undefined,String(error)));
+          return;
+        }
         case "searchProjectFiles":
         case "previewProjectFile": {
           if (!chat || action.botID !== chat.botId || typeof action.requestID !== "number" || typeof action.value !== "string") return;
