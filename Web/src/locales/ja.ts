@@ -74,6 +74,7 @@ export const ja: Dictionary = {
   "steps.soFar": "これまで {n} ステップ · 以前の {hidden} 件は非表示",
   "steps.subagents": "サブエージェント {n} 件",
   "steps.subagentsRunning": "（{running} 件実行中）",
+  "steps.imageUnavailable": "画像を読み込めません：{name}",
   "steps.in": "入力",
   "steps.out": "出力",
   "steps.error": "エラー",

@@ -41,7 +41,7 @@ export function stamp(messages: MessageView[], index: number, now: Date): string
 function step(view: NonNullable<MessageView["steps"]>[number]): WebStep {
   return {
     id: view.id, kind: view.kind === "message" ? "text" : view.kind, tool: view.tool, title: view.title,
-    detail: view.detail, output: view.output, failed: view.failed, done: view.done, status: view.status ?? null, count: view.count ?? null,
+    detail: view.detail, output: view.output, failed: view.failed, done: view.done, images: view.images, status: view.status ?? null, count: view.count ?? null,
   };
 }
 

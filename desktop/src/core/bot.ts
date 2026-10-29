@@ -1,3 +1,4 @@
+import { readImagePaths, readImages } from "./read-images";
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
 import { AgyCodexHead } from "./agent/agy-codex-head";
 import { agyPairAllowed } from "./agent/agy-capabilities";
@@ -2385,7 +2386,14 @@ export class Bot {
     // A picture or video a line shows by its local path (`![caption](file:///…/x.png)` or the bare
     // path), as 1.x's file:// chat page loads it: only image and video files, only ones a line names.
     if (attachmentKind(path) === "file") return null;
-    return this.records.some((record) => namesPath(record.text, path)) ? path : null;
+    if (this.records.some((record) => namesPath(record.text, path))) return path;
+    const steps = [
+      ...this.records.flatMap(record => record.steps ?? []),
+      ...(this.shownTurn?.steps ?? []), ...(this.partner?.shownTurn?.steps ?? []),
+      ...this.subagents.list.flatMap(agent => agent.steps),
+      ...(this.partner?.subagents.list.flatMap(agent => agent.steps) ?? []),
+    ];
+    return steps.some(step => readImagePaths(step).includes(path)) ? path : null;
   }
 
   private compose(turn: Turn, brief: boolean): string {
@@ -5212,6 +5220,8 @@ export function stepView(step: StepRecord, subagents?: Pick<SubagentBook, "get">
     failed: step.failed === true,
     done: step.done === true,
   };
+  const images = readImages(step);
+  if (images.length) view.images = images;
   if (kind === "subagent") {
     view.status = subagent?.status ?? (step.done ? (step.failed ? "failed" : "completed") : "running");
     view.count = subagent ? toolCount(subagent) : null;

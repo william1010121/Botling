@@ -75,6 +75,7 @@ export const StepView = z.strictObject({
   output: z.string().max(10_000).nullable(),
   failed: z.boolean(),
   done: z.boolean(),
+  images: z.array(z.strictObject({ url: z.string().max(20_000), name: z.string().max(400) })).max(20).optional(),
   /** A subagent's: running, completed, failed or stopped; and its tool calls so far. */
   status: z.enum(["running", "completed", "failed", "stopped"]).nullable().optional(),
   count: z.number().int().nonnegative().nullable().optional(),

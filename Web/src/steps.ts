@@ -1,7 +1,7 @@
 import { post } from "./bridge";
 import type { StepImage, StepView } from "./types";
 import { openLightbox } from "./lightbox";
-import { renderMarkdown } from "./markdown";
+import { mediaSrc, renderMarkdown } from "./markdown";
 import { t, type Key } from "./i18n";
 import { escapeHTML } from "./util";
 
@@ -253,12 +253,19 @@ function block(label: string, text: string, images: StepImage[] = []): HTMLEleme
 function stepImage(picture: StepImage): HTMLElement {
   const image = document.createElement("img");
   image.className = "step-image";
-  image.dataset.src = picture.thumb ?? picture.url;
+  image.dataset.src = mediaSrc(picture.thumb ?? picture.url);
   image.dataset.full = picture.url;
   image.alt = picture.name;
   image.title = picture.name;
   image.loading = "lazy";
   image.decoding = "async";
+  image.addEventListener("error", () => {
+    const missing = document.createElement("div");
+    missing.className = "step-image-unavailable";
+    missing.setAttribute("role", "status");
+    missing.textContent = t("steps.imageUnavailable", { name: picture.name });
+    image.replaceWith(missing);
+  }, { once: true });
   image.addEventListener("click", (event) => {
     event.stopPropagation();
     openLightbox(picture.url, picture.name);

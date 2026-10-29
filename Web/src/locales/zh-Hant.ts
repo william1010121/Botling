@@ -74,6 +74,7 @@ export const zhHant: Dictionary = {
   "steps.soFar": "目前 {n} 個步驟 · 較早的 {hidden} 個已隱藏",
   "steps.subagents": "{n} 個子代理",
   "steps.subagentsRunning": "（{running} 個執行中）",
+  "steps.imageUnavailable": "無法載入圖片：{name}",
   "steps.in": "輸入",
   "steps.out": "輸出",
   "steps.error": "錯誤",

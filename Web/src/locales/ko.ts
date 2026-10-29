@@ -74,6 +74,7 @@ export const ko: Dictionary = {
   "steps.soFar": "지금까지 {n}단계 · 이전 {hidden}개 숨김",
   "steps.subagents": "서브에이전트 {n}개",
   "steps.subagentsRunning": " ({running}개 실행 중)",
+  "steps.imageUnavailable": "이미지를 불러올 수 없습니다: {name}",
   "steps.in": "입력",
   "steps.out": "출력",
   "steps.error": "오류",

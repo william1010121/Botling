@@ -77,6 +77,7 @@ export const en = {
   "steps.soFar": "{n} steps so far · {hidden} earlier hidden",
   "steps.subagents": ["{n} subagent", "{n} subagents"],
   "steps.subagentsRunning": " ({running} running)",
+  "steps.imageUnavailable": "Image unavailable: {name}",
   "steps.in": "In",
   "steps.out": "Out",
   "steps.error": "Error",
