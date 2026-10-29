@@ -32,6 +32,18 @@ export const AGY_WORKER_TOOLS: AgyTool[] = [
 ];
 const canonical = (v: any): string => v && typeof v === 'object' ? Array.isArray(v) ? '['+v.map(canonical).join(',')+']' : '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}' : JSON.stringify(v);
 
+// ACP 1.4.3 can supply filePath even though tools/list advertises path.
+// Normalize the explicit alias identically for approval and execution; never
+// choose between conflicting paths or infer a destination from file contents.
+function normalizeFileArgs(name: string, args: Args): Args {
+  if (name !== 'read_file' && name !== 'write_file') return args;
+  if (!Object.prototype.hasOwnProperty.call(args, 'filePath')) return args;
+  if (typeof args.filePath !== 'string' || !args.filePath.trim()) throw new Error('Path required.');
+  if (Object.prototype.hasOwnProperty.call(args, 'path') && args.path !== args.filePath) throw new Error('Conflicting path and filePath. Nothing executed.');
+  const {filePath, ...rest} = args;
+  return {...rest, path:filePath};
+}
+
 export class AgyMcpBridge {
   private server?: Server;
   private token = randomUUID();
@@ -61,10 +73,12 @@ export class AgyMcpBridge {
     if (!this.tools.some(t=>t.name===name)) return;
     const nested = args.arguments;
     if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-      const actual = nested as Args;
+      let actual: Args;
+      try { actual = normalizeFileArgs(name, nested as Args); args = normalizeFileArgs(name, args); } catch { return; }
       if (Object.keys(actual).some(key => key in args && canonical(args[key]) !== canonical(actual[key]))) return;
       args = actual;
     }
+    try { args = normalizeFileArgs(name, args); } catch { return; }
     const key = name+':'+canonical(args), list = this.grants.get(key) ?? [];
     list.push(Date.now()+60_000); this.grants.set(key,list);
   }
@@ -101,6 +115,7 @@ export class AgyMcpBridge {
   async invoke(name:string,args:Args):Promise<unknown> {
     if(this.stopped)throw new Error('Tool bridge closed.');
     const tool=this.tools.find(t=>t.name===name);if(!tool)throw new Error('Unsupported tool.');
+    args = normalizeFileArgs(name, args);
     const key=name+':'+canonical(args),grants=(this.grants.get(key)??[]).filter(deadline=>deadline>Date.now());
     const full = AGY_LOCAL_TOOLS.some(t=>t.name===name) && this.fullTurn && this.fullPermissionActive();
     if(!full && !grants.length)throw new Error('No matching single-action user approval. Nothing executed.');
@@ -111,7 +126,7 @@ export class AgyMcpBridge {
       return this.command(args.command, full);
     }
     if(name==='read_file'||name==='write_file') {
-      if(typeof args.path!=='string')throw new Error('Path required.');
+      if(typeof args.path!=='string'||!args.path.trim())throw new Error('Path required.');
       if(full) {
         // Explicit full permission: ordinary OS paths (including symlinks/outside workspace).
         // Synchronous bounded operations cannot outlive revocation between event-loop turns.

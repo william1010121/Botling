@@ -151,3 +151,26 @@ it('refuses tampered or symlinked provisioned helpers before a granted write',as
   expect(existsSync(join(cwd,'blocked'))).toBe(false);
  }
 });
+
+it('filePath aliases share exact one-action grants with canonical paths and retain containment',async()=>{
+ const {b,cwd}=setup();
+ const args={filePath:'alias.txt',content:'approved'};
+ b.grant('botling_write_file',{arguments:args,...args});
+ await expect(b.invoke('write_file',{...args,content:'changed'})).rejects.toThrow('No matching');
+ await b.invoke('write_file',{path:'alias.txt',content:'approved'});
+ expect(readFileSync(join(cwd,'alias.txt'),'utf8')).toBe('approved');
+ await expect(b.invoke('write_file',args)).rejects.toThrow('No matching');
+ b.grant('botling_read_file',{path:'alias.txt'});
+ expect(await b.invoke('read_file',{filePath:'alias.txt'})).toBe('approved');
+ for(const filePath of ['../outside','private-profile/blocked']){
+  b.grant('botling_write_file',{filePath,content:'denied'});
+  await expect(b.invoke('write_file',{filePath,content:'denied'})).rejects.toThrow(/outside|Protected|Workspace file access refused/);
+  expect(existsSync(join(cwd,filePath))).toBe(false);
+ }
+ b.grant('botling_write_file',{arguments:args,...args,content:'conflict'});
+ await expect(b.invoke('write_file',args)).rejects.toThrow('No matching');
+ for(const input of [{path:'different',...args},{arguments:args,path:'different'},{arguments:{path:'alias.txt',content:'approved'},filePath:'different'}]){
+  b.grant('botling_write_file',input);
+  await expect(b.invoke('write_file',args)).rejects.toThrow('No matching');
+ }
+});

@@ -78,3 +78,30 @@ it('negotiated protocol capability and bridge turn epoch work together and revok
  expect(errors).toEqual([]);await expect(bridge.invoke('write_file',args)).rejects.toThrow('No matching');
  }finally{protocol.close();}
 });
+
+// ACP 1.4.3 transcript steps 47/48 supplied content + filePath despite the
+// advertised path field. rawInput additionally mirrors these under arguments.
+it('executes observed filePath calls over MCP and keeps command dispatch independent',async()=>{
+ const {bridge,cwd}=setup(()=>true),endpoint=await bridge.start();
+ const call=async(name:string,args:unknown)=>{
+  const response=await fetch(endpoint.url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}})});
+  return (await response.json() as any).result;
+ };
+ const written=await call('write_file',{content:'{"version":2}',filePath:'report.json'});
+ expect(written).toMatchObject({isError:false});
+ expect(readFileSync(join(cwd,'report.json'),'utf8')).toBe('{"version":2}');
+ expect(await call('read_file',{filePath:'report.json'})).toMatchObject({isError:false,content:[{text:'{"version":2}'}]});
+ expect(await call('run_command',{command:"printf 'command-ok'"})).toMatchObject({isError:false,content:[{text:JSON.stringify({exitCode:0,output:'command-ok'})}]});
+ expect(await call('write_file',{content:'missing'})).toMatchObject({isError:true,content:[{text:'Path required.'}]});
+ expect(await call('run_command',{})).toMatchObject({isError:true,content:[{text:'Command required.'}]});
+});
+
+it('full permission rejects missing or conflicting file paths without changing files',async()=>{
+ const {bridge,cwd}=setup(()=>true);writeFileSync(join(cwd,'keep'),'KEEP');
+ for(const args of [{}, {filePath:''}, {path:' '}, {filePath:42}, {path:'keep',filePath:'other'}, {path:'keep',filePath:null}]){
+  await expect(bridge.invoke('write_file',{...args,content:'BAD'})).rejects.toThrow(/Path required|Conflicting path/);
+ }
+ expect(readFileSync(join(cwd,'keep'),'utf8')).toBe('KEEP');
+ await bridge.invoke('write_file',{path:'keep',filePath:'keep',content:'same explicit path'});
+ expect(readFileSync(join(cwd,'keep'),'utf8')).toBe('same explicit path');
+});
