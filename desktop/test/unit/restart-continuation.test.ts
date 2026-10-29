@@ -1,6 +1,7 @@
+import {projectFolderName} from '../../src/core/claude-files';
 import { afterEach, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { CoreHarness, MAIN } from '../core-harness';
 import { tempDir, until } from '../helpers';
 const all: CoreHarness[] = [];
@@ -65,4 +66,18 @@ it('a message accepted during restart preparation is delivered once after boot',
  const queued=await a.call({type:'chat.send',botId:MAIN,text:'queued-original-work'});await a.kill('SIGTERM');
  const b=core(dir);await until(()=>b.of('turn.finished').some(e=>(e.event as any).turnId===queued.turnId),{what:'queued original turn'});
  expect(lines(dir,'input.log').filter(x=>x.text.includes('queued-original-work'))).toHaveLength(1);
+});
+it('boot automatically asks the original Claude parent to resume an existing native child by ID once',async()=>{
+ const dir=tempDir('restart-native-parent'),a=core(dir);await a.call({type:'chat.send',botId:MAIN,text:'initial research'});
+ await until(()=>a.of('turn.finished').length,{what:'original parent ready'});const original=lines(dir,'starts.log')[0];await prepare(a);await a.kill('SIGTERM');
+ const config=join(dir,'claude-fixture'),agent='original-native-agent',file=join(config,'projects',projectFolderName(original.cwd),original.session,'subagents',`agent-${agent}.jsonl`);mkdirSync(dirname(file),{recursive:true});
+ const rows=[{type:'user',message:{content:'Research only; no implementation'}},{type:'assistant',message:{content:[{type:'tool_use',id:'read-1'}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'read-1',content:'existing evidence'}]}}];
+ writeFileSync(file,rows.map(r=>JSON.stringify({...r,sessionId:original.session,agentId:agent,isSidechain:true})).join('\n'));
+ const journalFile=join(dir,'restart-continuation.json'),journal=JSON.parse(readFileSync(journalFile,'utf8'));
+ journal.entries=[{botId:MAIN,engine:'claude',sessionId:original.session,sessionStarted:true,continue:true,queued:[],state:'pending',nativeCwd:original.cwd,nativeConfigDir:config,nativeChildren:[{id:'original-native-call',agentId:agent,checkpoint:'read-1',prompt:'Research only; no implementation',description:'Research'}]}];writeFileSync(journalFile,JSON.stringify(journal));
+ const b=core(dir);const input=await until(()=>lines(dir,'input.log').find(x=>x.text.includes('Native Claude child recovery')),{what:'native parent recovery'});
+ expect(input.session).toBe(original.session);expect(input.text).toContain('original-native-agent');expect(input.text).toContain('SendMessage to the exact agentId');expect(input.text).toContain('Research only; no implementation');
+ expect(lines(dir,'starts.log').at(-1)).toMatchObject({session:original.session,resume:true});
+ await until(()=>b.of('turn.finished').length,{what:'parent recovery response'});await b.kill('SIGTERM');const c=core(dir);await c.chat();
+ expect(lines(dir,'input.log').filter(x=>x.text.includes('Native Claude child recovery'))).toHaveLength(1);
 });

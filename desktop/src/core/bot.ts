@@ -1,4 +1,6 @@
 import { readImagePaths, readImages } from "./read-images";
+import {nativeRestartContext} from './claude-restart';
+import {claudeConfigFolder} from './claude-files';
 import { RESTART_NOTE, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
 import { AgyCodexHead } from "./agent/agy-codex-head";
@@ -2912,15 +2914,15 @@ export class Bot {
       case "subagentStarted":
         // Initial ownership comes from the Agent call, never from whichever turn is now visible.
         if (this.subagents.started(item)) this.subagentChanged(this.subagents.get(item.id));
-        if (item.background) this.addBackgroundTask(item.id, "agent", item.description);
+        if (item.background) this.addBackgroundTask(this.subagents.get(item.id)?.id ?? item.id, "agent", item.description);
         // A worker for handed-over work: its report carries the hand-back.
         if ((this.engine === "codex" || this.engine === "agy") && this.turn?.conducted && this.turn.handoffId && (item.type === "codex-worker" || item.type === "agy-worker" || item.type === "ccb-core:component-editor")) {
           this.managedTaskHandoffs.set(item.id, this.turn.handoffId);
         }
         return true;
       case "subagentEnded": {
-        this.endBackground(item.id, item.status, item.summary);
-        const known = this.subagents.get(item.id)?.id;
+        const known = this.subagents.get(item.id)?.id ?? this.subagents.list.find(child=>child.agentID===item.id)?.id;
+        this.endBackground(known ?? item.id, item.status, item.summary);
         const ended = this.subagents.ended(item);
         // A notification says more than the error, so a failed one counts if any line is it.
         if (known && (item.status.toLowerCase() === "failed" || item.status.toLowerCase() === "error" || this.cutOffByNetwork.has(known) || isConnectionError(item.summary ?? ""))) {
@@ -5058,6 +5060,10 @@ export class Bot {
     return [this, ...(peers ?? (this.partner ? [this.partner] : []))].flatMap(bot => {
       const turn = bot.turn;
       const workers = bot.head instanceof CodexHead ? bot.head.restartWorkers : undefined;
+      const nativeChildren=bot.engine==="claude"?bot.subagents.running.map(child=>({id:child.id,agentId:child.agentID,parentId:child.parentID?(bot.subagents.get(child.parentID)?.id??child.parentID):undefined,
+        checkpoint:child.steps.findLast(step=>step.kind==="tool"&&step.done&&!step.failed)?.id,
+        prompt:child.prompt,description:child.description,type:child.type})):undefined;
+      const nativeConfig=bot.head instanceof ClaudeHead?bot.head.config:undefined;
       const active = !!turn?.open && turn.origin !== "tidy";
       const queued=bot.queue.filter(t=>t.open&&!t.sent&&t.origin!=="tidy").map(t=>({words:t.words,userId:t.userId,origin:t.origin,turnId:t.id,messageId:t.messageId,handoffId:t.handoffId,conducted:t.conducted}));
       if (!active && !queued.length && !bot.managedPending && !bot.subagents.running.length) return [];
@@ -5070,11 +5076,12 @@ export class Bot {
         : active && turn && !turn.reply.text && !turn.steps.length ? "Prompt delivery has no confirmed response yet; reconcile the original conversation before retrying."
         : bot.turn?.steps.some(step=>step.kind==="tool"&&!step.done) ? "A tool call had no confirmed result. Reconcile its outcome before continuing."
         : bot.deferred || bot.paused || bot.claimHold ? "Paused or deferred work needs explicit reconciliation."
-        : bot.subagents.running.length && !workers?.length ? "Native subagent execution cannot be safely resumed automatically."
+        : nativeChildren?.some(child=>!child.agentId||!child.checkpoint) ? "Native child lacks an observed agent ID or acknowledged tool-result checkpoint. Original assignment remains in subagent history; no replacement was started."
+        : bot.subagents.running.length && !workers?.length && !nativeChildren?.length ? "This child transport has no safe restart contract."
         : workers?.some(w => w.wasActive && (!w.restartSafe || !w.thread)) ? "A worker has pending approval, tool execution, or unconfirmed delivery. Reconcile the original task."
         : active && !bot.session.started ? "Provider session creation was not confirmed." : undefined;
       return [{botId:this.owner.id,engine:bot.engine,sessionId:bot.session.sessionId,sessionStarted:bot.session.started,
-        continue:active,queued,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
+        continue:active||!!nativeChildren?.length,queued,nativeChildren,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
         blocked,workers,providerTurnId:bot.head instanceof CodexHead ? bot.head.restartTurn : undefined}];
     });
   }
@@ -5092,8 +5099,9 @@ export class Bot {
     const bot=this.retainRestartIdentity(entry);
     bot.restartWorkerRecords=entry.workers;
     bot.restartProviderTurn=entry.providerTurnId;
+    const nativeContext=entry.nativeChildren?.length?nativeRestartContext(entry.nativeChildren,{cwd:entry.nativeCwd??bot.commandFolder,configDir:entry.nativeConfigDir,sessionId:entry.sessionId!}):"";
     if(entry.continue){
-      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+(entry.workers?.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+entry.workers.map(w=>w.id).join(", ") : ""),entry.userId??null);
+      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+nativeContext+(entry.workers?.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+entry.workers.map(w=>w.id).join(", ") : ""),entry.userId??null);
       turn.handoffId=entry.handoffId??null;
       // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
       turn.retried=true; // A failed resume must never fall back to a fresh session/replay.

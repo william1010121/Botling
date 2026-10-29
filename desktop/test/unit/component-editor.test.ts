@@ -214,3 +214,47 @@ describe("Maintainer editor task lifecycle", () => {
     expect(session.componentEditorFailed(task, 2, "exit after result")).toEqual([]);
   });
 });
+
+describe('component-editor restart reconciliation',()=>{
+ function checkpoint(){
+  const b=setup(),id=b.action.config.sessionId;
+  b.session.componentEditorItem(b.task,1,{kind:'init',sessionId:id});
+  b.session.componentEditorItem(b.task,1,{kind:'toolUse',id:'read-checkpoint',tool:'Read',title:'Read',detail:'evidence',parent:null,input:{}});
+  b.session.componentEditorItem(b.task,1,{kind:'toolResult',id:'read-checkpoint',output:'evidence',failed:false,parent:null,launch:null});
+  return {...b,records:b.session.restartWorkers};
+ }
+ function reboot(b:ReturnType<typeof checkpoint>){
+  const s=new CodexSession({...b.session.config,restoredWorkers:[],restartWorkers:b.records});
+  s.start();s.receive(JSON.stringify({id:1,result:{}}));
+  const out=new Out(s.receive(JSON.stringify({id:2,result:{thread:{id:'coordinator'}}})));
+  expect(out.all).toContainEqual({kind:'recoverEditor',task:b.task,run:1,session:b.action.config.sessionId,checkpoint:'read-checkpoint'});
+  expect(out.actions).toEqual([]);return s;
+ }
+ it('resumes the same Claude child/task/run with the original role and permissions, only after reconciliation',()=>{
+  const b=checkpoint();expect(b.records[0].restartSafe).toBe(true);const s=reboot(b);
+  const out=new Out(s.recoverEditor(b.task,1,{state:'continue'})),a=out.actions[0];
+  expect(a).toMatchObject({kind:'start',task:b.task,run:1,config:{...b.action.config,resume:true}});
+  if(a.kind!=='start')throw Error('not a start');
+  expect(a.text).toContain('authorized edit');expect(a.text).toContain('Do not repeat completed actions');
+  expect(s.workerRecords[0]).toMatchObject({id:b.task,run:1,thread:b.action.config.sessionId,role:'component-editor',instructions:'authorized edit'});
+ });
+ it('uses completion-before-crash evidence without another Claude prompt or duplicate callback',()=>{
+  const b=checkpoint(),s=reboot(b),out=new Out(s.recoverEditor(b.task,1,{state:'completed',report:'Already changed and checked'}));
+  expect(out.actions).toEqual([]);expect(out.items).toContainEqual(expect.objectContaining({kind:'subagentEnded',id:b.task,status:'completed',summary:'Already changed and checked'}));
+  expect(new Out(s.recoverEditor(b.task,1,{state:'completed',report:'late duplicate'})).writes).toEqual([]);
+ });
+ it('pending approval, unresolved calls and cancellation prevent automatic restart',()=>{
+  const b=checkpoint();b.session.componentEditorItem(b.task,1,{kind:'permission',requestId:'ask',tool:'Bash',summary:'May I?',input:{}});
+  expect(b.session.restartWorkers[0].restartSafe).toBe(false);
+  b.session.componentEditorItem(b.task,1,{kind:'permissionCancelled',requestId:'ask'});
+  b.session.componentEditorItem(b.task,1,{kind:'toolUse',id:'pending',tool:'Bash',title:'Bash',detail:'unknown outcome',parent:null,input:{}});
+  expect(b.session.restartWorkers[0].restartSafe).toBe(false);
+  const s=reboot(b);s.cancelWorkers(new Set([b.task]));expect(new Out(s.recoverEditor(b.task,1,{state:'continue'})).actions).toEqual([]);
+ });
+ it('missing role or ambiguous transcript never substitutes a generic worker',()=>{
+  const b=checkpoint(),s=reboot(b);const out=new Out(s.recoverEditor(b.task,1,{state:'blocked',reason:'Unknown completion'}));
+  expect(out.actions).toEqual([]);expect(out.items).toContainEqual(expect.objectContaining({kind:'subagentEnded',status:'interrupted'}));
+  const missing=new CodexSession({...b.session.config,componentEditor:null,restartWorkers:b.records});
+  const failed=new Out(missing.recoverEditor(b.task,1,{state:'continue'}));expect(failed.actions).toEqual([]);expect(failed.items).toContainEqual(expect.objectContaining({kind:'subagentEnded',status:'failed'}));
+ });
+});

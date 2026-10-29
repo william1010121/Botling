@@ -1,3 +1,5 @@
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {projectFolderName} from '../../src/core/claude-files';
 // Deterministic transport lifetime races; no process spawning, timers, UI or credentials.
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -29,7 +31,7 @@ function transport() {
   const items: any[] = [];
   const root = tempDir("editor-transport");
   const head = new CodexHead({ command: "/test/codex", cwd: root, sessionId: "owner", resume: false, instructions: "coordinator", workerInstructions: "worker",
-    threads: new CodexThreads(join(root, "threads")), componentEditor: { launch: { command: "/test/claude", cwd: root, sessionId: "unused", resume: false, model: "haiku", allowedTools: ["Read"], tools: ["Read"] } } },
+    threads: new CodexThreads(join(root, "threads")), componentEditor: { launch: { command: "/test/claude", cwd: root, env:{CLAUDE_CONFIG_DIR:join(root,"claude-config")}, sessionId: "unused", resume: false, model: "haiku", allowedTools: ["Read"], tools: ["Read"] } } },
     { onItem: item => items.push(item), onExit() {} }, adapter);
   head.start();
   const coordinator = processes[0];
@@ -42,7 +44,7 @@ function transport() {
   const call = (tool: string, args: unknown) => receive({ id: ++rpc, method: "item/tool/call", params: { threadId: "coordinator", turnId: "t1", tool, arguments: args } });
   call("app_handoff", { role: "component-editor", instructions: "initial edit" });
   const task = head.session.workerRecords[0].id;
-  return { head, task, processes, items, call };
+  return { head, task, processes, items, call, adapter, root };
 }
 const tick = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
@@ -126,4 +128,30 @@ describe("Claude editor transport ownership", () => {
     }
   });
 
+});
+
+it.each(['continue','completed','uncertain'])('restart transport reconciles the original editor transcript before dispatch (%s)',async mode=>{
+ const {head,task,processes,adapter,root}=transport();const first=processes[1];const session=head.session.workerRecords[0].thread!;
+ const childItem=(v:unknown)=>(first.child.stdout as PassThrough).write(JSON.stringify(v)+'\n');
+ childItem({type:'system',subtype:'init',session_id:session});
+ childItem({type:'assistant',message:{content:[{type:'tool_use',id:'read-1',name:'Read',input:{}}]}});
+ childItem({type:'user',message:{content:[{type:'tool_result',tool_use_id:'read-1',content:'evidence'}]}});
+ const saved=head.restartWorkers;expect(saved[0].restartSafe).toBe(true);
+ const folder=join(root,'claude-config','projects',projectFolderName(root));mkdirSync(folder,{recursive:true});
+ const rows:any[]=[{type:'user',message:{content:'initial edit'}},{type:'assistant',message:{content:[{type:'tool_use',id:'read-1'}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'read-1',content:'evidence'}]}}];
+ if(mode==='completed')rows.push({type:'assistant',message:{stop_reason:'end_turn',content:[{type:'text',text:'Already verified'}]}});
+ if(mode==='uncertain')rows.push({type:'assistant',message:{content:[{type:'tool_use',id:'late-write'}]}});
+ writeFileSync(join(folder,session+'.jsonl'),rows.map(r=>JSON.stringify({...r,sessionId:session})).join('\n'));
+ const ended=head.terminate();for(const p of processes)p.release();await ended;
+ const events:any[]=[];const restored=new CodexHead({...head.config,resume:true,restartWorkers:saved},{onItem:i=>events.push(i),onExit(){}},adapter);restored.start();
+ const coordinator=processes[2];const answer=(method:string,result:unknown)=>(coordinator.child.stdout as PassThrough).write(JSON.stringify({id:coordinator.writes.findLast(w=>w.method===method).id,result})+'\n');
+ answer('initialize',{});answer('thread/resume',{thread:{id:'coordinator'}});answer('thread/inject_items',{});
+ if(mode==='continue'){
+  expect(processes).toHaveLength(4);const child=processes[3];expect(child.args[child.args.indexOf('--resume')+1]).toBe(session);
+  expect(child.writes.find(w=>w.type==='user').message.content).toContain('Original assignment (unchanged scope):\ninitial edit');
+  expect(restored.session.workerRecords[0]).toMatchObject({id:task,run:1,thread:session,role:'component-editor'});
+ }else{
+  expect(processes).toHaveLength(3);expect(events).toContainEqual(expect.objectContaining({kind:'subagentEnded',id:task,status:mode==='completed'?'completed':'interrupted'}));
+ }
+ const stopped=restored.terminate();for(const p of processes)p.release();await stopped;
 });

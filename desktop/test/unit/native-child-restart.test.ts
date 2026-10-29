@@ -1,0 +1,46 @@
+import {expect,it,vi} from 'vitest';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {join,dirname} from 'node:path';
+import {Bot} from '../../src/core/bot';
+import {SubagentBook} from '../../src/core/subagents';
+import {parseLine} from '../../src/core/agent/stream';
+import {nativeRestartContext} from '../../src/core/claude-restart';
+import {projectFolderName} from '../../src/core/claude-files';
+import {tempDir} from '../helpers';
+it('provider restart events retain the original UI task and parent relationship',()=>{
+ const book=new SubagentBook([{id:'original-call',agentID:'original-agent',parentID:'original-launcher',description:'Research',prompt:'Research only',status:'stopped',background:true,startedAt:0,steps:[]}]);
+ const [event]=parseLine(JSON.stringify({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'original-agent',tool_use_id:'resumed-call',is_backgrounded:true}));
+ if(event.kind!=='subagentStarted')throw Error('missing task event');book.started(event);
+ expect(book.list).toHaveLength(1);expect(book.get('resumed-call')).toMatchObject({id:'original-call',agentID:'original-agent',parentID:'original-launcher',status:'running'});
+ book.toolUse({id:'new-read',tool:'Read',title:'Read',detail:'',parent:'resumed-call',input:{}});
+ expect(book.list[0].steps[0].id).toBe('new-read');
+});
+it('native recovery instructs the original parent to resume exact IDs, never replacement agents',()=>{
+ const root=tempDir('native-resume'),cwd=join(root,'work'),sessionId='parent-session',agentId='original-agent';
+ const file=join(root,'projects',projectFolderName(cwd),sessionId,'subagents',`agent-${agentId}.jsonl`);mkdirSync(dirname(file),{recursive:true});
+ const rows=[{type:'user',message:{content:'Research only'}},{type:'assistant',message:{content:[{type:'tool_use',id:'read-1'}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'read-1',content:'evidence'}]}}];
+ writeFileSync(file,rows.map(r=>JSON.stringify({...r,sessionId,agentId,isSidechain:true})).join('\n'));
+ const child={id:'original-call',agentId,checkpoint:'read-1',prompt:'Research only',description:'Research'};
+ const note=nativeRestartContext([child],{cwd,sessionId,configDir:root});expect(note).toContain('SendMessage to the exact agentId');expect(note).toContain('Never message a descendant directly');expect(note).toContain('Do not spawn a replacement');expect(note).toContain('Research only');expect(note).toContain('original-agent');
+ const nestedAgent='nested-agent';writeFileSync(join(dirname(file),`agent-${nestedAgent}.jsonl`),rows.map(r=>JSON.stringify({...r,sessionId,agentId:nestedAgent,isSidechain:true})).join('\n'));
+ const graphNote=nativeRestartContext([child,{...child,id:'nested-call',agentId:nestedAgent,parentId:child.id}],{cwd,sessionId,configDir:root});
+ const graph=JSON.parse(graphNote.split('\n').at(-1)!);expect(graph[1]).toMatchObject({parentTaskId:'original-call',parentAgentId:'original-agent',agentId:'nested-agent'});
+ expect(()=>nativeRestartContext([{...child,type:'Explore'}],{cwd,sessionId,configDir:root})).toThrow('one-shot');
+ expect(()=>nativeRestartContext([{...child,parentId:'missing-launcher'}],{cwd,sessionId,configDir:root})).toThrow('launcher chain');
+ expect(()=>nativeRestartContext([{...child,agentId:undefined}],{cwd,sessionId,configDir:root})).toThrow('no provider agent ID');
+});
+it('snapshot excludes stopped native children and preserves safe running identity/checkpoint',()=>{
+ const children=[{id:'running-call',agentID:'agent',status:'running',prompt:'Research only',description:'Research',steps:[{id:'read-1',kind:'tool',done:true,failed:false}]},{id:'cancelled',status:'stopped',steps:[]}];
+ const owner={owner:{id:'chat'},engine:'claude',partner:null,peers:[],readOnly:false,head:null,turn:null,queue:[],approvals:new Map(),subagents:{running:children.filter(c=>c.status==='running')},session:{sessionId:'parent',started:true}};
+ const [entry]=Bot.prototype.restartEntries.call(owner as unknown as Bot);
+ expect(entry.blocked).toBeUndefined();expect(entry.continue).toBe(true);expect(entry.nativeChildren).toEqual([{id:'running-call',agentId:'agent',parentId:undefined,checkpoint:'read-1',prompt:'Research only',description:'Research',type:undefined}]);
+});
+it('a resumed native provider call updates the original background task through completion',()=>{
+ const subagents=new SubagentBook([{id:'original-call',agentID:'agent-id',description:'Research',prompt:'Research',status:'stopped',background:true,startedAt:0,steps:[]}]);
+ const bot={subagents,engine:'claude',turn:null,cutOffByNetwork:new Set(),subagentChanged:vi.fn(),subagentEnded:vi.fn(),addBackgroundTask:vi.fn(),endBackground:vi.fn()};
+ const apply=(event:any)=>(Bot.prototype as any).onSubagentItem.call(bot,event);
+ apply({kind:'subagentStarted',id:'new-provider-call',agentID:'agent-id',type:'general-purpose',description:'Research',prompt:'',background:true});
+ expect(bot.addBackgroundTask).toHaveBeenCalledWith('original-call','agent','Research');
+ apply({kind:'subagentEnded',id:'agent-id',status:'completed',summary:'Existing evidence'});
+ expect(bot.endBackground).toHaveBeenCalledWith('original-call','completed','Existing evidence');expect(bot.subagentEnded).toHaveBeenCalledWith('original-call');expect(subagents.list).toHaveLength(1);
+});

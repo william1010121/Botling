@@ -26,7 +26,7 @@ export type StreamItem =
   /** Words a subagent said (its own assistant text). */
   | { kind: "subagentText"; parent: string; text: string }
   /** claude started a subagent (`task_started`, local_agent): it may run on in the background. */
-  | { kind: "subagentStarted"; id: string; description: string; type: string | null; prompt: string; background: boolean; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }
+  | { kind: "subagentStarted"; id: string; description: string; type: string | null; prompt: string; background: boolean; agentID?: string; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }
   | { kind: "subagentExecution"; id: string; execution: SubagentExecution }
   | { kind: "subagentRuntime"; id: string; runtime: SubagentRuntime; model?: string }
   | { kind: "subagentOutput"; id: string; counter: string; tokens: number }
@@ -195,6 +195,7 @@ export function parseLine(line: string): StreamItem[] {
           type: typeof message.subagent_type === "string" ? message.subagent_type : null,
           prompt: typeof message.prompt === "string" ? message.prompt : "",
           background: message.is_backgrounded === true,
+          ...(typeof message.task_id === "string" ? {agentID:message.task_id} : {}),
         }];
       }
       if (message.subtype === "permission_denied") {

@@ -16,6 +16,9 @@ export interface RestartQueued extends SwapQueued {
   conducted: boolean;
 }
 export interface RestartEntry extends SwapEntry {
+  nativeChildren?: import("./claude-restart").NativeRestartChild[];
+  nativeCwd?: string;
+  nativeConfigDir?: string;
   sessionStarted?: boolean;
   providerTurnId?: string;
   queued: RestartQueued[];
