@@ -133,6 +133,9 @@ it('routes a missing app-handoff grant to an actionable chat card and gates disp
  const allowed=await request('allow');
  try{
   expect(allowed.card.choices?.map(c=>c.label)).toEqual(['Allow once',"Don't allow"]);
+  const delivered=allowed.h.events.findLast(e=>e.type==='message.added'&&e.message.id===allowed.card.id);
+  expect(delivered?.message.approval?.tool).toBe('app_handoff');
+  expect(delivered?.message.choices?.map((c:{label:string})=>c.label)).toEqual(['Allow once',"Don't allow"]);
   expect(allowed.dispatch).not.toHaveBeenCalled();
   expect(allowed.h.events.some(e=>e.type==='turn.finished'&&e.turnId===allowed.turn.turnId)).toBe(false);
   allowed.h.b.choose(allowed.card.id,0);
