@@ -1,4 +1,3 @@
-import { agyPairAllowed } from "../core/agent/agy-capabilities";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { postToChat } from "./editor-surface";
@@ -507,14 +506,14 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
   const hasAgy = view.engines.includes("agy");
   return (
     <>
-      <Group title="Engines in this bot" note="With both, they work at the same time. Turning off the one it runs on hands its work to the other through memory.md, just before its next message. Antigravity requires the verified official ACP runtime and its Google sign-in. Choose up to two engines.">
+      <Group title="Engines in this bot" note="Choose a primary recipient in the composer. Enabled engines can collaborate when needed. Antigravity requires the verified official ACP runtime and Google sign-in.">
         {(["claude", "codex", "agy"] as const).map((engine) => {
           const on = view.engines.includes(engine);
           const name = engine === "agy" ? "Antigravity" : engine === "claude" ? "Claude" : "Codex";
           // 1.x's "Engines in this bot": the only head cannot go; turning off the first of two runs the bot on the other, through a handoff.
           return (
-            <Toggle key={engine} label={name} checked={on} disabled={bot.phase === "switching" || (on && !two) || (!on && two && engine !== "agy")}
-              onChange={(wanted) => setHeads(wanted ? ((engine === "agy" || hasAgy) && !(agyPairAllowed("agy", "codex") && engine !== "claude" && !hasClaude) ? [engine] : [...view.engines, engine]) : view.engines.filter((candidate) => candidate !== engine))} />
+            <Toggle key={engine} label={name} checked={on} disabled={bot.phase === "switching" || (on && !two)}
+              onChange={(wanted) => setHeads(wanted ? [...view.engines, engine] : view.engines.filter((candidate) => candidate !== engine))} />
           );
         })}
       </Group>

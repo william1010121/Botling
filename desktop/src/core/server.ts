@@ -693,7 +693,7 @@ export class Core {
 
   /** 1.x's `checkNetwork`: asks the probe only while a bot waits for the network; once it answers, they carry on. */
   async checkNetwork(now?: number) {
-    const waiting = [...this.bots.values()].filter((bot) => bot.outage || bot.partner?.outage);
+    const waiting = [...this.bots.values()].filter((bot) => bot.outage || bot.peers.some(peer => peer.outage));
     if (!waiting.length || this.probing) return;
     this.probing = true;
     try {

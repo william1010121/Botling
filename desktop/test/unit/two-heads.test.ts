@@ -171,114 +171,36 @@ describe("two heads in one chat", () => {
     return c;
   }
 
-  it("a message to both: one head reads it first, the other gets it with the first one's reply; the lead takes turns", async () => {
-    const dir = tempDir("heads");
-    const c = await twoHeads(dir);
-    const chat = await c.chat();
-    expect(chat.heads).toMatchObject({ engines: ["claude", "codex"], answerWith: "both", handoffsOn: true, rounds: null, handoffs: [] });
-    const { messageId: userId } = await c.call({ type: "chat.send", botId: MAIN, text: "hello" });
-    const claude = await until(async () => (await lastBy(c, "claude"))?.state === "done" && lastBy(c, "claude"), { timeout: 10_000 });
-    const codex = await until(async () => (await lastBy(c, "codex"))?.state === "done" && lastBy(c, "codex"), { timeout: 10_000 });
-    expect(claude.text).toBe("You said: hello");
-    expect(codex.text).toBe("Codex says: hello");
-    // Codex heard Claude's reply with the message (Claude led: it was free and first).
-    const heard = codexInputs(dir)[0]!;
-    expect(heard).toContain("(App: Claude, this bot's other head, replied in this chat:)\nYou said: hello\n\nhello");
-    // Each head's instructions say it has a partner (the heads rule).
-    expect(claudeInputs(dir)[0]).not.toContain("this bot's other head");
-    // Seen marks: the message reached both; each reply its own head (and Claude's reply reached Codex).
-    const after = (await c.chat()).messages;
-    expect(after.find((m: any) => m.id === userId).seenBy).toEqual(["claude", "codex"]);
-    expect(after.find((m: any) => m.id === claude.id).seenBy).toEqual(["claude", "codex"]);
-    expect(after.find((m: any) => m.id === codex.id).seenBy).toEqual(["codex"]);
-    // The next message to both is led by Codex.
-    await c.call({ type: "chat.send", botId: MAIN, text: "second" });
-    await until(() => claudeInputs(dir).length >= 2, { timeout: 10_000 });
-    // What it heard meanwhile (Codex's first reply), then what the lead said about this one, then the words.
-    expect(claudeInputs(dir)[1]).toMatch(/^\(App: Codex, this bot's other head, replied in this chat:\)\nCodex says: hello\n\n\(App: Codex, this bot's other head, replied in this chat:\)\nCodex says: second\n\nsecond/);
-    // Both files: the shared chat (both heads' lines) and the partner's own (1.x's partner-codex/).
-    const shared = JSON.parse(readFileSync(join(dir, "main", "chat.json"), "utf8"));
-    expect(shared.filter((m: any) => m.engine === "codex").length).toBeGreaterThanOrEqual(1);
-    const partner = JSON.parse(readFileSync(join(dir, "main", "partner-codex", "chat.json"), "utf8"));
-    expect(partner.every((m: any) => m.engine === "codex")).toBe(true);
-    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).heads).toMatchObject({ engines: ["claude", "codex"], answerWith: "both", limits: { discussion: 3, review: 2, handoffs: 6 } });
+  it("sends once to the saved primary and never broadcasts legacy Both", async () => {
+    const dir = tempDir("heads"), c = await twoHeads(dir);
+    expect((await c.chat()).heads.answerWith).toBe("claude");
+    await turn(c, "hello");
+    expect(claudeInputs(dir)).toHaveLength(1);expect(codexInputs(dir)).toHaveLength(0);
+    await c.call({type:"heads.answerWith",botId:MAIN,to:"codex"});
+    await turn(c,"second",{to:"both"});
+    expect(claudeInputs(dir)).toHaveLength(1);expect(codexInputs(dir)).toHaveLength(1);
+    expect((await c.chat()).heads.answerWith).toBe("codex");
   });
 
-  it("Claude hears the other head mid-turn (1.x's context-only delivery), and only once", async () => {
-    const dir = tempDir("heads");
-    const c = await twoHeads(dir, { FAKE_CLAUDE_LINGER_MS: "1500" });
-    const { messageId: userId } = await c.call({ type: "chat.send", botId: MAIN, text: "/linger plan it" });
-    // Claude leads; its first words go to Codex with the message; Codex answers while Claude still works.
-    const codex = await until(async () => (await lastBy(c, "codex"))?.state === "done" && lastBy(c, "codex"), { timeout: 10_000 });
-    expect(codexInputs(dir)[0]).toContain("(App: Claude, working on this too, says: Thinking it over.)\n\n/linger plan it");
-    const midTurn = await until(() => lines(join(dir, "claude-input.log")).find((entry) => entry.midTurn), { timeout: 5_000 });
-    expect(midTurn.text).toBe(`(App: Codex, this bot's other head, replied in this chat:)\n${codex.text}`);
-    const claude = await until(async () => (await lastBy(c, "claude"))?.state === "done" && lastBy(c, "claude"), { timeout: 10_000 });
-    expect(claude.text).toBe("Thinking it over.\n\nYou said: plan it (heard mid-turn: 1)");
-    expect((await c.chat()).messages.find((m: any) => m.id === codex.id).seenBy).toEqual(["claude", "codex"]);
-    expect((await c.chat()).messages.find((m: any) => m.id === userId).seenBy).toEqual(["claude", "codex"]);
-    await until(async () => !(await bots(c))[0].working, { timeout: 10_000 });
-    // Not again with its next message.
-    await turn(c, "and now?", { to: "claude" });
-    expect(claudeInputs(dir).at(-1)).not.toContain("replied in this chat");
-    expect(claudeInputs(dir).at(-1)).toMatch(/and now\?/);
+  it("keeps independent concurrent turns isolated without context-only dispatch", async () => {
+    const dir = tempDir("heads"), c = await twoHeads(dir, {FAKE_CLAUDE_LINGER_MS:"800"});
+    await c.call({type:"chat.send",botId:MAIN,text:"/linger plan it",to:"claude"});
+    await until(()=>claudeInputs(dir).length===1);
+    await turn(c,"independent",{to:"codex"});
+    await until(async()=>!(await bots(c))[0].working);
+    expect(claudeInputs(dir)).toHaveLength(1);expect(codexInputs(dir)).toHaveLength(1);
+    expect(lines(join(dir,"claude-input.log")).some(entry=>entry.midTurn)).toBe(false);
   });
 
-  it("words claude reads only after its turn ended get a turn of their own, the app's: <no-reply/> shows nothing", async () => {
-    const dir = tempDir("heads");
-    const c = await twoHeads(dir, { FAKE_CLAUDE_LINGER_MS: "800", FAKE_CLAUDE_NO_ABSORB: "1", FAKE_CLAUDE_NOTE_MS: "300" });
-    await c.call({ type: "chat.send", botId: MAIN, text: "/linger plan it" });
-    await until(async () => (await lastBy(c, "claude"))?.state === "done", { timeout: 10_000 });
-    // The note's own turn starts (command_lifecycle "started"): the bot works, then shows nothing.
-    await until(() => claudeInputs(dir).some((text) => text.startsWith("(App: Codex, this bot's other head, replied")), { timeout: 5_000 });
-    await until(async () => !(await bots(c))[0].working, { timeout: 10_000 });
-    const replies = (await c.chat()).messages.filter((m: any) => m.role === "bot");
-    expect(replies.map((m: any) => [m.engine, m.text])).toEqual([["claude", "Thinking it over.\n\nYou said: plan it"], ["codex", "Codex says: /linger plan it"]]);
-    // A message after it goes as usual.
-    expect((await turn(c, "after", { to: "claude" })).event.text).toBe("You said: after");
-  });
-
-  it("a lead that says nothing: the other head gets the message after the wait; the lead's first words release it (headWords)", async () => {
-    const dir = tempDir("heads");
-    const c = await twoHeads(dir, { BOTLING_CLAIM_WAIT_MS: "400" });
-    // Claude leads and only streams: after the wait Codex gets the message anyway, plain.
-    await c.call({ type: "chat.send", botId: MAIN, text: "/slow" });
-    const plain = await until(() => codexInputs(dir)[0], { timeout: 5_000 });
-    expect(plain).toMatch(/\n\n\/slow$/);
-    expect(plain).not.toContain("working on this too");
-    const runs = await until(async () => { const r = (await c.chat()).runs; return r.length === 2 && r; });
-    expect(runs.map((run: any) => run.head).sort()).toEqual(["claude", "codex"]);
-    for (const run of runs) await c.call({ type: "turn.stop", botId: MAIN, turnId: run.turnId });
-    await until(async () => !(await bots(c))[0].working, { timeout: 10_000 });
-    // Codex leads the next one and says what it does before its tool call: Claude starts with those words.
-    await c.call({ type: "chat.send", botId: MAIN, text: "/tool echo a" });
-    const codexAsks = await until(async () => (await c.chat()).messages.find((m: any) => m.approval && m.engine === "codex"));
-    const heard = await until(() => claudeInputs(dir)[1], { timeout: 5_000 });
-    expect(heard).toContain("(App: Codex, working on this too, says: Let me run that.)\n\n/tool echo a");
-    const claudeAsks = await until(async () => (await c.chat()).messages.find((m: any) => m.approval && m.engine === "claude"));
-    expect((await bots(c))[0].approvals).toBe(2);
-    await c.call({ type: "chat.choose", botId: MAIN, messageId: claudeAsks.id, index: 1 });
-    await c.call({ type: "chat.choose", botId: MAIN, messageId: codexAsks.id, index: 1 });
-    await until(async () => !(await bots(c))[0].working, { timeout: 10_000 });
-    const replies = (await c.chat()).messages.filter((m: any) => m.role === "bot" && !m.approval && m.state === "done").map((m: any) => [m.engine, m.text]);
-    expect(replies).toEqual(expect.arrayContaining([["codex", "Denied: not run."], ["claude", "Let me run that. \n\nDenied: The user did not allow it."]]));
-  });
-
-  it("the head with nothing to add says <no-reply/> and shows nothing; a message for one head reaches the other as a note", async () => {
-    const dir = tempDir("heads");
-    const c = await twoHeads(dir);
-    await c.call({ type: "chat.send", botId: MAIN, text: "/solo fix the bug" });
-    await until(() => codexInputs(dir).length >= 1, { timeout: 5_000 });
-    await until(async () => !(await bots(c))[0].working, { timeout: 10_000 });
-    const replies = (await c.chat()).messages.filter((m: any) => m.role === "bot" && m.engine);
-    expect(replies.map((m: any) => [m.engine, m.text])).toEqual([["claude", "I take it: fix the bug"]]);
-    // To Codex only: Claude hears of it with its next message.
-    await turn(c, "only you", { to: "codex" });
-    expect((await c.chat()).messages.find((m: any) => m.role === "user" && m.text === "only you")).toMatchObject({ to: "codex", seenBy: ["codex"] });
-    await until(async () => (await lastBy(c, "codex"))?.text === "Codex says: only you", { timeout: 10_000 });
-    expect(claudeInputs(dir).length).toBe(1);
-    await turn(c, "and you?", { to: "claude" });
-    expect(claudeInputs(dir)[1]).toMatch(/^\(App: The user wrote this to Codex only; you need not answer it:\)\nonly you\n\n\(App: Codex, this bot's other head, replied in this chat:\)\nCodex says: only you\n\nand you\?/);
+  it("does not dispatch a second engine when the primary is slow or has nothing to add", async () => {
+    const dir = tempDir("heads"), c = await twoHeads(dir,{BOTLING_CLAIM_WAIT_MS:"20"});
+    const sent = await c.call({type:"chat.send",botId:MAIN,text:"/slow"});
+    await until(()=>claudeInputs(dir).length===1);
+    await new Promise(resolve=>setTimeout(resolve,80));
+    expect(codexInputs(dir)).toHaveLength(0);
+    expect((await c.chat()).runs).toHaveLength(1);
+    await c.call({type:"turn.stop",botId:MAIN,turnId:sent.turnId});
+    await turn(c,"/solo fix the bug");expect(codexInputs(dir)).toHaveLength(0);
   });
 
   it("a hand-off goes to the other head and its reply comes back; the composer's default is saved", async () => {
@@ -448,8 +370,8 @@ describe("two heads in one chat", () => {
   it("keeps both heads' lines and the heads across a restart", async () => {
     const dir = tempDir("heads");
     const c = await twoHeads(dir);
-    await c.call({ type: "chat.send", botId: MAIN, text: "hello" });
-    await until(async () => (await lastBy(c, "codex"))?.state === "done", { timeout: 10_000 });
+    await turn(c, "hello", {to:"claude"});
+    await turn(c, "hello codex", {to:"codex"});
     const before = (await c.chat()).messages.map((m: any) => [m.engine ?? null, m.text]);
     await c.kill();
     const again = core(dir);

@@ -77,7 +77,7 @@ it('failed durable commit throws before publishing; retry includes terminal stat
   expect(f.disk()).toEqual(f.bot.subagents.list);
 });
 it('shutdown awaits checkpoint and flushes both heads before releasing their locks',async()=>{
-  const f=fixture(),p=fixture(f.bot);f.bot.partner=p.bot;
+  const f=fixture(),p=fixture(f.bot);(f.bot as any).partners.set(p.bot.engine,p.bot);
   f.start();p.start();f.text('primary');p.text('partner');
   await f.bot.shutdown({tidy:false});
   for(const current of [f,p]){
@@ -86,7 +86,7 @@ it('shutdown awaits checkpoint and flushes both heads before releasing their loc
   }
 });
 it('a failed checkpoint rejects shutdown but preserves chat and releases both locks; explicit retry succeeds',async()=>{
-  const f=fixture(),p=fixture(f.bot);f.bot.partner=p.bot;
+  const f=fixture(),p=fixture(f.bot);(f.bot as any).partners.set(p.bot.engine,p.bot);
   f.start();p.start();await f.bot.flushForSwap();f.text('primary');p.text('partner');
   const savedCheckpoint=readFileSync(f.file);
   rmSync(f.file);mkdirSync(f.file);
@@ -97,7 +97,7 @@ it('a failed checkpoint rejects shutdown but preserves chat and releases both lo
   await f.bot.shutdown({tidy:false});expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows).toEqual(f.bot.subagents.list);
 });
 it('core handover waits for both heads and refuses success on persistence failure',async()=>{
-  const f=fixture(),p=fixture(f.bot);f.bot.partner=p.bot;f.start();p.start();await f.bot.flushForSwap();
+  const f=fixture(),p=fixture(f.bot);(f.bot as any).partners.set(p.bot.engine,p.bot);f.start();p.start();await f.bot.flushForSwap();
   f.text('pending');p.text('partner');rmSync(f.journal,{recursive:true});writeFileSync(f.journal,'blocked');
   await expect(drainBots([f.bot],{timeoutMs:0,boundaryMs:0})).rejects.toThrow();
   expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(p.file,"utf8"))).rows).toEqual(p.bot.subagents.list);

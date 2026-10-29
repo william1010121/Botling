@@ -93,7 +93,7 @@ const markLetter = (engine: string) => (engine === "agy" ? "A" : engine === "cla
 export function headsParts(heads: HeadsView | null | undefined): Pick<ChatState, "answerWith" | "rounds" | "handoffs"> {
   if (!heads || heads.engines.length < 2) return {};
   return {
-    answerWith: { options: [{ id: "both", label: "Both" }, ...heads.engines.map((engine) => ({ id: engine, label: headName(engine) }))], chosen: heads.answerWith },
+    answerWith: { options: heads.engines.map((engine) => ({ id: engine, label: headName(engine) })), chosen: heads.engines.includes(heads.answerWith as "claude" | "codex" | "agy") ? heads.answerWith : heads.engines[0]! },
     rounds: heads.rounds ? { text: heads.rounds.text, stop: "Stop now", kind: heads.rounds.kind, round: heads.rounds.round, limit: heads.rounds.limit } : null,
     handoffs: heads.handoffs.length ? heads.handoffs.map((record): HandoffView => ({
       id: record.id, from: record.from, to: record.to, fromName: headName(record.from), toName: headName(record.to), kind: record.kind,

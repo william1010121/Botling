@@ -71,7 +71,7 @@ describe("chat state for the Web/src page", () => {
     };
     const runs = [{ turnId: "t3", messageId: "r3", live: [] }, { turnId: "t4", messageId: "r4", live: [] }];
     const { state, extras } = chatState(two, { botId: "B", messages, running: { turnId: "t3", messageId: "r3" }, live: [], tasks: [], runs, heads });
-    expect(state.answerWith).toEqual({ options: [{ id: "both", label: "Both" }, { id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }], chosen: "both" });
+    expect(state.answerWith).toEqual({ options: [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }], chosen: "claude" });
     expect(state.rounds).toEqual({ text: "Review round 1 of 2", stop: "Stop now", kind: "review", round: 1, limit: 2 });
     expect(state.handoffs).toEqual([{ id: "H1", from: "claude", to: "codex", fromName: "Claude", toName: "Codex", kind: "review", task: "Check it", origin: null, round: 1, limit: 2, state: "running", lines: [{ who: "claude", name: "Claude", text: "Check it" }] }]);
     expect(state.messages.map((m) => [m.id, m.speaker, m.sourceEngine])).toEqual([["u1", "to Codex", null], ["r1", "blog · Codex", "codex"], ["r2", "blog · Claude", "claude"], ["r3", "blog · Codex", "codex"]]);

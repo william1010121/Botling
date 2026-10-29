@@ -58,7 +58,8 @@ export async function tokenFlowHistory(bot: Bot): Promise<TokenFlowHistoryView> 
   let unreadable = false;
   // Include saved inactive heads without constructing a Bot or launching an engine.
   for (const engine of ["claude", "codex"] as const) {
-    if (bot.partner?.engine === engine) sources.push({ engine, list: bot.partner.subagents.list });
+    const peer = bot.peers.find(peer => peer.engine === engine);
+    if (peer) sources.push({ engine, list: peer.subagents.list });
     else {
       const saved = await savedRows(join(bot.profile.storeDir, `partner-${engine}`, "subagents.json"));
       unreadable ||= saved.unreadable;

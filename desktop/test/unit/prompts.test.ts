@@ -61,7 +61,9 @@ describe("prompts: the Swift app's strings", () => {
     it(`matches ${entry.name}`, () => {
       const ours = promptsFor(entry.input);
       for (const key of ["system", "headsRule", "wake", "tidy", "handoff", "resume"] as const) {
-        expect(ours[key], `${entry.name}.${key}`).toBe(entry.output[key]);
+        // Desktop collaboration intentionally replaces the legacy broadcast rule only.
+        if (key === "headsRule") continue;
+        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(entry.output[key].replace(entry.output.headsRule, ""));
       }
     });
   }
@@ -73,18 +75,23 @@ describe("prompts: the Swift app's strings", () => {
         const expected = key === "system" || key === "codexWorkerSystem"
           ? withDesktopReportGuidance(entry.output[key], key === "codexWorkerSystem")
           : entry.output[key];
-        expect(ours[key], `${entry.name}.${key}`).toBe(expected);
+        if (key === "headsRule") continue;
+        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(expected.replace(entry.output.headsRule, ""));
       }
     });
   }
 
-  it("writes each head's rule about the other as Swift does (limits, hand-offs off)", () => {
-    const limits = { handoffs: true, limits: { discussion: 1, review: 4, handoffs: 9 } };
-    const off = { handoffs: false, limits: DEFAULT_HEADS.limits };
-    expect(headsRule(limits, "claude")).toBe(golden.headsRules["claude-limits-1-4-9"]);
-    expect(headsRule(limits, "codex")).toBe(golden.headsRules["codex-limits-1-4-9"]);
-    expect(headsRule(off, "claude")).toBe(golden.headsRules["claude-off"]);
-    expect(headsRule(off, "codex")).toBe(golden.headsRules["codex-off"]);
+  it("tells every engine to respect the primary, peer scope, decisions and handoff budget", () => {
+    for (const engine of ["claude", "codex", "agy"] as const) {
+      const rule = headsRule({engines:["claude","codex","agy"],handoffs:true,limits:{discussion:1,review:4,handoffs:9}},engine);
+      expect(rule).toContain("one primary recipient");
+      expect(rule).toContain("authorized phase, exact scope");
+      expect(rule).toContain("Never delegate a denied action");
+      expect(rule).toContain('decision="QUESTION-MESSAGE-UUID"');
+      expect(rule).toContain("9 hand-offs, 4 of them reviews and 1 discussion rounds");
+      expect(rule).not.toContain("Each user message reaches both");
+      expect(headsRule({handoffs:false,limits:DEFAULT_HEADS.limits},engine)).not.toContain('<handoff to=');
+    }
   });
 
   it("matches the digests ClaudePromptCompatibilityTests freezes", () => {
@@ -103,7 +110,9 @@ describe("prompts: the Swift app's strings", () => {
         : { role: "manager" as const, name: "Probe", folder: root, instructions: "Keep the project's billing API stable." };
       const ours = promptsFor({ profile, language, results: "artifactUnlessSensitive", dual });
       for (const [name, digest] of Object.entries(digests)) {
-        const value = ours[name as keyof typeof ours];
+        if (dual && name === "headsRule") continue; // Behavior checked above; Swift still broadcasts.
+        const legacyRule = (golden.prompts as GoldenPrompt[]).find(entry => entry.input.dual)!.output.headsRule;
+        const value = dual ? ours[name as keyof typeof ours].replace(ours.headsRule, legacyRule) : ours[name as keyof typeof ours];
         expect(createHash("sha256").update(value, "utf8").digest("hex"), `${key}.${name}`).toBe(digest);
       }
     }

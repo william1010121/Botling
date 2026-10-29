@@ -73,7 +73,7 @@ it("resolves ownership before retention and leaves two-head task identities unre
   const dir = tempDir("token-flow-ownership");
   const make = (id: string, counter: string, startedAt: number) => readSubagent({ id, description: id, startedAt, status: "completed", steps: [], outputTokenCounters: { [counter]: 100 } })!;
   const rows = Array.from({ length: 501 }, (_, i) => make(`w${i}`, i === 0 || i === 500 ? "thread:shared" : `thread:${i}`, i));
-  const bot = { engine: "codex", profile: { storeDir: dir, id: "B" }, id: "B", subagents: { list: rows }, partner: { engine: "claude", subagents: { list: [make("w500", "message:other", 600)] } }, tasks: { tasks: [{ id: "t", name: "T", state: "done", kept: true, messageIDs: [], subagentIDs: ["w500"] }] } } as unknown as Bot;
+  const bot = { engine: "codex", profile: { storeDir: dir, id: "B" }, id: "B", subagents: { list: rows }, peers: [{ engine: "claude", subagents: { list: [make("w500", "message:other", 600)] } }], tasks: { tasks: [{ id: "t", name: "T", state: "done", kept: true, messageIDs: [], subagentIDs: ["w500"] }] } } as unknown as Bot;
   const history = await tokenFlowHistory(bot);
   expect(history.rows.find(row => row.id === "w500" && row.head === "codex")?.attributableOutputTokens).toBeNull();
   expect(history.tasks[0].workers).toEqual([{ id: "w500", head: null }]);

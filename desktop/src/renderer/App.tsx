@@ -827,7 +827,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           if (!chat || typeof action.text !== "string") { composerReply(false, "Chat is not ready."); return; }
           const botId = typeof action.botID === "string" ? action.botID : chat.botId;
           const reply = replyingRef.current?.botId === botId ? replyingRef.current.id : undefined;
-          const to = action.to === "both" || action.to === "claude" || action.to === "codex" ? { to: action.to as "both" | "claude" | "codex" } : {};
+          const to = action.to === "agy" || action.to === "claude" || action.to === "codex" ? { to: action.to as "agy" | "claude" | "codex" } : {};
           void client.request({ type: "chat.send", botId, text: action.text, ...(reply ? { replyTo: reply } : {}), ...to }).then(result => {
             if (result.stoppedBy) { composerReply(false, `Plugin ${result.stoppedBy} stopped the message.`); return; }
             onSent();
@@ -837,7 +837,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           return;
         }
         case "setAnswerWith": {
-          if (!chat || (action.to !== "both" && action.to !== "claude" && action.to !== "codex") || typeof action.requestID !== "number") return;
+          if (!chat || (action.to !== "agy" && action.to !== "claude" && action.to !== "codex") || typeof action.requestID !== "number") return;
           const botId = chat.botId;
           const requestID = action.requestID;
           void client.request({ type: "heads.answerWith", botId, to: action.to })

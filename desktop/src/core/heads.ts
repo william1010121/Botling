@@ -4,7 +4,6 @@
 //
 // Kept in bot.json's `heads` key in 1.x's format ({engines, answerWith, limits, handoffs,
 // codexModel}), so a bot set up in 1.x keeps its heads here.
-import { agyPairAllowed } from "./agent/agy-capabilities";
 import { randomUUID } from "node:crypto";
 import { characterCount, characterPrefix } from "./briefing";
 
@@ -38,8 +37,7 @@ const clamp = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(10, Math.max(1, Math.trunc(value))) : fallback;
 
 export function makeHeads(engines: Engine[], answerWith: AnswerTarget = "both", rest: Partial<Omit<Heads, "engines" | "answerWith">> = {}): Heads {
-  // Restore old mixed configurations as single agy; never start an unvalidated partner.
-  const kept = engines.includes("agy") ? (engines.includes("codex") && !engines.includes("claude") && agyPairAllowed("agy", "codex") ? ["codex", "agy"] as Engine[] : ["agy" as Engine]) : ENGINES.filter((engine) => engines.includes(engine)).slice(0, 2);
+  const kept = ENGINES.filter(engine => engines.includes(engine));
   const heads: Heads = { engines: kept.length ? kept : ["claude"], answerWith, limits: rest.limits ?? { ...DEFAULT_LIMITS }, handoffs: rest.handoffs ?? true, codexModel: rest.codexModel ?? null };
   heads.answerWith = fitted(heads, answerWith);
   return heads;
@@ -48,21 +46,21 @@ export function makeHeads(engines: Engine[], answerWith: AnswerTarget = "both", 
 export const singleHead = (engine: Engine): Heads => makeHeads([engine], engine);
 export const hasTwo = (heads: Heads) => heads.engines.length > 1;
 
-/** What can be picked: both (with two heads), or one by name. */
-export function targets(heads: Heads): AnswerTarget[] {
-  return [...(hasTwo(heads) ? (["both"] as AnswerTarget[]) : []), ...heads.engines];
+/** Only a single primary recipient can be picked. */
+export function targets(heads: Heads): Engine[] {
+  return [...heads.engines];
 }
 
 /** `target`, or the nearest one this bot has. */
-export function fitted(heads: Heads, target: AnswerTarget): AnswerTarget {
-  const all = targets(heads);
-  return all.includes(target) ? target : all[0]!;
+export function fitted(heads: Heads, target: AnswerTarget): Engine {
+  if (isEngine(target) && heads.engines.includes(target)) return target;
+  if (isEngine(heads.answerWith) && heads.engines.includes(heads.answerWith)) return heads.answerWith;
+  return heads.engines[0]!;
 }
 
-/** The heads a message to `target` goes to, in the order they answer. */
+/** Legacy Both requests resolve to one saved primary, never a broadcast. */
 export function headsFor(heads: Heads, target: AnswerTarget): Engine[] {
-  const t = fitted(heads, target);
-  return t === "both" ? heads.engines : [t];
+  return [fitted(heads, target)];
 }
 
 /** `HeadsSettings(from:)`: bot.json's `heads`, read as text, so an unknown value leaves the rest readable. */
@@ -71,7 +69,7 @@ export function readHeads(value: unknown, engine: unknown): Heads {
   if (!value || typeof value !== "object" || Array.isArray(value)) return single;
   const raw = value as Record<string, unknown>;
   const engines = Array.isArray(raw.engines) ? raw.engines.filter(isEngine) : [];
-  const target = raw.answerWith === "both" || isEngine(raw.answerWith) ? raw.answerWith : "both";
+  const target = isEngine(raw.answerWith) ? raw.answerWith : isEngine(engine) && engines.includes(engine) ? engine : engines[0] ?? single.answerWith;
   const limits = raw.limits && typeof raw.limits === "object" ? (raw.limits as Record<string, unknown>) : {};
   return makeHeads(engines, target, {
     limits: {

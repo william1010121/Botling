@@ -341,7 +341,7 @@ export const MessageView = z.strictObject({
   /** A user line for one head only. */
   to: Engine.optional(),
   /** With two heads: the heads this line has reached. */
-  seenBy: z.array(Engine).max(2).optional(),
+  seenBy: z.array(Engine).max(3).optional(),
   /** A question shared between the heads: its source question's id. */
   decisionId: id.optional(),
   /** Components it shows (`<show>`). */
@@ -537,7 +537,7 @@ export const BotView = z.strictObject({
   /** Why its chat cannot be used (an unreadable chat file, a missing folder); null when fine. */
   problem: z.string().max(2_000).nullable(),
   /** Its heads, Claude first: one, or Claude and Codex in one chat. */
-  heads: z.array(Engine).min(1).max(2),
+  heads: z.array(Engine).min(1).max(3),
   /** A bot of its own's job (null for the main bot and managers). */
   job: z.string().max(4_000).nullable(),
   /** Its subagents sent off by the bot itself (not ones a subagent sent), newest kept. */
@@ -572,7 +572,7 @@ export type HandoffView = z.infer<typeof HandoffView>;
 
 /** A bot with two heads: who new messages go to, where the hand-offs for your latest message stand. */
 export const HeadsView = z.strictObject({
-  engines: z.array(Engine).min(1).max(2),
+  engines: z.array(Engine).min(1).max(3),
   answerWith: AnswerTarget,
   handoffsOn: z.boolean(),
   rounds: z.strictObject({ kind: z.enum(["discussion", "review", "handoff"]), round: z.number().int().nonnegative(), limit: z.number().int().nonnegative(), text: z.string().max(200) }).nullable(),
@@ -793,7 +793,7 @@ export type UsageView = z.infer<typeof UsageView>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
 export const BotSettingsView = z.strictObject({
   botId: id,
-  engines: z.array(z.enum(["claude", "codex", "agy"])).min(1).max(2),
+  engines: z.array(z.enum(["claude", "codex", "agy"])).min(1).max(3),
   model: BotModel.nullable(),
   effort: Effort.nullable(),
   subagentModel: BotModel.nullable(),
@@ -902,7 +902,7 @@ export const Command = z.discriminatedUnion("type", [
   /** Main only: a file the chat shows (an attachment of one of the bot's lines, or one waiting: `pending:<id>`). */
   z.strictObject({ type: z.literal("attachment.file"), botId, ref: z.string().min(1).max(5_000) }),
   /** One head or two (Claude, Codex). Leaving out the head it runs on runs it on the other, through a handoff (Phase 5c). */
-  z.strictObject({ type: z.literal("heads.set"), botId, engines: z.array(Engine).min(1).max(2) }),
+  z.strictObject({ type: z.literal("heads.set"), botId, engines: z.array(Engine).min(1).max(3) }),
   /** Who new messages go to (the composer's Both / Claude / Codex). */
   z.strictObject({ type: z.literal("heads.answerWith"), botId, to: AnswerTarget }),
   /** Stops one hand-off's chain. */

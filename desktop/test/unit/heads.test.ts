@@ -113,7 +113,7 @@ describe("heads in bot.json (1.x's format)", () => {
     expect(readHeads({ engines: [], answerWith: "both" }, undefined)).toMatchObject({ engines: ["claude"], answerWith: "claude" });
     const two = makeHeads(["codex", "claude"]);
     expect(two.engines).toEqual(["claude", "codex"]);
-    expect(headsFor(two, "both")).toEqual(["claude", "codex"]);
+    expect(headsFor(two, "both")).toEqual(["claude"]);
     expect(headsFor(two, "codex")).toEqual(["codex"]);
     expect(headsFor(makeHeads(["claude"]), "codex")).toEqual(["claude"]);
   });

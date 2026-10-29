@@ -54,7 +54,7 @@ it.each(['agy','codex'] as const)('routes a successful %s handoff to the other e
  expect(lead.sent[1]).toContain('correlated peer evidence');lead.finish('owner accepts fixture');await settle();
  expect((h.b as any).conductor.records.every((r:any)=>r.state==='done')).toBe(true);
  expect(fixture.heads.every(x=>x.engine!=='claude')).toBe(true);
- await expect(h.b.setHeads(['agy','claude'])).rejects.toThrow();expect(()=>(h.b as any).deliverTo('claude','forbidden',null)).toThrow();
+ expect(()=>(h.b as any).deliverTo('claude','not enabled',null)).toThrow();
 });
 it('blocked peer result never hands back successful evidence',async()=>{
  const h=bot('agy');h.b.send('offline');await until(()=>fixture.heads[0]?.sent.length);
