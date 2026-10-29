@@ -1043,6 +1043,7 @@ export const Command = z.discriminatedUnion("type", [
   /** The app's settings (settings.json), with every default filled in. */
   z.strictObject({ type: z.literal("settings.get") }),
   z.strictObject({ type: z.literal("agy.runtime.check") }),
+  z.strictObject({ type: z.literal("agy.runtime.install") }),
   z.strictObject({ type: z.literal("settings.set"), change: SettingsChange }),
   /** Main: look at GitHub Releases (`manual`: now, even when the check is off or was done lately). */
   z.strictObject({ type: z.literal("updates.check"), manual: z.boolean() }),
@@ -1125,7 +1126,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "agy.runtime.check", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "tokenFlow.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
@@ -1244,6 +1245,7 @@ export interface Results {
   "plugins.call": { result: unknown };
   "plugins.web": { specs: WebPluginSpecView[] };
   "settings.get": SettingsView;
+  "agy.runtime.install": DoctorView;
   "agy.runtime.check": { saved: string | null; override: string | null; effective: string | null; valid: boolean; message: string };
   "projects.pick": { botId: string | null; added: boolean };
   "projects.add": { botId: string; added: boolean };

@@ -1,3 +1,4 @@
+import { packageAgyHelper } from './scripts/package-agy-helper.mjs';
 // Bundles Botling 2.0: main (CJS, Node), preload (CJS, sandboxed), core (CJS, utility process),
 // renderer (IIFE, browser: the React app page) and the chat frame (IIFE: Web/src's chat page,
 // unchanged, plus the desktop's additions). Output goes to out/, which is not committed.
@@ -55,6 +56,7 @@ await Promise.all([
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(out, "host/check-plugin.cjs") }),
   buildRenderer({ root: here }),
 ]);
+packageAgyHelper(here);
 // Storage epoch must travel with the core, including staged development builds.
 writeFileSync(join(out, "core/storage-contract.json"), JSON.stringify(JSON.parse(readFileSync(join(here, "package.json"), "utf8")).botlingStorageContract));
 // The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.

@@ -351,3 +351,48 @@ Provisioning remains external: the official macOS arm64 ACP 1.4.3 distribution
 and the exact verified Botling helper described above are required, plus the
 existing official Google sign-in at connection time. No installer, legacy CLI
 fallback, worker/mixed-engine gate, or delegation/permission policy was changed.
+
+### Doctor local installation (pinned 1.4.3)
+
+Doctor now lists Antigravity beside Claude and Codex. Its check reads the saved
+runtime choice (or the authoritative environment override) and verifies the
+existing runtime and helper. It does not download, launch ACP, or check Google
+sign-in. Runtime verification is separate from connection and login readiness.
+
+Only **Install locally and configure** sends `agy.runtime.install`. The command
+has no destination or URL parameters. It installs to
+`~/Library/Application Support/Botling/runtimes/antigravity/1.4.3/`, rejecting
+symlinked parents and volumes outside the macOS data disk. An active
+`BOTLING_AGY_ACP_PATH` blocks installation until removed and the app restarted.
+The command saves `agyAcpPath` only after validation, preserving other settings.
+Existing engine permissions, login consent, and worker/mixed gates are unchanged.
+
+The archive URL is the official macOS arm64 1.4.3 download. Its SHA256 is
+`c57db0a9b8b712daa9c3c17cdb990a61842ea569f279e8bd79d7aa85a303b20b`, from the
+1.4.3 official registry record captured during the original ACP investigation.
+The mutable registry now advertises 1.4.4; Doctor intentionally does not adopt it.
+The existing server/harness pins and Apple signature checks still apply.
+
+`build.mjs` calls `scripts/package-agy-helper.mjs` on macOS arm64. That step
+compiles the reviewed helper, verifies its existing SHA256 pin and signature,
+and writes `out/core/agy-file-helper.base64`. The normal `out/**/*` packaging rule
+includes this data file in app.asar. Encoding it as text prevents release signing
+from rewriting its pinned Mach-O bytes. The installer checks its digest again
+and copies it beside ACP; no developer path or compiler is used at runtime.
+A different compiler output stops the build and requires explicit pin review.
+
+Installation bounds the download, checks its archive digest, extracts only the
+two exact filenames, and validates the complete staged trio before rename.
+Concurrent operations share a promise within a core and use a filesystem lock
+across cores. A valid local installation is reused without download. Repair
+stages new bytes before moving an invalid previous directory aside; rename
+failure restores that directory. Failed downloads or validation keep saved
+settings and previous bytes. An interrupted process can leave a lock; the error
+identifies the empty lock folder to remove after confirming no install runs.
+
+Bounded validation covers Doctor UI explicit action/retry, IPC settings
+preservation and override refusal, archive tampering, failed validation,
+unsupported hosts, external destinations, concurrency, and an opt-in official
+archive fixture (`BOTLING_TEST_AGY_ARCHIVE`). The fixture uses an isolated test
+folder and never launches ACP or touches the user's runtime. Signed packaged
+app acceptance remains part of cumulative integration.

@@ -1,3 +1,4 @@
+import { agyRuntimeStatus } from './agy-runtime-settings';
 // Port of Sources/ClaudeCodeBotCore/Doctor.swift. No model calls, installs or sign-in changes.
 import { execFile } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
@@ -7,7 +8,7 @@ import { childEnvironment } from "./agent/runner";
 import { resolveExecutable } from "./process/executable";
 
 export const DOCTOR_TIMEOUT_MS = 10_000;
-type Tool = DoctorCheck["tool"];
+type Tool = "claude" | "codex";
 export interface CommandResult { output: string; exitCode: number; timedOut: boolean }
 export type Run = (path: string, args: string[], timeout: number) => Promise<CommandResult | null>;
 type Auth = { state: "signedIn"; how: string } | { state: "signedOut" | "unknown" };
@@ -80,10 +81,10 @@ export const runCommand: Run = (path, args, timeout) => new Promise(resolve => {
   child.stdin?.end();
 });
 export class Doctor {
-  constructor(private options: { locate?: (tool: Tool) => string | null; run?: Run; latest?: (name: string) => Promise<string | null> } = {}) {}
+  constructor(private options: { locate?: (tool: Tool) => string | null; run?: Run; latest?: (name: string) => Promise<string | null>; agy?: () => ReturnType<typeof agyRuntimeStatus> } = {}) {}
   async check(includeLatest: boolean): Promise<DoctorCheck[]> {
     const run = this.options.run ?? runCommand;
-    return Promise.all((["claude", "codex"] as const).map(async tool => {
+    const checks = await Promise.all((["claude", "codex"] as const).map(async tool => {
       const spec = tools[tool];
       const latest = includeLatest ? (this.options.latest ?? (async name => {
         const npm = locateExecutable("npm");
@@ -94,6 +95,11 @@ export class Doctor {
       const [version, auth] = path ? await Promise.all([run(path, ["--version"], DOCTOR_TIMEOUT_MS), run(path, spec.auth, DOCTOR_TIMEOUT_MS)]) : [null, null];
       return evaluate(tool, path, version, auth && !auth.timedOut ? parseAuth(tool, auth.output, auth.exitCode) : { state: "unknown" }, cliVersion(await latest));
     }));
+    const agy = this.options.agy?.() ?? agyRuntimeStatus({}, process.cwd());
+    checks.push({ tool: 'antigravity', name: 'Antigravity', isRequired: false, minimum: '1.4.3',
+      status: agy.valid ? 'ok' : 'warning', version: agy.valid ? '1.4.3' : null, path: agy.effective,
+      auth: null, latest: null, summary: agy.message + (agy.override ? " BOTLING_AGY_ACP_PATH is active; remove it and restart Botling to use automatic local installation." : ""), fix: null });
+    return checks;
   }
 }
 

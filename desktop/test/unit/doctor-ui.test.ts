@@ -130,3 +130,25 @@ it("keeps the startup rows visible while checking npm and shares the running ind
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false;
   }
 });
+it('installs Antigravity only on click, displays pending/failure, and permits retry', async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const host = document.createElement('div'), root = createRoot(host);
+  const view = checked(false);
+  view.checks.push({tool:'antigravity',name:'Antigravity',isRequired:false,minimum:'1.4.3',status:'warning',version:null,path:null,auth:null,latest:null,summary:'Not configured.',fix:null});
+  let reject!: (error: Error) => void;
+  const request = vi.fn((cmd: {type:string}) => cmd.type === 'agy.runtime.install' ? new Promise((_resolve, failure) => {reject=failure;}) : Promise.resolve(view));
+  const client = {request,onEvent:()=>()=>{}} as unknown as Client;
+  try {
+    await act(async () => root.render(createElement(DoctorSection,{client})));
+    expect(request).not.toHaveBeenCalledWith({type:'agy.runtime.install'});
+    const install = [...host.querySelectorAll('button')].find(b=>b.textContent==='Install locally and configure')!;
+    await act(async () => install.click());
+    expect(request).toHaveBeenCalledWith({type:'agy.runtime.install'});
+    expect(install.disabled).toBe(true);
+    await act(async () => reject(Error('archive hash mismatch')));
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('archive hash mismatch');
+    expect(install.disabled).toBe(false);
+    await act(async () => install.click());
+    expect(request.mock.calls.filter(([cmd])=>cmd.type==='agy.runtime.install')).toHaveLength(2);
+  } finally { await act(async()=>root.unmount()); (globalThis as any).IS_REACT_ACT_ENVIRONMENT=false; }
+});

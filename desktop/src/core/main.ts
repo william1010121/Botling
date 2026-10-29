@@ -1,4 +1,4 @@
-import { resolveAgyRuntime } from "./agy-runtime-settings";
+import { agyRuntimeStatus, resolveAgyRuntime } from "./agy-runtime-settings";
 import { startConfiguredMobile } from '../mobile-bridge/start';
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
@@ -211,7 +211,7 @@ function groupTiming(text: string | undefined) {
 const core = new Core({
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { quotaRetriever: retrieveQuota } : {}),
   // A swap's self-check (BOTLING_CORE_PROBE, main/core-swap.ts) runs on a scratch folder and checks no CLI.
-  ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor() } : {}),
+  ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(dataDir)), dataDir) }) } : {}),
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   headConfig,

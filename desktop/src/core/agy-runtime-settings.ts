@@ -28,7 +28,7 @@ export function validateAgyRuntimePath(command: string, workspace: string) {
 
 export function resolveAgyRuntime(raw: RawSettings, workspace: string, env: NodeJS.ProcessEnv = process.env) {
   const { effective, override } = agyRuntimeChoice(raw, env);
-  if (!effective) throw new Error(`Antigravity runtime is not configured. Open ${location} and save the official ACP 1.4.3 runtime path. Legacy CLI remains disabled.`);
+  if (!effective) throw new Error(`Antigravity runtime is not configured. Open Settings → Doctor to install locally, or ${location} to save the official ACP 1.4.3 runtime path. Legacy CLI remains disabled.`);
   try { validateAgyRuntimePath(effective, workspace); }
   catch (error) { throw new Error(`${(error as Error).message}${override ? ' BOTLING_AGY_ACP_PATH overrides the saved setting; correct or remove that environment variable and restart the app.' : ''}`); }
   return effective;
@@ -36,6 +36,7 @@ export function resolveAgyRuntime(raw: RawSettings, workspace: string, env: Node
 
 export function agyRuntimeStatus(raw: RawSettings, workspace: string) {
   const choice = agyRuntimeChoice(raw);
+  if (process.platform !== "darwin" || process.arch !== "arm64") return { ...choice, valid: false, message: "Antigravity ACP 1.4.3 requires macOS arm64. Automatic local installation is unavailable on this host." };
   try {
     resolveAgyRuntime(raw, workspace);
     return { ...choice, valid: true, message: 'Official ACP 1.4.3 runtime and Botling helper verified. Project location is checked again at launch; Google sign-in and connection have not been tested.' };
