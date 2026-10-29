@@ -2389,9 +2389,8 @@ export class Bot {
     if (this.records.some((record) => namesPath(record.text, path))) return path;
     const steps = [
       ...this.records.flatMap(record => record.steps ?? []),
-      ...(this.shownTurn?.steps ?? []), ...(this.partner?.shownTurn?.steps ?? []),
-      ...this.subagents.list.flatMap(agent => agent.steps),
-      ...(this.partner?.subagents.list.flatMap(agent => agent.steps) ?? []),
+      ...this.members.flatMap(bot => bot.shownTurn?.steps ?? []),
+      ...this.members.flatMap(bot => bot.subagents.list.flatMap(agent => agent.steps)),
     ];
     return steps.some(step => readImagePaths(step).includes(path)) ? path : null;
   }

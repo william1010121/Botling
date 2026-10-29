@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { stepView } from '../../src/core/bot';
+import { Bot, stepView } from '../../src/core/bot';
 import { StepView } from '../../src/contract';
 import { parseLine } from '../../src/core/agent/stream';
 import type { StepRecord } from '../../src/core/store/records';
@@ -68,4 +68,27 @@ it('uses kept images and falls back to the recorded source when kept files are g
   expect(readImagePaths({ ...read, images: [kept] })).toEqual([kept]);
   expect(readImagePaths({ ...read, images: [join(dir, 'gone.jpg')] })).toEqual([read.detail]);
   expect(readImagePaths({ ...read, detail: 'relative.png' })).toEqual([]);
+});
+
+
+it('allows live Read images from every peer and its subagents, without allowing unnamed paths', () => {
+  const owner = Object.create(Bot.prototype);
+  const first = Object.create(Bot.prototype);
+  const second = Object.create(Bot.prototype);
+  for (const member of [owner, first, second]) {
+    member.options = {};
+    member.records = [];
+    member.subagents = { list: [] };
+    Object.defineProperty(member, 'shownTurn', { value: null, writable: true });
+  }
+  owner.partners = new Map([['codex', first], ['agy', second]]);
+  for (const member of [first, second]) {
+    member.shownTurn = { steps: [read] };
+    expect(owner.attachmentPath('file:///work/diagram.png')).toBe('/work/diagram.png');
+    member.shownTurn = null;
+    member.subagents.list = [{ steps: [read] }];
+    expect(owner.attachmentPath('file:///work/diagram.png')).toBe('/work/diagram.png');
+    member.subagents.list = [];
+    expect(owner.attachmentPath('file:///work/diagram.png')).toBeNull();
+  }
 });
