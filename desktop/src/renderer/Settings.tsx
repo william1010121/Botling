@@ -26,7 +26,7 @@ const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
-  { id: "doctor", title: "Doctor", terms: "command-line tools claude codex install version login sign in check health" },
+  { id: "doctor", title: "Doctor", terms: "command-line tools claude codex antigravity install version login sign in check health" },
   { id: "updates", title: "Updates", terms: "updates version release github check new" },
   { id: "developer", title: "Developer", terms: "developer mode source project feedback not right" },
 ];
@@ -419,7 +419,7 @@ function AntigravityRuntime({ client, settings, change }: { client: Client; sett
     } catch (failure) { setError(why(failure)); }
     finally { setBusy(false); }
   };
-  return <Group title="Antigravity" note="Official ACP 1.4.3 for macOS arm64. Requires agy_acp_server.par, localharness_external and the verified Botling file helper in the same folder, outside your projects. Provisioning these files is separate; this setting does not download or launch them.">
+  return <Group title="Antigravity" note="Official ACP 1.4.3 for macOS arm64. Requires agy_acp_server.par, localharness_external and the verified Botling file helper in the same folder, outside your projects. Use Settings → Doctor to install locally and configure automatically. This path editor does not download or launch files.">
     <Row label="Official ACP runtime path">
       <input aria-label="Official ACP runtime path" type="text" value={path} disabled={busy} placeholder="/absolute/path/agy_acp_server.par" onChange={event => { setPath(event.target.value); setStatus(null); }} />
     </Row>

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const DoctorCheck = z.strictObject({
-  tool: z.enum(["claude", "codex"]), name: z.string(), isRequired: z.boolean(), minimum: z.string(),
+  tool: z.enum(["claude", "codex", "antigravity"]), name: z.string(), isRequired: z.boolean(), minimum: z.string(),
   status: z.enum(["ok", "warning", "failing"]), version: z.string().nullable(), path: z.string().nullable(),
   auth: z.string().nullable(), latest: z.string().nullable(), summary: z.string(), fix: z.string().nullable(),
 });

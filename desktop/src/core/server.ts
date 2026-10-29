@@ -1,3 +1,4 @@
+import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
 import { tokenFlowHistory } from "./token-flow-history";
 import type { AgyConfig } from "./agent/agy";
@@ -170,6 +171,7 @@ export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; bo
 
 export class Core {
   readonly doctor: DoctorModel;
+  private agyInstaller = new AgyRuntimeInstaller();
   readonly epoch = randomUUID().slice(0, 18);
   private seq = 0;
   private activated = false;
@@ -236,7 +238,7 @@ export class Core {
   private copies = new Map<string, { botId: string; questionId: string }>();
 
   constructor(private options: CoreOptions) {
-    this.doctor = new DoctorModel(options.doctor, doctor => this.event({ type: "doctor.updated", doctor }));
+    this.doctor = new DoctorModel(options.doctor ?? new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(options.dataDir)), options.dataDir) }), doctor => this.event({ type: "doctor.updated", doctor }));
     mkdirSync(options.dataDir, { recursive: true });
     this.pending = new PendingFiles(join(options.dataDir, "incoming"), (botId, files) => this.event({ type: "files.updated", botId, files }));
     this.catchUps = new CatchUps({
@@ -1661,6 +1663,12 @@ First write a test that shows this, then fix it.`;
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params) ?? null };
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
+      case "agy.runtime.install": {
+        if (process.env.BOTLING_AGY_ACP_PATH) throw new Error('BOTLING_AGY_ACP_PATH overrides saved settings. Remove it and restart Botling before installing from Doctor.');
+        const path = await this.agyInstaller.install(this.options.dataDir);
+        this.changeSetting({ key: 'agyAcpPath', value: path });
+        return this.doctor.run(false);
+      }
       case "agy.runtime.check": return agyRuntimeStatus(readSettings(Layout.settings(this.options.dataDir)), this.options.dataDir);
       case "projects.add": return this.addProject(cmd.folder);
       case "bots.create": {

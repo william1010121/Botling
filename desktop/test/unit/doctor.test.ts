@@ -49,19 +49,19 @@ describe("Doctor parity with the Swift CLI self-check", () => {
     expect(evaluate("claude", "/u/bin/claude", result("2.1.304"), signedIn, "2.1.304").fix).toBeNull();
   });
 
-  it("runs only version/auth probes at the 10-second bound; startup skips npm and an offline rerun still returns two rows", async () => {
+  it("runs only version/auth probes at the 10-second bound; startup skips npm and an offline rerun still returns three rows", async () => {
     const run = vi.fn<Run>(async (path, args) => args[0] === "--version" ? result(path.endsWith("claude") ? "2.1.304 (Claude Code)" : "codex-cli 0.163.0") : result(path.endsWith("claude") ? '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"pro"}' : "Logged in using ChatGPT"));
     const latest = vi.fn(async () => null);
     const doctor = new Doctor({ locate: tool => `/u/bin/${tool}`, run, latest });
     const rows = await doctor.check(false);
-    expect(rows.map(row => [row.tool, row.status, row.auth])).toEqual([["claude", "ok", "Claude subscription (pro)"], ["codex", "ok", "ChatGPT"]]);
+    expect(rows.map(row => [row.tool, row.status, row.auth])).toEqual([["claude", "ok", "Claude subscription (pro)"], ["codex", "ok", "ChatGPT"], ["antigravity", "warning", null]]);
     expect(run.mock.calls).toEqual(expect.arrayContaining([
       ["/u/bin/claude", ["--version"], DOCTOR_TIMEOUT_MS], ["/u/bin/claude", ["auth", "status"], DOCTOR_TIMEOUT_MS],
       ["/u/bin/codex", ["--version"], DOCTOR_TIMEOUT_MS], ["/u/bin/codex", ["login", "status"], DOCTOR_TIMEOUT_MS],
     ]));
     expect(run).toHaveBeenCalledTimes(4); expect(latest).not.toHaveBeenCalled();
     const offline = await new Doctor({ locate: () => null, run, latest }).check(true);
-    expect(offline.map(row => row.status)).toEqual(["failing", "warning"]);
+    expect(offline.map(row => row.status)).toEqual(["failing", "warning", "warning"]);
     expect(latest.mock.calls).toHaveLength(2);
     expect(run).toHaveBeenCalledTimes(4);
   });
@@ -127,7 +127,7 @@ describe("Doctor parity with the Swift CLI self-check", () => {
       expect(parseInbound({ v: PROTOCOL_VERSION, id: "bad", cmd: { type: "doctor.run", includeLatest: true, command: "install" } }).ok).toBe(false);
       expect(core.snapshot().doctor?.checks).toEqual([]);
       await call({ type: "boot.commit" });
-      await until(() => !core.doctor.view().isRunning && core.doctor.view().checks.length === 2);
+      await until(() => !core.doctor.view().isRunning && core.doctor.view().checks.length === 3);
       expect(latest).not.toHaveBeenCalled();
       expect(core.snapshot().doctor).toMatchObject({ needsAttention: true, includedLatest: false });
       const view = DoctorView.parse(await call({ type: "doctor.run", includeLatest: true }));
