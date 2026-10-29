@@ -47,6 +47,11 @@ export function childEnvironment(extra: Record<string, string | undefined> = {})
   return executableEnvironment(env);
 }
 
+/** Botling's Claude identity overrides inherited and per-launch values, after normal env merging. */
+export function claudeEnvironment(extra: Record<string, string | undefined> = {}): Record<string, string> {
+  return { ...childEnvironment(extra), CLAUDE_CODE_ENTRYPOINT: "claude-bolting" };
+}
+
 /**
  * Reads stream-json lines and turns them into text. Partial deltas (`stream_event` /
  * `content_block_delta` / `text_delta`) are used when present; a full `assistant` message only fills
@@ -149,7 +154,7 @@ export class AgentTurn {
 
   start(prompt: string) {
     const args = [...(this.config.prefixArgs ?? []), ...claudeArguments(this.config)];
-    const env = childEnvironment(this.config.env);
+    const env = claudeEnvironment(this.config.env);
     const managed = this.adapter.spawn(resolveExecutable(this.config.command, env), args, { cwd: this.config.cwd, env });
     this.process = managed;
     const child = managed.child;
