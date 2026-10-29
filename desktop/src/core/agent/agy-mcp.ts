@@ -55,6 +55,7 @@ export class AgyMcpBridge {
   private commands = new Set<ManagedProcess>();
   private stopped = false;
   private epoch = 0;
+  private pendingApprovals = new Map<string, (allow: boolean) => void>();
   private fullTurn = false;
   private scratch: string | undefined;
   readonly tools: AgyTool[];
@@ -88,8 +89,30 @@ export class AgyMcpBridge {
     const key = name+':'+canonical(args), list = this.grants.get(key) ?? [];
     list.push(Date.now()+60_000); this.grants.set(key,list);
   }
+  answer(requestId: string, allow: boolean) {
+    const resolve = this.pendingApprovals.get(requestId);
+    if (!resolve) return false;
+    this.pendingApprovals.delete(requestId);
+    resolve(allow && !this.stopped);
+    return true;
+  }
+  private requestApproval(name: string, args: Args): Promise<boolean> {
+    if (!this.onToolEvent) return Promise.resolve(false);
+    const requestId = `agy-mcp:${randomUUID()}`;
+    return new Promise(resolve => {
+      this.pendingApprovals.set(requestId, resolve);
+      this.onToolEvent!({kind:'permission',requestId,tool:name,summary:`botling_${name}\n${JSON.stringify(args)}`,input:args});
+    });
+  }
   beginTurn() { this.revoke(); if (!this.stopped) this.fullTurn = true; }
-  revoke() { this.fullTurn = false; this.grants.clear(); this.epoch++; }
+  revoke() {
+    this.fullTurn = false; this.grants.clear(); this.epoch++;
+    for (const [requestId, resolve] of this.pendingApprovals) {
+      this.pendingApprovals.delete(requestId);
+      this.onToolEvent?.({kind:'permissionCancelled',requestId});
+      resolve(false);
+    }
+  }
   async start() {
     if (this.stopped) throw new Error('Tool bridge closed.');
     this.server=createServer(async(req,res)=>{
@@ -135,6 +158,12 @@ export class AgyMcpBridge {
     args = normalizeFileArgs(name, args);
     const key=name+':'+canonical(args),grants=(this.grants.get(key)??[]).filter(deadline=>deadline>Date.now());
     const full = AGY_LOCAL_TOOLS.some(t=>t.name===name) && this.fullTurn && this.fullPermissionActive();
+    if (!full && !grants.length && AGY_WORKER_TOOLS.some(tool=>tool.name===name)) {
+      const approved = await this.requestApproval(name,args);
+      if (!approved || this.stopped) throw new Error('The user did not approve this app action. Nothing executed.');
+      this.grant(`botling_${name}`,args);
+      return this.invoke(name,args);
+    }
     if(!full && !grants.length)throw new Error('No matching single-action user approval. Nothing executed.');
     grants.shift();this.grants.set(key,grants);
     const epoch=this.epoch;

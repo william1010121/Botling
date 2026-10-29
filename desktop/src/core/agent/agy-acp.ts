@@ -402,6 +402,7 @@ export class AgyAcpHead {
   }
   answer(id: string, allow: boolean, input: Record<string, unknown>, message?: string) {
     if (id.startsWith("worker:")) this.workers?.answer(id,allow,input,message);
+    else if (id.startsWith("agy-mcp:")) this.bridge?.answer(id,allow);
     else this.protocol?.answer(id, allow);
   }
   allow(_rules: string[]): never { throw new Error("ACP accepts single-action approval only; persistent allow rules are unavailable."); }
