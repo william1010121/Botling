@@ -2,7 +2,7 @@ import {composerHost, type ModelEngine, type ModelPreferences, type ModelCatalog
 const fields = {claude:'model',codex:'codexModel',agy:'agyModel'} as const;
 const labels: Record<string,string> = {default:'Default',low:'Low',medium:'Medium',high:'High',xhigh:'Extra high',max:'Max'};
 /** Short stop labels for the effort control (the heading above it spells the level out). */
-const stops: Record<string,string> = {default:'Default',low:'Low',medium:'Med',high:'High',xhigh:'XHigh',max:'Max'};
+const stops: Record<string,string> = {default:'Auto',low:'Low',medium:'Med',high:'High',xhigh:'XHigh',max:'Max'};
 /** One-line hint per well-known model family; unknown models simply have none. */
 export function modelHint(id:string|null,name:string):string {
  const key=`${id??''} ${name}`.toLowerCase();
@@ -10,6 +10,7 @@ export function modelHint(id:string|null,name:string):string {
  if(key.includes('opus')) return 'Most capable';
  if(key.includes('sonnet')) return 'Balanced';
  if(key.includes('haiku')) return 'Fastest';
+ if(key.includes('fable')) return 'Creative';
  return '';
 }
 const order = ['low','medium','high','xhigh','max'];
@@ -33,6 +34,7 @@ export class ComposerModels {
  private settings: ModelPreferences|null=null;
  private catalogs: Partial<Record<ModelEngine,ModelCatalog>>={};
  private loading=false;
+ private resize: ResizeObserver|null=null;
  private error='';
  private pending=new Set<string>();
  constructor(private root:HTMLElement, private changed:()=>void) {}
@@ -40,7 +42,7 @@ export class ComposerModels {
  blocked(bot:string):boolean {return this.pending.has(bot);}
  update(bot:string,engines:string[]):void {if(this.panel && (bot!==this.bot || !engines.includes(this.engine))) this.close(false);}
  close(focus=true):void {
-  ++this.generation; this.lifetime?.abort();this.lifetime=null;this.panel?.remove();this.panel=null;
+  ++this.generation; this.resize?.disconnect();this.resize=null; this.lifetime?.abort();this.lifetime=null;this.panel?.remove();this.panel=null;
   this.root.querySelectorAll('.answer-menu').forEach(el=>el.setAttribute('aria-expanded','false'));
   if(focus) this.root.querySelector<HTMLButtonElement>(`.answer-menu[data-engine="${this.engine}"]`)?.focus();
  }
@@ -103,6 +105,7 @@ export class ComposerModels {
  private draw():void {
   const panel=this.panel;if(!panel)return;
   const focused=(document.activeElement as HTMLElement)?.dataset.focus;
+  this.resize?.disconnect();this.resize=null;
   panel.replaceChildren();
   const busy=this.pending.has(this.bot);
   const button=(label:string,run:()=>void,focus:string)=>{const el=document.createElement('button');el.type='button';el.textContent=label;el.setAttribute('aria-label',label);el.dataset.focus=focus;el.disabled=busy;el.onclick=run;return el;};
@@ -164,7 +167,9 @@ export class ComposerModels {
    track.append(slider,dots);section.append(heading,track);reflect();if(selected<0){output.textContent=this.loading?current:`${current} · ${unavailable}`;slider.setAttribute('aria-valuetext',output.textContent);}
    if(selected<0 && !this.loading) section.append(button('Use default',()=>void this.save({effort:null}),'default-effort'));
    panel.append(section);
-   const width=track.getBoundingClientRect().width;if(width>0)track.style.setProperty('--seg',`${width/levels.length}px`);
+   const measure=()=>{const width=track.getBoundingClientRect().width;if(width>0)track.style.setProperty('--seg',`${width/levels.length}px`);};
+   measure();
+   if(typeof ResizeObserver!=='undefined'){this.resize=new ResizeObserver(measure);this.resize.observe(track);}
   }
   const catalog=this.catalogs[this.engine];
   const message=busy?'Saving…':this.error|| (this.loading?'Loading…':catalog?.status!=='ready'?catalog?.message??'':catalog.models.length?'':'No models returned');
