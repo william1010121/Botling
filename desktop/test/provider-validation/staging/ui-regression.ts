@@ -1,4 +1,6 @@
 import {strict as assert} from 'node:assert';
+import {writeFileSync} from 'node:fs';
+import {join} from 'node:path';
 import type {BrowserWindow} from 'electron';
 import type {SafeController} from './safe-controller';
 /** Native Chromium event delivery reproduces capture/target microtask boundaries.
@@ -13,6 +15,7 @@ export async function checkUI(window:BrowserWindow,controller:SafeController){
  }
  for(let i=0;i<20&&(await read()).disabled;i++)await delay(50);
  assert.equal((await read()).disabled,false,'Renderer readiness must enable Start');
+ writeFileSync(join(__dirname,'ui-ready.png'),(await page.capturePage()).toPNG());
  await page.executeJavaScript("document.querySelector('#write').click()");await delay(30);
  assert.equal(controller.calls.start,0,'Untrusted programmatic clicks must not dispatch');
  controller.rejectNextStart=true;
@@ -25,6 +28,7 @@ export async function checkUI(window:BrowserWindow,controller:SafeController){
  assert.equal((await read()).focus,'write');
  page.sendInputEvent({type:'keyDown',keyCode:'Return'});page.sendInputEvent({type:'char',keyCode:'\r'});page.sendInputEvent({type:'keyUp',keyCode:'Return'});
  await delay(350);assert.equal(controller.calls.start,2);view=await read();assert.equal(view.disabled,true);assert.equal(view.error,'');assert.match(view.status,/介面回應正常/);
+ writeFileSync(join(__dirname,'ui-responsive.png'),(await page.capturePage()).toPNG());
  await click('#cancel');await delay(80);
  assert.equal(controller.calls.cancel,1,'Cancel click must reach main');view=await read();assert.equal(view.cancelDisabled,true);assert.match(view.status,/清理完成/);
  return {passed:true,nativeStart:1,keyboardStart:1,cancel:1,syntheticClickRejected:true,immediateBusyFeedback:true,errorAndRetry:true,focus:true,disabledState:true,providerProcesses:0,approvalChoices:0};
