@@ -4,6 +4,56 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 2.0.1
+
+The first release of the Electron app (Botling 2). It replaces the 1.x Swift app and covers
+everything since 1.19.0. It keeps the existing "Botling 2 Dev Trial" profile, so your chats,
+settings and web profiles stay where they are.
+
+### New
+
+- **Botling Web.** The app now draws its chat with Botling Web, so the desktop app, the browser
+  client and the phone client look and behave the same. Cards and components run in sandboxed
+  frames.
+- **Three engines.** Claude, Codex and Antigravity (Gemini) can each be a bot's engine. The chat
+  header shows every engine in use, and the primary bot can lead a three-engine discussion. The
+  Antigravity engine is set up from Settings and checked by Doctor.
+- **Model and effort picker.** A compact menu in the composer lists each engine's models and sets
+  the effort with a segmented control. Settings find each engine's available models.
+- **Terminal tabs.** Each bot has its own terminal tabs. You can drag the panel and resize it.
+- **Task cards and a new task panel.** Every piece of work has a card. The panel groups work
+  into Running, Waiting, Quiet and To verify, and you can close unverified work by hand. Details
+  open in a drawer on narrow windows.
+- **Token Flow.** A developer view of where tokens go, by task, with Claude and Codex usage.
+- **Reports v2.** Bots build report pages from blocks (documents and slides) in plain language.
+- **Chat files.** Type `@` to pick a project file with a preview. Markdown images open in a
+  keyboard-friendly preview, and consecutive images group into a gallery. Image previews work
+  for files the model reads.
+- **Antigravity quota** shows as ring cards (Gemini only, as percent used) in usage settings.
+- **Whiteboard** has Waiting and Running lanes, and Notify replaces Decide.
+- **Codex** shows reasoning summaries and a thinking timer during quiet turns.
+- Cute avatars use the supplied Claude, Codex and Gemini portraits.
+
+### Improved
+
+- Restarting the app after you approve it resumes safe unfinished work.
+- Long chats stay fast: history loads in bounded windows and worker history is saved separately.
+- Concurrent runs in one conversation show their own live activity.
+- Dropped files no longer also paste their text into the composer.
+- Ignored questions stay in the list as notes.
+
+### Fixed
+
+- Antigravity quota refreshes correctly after busy turns, and tool errors no longer end a turn.
+- Progress reports no longer overwrite unrelated task cards.
+- Token Flow keeps run ownership and a stable column layout.
+- Several restart, history and update-safety fixes.
+
+### Not included
+
+- Antigravity helpers that take over work from other engines, and the mixed-engine worker
+  features. They stay off until they are fully tested.
+
 ## Unreleased 1.20.0-dev
 
 ### Added
