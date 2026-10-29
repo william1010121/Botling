@@ -1805,9 +1805,9 @@ export class Bot {
     const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
     const workers = codexWorkerDefaults(settings.codexWorkers);
     return {
-      model: pick(settings.model, ["haiku", "sonnet", "opus"]),
+      model: typeof settings.model === "string" ? settings.model : null,
       effort: pick(settings.effort, ["low", "medium", "high", "xhigh", "max"]),
-      subagentModel: pick(settings.subagentModel, ["haiku", "sonnet", "opus"]),
+      subagentModel: typeof settings.subagentModel === "string" ? settings.subagentModel : null,
       // None set: Codex's own config (~/.codex/config.toml).
       codexWorkers: workers.model || workers.effort || workers.fast !== null ? workers : null,
     };

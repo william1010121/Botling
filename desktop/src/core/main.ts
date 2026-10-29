@@ -1,3 +1,4 @@
+import { discoverModels, discoveryFailure, modelDiscoveryService } from "./agent/model-discovery";
 import { agyRuntimeStatus, resolveAgyRuntime } from "./agy-runtime-settings";
 import { startConfiguredMobile } from '../mobile-bridge/start';
 // The core process entry. Under Electron it runs as a utility process and talks over
@@ -139,6 +140,17 @@ function codexModels() {
   return script ? cachedModels(() => askModels({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } })) : null;
 }
 
+const queryModels = modelDiscoveryService(async (engine, folder) => {
+  if ((process.env.BOTLING_AGENT ?? "fake") !== "claude") return discoveryFailure(engine, "unsupported", "Live discovery is disabled for the test runtime.");
+  if (engine === "agy") {
+    try {
+      const command = resolveAgyRuntime(readSettings(Layout.settings(dataDir)), dataDir);
+      return await discoverModels(engine, { file: command });
+    } catch { return discoveryFailure(engine, "unavailable", "Configure and verify the official ACP runtime in Settings → Engines and subagents, then retry."); }
+  }
+  return discoverModels(engine, { file: engine === "claude" ? process.env.BOTLING_CLAUDE_PATH ?? "claude" : process.env.BOTLING_CODEX_PATH ?? "codex", cwd: folder });
+});
+
 /** The completion judge (`PromiseCheck.codexClassifier`): the real Codex CLI, or the fake one's `exec`. */
 function classifier() {
   const kind = process.env.BOTLING_AGENT ?? "fake";
@@ -250,6 +262,7 @@ const core = new Core({
   summarizer: summarizer(),
   classifier: classifier(),
   codexModels: codexModels(),
+  engineModels: (engine, profile) => queryModels(engine, profile.folder),
   // The library and memory files are watched; these are the slow looks that catch what a watcher missed.
   componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 60_000),
   waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 60_000),

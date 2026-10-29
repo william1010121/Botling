@@ -1,3 +1,4 @@
+import { ModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { postToChat } from "./editor-surface";
@@ -484,14 +485,16 @@ export function BotSettings({ client, bot }: { client: Client; bot: BotView }) {
   return (
     <>
       {problem && <p className="settings-problem" role="alert">{problem}</p>}
-      <ThisBot client={client} bot={bot} onProblem={setProblem} />
+      <ThisBot key={bot.id} client={client} bot={bot} onProblem={setProblem} />
     </>
   );
 }
 
 function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onProblem: (problem: string | null) => void }) {
   const [view, setView] = useState<BotSettingsView | null>(null);
-  const models = useCodexModels(client, bot.heads.includes("codex"));
+  const claudeModels = useModelDiscovery(client, bot.id, "claude", (view?.engines ?? bot.heads).includes("claude"));
+  const codexModels = useModelDiscovery(client, bot.id, "codex", (view?.engines ?? bot.heads).includes("codex"));
+  const agyModels = useModelDiscovery(client, bot.id, "agy", (view?.engines ?? bot.heads).includes("agy"));
   useEffect(() => { void client.request({ type: "bot.settings", botId: bot.id }).then(setView, (failure) => onProblem(why(failure))); }, [client, bot.id, bot.heads.length, onProblem]);
   const configure = (change: Omit<Extract<import("../contract").Command, { type: "bot.configure" }>, "type" | "botId">) => {
     onProblem(null);
@@ -522,24 +525,23 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
       {hasClaude && (
         <Group title="Claude">
           <Row label="Model">
-            <SelectSetting label="Claude's model" blank="Default" options={MODELS} value={view.model} onChange={(value) => configure({ model: value as BotSettingsView["model"] })} />
+            <ModelPicker label="Claude's model" discovery={claudeModels} value={view.model} onChange={(model) => configure({ model })} />
           </Row>
           <Row label="Subagents' model">
-            <SelectSetting label="Claude subagents' model" blank="As in Settings" options={MODELS} value={view.subagentModel} onChange={(value) => configure({ subagentModel: value as BotSettingsView["subagentModel"] })} />
+            <ModelPicker label="Claude subagents' model" blank="Inherit bot" discovery={claudeModels} value={view.subagentModel} subagents onChange={(subagentModel) => configure({ subagentModel })} />
           </Row>
         </Group>
       )}
       {hasCodex && (
         <Group title="Codex">
           <Row label="Model">
-            <SelectSetting label="Codex's model" blank="Codex's default model" options={codexOptions(models)} value={view.codexModel} onChange={(value) => configure({ codexModel: value })} />
+            <ModelPicker label="Codex's model" discovery={codexModels} value={view.codexModel} onChange={(codexModel) => configure({ codexModel })} />
           </Row>
         </Group>
       )}
       {hasAgy && <Group title="Antigravity" note="ACP uses single-action approval cards and app-managed tools. Native agents, workflows and global plugins are disabled.">
-        <Row label="Model" hint="Use an ACP model ID (for example gemini-3.8-flash-high). Leave empty for this account’s default.">
-          <input aria-label="Antigravity model" key={view.agyModel ?? "default"} defaultValue={view.agyModel ?? ""} maxLength={200}
-            onBlur={event => { const value = event.target.value.trim() || null; if (value !== (view.agyModel ?? null)) configure({ agyModel: value }); }} />
+        <Row label="Model">
+          <ModelPicker label="Antigravity model" discovery={agyModels} value={view.agyModel ?? null} onChange={(agyModel) => configure({ agyModel })} />
         </Row>
       </Group>}
       {/* Both heads use the bot's effort; keep this outside either engine's group. */}

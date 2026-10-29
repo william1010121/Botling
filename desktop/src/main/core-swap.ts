@@ -66,7 +66,7 @@ export function stageCoreBuild(source: string, stagingRoot: string, keep: string
 export const PASS_WHILE_DRAINING = new Set<string>([
   "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings",
   "usage.view", "doctor.view", "attachment.file", "card.image", "card.html", "web.state", "link.authorize", "task.output",
-  "subagent.view", "whiteboard.view", "routines.list", "codex.models", "turn.stop", "turn.await", "handoff.stop", "rounds.stop",
+  "subagent.view", "whiteboard.view", "routines.list", "codex.models", "engine.models", "turn.stop", "turn.await", "handoff.stop", "rounds.stop",
 ]);
 
 /** How requests are held: none; those that change something (draining); all (switching). */

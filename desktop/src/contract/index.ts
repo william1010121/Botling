@@ -11,6 +11,7 @@
 // with the schemas below: the renderer is not trusted by main, and main does not let anything but
 // these shapes reach the core.
 import { z } from "zod";
+import type { ModelDiscovery } from "./model-discovery";
 import { DoctorView } from "./doctor";
 export { DoctorCheck, DoctorView } from "./doctor";
 import { ContractId, CARD_SAVE_LIMIT, FILE_DATA_LIMIT, CardSaveCommand, CardActionCommand } from "./editor-card";
@@ -795,9 +796,9 @@ export type UsageView = z.infer<typeof UsageView>;
 export const BotSettingsView = z.strictObject({
   botId: id,
   engines: z.array(z.enum(["claude", "codex", "agy"])).min(1).max(3),
-  model: BotModel.nullable(),
+  model: z.string().max(200).nullable(),
   effort: Effort.nullable(),
-  subagentModel: BotModel.nullable(),
+  subagentModel: z.string().max(200).nullable(),
   codexModel: z.string().max(200).nullable(),
   agyModel: z.string().max(200).nullable().optional(),
 });
@@ -990,6 +991,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("spec.close") }),
   /** The models the local Codex offers (`model/list`, 1.x's `CodexModels`), for the Codex model menu. */
   z.strictObject({ type: z.literal("codex.models") }),
+  z.strictObject({ type: z.literal("engine.models"), botId, engine: z.enum(["claude", "codex", "agy"]) }),
   z.strictObject({ type: z.literal("spec.wide"), wide: z.boolean() }),
   /**
    * "Not right" on a reply, in developer mode (1.x's `reportFeedback`): your words and pictures go to the
@@ -1070,8 +1072,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bot.settings"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
   z.strictObject({
-    type: z.literal("bot.configure"), botId, model: BotModel.nullable().optional(), effort: Effort.nullable().optional(),
-    subagentModel: BotModel.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
+    type: z.literal("bot.configure"), botId, model: ModelId.nullable().optional(), effort: Effort.nullable().optional(),
+    subagentModel: ModelId.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
   }),
   /** Main only: "Add project…" (main's folder picker), then `projects.add`; the new bot is selected. */
   z.strictObject({ type: z.literal("projects.pick") }),
@@ -1126,7 +1128,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
-  "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
+  "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
@@ -1230,6 +1232,7 @@ export interface Results {
   "spec.make": { specId: string | null };
   "spec.act": { accepted: boolean };
   "spec.close": Record<string, never>;
+  "engine.models": ModelDiscovery;
   "codex.models": { models: { id: string; name: string; isDefault: boolean; efforts: string[] | null }[] };
   "spec.wide": Record<string, never>;
   "pin.add": { pinned: boolean };

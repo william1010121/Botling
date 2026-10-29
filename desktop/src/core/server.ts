@@ -1,3 +1,5 @@
+import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
+import { discoveryFailure } from "./agent/model-discovery";
 import { ProjectFiles } from "./project-files";
 import { RestartJournal } from './restart-continuation';
 import { AgyRuntimeInstaller } from './agy-runtime-install';
@@ -131,6 +133,7 @@ export interface CoreOptions {
   /** The completion judge on Codex for a model (`completionClassifier`); null: none (the check stays off). */
   classifier?: ((model: string) => Classifier) | null;
   /** The models the local Codex offers (`model/list`); null: none known. */
+  engineModels?: (engine: ModelEngine, profile: BotProfile) => Promise<ModelDiscovery>;
   codexModels?: (() => Promise<CodexModel[]>) | null;
   /**
    * The component and plugin library is watched for changes on disk (folder-watch.ts); this is how often it is
@@ -1801,6 +1804,10 @@ First write a test that shows this, then fix it.`;
       }
       case "spec.act": return { accepted: await this.specAct(cmd.specId, cmd.action) };
       case "spec.close": this.specs.close(); return {};
+      case "engine.models": {
+        const bot = this.bot(cmd.botId);
+        return this.options.engineModels?.(cmd.engine, bot.profile) ?? discoveryFailure(cmd.engine, "unsupported", "Model discovery is unavailable in this runtime.");
+      }
       case "codex.models": return { models: ((await this.options.codexModels?.()) ?? []).slice(0, 200).map((model) => ({ id: model.id.slice(0, 200), name: model.name.slice(0, 200), isDefault: model.isDefault, efforts: model.efforts?.slice(0, 10) ?? null })) };
       case "spec.wide": this.specs.setWide(cmd.wide); return {};
       case "component.revert": {

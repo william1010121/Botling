@@ -20,6 +20,7 @@ function fakeClient(raw: Record<string, unknown>, sent: unknown[], botView?: Bot
   return {
     request: async (cmd: any) => {
       sent.push(cmd);
+      if (cmd.type === "engine.models") return {status:"ready", models:cmd.engine === "claude" ? ["haiku","sonnet","opus"].map(id=>({id,name:id,isDefault:false,efforts:null})) : MODELS,source:cmd.engine,message:"Runtime catalog"};
       if (cmd.type === "codex.models") return { models: MODELS };
       if (cmd.type === "agy.runtime.check") return { saved: null, override: null, effective: null, valid: false, message: "Runtime not configured." };
       if (cmd.type === "settings.get") return settingsView(settings);
@@ -140,7 +141,7 @@ describe("Settings' model and effort choices are dropdowns", () => {
       expect(options(select(host, "Claude's model"))).toEqual(["", "haiku", "sonnet", "opus"]);
       expect(select(host, "Reasoning effort").value).toBe("high");
       expect(options(select(host, "Claude subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
-      expect(options(select(host, "Codex's model"))).toEqual(["", "gpt-6-luna", "gpt-6-sol", "gpt-5-old"]);
+      expect(options(select(host, "Codex's model"))).toEqual(["", "gpt-5-old", "gpt-6-luna", "gpt-6-sol"]);
       await choose(select(host, "Claude's model"), "opus");
       expect(sent.at(-1)).toMatchObject({ type: "bot.configure", model: "opus" });
       await choose(select(host, "Claude subagents' model"), "sonnet");
