@@ -9,7 +9,7 @@ import { QuickSettingsUsage } from '../../src/renderer/QuickSettingsUsage';
 import type { Client } from '../../src/renderer/client';
 import type { AntigravityQuotaView } from '../../src/contract';
 const busy: AntigravityQuotaView = { status:'unavailable', reason:'busy', source:'antigravity_acp' };
-const available: Extract<AntigravityQuotaView, {status:'available'}> = { status:'available', source:'antigravity_acp', seen:123000, buckets:[{group:'Models', label:'Week', remainingFraction:.91}] };
+const available: Extract<AntigravityQuotaView, {status:'available'}> = { status:'available', source:'antigravity_acp', seen:123000, buckets:[{group:'Gemini Models', label:'Weekly Limit Remaining', remainingFraction:.91}] };
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 afterEach(() => vi.useRealTimers());
 it('labels retained quota with its original read time while busy, without inventing a value on first open', async () => {
@@ -19,11 +19,11 @@ it('labels retained quota with its original read time while busy, without invent
   expect(host.textContent).toContain('Waiting to read quota');
   expect(host.textContent).not.toContain('%');
   await act(async () => root.render(createElement(AntigravityQuota, {quota:available})));
-  expect(host.textContent).toContain('91% remaining');
+  expect(host.textContent).toContain('9%');
   await act(async () => root.render(createElement(AntigravityQuota, {quota:{...busy, lastKnown:available}})));
-  expect(host.textContent).toContain('91% remaining');
+  expect(host.textContent).toContain('9%');
   expect(host.textContent).toContain('Last known quota');
-  expect(host.textContent).toContain(new Date(123000).toLocaleString());
+  expect(host.textContent).toMatch(/as of \d+ (min|h|days)/);
   expect(host.textContent).toContain('Waiting to refresh quota');
  } finally { await act(async () => root.unmount()); }
 });
@@ -51,7 +51,7 @@ it('retries busy at a bounded interval, coalesces turn events, stops on success 
   quota = available; pending = false;
   await act(async () => { resolve!({antigravity:busy}); });
   expect(request).toHaveBeenCalledTimes(3);
-  expect(host.textContent).toContain('91% remaining');
+  expect(host.textContent).toContain('9%');
   await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
   expect(request).toHaveBeenCalledTimes(3);
  } finally { await act(async () => root.unmount()); }
@@ -84,9 +84,9 @@ it('retains core last-known quota across close/reopen in both surfaces and share
   await act(async () => {quickRoot.render(createElement(QuickSettingsUsage,{client}));fullRoot.render(fullElement());});
   expect(usageRequest).toHaveBeenCalledTimes(1);
   for (const host of [quick,full]) {
-   expect(host.textContent).toContain('91% remaining');
+   expect(host.textContent).toContain('9%');
    expect(host.textContent).toContain('Last known quota');
-   expect(host.textContent).toContain(new Date(available.seen).toLocaleString());
+   expect(host.textContent).toMatch(/as of \d+ (min|h|days)/);
   }
   await act(async () => {await vi.advanceTimersByTimeAsync(2000);});
   expect(usageRequest).toHaveBeenCalledTimes(2);
@@ -97,16 +97,16 @@ it('retains core last-known quota across close/reopen in both surfaces and share
   await act(async () => fullRoot.render(fullElement()));
   expect(usageRequest).toHaveBeenCalledTimes(3);
   expect(full.textContent).toContain('Last known quota');
-  expect(full.textContent).toContain('91% remaining');
-  quota = {...available,seen:Date.now(),buckets:[{group:'Models',label:'Week',remainingFraction:.85}]};
+  expect(full.textContent).toContain('9%');
+  quota = {...available,seen:Date.now(),buckets:[{group:'Gemini Models',label:'Weekly Limit Remaining',remainingFraction:.85}]};
   await act(async () => {for(const listener of listeners) listener({event:{type:'turn.finished'}});});
   expect(usageRequest).toHaveBeenCalledTimes(4);
-  expect(full.textContent).toContain('85% remaining');
+  expect(full.textContent).toContain('15%');
   expect(full.textContent).not.toContain('Last known quota');
   await act(async () => {await vi.advanceTimersByTimeAsync(10000);});
   expect(usageRequest).toHaveBeenCalledTimes(4);
   await act(async () => {fullRoot.render(null);quickRoot.render(createElement(QuickSettingsUsage,{client}));});
-  expect(quick.textContent).toContain('85% remaining');
+  expect(quick.textContent).toContain('15%');
  } finally {await act(async () => {quickRoot.unmount();fullRoot.unmount();});}
 });
 
@@ -122,4 +122,38 @@ it('bounds repeated manual retries while busy', async () => {
   await act(async () => {await vi.advanceTimersByTimeAsync(2000);});
   expect(request).toHaveBeenCalledTimes(2);
  } finally {await act(async () => root.unmount());}
+});
+
+it('shows only Gemini quotas as used-percent ring cards in the Claude/Codex layout', async () => {
+ const now = Date.parse('2026-10-29T16:00:00Z');
+ const quota: AntigravityQuotaView = { status:'available', source:'antigravity_acp', seen:now, buckets:[
+  {group:'Gemini Models', label:'Weekly Limit Remaining', remainingFraction:.88, resetsAt:Date.parse('2026-11-04T12:42:00Z')},
+  {group:'Gemini Models', label:'Five Hour Limit Remaining', remainingFraction:.91, resetsAt:now + 103*60_000},
+  {group:'Claude and GPT models', label:'Weekly Limit Remaining', remainingFraction:.5},
+  {group:'Claude and GPT models', label:'Five Hour Limit Remaining', remainingFraction:.4}]};
+ const host = document.createElement('div'), root = createRoot(host);
+ try {
+  await act(async () => root.render(createElement(AntigravityQuota, {quota, now})));
+  const cards = [...host.querySelectorAll('.quick-usage-card')];
+  expect(cards).toHaveLength(2);
+  expect(cards[0].textContent).toBe('9%5 hoursin 1h 43m');
+  expect(cards[1].textContent).toMatch(/^12%Week/);
+  expect(host.textContent).not.toContain('remaining');
+  expect(host.textContent).not.toContain('50%');
+  expect(host.textContent).not.toContain('60%');
+  expect(host.textContent).not.toContain('Read ');
+ } finally { await act(async () => root.unmount()); }
+});
+it('degrades gracefully for missing, disabled and amount-only Gemini buckets', async () => {
+ const now = Date.now();
+ const quota: AntigravityQuotaView = { status:'available', source:'antigravity_acp', seen:now, buckets:[
+  {group:'Gemini Models', label:'Five Hour Limit Remaining', disabled:true},
+  {group:'Claude and GPT models', label:'Weekly Limit Remaining', remainingFraction:.5}]};
+ const host = document.createElement('div'), root = createRoot(host);
+ try {
+  await act(async () => root.render(createElement(AntigravityQuota, {quota, now})));
+  const cards = [...host.querySelectorAll('.quick-usage-card')];
+  expect(cards[0].textContent).toBe('–5 hoursdisabled');
+  expect(cards[1].textContent).toBe('–Weekunavailable');
+ } finally { await act(async () => root.unmount()); }
 });

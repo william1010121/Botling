@@ -255,18 +255,18 @@ it("repositions the popup when asynchronous quota status changes its height", as
   } finally { rect.mockRestore(); vi.unstubAllGlobals(); }
 });
 
-it("renders actual Antigravity quota groups, counts and resets without imposing windows", async () => {
+it("renders only the Gemini quota as used-percent cards, converting what remains", async () => {
   const value = limits();
   value.antigravity = { status: "available", source: "antigravity_acp", seen: now, buckets: [
     {group: "Gemini Models", label: "Weekly", remainingFraction: .91, resetsAt: now + 3600000},
+    {group: "Claude and GPT models", label: "Weekly", remainingFraction: .5},
     {group: "Claude and GPT models", label: "Daily", remainingAmount: "9007199254740993"},
-    {group: "Other", label: "Unknown"}, {group: "Other", label: "Disabled", disabled: true},
   ] };
   const ui = await mount(vi.fn(async () => value)); await ui.toggle();
-  const text = host.querySelector('[aria-label="Antigravity quota"]')!.textContent!;
-  expect(text).toContain("Gemini Models · Weekly: 91% remaining");
-  expect(text).toContain("9007199254740993 units remaining");
-  expect(text).toContain("Resets"); expect(text).toContain("Read");
-  expect(text).toContain("Remaining quota not reported");
-  expect(text).not.toContain("0% remaining");
+  const group = host.querySelector('[aria-label="Antigravity quota"]')!;
+  const text = group.textContent!;
+  expect(group.querySelectorAll(".quick-usage-card")).toHaveLength(2);
+  expect(text).toContain("9%"); expect(text).toContain("Week");
+  expect(text).not.toContain("50%"); expect(text).not.toContain("9007199254740993");
+  expect(text).not.toContain("remaining"); expect(text).not.toContain("Read");
 });

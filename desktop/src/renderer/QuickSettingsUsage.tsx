@@ -1,10 +1,11 @@
 // 1.x's gear-popover quota rings. Read the core's saved CLI readings on open, after
 // turns, and each minute; the minute tick also advances reset/countdown/stale text.
 import { AntigravityQuota } from "./AntigravityQuota";
+import { QuotaCard } from "./QuotaCard";
 import { useEffect, useState } from "react";
 import type { UsageView } from "../contract";
 import type { Client } from "./client";
-import { asOf, countdown, hasReset, percent, resetDay, staleSince, type LimitWindow } from "./usage-text";
+import { asOf, staleSince } from "./usage-text";
 
 type QuotaStatus = NonNullable<UsageView["quotaStatus"]>["claude"];
 const quotaProblems: Record<Exclude<QuotaStatus, "available">, string> = {
@@ -112,31 +113,10 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
     {codexProblem && <p className="quick-usage-note" role="status">Codex: {codexProblem}.</p>}
     {since({ fiveHour: null, week: codex.week })}
     <h3>Antigravity</h3>
-    <AntigravityQuota quota={usage?.antigravity} loading={loading} failed={failed} onRetry={retry} />
+    <AntigravityQuota quota={usage?.antigravity} now={now} loading={loading} failed={failed} onRetry={retry} />
     {failed && <p className="quick-usage-note" role="alert">
       Quota readings unavailable.{" "}
       <button type="button" onClick={retry}>Retry</button>
     </p>}
   </section>;
-}
-
-function QuotaCard({ engine, title, window, now, weekly = false, lastKnown = false }: {
-  engine: string; title: string; window: LimitWindow | null; now: number; weekly?: boolean; lastKnown?: boolean;
-}) {
-  const reset = window ? hasReset(window, now) : false;
-  const used = window && !reset ? window.used : null;
-  const value = window ? percent(window, now) : "–";
-  const timing = window ? (weekly ? resetDay(window, now) : countdown(window, now)) : "unavailable";
-  const detail = window && lastKnown ? `Last-known${timing ? ` · ${timing}` : ""}` : timing;
-  return <div className="quick-usage-card" role="group" aria-label={`${engine} ${title} limit, ${window ? `${value} used` : "unavailable"}${detail ? `, ${detail}` : ""}`}>
-    <span className="quick-usage-ring" aria-hidden="true">
-      <svg viewBox="0 0 41 41" fill="none">
-        <circle cx="20.5" cy="20.5" r="18" stroke="var(--chip)" strokeWidth="5" />
-        {used !== null && <circle cx="20.5" cy="20.5" r="18" pathLength="1" stroke={used >= 0.8 ? "var(--orange)" : "var(--blue)"}
-          strokeWidth="5" strokeLinecap="round" strokeDasharray={`${used} 1`} />}
-      </svg>
-      <span>{value}</span>
-    </span>
-    <span><strong>{title}</strong><small>{detail}</small></span>
-  </div>;
 }
