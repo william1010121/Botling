@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./durable/atomic";
 import { QuotaError, type QuotaRetriever, type QuotaStatus } from "./quota";
+import { readAntigravityQuota } from "./antigravity-quota";
 import { toSwiftDate } from "./store/records";
 
 export interface TokenUsage { input: number; output: number; cacheWrite: number; cacheRead: number }
@@ -259,6 +260,7 @@ export function usageView(book: { spending: Spending; claude: RateLimits; codex:
   const nonNegative = (tokens: TokenUsage): TokenUsage => ({ input: Math.max(0, tokens.input), output: Math.max(0, tokens.output), cacheWrite: Math.max(0, tokens.cacheWrite), cacheRead: Math.max(0, tokens.cacheRead) });
   return {
     ...(book.quotaStatus ? { quotaStatus: book.quotaStatus } : {}),
+    antigravity: readAntigravityQuota(),
     spendingStatus: book.spendingStatus ?? "available",
     day: spending.day.slice(0, 20), spent: Math.max(0, spending.spent), tokens: nonNegative(spending.tokens), byBot,
     history: spending.history.slice(-31).map((day) => ({ day: day.day.slice(0, 20), spent: Math.max(0, day.spent), tokens: Math.max(0, totalTokens(day.tokens)) })),

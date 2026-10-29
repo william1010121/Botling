@@ -782,7 +782,16 @@ const LimitWindowView = z.strictObject({ used: z.number().min(0).max(1), resetsA
 const LimitsView = z.strictObject({ fiveHour: LimitWindowView.nullable(), week: LimitWindowView.nullable() });
 /** What the bots used (Phase 5c; 1.x's usage page): today, by bot, the days before, and each CLI's subscription limits. */
 const QuotaStatus = z.enum(["available", "missing", "auth_required", "token_expired", "auth_rejected", "forbidden", "timeout", "network_error", "invalid_response", "cli_unavailable"]);
+/** Current ACP connection has no supported subscription-quota reader. No numeric
+ * fields until a provider source can supply actual quota, not tokens or model access. */
+export const AntigravityQuotaView = z.strictObject({
+  status: z.literal("unavailable"),
+  reason: z.literal("unsupported_connection"),
+  source: z.literal("antigravity_acp"),
+});
+export type AntigravityQuotaView = z.infer<typeof AntigravityQuotaView>;
 export const UsageView = z.strictObject({
+  antigravity: AntigravityQuotaView.optional(),
   quotaStatus: z.strictObject({ claude: QuotaStatus, codex: QuotaStatus }).optional(),
   /** Whether local spending was read or recorded; missing/corrupt files are not measured zero. */
   spendingStatus: z.enum(["available", "missing", "unreadable"]),

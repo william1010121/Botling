@@ -1,3 +1,4 @@
+import { AntigravityQuota } from "./AntigravityQuota";
 import { ModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
@@ -23,7 +24,7 @@ const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
   { id: "engines", title: "Engines and subagents", terms: "antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
-  { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
+  { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
   { id: "doctor", title: "Doctor", terms: "command-line tools claude codex antigravity install version login sign in check health" },
@@ -158,6 +159,9 @@ function Usage({ client }: { client: Client }) {
         <Group title="Subscription limits">
           <LimitRow name="Claude" limits={usage.claude} now={now} />
           <LimitRow name="Codex" limits={usage.codex} now={now} />
+          <Row label="Antigravity">
+            <AntigravityQuota quota={usage.antigravity} failed={failed} />
+          </Row>
         </Group>
         {available && <Group title="By bot">
           {!usage.byBot.length && <Row label="No bot has used anything today." />}

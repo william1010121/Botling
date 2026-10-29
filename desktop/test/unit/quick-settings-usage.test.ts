@@ -203,3 +203,54 @@ describe("quota readings in the production Quick settings popup", () => {
     expect(ui.cards()[0].textContent).toContain("56%");
   });
 });
+
+
+it("shows the Antigravity connection limitation without invented windows or percentages", async () => {
+  const value = limits();
+  value.antigravity = { status: "unavailable", reason: "unsupported_connection", source: "antigravity_acp" };
+  const ui = await mount(vi.fn(async () => value)); await ui.toggle();
+  const quota = host.querySelector('[aria-label="Antigravity quota"]')!;
+  expect(quota.textContent).toBe("Quota unavailable through the current Antigravity connection.");
+  expect(quota.textContent).not.toMatch(/%|5 hours|Week|tokens|sign-in/);
+  expect(ui.cards()).toHaveLength(3);
+});
+
+it("shows loading, failure, retry, then unavailable for Antigravity", async () => {
+  let reject!: (error: Error) => void;
+  const request = vi.fn(() => new Promise<UsageView>((_, fail) => { reject = fail; }));
+  const ui = await mount(request); await ui.toggle();
+  const quota = () => host.querySelector('[aria-label="Antigravity quota"]')!.textContent;
+  expect(quota()).toBe("Loading quota…");
+  await act(async () => reject(new Error("secret raw provider response")));
+  expect(quota()).toBe("Quota refresh failed.");
+  expect(host.textContent).not.toContain("secret");
+  request.mockImplementation(async () => limits());
+  await act(async () => host.querySelector<HTMLButtonElement>(".quick-usage-note button")!.click());
+  expect(quota()).toBe("Quota readings unavailable.");
+  expect(ui.cards()[0].textContent).toContain("42%");
+});
+
+
+it("repositions the popup when asynchronous quota status changes its height", async () => {
+  let resize!: () => void;
+  const disconnect = vi.fn();
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: () => void) { resize = callback; }
+    observe() {} disconnect = disconnect;
+  });
+  let height = 300;
+  const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return { top: this.classList.contains("strip-gear") ? 700 : 0, left: 24, right: 48,
+      width: 300, height: this.classList.contains("sidebar-settings-popover") ? height : 24 } as DOMRect;
+  });
+  try {
+    const ui = await mount(); await ui.toggle();
+    const popup = () => host.querySelector<HTMLElement>(".sidebar-settings-popover")!;
+    expect(popup().style.top).toBe("392px");
+    height = 500;
+    await act(async () => resize());
+    expect(popup().style.top).toBe("192px");
+    await ui.toggle();
+    expect(disconnect).toHaveBeenCalledOnce();
+  } finally { rect.mockRestore(); vi.unstubAllGlobals(); }
+});

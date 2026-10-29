@@ -1,5 +1,6 @@
 // 1.x's gear-popover quota rings. Read the core's saved CLI readings on open, after
 // turns, and each minute; the minute tick also advances reset/countdown/stale text.
+import { AntigravityQuota } from "./AntigravityQuota";
 import { useEffect, useState } from "react";
 import type { UsageView } from "../contract";
 import type { Client } from "./client";
@@ -75,6 +76,8 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
     </div>
     {codexProblem && <p className="quick-usage-note" role="status">Codex: {codexProblem}.</p>}
     {since({ fiveHour: null, week: codex.week })}
+    <h3>Antigravity</h3>
+    <AntigravityQuota quota={usage?.antigravity} loading={!usage && !failed} failed={failed} />
     {failed && <p className="quick-usage-note" role="alert">
       Quota readings unavailable.{" "}
       <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button>

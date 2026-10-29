@@ -33,8 +33,11 @@ export function SidebarSettings({ client, settings, plugins, doctor, compact = f
       });
     };
     place();
+    // Quota loading/error text can change height after the popup is positioned.
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+    if (panel.current) observer?.observe(panel.current);
     window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", place); };
   }, [open, compact, problem]);
   useEffect(() => {
     if (!open) return;
