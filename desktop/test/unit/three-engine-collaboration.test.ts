@@ -134,10 +134,10 @@ it('routes Stop to every engine by turn id without stopping independent peers',a
  }
  expect(h.b.snapshot().runs).toEqual([]);
 });
-it('supplies Antigravity the same explicit delegation scope and recipient protocol',()=>{
+it('supplies Antigravity the app-managed coordinator delegation policy (agy-only worker gate on, mixed gate off)',()=>{
  const h=bot('agy');const prompt=(h.b as any).prompts().system;
- expect(prompt).toContain('one primary recipient');expect(prompt).toContain('claude, codex');
- expect(prompt).toContain('authorized phase, exact scope');expect(prompt).not.toContain('mixed-engine sessions are disabled');
+ expect(prompt).toContain('You are the coordinator, not an execution worker');expect(prompt).toContain('app_task_checkpoint');
+ expect(prompt).toContain('implementation_authorized=false');expect(prompt).not.toContain('mixed-engine sessions are disabled');
 });
 
 it('lets settings remove the storage owner while retaining two selected recipients',async()=>{

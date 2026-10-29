@@ -1,4 +1,6 @@
-import {afterAll,beforeAll,afterEach,expect,it} from 'vitest';
+import {afterAll,beforeAll,afterEach,expect,it,vi} from 'vitest';
+// This file covers the local-tools-only bridge; keep the worker gate closed here.
+vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>false,agyMixedRuntimeEnabled:()=>false,agyPairAllowed:()=>false}));
 import {mkdtempSync,mkdirSync,readFileSync,existsSync,symlinkSync,writeFileSync,realpathSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
