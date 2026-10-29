@@ -9,11 +9,11 @@ import {tempDir,until} from '../helpers';
 const bots:Bot[]=[];
 afterEach(async()=>{for(const b of bots.splice(0))await b.shutdown({tidy:false});});
 const session='11111111-2222-4333-8444-555555555555';
-function harness(){
+function harness(full=false){
  const dir=tempDir('agy-recovery'),profile=mainProfile(dir),launches:any[]=[],events:any[]=[];
  mkdirSync(profile.storeDir,{recursive:true});const settings=join(profile.storeDir,'bot.json');
  writeFileSync(settings,JSON.stringify({engine:'agy',heads:{engines:['agy'],answerWith:'agy'},agyConversation:session}));
- const make=()=>{const b=new Bot({profile,deferStartup:true,welcome:false,ledger:new ProcessLedger(join(dir,'ledger.json')),headConfig(){throw Error('No other agent');},agyConfig(_p,c){launches.push(c);return c;},prompts:()=>botPrompts({profile,engine:'agy'}),emit:e=>events.push(e),log(){},approvalTimeoutMs:100,idleMs:60000,interruptGraceMs:10});bots.push(b);return b;};
+ const make=()=>{const b=new Bot({profile,launch:()=>({subagentHourCache:false,agyBypassPermissions:full,claudeBypassPermissions:!full,codexBypassPermissions:!full}),deferStartup:true,welcome:false,ledger:new ProcessLedger(join(dir,'ledger.json')),headConfig(){throw Error('No other agent');},agyConfig(_p,c){launches.push(c);return c;},prompts:()=>botPrompts({profile,engine:'agy'}),emit:e=>events.push(e),log(){},approvalTimeoutMs:100,idleMs:60000,interruptGraceMs:10});bots.push(b);return b;};
  const say=async(b:Bot)=>{const {turnId}=b.send('explicit next message');await until(()=>events.some(e=>e.type==='turn.finished'&&e.turnId===turnId));};
  return {make,launches,events,say,saved:()=>JSON.parse(readFileSync(settings,'utf8'))};
 }
@@ -111,4 +111,8 @@ it('keeps Token Flow history valid for an agy owner without attributing agy coun
  const view=TokenFlowHistoryView.parse(await tokenFlowHistory(b));
  expect(view.rows.map(r=>[r.id,r.head])).toEqual([['saved-codex','codex']]);
  expect(b.partner).toBeNull();
+});
+
+for(const full of [true,false]) it(`passes only the explicit Antigravity permission selection (${full}) into its head`,async()=>{
+ const h=harness(full);await h.say(h.make());expect(h.launches[0]).toMatchObject({bypassPermissions:full,sessionId:session,resume:true});
 });

@@ -72,6 +72,8 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false),
     codexBypassPermissions: bool(raw.codexBypassPermissions, false),
+    agyBypassPermissions: bool(raw.agyBypassPermissions, false),
+    agyPermissionSessions: [],
     codexWorkersFollow: bool(raw.codexWorkersFollow, true),
     codexWorkers: codexWorkerDefaults(raw.codexWorkerChoice),
     componentEditorModel: oneOf(BOT_MODELS, raw.componentEditorModel) ?? "sonnet",
@@ -111,6 +113,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "completionVerificationModel": set("completionVerificationModelChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
     case "claudeBypassPermissions": set("claudeBypassPermissions", change.value); break;
+    case "agyBypassPermissions": set("agyBypassPermissions", change.value); break;
     case "codexBypassPermissions": set("codexBypassPermissions", change.value); break;
     case "subagentHourCache": set("subagentHourCacheChoice", change.value); break;
     case "codexWorkersFollow": set("codexWorkersFollow", change.value); break;
@@ -142,7 +145,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
 export function launchSettings(raw: RawSettings) {
   // 1.x's `autoApprove` (AppSettings.autoApprovesSafeActions), on unless turned off; settings.json comes over from 1.x as it is.
   return { subagentHourCache: settingsView(raw).subagentHourCache, autoMode: bool(raw.autoApprove, true),
-    claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false) };
+    claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false), agyBypassPermissions: bool(raw.agyBypassPermissions, false) };
 }
 
 /** What Codex workers start on with the app's choice applied (`appliedCodexWorkerDefaults`): following

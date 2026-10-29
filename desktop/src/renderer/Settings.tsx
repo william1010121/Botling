@@ -22,7 +22,7 @@ type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
-  { id: "engines", title: "Engines and subagents", terms: "antigravity agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
+  { id: "engines", title: "Engines and subagents", terms: "antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
@@ -435,6 +435,23 @@ function AntigravityRuntime({ client, settings, change }: { client: Client; sett
   </Group>;
 }
 
+/** Selection and effective runtime state are deliberately distinct. */
+export function AntigravityPermissions({client,settings,change}: {client:Client;settings:SettingsView;change:(next:SettingsChange)=>Promise<boolean>}) {
+  const [sessions,setSessions]=useState(settings.agyPermissionSessions);
+  const [error,setError]=useState("");
+  useEffect(()=>{
+    let live=true;
+    const refresh=async()=>{try{const view=await client.request({type:"settings.get"});if(live){setSessions(view.agyPermissionSessions ?? []);setError("");}}catch{if(live){setSessions([]);setError("Cannot read effective Antigravity permission status.");}}};
+    void refresh();const timer=setInterval(()=>void refresh(),2000);
+    return ()=>{live=false;clearInterval(timer);};
+  },[client,settings.agyBypassPermissions]);
+  return <Group title="Antigravity permissions" note="Changing this setting stops Antigravity session processes and their active tools. Continue the conversation to apply the new mode; no app restart is required.">
+    <Toggle label="Antigravity: Full permission" hint="Automatically allows file reads, writes and shell commands, including outside the project, with the app user's OS access. Removes Botling's command sandbox. This does not authorize work outside your task. App install/update confirmations and runtime administrator restrictions remain." checked={settings.agyBypassPermissions} onChange={value=>change({key:"agyBypassPermissions",value})}/>
+    <p className="settings-hint">Selected: {settings.agyBypassPermissions ? "Full permission (yolo)" : "Ask for approval (default)"}. Selection becomes effective only after the runtime confirms it.</p>
+    {error ? <p className="settings-problem" role="alert">{error}</p> : sessions.length ? sessions.map((s,i)=><p key={s.sessionId+":"+i} className={s.state==="error"?"settings-problem":"settings-hint"} role={s.state==="error"?"alert":"status"}>Session {s.sessionId.slice(0,8)} — {s.state}: {s.message}</p>) : <p className="settings-hint" role="status">No Antigravity session process. No active tool permission.</p>}
+  </Group>;
+}
+
 function Engines({ client, settings, change, codexModels }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; codexModels: CodexModelOption[] }) {
   const workers = settings.codexWorkers;
   const following = settings.codexWorkersFollow;
@@ -446,6 +463,7 @@ function Engines({ client, settings, change, codexModels }: { client: Client; se
         <Toggle label="Claude: bypass permission checks" hint="Skips Claude tool permission checks for sessions and Claude workers. Protected paths, explicit tool restrictions, managed policy and OS protections still apply." checked={settings.claudeBypassPermissions} onChange={(value) => change({ key: "claudeBypassPermissions", value })} />
         <Toggle label="Codex: bypass approvals and sandbox" hint="Disables Codex approval prompts, auto review and its filesystem/network sandbox for sessions and Codex workers. Commands run with the app user's OS access." checked={settings.codexBypassPermissions} onChange={(value) => change({ key: "codexBypassPermissions", value })} />
       </Group>
+      <AntigravityPermissions client={client} settings={settings} change={change} />
       <Group title="Claude subagents" note="Takes effect when a bot next wakes.">
         <Row label="Model">
           <SelectSetting label="Subagents' model" blank="Same as bot" options={MODELS} value={settings.subagentModel}

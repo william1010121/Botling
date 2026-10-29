@@ -66,14 +66,19 @@ The new `AgyAcpHead`:
    subagents, workflows, scheduling, browser agents and image generation are NOT
    exposed. There is no fallback to native tools when an app tool is refused.
 3. Awaits the pinned agent/version, session identity, model/effort selection and
-   explicit `default` approval-mode acknowledgements BEFORE sending a prompt.
+   explicit approval-mode acknowledgements BEFORE sending a prompt: `default` unless
+   the user explicitly selects Antigravity Full permission (`yolo`). Every turn rechecks the mode.
    Interrupt, timeout, malformed/premature success, bad mode, failed auth and
    failed resume do not release queued prompts.
 4. Connects only the built-in loopback HTTP MCP endpoint `botling`. For each
-   action, the app records an exact tool+arguments grant ONLY after the user's
+   action in default mode, the app records an exact tool+arguments grant ONLY after the user's
    matching Allow once card. The bridge consumes it once, checks expiry and
    revocation, and refuses calls without it—even a direct call to its endpoint.
    ACP MCP's observed nested/flattened arguments are checked for consistency.
+   In Full permission, only read_file/write_file/run_command use the owning head's
+   negotiated active-turn capability instead. App tools do not inherit that capability.
+   It is unavailable during startup, between turns, after denial/cancellation/close,
+   or while a runtime approval is pending. HTTP requests crossing revocation are rejected.
 5. Does not import shared Always allow rules. ACP cards offer Allow once / Don't
    allow only; arbitrary questions/workspace-trust options are cancelled rather
    than reinterpreted as an approval. No persistent ACP allow-always is sent.
@@ -93,9 +98,9 @@ This is a demonstrated limitation, not a conjecture or a passing cleanup test.
 
 Botling's MCP command tool owns its process group and registers it in the existing
 process ledger. Cancel, ACP failure, head shutdown clean up
-app-owned commands. Commands run under macOS sandbox-exec with workspace/owned-temp
+app-owned commands. In default mode, commands run under macOS sandbox-exec with workspace/owned-temp
 writes only, ACP profile read/write denied, and home reads denied except the
-workspace. There is no unsandboxed fallback/escalation. File tools use a pinned native helper with workspace device/inode anchoring,
+workspace. There is no automatic unsandboxed fallback/escalation. Default file tools use a pinned native helper with workspace device/inode anchoring,
 openat directory traversal and O_NOFOLLOW on every component. Unresolved/existing
 symlinks, hardlinked/special files and protected-profile identities are rejected;
 existing files are never truncated before fstat. Directory FDs keep the originally
@@ -103,11 +108,28 @@ authorized inode if another process renames a directory; they never follow its
 replacement into an unrelated target. The workspace root itself must still match
 its pinned identity. Both protected path names and identities are denied. This
 is inode-capability containment, not a claim that an external actor cannot move
-an already authorized inode. Helper children are killed and awaited on cancel. Tools retain explicit one-action approval.
+an already authorized inode. Helper children are killed and awaited on cancel. Default tools retain explicit one-action approval.
 Commands time out at 120 seconds; output is bounded. Deliberately daemonizing
 commands can escape the existing process-group mechanism; no claim of arbitrary
 hostile-process containment is made. Native execution is not used to bypass these
-limits. Tools needing additional folders/home credentials must report the denial.
+limits. Default tools needing additional folders/home credentials must report the denial.
+
+Full permission is an explicit exception: commands run directly through /bin/sh
+without Botling sandbox-exec, and file tools use ordinary OS paths, including
+symlinks and paths outside the workspace. This includes App-readable profile files;
+it is not a security boundary against the OS user or another full-permission shell.
+OS account access and runtime-enforced administrator rules still apply. Files remain
+regular UTF-8 files bounded to 2 MB, read output to 200000 characters; shell timeout
+and process-group cleanup remain. App install/update API confirmation, routing and
+worker gates are unchanged. Full permission does not authorize tasks outside user scope.
+
+The global per-engine agyBypassPermissions setting defaults off and does not inherit
+Claude/Codex choices. Changing it synchronously revokes mismatching Antigravity heads
+and starts process cleanup. Continuing the conversation creates a process that
+negotiates the selected mode, preserving conversation identity. Settings distinguish
+saved selection from negotiating, confirmed/active, stopped and rejected runtime status.
+Runtime permission requests still require a user answer: yolo must not override
+upstream mandatory review. No risk classifier or persistent allow-always cache is added.
 
 ## Implemented app behavior
 
@@ -143,7 +165,7 @@ Global/external plugins, Claude component-editor/team paths, native workflows,
 background monitors and native schedules remain unavailable. This is an explicit
 implementation gate, not a statement that ACP lacks all such capabilities. The
 built-in HTTP MCP bridge demonstrates the safe tool transport for future adapters.
-In-turn steering is unsupported: user messages queue. Native approval modes auto_edit/yolo are unavailable.
+In-turn steering is unsupported: user messages queue. `auto_edit` is not exposed; `yolo` requires explicit Full permission selection.
 
 The current adapter intentionally keeps the existing usage event shape. Concurrent
 Token Flow task543c6570 owns metering identity/event metadata/turn-purpose changes.

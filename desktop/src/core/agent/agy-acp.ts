@@ -1,3 +1,4 @@
+import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -38,11 +39,15 @@ export class AgyAcpProtocol {
   private cancelEpoch = 0;
   private turnCancelled = false;
   private turnFailure: "permission_denied" | "cancelled" | "tool_failed" | undefined;
+  private confirmed = false;
+  private submitting = false;
+  private readonly mode: "default" | "yolo";
   get initialized() { return this.ready; }
+  get fullPermissionActive() { return this.mode === "yolo" && this.confirmed && this.ready && this.submitting && !this.closed && !this.turnCancelled && !this.turnFailure && this.approvals.size === 0; }
   private text = "";
   private sessionId = "";
   private initialization: Promise<void> | null = null;
-  constructor(private config: AgyConfig, private write: (message: Obj) => void, private emit: (item: StreamItem) => void, private fatal: (error: Error) => void, private transport: { mcpServers?: Promise<Obj[]>; onAllow?: (title: string, args: Obj) => void } = {}) {}
+  constructor(private config: AgyConfig, private write: (message: Obj) => void, private emit: (item: StreamItem) => void, private fatal: (error: Error) => void, private transport: { mcpServers?: Promise<Obj[]>; onAllow?: (title: string, args: Obj) => void; onPolicy?: (state: "negotiating" | "ready" | "active" | "stopped" | "error", message: string) => void; revoke?: () => void } = {}) { this.mode = config.bypassPermissions === true ? "yolo" : "default"; }
   private call(method: string, params: Obj, timeout = 30_000): Promise<Obj> {
     if (this.closed) return Promise.reject(new Error("ACP connection closed."));
     const id = ++this.seq;
@@ -65,7 +70,7 @@ export class AgyAcpProtocol {
     const session = await this.call(this.config.resume ? "session/load" : "session/new", params, 60_000);
     this.sessionId = this.config.resume ? this.config.sessionId : str(session.sessionId);
     if (!this.sessionId || (session.sessionId && session.sessionId !== this.sessionId)) throw new Error("ACP returned an invalid conversation identity.");
-    await this.verifyDefault();
+    await this.verifyMode();
     if (this.config.model) {
       const options = session.models?.availableModels;
       if (!Array.isArray(options) || !options.some((o: Obj) => o.modelId === this.config.model)) throw new Error(`ACP model unavailable: ${this.config.model}. Choose a model advertised by this account.`);
@@ -76,14 +81,24 @@ export class AgyAcpProtocol {
       const result = await this.call("session/set_config_option", { sessionId: this.sessionId, configId: "thinking_level", value: this.config.effort });
       if (!result.configOptions?.some((o: Obj) => o.id === "thinking_level" && o.currentValue === this.config.effort)) throw new Error("ACP did not confirm reasoning effort.");
     }
-    await this.verifyDefault();
+    await this.verifyMode();
     if (this.closed) throw new Error("ACP cancelled during startup.");
     this.ready = true;
     this.emit({ kind: "init", sessionId: this.sessionId });
   }
-  private async verifyDefault() {
-    const result = await this.call("session/set_config_option", { sessionId: this.sessionId, configId: "mode", value: "default" });
-    if (!result.configOptions?.some((o: Obj) => o.id === "mode" && o.currentValue === "default")) throw new Error("ACP did not confirm default approval mode; no task submitted.");
+  private async verifyMode() {
+    this.confirmed = false;
+    this.transport.revoke?.();
+    this.transport.onPolicy?.("negotiating", `Confirming ${this.mode === "yolo" ? "Full permission" : "approval"} mode with Antigravity.`);
+    try {
+      const result = await this.call("session/set_config_option", { sessionId: this.sessionId, configId: "mode", value: this.mode });
+      const modes = result.configOptions?.filter((o: Obj) => o.id === "mode");
+      if (this.closed || modes?.length !== 1 || modes[0].currentValue !== this.mode) throw new Error("Mode not confirmed");
+      this.confirmed = true;
+      this.transport.onPolicy?.("ready", `${this.mode === "yolo" ? "Full permission" : "Approval mode"} confirmed. Tools are available only during this session's active turn.`);
+    } catch {
+      throw new Error(`Antigravity did not confirm ${this.mode === "yolo" ? "Full permission (yolo)" : "default approval mode"}. No task submitted; runtime or administrator policy may refuse this mode.`);
+    }
   }
   async send(text: string, uuid: string, images: string[] = []) {
     if (this.busy) throw new Error("ACP does not support in-turn steering; wait for this turn to finish.");
@@ -94,7 +109,7 @@ export class AgyAcpProtocol {
     const epoch = this.cancelEpoch;
     try {
       await this.start();
-      await this.verifyDefault();
+      await this.verifyMode();
       if (!this.ready || this.closed || epoch !== this.cancelEpoch) throw new Error("ACP cancelled before task submission.");
       this.text = ""; this.tools.clear(); this.completedTools.clear();
       const prompt: Obj[] = [{ type: "text", text }];
@@ -106,6 +121,8 @@ export class AgyAcpProtocol {
         prompt.push({ type: "image", mimeType, data: data.toString("base64") });
       }
       this.emit({ kind: "command", id: uuid, state: "started" });
+      this.submitting = true;
+      this.transport.onPolicy?.("active", `${this.mode === "yolo" ? "Full permission" : "Approval mode"} active for this turn.`);
       const result = await this.call("session/prompt", { sessionId: this.sessionId, prompt }, 30 * 60_000);
       this.cancelApprovals();
       const usage = obj(result.usage);
@@ -116,7 +133,7 @@ export class AgyAcpProtocol {
       return reason === "end_turn";
     } catch (error) {
       this.fail(error as Error);
-    } finally { this.busy = false; }
+    } finally { this.submitting = false; this.transport.revoke?.(); this.busy = false; if (!this.closed) this.transport.onPolicy?.("ready", this.confirmed ? `${this.mode === "yolo" ? "Full permission" : "Approval mode"} confirmed; no active turn.` : "Tools revoked. The next turn must confirm its permission mode again."); }
   }
   receive(value: unknown) {
     if (this.closed) return;
@@ -139,8 +156,8 @@ export class AgyAcpProtocol {
       // load replays old text before returning; do not render it as this turn's output.
       if (!this.ready) return;
       if (p.sessionId !== this.sessionId) throw new Error("ACP update for another session.");
-      if (u.sessionUpdate === "current_mode_update" && u.currentModeId !== "default") throw new Error("ACP changed approval mode unexpectedly.");
-      if (u.sessionUpdate === "config_option_update" && u.configOptions?.some((o: Obj) => o.id === "mode" && o.currentValue !== "default")) throw new Error("ACP changed approval policy unexpectedly.");
+      if (u.sessionUpdate === "current_mode_update" && u.currentModeId !== this.mode) throw new Error("ACP changed approval mode unexpectedly.");
+      if (u.sessionUpdate === "config_option_update" && u.configOptions?.some((o: Obj) => o.id === "mode" && o.currentValue !== this.mode)) throw new Error("ACP changed approval policy unexpectedly.");
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") {
         const text = str(u.content.text); this.text += text; this.emit({ kind: "delta", text });
       }
@@ -176,7 +193,7 @@ export class AgyAcpProtocol {
   answer(requestId: string, allow: boolean) {
     const pending = this.approvals.get(requestId); if (!pending || this.closed) return;
     this.approvals.delete(requestId);
-    if (!allow) this.turnFailure = "permission_denied";
+    if (!allow) { this.turnFailure = "permission_denied"; this.transport.revoke?.(); }
     if (allow) this.transport.onAllow?.(pending.title, pending.input);
     this.write({ jsonrpc: "2.0", id: pending.id, result: { outcome: { outcome: "selected", optionId: allow ? pending.allow : pending.deny } } });
   }
@@ -189,6 +206,7 @@ export class AgyAcpProtocol {
     this.approvals.clear();
   }
   interrupt() {
+    this.submitting = false; this.confirmed = false; this.transport.revoke?.();
     this.cancelEpoch++;
     if (this.busy) { this.turnCancelled = true; this.turnFailure ??= "cancelled"; }
     if (this.sessionId && !this.closed) this.write({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: this.sessionId } });
@@ -197,10 +215,11 @@ export class AgyAcpProtocol {
   close() {
     if (this.closed) return;
     this.interrupt(); this.closed = true; this.ready = false;
+    this.transport.onPolicy?.("stopped", "Session process stopped; no active tool permission.");
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("ACP connection closed.")); }
     this.pending.clear();
   }
-  private fail(error: Error) { if (this.closed) return; this.close(); this.fatal(error); }
+  private fail(error: Error) { if (this.closed) return; this.close(); this.transport.onPolicy?.("error", error.message); this.fatal(error); }
 }
 
 /** Pin both executable artifacts, not a mutable settings assertion or a CLI flag. */
@@ -231,8 +250,16 @@ export class AgyAcpHead {
   get completionDependencies() { return this.workers?.completionDependencies ?? []; }
   get pid() { return this.process?.pid ?? -1; }
   start() {
+    try { this.startRuntime(); }
+    catch(error) { updateAgyPermissions(this,{state:"error",message:(error as Error).message}); throw error; }
+  }
+  private startRuntime() {
     if (this.config.worker && !agyWorkerRuntimeEnabled()) throw new Error("Antigravity app workers are disabled pending live lifecycle validation.");
-    verifyAcpRuntime(this.config.command);
+    registerAgyPermissions(this, {sessionId:this.config.sessionId, mode:this.config.bypassPermissions === true ? "yolo" : "default", state:"negotiating", message:"Starting Antigravity; mode is not active yet."}, () => {
+      this.protocol?.close(); this.bridge?.revoke(); this.stopped = true;
+      void this.terminate(500).catch(() => updateAgyPermissions(this,{state:"error",message:"Permission revoked, but process cleanup failed. Stop the remaining process before continuing."}));
+    });
+    try { verifyAcpRuntime(this.config.command); } catch (error) { updateAgyPermissions(this, {state:"error",message:(error as Error).message}); throw error; }
     verifyAgyFileHelper(join(dirname(this.config.command), "botling-agy-file-helper"), this.config.cwd);
     if (!this.config.acpHome || !isAbsolute(this.config.acpHome)) throw new Error("ACP requires a private Botling profile.");
     const home = this.config.acpHome;
@@ -250,9 +277,9 @@ export class AgyAcpHead {
     void mcpServers.catch(() => {});
     this.process = processTreeAdapter().spawn(this.config.command, [], { cwd, env });
     const child = this.process.child; this.running = true;
-    this.protocol = new AgyAcpProtocol(this.config, value => { if (child.stdin.writable) child.stdin.write(JSON.stringify(value) + "\n"); }, item => { if (item.kind === "init") this.config.sessionId = item.sessionId; this.handlers.onItem(item); }, error => {
+    this.protocol = new AgyAcpProtocol(this.config, value => { if (child.stdin.writable) child.stdin.write(JSON.stringify(value) + "\n"); }, item => { if (item.kind === "init") { this.config.sessionId = item.sessionId; updateAgyPermissions(this, {sessionId:item.sessionId}); } this.handlers.onItem(item); }, error => {
       this.failure = error.message; this.stopped = true; void this.workers?.close(); void this.bridge?.close(); void this.process?.terminate({ graceMs: 500 });
-    }, { mcpServers, onAllow: (title, args) => this.bridge?.grant(title, args) });
+    }, { mcpServers, onAllow: (title, args) => this.bridge?.grant(title, args), revoke: () => this.bridge?.revoke(), onPolicy: (state,message) => { if (state === "active") this.bridge?.beginTurn(); updateAgyPermissions(this,{state,message}); } });
     child.stdin.on("error", () => {});
     child.stdout.setEncoding("utf8");
     // Official ACP stderr can contain OAuth entry URLs; never expose it in chat/logs.
@@ -274,6 +301,8 @@ export class AgyAcpHead {
       this.protocol?.close(); this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined;
       void Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs: 500 })]).then(results => {
         if (results.some(result => result.status === "rejected")) this.failure ||= "ACP cleanup incomplete.";
+        if (this.failure) updateAgyPermissions(this,{state:"error",message:this.failure});
+        else forgetAgyPermissions(this);
         this.exitedResolve();
         this.handlers.onExit({ code, signal, stderr: this.failure, expected: this.expected, silent: true });
       });
@@ -288,7 +317,7 @@ export class AgyAcpHead {
     if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.handlers.onItem,
       (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
       (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h)));
-    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"));
+    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true);
     return this.bridge.start().then(server => [server]);
   }
   send(text: string, uuid: string, images: string[] = []) {

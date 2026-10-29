@@ -1,3 +1,4 @@
+import { agyPermissionSessions, changeAgyPermissions } from "./agent/agy-permissions";
 import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
 import { ProjectFiles } from "./project-files";
@@ -1934,7 +1935,7 @@ First write a test that shows this, then fix it.`;
   }
 
   private settingsNow(): SettingsView {
-    return settingsView(readSettings(Layout.settings(this.options.dataDir)), this.language());
+    return { ...settingsView(readSettings(Layout.settings(this.options.dataDir)), this.language()), agyPermissionSessions: agyPermissionSessions() };
   }
 
   /** One change on the Settings page: saved in settings.json (other keys kept), then told to every window. */
@@ -1945,6 +1946,7 @@ First write a test that shows this, then fix it.`;
     if (change.key === "agyAcpPath" && change.value?.trim()) validateAgyRuntimePath(change.value.trim(), this.options.dataDir);
     const next = applySetting(before, change);
     writeSettings(file, next);
+    if (change.key === "agyBypassPermissions" && before.agyBypassPermissions !== change.value) changeAgyPermissions(change.value);
     // Turning developer mode on again gives builds a fresh start after failures (`setDeveloperMode`).
     if (change.key === "developerMode" && change.value === true) this.devBuilds.developerModeOn();
     // The developer project's manager hears about it at once if awake, else at its next wake (`setDeveloperMode`).
@@ -1962,7 +1964,7 @@ First write a test that shows this, then fix it.`;
     if ((change.key === "codexWorkers" || change.key === "codexWorkersFollow") && JSON.stringify(workers) !== JSON.stringify(appliedCodexWorkers(before))) {
       for (const bot of this.bots.values()) bot.applyEngineDefaults({ codexWorkers: codexWorkersJSON(workers) });
     }
-    const view = settingsView(next, this.language());
+    const view = this.settingsNow();
     this.event({ type: "settings.updated", settings: view });
     return view;
   }

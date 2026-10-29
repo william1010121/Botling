@@ -3,11 +3,11 @@ import {AgyAcpProtocol,AgyAcpHead,ACP_TOOLS,verifyAcpRuntime} from '../../src/co
 const clients:AgyAcpProtocol[]=[];
 afterEach(()=>clients.splice(0).forEach(c=>c.close()));
 const tick=async()=>{for(let i=0;i<15;i++)await Promise.resolve();};
-function harness(resume=false){
+function harness(resume=false, full=false){
  const frames:any[]=[],items:any[]=[],errors:Error[]=[];
- const client=new AgyAcpProtocol({command:'never-launched',cwd:'/owned',sessionId:'old',resume},m=>frames.push(m),i=>items.push(i),e=>errors.push(e));clients.push(client);
+ const client=new AgyAcpProtocol({command:'never-launched',cwd:'/owned',sessionId:'old',resume,bypassPermissions:full},m=>frames.push(m),i=>items.push(i),e=>errors.push(e));clients.push(client);
  const reply=(result:any)=>client.receive({jsonrpc:'2.0',id:frames.findLast(f=>f.method&&f.id).id,result});
- const policy=()=>reply({configOptions:[{id:'mode',currentValue:'default'}]});
+ const policy=()=>reply({configOptions:[{id:'mode',currentValue:full?'yolo':'default'}]});
  const init=async()=>{reply({protocolVersion:1,agentInfo:{name:'antigravity-acp',version:'1.4.3'},agentCapabilities:{loadSession:true}});await tick();reply({sessionId:resume?'old':'new'});await tick();policy();await tick();policy();await tick();};
  return {client,frames,items,errors,reply,policy,init};
 }
@@ -108,4 +108,32 @@ it('failed worker cleanup still attempts parent and tool cleanup and reports fai
  (head as any).bridge={async close(){cleaned.push('tools');}};
  (head as any).process={async terminate(){cleaned.push('parent');return {killed:[],forced:false};}};
  await expect(head.terminate()).rejects.toThrow('cleanup incomplete');expect(cleaned.sort()).toEqual(['parent','tools','workers']);
+});
+
+for (const resume of [false,true]) it(`explicit full permission negotiates yolo on ${resume?'resume':'initialize'} and every turn, active only after ACK`,async()=>{
+ const h=harness(resume,true);let sent=h.client.send('task','one');expect(h.client.fullPermissionActive).toBe(false);
+ await h.init();expect(h.client.fullPermissionActive).toBe(false);h.policy();await tick();expect(h.client.fullPermissionActive).toBe(true);
+ expect(h.frames.filter(f=>f.method==='session/set_config_option').map(f=>f.params.value)).toEqual(['yolo','yolo','yolo']);
+ const prompt=h.frames.at(-1).id;h.client.receive({jsonrpc:'2.0',id:prompt,result:{stopReason:'end_turn'}});await sent;expect(h.client.fullPermissionActive).toBe(false);
+ sent=h.client.send('next','two');await tick();expect(h.client.fullPermissionActive).toBe(false);h.policy();await tick();expect(h.client.fullPermissionActive).toBe(true);
+ h.client.interrupt();expect(h.client.fullPermissionActive).toBe(false);h.client.close();await sent;
+});
+it('full permission rejection never submits or exposes an active capability',async()=>{
+ const h=harness(false,true),done=h.client.send('task','one');
+ h.reply({protocolVersion:1,agentInfo:{name:'antigravity-acp',version:'1.4.3'}});await tick();h.reply({sessionId:'new'});await tick();
+ h.reply({configOptions:[{id:'mode',currentValue:'default'}]});await done;
+ expect(h.client.fullPermissionActive).toBe(false);expect(h.errors[0].message).toContain('did not confirm Full permission');expect(h.frames.some(f=>f.method==='session/prompt')).toBe(false);
+});
+it('runtime mandatory review is not autoanswered in yolo, denial revokes full permission',async()=>{
+ const h=harness(false,true),sent=h.client.send('task','one');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
+ h.client.receive({jsonrpc:'2.0',id:78,method:'session/request_permission',params:{sessionId:'new',toolCall:{title:'administrator review',rawInput:{}},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'deny'}]}});
+ expect(h.client.fullPermissionActive).toBe(false);expect(h.frames.some(f=>f.id===78)).toBe(false);
+ h.client.answer('acp:78',false);expect(h.client.fullPermissionActive).toBe(false);
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);
+});
+it('foreign session updates and unexpected mode changes fail closed in full permission',async()=>{
+ for(const params of [{sessionId:'foreign',update:{sessionUpdate:'agent_message_chunk'}},{sessionId:'new',update:{sessionUpdate:'current_mode_update',currentModeId:'default'}}]) {
+  const h=harness(false,true),sent=h.client.send('task','one');await h.init();h.policy();await tick();
+  h.client.receive({jsonrpc:'2.0',method:'session/update',params});await sent;expect(h.errors).toHaveLength(1);expect(h.client.fullPermissionActive).toBe(false);
+ }
 });

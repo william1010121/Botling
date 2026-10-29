@@ -3,7 +3,7 @@ import { agyWorkerRuntimeEnabled } from './agy-capabilities';
 import { createServer, type Server } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, type ChildProcess } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { resolve, relative, isAbsolute, join } from 'node:path';
 import { processTreeAdapter, type ManagedProcess } from '../process/tree';
@@ -21,8 +21,8 @@ const schema = (properties: Args, required: string[]) => ({ type: 'object', prop
 const text = { type: 'string' };
 export const AGY_LOCAL_TOOLS: AgyTool[] = [
   { name:'read_file', description:'Read a UTF-8 file inside this workspace.', inputSchema:schema({path:text},['path']) },
-  { name:'write_file', description:'Write exact UTF-8 contents to a workspace file. Requires single-action user approval.', inputSchema:schema({path:text,content:text},['path','content']) },
-  { name:'run_command', description:'Run a shell command in this workspace, waiting for completion (maximum 120 seconds). Requires single-action user approval. Stop cancels its process group.', inputSchema:schema({command:text},['command']) },
+  { name:'write_file', description:'Write exact UTF-8 contents to a workspace file. Requires approval unless Full permission is active.', inputSchema:schema({path:text,content:text},['path','content']) },
+  { name:'run_command', description:'Run a shell command in this workspace, waiting for completion (maximum 120 seconds). Requires approval unless Full permission is active. Stop cancels its process group.', inputSchema:schema({command:text},['command']) },
 ];
 export const AGY_WORKER_TOOLS: AgyTool[] = [
   { name:'app_reconcile_report', description:'After explicit user approval, acknowledge an uncertain report as received, or retry only its delivery. Never replays the worker task.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},action:{type:'string',enum:['acknowledge','retry']}},['task_id','run','action']) },
@@ -40,12 +40,13 @@ export class AgyMcpBridge {
   private commands = new Set<ManagedProcess>();
   private stopped = false;
   private epoch = 0;
+  private fullTurn = false;
   private scratch: string | undefined;
   readonly tools: AgyTool[];
   private base: string;
   private rootIdentity: string[];
   private protectedIdentity: string[];
-  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string) {
+  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false) {
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
     this.tools = [...AGY_LOCAL_TOOLS, ...(delegate && agyWorkerRuntimeEnabled() ? AGY_WORKER_TOOLS : [])];
     this.base = realpathSync(cwd);
@@ -67,16 +68,19 @@ export class AgyMcpBridge {
     const key = name+':'+canonical(args), list = this.grants.get(key) ?? [];
     list.push(Date.now()+60_000); this.grants.set(key,list);
   }
-  revoke() { this.grants.clear(); this.epoch++; }
+  beginTurn() { this.revoke(); if (!this.stopped) this.fullTurn = true; }
+  revoke() { this.fullTurn = false; this.grants.clear(); this.epoch++; }
   async start() {
     if (this.stopped) throw new Error('Tool bridge closed.');
     this.server=createServer(async(req,res)=>{
       if (req.url!==`/${this.token}` || req.method!=='POST' || req.headers.origin) { res.writeHead(403).end(); return; }
+      const requestEpoch = this.epoch;
       let body='';
       for await(const chunk of req) { body+=chunk; if(body.length>4*1024*1024){res.writeHead(413).end();return;} }
       let request:any;try{request=JSON.parse(body);}catch{res.writeHead(400).end();return;}
       res.setHeader('Content-Type','application/json');
       if(request.id===undefined){res.writeHead(202).end();return;}
+      if (this.stopped || requestEpoch !== this.epoch) { res.writeHead(409).end(); return; }
       try { const result=await this.rpc(request.method,request.params??{});res.end(JSON.stringify({jsonrpc:'2.0',id:request.id,result})); }
       catch(error){res.end(JSON.stringify({jsonrpc:'2.0',id:request.id,error:{code:-32602,message:(error as Error).message}}));}
     });
@@ -93,20 +97,33 @@ export class AgyMcpBridge {
     try { const result=await this.invoke(name,args);return {isError:name==='run_command'&&(result as {exitCode:number|null}).exitCode!==0,content:[{type:'text',text:typeof result==='string'?result:JSON.stringify(result)}]}; }
     catch(error){return {isError:true,content:[{type:'text',text:(error as Error).message}]};}
   }
-  /** Independent enforcement: even a direct MCP call cannot act without the exact user's grant. */
+  /** Exact grants by default; local tools alone may use this head's negotiated active-turn capability. */
   async invoke(name:string,args:Args):Promise<unknown> {
     if(this.stopped)throw new Error('Tool bridge closed.');
     const tool=this.tools.find(t=>t.name===name);if(!tool)throw new Error('Unsupported tool.');
     const key=name+':'+canonical(args),grants=(this.grants.get(key)??[]).filter(deadline=>deadline>Date.now());
-    if(!grants.length)throw new Error('No matching single-action user approval. Nothing executed.');
+    const full = AGY_LOCAL_TOOLS.some(t=>t.name===name) && this.fullTurn && this.fullPermissionActive();
+    if(!full && !grants.length)throw new Error('No matching single-action user approval. Nothing executed.');
     grants.shift();this.grants.set(key,grants);
     const epoch=this.epoch;
     if(name==='run_command') {
       if(typeof args.command!=='string'||!args.command.trim())throw new Error('Command required.');
-      return this.command(args.command);
+      return this.command(args.command, full);
     }
     if(name==='read_file'||name==='write_file') {
       if(typeof args.path!=='string')throw new Error('Path required.');
+      if(full) {
+        // Explicit full permission: ordinary OS paths (including symlinks/outside workspace).
+        // Synchronous bounded operations cannot outlive revocation between event-loop turns.
+        const path = resolve(this.base, args.path);
+        if(name==='write_file') {
+          if(typeof args.content!=='string'||Buffer.byteLength(args.content,'utf8')>2_000_000)throw new Error('File content required (maximum 2 MB).');
+          try { if(!statSync(path).isFile())throw new Error('Regular file required.'); } catch(error) { if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error; }
+          writeFileSync(path,args.content,'utf8'); return 'File written.';
+        }
+        const stat=statSync(path); if(!stat.isFile()||stat.size>2_000_000)throw new Error('Regular file required (maximum 2 MB).');
+        const output=readFileSync(path,'utf8');return output.slice(0,200_000)+(output.length>200_000?'\n[Truncated at 200000 characters]':'');
+      }
       const rel=relative(this.base,resolve(this.base,args.path));
       if(!rel||rel==='..'||rel.startsWith('../')||isAbsolute(rel))throw new Error('Path is outside the workspace.');
       const protectedRel=relative(this.base,resolve(this.protectedPath));
@@ -126,12 +143,12 @@ export class AgyMcpBridge {
     if(!agyWorkerRuntimeEnabled() || !this.delegate)throw new Error('Workers unavailable.');
     return this.delegate(name,args);
   }
-  private command(command:string):Promise<{exitCode:number|null;output:string}> {
+  private command(command:string, full = false):Promise<{exitCode:number|null;output:string}> {
     const env:NodeJS.ProcessEnv={};for(const key of ['HOME','PATH','USER','TMPDIR','LANG'])if(process.env[key])env[key]=process.env[key];
     if(process.platform!=='darwin')return Promise.reject(new Error('Verified macOS command containment is required.'));
     this.scratch??=realpathSync(mkdtempSync(join(tmpdir(),'botling-agy-command-')));
     env.TMPDIR=this.scratch;
-    // Every command still requires its exact approval. No unsandboxed fallback or escalation.
+    // Default keeps exact approval and containment. Only explicit negotiated Full permission removes this sandbox.
     const quoted=(path:string)=>JSON.stringify(path);
     const cwd=realpathSync(this.cwd),profile=realpathSync(this.protectedPath);
     const sandbox=`(version 1) (allow default)
@@ -140,7 +157,7 @@ export class AgyMcpBridge {
       (deny file-read* (subpath ${quoted(realpathSync(homedir()))}))
       (allow file-read* (subpath ${quoted(cwd)}) (subpath ${quoted(this.scratch)}))
       (deny file-read* file-write* (subpath ${quoted(profile)}))`;
-    const child=processTreeAdapter().spawn('/usr/bin/sandbox-exec',['-p',sandbox,'/bin/sh','-c',command],{cwd,env});this.commands.add(child);
+    const child=processTreeAdapter().spawn(full ? '/bin/sh' : '/usr/bin/sandbox-exec',full ? ['-c',command] : ['-p',sandbox,'/bin/sh','-c',command],{cwd,env});this.commands.add(child);
     try{if(child.pid>0)this.processStarted?.(child.pid);}catch(error){void child.terminate({graceMs:500});return Promise.reject(error);}
     return new Promise(resolve=>{
       let output='',ended=false;
