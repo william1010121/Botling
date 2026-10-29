@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./durable/atomic";
 import { QuotaError, type QuotaRetriever, type QuotaStatus } from "./quota";
-import { readAntigravityQuota } from "./antigravity-quota";
+import { readAntigravityQuota, refreshAntigravityQuota } from "./antigravity-quota";
 import { toSwiftDate } from "./store/records";
 
 export interface TokenUsage { input: number; output: number; cacheWrite: number; cacheRead: number }
@@ -175,6 +175,7 @@ export function readLimits(value: any): RateLimits {
 
 /** The usage files, the latest readings kept as 1.x keeps them. */
 export class UsageBook {
+  antigravity = readAntigravityQuota();
   private refreshPending?: Promise<void>;
   private lastRefresh = -Infinity;
   quotaStatus: Record<"claude" | "codex", QuotaStatus> = { claude: "missing", codex: "missing" };
@@ -197,11 +198,12 @@ export class UsageBook {
   /** Deduplicate concurrent opens and bound provider traffic, including failed requests. */
   refresh(): Promise<void> {
     if (this.refreshPending) return this.refreshPending;
-    if (!this.retrieve || Date.now() - this.lastRefresh < 60_000) return Promise.resolve();
+    if (Date.now() - this.lastRefresh < 60_000) return Promise.resolve();
     this.lastRefresh = Date.now();
-    this.refreshPending = Promise.all((["claude", "codex"] as const).map(async engine => {
+    this.refreshPending = Promise.all([refreshAntigravityQuota(this.dir).then(value => { this.antigravity = value; this.changed(); }), ...(["claude", "codex"] as const).map(async engine => {
+      if (!this.retrieve) return;
       try {
-        const limits = await this.retrieve!(engine);
+        const limits = await this.retrieve(engine);
         if (isEmptyLimits(limits)) throw new QuotaError("missing");
         // A read is a complete snapshot; stream events remain incremental in note().
         this[engine] = limits;
@@ -212,7 +214,7 @@ export class UsageBook {
         this.quotaStatus[engine] = error instanceof QuotaError ? error.status : "network_error";
         this.changed();
       }
-    })).then(() => {}).finally(() => { this.refreshPending = undefined; });
+    })]).then(() => {}).finally(() => { this.refreshPending = undefined; });
     return this.refreshPending;
   }
 
@@ -237,10 +239,10 @@ export class UsageBook {
   }
 
   /** Today's record, rolled over if the day changed since. */
-  view(now = new Date()): { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus: import("../contract").UsageView["spendingStatus"]; quotaStatus: Record<"claude" | "codex", QuotaStatus> } {
+  view(now = new Date()): { antigravity: import("../contract").AntigravityQuotaView; spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus: import("../contract").UsageView["spendingStatus"]; quotaStatus: Record<"claude" | "codex", QuotaStatus> } {
     const day = today(now);
     if (this.spending.day !== day) this.spending = rolled(this.spending, day);
-    return { spending: this.spending, claude: this.claude, codex: this.codex, spendingStatus: this.spendingStatus, quotaStatus: this.quotaStatus };
+    return { antigravity: this.antigravity, spending: this.spending, claude: this.claude, codex: this.codex, spendingStatus: this.spendingStatus, quotaStatus: this.quotaStatus };
   }
 
   private save(name: string, value: unknown) {
@@ -249,7 +251,7 @@ export class UsageBook {
 }
 
 /** What Settings → Usage shows (dates as ms since 1970): today's bots, most first, and the days before. */
-export function usageView(book: { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus?: import("../contract").UsageView["spendingStatus"]; quotaStatus?: Record<"claude" | "codex", QuotaStatus> }, breakdown = false): import("../contract").UsageView {
+export function usageView(book: { antigravity?: import("../contract").AntigravityQuotaView; spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus?: import("../contract").UsageView["spendingStatus"]; quotaStatus?: Record<"claude" | "codex", QuotaStatus> }, breakdown = false): import("../contract").UsageView {
   const { spending } = book;
   const names = [...new Set([...Object.keys(spending.byBot), ...Object.keys(spending.tokensByBot)])];
   const byBot = names.map((name) => ({ name: name.slice(0, 200), spent: Math.max(0, spending.byBot[name] ?? 0), tokens: totalTokens(spending.tokensByBot[name] ?? noTokens()), ...(breakdown ? { breakdown: spending.tokensByBot[name] ?? null } : {}) }))
@@ -260,7 +262,7 @@ export function usageView(book: { spending: Spending; claude: RateLimits; codex:
   const nonNegative = (tokens: TokenUsage): TokenUsage => ({ input: Math.max(0, tokens.input), output: Math.max(0, tokens.output), cacheWrite: Math.max(0, tokens.cacheWrite), cacheRead: Math.max(0, tokens.cacheRead) });
   return {
     ...(book.quotaStatus ? { quotaStatus: book.quotaStatus } : {}),
-    antigravity: readAntigravityQuota(),
+    antigravity: book.antigravity ?? readAntigravityQuota(),
     spendingStatus: book.spendingStatus ?? "available",
     day: spending.day.slice(0, 20), spent: Math.max(0, spending.spent), tokens: nonNegative(spending.tokens), byBot,
     history: spending.history.slice(-31).map((day) => ({ day: day.day.slice(0, 20), spent: Math.max(0, day.spent), tokens: Math.max(0, totalTokens(day.tokens)) })),

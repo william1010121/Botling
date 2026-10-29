@@ -1,3 +1,5 @@
+import { parseAntigravityUsage, quotaError, quotaUnavailable, registerAntigravityQuotaReader } from "../antigravity-quota";
+import type { AntigravityQuotaView } from "../../contract";
 import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
 import { createHash, randomUUID } from "node:crypto";
@@ -28,6 +30,9 @@ type Pending = { resolve(value: Obj): void; reject(error: Error): void; timer: R
 
 /** Tested independently from process launch: no prompt is sent before the entire handshake. */
 export class AgyAcpProtocol {
+  private quotaPending?: Promise<AntigravityQuotaView>;
+  private quotaCapture?: { text: string; invalid: boolean };
+  private releaseQuota?: () => void;
   private seq = 0;
   private pending = new Map<number, Pending>();
   private approvals = new Map<string, { id: string | number; allow: string; deny: string; title: string; input: Obj }>();
@@ -86,6 +91,7 @@ export class AgyAcpProtocol {
     await this.verifyMode();
     if (this.closed) throw new Error("ACP cancelled during startup.");
     this.ready = true;
+    if (this.config.acpHome && !this.config.worker) this.releaseQuota = registerAntigravityQuotaReader(dirname(dirname(this.config.acpHome)), () => this.readQuota());
     this.emit({ kind: "init", sessionId: this.sessionId });
   }
   private async verifyMode() {
@@ -102,7 +108,29 @@ export class AgyAcpProtocol {
       throw new Error(`Antigravity did not confirm ${this.mode === "yolo" ? "Full permission (yolo)" : "default approval mode"}. No task submitted; runtime or administrator policy may refuse this mode.`);
     }
   }
+  /** Official pinned server intercepts /usage before model execution. Read only
+   * from an initialized idle session: no login, mode changes or chat events. */
+  readQuota(): Promise<AntigravityQuotaView> {
+    if (this.quotaPending) return this.quotaPending;
+    if (!this.ready || this.closed) return Promise.resolve(quotaUnavailable());
+    if (this.busy) return Promise.resolve(quotaUnavailable("busy"));
+    const capture = this.quotaCapture = { text: "", invalid: false };
+    this.quotaPending = this.call("session/prompt", { sessionId: this.sessionId, prompt: [{ type: "text", text: "/usage" }] }, 15_000)
+      .then(result => result.stopReason === "end_turn" && !capture.invalid ? parseAntigravityUsage(capture.text) : quotaError())
+      .catch(error => {
+        // ACP chunks have no turn ID. Close the idle connection after timeout
+        // rather than letting late quota output enter the next user's turn.
+        if (error instanceof Error && error.message.includes("timed out")) this.fail(new Error("Antigravity quota request timed out; connection closed to isolate late responses."));
+        return quotaError();
+      }).finally(() => { this.quotaCapture = undefined; this.quotaPending = undefined; });
+    return this.quotaPending;
+  }
   async send(text: string, uuid: string, images: string[] = []) {
+    if (this.quotaPending) {
+      const queuedEpoch = this.cancelEpoch;
+      await this.quotaPending;
+      if (this.closed || queuedEpoch !== this.cancelEpoch) return false;
+    }
     if (this.busy) throw new Error("ACP does not support in-turn steering; wait for this turn to finish.");
     if (/^\s*\/(logout|usage)\b/i.test(text)) throw new Error("ACP account slash commands are not available through Botling.");
     this.busy = true;
@@ -160,6 +188,13 @@ export class AgyAcpProtocol {
       if (p.sessionId !== this.sessionId) throw new Error("ACP update for another session.");
       if (u.sessionUpdate === "current_mode_update" && u.currentModeId !== this.mode) throw new Error("ACP changed approval mode unexpectedly.");
       if (u.sessionUpdate === "config_option_update" && u.configOptions?.some((o: Obj) => o.id === "mode" && o.currentValue !== this.mode)) throw new Error("ACP changed approval policy unexpectedly.");
+      if (this.quotaCapture) {
+        if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") {
+          this.quotaCapture.text += str(u.content.text);
+          if (this.quotaCapture.text.length > 256_000) throw new Error("ACP quota response exceeds limit.");
+        } else if (["tool_call", "tool_call_update", "agent_thought_chunk"].includes(u.sessionUpdate)) this.quotaCapture.invalid = true;
+        return;
+      }
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") {
         const text = str(u.content.text); this.text += text; this.emit({ kind: "delta", text });
       }
@@ -185,6 +220,11 @@ export class AgyAcpProtocol {
     } catch (error) { this.fail(error as Error); }
   }
   private permission(message: Obj) {
+    if (this.quotaCapture) {
+      this.quotaCapture.invalid = true;
+      this.write({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } });
+      return;
+    }
     const p = obj(message.params), options = Array.isArray(p.options) ? p.options : [];
     const allow = options.find((o: Obj) => o.kind === "allow_once" && o.optionId === "allow");
     const deny = options.find((o: Obj) => o.kind === "reject_once" && o.optionId === "deny");
@@ -215,6 +255,7 @@ export class AgyAcpProtocol {
     this.approvals.clear();
   }
   interrupt() {
+    if (this.quotaCapture) this.quotaCapture.invalid = true;
     this.submitting = false; this.confirmed = false; this.transport.revoke?.();
     this.cancelEpoch++;
     if (this.busy) { this.turnCancelled = true; this.turnFailure ??= "cancelled"; }
@@ -224,6 +265,7 @@ export class AgyAcpProtocol {
   close() {
     if (this.closed) return;
     this.interrupt(); this.closed = true; this.ready = false;
+    this.releaseQuota?.(); this.releaseQuota = undefined;
     this.transport.onPolicy?.("stopped", "Session process stopped; no active tool permission.");
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("ACP connection closed.")); }
     this.pending.clear();

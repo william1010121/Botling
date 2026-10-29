@@ -4,7 +4,7 @@ import { readAntigravityQuota } from "../../src/core/antigravity-quota";
 import { UsageBook, usageView } from "../../src/core/usage";
 import { tempDir } from "../helpers";
 
-it("reports the unsupported ACP quota source even when token spending is recorded", async () => {
+it("reports the absent ACP connection even when token spending is recorded", async () => {
   const calls: string[] = [];
   const book = new UsageBook(tempDir("agy-quota"), undefined, undefined, async engine => {
     calls.push(engine);
@@ -13,14 +13,14 @@ it("reports the unsupported ACP quota source even when token spending is recorde
   book.record(0, { input: 100, output: 25, cacheWrite: 0, cacheRead: 0 }, "Antigravity");
   await book.refresh();
   const view = UsageView.parse(usageView(book.view()));
-  expect(view.antigravity).toEqual({ status: "unavailable", reason: "unsupported_connection", source: "antigravity_acp" });
+  expect(view.antigravity).toEqual({ status: "unavailable", reason: "no_connection", source: "antigravity_acp" });
   expect(calls.sort()).toEqual(["claude", "codex"]);
   expect(view.claude.week?.used).toBe(.25);
   expect(view.codex.week?.used).toBe(.25);
   expect(view.tokens.input).toBe(100);
 });
 
-it("rejects fabricated quota numbers and model lists in the unsupported-source contract", () => {
+it("rejects fabricated quota numbers and model lists in the unavailable-source contract", () => {
   const quota = readAntigravityQuota();
   expect(AntigravityQuotaView.parse(quota)).toEqual(quota);
   for (const extra of [{ remaining: 100 }, { used: 0 }, { models: ["gemini"] }, { status: "available" }]) {

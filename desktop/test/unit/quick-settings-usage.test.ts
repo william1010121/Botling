@@ -205,12 +205,12 @@ describe("quota readings in the production Quick settings popup", () => {
 });
 
 
-it("shows the Antigravity connection limitation without invented windows or percentages", async () => {
+it("shows the missing Antigravity connection without invented windows or percentages", async () => {
   const value = limits();
-  value.antigravity = { status: "unavailable", reason: "unsupported_connection", source: "antigravity_acp" };
+  value.antigravity = { status: "unavailable", reason: "no_connection", source: "antigravity_acp" };
   const ui = await mount(vi.fn(async () => value)); await ui.toggle();
   const quota = host.querySelector('[aria-label="Antigravity quota"]')!;
-  expect(quota.textContent).toBe("Quota unavailable through the current Antigravity connection.");
+  expect(quota.textContent).toBe("Connect Antigravity to read quota.");
   expect(quota.textContent).not.toMatch(/%|5 hours|Week|tokens|sign-in/);
   expect(ui.cards()).toHaveLength(3);
 });
@@ -253,4 +253,20 @@ it("repositions the popup when asynchronous quota status changes its height", as
     await ui.toggle();
     expect(disconnect).toHaveBeenCalledOnce();
   } finally { rect.mockRestore(); vi.unstubAllGlobals(); }
+});
+
+it("renders actual Antigravity quota groups, counts and resets without imposing windows", async () => {
+  const value = limits();
+  value.antigravity = { status: "available", source: "antigravity_acp", seen: now, buckets: [
+    {group: "Gemini Models", label: "Weekly", remainingFraction: .91, resetsAt: now + 3600000},
+    {group: "Claude and GPT models", label: "Daily", remainingAmount: "9007199254740993"},
+    {group: "Other", label: "Unknown"}, {group: "Other", label: "Disabled", disabled: true},
+  ] };
+  const ui = await mount(vi.fn(async () => value)); await ui.toggle();
+  const text = host.querySelector('[aria-label="Antigravity quota"]')!.textContent!;
+  expect(text).toContain("Gemini Models · Weekly: 91% remaining");
+  expect(text).toContain("9007199254740993 units remaining");
+  expect(text).toContain("Resets"); expect(text).toContain("Read");
+  expect(text).toContain("Remaining quota not reported");
+  expect(text).not.toContain("0% remaining");
 });
