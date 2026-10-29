@@ -23,7 +23,10 @@ handoffs do not resolve it. One omitted decision causes one reconciliation turn;
 a second omission retains an unresolved dependency and emits an error. Decisions
 and reconciliation counts persist. Restart never replays uncertain delivery.
 Acknowledging uncertain delivery does not accept the task. Stale report completions
-cannot consume a newer worker run. Cancellation and process recovery guards remain.
+cannot consume a newer worker run. Cancellation and process recovery guards remain. Reconstructed recovery-required
+tasks retain their dependency and worker slot even after a checkpoint. Cancellation
+must verify recorded process disappearance or fail. Missing registration is not
+evidence of cleanup.
 
 The only `bot.ts` change passes the separate worker prompt into the ACP config.
 This may overlap another branch by filename; it does not touch stream rendering.
@@ -66,7 +69,7 @@ usable session either. Do not repeat automatically or change credentials.
 | One allowed marker write and replay rejection | Offline ownership/grant checks | Explicitly approve only the named scratch write; deny stale/replayed requests |
 | Active-command cancel and crash recovery | Offline process-group checks | Approve one bounded scratch command, cancel it, verify descendants and reconstruction |
 | Uncertain report delivery and restart | Durable offline tests | Induce bounded delivery interruption; confirm report-only reconciliation |
-| Mixed Codex/agy isolation and handback | Offline only; mixed gate stays closed | Check existing ChatGPT account metadata and effective leaf tool inventory first |
+| Mixed Codex/agy isolation and handback | Offline only; separate mixed gate stays closed | Not required for agy-only activation; validate separately before enabling mixed routes |
 
 If official ACP authentication actually requires login, the user must complete
 that official ACP flow. CLI login alone is insufficient. This change supplies no
@@ -74,3 +77,47 @@ login automation. Allow-path probes require exact per-action approval; this harn
 must not silently grant it. After those checks, independent evidence review and a
 separate capability-enabling change remain required. No package or installation
 is part of this implementation.
+
+## Activation-readiness follow-up
+
+Review defect P2 is fixed in `1b020ac`: recovery obligations survive task
+assessment, occupy concurrency slots and block cancellation until disappearance
+is verified. Real process-group and missing-registration regressions reproduce
+both cases. Neither capability gate changed.
+
+The pinned server's shipped source has no dedicated read-only auth-status method.
+Its supported `/usage` command is read-only and bypasses model execution, but it
+requires an initialized session. `session/new` can initiate interactive login
+when cached authentication is unavailable. The probe therefore checks metadata
+first and never calls `authenticate`. The probe now matches the pinned server's
+explicit interactive-login notices, including split chunks, instead of generic
+OAuth/browser wording. It retains the valid process observer.
+
+At the bounded follow-up, `security find-generic-password -s gemini -a
+antigravity-acp` returned 44 with output suppressed. The default fallback token
+file did not exist (existence only). Runtime verification passed; zero provider
+processes or model tasks started. This is a fresh-process prerequisite failure,
+not a claim that every currently running ACP session is signed out.
+
+The required next auth action is to provide an existing official ACP setup usable
+by a fresh isolated process. If none exists, the user must explicitly perform the
+official ACP login themselves; this probe must not initiate it or copy credentials.
+After metadata succeeds, the harness checks read-only `/usage`, then two-worker
+denial/report/resume behavior and no replay of an uncertain report after manager
+reconstruction. The new status/reconstruction checks remain unexecuted while the
+metadata prerequisite fails.
+
+The allow/cancel/reconcile checks also need a candidate-backed staging UI with
+production Bot approval callbacks and a human-operated card. The standalone
+Vitest manager has no displayed card, and the installed app keeps the production
+worker gate closed. No current app-tool connector can inject this isolated head's
+permission request. Calling `grant`, `answer(true)` or `Bot.choose` from the test
+would fabricate user approval, so it is not an authorized alternative.
+
+In that isolated staging UI, the exact interactions are: Allow once for the
+private marker write; Allow once for a bounded private command followed by Cancel;
+and Allow once for the task/run-specific `app_reconcile_report` retry and report
+checkpoint. No such card was emitted or accepted in this run. These steps require
+a test UI/session, not installing or restarting the shared app. Mixed-provider
+checks are separate and are not prerequisites for agy-only activation while the
+mixed gate remains false.
