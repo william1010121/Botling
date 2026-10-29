@@ -106,3 +106,15 @@ it('renders every runtime model name, including a name that looks like fixture c
  expect(button('Runtime catalog fixture')).toBeDefined();button('Runtime catalog fixture').click();await settle();
  expect(configure).toHaveBeenCalledWith('A',{codexModel:'unusual-runtime-name'});
 });
+it('shows Claude\'s "default" alias once, as Default, and saves no model for it',async()=>{
+ settings.model='default';
+ catalog.models=[{id:'default',name:'Default (recommended)',isDefault:true,efforts:['low']},{id:'opus',name:'Opus 5.5',isDefault:false,efforts:['low']}];
+ await open('Claude');
+ const names=[...document.querySelectorAll('.model-choice .model-name')].map(n=>n.textContent);
+ expect(names).toEqual(['Default','Opus 5.5']);
+ expect(document.querySelector('.model-choice')!.getAttribute('aria-pressed')).toBe('true');
+ expect(document.querySelector('.model-choice small')!.textContent).toBe('Recommended');
+ button('Opus 5.5').click(); await settle();
+ button('Default').click(); await settle();
+ expect(configure).toHaveBeenLastCalledWith('A',{model:null});
+});

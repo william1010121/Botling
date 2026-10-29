@@ -1,6 +1,17 @@
 import {composerHost, type ModelEngine, type ModelPreferences, type ModelCatalog, type ModelChange} from './composer-host';
 const fields = {claude:'model',codex:'codexModel',agy:'agyModel'} as const;
 const labels: Record<string,string> = {default:'Default',low:'Low',medium:'Medium',high:'High',xhigh:'Extra high',max:'Max'};
+/** Short stop labels for the effort control (the heading above it spells the level out). */
+const stops: Record<string,string> = {default:'Default',low:'Low',medium:'Med',high:'High',xhigh:'XHigh',max:'Max'};
+/** One-line hint per well-known model family; unknown models simply have none. */
+export function modelHint(id:string|null,name:string):string {
+ const key=`${id??''} ${name}`.toLowerCase();
+ if(id===null || /\bdefault\b/.test(key)) return 'Recommended';
+ if(key.includes('opus')) return 'Most capable';
+ if(key.includes('sonnet')) return 'Balanced';
+ if(key.includes('haiku')) return 'Fastest';
+ return '';
+}
 const order = ['low','medium','high','xhigh','max'];
 /** Effort is shared: offer the intersection, never guess absent model capabilities. */
 export function supportedEfforts(settings: ModelPreferences, catalogs: Partial<Record<ModelEngine,ModelCatalog>>): (string|null)[] {
@@ -41,7 +52,7 @@ export class ComposerModels {
   this.panel.setAttribute('role','dialog');this.panel.setAttribute('aria-label',`${label} model and effort`);
   this.panel.tabIndex=-1; this.root.append(this.panel);
   const anchor=this.root.querySelector(`.answer-menu[data-engine="${engine}"]`)?.getBoundingClientRect();
-  if(anchor){const root=this.root.getBoundingClientRect();this.panel.style.left=`${Math.max(8,Math.min(anchor.left-root.left,root.width-268))}px`;this.panel.style.bottom=`${root.bottom-anchor.top+8}px`;}
+  if(anchor){const root=this.root.getBoundingClientRect();this.panel.style.left=`${Math.max(8,Math.min(anchor.left-root.left,root.width-288))}px`;this.panel.style.bottom=`${root.bottom-anchor.top+8}px`;}
   this.root.querySelector(`.answer-menu[data-engine="${engine}"]`)?.setAttribute('aria-expanded','true');
   this.lifetime=new AbortController();
   document.addEventListener('pointerdown',event=>{if(!this.panel?.contains(event.target as Node) && !(event.target as Element).closest?.('.answer-menu'))this.close(false);},{signal:this.lifetime.signal});
@@ -59,7 +70,7 @@ export class ComposerModels {
    }
   });
   const loading=this.load(),epoch=this.generation; await loading;
-  if(this.panel && epoch===this.generation) this.panel.querySelector<HTMLButtonElement>('button')?.focus();
+  if(this.panel && epoch===this.generation) (this.panel.querySelector<HTMLButtonElement>('.model-choice[aria-pressed=true]') ?? this.panel.querySelector<HTMLButtonElement>('button'))?.focus();
  }
  private async load():Promise<void> {
   const epoch=++this.generation,bot=this.bot;
@@ -101,16 +112,26 @@ export class ComposerModels {
    const catalog=this.catalogs[this.engine];
    const models=catalog?.status==='ready'?catalog.models:[];
    const rows=document.createElement('div');rows.className='model-choices';rows.setAttribute('role','group');rows.setAttribute('aria-label','Model');panel.append(rows);
+   const label=document.createElement('div');label.className='model-label';label.textContent='Model';label.setAttribute('aria-hidden','true');panel.insertBefore(label,rows);
+   /* Claude lists its own "default" alias ("Default (recommended)"): it is the same choice as no
+      saved model, so it is shown once, as "Default", and saves nothing (null). */
+   const alias=models.some(m=>m.id==='default');
    const choice=(id:string|null,name:string,missing=false)=>{
+    const selected=id===value || (id===null && value==='default' && alias);
     const row=button(name,()=>void this.save({[fields[this.engine]]:id}),`model:${id ?? ''}`);row.className='model-choice';row.title=id??name;
-    row.setAttribute('aria-pressed',String(id===value));
-    const mark=document.createElement('span');mark.className='model-check';mark.textContent=id===value?'✓':'';mark.setAttribute('aria-hidden','true');row.prepend(mark);
-    if(missing){const note=document.createElement('small');note.textContent=this.loading?'Saved':'Saved · not in current list';row.append(note);}
+    row.setAttribute('aria-pressed',String(selected));
+    const text=document.createElement('span');text.className='model-name';text.textContent=name;
+    const hint=missing?(this.loading?'Saved':'Saved · not in current list'):modelHint(id,name);
+    row.replaceChildren(text);
+    if(hint){const note=document.createElement('small');note.textContent=hint;row.append(note);}
+    const mark=document.createElement('span');mark.className='model-check';mark.setAttribute('aria-hidden','true');
+    mark.innerHTML=selected?'<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>':'';
+    row.append(mark);
     rows.append(row);
    };
    choice(null,'Default');
-   if(value && !models.some(m=>m.id===value))choice(value,value,true);
-   models.forEach(m=>choice(m.id,m.name));
+   if(value && value!=='default' && !models.some(m=>m.id===value))choice(value,value,true);
+   models.forEach(m=>{if(!(alias && m.id==='default'))choice(m.id,m.name);});
    const levels=supportedEfforts(settings,this.catalogs);
    const selected=levels.indexOf(settings.effort);
    const section=document.createElement('div');section.className='model-effort';
@@ -126,22 +147,24 @@ export class ComposerModels {
    const current=labels[settings.effort??'default']??settings.effort;
    const unavailable=settings.engines.includes('agy') && ['xhigh','max'].includes(settings.effort??'') ? 'unsupported' : 'not reported';
    output.textContent=selected<0?`${current} · ${unavailable}`:current;
-   const track=document.createElement('div');track.className='effort-track';
+   const track=document.createElement('div');track.className='effort-track';track.style.setProperty('--n',String(levels.length));
    const slider=document.createElement('input');slider.id='composer-effort';slider.type='range';slider.min='0';slider.max=String(levels.length-1);slider.step='1';slider.value=String(Math.max(0,selected));slider.dataset.focus='effort';
    slider.disabled=busy||this.loading||levels.length<2;slider.setAttribute('aria-label','Reasoning effort, shared by this bot');
-   const reflect=()=>{const index=Math.max(0,Math.min(levels.length-1,Math.round(Number(slider.value))));slider.value=String(index);const label=labels[levels[index]??'default'];output.textContent=label;slider.setAttribute('aria-valuetext',label);track.style.setProperty('--progress',`${levels.length>1?index/(levels.length-1)*100:0}%`);};
-   reflect();if(selected<0){output.textContent=this.loading?current:`${current} · ${unavailable}`;slider.setAttribute('aria-valuetext',output.textContent);}
-   slider.oninput=reflect;
-   slider.onchange=()=>{reflect();void this.save({effort:levels[Number(slider.value)]});};
+   let touched=false;
+   const reflect=()=>{const index=Math.max(0,Math.min(levels.length-1,Math.round(Number(slider.value))));slider.value=String(index);const label=labels[levels[index]??'default'];output.textContent=label;slider.setAttribute('aria-valuetext',label);track.style.setProperty('--i',String(index));track.toggleAttribute('data-unset',selected<0 && !touched);track.querySelectorAll('.effort-stops span').forEach((el,i)=>el.classList.toggle('on',i===index && !track.hasAttribute('data-unset')));};
+   slider.oninput=()=>{touched=true;reflect();};
+   slider.onchange=()=>{touched=true;reflect();void this.save({effort:levels[Number(slider.value)]});};
    slider.onkeydown=event=>{
     const next=event.key==='Home'?0:event.key==='End'?levels.length-1:['ArrowRight','ArrowUp'].includes(event.key)?Number(slider.value)+1:['ArrowLeft','ArrowDown'].includes(event.key)?Number(slider.value)-1:null;
-    if(next===null || slider.disabled)return;event.preventDefault();slider.value=String(Math.max(0,Math.min(levels.length-1,next)));reflect();void this.save({effort:levels[Number(slider.value)]});
+    if(next===null || slider.disabled)return;event.preventDefault();touched=true;slider.value=String(Math.max(0,Math.min(levels.length-1,next)));reflect();void this.save({effort:levels[Number(slider.value)]});
    };
-   const dots=document.createElement('div');dots.className='effort-dots';dots.setAttribute('aria-hidden','true');levels.forEach(()=>dots.append(document.createElement('i')));
+   const dots=document.createElement('div');dots.className='effort-stops';dots.setAttribute('aria-hidden','true');
+   dots.append(document.createElement('b'));levels.forEach((level,i)=>{const stop=document.createElement('span');stop.textContent=stops[level??'default']??String(level);stop.className=i===selected?'on':'';dots.append(stop);});
    heading.append(caption,separator,output,scope);
-   track.append(slider,dots);section.append(heading,track);
+   track.append(slider,dots);section.append(heading,track);reflect();if(selected<0){output.textContent=this.loading?current:`${current} · ${unavailable}`;slider.setAttribute('aria-valuetext',output.textContent);}
    if(selected<0 && !this.loading) section.append(button('Use default',()=>void this.save({effort:null}),'default-effort'));
    panel.append(section);
+   const width=track.getBoundingClientRect().width;if(width>0)track.style.setProperty('--seg',`${width/levels.length}px`);
   }
   const catalog=this.catalogs[this.engine];
   const message=busy?'Saving…':this.error|| (this.loading?'Loading…':catalog?.status!=='ready'?catalog?.message??'':catalog.models.length?'':'No models returned');
