@@ -1450,3 +1450,15 @@ body.spec-mode .float-layer { display: none; }
 .file-picker-status { padding: 8px; font: 12px/1.4 system-ui; color: var(--muted); white-space: normal; }
 .file-comment { color: #8d9b89; } .file-string { color: #b6d78a; } .file-keyword { color: #cba7ef; } .file-number { color: #e4bb89; }
 @media (max-width: 480px) { .mention-list.with-files { grid-template-columns: minmax(110px, 1fr) minmax(130px, 1fr); } .file-preview { padding: 6px; font-size: 11px; } }
+
+/* Consecutive images keep their original preview targets inside one bounded gallery. */
+.image-gallery { display: grid; width: 480px; max-width: 100%; min-width: 0; gap: 8px; margin: 8px 0; }
+.image-gallery-stage { display: grid; place-items: center; min-width: 0; height: 320px; border-radius: 12px; background: rgba(127, 127, 127, .07); overflow: hidden; touch-action: pan-y; }
+.image-gallery-stage img.media { max-width: 100%; max-height: 320px; object-fit: contain; margin: 0; }
+.image-gallery-stage img[hidden] { display: none; }
+.image-gallery-caption { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.image-gallery-controls { display: flex; align-items: center; justify-content: center; gap: 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.image-gallery-controls button { width: 36px; height: 32px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; }
+.image-gallery-controls button[aria-disabled="true"] { opacity: .35; cursor: default; }
+.image-gallery:focus-visible, .image-gallery-controls button:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+@media (max-width: 480px) { .image-gallery-stage { height: 240px; } .image-gallery-stage img.media { max-height: 240px; } }

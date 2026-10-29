@@ -150,6 +150,9 @@ export const zhHant: Dictionary = {
   "artifact.kind": "Artifact",
   "artifact.openLabel": "在瀏覽器開啟 {title}",
   // lightbox.ts
+  "gallery.label": "圖片集",
+  "gallery.previous": "上一張圖片",
+  "gallery.next": "下一張圖片",
   "lightbox.picture": "圖片",
   "lightbox.openInPreview": "用「預覽程式」開啟",
   "lightbox.showInFinder": "在 Finder 中顯示",

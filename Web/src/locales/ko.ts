@@ -150,6 +150,9 @@ export const ko: Dictionary = {
   "artifact.kind": "Artifact",
   "artifact.openLabel": "브라우저에서 {title} 열기",
   // lightbox.ts
+  "gallery.label": "이미지 갤러리",
+  "gallery.previous": "이전 이미지",
+  "gallery.next": "다음 이미지",
   "lightbox.picture": "이미지",
   "lightbox.openInPreview": "미리보기에서 열기",
   "lightbox.showInFinder": "Finder에서 보기",

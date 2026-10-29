@@ -1,3 +1,4 @@
+import { groupImages } from "./image-gallery";
 import { findMessageRow } from "./message-navigation";
 import { artifactCard } from "./artifacts";
 import { summaryCountable } from "./summary-countable";
@@ -549,6 +550,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     const text = document.createElement("div");
     text.className = "markdown";
     text.innerHTML = renderMarkdown(piece);
+    groupImages(text);
     bubble.append(text);
   };
   // A component in it spans the reply edge to edge, and the reply the whole message column: the

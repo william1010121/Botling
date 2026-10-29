@@ -150,6 +150,9 @@ export const ja: Dictionary = {
   "artifact.kind": "Artifact",
   "artifact.openLabel": "{title} をブラウザで開く",
   // lightbox.ts
+  "gallery.label": "画像ギャラリー",
+  "gallery.previous": "前の画像",
+  "gallery.next": "次の画像",
   "lightbox.picture": "画像",
   "lightbox.openInPreview": "プレビューで開く",
   "lightbox.showInFinder": "Finder に表示",

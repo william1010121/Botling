@@ -150,6 +150,9 @@ export const zhHans: Dictionary = {
   "artifact.kind": "Artifact",
   "artifact.openLabel": "在浏览器中打开 {title}",
   // lightbox.ts
+  "gallery.label": "图片集",
+  "gallery.previous": "上一张图片",
+  "gallery.next": "下一张图片",
   "lightbox.picture": "图片",
   "lightbox.openInPreview": "用“预览”打开",
   "lightbox.showInFinder": "在访达中显示",

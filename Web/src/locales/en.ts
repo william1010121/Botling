@@ -153,6 +153,9 @@ export const en = {
   "artifact.kind": "Artifact",
   "artifact.openLabel": "Open {title} in the browser",
   // lightbox.ts
+  "gallery.label": "Image gallery",
+  "gallery.previous": "Previous image",
+  "gallery.next": "Next image",
   "lightbox.picture": "Picture",
   "lightbox.openInPreview": "Open in Preview",
   "lightbox.showInFinder": "Show in Finder",
