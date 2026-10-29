@@ -1,0 +1,31 @@
+// Preparation only: compile this dedicated validation runner; never launch Electron or ACP.
+import {build} from 'esbuild';
+import {mkdirSync,copyFileSync,writeFileSync,readFileSync,realpathSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {dirname,resolve,join} from 'node:path';
+const source=dirname(fileURLToPath(import.meta.url)),desktop=resolve(source,'../../..');
+const out=resolve(desktop,'.cache/agy-staging-prepared');mkdirSync(out,{recursive:true});
+const acpCommand='/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cache/agy-acp-dev/server/agy_acp_server.par';
+const gate=resolve(desktop,'src/core/agent/agy-capabilities.ts');
+const plugin={name:'private-staging-capabilities',setup(b){b.onLoad({filter:/agy-capabilities\.ts$/},args=>{
+ if(resolve(args.path)!==gate)throw Error('Unexpected gate module');
+ return {contents:'export const agyWorkerRuntimeEnabled=()=>true; export const agyMixedRuntimeEnabled=()=>false; export const agyPairAllowed=()=>false;',loader:'ts'};
+});}};
+const node={absWorkingDir:desktop,bundle:true,platform:'node',format:'cjs',target:'node22',external:['electron','node-pty'],logLevel:'warning'};
+await build({...node,entryPoints:[join(source,'main.ts')],outfile:join(out,'main.cjs'),plugins:[plugin]});
+await build({...node,entryPoints:[join(source,'preload.ts')],outfile:join(out,'preload.cjs')});
+await build({...node,entryPoints:[join(source,'login.ts')],outfile:join(out,'login.cjs')});
+await build({absWorkingDir:desktop,bundle:true,platform:'browser',format:'iife',target:'chrome138',entryPoints:[join(source,'renderer.ts')],outfile:join(out,'renderer.js'),logLevel:'warning'});
+copyFileSync(join(source,'index.html'),join(out,'index.html'));
+const commit=execFileSync('git',['rev-parse','HEAD'],{cwd:desktop,encoding:'utf8'}).trim();
+const paths=['main.cjs','preload.cjs','renderer.js','login.cjs','index.html'];
+const hashes=Object.fromEntries(paths.map(p=>[p,createHash('sha256').update(readFileSync(join(out,p))).digest('hex')]));
+const electron=realpathSync(join(desktop,'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'));
+const nodePath=process.execPath;
+writeFileSync(join(out,'manifest.json'),JSON.stringify({commit,acpCommand,gateOverride:'this main.cjs bundle only; agy workers true; mixed false',productionGateSHA256:createHash('sha256').update(readFileSync(gate)).digest('hex'),hashes,electron,node:nodePath},null,2));
+const quote=s=>"'"+s.replaceAll("'","'\\''")+"'";
+writeFileSync(join(out,'launch.command'),`#!/bin/sh\n# User launch only. No provider starts before a Start case click.\nunset ELECTRON_RUN_AS_NODE\nexec ${quote(electron)} ${quote(join(out,'main.cjs'))}\n`,{mode:0o700});
+writeFileSync(join(out,'login.command'),`#!/bin/sh\n# User authorization only: may open official browser login and update shared ACP keychain.\nexec ${quote(nodePath)} ${quote(join(out,'login.cjs'))} --user-authorized-login\n`,{mode:0o700});
+console.log(JSON.stringify({prepared:true,launched:false,output:out,commit,files:paths,launch:join(out,'launch.command'),login:join(out,'login.command')}));
