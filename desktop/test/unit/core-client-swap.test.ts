@@ -127,3 +127,23 @@ describe("CoreClient during a core swap", () => {
     expect(child.posted[1]).toEqual({ botling: "undrain" });
   });
 });
+
+it('waits for durable restart intent acknowledgement and forwards cancellation after installer failure',async()=>{
+ const {core}=client();core.start();const child=FakeChild.all[0]!;
+ child.answer=message=>message.botling==='prepareRestart'?{botling:'drained',id:message.id,ok:true}:null;
+ await core.prepareRestart();expect(child.posted[0].botling).toBe('prepareRestart');
+ core.cancelRestart();expect(child.posted.at(-1).botling).toBe('cancelRestart');
+});
+it('rejects restart when the checkpoint cannot be saved',async()=>{
+ const {core}=client();core.start();FakeChild.all[0]!.answer=message=>({botling:'drained',id:message.id,ok:false,error:'disk full'});
+ await expect(core.prepareRestart()).rejects.toThrow('disk full');
+});
+it('releases restart preparation after an acknowledgement timeout',async()=>{
+ vi.useFakeTimers();
+ try {
+  const {core}=client();core.start();const child=FakeChild.all[0]!;
+  const pending=expect(core.prepareRestart()).rejects.toThrow('timed out');
+  await vi.advanceTimersByTimeAsync(10_000);await pending;
+  expect(child.posted.map(m=>m.botling)).toEqual(['prepareRestart','cancelRestart']);
+ } finally { vi.useRealTimers(); }
+});

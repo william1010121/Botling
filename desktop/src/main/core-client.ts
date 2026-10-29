@@ -241,6 +241,17 @@ export class CoreClient {
     this.options.audit(`dropped a malformed message from the core: ${describeIssues(event.error)}`);
   }
 
+  prepareRestart(): Promise<void> {
+    return new Promise((resolve,reject)=>{
+      if(!this.child){reject(Error("Core is not running; restart intent cannot be saved."));return;}
+      const id=++this.drainCount;
+      const timer=setTimeout(()=>{this.drains.delete(id);this.cancelRestart();reject(Error("Restart checkpoint timed out."));},10_000);
+      this.drains.set(id,answer=>{clearTimeout(timer);this.drains.delete(id);answer.ok?resolve():reject(Error(String(answer.error??"Restart checkpoint failed.")));});
+      this.child.postMessage({botling:"prepareRestart",id});
+    });
+  }
+  cancelRestart(){this.child?.postMessage({botling:"cancelRestart"});}
+
   /** Sends a command; resolves with the response (never rejects). */
   request(cmd: Command, id = `main.${++this.counter}`): Promise<ResponseEnvelopeT> {
     if (this.holdMode === "all" || (this.holdMode === "drain" && !PASS_WHILE_DRAINING.has(cmd.type))) {

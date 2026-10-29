@@ -1,3 +1,4 @@
+import { RESTART_NOTE } from '../restart-continuation';
 import { monitorHandback, MONITOR_HANDBACK } from "./monitor-policy";
 import { TokenFlowMeter } from "../token-flow-meter";
 import { codexAutoRiskConfig } from "./auto-risk-policy";
@@ -84,6 +85,9 @@ export type CodexOutput =
 
 /** A worker as codex-threads/<session>.workers.json keeps it (`CodexManagedWorkerRecord`, 1.x's keys). */
 export interface WorkerRecord {
+  restartSafe?: boolean;
+  restartTurn?: string;
+  reportDispatching?: boolean;
   id: string;
   name: string;
   instructions: string;
@@ -115,6 +119,9 @@ export interface CodexConfig {
   workerEffort?: string | null;
   workerFast?: boolean | null;
   restoredWorkers: WorkerRecord[];
+  restartWorkers?: WorkerRecord[];
+  strictResume?: boolean;
+  restartTurn?: string;
   /** Core binds this only for its own Maintainer; tool arguments cannot supply it. */
   componentEditor?: ComponentEditorRoute | null;
   /** scheduled-routines.json for `app_routines` (null: none here). */
@@ -141,6 +148,8 @@ type Call =
   | { kind: "workerInstructions"; task: string }
   | { kind: "steer"; input: Input }
   | { kind: "workerThread"; task: string }
+  | { kind: "restartCoordinatorRead"; turn: string }
+  | { kind: "restartWorkerRead"; task: string; turn: string }
   | { kind: "workerTurn"; task: string; run: number }
   | { kind: "workerSteer"; task: string; run: number; text: string }
   | { kind: "monitorCommand"; id: string };
@@ -165,6 +174,7 @@ interface Worker {
   /** Its thread's tokens so far, and at the start of the run under way (Phase 5c). */
   tokens?: TokenUsage; tokensAtRunStart?: TokenUsage;
   editorCost?: number;
+  restartText?: string;
 }
 
 interface Result {
@@ -240,6 +250,9 @@ export class CodexSession {
   private finishing = false;
   private stopped = false;
   private workers = new Map<string, Worker>();
+  private restartPending = new Map<string, WorkerRecord>();
+  private restartCoordinatorPending = false;
+  private workerTools = new Set<string>();
   private results: Result[] = [];
   private active: Result | null = null;
   private toolReplies = new Map<string, { intent: string; response: Record<string, unknown> }>();
@@ -254,12 +267,16 @@ export class CodexSession {
       if (config.ownerSession && record.owner.toLowerCase() !== config.ownerSession.toLowerCase()) continue;
       this.monitors.set(record.id, reconcile(record));
     }
-    for (const record of config.restoredWorkers) {
+    for (const record of config.restartWorkers ?? config.restoredWorkers) {
       this.workers.set(record.id, {
         id: record.id, name: record.name, instructions: record.instructions, ownershipInstructions: record.ownershipInstructions, role: record.role, isolatedGit: record.isolatedGit,
         thread: record.thread, turnId: null, run: record.run, active: false, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set(),
       });
-      if (record.reportPending && record.report !== undefined && record.status) {
+      if(config.restartWorkers && record.wasActive && record.restartSafe && record.thread && record.restartTurn && !record.role){
+        this.restartPending.set(record.id,record);
+      } else if(record.reportDispatching){
+        // Delivery is uncertain: never duplicate the coordinator wake.
+      } else if (record.reportPending && record.report !== undefined && record.status) {
         this.results.push({ task: record.id, name: record.name, thread: record.thread, turn: record.turn, run: record.run, status: record.status, report: record.report, reconciliationAttempt: 0, reconciled: false });
       } else if (record.wasActive) {
         this.results.push({ task: record.id, name: record.name, thread: record.thread, run: record.run, status: "interrupted", report: "The app stopped before this worker completed. Send a message to the same task_id to resume its session.", reconciliationAttempt: 0, reconciled: false });
@@ -279,7 +296,7 @@ export class CodexSession {
   /** A message: a turn of its own (now, or once the one under way ends). */
   send(text: string, images: string[] = []): CodexOutput[] {
     const input: Input = { text, token: randomUUID(), ...(images.length ? { images } : {}) };
-    if (!this.threadId || this.turn) {
+    if (!this.threadId || this.turn || this.restartCoordinatorPending) {
       this.inbox.push(input);
       return [];
     }
@@ -390,12 +407,52 @@ export class CodexSession {
 
   private response(call: Call, result: any, error: any): CodexOutput[] {
     switch (call.kind) {
+      case "restartCoordinatorRead": {
+        this.restartCoordinatorPending=false;
+        if(this.stopped)return [];
+        const turns=result?.thread?.turns;
+        const turn=Array.isArray(turns)?turns.find((t:any)=>t.id===call.turn):null;
+        const uncertain=turn?.status==="interrupted" && (!Array.isArray(turn.items) || turn.items.some((i:any)=>
+          !["agentMessage","reasoning","plan","contextCompaction"].includes(i.type) && !["completed","failed","declined"].includes(i.status)));
+        if(error || result?.thread?.id!==this.threadId || !turn || turns.at(-1)?.id!==call.turn || uncertain || !["completed","interrupted"].includes(turn.status)){
+          this.inbox.shift();
+          return [this.result(false,"Restart continuation paused: the original coordinator turn outcome is unconfirmed. No prompt was replayed."),...this.next()];
+        }
+        if(turn.status==="completed"){
+          this.inbox.shift();
+          const report=Array.isArray(turn.items)?turn.items.findLast((i:any)=>i.type==="agentMessage"&&i.phase!=="commentary")?.text:null;
+          return [this.result(!!report,report||"The original turn completed without a recoverable final report; it was not replayed."),...this.next()];
+        }
+        return this.inbox.length?this.startTurn(this.inbox.shift()!):this.next();
+      }
+      case "restartWorkerRead": {
+        const worker=this.workers.get(call.task), record=this.restartPending.get(call.task);
+        this.restartPending.delete(call.task);
+        if(!worker || !record || worker.cancelled || this.stopped)return this.pendingChanged();
+        const turns=result?.thread?.turns;
+        const turn=Array.isArray(turns)?turns.find((t:any)=>t.id===call.turn):null;
+        const unresolvedItems = turn?.status === "interrupted" && (!Array.isArray(turn.items) || turn.items.some((item:any) =>
+          !["agentMessage", "reasoning", "plan", "contextCompaction"].includes(item.type)
+          && !["completed", "failed", "declined"].includes(item.status)));
+        if(error || result?.thread?.id!==worker.thread || !turn || turns.at(-1)?.id!==call.turn || unresolvedItems || !["completed","interrupted"].includes(turn.status)){
+          return [this.item({kind:"subagentEnded",id:worker.id,status:"interrupted",summary:"Restart recovery could not confirm the original worker turn outcome. No task was replayed; reconcile this task and thread."}),...this.pendingChanged()];
+        }
+        worker.active=true;worker.turnId=call.turn;
+        if(turn.status==="completed"){
+          worker.said=(turn.items??[]).filter((i:any)=>i.type==="agentMessage").map((i:any)=>({text:i.text??"",phase:i.phase??null}));
+          return this.workerLine("turn/completed",{turn},worker);
+        }
+        worker.restartText=RESTART_NOTE+"\nOriginal assignment (scope remains unchanged):\n"+record.instructions;
+        worker.turnId=null;
+        return [this.item({kind:"subagentStarted",id:worker.id,description:worker.name,type:"codex-worker",prompt:record.instructions,background:true,execution:this.workerExecution(worker)}),...this.startWorkerThread(worker.id),...this.pendingChanged()];
+      }
       case "initialize":
         if (error) return [{ kind: "failed", message: message(error) }];
         return [{ kind: "write", value: { jsonrpc: "2.0", method: "initialized" } }, this.startThread()];
       case "thread": {
         const thread = result?.thread?.id;
         if (error || typeof thread !== "string") return [{ kind: "failed", message: message(error) }];
+        if(this.config.strictResume && thread!==this.config.resumeThread)return [{kind:"failed",message:"Restart resume returned a different thread. No prompt was sent."}];
         if (!this.config.resumeThread) this.usageMeter.fresh(thread);
         if (this.config.resumeThread && this.managed) return [this.refreshInstructions(this.config.instructions, thread, { kind: "coordinatorInstructions", thread })];
         return this.coordinatorReady(thread);
@@ -408,7 +465,9 @@ export class CodexSession {
         const worker = this.workers.get(call.task);
         if (!worker?.active || worker.cancelled || this.stopped) return [];
         worker.loaded = true;
-        return this.startWorkerTurn(call.task, worker.instructions);
+        const text=worker.restartText??worker.instructions;
+        delete worker.restartText;
+        return this.startWorkerTurn(call.task, text);
       }
       case "monitorCommand":
         return this.completeMonitor(call.id, result, error);
@@ -697,7 +756,12 @@ export class CodexSession {
     if (this.stopped) return [];
     this.threadId = thread;
     const out: CodexOutput[] = [{ kind: "thread", id: thread }];
-    if (this.inbox.length) out.push(...this.startTurn(this.inbox.shift()!));
+    for(const record of this.restartPending.values())out.push(this.request("thread/read",{threadId:record.thread,includeTurns:true},{kind:"restartWorkerRead",task:record.id,turn:record.restartTurn!}));
+    if(this.config.restartTurn){
+      this.restartCoordinatorPending=true;
+      out.push(this.request("thread/read",{threadId:thread,includeTurns:true},{kind:"restartCoordinatorRead",turn:this.config.restartTurn}));
+    }
+    else if (this.inbox.length) out.push(...this.startTurn(this.inbox.shift()!));
     else out.push(...this.next());
     out.push(...this.pendingChanged());
     return out;
@@ -790,6 +854,7 @@ export class CodexSession {
 
   /** The next waiting message's turn, a worker's report, or the end once `finish` asked for it. */
   private next(): CodexOutput[] {
+    if(this.restartCoordinatorPending)return [];
     if (this.turn) return [];
     if (this.inbox.length) return this.startTurn(this.inbox.shift()!);
     const waking = [...this.monitors.values()].sort((a, b) => (a.id < b.id ? -1 : 1)).find((monitor) => monitor.wake === "pending");
@@ -847,6 +912,7 @@ export class CodexSession {
       const result = this.results.find((r) => r.task === worker.id && r.run === worker.run) ?? (this.active?.task === worker.id && this.active.run === worker.run ? this.active : undefined);
       const record: WorkerRecord = { id: worker.id, name: worker.name, instructions: worker.instructions, run: worker.run, wasActive: worker.active, reportPending: !!result };
       if (worker.thread) record.thread = worker.thread;
+      if(this.active?.task===worker.id && this.active.run===worker.run)record.reportDispatching=true;
       if (result) { record.report = result.report; record.status = result.status; if (result.turn) record.turn = result.turn; }
       if (worker.ownershipInstructions) record.ownershipInstructions = worker.ownershipInstructions;
       if (worker.role) record.role = worker.role;
@@ -855,8 +921,26 @@ export class CodexSession {
     }).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
+  get restartTurn(): string | undefined { return this.turn?.id ?? undefined; }
+
+  get restartBlocker(): string | undefined {
+    if([...this.monitors.values()].some(m=>monitorActive(m)||m.wake==="dispatching"||m.wake==="uncertain"))
+      return "A monitored command or its callback has an unconfirmed outcome. Reconcile the original monitor; it was not replayed.";
+    return undefined;
+  }
+
+  get restartWorkers(): WorkerRecord[] {
+    return this.workerRecords.map(record=>{
+      const worker=this.workers.get(record.id)!;
+      const pendingCall=[...this.calls.values()].some(call=>'task' in call && call.task===worker.id);
+      const approval=[...this.approvals.values()].some(a=>a.worker?.task===worker.id);
+      return {...record,restartTurn:worker.turnId??undefined,restartSafe:!worker.role && !!worker.turnId && !worker.cancelled
+        && !pendingCall && !approval && ![...this.workerTools].some(id=>id.startsWith(worker.id+':')) && !worker.messages.length && !record.reportDispatching};
+    });
+  }
+
   get hasManagedWork(): boolean {
-    return [...this.workers.values()].some((worker) => worker.active) || this.results.length > 0
+    return this.restartPending.size > 0 || [...this.workers.values()].some((worker) => worker.active) || this.results.length > 0
       || [...this.monitors.values()].some((monitor) => monitorActive(monitor) || monitor.wake === "pending");
   }
 
@@ -1209,6 +1293,7 @@ export class CodexSession {
     if (!worker?.active || worker.cancelled || this.stopped) return [];
     const thread = result?.thread?.id;
     if (error || typeof thread !== "string") return this.failWorker(task, `Could not start worker session: ${message(error)}`);
+    if(this.config.restartWorkers && worker.thread && thread!==worker.thread)return this.failWorker(task,"Restart resume returned a different worker thread; no prompt was sent.");
     const resumed = !!worker.thread;
     worker.thread = thread;
     if (!resumed) this.usageMeter.fresh(thread);
@@ -1303,6 +1388,7 @@ export class CodexSession {
         if (typeof params.turnId === "string" && worker.turnId && params.turnId !== worker.turnId) return [];
         if (method === "item/started") {
           const step = this.started(item, task);
+          if(step?.kind === "toolUse")this.workerTools.add(task+':'+item.id);
           return step ? [this.item(step)] : [];
         }
         if (item.type === "agentMessage") {
@@ -1310,7 +1396,9 @@ export class CodexSession {
           worker.said.push({ text, phase: typeof item.phase === "string" ? item.phase : null });
           return text ? [this.item({ kind: "subagentText", parent: task, text })] : [];
         }
-        return this.completed(item, task).map((step) => this.item(step));
+        const completed=this.completed(item, task);
+        if(completed.some(step=>step.kind==="toolResult"))this.workerTools.delete(task+':'+item.id);
+        return completed.map((step) => this.item(step));
       }
       case "turn/completed": {
         const ended = params.turn;
@@ -1398,7 +1486,8 @@ export class CodexSession {
       this.active = null;
     }
     for (const worker of this.workers.values()) {
-      if (!worker.active || (ids && !ids.has(worker.id))) continue;
+      if ((!worker.active && !this.restartPending.has(worker.id)) || (ids && !ids.has(worker.id))) continue;
+      this.restartPending.delete(worker.id);
       worker.active = false;
       if (worker.turnId) worker.completedTurns.add(worker.turnId);
       worker.cancelled = true;
@@ -1560,6 +1649,9 @@ export class CodexThreads {
 // The process
 
 export interface CodexHeadConfig {
+  restartWorkers?: WorkerRecord[];
+  strictResume?: boolean;
+  restartTurn?: string;
   /** `codex`, or the fake app-server's interpreter for tests. */
   command: string;
   prefixArgs?: string[];
@@ -1628,6 +1720,7 @@ export class CodexHead {
       cwd: config.cwd, instructions: config.instructions + recovery, workerInstructions: config.workerInstructions, resumeThread,
       model: config.model ?? null, workerModel: config.workerModel ?? null, effort: config.effort ?? null,
       workerEffort: config.workerEffort ?? null, workerFast: config.workerFast ?? null,
+      restartWorkers: config.restartWorkers, strictResume:config.strictResume, restartTurn:config.restartTurn,
       restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
       autoMode: config.autoMode ?? true,
@@ -1638,6 +1731,10 @@ export class CodexHead {
     this.savedWorkers = JSON.stringify(this.session.workerRecords);
     this.savedMonitors = JSON.stringify(restoredMonitors);
   }
+
+  get restartWorkers() { return this.session.restartWorkers; }
+  get restartBlocker() { return this.session.restartBlocker; }
+  get restartTurn() { return this.session.restartTurn; }
 
   get pid() {
     return this.process?.pid ?? -1;

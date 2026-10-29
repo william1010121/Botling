@@ -498,7 +498,7 @@ export class DevBuilds {
     if (hot) {
       lines.push("", "The app keeps running: the new build is installed for the next launch, and its changed parts are applied in place. Bots finish their turns (or pause between tool calls) and go on in the same conversations. If the new core fails its self-check, the running one stays and the app on disk is put back.");
     } else {
-      lines.push("", `Bots write down where they are before the restart. If the new build does not come up within ${HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
+      lines.push("", `Bots save their original conversations and unfinished work before restart. Supported work resumes automatically; pending permissions or uncertain execution stay paused for reconciliation. If the new build does not come up within ${HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
     }
     const install = hot ? "Install and hot-apply" : "Install and restart";
     main.appNotice(lines.join("\n"), [
@@ -617,7 +617,7 @@ export class DevBuilds {
       lines.push("", `It can't be installed from here: ${release.unavailable ?? "this Botling cannot replace itself."}`);
       return main.appNotice(lines.join("\n"));
     }
-    lines.push("", "Bots write down where they are before the restart.");
+    lines.push("", "Bots save their original conversations and unfinished work before restart. Supported work resumes automatically; pending permissions or uncertain execution stay paused for reconciliation.");
     return main.appNotice(lines.join("\n"), [
       { label: "Install and restart", recommended: true },
       { label: "Not now" },

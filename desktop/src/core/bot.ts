@@ -1,4 +1,5 @@
 import { readImagePaths, readImages } from "./read-images";
+import { RESTART_NOTE, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
 import { AgyCodexHead } from "./agent/agy-codex-head";
 import { agyPairAllowed } from "./agent/agy-capabilities";
@@ -2506,11 +2507,15 @@ export class Bot {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
       const configured = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
       const config = this.mixedCodex ? {...configured,autoMode:false,bypassPermissions:false,componentEditor:null,workerInstructions:null,routinesFile:null,writableRoots:[]} : configured;
-      if (this.mixedCodex && config.resume) {
+      if ((this.mixedCodex || this.restartRecovery) && config.resume) {
         const thread = config.threads.thread(config.sessionId);
         if (!thread || (config.workerInstructions && !config.threads.isManaged(config.sessionId, thread))) throw new Error("Mixed Codex conversation mapping unavailable; identity retained, no replacement or replay.");
       }
-      head = new (this.mixedCodex ? AgyCodexHead : CodexHead)(config, { onItem: item => {
+      const restartWorkers=this.restartWorkerRecords;
+      const restartTurn=this.restartProviderTurn;
+      this.restartProviderTurn=undefined;
+      this.restartWorkerRecords=undefined;
+      head = new (this.mixedCodex ? AgyCodexHead : CodexHead)({...config, restartWorkers, restartTurn, strictResume:this.restartRecovery && config.resume}, { onItem: item => {
         if (this.mixedCodex && item.kind === "init") { this.store.saveSetting("mixedCodexConversation", item.sessionId); this.store.saveSetting("mixedCodexRecovery", undefined); }
         this.onItem(head, item);
       }, onExit: exit => this.onExit(head, exit) });
@@ -3498,7 +3503,7 @@ export class Bot {
     let failedTurn = false;
     if (turn?.open && turn.head === head) {
       // A resume of a session claude no longer has: start a new session and send the message again, once.
-      if (this.engine !== "agy" && !this.mixedCodex && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
+      if (!this.restartRecovery && this.engine !== "agy" && !this.mixedCodex && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
         this.log(`resuming session ${this.session.sessionId} failed (${why}: ${exit.stderr.slice(0, 200)}); starting a new session`);
         this.newSession();
         this.store.saveHead(this.session);
@@ -3521,7 +3526,7 @@ export class Bot {
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
       this.restarting = null;
-    } else if (exit.expected && (this.engine === "agy" || this.mixedCodex)) {
+    } else if (this.restartRecovery || (exit.expected && (this.engine === "agy" || this.mixedCodex))) {
       // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
       this.briefing = !this.session.started;
     } else if (exit.expected) {
@@ -5045,6 +5050,68 @@ export class Bot {
     const failed = saved.find(result => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
   }
+
+  /** Capture before shutdown cancels transports; never treat a pending approval as consent. */
+  restartEntries(): RestartEntry[] {
+    // The three-engine integration exposes all peers; older cores expose only partner.
+    const peers = (this as Bot & { readonly peers?: Bot[] }).peers;
+    return [this, ...(peers ?? (this.partner ? [this.partner] : []))].flatMap(bot => {
+      const turn = bot.turn;
+      const workers = bot.head instanceof CodexHead ? bot.head.restartWorkers : undefined;
+      const active = !!turn?.open && turn.origin !== "tidy";
+      const queued=bot.queue.filter(t=>t.open&&!t.sent&&t.origin!=="tidy").map(t=>({words:t.words,userId:t.userId,origin:t.origin,turnId:t.id,messageId:t.messageId,handoffId:t.handoffId,conducted:t.conducted}));
+      if (!active && !queued.length && !bot.managedPending && !bot.subagents.running.length) return [];
+      const blocked = bot.readOnly ? "The conversation store is read-only."
+        : bot.approvals.size ? "A permission decision was pending. Review the original request before continuing."
+        : bot.engine === "agy" && bot.managedPending ? "Antigravity worker execution reconciliation is not supported; original worker identities are retained."
+        : bot.head instanceof CodexHead && bot.head.restartBlocker ? bot.head.restartBlocker
+        : active && bot.head instanceof CodexHead && !bot.head.restartTurn ? "Coordinator turn delivery is unconfirmed; reconcile the original thread."
+        : workers?.some(w=>w.reportDispatching) ? "Worker report delivery is uncertain. Inspect the original coordinator conversation before any retry."
+        : active && turn && !turn.reply.text && !turn.steps.length ? "Prompt delivery has no confirmed response yet; reconcile the original conversation before retrying."
+        : bot.turn?.steps.some(step=>step.kind==="tool"&&!step.done) ? "A tool call had no confirmed result. Reconcile its outcome before continuing."
+        : bot.deferred || bot.paused || bot.claimHold ? "Paused or deferred work needs explicit reconciliation."
+        : bot.subagents.running.length && !workers?.length ? "Native subagent execution cannot be safely resumed automatically."
+        : workers?.some(w => w.wasActive && (!w.restartSafe || !w.thread)) ? "A worker has pending approval, tool execution, or unconfirmed delivery. Reconcile the original task."
+        : active && !bot.session.started ? "Provider session creation was not confirmed." : undefined;
+      return [{botId:this.owner.id,engine:bot.engine,sessionId:bot.session.sessionId,sessionStarted:bot.session.started,
+        continue:active,queued,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
+        blocked,workers,providerTurnId:bot.head instanceof CodexHead ? bot.head.restartTurn : undefined}];
+    });
+  }
+
+  retainRestartIdentity(entry: RestartEntry): Bot {
+    const bot=this.botFor(entry.engine);
+    if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
+    bot.session={sessionId:entry.sessionId,started:entry.sessionStarted!==false};bot.briefing=entry.sessionStarted===false;
+    bot.store.saveHead(bot.session);
+    bot.restartRecovery=true;
+    return bot;
+  }
+
+  adoptRestart(entry: RestartEntry) {
+    const bot=this.retainRestartIdentity(entry);
+    bot.restartWorkerRecords=entry.workers;
+    bot.restartProviderTurn=entry.providerTurnId;
+    if(entry.continue){
+      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+(entry.workers?.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+entry.workers.map(w=>w.id).join(", ") : ""),entry.userId??null);
+      turn.handoffId=entry.handoffId??null;
+      // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
+      turn.retried=true; // A failed resume must never fall back to a fresh session/replay.
+      bot.queue.push(turn);
+    }
+    for(const saved of entry.queued){
+      if(!["user","app","background"].includes(saved.origin))throw Error("Queued work origin requires reconciliation.");
+      const turn=bot.newTurn(saved.origin as Origin,saved.words,saved.userId);
+      turn.id=saved.turnId;turn.messageId=saved.messageId;turn.handoffId=saved.handoffId;turn.conducted=saved.conducted;turn.retried=true;
+      bot.queue.push(turn);
+    }
+    if(bot.queue.length)bot.next();
+    else if(entry.workers?.some(w=>w.wasActive||w.reportPending))bot.ensureHead();
+  }
+
+  private restartRecovery = false;
+  private restartProviderTurn?: string;
+  private restartWorkerRecords?: import('./agent/codex').WorkerRecord[];
 
   /** At the new core's start: go on in the sessions the old core handed over (`--resume`), then what waited. */
   adoptSwap(entries: SwapEntry[]) {

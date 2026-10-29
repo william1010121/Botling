@@ -199,7 +199,7 @@ const core: CoreClient = new CoreClient({
         const verified = hotInstaller.verified(args.path ?? "");
         if (!verified) return { ok: false, error: "Verified restart candidate unavailable" };
         await installer.stageLocal(verified.zip, verified.version);
-        await installer.restart(process.pid);
+        await restartWithContinuation();
         setImmediate(() => app.quit());
         return { ok: true };
       }
@@ -219,7 +219,7 @@ const core: CoreClient = new CoreClient({
         if (!state.newer) return { ok: false, error: "There is no newer release." };
         if (installer.ready !== state.newer.version) await installer.stage(state.newer);
         note(`installing release ${state.newer.version} and restarting`);
-        await installer.restart(process.pid);
+        await restartWithContinuation();
         setImmediate(() => app.quit());
         return { ok: true };
       } catch (error) {
@@ -328,6 +328,11 @@ const installer = new VerifiedInstaller({
   fetch: (url) => net.fetch(url, { signal: AbortSignal.timeout(120_000) }),
   launchArgs: process.argv.filter(arg => arg === "--use-mock-keychain" || /^--remote-debugging-port=\d+$/.test(arg)),
 });
+async function restartWithContinuation() {
+  await core.prepareRestart();
+  try { await installer.restart(process.pid); }
+  catch(error){core.cancelRestart();throw error;}
+}
 const updater = new Updater({
   current: app.getVersion(),
   platform: process.platform,
@@ -713,7 +718,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
       return updater.view(state.enabled);
     });
     case "updates.restart": return withInstallRequest(async () => {
-      await installer.restart(process.pid);
+      await restartWithContinuation();
       // Let the explicit click's response reach the renderer before normal core shutdown.
       setImmediate(() => app.quit());
       return { restarting: true };

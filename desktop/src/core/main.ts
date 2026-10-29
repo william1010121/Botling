@@ -283,6 +283,11 @@ if (process.env.BOTLING_STARTUP_LOG) new StartupMarks({ file: process.env.BOTLIN
  * waits for those under way, then answers `{botling: "drained", id, ok, …}`; `{botling: "undrain"}` calls it off.
  */
 function swapControl(data: { botling?: unknown; id?: unknown; timeoutMs?: unknown; boundaryMs?: unknown }, reply: (message: unknown) => void): boolean {
+  if(data.botling === "prepareRestart" || data.botling === "cancelRestart") {
+    try{if(data.botling === "prepareRestart")core.prepareRestart();else core.cancelRestart();reply({botling:"drained",id:data.id,ok:true});}
+    catch(error){reply({botling:"drained",id:data.id,ok:false,error:String(error)});}
+    return true;
+  }
   if (data.botling === "undrain") { core.cancelSwap(); return true; }
   if (data.botling !== "drain") return false;
   const ms = (value: unknown, fallback: number) => (typeof value === "number" && Number.isFinite(value) ? Math.min(Math.max(value, 0), 30 * 60_000) : fallback);

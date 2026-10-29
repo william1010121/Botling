@@ -1,4 +1,5 @@
 import { ProjectFiles } from "./project-files";
+import { RestartJournal } from './restart-continuation';
 import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
 import { tokenFlowHistory } from "./token-flow-history";
@@ -532,6 +533,17 @@ export class Core {
     for (const bot of this.bots.values()) bot.activateStartup();
     // Started by a core hot swap: the old core's sessions go on, and what waited there is delivered.
     this.adoptSwap();
+    try { new RestartJournal(this.options.dataDir).recover(entry => {
+      const bot=this.bots.get(entry.botId);if(!bot)throw Error("Original bot unavailable.");bot.adoptRestart(entry);
+    }, (entry,reason) => {
+      const bot=this.bots.get(entry.botId);
+      try { bot?.retainRestartIdentity(entry); } catch(error) { this.log(`restart identity: ${String(error)}`); }
+      (bot ?? this.bots.get(MAIN_BOT_ID))?.appNotice(`Restart continuation paused (${entry.engine}, ${entry.botId}): ${reason}`);
+      this.log(`restart ${entry.botId}: ${reason}`);
+    }); } catch(error){
+      this.log(String(error));
+      this.bots.get(MAIN_BOT_ID)?.appNotice("Restart continuation could not be read. The checkpoint is preserved; no recovery prompt was sent. Reconcile it before retrying.");
+    }
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
     try { this.devBuilds.check(); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
@@ -1993,7 +2005,25 @@ First write a test that shows this, then fix it.`;
   }
 
   /** Ends every turn and head (with their trees) and writes everything out; for quitting. */
+  private restarting = false;
+  prepareRestart() {
+    if(this.restarting)throw Error("Restart is already prepared.");
+    if(this.swapping)throw Error("A core swap is already in progress.");
+    const journal=new RestartJournal(this.options.dataDir);
+    journal.prepare([...this.bots.values()].flatMap(bot=>bot.restartEntries()));
+    this.restarting=true;
+    for(const bot of this.bots.values())bot.holdForSwap(true);
+  }
+  cancelRestart(){
+    if(!this.restarting)return;
+    new RestartJournal(this.options.dataDir).cancel();this.restarting=false;
+    for(const bot of this.bots.values())bot.holdForSwap(false);
+  }
+
   async shutdown() {
+    // Re-snapshot synchronously: completion/cancellation after confirmation wins over intent.
+    const journal=new RestartJournal(this.options.dataDir);
+    if(this.restarting)journal.checkpoint([...this.bots.values()].flatMap(bot=>bot.restartEntries()));
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
     if (this.watchClock) { clearInterval(this.watchClock); this.watchClock = null; }
     this.libraryWatch?.stop(); this.libraryWatch = null;
@@ -2001,7 +2031,7 @@ First write a test that shows this, then fix it.`;
     this.memoryWatch?.stop(); this.memoryWatch = null;
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
     // After a swap's drain the heads end without the tidy (it would end their sessions): the new core resumes them.
-    const tidy = !this.swapping;
+    const tidy = !this.swapping && !this.restarting;
     // Invoke every participant even if one throws synchronously, and never let an early
     // rejection reach the process exit boundary while another durable flush is pending.
     const participants = [...this.bots.values()].map(bot => () => bot.shutdown({ tidy }));
@@ -2009,5 +2039,6 @@ First write a test that shows this, then fix it.`;
     const results = await Promise.allSettled(participants.map(stop => Promise.resolve().then(stop)));
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, "Core shutdown failed", { cause: failures[0] });
+    if(this.restarting)journal.ready();
   }
 }
