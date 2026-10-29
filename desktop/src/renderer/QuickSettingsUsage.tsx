@@ -114,9 +114,5 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
     {since({ fiveHour: null, week: codex.week })}
     <h3>Antigravity</h3>
     <AntigravityQuota quota={usage?.antigravity} now={now} loading={loading} failed={failed} onRetry={retry} />
-    {failed && <p className="quick-usage-note" role="alert">
-      Quota readings unavailable.{" "}
-      <button type="button" onClick={retry}>Retry</button>
-    </p>}
   </section>;
 }

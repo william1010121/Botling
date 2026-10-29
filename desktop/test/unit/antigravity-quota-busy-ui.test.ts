@@ -16,15 +16,14 @@ it('labels retained quota with its original read time while busy, without invent
  const host = document.createElement('div'), root = createRoot(host);
  try {
   await act(async () => root.render(createElement(AntigravityQuota, {quota:busy})));
-  expect(host.textContent).toContain('Waiting to read quota');
+  expect(host.querySelectorAll('.quick-usage-card')).toHaveLength(2);
+  expect(host.textContent).toContain('Antigravity is busy');
   expect(host.textContent).not.toContain('%');
   await act(async () => root.render(createElement(AntigravityQuota, {quota:available})));
   expect(host.textContent).toContain('9%');
   await act(async () => root.render(createElement(AntigravityQuota, {quota:{...busy, lastKnown:available}})));
   expect(host.textContent).toContain('9%');
-  expect(host.textContent).toContain('Last known quota');
-  expect(host.textContent).toMatch(/as of \d+ (min|h|days)/);
-  expect(host.textContent).toContain('Waiting to refresh quota');
+  expect(host.textContent).toMatch(/Updated \d+ (min|h|days) ago · Antigravity is busy/);
  } finally { await act(async () => root.unmount()); }
 });
 it('retries busy at a bounded interval, coalesces turn events, stops on success and cleans up on close', async () => {
@@ -85,8 +84,7 @@ it('retains core last-known quota across close/reopen in both surfaces and share
   expect(usageRequest).toHaveBeenCalledTimes(1);
   for (const host of [quick,full]) {
    expect(host.textContent).toContain('9%');
-   expect(host.textContent).toContain('Last known quota');
-   expect(host.textContent).toMatch(/as of \d+ (min|h|days)/);
+   expect(host.textContent).toMatch(/Updated \d+ (min|h|days) ago · Antigravity is busy/);
   }
   await act(async () => {await vi.advanceTimersByTimeAsync(2000);});
   expect(usageRequest).toHaveBeenCalledTimes(2);
@@ -96,13 +94,13 @@ it('retains core last-known quota across close/reopen in both surfaces and share
   expect(usageRequest).toHaveBeenCalledTimes(2);
   await act(async () => fullRoot.render(fullElement()));
   expect(usageRequest).toHaveBeenCalledTimes(3);
-  expect(full.textContent).toContain('Last known quota');
+  expect(full.textContent).toContain('Antigravity is busy');
   expect(full.textContent).toContain('9%');
   quota = {...available,seen:Date.now(),buckets:[{group:'Gemini Models',label:'Weekly Limit Remaining',remainingFraction:.85}]};
   await act(async () => {for(const listener of listeners) listener({event:{type:'turn.finished'}});});
   expect(usageRequest).toHaveBeenCalledTimes(4);
   expect(full.textContent).toContain('15%');
-  expect(full.textContent).not.toContain('Last known quota');
+  expect(full.textContent).not.toContain('Antigravity is busy');
   await act(async () => {await vi.advanceTimersByTimeAsync(10000);});
   expect(usageRequest).toHaveBeenCalledTimes(4);
   await act(async () => {fullRoot.render(null);quickRoot.render(createElement(QuickSettingsUsage,{client}));});
@@ -156,4 +154,37 @@ it('degrades gracefully for missing, disabled and amount-only Gemini buckets', a
   expect(cards[0].textContent).toBe('–5 hoursdisabled');
   expect(cards[1].textContent).toBe('–Weekunavailable');
  } finally { await act(async () => root.unmount()); }
+});
+
+const geminiBuckets = [{group:'Gemini Models', label:'Five Hour Limit Remaining', remainingFraction:.91}, {group:'Gemini Models', label:'Weekly Limit Remaining', remainingFraction:.88}];
+async function renderOnce(props: any) {
+ const host = document.createElement('div'), root = createRoot(host);
+ await act(async () => root.render(createElement(AntigravityQuota, props)));
+ return {host, done: () => act(async () => root.unmount())};
+}
+it('keeps both Gemini ring cards with an updated-ago note when busy or a later read fails', async () => {
+ const now = 10_000_000, seen = now - 12*60_000;
+ const lastKnown = {seen, buckets: geminiBuckets};
+ for (const props of [{quota:{...busy, lastKnown}}, {quota:{...busy, lastKnown}, failed:true}, {quota:{status:'error'} as any, failed:true}]) {
+  const {host, done} = await renderOnce({...props, now, onRetry:()=>{}});
+  const cards = [...host.querySelectorAll('.quick-usage-card')];
+  if ((props.quota as any).status === 'error') { expect(cards).toHaveLength(2); expect(host.textContent).toContain('–'); }
+  else { expect(cards.map(c => c.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/^9%5 hours/), expect.stringMatching(/^12%Week/)])); expect(host.textContent).toContain('Updated 12 min ago'); }
+  expect(host.querySelector('.quick-usage-note')!.textContent).toMatch(/busy|failed/);
+  await done();
+ }
+});
+it('shows empty ring-card shells (dash, no percent) when nothing was ever read, with a styled retry that disables while loading', async () => {
+ for (const props of [{quota:busy}, {failed:true}, {quota:{status:'unavailable',reason:'no_connection',source:'antigravity_acp'} as any}, {loading:true}]) {
+  const retry = vi.fn();
+  const {host, done} = await renderOnce({...props, onRetry:retry});
+  const cards = [...host.querySelectorAll('.quick-usage-card')];
+  expect(cards).toHaveLength(2);
+  expect(cards[0].textContent).toMatch(/^–5 hours/);
+  expect(host.textContent).not.toContain('%');
+  expect(host.querySelector('p.quick-usage-note')).not.toBeNull();
+  expect(host.querySelector('.quick-usage-note button')).not.toBeNull();
+  if ((props as any).loading) expect((host.querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+  await done();
+ }
 });

@@ -33,7 +33,7 @@ async function mount(request = vi.fn(async () => limits())) {
   })));
   const toggle = async () => act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Quick settings"]')!.click());
   const finished = async () => act(async () => listener?.({ event: { type: "turn.finished" } } as EventEnvelope));
-  const cards = () => [...host.querySelectorAll<HTMLElement>(".quick-usage-card")];
+  const cards = () => [...host.querySelectorAll<HTMLElement>(".quick-usage-card")].filter(card => !card.closest('[aria-label="Antigravity quota"]'));
   return { toggle, finished, cards, request, off };
 }
 
@@ -210,8 +210,9 @@ it("shows the missing Antigravity connection without invented windows or percent
   value.antigravity = { status: "unavailable", reason: "no_connection", source: "antigravity_acp" };
   const ui = await mount(vi.fn(async () => value)); await ui.toggle();
   const quota = host.querySelector('[aria-label="Antigravity quota"]')!;
-  expect(quota.textContent).toBe("Connect Antigravity to read quota.");
-  expect(quota.textContent).not.toMatch(/%|5 hours|Week|tokens|sign-in/);
+  expect(quota.querySelector(".quick-usage-note")!.textContent).toContain("Connect Antigravity to read quota");
+  expect(quota.textContent).not.toMatch(/%|tokens|sign-in/);
+  expect([...quota.querySelectorAll(".quick-usage-ring")].map(ring => ring.textContent)).toEqual(["–", "–"]);
   expect(ui.cards()).toHaveLength(3);
 });
 
@@ -219,14 +220,14 @@ it("shows loading, failure, retry, then unavailable for Antigravity", async () =
   let reject!: (error: Error) => void;
   const request = vi.fn(() => new Promise<UsageView>((_, fail) => { reject = fail; }));
   const ui = await mount(request); await ui.toggle();
-  const quota = () => host.querySelector('[aria-label="Antigravity quota"]')!.textContent;
+  const quota = () => host.querySelector('[aria-label="Antigravity quota"] .quick-usage-note')!.textContent!.replace(/\s*·?\s*Retry quota$/, "");
   expect(quota()).toBe("Loading quota…");
   await act(async () => reject(new Error("secret raw provider response")));
-  expect(quota()).toBe("Quota refresh failed.");
+  expect(quota()).toBe("Quota refresh failed");
   expect(host.textContent).not.toContain("secret");
   request.mockImplementation(async () => limits());
   await act(async () => host.querySelector<HTMLButtonElement>(".quick-usage-note button")!.click());
-  expect(quota()).toBe("Quota readings unavailable.");
+  expect(quota()).toBe("Quota readings unavailable");
   expect(ui.cards()[0].textContent).toContain("42%");
 });
 

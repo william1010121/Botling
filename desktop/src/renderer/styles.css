@@ -645,12 +645,18 @@ button { font: inherit; color: inherit; }
 .quick-usage-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .quick-usage-cards.single { grid-template-columns: minmax(0, 1fr); }
 .quick-usage-card { display: flex; align-items: center; gap: 8px; padding: 10px 8px; background: #232328; border-radius: 8px; min-width: 0; }
+/* The card colour is the dark theme's; light uses the page's own surface so the ring track and text stay readable. */
+:root[data-theme="light"] .quick-usage-card { background: var(--bubble); box-shadow: inset 0 0 0 1px var(--line); }
 .quick-usage-ring { position: relative; width: 41px; height: 41px; flex-shrink: 0; display: grid; place-items: center; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .quick-usage-ring svg { position: absolute; inset: 0; width: 41px; height: 41px; transform: rotate(-90deg); }
 .quick-usage-card strong { display: block; font-size: 13px; font-weight: 400; }
 .quick-usage-card small { display: block; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .quick-usage-note { margin: 6px 0 0; font-size: 11px; color: var(--faint); }
-.quick-usage-note button { border: 0; background: none; color: var(--blue); font: inherit; cursor: pointer; }
+.quick-usage-retry { white-space: nowrap; }
+.quick-usage-note button { border: 0; background: none; color: var(--blue); font: inherit; cursor: pointer; padding: 0 2px; border-radius: 4px; }
+.quick-usage-note button:hover:not(:disabled) { text-decoration: underline; }
+.quick-usage-note button:disabled { color: var(--faint); cursor: default; }
+.quick-usage-note button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* The bot's settings in the right panel (1.x's DetailPanel slider button and SettingsPage). */
 .detail-settings, .panel-back { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
