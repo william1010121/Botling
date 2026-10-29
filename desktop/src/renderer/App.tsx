@@ -1,3 +1,4 @@
+import { TerminalPanels } from './TerminalPanel';
 // The app page: React chrome around the reused chat page. The left column lists the bots (as the
 // Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
 // (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
@@ -336,6 +337,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} />
+        {!web && <TerminalPanels onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} />}
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>

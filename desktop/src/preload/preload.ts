@@ -11,6 +11,18 @@ ipcRenderer.on("botling:message", (_event, message: unknown) => {
 
 contextBridge.exposeInMainWorld("botling", Object.freeze({
   protocol: 2,
+  ...(process.isMainFrame ? { terminal: Object.freeze({
+    request: (request: unknown) => ipcRenderer.invoke('botling:terminal', request),
+    subscribe: (listener: (event: unknown) => void) => {
+      const handler = (_event: unknown, value: unknown) => listener(value);
+      ipcRenderer.on('botling:terminal:event', handler);
+      return () => ipcRenderer.removeListener('botling:terminal:event', handler);
+    },
+    onToggle: (listener: () => void) => {
+      const handler = () => listener(); ipcRenderer.on('botling:terminal:toggle', handler);
+      return () => ipcRenderer.removeListener('botling:terminal:toggle', handler);
+    },
+  }) } : {}),
   // Only main selects the native-editor shell; child frames never receive this bridge.
   ...(process.isMainFrame&&process.argv.includes("--botling-editor-shell=1")?{editorHost:editorBridge(ipcRenderer,"shell")} : {}),
   platform: process.platform,

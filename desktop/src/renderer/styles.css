@@ -942,3 +942,16 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 .report-viewer header button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--chip); cursor: pointer; }
 .report-viewer header button:hover { background: var(--hover); }
 .report-viewer header button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+.terminal-panel { height: 300px; min-height: 120px; max-height: 70vh; resize: vertical; overflow: hidden; display: flex; flex-direction: column; flex-shrink: 0; background: #111318; color: #e5e7eb; border-top: 1px solid #454850; }
+.terminal-panel[hidden], .terminal-tab[hidden] { display: none; }
+.terminal-toolbar { display: flex; gap: 6px; align-items: center; padding: 5px 8px; flex-shrink: 0; }
+.terminal-toolbar [role=tablist] { flex: 1; overflow-x: auto; white-space: nowrap; }
+.terminal-toolbar button[aria-selected=true] { background: #44506b; }
+.terminal-toolbar select { max-width: 180px; }
+.terminal-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 8px; }
+.terminal-emulator { flex: 1; min-height: 0; }
+.terminal-toggle { align-self: flex-end; font-size: 11px; padding: 2px 12px; }
+.terminal-empty { padding: 20px; }
+
+@font-face { font-family: "Botling Terminal"; src: url("terminal-assets/MesloLGS-NF-Regular.ttf") format("truetype"); font-display: block; }

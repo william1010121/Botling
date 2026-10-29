@@ -23,3 +23,9 @@ it('Reload Chat Page reloads only that window\'s native chat page, through main'
  // Without a handler (older callers) the item is absent rather than dead.
  expect(flat(appMenuTemplate('darwin')).some(i=>i.label==='Reload Chat Page')).toBe(false);
 });
+it('Cmd+J targets the shell terminal even when a child editor has focus', () => {
+ const win=new (BrowserWindow as any)();win.webContents.send=vi.fn();
+ const item=flat(appMenuTemplate('darwin')).find(i=>i.accelerator==='CmdOrCtrl+J');
+ item.click(item,win,{});item.click(item,undefined,{});
+ expect(win.webContents.send).toHaveBeenCalledExactlyOnceWith('botling:terminal:toggle');
+});

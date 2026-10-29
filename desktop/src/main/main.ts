@@ -1,6 +1,9 @@
+import { BotTerminals } from './terminal';
+import { sendTerminalEvent } from './terminal-transport';
+import { installTerminalIPC } from './terminal-ipc';
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, webContents, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
@@ -136,7 +139,7 @@ const CHAT_URL = `${CHAT_ORIGIN}/chat.html`;
  * needs inline styles; it loads the ccb-latex plugin from a blob: module. Neither page can connect
  * anywhere or frame anything but what is listed. */
 const APP_CSP = [
-  "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'",
+  "default-src 'none'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data:", "font-src 'self'",
   "frame-src botling-chat: botling-card:", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
 ].join("; ");
 const CHAT_CSP = [
@@ -168,6 +171,11 @@ const openingWindows = new WeakMap<BrowserWindow, Promise<boolean>>();
 const appContents = new Set<number>();
 const recoveryContents = new Set<number>();
 
+const terminals = new BotTerminals((owner, event) => {
+  const contents = webContents.fromId(owner) ?? undefined;
+  sendTerminalEvent(contents, event);
+});
+const deletedTerminalBots = new Set<string>();
 const core: CoreClient = new CoreClient({
   script: join(root, "out", "core", "main.cjs"),
   hostScript: join(root, "out", "host", "host-utility.mjs"),
@@ -180,6 +188,7 @@ const core: CoreClient = new CoreClient({
       lastEpoch = event.epoch;
     }
     if (event.event.type === "web.updated") web.update(event.event.web);
+    if (event.event.type === 'bot.removed') { deletedTerminalBots.add(event.event.botId); terminals.remove(event.event.botId); }
     broadcast(event);
   },
   audit: note,
@@ -485,12 +494,18 @@ function openSite(accountId: string, url: string): number {
 // ----------------------------------------------------------------------------------------------
 // IPC from the app's renderer
 
-function fromAppFrame(event: IpcMainEvent): boolean {
+function fromAppFrame(event: Pick<IpcMainEvent, "sender" | "senderFrame">): boolean {
   const frame = event.senderFrame;
   const ok = !!frame && appContents.has(event.sender.id) && frame === event.sender.mainFrame && frame.url.startsWith(`${APP_ORIGIN}/`);
   if (!ok) note(`refused IPC from ${frame?.url ?? "an unknown frame"} (contents ${event.sender.id})`);
   return ok;
 }
+
+installTerminalIPC(ipcMain, terminals, fromAppFrame, async botId => {
+  const snapshot = await core.call({ type: 'chat.snapshot' });
+  if (deletedTerminalBots.has(botId)) return null;
+  return snapshot.bots.find(bot => bot.id === botId)?.folder ?? null;
+});
 
 // A separate diagnostic channel: renderer arguments cannot grant main persistence authority.
 ipcMain.on(TEST_TRACE_CHANNEL,(event,record:unknown)=>acceptTraceIPC(traceWriter,()=>{
@@ -814,6 +829,7 @@ function createWindow() {
   });
   appContents.add(window.webContents.id);
   const id = window.webContents.id;
+  window.webContents.once('destroyed', () => terminals.closeOwner(id));
   window.on('focus',()=>traceWriter?.observe('native.window.focus',{contentsId:id}));
   window.on('blur',()=>traceWriter?.observe('native.window.blur',{contentsId:id}));
   window.webContents.on('focus',()=>traceWriter?.observe('native.contents.focus',{contentsId:id}));
@@ -821,7 +837,7 @@ function createWindow() {
   window.webContents.on('did-start-navigation',(details)=>traceWriter?.observe('native.navigation.start',{contentsId:id,url:details.url.slice(0,2048),isMainFrame:details.isMainFrame,frame:traceFrameIdentity(details.frame)}));
   window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
-  window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
+  window.on("closed", () => { terminals.closeOwner(id); appContents.delete(id); if (mainWindow === window) mainWindow = null; });
   window.webContents.once('did-finish-load',()=>startup.mark('window.loaded'));
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);
   const editor=prepareNativeEditorHost(window,root,ownerReady,preloadDir);
@@ -934,7 +950,8 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
   });
   appContents.add(window.webContents.id);
   const id = window.webContents.id;
-  window.on("closed", () => { appContents.delete(id); });
+  window.webContents.once('destroyed', () => terminals.closeOwner(id));
+  window.on("closed", () => { terminals.closeOwner(id); appContents.delete(id); });
   mainWindow = window;
   return window;
 }
@@ -1106,8 +1123,9 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   // Cookies are written to disk lazily; make sure each account's are there before exiting.
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
+  const terminalShutdown = terminals.closeAll();
   web.closeAll();
-  void Promise.allSettled([core.stop(), installer.discard(), ...flushes]).then(async () => {
+  void Promise.allSettled([terminalShutdown, core.stop(), installer.discard(), ...flushes]).then(async () => {
     ipcMain.removeAllListeners(TEST_TRACE_CHANNEL);
     try{await traceWriter?.close();}catch(error){note('Synthetic trace flush failed: '+String(error));}
     if(startupRecovery)rmSync(profileDir,{recursive:true,force:true});app.exit(0);

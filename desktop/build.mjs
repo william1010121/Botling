@@ -1,3 +1,4 @@
+import { stageTerminalRuntime } from './scripts/terminal-runtime.mjs';
 import { packageAgyHelper } from './scripts/package-agy-helper.mjs';
 // Bundles Botling 2.0: main (CJS, Node), preload (CJS, sandboxed), core (CJS, utility process),
 // renderer (IIFE, browser: the React app page) and the chat frame (IIFE: Web/src's chat page,
@@ -21,10 +22,11 @@ const here = dirname(fileURLToPath(import.meta.url));
 export function buildMain({ root = here, outfile = join(root, "out/main/main.cjs"), updatePublicKey = null } = {}) {
   root = resolve(root);
   outfile = resolve(outfile);
+  stageTerminalRuntime(root, dirname(outfile));
   return build({
     absWorkingDir: root, preserveSymlinks: true,
     bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof",
-    entryPoints: [join(root, "src/main/main.ts")], outfile, external: ["electron", "original-fs"],
+    entryPoints: [join(root, "src/main/main.ts")], outfile, external: ["electron", "original-fs", "node-pty"],
     define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) },
   });
 }
