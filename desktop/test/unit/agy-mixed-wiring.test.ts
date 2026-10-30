@@ -155,3 +155,13 @@ it('simultaneous head cards with the same RPC id cannot approve the other engine
  h.b.choose(cc.id,1);expect(c.answers).toHaveLength(1);expect(a.answers).toEqual([]);
  h.b.choose(ac.id,1);expect(a.answers).toHaveLength(1);expect(c.answers).toHaveLength(1);a.finish('denied',false);c.finish('denied',true);
 });
+it('chat send to agy is accepted immediately while the agy turn is blocked on an approval',async()=>{
+ const h=bot('agy');h.b.send('first');await until(()=>fixture.heads.some(x=>x.engine==='agy'&&x.sent.length));
+ const lead=fixture.heads.find(x=>x.engine==='agy')!;
+ lead.emit({kind:'permission',requestId:'blocked-1',tool:'write_file',summary:'write',input:{path:'a'}});
+ await until(()=>h.b.snapshot().messages.some(m=>!!m.approval));
+ const started=Date.now(),second=h.b.send('while blocked',{to:'agy'});
+ expect(second.messageId).toBeTruthy();expect(Date.now()-started).toBeLessThan(200);
+ expect(h.b.snapshot().messages.some(m=>m.text==='while blocked')).toBe(true);
+ expect(h.events.some(e=>e.type==='turn.finished')).toBe(false);
+});
