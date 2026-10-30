@@ -116,46 +116,20 @@ it('mixed Codex refusal cannot be erased by a later successful result',async()=>
  expect(head.answers[0][1]).toBe(false);head.finish('operation denied',true);await settle();
  expect(h.events.find(e=>e.type==='turn.finished'&&e.turnId===turn.turnId).status).toBe('failed');
 });
-it('routes a missing app-handoff grant to an actionable chat card and gates dispatch',async()=>{
+it('app_handoff from an agy turn dispatches immediately without an approval card',async()=>{
  const {AgyMcpBridge}=await import('../../src/core/agent/agy-mcp');
- async function request(label:string){
-  const h=bot('agy'),priorHeads=fixture.heads.length,turn=h.b.send('offline authorized request');await until(()=>fixture.heads.slice(priorHeads).some(x=>x.engine==='agy'&&x.sent.length));
-  const lead=fixture.heads.slice(priorHeads).find(x=>x.engine==='agy')!,privatePath=join(h.folder,'.private-profile');mkdirSync(privatePath);
-  const dispatch=vi.fn(async()=>({task_id:`task-${label}`,status:'accepted'}));
-  const bridge=new AgyMcpBridge(h.folder,privatePath,dispatch,undefined,undefined,undefined,item=>lead.emit(item));
-  lead.answerHandler=(id:string,allow:boolean)=>bridge.answer(id,allow);lead.interruptHandler=()=>{void bridge.cancel();};
+ const h=bot('agy'),priorHeads=fixture.heads.length,turn=h.b.send('offline authorized request');await until(()=>fixture.heads.slice(priorHeads).some(x=>x.engine==='agy'&&x.sent.length));
+ const lead=fixture.heads.slice(priorHeads).find(x=>x.engine==='agy')!,privatePath=join(h.folder,'.private-profile');mkdirSync(privatePath);
+ const dispatch=vi.fn(async()=>({task_id:'task-auto',status:'accepted'}));
+ const bridge=new AgyMcpBridge(h.folder,privatePath,dispatch,undefined,undefined,undefined,item=>lead.emit(item));
+ try{
   const endpoint=await bridge.start();bridge.beginTurn();
-  const pending=fetch(endpoint.url,{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'app_handoff',arguments:{instructions:`authorized ${label}`,name:label}}})}).then(r=>r.json());
-  await until(()=>h.b.snapshot().messages.some(m=>m.approval?.tool==='app_handoff'&&m.text.includes(label)));
-  const card=h.b.snapshot().messages.findLast(m=>m.approval?.tool==='app_handoff'&&m.text.includes(label))!;
-  return {h,turn,lead,bridge,dispatch,pending,card};
- }
- const allowed=await request('allow');
- try{
-  expect(allowed.card.choices?.map(c=>c.label)).toEqual(['Allow once',"Don't allow"]);
-  const delivered=allowed.h.events.findLast(e=>e.type==='message.added'&&e.message.id===allowed.card.id);
-  expect(delivered?.message.approval?.tool).toBe('app_handoff');
-  expect(delivered?.message.choices?.map((c:{label:string})=>c.label)).toEqual(['Allow once',"Don't allow"]);
-  expect(allowed.dispatch).not.toHaveBeenCalled();
-  expect(allowed.h.events.some(e=>e.type==='turn.finished'&&e.turnId===allowed.turn.turnId)).toBe(false);
-  allowed.h.b.choose(allowed.card.id,0);
-  await expect(allowed.pending).resolves.toMatchObject({result:{isError:false}});
-  expect(allowed.dispatch).toHaveBeenCalledTimes(1);
-  allowed.lead.finish('accepted');await until(()=>allowed.h.events.some(e=>e.type==='turn.finished'&&e.turnId===allowed.turn.turnId));
- }finally{await allowed.bridge.close();}
- const denied=await request('deny');
- try{
-  denied.h.b.choose(denied.card.id,1);
-  await expect(denied.pending).resolves.toMatchObject({result:{isError:true}});
-  expect(denied.dispatch).not.toHaveBeenCalled();
-  denied.lead.finish('not approved');
- }finally{await denied.bridge.close();}
- const interrupted=await request('interrupt');
- try{
-  expect(interrupted.turn.turnId).toBeTruthy();await interrupted.h.b.stop(interrupted.turn.turnId!);
-  await expect(interrupted.pending).resolves.toMatchObject({result:{isError:true}});
-  expect(interrupted.dispatch).not.toHaveBeenCalled();
- }finally{await interrupted.bridge.close();}
+  const res=await fetch(endpoint.url,{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'app_handoff',arguments:{instructions:'authorized auto',name:'auto'}}})}).then(r=>r.json());
+  expect(res).toMatchObject({result:{isError:false}});
+  expect(dispatch).toHaveBeenCalledTimes(1);
+  expect(h.b.snapshot().messages.some(m=>m.approval?.tool==='app_handoff')).toBe(false);
+  lead.finish('accepted');await until(()=>h.events.some(e=>e.type==='turn.finished'&&e.turnId===turn.turnId));
+ }finally{await bridge.close();}
 });
 it.each([false,true])('worker-owned handback waits for its report and respects stop=%s',async stop=>{
  const h=bot('codex');h.b.send('offline');await until(()=>fixture.heads[0]?.sent.length);const lead=fixture.heads[0];

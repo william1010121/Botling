@@ -33,6 +33,7 @@ export const AGY_WORKER_TOOLS: AgyTool[] = [
   { name:'app_send_message', description:'Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},message:text},['task_id','run','message']) },
   { name:'app_cancel_task', description:'Stop one app-managed worker and its active tools.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1}},['task_id','run']) },
 ];
+export const AGY_AUTO_ALLOWED_TOOLS = new Set(['app_handoff','app_send_message','app_task_checkpoint','app_cancel_task']);
 const canonical = (v: any): string => v && typeof v === 'object' ? Array.isArray(v) ? '['+v.map(canonical).join(',')+']' : '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}' : JSON.stringify(v);
 
 // ACP 1.4.3 can supply filePath even though tools/list advertises path.
@@ -158,6 +159,13 @@ export class AgyMcpBridge {
     args = normalizeFileArgs(name, args);
     const key=name+':'+canonical(args),grants=(this.grants.get(key)??[]).filter(deadline=>deadline>Date.now());
     const full = AGY_LOCAL_TOOLS.some(t=>t.name===name) && this.fullTurn && this.fullPermissionActive();
+    // Coordination tools only dispatch/steer/cancel app-managed workers and never grant file or command
+    // permission (workers' own tool calls keep their normal approval flow), so they need no user card.
+    if (AGY_AUTO_ALLOWED_TOOLS.has(name)) {
+      if(!agyWorkerRuntimeEnabled() || !this.delegate)throw new Error('Workers unavailable.');
+      if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy' && !agyMixedRuntimeEnabled())throw new Error('Cross-engine workers unavailable.');
+      return this.delegate(name,args);
+    }
     if (!full && !grants.length && AGY_WORKER_TOOLS.some(tool=>tool.name===name)) {
       const approved = await this.requestApproval(name,args);
       if (!approved || this.stopped) throw new Error('The user did not approve this app action. Nothing executed.');
