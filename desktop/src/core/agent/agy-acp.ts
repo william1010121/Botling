@@ -282,6 +282,8 @@ export function verifyAcpRuntime(command: string) {
   }
 }
 
+/** Prepended to every turn the main chat head sends to Antigravity, whose built-in persona ignores the system rule. Never shown or archived: it is added inside the head, after the app has stored the turn. */
+export const AGY_REPLY_REMINDER = "(Reply rule: at most 3 sentences, conclusion and next step only; no opening praise or filler, no headings, no bullet lists, no emoji; long content goes into a report page with a link; after dispatching subagents say only how many and what for, in one sentence.)";
 export class AgyAcpHead {
   private process?: ManagedProcess;
   private bridge?: AgyMcpBridge;
@@ -373,7 +375,8 @@ export class AgyAcpHead {
   }
   send(text: string, uuid: string, images: string[] = []) {
     if (!this.protocol || this.stopped) throw new Error("ACP not running.");
-    this.queue.unshift({text, uuid, images}); void this.drain();
+    const sent = this.config.worker ? text : `${AGY_REPLY_REMINDER}\n\n${text}`;
+    this.queue.unshift({text: sent, uuid, images}); void this.drain();
   }
   private async drain() {
     if (this.sending || this.stopped || !this.protocol) return;

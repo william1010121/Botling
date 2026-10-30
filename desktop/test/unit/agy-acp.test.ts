@@ -1,11 +1,11 @@
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,rmSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AgyMcpBridge} from '../../src/core/agent/agy-mcp';
-import {afterEach,expect,it,vi} from 'vitest';
+import {afterEach,describe,expect,it,vi} from 'vitest';
 const gate=vi.hoisted(()=>({workers:true}));
 vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>gate.workers,agyMixedRuntimeEnabled:()=>false,agyPairAllowed:()=>false}));
-import {AgyAcpProtocol,AgyAcpHead,ACP_TOOLS,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
+import {AgyAcpProtocol,AgyAcpHead,AGY_REPLY_REMINDER,ACP_TOOLS,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
 const clients:AgyAcpProtocol[]=[];
 afterEach(()=>{gate.workers=true;clients.splice(0).forEach(c=>c.close());});
 const tick=async()=>{for(let i=0;i<15;i++)await Promise.resolve();};
@@ -67,8 +67,8 @@ it('worker reports wait for the Bot scheduler and cannot consume a queued user t
  (head as any).queue.push({text:'worker report',uuid:'r',images:[],taskId:'task',taskRun:1});
  try{
   await (head as any).drain();expect(sent).toEqual([]);
-  head.send('user message','u');await tick();expect(sent).toEqual(['user message']);
-  available=true;await vi.advanceTimersByTimeAsync(100);expect(sent).toEqual(['user message','worker report']);
+  head.send('user message','u');await tick();expect(sent).toEqual([`${AGY_REPLY_REMINDER}\n\nuser message`]);
+  available=true;await vi.advanceTimersByTimeAsync(100);expect(sent).toEqual([`${AGY_REPLY_REMINDER}\n\nuser message`,'worker report']);
   expect(events.filter(i=>i.kind==='backgroundTurn')).toEqual([{kind:'backgroundTurn',taskId:'task'}]);
  }finally{await head.terminate();vi.useRealTimers();}
 });
@@ -207,4 +207,26 @@ it('uses bridge-owned execution cards instead of stale ACP command results',asyn
   h.client.receive({jsonrpc:'2.0',id:prompt,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);
   expect(h.items.at(-1)).toMatchObject({kind:'result',subtype:'tool_failed'});
  }finally{await head.terminate();await sent;rmSync(root,{recursive:true,force:true});}
+});
+
+describe('agy per-turn reply reminder',()=>{
+ const turn=async(config:any,text:string)=>{
+  const sent:string[]=[],items:any[]=[];
+  const head=new AgyAcpHead({command:'never-spawned',cwd:'/owned',sessionId:'s',resume:false,...config},{onItem:i=>items.push(i),onExit(){}});
+  (head as any).protocol={send:async(t:string)=>{sent.push(t);return true;},close(){}};
+  head.send(text,'u');await tick();await head.terminate();return {sent,items};
+ };
+ it('starts every main-head turn with the reminder, one time, and leaves the rest untouched',async()=>{
+  const {sent,items}=await turn({},'hello there');
+  expect(sent).toEqual([`${AGY_REPLY_REMINDER}\n\nhello there`]);
+  expect(AGY_REPLY_REMINDER.startsWith('(Reply rule: at most 3 sentences')).toBe(true);
+  expect(JSON.stringify(items)).not.toContain('Reply rule');
+ });
+ it('does not touch agy worker turns',async()=>{
+  expect((await turn({worker:true},'do the task')).sent).toEqual(['do the task']);
+ });
+ it('is not part of the composed turn, system prompt or archive text of Claude/Codex',()=>{
+  const src=readFileSync(new URL('../../src/core/bot.ts',import.meta.url),'utf8')+readFileSync(new URL('../../src/core/prompts.ts',import.meta.url),'utf8');
+  expect(src).not.toContain('Reply rule:');
+ });
 });

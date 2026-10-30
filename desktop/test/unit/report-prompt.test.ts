@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { promptDoc } from "../../reports/v2/promptdoc";
+import { AGY_DELEGATION_POLICY } from "../../src/core/prompts-agy";
 import { botPrompts, desktopPrompts, codexLocalReportRule, codexWorkerInstructions, reportPageLine, type ReportTool } from "../../src/core/prompts";
 
 const tool: ReportTool = { command: "env -u ELECTRON_RUN_AS_NODE '/Applications/Botling 2.app/Contents/MacOS/Botling 2' --render-report", docs: "/Applications/Botling 2.app/Contents/Resources/report/report-blocks.md" };
@@ -144,10 +145,10 @@ describe("the reply length rule reaches every engine", () => {
     });
   }
 
-  it("keeps the length rule next to the report page rule for Antigravity", () => {
-    const lines = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "agy" }), profile("bot"), tool).system.split("\n");
-    const report = lines.findIndex((l) => l.includes("ReportSpec v2"));
-    expect(lines[report - 1]).toContain("Results meant for the user");
-    expect(lines[report + 1]).toContain("At most 3 sentences");
+  it("puts the specific brevity rule near the top of the Antigravity system text, before the delegation policy", () => {
+    const system = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "agy" }), profile("bot"), tool).system;
+    for (const phrase of ["no praise, greeting or filler opener", "No headings, no bullet lists, no emoji", "how many and what for", "translations and rewrites of a report"]) expect(system).toContain(phrase);
+    expect(system.split("\n").findIndex((l) => l.includes("no praise, greeting"))).toBeLessThanOrEqual(2);
+    expect(system.indexOf("no praise, greeting")).toBeLessThan(system.indexOf(AGY_DELEGATION_POLICY.slice(0, 60)));
   });
 });
