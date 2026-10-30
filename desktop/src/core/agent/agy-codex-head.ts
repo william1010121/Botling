@@ -8,7 +8,7 @@ export class AgyCodexHead extends CodexHead {
   constructor(config:CodexHeadConfig,handlers:Omit<HeadHandlers,'onItem'>&{onItem(item:CodexItem):void}){
     if(!agyMixedRuntimeEnabled())throw Error('Mixed Codex runtime is disabled pending live validation.');
     const state={busy:false,failure:undefined as string|undefined,approvals:new Map<string,Record<string,unknown>>()};
-    super({...config,autoMode:false,bypassPermissions:false,componentEditor:null,workerInstructions:null,routinesFile:null,writableRoots:[],retryLog:null,
+    super({...config,autoMode:false,bypassPermissions:config.bypassPermissions===true,componentEditor:null,workerInstructions:null,routinesFile:null,writableRoots:[],retryLog:null,
       prefixArgs:[...(config.prefixArgs??[]),'-c','features.multi_agent=false','-c','agents.enabled=false']},
       {...handlers,onItem:item=>{
         if(item.kind==='permission')state.approvals.set(item.requestId,JSON.parse(JSON.stringify(item.input)));

@@ -14,7 +14,7 @@ export function codexWorkerConfig(config:AgyConfig):CodexHeadConfig {
   if(config.resume&&!threads.thread(config.sessionId))throw Error('Codex worker conversation mapping missing; no replacement session or replay.');
   return {...base,cwd:config.cwd,sessionId:config.sessionId,resume:config.resume,threads,
     instructions:config.systemPrompt??'',workerInstructions:null,componentEditor:null,routinesFile:null,
-    autoMode:false,bypassPermissions:false,writableRoots:[],retryLog:null};
+    autoMode:false,bypassPermissions:config.workerBypassPermissions?.().codex===true,writableRoots:[],retryLog:null};
 }
 
 /** The factory is wired but unreachable in production while the source gate remains false. */

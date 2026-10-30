@@ -85,6 +85,19 @@ it('worker transport selection pins engine, permissions, report/run identity and
  await resumed.tool('app_cancel_task',{task_id:c.task_id,run:2});expect(fixture.heads.at(-1).stopped).toBe(true);
  await expect(resumed.tool('app_handoff',{instructions:'forbidden',engine:'claude'})).rejects.toThrow('Claude');
 });
+it('workers inherit the bot bypass setting for their own engine and keep asking when it is off',async()=>{
+ for(const on of [true,false]){
+  const home=workspace(),flags={agy:on,codex:on};
+  const config:any={command:'/never-spawned',cwd:home,acpHome:join(home,'profile-'+on),sessionId:'owner-'+on,resume:false,bypassPermissions:flags.agy,workerBypassPermissions:()=>({codex:flags.codex}),codexWorkerConfig:(c:any)=>({command:'/never-spawned',cwd:home,sessionId:c.sessionId,resume:c.resume,threads:new CodexThreads(join(home,'shared')),instructions:'',autoMode:true,bypassPermissions:true,writableRoots:['/'],componentEditor:{must:'be removed'}})};
+  const m=new AgyWorkers(config,()=>{},()=>{},(c,h)=>createAgyWorkerHead(c,h,(a,b)=>new fixture.Head('agy',a,b)));managers.push(m);
+  await m.tool('app_handoff',{instructions:'a',engine:'agy'});await m.tool('app_handoff',{instructions:'c',engine:'codex'});await settle();
+  const agy=fixture.heads.findLast(x=>x.engine==='agy'),codex=fixture.heads.findLast(x=>x.engine==='codex');
+  expect(agy.config.bypassPermissions).toBe(on);
+  expect(codex.config).toMatchObject({bypassPermissions:on,autoMode:false,writableRoots:[]});
+  flags.codex=!on;await m.tool('app_handoff',{instructions:'c2',engine:'codex'});await settle();
+  expect(fixture.heads.findLast(x=>x.engine==='codex').config.bypassPermissions).toBe(!on);
+ }
+});
 it('missing Codex worker mapping fails closed before constructing a replacement head',()=>{
  const home=workspace(),before=fixture.heads.length;
  expect(()=>codexWorkerConfig({command:'none',cwd:home,acpHome:home,sessionId:'missing',resume:true,codexWorkerConfig:()=>({}) as any})).toThrow('mapping missing');

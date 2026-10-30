@@ -22,7 +22,7 @@ it('exposes only coordinator tools and keeps cross-engine dispatch gated',async(
   await expect(bridge.invoke('app_handoff',args)).rejects.toThrow('Cross-engine');expect(dispatch).not.toHaveBeenCalled();
  }finally{await bridge.close();rmSync(dir,{recursive:true,force:true});}
 });
-it('dispatches coordination tools without an approval card, while reconcile still needs approval',async()=>{
+it('dispatches coordination tools and reconcile without an approval card',async()=>{
  const {mkdtempSync,mkdirSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
  const {AgyMcpBridge}=await import('../../src/core/agent/agy-mcp');
  const dir=mkdtempSync(join(tmpdir(),'agy-handoff-auto-')),home=join(dir,'home');mkdirSync(home);
@@ -36,13 +36,9 @@ it('dispatches coordination tools without an approval card, while reconcile stil
   await expect(call(3,'app_task_checkpoint',{task_id:'task-1',run:1,outcome:'complete',evidence:'ok'})).resolves.toMatchObject({result:{isError:false}});
   expect(dispatch).toHaveBeenCalledTimes(3);
   expect(items.some(item=>item.kind==='permission')).toBe(false);
-  // Reconcile stays behind explicit approval.
-  const pending=call(4,'app_reconcile_report',{task_id:'task-1',run:1,action:'acknowledge'});
-  for(let i=0;i<50&&!items.some(item=>item.kind==='permission');i++)await new Promise(resolve=>setTimeout(resolve,2));
-  const card=items.find(item=>item.kind==='permission');expect(card).toMatchObject({tool:'app_reconcile_report'});
-  expect(dispatch).toHaveBeenCalledTimes(3);
-  bridge.answer(card.requestId,false);
-  await expect(pending).resolves.toMatchObject({result:{isError:true}});
-  expect(dispatch).toHaveBeenCalledTimes(3);
+  // Reconcile also dispatches directly, with no card.
+  await expect(call(4,'app_reconcile_report',{task_id:'task-1',run:1,action:'acknowledge'})).resolves.toMatchObject({result:{isError:false}});
+  expect(dispatch).toHaveBeenCalledTimes(4);
+  expect(items.some(item=>item.kind==='permission')).toBe(false);
  }finally{await bridge.close();rmSync(dir,{recursive:true,force:true});}
 });

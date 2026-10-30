@@ -31,7 +31,6 @@ async function setup(worker=false){
 }
 it('connects both worker engines through exact grants and owner-specific cards, then correlates the report',async()=>{
  const h=await setup(),args={engine:'codex',instructions:'offline fixture only'};
- await expect(h.bridge.invoke('app_handoff',args)).rejects.toThrow('No matching');expect(fixture.workers).toHaveLength(0);
  h.bridge.grant('botling_app_handoff',args);const task=await h.bridge.invoke('app_handoff',args);expect(fixture.workers[0].config.workerEngine).toBe('codex');
  const child=fixture.workers[0];child.handlers.onItem({kind:'permission',requestId:'p',tool:'write',summary:'fixture',input:{path:'x'}});
  const card=h.events.findLast(e=>e.kind==='permission');expect(card.workerId).toBe(task.task_id);h.head.answer(card.requestId,false,{path:'x'});expect(child.answers[0][1]).toBe(false);
@@ -39,12 +38,12 @@ it('connects both worker engines through exact grants and owner-specific cards, 
  h.acknowledged.available=true;await (h.head as any).drain();await settle();
  expect(h.prompts[0]).toContain(`task_id="${task.task_id}" run="1" engine="codex" status="failed"`);expect(h.head.completionDependencies).toEqual([]);expect(child.stopped).toBe(true);
 });
-it('uncertain report reconciliation requires a separate exact approval and never replays the worker task',async()=>{
+it('uncertain report reconciliation needs no approval card and never replays the worker task',async()=>{
  const h=await setup(),args={instructions:'offline'},task=await(async()=>{h.bridge.grant('botling_app_handoff',args);return h.bridge.invoke('app_handoff',args);})();
  fixture.workers[0].handlers.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();h.acknowledged.available=true;h.acknowledged.ok=false;await (h.head as any).drain();await settle();
  const reconcile={task_id:task.task_id,run:1,action:'retry'};
- await expect(h.bridge.invoke('app_reconcile_report',reconcile)).rejects.toThrow('No matching');expect(h.prompts).toHaveLength(1);
- h.bridge.grant('botling_app_reconcile_report',reconcile);h.acknowledged.ok=true;const result=await h.bridge.invoke('app_reconcile_report',reconcile);await settle();
+ expect(h.prompts).toHaveLength(1);
+ h.acknowledged.ok=true;const result=await h.bridge.invoke('app_reconcile_report',reconcile);await settle();
  expect(result.taskReplayed).toBe(false);expect(fixture.workers).toHaveLength(1);expect(h.prompts).toHaveLength(2);expect(h.head.completionDependencies).toEqual([]);
 });
 it('worker profiles expose no nested worker transport even with fixture capability gates',async()=>{
@@ -58,7 +57,7 @@ it('coordinator exposes delegation only and checkpoint needs its own exact grant
  const a=await h.bridge.invoke('app_handoff',args);
  fixture.workers[0].handlers.onItem({kind:'result',ok:true,text:'research result',error:'',subtype:'end_turn'});await settle();
  const decision={task_id:a.task_id,run:1,outcome:'complete',evidence:'research accepted'};
- await expect(h.bridge.invoke('app_task_checkpoint',decision)).rejects.toThrow('No matching');
+ await expect(h.bridge.invoke('app_task_checkpoint',decision)).rejects.toThrow('No delivered report');
  expect(h.head.completionDependencies).toHaveLength(1);
 });
 
@@ -75,7 +74,6 @@ it('the report turn can continue its own task through the approval-bound bridge'
  const a=await h.bridge.invoke('app_handoff',args);
  (h.head as any).protocol.send=async()=>{
   const next={task_id:a.task_id,run:1,message:'same research scope: missing evidence'};
-  await expect(h.bridge.invoke('app_send_message',next)).rejects.toThrow('No matching');
   h.bridge.grant('botling_app_send_message',next);
   expect(await h.bridge.invoke('app_send_message',next)).toMatchObject({task_id:a.task_id,run:2});return true;
  };

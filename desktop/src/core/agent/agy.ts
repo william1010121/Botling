@@ -17,6 +17,8 @@ export interface AgyConfig {
   worker?: boolean;
   workerEngine?: "agy" | "codex";
   /** App-supplied transport config; never constructed from model/tool arguments. */
+  /** Read at each worker launch: the bot's current bypass setting for app-managed Codex workers (agy workers inherit `bypassPermissions`). */
+  workerBypassPermissions?: () => { codex: boolean };
   codexWorkerConfig?: (worker: AgyConfig) => import("./codex").CodexHeadConfig;
   processStarted?: (pid: number) => void;
   canStartReport?: () => boolean;

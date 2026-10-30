@@ -28,12 +28,12 @@ export const AGY_LOCAL_TOOLS: AgyTool[] = [
 ];
 export const AGY_WORKER_TOOLS: AgyTool[] = [
   { name:'app_task_checkpoint', description:'Resolve this task/run report with concrete acceptance evidence or a specific blocker. Does not grant authorization.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},outcome:{type:'string',enum:['complete','waiting_user','waiting_dependency','blocked']},evidence:text,dependency_task_id:text},['task_id','run','outcome','evidence']) },
-  { name:'app_reconcile_report', description:'After explicit user approval, acknowledge an uncertain report as received, or retry only its delivery. Never replays the worker task.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},action:{type:'string',enum:['acknowledge','retry']}},['task_id','run','action']) },
+  { name:'app_reconcile_report', description:'Needs no user approval card. Acknowledge an uncertain report as received, or retry only its delivery. Never replays the worker task.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},action:{type:'string',enum:['acknowledge','retry']}},['task_id','run','action']) },
   { name:'app_handoff', description:'Assign an authorized task to an app-managed agy or Codex worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.', inputSchema:schema({instructions:text,name:text,engine:{type:'string',enum:['agy','codex']}},['instructions']) },
   { name:'app_send_message', description:'Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},message:text},['task_id','run','message']) },
   { name:'app_cancel_task', description:'Stop one app-managed worker and its active tools.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1}},['task_id','run']) },
 ];
-export const AGY_AUTO_ALLOWED_TOOLS = new Set(['app_handoff','app_send_message','app_task_checkpoint','app_cancel_task']);
+export const AGY_AUTO_ALLOWED_TOOLS = new Set(['app_handoff','app_send_message','app_task_checkpoint','app_cancel_task','app_reconcile_report']);
 const canonical = (v: any): string => v && typeof v === 'object' ? Array.isArray(v) ? '['+v.map(canonical).join(',')+']' : '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}' : JSON.stringify(v);
 
 // ACP 1.4.3 can supply filePath even though tools/list advertises path.
