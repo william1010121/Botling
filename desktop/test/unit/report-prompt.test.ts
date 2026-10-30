@@ -132,3 +132,22 @@ describe("generated report writing guide", () => {
     expect(shipped).toContain("Never conceal defects or claim unperformed validation");
   });
 });
+
+describe("the reply length rule reaches every engine", () => {
+  for (const engine of ["claude", "codex", "agy"] as const) {
+    it(`caps chat replies at 3 sentences and forbids pasting long text (${engine})`, () => {
+      for (const role of ["bot", "manager"] as const) {
+        const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), tool).system;
+        expect(ours).toContain("At most 3 sentences, only the conclusion and the next step");
+        expect(ours).toMatch(/never paste long text|Do not paste long text/i);
+      }
+    });
+  }
+
+  it("keeps the length rule next to the report page rule for Antigravity", () => {
+    const lines = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "agy" }), profile("bot"), tool).system.split("\n");
+    const report = lines.findIndex((l) => l.includes("ReportSpec v2"));
+    expect(lines[report - 1]).toContain("Results meant for the user");
+    expect(lines[report + 1]).toContain("At most 3 sentences");
+  });
+});
