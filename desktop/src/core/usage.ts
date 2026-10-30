@@ -253,7 +253,8 @@ export class UsageBook {
   note(engine: "claude" | "codex", limits: RateLimits) {
     if (!isEmptyLimits(limits)) this.quotaStatus[engine] = "available";
     const old = engine === "claude" ? this.claude : this.codex;
-    const next = mergeLimits(old, limits);
+    // A Codex snapshot carries primary and secondary together: one without a 5-hour window means there is none now.
+    const next = engine === "codex" && limits.week && !limits.fiveHour ? mergeLimits({ ...old, fiveHour: undefined }, limits) : mergeLimits(old, limits);
     if (JSON.stringify(next) === JSON.stringify(old)) return;
     if (engine === "claude") this.claude = next; else this.codex = next;
     this.save(engine === "claude" ? "rate-limits.json" : "codex-rate-limits.json", next);

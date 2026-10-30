@@ -107,11 +107,12 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
     {claudeProblem && <p className="quick-usage-note" role="status">Claude: {claudeProblem}.</p>}
     {since(claude)}
     <h3>Codex</h3>
-    <div className="quick-usage-cards single">
+    <div className={codex.fiveHour ? "quick-usage-cards" : "quick-usage-cards single"}>
+      {codex.fiveHour && <QuotaCard engine="Codex" title="5 hours" window={codex.fiveHour} now={now} lastKnown={!!codexProblem} />}
       <QuotaCard engine="Codex" title="Week" window={codex.week} now={now} lastKnown={!!codexProblem} weekly />
     </div>
     {codexProblem && <p className="quick-usage-note" role="status">Codex: {codexProblem}.</p>}
-    {since({ fiveHour: null, week: codex.week })}
+    {since(codex)}
     <h3>Antigravity</h3>
     <AntigravityQuota quota={usage?.antigravity} now={now} loading={loading} failed={failed} onRetry={retry} />
   </section>;

@@ -11,7 +11,7 @@ const limits = (): UsageView => ({
   spendingStatus: "missing", day: "2026-10-26", spent: 0,
   tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, byBot: [], history: [],
   claude: { fiveHour: { used: .42, seen: now, resetsAt: now + 60_000 }, week: { used: .18, seen: now, resetsAt: now + 3 * 86400_000 } },
-  codex: { fiveHour: { used: .99, seen: now, resetsAt: now + 3600_000 }, week: { used: .31, seen: now, resetsAt: now + 5 * 86400_000 } },
+  codex: { fiveHour: null, week: { used: .31, seen: now, resetsAt: now + 5 * 86400_000 } },
 });
 let host: HTMLDivElement, root: Root;
 beforeEach(() => {
@@ -53,6 +53,15 @@ describe("quota readings in the production Quick settings popup", () => {
     expect(host.textContent).not.toContain("99%");
     expect(host.querySelectorAll('[role="status"]')).toHaveLength(0);
     expect(host.textContent).not.toContain("Last-known");
+  });
+
+  it("shows Codex 5 hours and Week when Codex reports a 5-hour window", async () => {
+    const value = limits(); value.codex.fiveHour = { used: .99, seen: now, resetsAt: now + 3600_000 };
+    const ui = await mount(vi.fn(async () => value)); await ui.toggle();
+    expect(ui.cards().map(card => card.getAttribute("aria-label"))).toEqual([
+      expect.stringContaining("Claude 5 hours limit"), expect.stringContaining("Claude Week limit"),
+      expect.stringContaining("Codex 5 hours limit, 99% used"), expect.stringContaining("Codex Week limit, 31% used"),
+    ]);
   });
 
   it("keeps missing windows unavailable and distinguishes an actually reported zero", async () => {

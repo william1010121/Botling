@@ -62,6 +62,27 @@ describe("reading the CLIs", () => {
   });
 });
 
+describe("Codex's 5-hour window follows the latest snapshot", () => {
+  const both = { primary: { usedPercent: 40, windowDurationMins: 300, resetsAt: 900_000_000 }, secondary: { usedPercent: 10, windowDurationMins: 10080, resetsAt: 900_500_000 } };
+  const weekly = { primary: { usedPercent: 12, windowDurationMins: 10080, resetsAt: 900_500_000 } };
+  it("reports 5 hours and Week for a two-window snapshot, only Week for a weekly one", () => {
+    expect(Object.keys(codexRateLimits(both)).sort()).toEqual(["fiveHour", "week"]);
+    expect(Object.keys(codexRateLimits(weekly))).toEqual(["week"]);
+  });
+  it("a weekly-only snapshot after a 5h+weekly one drops the 5-hour window; Claude still keeps its old one", () => {
+    const book = new UsageBook(tempDir("usage-codex-5h"));
+    book.note("codex", codexRateLimits(both));
+    expect(book.codex.fiveHour?.used).toBeCloseTo(0.4);
+    book.note("codex", codexRateLimits(weekly));
+    expect(book.codex.fiveHour).toBeUndefined();
+    expect(book.codex.week?.used).toBeCloseTo(0.12);
+    expect(JSON.parse(readFileSync(join(book["dir"], "codex-rate-limits.json"), "utf8")).fiveHour).toBeUndefined();
+    book.note("claude", { fiveHour: { used: 0.5, seen: 1 }, week: { used: 0.2, seen: 1 } });
+    book.note("claude", { week: { used: 0.3, seen: 2 } });
+    expect(book.claude.fiveHour?.used).toBe(0.5);
+  });
+});
+
 describe("usage in the core", () => {
   it("Claude's turns: the difference of the running cost, the tokens, the limits; usage.view and 1.x's files", async () => {
     const dir = tempDir("usage-claude");
