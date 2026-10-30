@@ -61,7 +61,6 @@ export class AgyWorkers {
     if(name==='app_handoff'){
       const engine=args.engine??'agy';if(engine!=='agy'&&engine!=='codex')throw new Error('Unsupported worker engine; Claude is forbidden.');
       if(typeof args.instructions!=='string'||!args.instructions.trim()||args.instructions.length>64_000)throw new Error('Instructions required (maximum 64000 characters).');
-      if(this.running.length>=4)throw new Error('Four ACP workers are already running or cleaning up.');
       if(this.workers.size>=128)throw new Error('Worker history limit reached.');
       const id=randomUUID(),w:Worker={id,engine,name:typeof args.name==='string'?args.name.slice(0,200):args.instructions.slice(0,80),instructions:args.instructions,sessionId:'',run:0,active:false,cleaning:false,denied:false,approvals:new Map(),processes:[],status:'new',reportPending:false};this.workers.set(id,w);
       this.launch(w,args.instructions);return {accepted:true,task_id:id,run:w.run};
@@ -94,7 +93,6 @@ export class AgyWorkers {
       this.verifyRecovery(w);
       if(w.active||w.cleaning||w.cleanup)throw new Error('This ACP worker is busy or cleaning up; in-turn steering is unsupported.');
       if(w.reportPending&&!(this.activeReports.get(w.id)===w.run)&&(!w.reportDelivered||w.reportDispatching))throw new Error('The prior worker report must be acknowledged before continuation.');
-      if(this.running.length>=4)throw new Error('Four ACP workers are already running or cleaning up.');
       if(typeof args.message!=='string'||!args.message.trim()||args.message.length>64_000)throw new Error('Message required (maximum 64000 characters).');
       this.launch(w,args.message);return {accepted:true,task_id:w.id,run:w.run};
     }
@@ -152,7 +150,7 @@ export class AgyWorkers {
       try{process.kill(-pid,0);return false;}catch(error){return (error as NodeJS.ErrnoException).code==='ESRCH';}
     });
   }
-  /** Cleanup is a completion dependency and holds a concurrency slot; never release it on failure. */
+  /** Cleanup is a completion dependency and keeps the worker in running until it finishes; never release it on failure. */
   private clean(w:Worker):Promise<void>{
     if(w.cleanup)return w.cleanup;
     const head=w.head;w.cleaning=true;this.save();

@@ -79,12 +79,11 @@ it('holds concurrency and report delivery until process cleanup finishes',async(
  for(let i=0;i<3;i++)await h.m.tool('app_handoff',{instructions:'other'});
  w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
  expect(h.m.running).toHaveLength(4);expect(h.reports).toEqual([]);
- await expect(h.m.tool('app_handoff',{instructions:'fifth'})).rejects.toThrow('Four');
+ await expect(h.m.tool('app_handoff',{instructions:'fifth'})).resolves.toMatchObject({accepted:true});
  await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'race'})).rejects.toThrow('busy');
- clean();await settle();expect(h.reports).toHaveLength(1);expect(h.m.running).toHaveLength(3);
+ clean();await settle();expect(h.reports).toHaveLength(1);expect(h.m.running).toHaveLength(4);
  expect(h.m.beginReport(a.task_id,2)).toBe(false);expect(h.m.beginReport(a.task_id,1)).toBe(true);expect(h.m.beginReport(a.task_id,1)).toBe(false);
- await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});await h.m.tool('app_handoff',{instructions:'fill fourth slot'});
- await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'})).rejects.toThrow('Four');
+ await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});await h.m.tool('app_handoff',{instructions:'sixth'});
  await h.m.tool('app_cancel_task',{task_id:h.m.running[0],run:1});
  await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'});
  await expect(h.m.tool('app_cancel_task',{task_id:a.task_id,run:1})).rejects.toThrow('Stale');
@@ -254,7 +253,6 @@ it('retains the recovery obligation after checkpoint while a reconstructed proce
   expect(restored.m.running).toEqual([a.task_id]);
   expect(restored.m.completionDependencies).toMatchObject([{id:a.task_id,state:'running'}]);
   for(let i=0;i<3;i++)await restored.m.tool('app_handoff',{instructions:'independent'});
-  await expect(restored.m.tool('app_handoff',{instructions:'fifth'})).rejects.toThrow('Four');
   await expect(restored.m.tool('app_cancel_task',{task_id:a.task_id,run:1})).rejects.toThrow('cleanup');
   expect(restored.m.completionDependencies.some(d=>d.id===a.task_id)).toBe(true);
   await processGroup.terminate({graceMs:50});
@@ -270,10 +268,20 @@ it('retains the recovery obligation with missing process registration and refuse
   expect(restored.m.beginReport(id,1)).toBe(true);
   await restored.m.tool('app_task_checkpoint',{task_id:id,run:1,outcome:'complete',evidence:'assessment does not prove process cleanup'});
   expect(restored.m.running).toHaveLength(4);expect(restored.m.completionDependencies).toHaveLength(4);
-  await expect(restored.m.tool('app_handoff',{instructions:'fifth'})).rejects.toThrow('Four');
   await expect(restored.m.tool('app_cancel_task',{task_id:id,run:1})).rejects.toThrow('cleanup');
   await expect(restored.m.tool('app_send_message',{task_id:id,run:1,message:'continue'})).rejects.toThrow('cleanup');
   await expect(restored.m.close()).rejects.toThrow('cleanup');
   expect(restored.m.completionDependencies).toHaveLength(4);
  }finally{managers.splice(managers.indexOf(restored.m),1);}
+});
+
+it('has no concurrent worker cap: 6 workers start and a resume succeeds with 5 running',async()=>{
+ const h=harness(),ids:string[]=[];
+ for(let i=0;i<6;i++)ids.push((await h.m.tool('app_handoff',{instructions:`task ${i}`})).task_id);
+ expect(h.m.running).toHaveLength(6);expect(h.starts).toHaveLength(6);
+ const w=h.starts[0]!;w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ expect(h.m.running).toHaveLength(5);h.m.beginReport(ids[0],1);
+ await h.m.tool('app_task_checkpoint',{task_id:ids[0],run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
+ await expect(h.m.tool('app_send_message',{task_id:ids[0],run:1,message:'again'})).resolves.toMatchObject({accepted:true});
+ expect(h.m.running).toHaveLength(6);
 });
