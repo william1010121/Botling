@@ -68,7 +68,7 @@ import {
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
 import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
 import {
-  Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, roundsText,
+  Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
   type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
 import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall } from "./session-schedules";
@@ -222,7 +222,7 @@ export interface BotOptions {
   /** The completion judge when Settings has it on (1.x's `promiseCheck`), with its model; null: off. */
   promiseCheck?: () => { check: Check; model: string } | null;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean };
+  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -1359,7 +1359,7 @@ export class Bot {
     if (!hasTwo(heads)) return null;
     return {
       engines: heads.engines,
-      answerWith: heads.answerWith,
+      answerWith: resolvePrimary(heads, this.appPrimary()),
       handoffsOn: heads.handoffs,
       rounds: this.rounds ? { kind: this.rounds.kind, round: this.rounds.round, limit: this.rounds.limit, text: roundsText(this.rounds) } : null,
       handoffs: this.conductor.records.slice(-12).map((record) => ({
@@ -1368,6 +1368,11 @@ export class Bot {
         lines: record.lines.slice(-20).map((line) => ({ who: line.who, text: clip(line.text, 2_000) ?? "" })),
       })),
     };
+  }
+
+  /** The app's default primary changed: a bot that follows it tells the composer. */
+  appPrimaryChanged(): void {
+    if (!this.options.primary && !this.headsSettings.answerWith && hasTwo(this.headsSettings)) this.headsChanged();
   }
 
   private headsChanged(): void {
@@ -1477,7 +1482,7 @@ export class Bot {
     if (!words && !kept.length) throw new ContractError("bad_request", "The files could not be read.");
     const heads = this.headsSettings;
     const two = hasTwo(heads);
-    const target = fitted(heads, decisionOwner ?? to ?? heads.answerWith);
+    const target = fitted(heads, decisionOwner ?? to ?? resolvePrimary(heads, this.appPrimary()), this.appPrimary());
     const user: ChatRecord = { id: newId(), role: "user", text: words, date: toSwiftDate() };
     if (two) user.to = target;
     if (kept.length) user.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
@@ -1757,10 +1762,15 @@ export class Bot {
   /** Who new messages go to (the composer's primary engine), saved in bot.json. */
   setAnswerWith(to: AnswerTarget): ResultOf<"heads.answerWith"> {
     const owner = this.owner;
-    owner.headsSettings.answerWith = fitted(owner.headsSettings, to);
+    owner.headsSettings.answerWith = fitted(owner.headsSettings, to, owner.appPrimary());
     owner.saveHeads();
     owner.headsChanged();
-    return { answerWith: owner.headsSettings.answerWith };
+    return { answerWith: owner.headsSettings.answerWith ?? resolvePrimary(owner.headsSettings, owner.appPrimary()) };
+  }
+
+  /** The app's default primary engine (Settings → Engines and models); null: none chosen. */
+  private appPrimary(): Engine | null {
+    return (this.owner.options.launch?.().defaultPrimaryEngine ?? null) as Engine | null;
   }
 
   /** One head or two (1.x's Settings → Heads). An awake head that goes away tidies first. */
@@ -1781,7 +1791,8 @@ export class Bot {
     if (target === this.engine) this.switchTo = null;
     const switching = target !== this.engine ? target : null;
     settings.engines = kept;
-    settings.answerWith = fitted(settings, settings.answerWith);
+    // A bot with no primary of its own keeps following the app's; one it has is kept if it still has that engine.
+    if (settings.answerWith && !kept.includes(settings.answerWith as Engine)) settings.answerWith = fitted(settings, settings.answerWith, this.appPrimary());
     this.conductor.settings = settings;
     this.saveHeads(switching ?? undefined);
     for (const partner of this.peers.filter(peer => !kept.includes(peer.engine) || peer.engine === switching)) {
@@ -1815,6 +1826,18 @@ export class Bot {
   }
 
   /**
+   * "Apply to all bots": this bot's engine set, models, effort and primary become the app's defaults
+   * (its own primary is cleared, so it follows the app's). Heads go away or start as with Settings → Engines in
+   * this bot; a head already running keeps its model until it next wakes, as with its own settings.
+   */
+  async applyEngineChoices(choices: { engines: Engine[]; model: string | null; effort: string | null; codexModel: string | null; agyModel: string | null }) {
+    const owner = this.owner;
+    if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
+    if (owner.headsSettings.engines.join() !== choices.engines.join()) await owner.setHeads(choices.engines);
+    owner.configure({ model: choices.model, effort: choices.effort, codexModel: choices.codexModel, agyModel: choices.agyModel, primary: null });
+  }
+
+  /**
    * The app's engine defaults changed (1.x's `setSubagentModelDefault` / `setCodexWorkerDefaults`, which
    * set every bot): written into its bot.json and its other head's; a head already running keeps its own
    * until it next wakes, as with its own settings.
@@ -1834,6 +1857,8 @@ export class Bot {
     const choices = owner.choices();
     return {
       botId: owner.id, engines: [...owner.headsSettings.engines] as Engine[],
+      primary: owner.headsSettings.answerWith && owner.headsSettings.answerWith !== "both" ? owner.headsSettings.answerWith : null,
+      primaryEffective: resolvePrimary(owner.headsSettings, owner.appPrimary()),
       model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"],
       subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], codexModel: owner.headsSettings.codexModel ?? null,
       agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
@@ -1841,10 +1866,17 @@ export class Bot {
   }
 
   /** Changes its own choices; a head already running keeps its own until it next wakes. */
-  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null }): BotSettingsView {
+  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null; primary?: Engine | null }): BotSettingsView {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     const before = owner.settingsView();
+    if (change.primary !== undefined) {
+      // Its own primary engine, or null to follow the app's; one the bot does not have is refused.
+      if (change.primary !== null && !owner.headsSettings.engines.includes(change.primary)) throw new ContractError("bad_request", `This bot does not have ${displayName(change.primary)}.`);
+      owner.headsSettings.answerWith = change.primary;
+      owner.saveHeads();
+      owner.headsChanged();
+    }
     for (const key of ["model", "effort", "subagentModel", "agyModel"] as const) {
       if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
     }

@@ -701,6 +701,13 @@ export const SettingsView = z.strictObject({
   codexWorkersFollow: z.boolean(),
   codexWorkers: z.strictObject({ model: z.string().max(200).nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }),
   componentEditorModel: BotModel,
+  /** Engines and models: what a new bot starts with, the primary a bot without its own follows, and what "Apply to all bots" writes. */
+  engineDefaults: z.strictObject({
+    engines: z.array(Engine).min(1).max(3),
+    primary: Engine.nullable(),
+    models: z.strictObject({ claude: z.string().max(200).nullable(), codex: z.string().max(200).nullable(), agy: z.string().max(200).nullable() }),
+    effort: Effort.nullable(),
+  }),
   resultPublishing: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]),
   stallReminderMinutes: z.number().int().min(0).max(10_000),
   /** The right panel folded into a strip of icons (1.x's `rightPanelCollapsed`). */
@@ -740,6 +747,10 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("codexWorkersFollow"), value: z.boolean() }),
   z.strictObject({ key: z.literal("codexWorkers"), value: z.strictObject({ model: ModelId.nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }) }),
   z.strictObject({ key: z.literal("componentEditorModel"), value: BotModel }),
+  z.strictObject({ key: z.literal("defaultEngines"), value: z.array(Engine).min(1).max(3) }),
+  z.strictObject({ key: z.literal("defaultPrimaryEngine"), value: Engine.nullable() }),
+  z.strictObject({ key: z.literal("defaultEngineModel"), value: z.strictObject({ engine: Engine, model: ModelId.nullable() }) }),
+  z.strictObject({ key: z.literal("defaultEffort"), value: Effort.nullable() }),
   z.strictObject({ key: z.literal("resultPublishing"), value: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]) }),
   z.strictObject({ key: z.literal("stallReminderMinutes"), value: z.number().int().min(0).max(1_440) }),
   z.strictObject({ key: z.literal("rightPanelCollapsed"), value: z.boolean() }),
@@ -815,6 +826,10 @@ export type UsageView = z.infer<typeof UsageView>;
 export const BotSettingsView = z.strictObject({
   botId: id,
   engines: z.array(z.enum(["claude", "codex", "agy"])).min(1).max(3),
+  /** The bot's own primary engine; null: it follows the app's default. */
+  primary: Engine.nullable().optional(),
+  /** The engine a message goes to when the composer has not been used: its own, else the app's, else its first. */
+  primaryEffective: Engine.optional(),
   model: z.string().max(200).nullable(),
   effort: Effort.nullable(),
   subagentModel: z.string().max(200).nullable(),
@@ -1093,7 +1108,11 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("bot.configure"), botId, model: ModelId.nullable().optional(), effort: Effort.nullable().optional(),
     subagentModel: ModelId.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
+    /** The bot's own primary engine (null: follow the app's default). */
+    primary: Engine.nullable().optional(),
   }),
+  /** Settings → Engines and models → "Apply to all bots": every bot's engines, models, effort and primary become the app's defaults. Needs `confirmed: true`, as the UI asks first. */
+  z.strictObject({ type: z.literal("engineDefaults.applyAll"), confirmed: z.literal(true) }),
   /** Main only: "Add project…" (main's folder picker), then `projects.add`; the new bot is selected. */
   z.strictObject({ type: z.literal("projects.pick") }),
   /** Main only (from its picker): a folder becomes a project with a manager (one that is already a project: that one). */
@@ -1150,7 +1169,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "tokenFlow.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
@@ -1295,6 +1314,7 @@ export interface Results {
   "boot.commit": Record<string, never>;
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;
+  "engineDefaults.applyAll": { applied: number; failed: { botId: string; name: string; reason: string }[] };
   "plugins.loaded": Record<string, never>;
   "plugins.failed": Record<string, never>;
   "plugins.notice": Record<string, never>;

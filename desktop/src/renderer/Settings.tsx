@@ -24,7 +24,7 @@ type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
-  { id: "engines", title: "Engines and subagents", terms: "antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
+  { id: "engines", title: "Engines and subagents", terms: "default engines models primary recipient apply all bots reasoning effort thinking antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
@@ -97,7 +97,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
           <div className="settings-body">
             {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} codexModels={codexModels} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
-            {shown && current?.id === "engines" && <Engines client={client} settings={shown} change={change} codexModels={codexModels} />}
+            {shown && current?.id === "engines" && <Engines client={client} settings={shown} change={change} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} botCount={bots.length} />}
             {current?.id === "usage" && <Usage client={client} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
@@ -435,11 +435,89 @@ export function AntigravityPermissions({client,settings,change}: {client:Client;
   </Group>;
 }
 
-function Engines({ client, settings, change, codexModels }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; codexModels: CodexModelOption[] }) {
+const ENGINE_NAMES = { claude: "Claude", codex: "Codex", agy: "Antigravity" } as const;
+type EngineId = keyof typeof ENGINE_NAMES;
+
+/**
+ * Settings → Engines and models: the engines a bot has, which one gets a message unless the bot says otherwise, each
+ * engine's model and one reasoning effort. New bots start with these; "Apply to all bots" writes them into every
+ * existing bot (after a confirmation, as it overwrites each bot's own choices).
+ */
+function EngineDefaults({ client, settings, change, botId, botCount }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; botId: string | null; botCount: number }) {
+  const defaults = settings.engineDefaults;
+  const [open, setOpen] = useState(true);
+  const [confirming, setConfirming] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
+  const id = botId ?? "";
+  const discovery = {
+    claude: useModelDiscovery(client, id, "claude", !!botId && defaults.engines.includes("claude") && open),
+    codex: useModelDiscovery(client, id, "codex", !!botId && defaults.engines.includes("codex") && open),
+    agy: useModelDiscovery(client, id, "agy", !!botId && defaults.engines.includes("agy") && open),
+  };
+  const toggle = (engine: EngineId, wanted: boolean) => {
+    const next = wanted ? [...defaults.engines, engine] : defaults.engines.filter((candidate) => candidate !== engine);
+    void change({ key: "defaultEngines", value: next as EngineId[] });
+  };
+  const apply = async () => {
+    setApplying(true);
+    setOutcome(null);
+    try {
+      const result = await client.request({ type: "engineDefaults.applyAll", confirmed: true });
+      setOutcome(result.failed.length
+        ? { ok: false, text: `Applied to ${result.applied} bots. Could not change: ${result.failed.map((failure) => `${failure.name} (${failure.reason})`).join("; ")}` }
+        : { ok: true, text: `Applied to ${result.applied} bots.` });
+    } catch (failure) {
+      setOutcome({ ok: false, text: why(failure) });
+    } finally { setApplying(false); setConfirming(false); }
+  };
+  const primaryName = defaults.primary ? ENGINE_NAMES[defaults.primary] : null;
+  return (
+    <section className="settings-group" aria-label="Engines and models">
+      <h3><button type="button" className="settings-fold" aria-expanded={open} onClick={() => setOpen(!open)}><span aria-hidden="true">{open ? "▾" : "▸"}</span> Engines and models</button></h3>
+      {open && <>
+        <div className="settings-card">
+          {(["claude", "codex", "agy"] as const).map((engine) => {
+            const on = defaults.engines.includes(engine);
+            return <Toggle key={engine} label={ENGINE_NAMES[engine]} checked={on} disabled={on && defaults.engines.length === 1} onChange={(wanted) => toggle(engine, wanted)} />;
+          })}
+          <Row label="Primary engine" hint={primaryName ? undefined : "Each bot's first engine"}>
+            <SelectSetting label="Primary engine" blank="First engine of each bot" options={defaults.engines.map((engine) => ({ id: engine, label: ENGINE_NAMES[engine] }))} value={defaults.primary}
+              onChange={(value) => change({ key: "defaultPrimaryEngine", value: value as EngineId | null })} />
+          </Row>
+          {defaults.engines.map((engine) => (
+            <Row key={engine} label={`${ENGINE_NAMES[engine]} model`}>
+              {botId
+                ? <ModelPicker label={`${ENGINE_NAMES[engine]}'s default model`} discovery={discovery[engine]} value={defaults.models[engine]} onChange={(model) => change({ key: "defaultEngineModel", value: { engine, model } })} />
+                : <SelectSetting label={`${ENGINE_NAMES[engine]}'s default model`} blank="Engine default" options={[]} value={defaults.models[engine]} onChange={(model) => change({ key: "defaultEngineModel", value: { engine, model } })} />}
+            </Row>
+          ))}
+          <Row label="Thinking effort" hint="A bot has one effort, shared by its engines.">
+            <SelectSetting label="Default thinking effort" blank="Engine default" options={EFFORTS} value={defaults.effort} onChange={(value) => change({ key: "defaultEffort", value: value as SettingsView["engineDefaults"]["effort"] })} />
+          </Row>
+          <Row label="Apply to all bots" hint="Sets every bot's engines, models, effort and primary engine to these. Overwrites each bot's own choices.">
+            {!confirming
+              ? <button type="button" disabled={applying} onClick={() => { setOutcome(null); setConfirming(true); }}>Apply to all bots…</button>
+              : <span className="settings-confirm" role="alertdialog" aria-label="Confirm apply to all bots">
+                  <span>Overwrite the engines, models, effort and primary engine of {botCount ? `all ${botCount} bots` : "every bot"}? Their own choices are lost.</span>
+                  <button type="button" disabled={applying} onClick={() => void apply()}>{applying ? "Applying…" : "Overwrite all bots"}</button>
+                  <button type="button" disabled={applying} onClick={() => setConfirming(false)}>Cancel</button>
+                </span>}
+          </Row>
+        </div>
+        <p className="settings-note">New bots start with these. A bot's own settings can override the primary engine, which is who a message goes to unless you pick another in the composer. Running heads switch model at their next wake.</p>
+        {outcome && <p className={outcome.ok ? "settings-hint" : "settings-problem"} role={outcome.ok ? "status" : "alert"}>{outcome.text}</p>}
+      </>}
+    </section>
+  );
+}
+
+function Engines({ client, settings, change, codexModels, modelBotId, botCount }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; codexModels: CodexModelOption[]; modelBotId: string | null; botCount: number }) {
   const workers = settings.codexWorkers;
   const following = settings.codexWorkersFollow;
   return (
     <>
+      <EngineDefaults client={client} settings={settings} change={change} botId={modelBotId} botCount={botCount} />
       <AntigravityRuntime client={client} settings={settings} change={change} />
       <Group title="Engine permissions" note="Applies when an engine process next starts, including resumed sessions and its workers. Running sessions keep their current mode: let work finish, then restart the app to apply changes. No new conversation is required. App-specific approvals and server policies remain in force.">
         <p className="settings-hint">Auto mode instructs the engines to allow low/medium-risk actions automatically and ask for human approval of high-risk actions. Engine classification is not guaranteed; hard denies and managed policies still apply. Unknown risk, review failures and OS/sandbox blocks are not auto-approved.</p>
@@ -523,6 +601,14 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           );
         })}
       </Group>
+      {two && (
+        <Group title="Primary engine" note="Who a message goes to unless you pick another in the composer. By default a bot follows the app's setting (Settings → Engines and models).">
+          <Row label="Primary engine">
+            <SelectSetting label="Primary engine" blank={`Follow app default (${ENGINE_NAMES[view.primaryEffective ?? view.engines[0]!]})`} options={view.engines.map((engine) => ({ id: engine, label: ENGINE_NAMES[engine] }))} value={view.primary ?? null}
+              onChange={(value) => configure({ primary: value as BotSettingsView["engines"][number] | null })} />
+          </Row>
+        </Group>
+      )}
       {hasClaude && (
         <Group title="Claude">
           <Row label="Model">

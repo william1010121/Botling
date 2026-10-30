@@ -10,6 +10,7 @@ import { writeFileAtomic } from "./durable/atomic";
 import { DEFAULT_WRITING_PROMPT, JUDGE_MODEL } from "./catchup";
 import type { SettingsChange, SettingsView } from "../contract";
 import { messageWidth } from "../contract/message-width";
+import { changeEngineDefaults, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
 
 export const LANGUAGES = ["en", "zh-Hant", "zh-Hans", "ja", "ko"] as const;
 export const BOT_MODELS = ["haiku", "sonnet", "opus"] as const;
@@ -77,6 +78,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     codexWorkersFollow: bool(raw.codexWorkersFollow, true),
     codexWorkers: codexWorkerDefaults(raw.codexWorkerChoice),
     componentEditorModel: oneOf(BOT_MODELS, raw.componentEditorModel) ?? "sonnet",
+    engineDefaults: engineDefaultsFor(raw),
     resultPublishing: oneOf(RESULT_PUBLISHING, raw.resultPublishingChoice) ?? "artifactUnlessSensitive",
     stallReminderMinutes: stall !== null && stall >= 0 ? stall : 15,
     rightPanelCollapsed: bool(raw.rightPanelCollapsed, false),
@@ -122,6 +124,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
       set("codexWorkerChoice", Object.keys(value).length ? value : null);
       break;
     }
+    case "defaultEngines": case "defaultPrimaryEngine": case "defaultEngineModel": case "defaultEffort": return changeEngineDefaults(raw, change);
     case "componentEditorModel": set("componentEditorModel", change.value); break;
     case "resultPublishing": set("resultPublishingChoice", change.value); break;
     case "stallReminderMinutes": set("stallReminderMinutes", change.value); break;
@@ -144,7 +147,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
  */
 export function launchSettings(raw: RawSettings) {
   // 1.x's `autoApprove` (AppSettings.autoApprovesSafeActions), on unless turned off; settings.json comes over from 1.x as it is.
-  return { subagentHourCache: settingsView(raw).subagentHourCache, autoMode: bool(raw.autoApprove, true),
+  return { subagentHourCache: settingsView(raw).subagentHourCache, defaultPrimaryEngine: engineDefaultsFor(raw).primary, autoMode: bool(raw.autoApprove, true),
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false), agyBypassPermissions: bool(raw.agyBypassPermissions, false) };
 }
 
@@ -171,6 +174,8 @@ export function seedEngineDefaults(raw: RawSettings, setSetting: (key: string, v
   if (model) setSetting("subagentModel", model);
   const workers = codexWorkersJSON(appliedCodexWorkers(raw));
   if (workers) setSetting("codexWorkers", workers);
+  // Engines, primary, models and effort (Settings → Engines and models).
+  seedBotChoices(raw, setSetting);
 }
 
 /** A list of strings in settings.json (`ignoredWaiting`). */

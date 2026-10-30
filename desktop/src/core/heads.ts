@@ -26,7 +26,8 @@ export const DEFAULT_LIMITS: RoundLimits = { discussion: 3, review: 2, handoffs:
 export interface Heads {
   /** Claude first; never empty. */
   engines: Engine[];
-  answerWith: AnswerTarget;
+  /** The bot's own primary recipient; null: it has no choice and follows the app's default (`resolvePrimary`). */
+  answerWith: AnswerTarget | null;
   limits: RoundLimits;
   handoffs: boolean;
   /** The Codex model (`model/list`'s id); null: Codex's own default. */
@@ -36,10 +37,10 @@ export interface Heads {
 const clamp = (value: unknown, fallback: number) =>
   typeof value === "number" && Number.isFinite(value) ? Math.min(10, Math.max(1, Math.trunc(value))) : fallback;
 
-export function makeHeads(engines: Engine[], answerWith: AnswerTarget = "both", rest: Partial<Omit<Heads, "engines" | "answerWith">> = {}): Heads {
+export function makeHeads(engines: Engine[], answerWith: AnswerTarget | null = "both", rest: Partial<Omit<Heads, "engines" | "answerWith">> = {}): Heads {
   const kept = ENGINES.filter(engine => engines.includes(engine));
   const heads: Heads = { engines: kept.length ? kept : ["claude"], answerWith, limits: rest.limits ?? { ...DEFAULT_LIMITS }, handoffs: rest.handoffs ?? true, codexModel: rest.codexModel ?? null };
-  heads.answerWith = fitted(heads, answerWith);
+  heads.answerWith = answerWith === null ? null : fitted(heads, answerWith);
   return heads;
 }
 
@@ -51,10 +52,16 @@ export function targets(heads: Heads): Engine[] {
   return [...heads.engines];
 }
 
-/** `target`, or the nearest one this bot has. */
-export function fitted(heads: Heads, target: AnswerTarget): Engine {
+/** `target`, or the nearest one this bot has: its own choice, then `fallback` (the app's default), then its first engine. */
+export function fitted(heads: Heads, target: AnswerTarget, fallback: Engine | null = null): Engine {
   if (isEngine(target) && heads.engines.includes(target)) return target;
+  return resolvePrimary(heads, fallback);
+}
+
+/** The primary recipient: the bot's own choice > the app's default > the bot's first engine; always an engine the bot has. */
+export function resolvePrimary(heads: Heads, appDefault: Engine | null): Engine {
   if (isEngine(heads.answerWith) && heads.engines.includes(heads.answerWith)) return heads.answerWith;
+  if (appDefault && heads.engines.includes(appDefault)) return appDefault;
   return heads.engines[0]!;
 }
 
@@ -69,7 +76,9 @@ export function readHeads(value: unknown, engine: unknown): Heads {
   if (!value || typeof value !== "object" || Array.isArray(value)) return single;
   const raw = value as Record<string, unknown>;
   const engines = Array.isArray(raw.engines) ? raw.engines.filter(isEngine) : [];
-  const target = isEngine(raw.answerWith) ? raw.answerWith : isEngine(engine) && engines.includes(engine) ? engine : engines[0] ?? single.answerWith;
+  // No `answerWith` at all: the bot has no choice of its own. A legacy "both" becomes its engine.
+  const target = raw.answerWith === undefined || raw.answerWith === null ? null
+    : isEngine(raw.answerWith) ? raw.answerWith : isEngine(engine) && engines.includes(engine) ? engine : engines[0] ?? single.answerWith;
   const limits = raw.limits && typeof raw.limits === "object" ? (raw.limits as Record<string, unknown>) : {};
   return makeHeads(engines, target, {
     limits: {
@@ -86,7 +95,7 @@ export function readHeads(value: unknown, engine: unknown): Heads {
 /** As 1.x's encoder writes it. */
 export function headsJSON(heads: Heads): Record<string, unknown> {
   return {
-    engines: heads.engines, answerWith: heads.answerWith, limits: heads.limits, handoffs: heads.handoffs,
+    engines: heads.engines, ...(heads.answerWith ? { answerWith: heads.answerWith } : {}), limits: heads.limits, handoffs: heads.handoffs,
     ...(heads.codexModel ? { codexModel: heads.codexModel } : {}),
   };
 }

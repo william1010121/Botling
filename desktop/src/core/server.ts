@@ -30,6 +30,7 @@ import type { CodexModel } from "./agent/codex-models";
 import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
+import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
 import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
@@ -1739,6 +1740,7 @@ First write a test that shows this, then fix it.`;
       case "whiteboard.allow": return this.bot(cmd.botId).whiteboardAllow({ command: cmd.command, folder: cmd.folder });
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);
+      case "engineDefaults.applyAll": return this.applyEngineDefaultsToAll();
       case "bot.settings": return this.bot(cmd.botId).settingsView();
       case "bot.configure": {
         const { type: _type, botId, ...change } = cmd;
@@ -1938,6 +1940,22 @@ First write a test that shows this, then fix it.`;
     return { ...settingsView(readSettings(Layout.settings(this.options.dataDir)), this.language()), agyPermissionSessions: agyPermissionSessions() };
   }
 
+  /**
+   * "Apply to all bots" (the Settings page asked first; the command carries `confirmed`): every bot's engines, models,
+   * effort and primary become the app's defaults. One that cannot (read-only, an engine that is not available) is listed, the rest go on.
+   */
+  private async applyEngineDefaultsToAll(): Promise<ResultOf<"engineDefaults.applyAll">> {
+    const choices = botChoicesFromDefaults(engineDefaultsFor(readSettings(Layout.settings(this.options.dataDir))));
+    const failed: { botId: string; name: string; reason: string }[] = [];
+    let applied = 0;
+    for (const [botId, bot] of [...this.bots]) {
+      try { await bot.applyEngineChoices(choices); applied += 1; }
+      catch (error) { failed.push({ botId, name: bot.profile.name, reason: String((error as Error)?.message ?? error).slice(0, 300) }); }
+    }
+    this.log(`engine defaults applied to ${applied} bots, ${failed.length} failed`);
+    return { applied, failed };
+  }
+
   /** One change on the Settings page: saved in settings.json (other keys kept), then told to every window. */
   private changeSetting(change: SettingsChange): SettingsView {
     const file = Layout.settings(this.options.dataDir);
@@ -1964,6 +1982,7 @@ First write a test that shows this, then fix it.`;
     if ((change.key === "codexWorkers" || change.key === "codexWorkersFollow") && JSON.stringify(workers) !== JSON.stringify(appliedCodexWorkers(before))) {
       for (const bot of this.bots.values()) bot.applyEngineDefaults({ codexWorkers: codexWorkersJSON(workers) });
     }
+    if (change.key === "defaultPrimaryEngine" || change.key === "defaultEngines") for (const bot of this.bots.values()) bot.appPrimaryChanged();
     const view = this.settingsNow();
     this.event({ type: "settings.updated", settings: view });
     return view;
