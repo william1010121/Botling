@@ -3,7 +3,8 @@
 // An agent CLI starts its own children (tool commands, MCP servers, background subagents). Killing
 // only the CLI leaves those running, unseen and still spending, so "stop" must end the whole tree.
 // Each OS does that differently, so the core only talks to this interface.
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
+import { groupAlive, groupMembers, killTree, signalGroup } from "./kill-tree";
 
 export interface TerminateResult {
   /** Process ids that were signalled (the leader's group or tree). */
@@ -54,30 +55,21 @@ export class PosixGroupAdapter implements ProcessTreeAdapter {
       return { pid: -1, child, terminate: async () => ({ killed: [], forced: false }) };
     }
     let ending: Promise<TerminateResult> | null = null;
-    const groupAlive = () => {
-      try {
-        process.kill(-pid, 0);
-        return true;
-      } catch (error) {
-        return (error as NodeJS.ErrnoException).code === "EPERM";
-      }
-    };
-    const members = (): number[] => groupMembers(pid);
     return {
       pid,
       child,
       terminate: ({ graceMs = 2_000 } = {}) => {
         ending ??= (async () => {
-          const killed = members();
-          if (!groupAlive()) return { killed, forced: false };
-          try { process.kill(-pid, "SIGTERM"); } catch { /* already gone */ }
+          const killed = groupMembers(pid);
+          if (!groupAlive(pid)) return { killed, forced: false };
+          signalGroup(pid, "SIGTERM");
           const deadline = Date.now() + graceMs;
           while (Date.now() < deadline) {
-            if (!groupAlive()) return { killed, forced: false };
+            if (!groupAlive(pid)) return { killed, forced: false };
             await sleep(25);
           }
-          try { process.kill(-pid, "SIGKILL"); } catch { /* already gone */ }
-          for (let i = 0; i < 80 && groupAlive(); i++) await sleep(25);
+          signalGroup(pid, "SIGKILL");
+          for (let i = 0; i < 80 && groupAlive(pid); i++) await sleep(25);
           return { killed, forced: true };
         })();
         return ending;
@@ -86,25 +78,13 @@ export class PosixGroupAdapter implements ProcessTreeAdapter {
   }
 }
 
-/** The pids in process group `pgid` (best effort, for reporting only). */
-function groupMembers(pgid: number): number[] {
-  try {
-    // `ps -g` means "session leader" on some systems; filter on the pgid column instead.
-    const out = execFileSync("ps", ["-A", "-o", "pid=,pgid="], { encoding: "utf8", timeout: 2_000 });
-    return out.split("\n").map((line) => line.trim().split(/\s+/).map(Number)).filter(([, g]) => g === pgid).map(([p]) => p!).filter(Boolean);
-  } catch {
-    return [pgid];
-  }
-}
-
 /**
  * Windows 11: UNVERIFIED — written from documentation, never run. See desktop/README.md,
  * "Spike 4", for the plan.
  *
- * Interim behaviour: `taskkill /PID <pid> /T` (polite, WM_CLOSE to windowed processes; console
- * programs mostly ignore it), then `taskkill /PID <pid> /T /F` after the grace period. `/T` walks
- * the parent-pid links at kill time, so a child whose parent already exited is missed. The planned
- * replacement puts the CLI in a Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (through a small
+ * Interim behaviour: `taskkill /PID <pid> /T /F` through killTree, at once and again if the
+ * CLI is still there after the grace period. `/T` walks the parent-pid links at kill time, so a
+ * child whose parent already exited is missed. The planned replacement puts the CLI in a Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (through a small
  * signed helper or N-API addon), which contains every descendant regardless of reparenting, and
  * ends it with TerminateJobObject.
  */
@@ -119,21 +99,15 @@ export class WindowsTreeAdapter implements ProcessTreeAdapter {
     const pid = child.pid ?? -1;
     let ending: Promise<TerminateResult> | null = null;
     const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    const taskkill = (force: boolean) =>
-      new Promise<void>((resolve) => {
-        const kill = spawn("taskkill", ["/PID", String(pid), "/T", ...(force ? ["/F"] : [])], { windowsHide: true, stdio: "ignore" });
-        kill.once("exit", () => resolve());
-        kill.once("error", () => resolve());
-      });
     return {
       pid,
       child,
       terminate: ({ graceMs = 2_000 } = {}) => {
         ending ??= (async () => {
           if (pid < 0 || child.exitCode !== null) return { killed: [], forced: false };
-          await taskkill(false);
+          killTree(pid, "SIGKILL"); // taskkill /T /F: there is no polite form console programs honour.
           const timedOut = await Promise.race([exited.then(() => false), sleep(graceMs).then(() => true)]);
-          if (timedOut) await taskkill(true);
+          if (timedOut) killTree(pid, "SIGKILL");
           return { killed: [pid], forced: timedOut };
         })();
         return ending;

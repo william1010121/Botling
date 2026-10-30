@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { childEnvironment } from "./runner";
 import { resolveExecutable } from "../process/executable";
+import { killTree } from "../process/kill-tree";
 
 export interface CodexModel { id: string; name: string; isDefault: boolean; efforts: string[] | null }
 
@@ -39,7 +40,7 @@ export function askModels(command: { file: string; prefixArgs?: string[]; env?: 
       done = true;
       clearTimeout(timer);
       try { child.stdin.end(); } catch { /* gone */ }
-      try { process.platform !== "win32" && child.pid ? process.kill(-child.pid, "SIGTERM") : child.kill(); } catch { /* gone */ }
+      if (!(child.pid && killTree(child.pid))) { try { child.kill(); } catch { /* gone */ } }
       resolve(models);
     };
     const timer = setTimeout(() => finish([]), timeoutMs);

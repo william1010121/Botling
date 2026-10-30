@@ -1,6 +1,7 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron';
 import { TerminalRequest } from '../contract/terminal';
-import { BotTerminals, installedShells } from './terminal';
+import { BotTerminals } from './terminal';
+import { installedShells } from '../core/shell';
 export function installTerminalIPC(ipc: Pick<IpcMain, 'handle'>, terminals: BotTerminals,
   allowed: (event: IpcMainInvokeEvent) => boolean,
   folderFor: (botId: string) => Promise<string | null>) {

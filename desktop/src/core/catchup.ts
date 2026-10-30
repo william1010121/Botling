@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { isSummaryReply } from "../contract/summary";
 import { childEnvironment } from "./agent/runner";
 import { resolveExecutable } from "./process/executable";
+import { killTree } from "./process/kill-tree";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -169,7 +170,7 @@ export function codexSummarizer(command: { file: string; prefixArgs?: string[]; 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => { if (output.length < 4_000_000) output += chunk; });
     child.stderr.resume();
-    const kill = () => { try { process.platform !== "win32" && child.pid ? process.kill(-child.pid, "SIGKILL") : child.kill("SIGKILL"); } catch { /* gone */ } };
+    const kill = () => { if (!(child.pid && killTree(child.pid, "SIGKILL"))) { try { child.kill("SIGKILL"); } catch { /* gone */ } } };
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;

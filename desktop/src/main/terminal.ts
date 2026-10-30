@@ -1,21 +1,11 @@
-import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs';
-import { userInfo } from 'node:os';
+import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { processStartTime } from '../core/process/ledger';
+import { killTree, processStartTime, signalGroup } from '../core/process/kill-tree';
+import { installedShells, interactiveArgs } from '../core/shell';
 import { randomUUID } from 'node:crypto';
 import { spawn, type IPty, type IDisposable } from 'node-pty';
 import type { TerminalEvent, TerminalState } from '../contract/terminal';
 
-export function installedShells() {
-  const configured = userInfo().shell || process.env.SHELL || '/bin/sh';
-  let listed: string[] = [];
-  try { listed = readFileSync('/etc/shells', 'utf8').split('\n').map(s => s.trim()).filter(s => s.startsWith('/')); } catch {}
-  const shells = [...new Set([configured, ...listed, '/opt/homebrew/bin/fish', '/usr/local/bin/fish'])].filter(file => {
-    try { accessSync(file, constants.X_OK); return isAbsolute(file) && statSync(file).isFile(); } catch { return false; }
-  });
-  if (!shells.length) throw new Error('No installed interactive shell found.');
-  return { shells, defaultShell: shells.includes(configured) ? configured : shells[0] };
-}
 interface Session { state: TerminalState; owner: number; pty: IPty; paused: boolean; acknowledged: number; subscriptions: IDisposable[]; closed: boolean }
 /** Main-process only. Never serializes commands or sessions to disk. */
 export class BotTerminals {
@@ -32,7 +22,7 @@ export class BotTerminals {
     if (!available.shells.includes(shell)) throw new Error('Select an installed shell.');
     const env: NodeJS.ProcessEnv = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TERM_PROGRAM: 'Botling', LANG: process.env.LANG || 'en_US.UTF-8' };
     delete env.ELECTRON_RUN_AS_NODE; delete env.NODE_OPTIONS;
-    const pty = this.spawnPty(shell, ['-l', '-i'], { cwd: realpathSync(cwd), env, name: 'xterm-256color', cols: 80, rows: 24 });
+    const pty = this.spawnPty(shell, interactiveArgs(), { cwd: realpathSync(cwd), env, name: 'xterm-256color', cols: 80, rows: 24 });
     const state: TerminalState = { botId, sessionId: randomUUID(), shell, output: '', offset: 0, exitCode: null };
     const session: Session = { state, owner, pty, paused: false, acknowledged: 0, subscriptions: [], closed: false };
     this.sessions.set(state.sessionId, session);
@@ -82,13 +72,14 @@ export class BotTerminals {
     if (s.state.exitCode === null) {
       const pid = s.pty.pid;
       const started = pid > 1 ? processStartTime(pid) : null;
-      try { if (process.platform !== 'win32' && pid > 1) process.kill(-pid, 'SIGHUP'); } catch {}
+      if (process.platform !== 'win32') signalGroup(pid, 'SIGHUP');
       try { s.pty.kill(); } catch {}
       if (started) {
         const ending = new Promise<void>(resolve => setTimeout(() => {
           // Escalate only while this same shell is alive; never signal a recycled PID.
           if (processStartTime(pid) === started) {
-            try { process.kill(-pid, 'SIGKILL'); } catch {}
+            if (process.platform === 'win32') killTree(pid, 'SIGKILL');
+            else signalGroup(pid, 'SIGKILL');
             try { s.pty.kill('SIGKILL'); } catch {}
           }
           resolve();

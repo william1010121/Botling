@@ -8,12 +8,11 @@
 //   (`…/Contents/MacOS/botling`) whose projects.json lists this folder holds it too.
 // 1.x never blocks on this, so neither does 2.0: a lock someone else holds only puts a notice in
 // the bot's chat (Bot.checkLock); the bot keeps working.
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { processStartTime } from "../process/ledger";
+import { processAlive, processCommandLines, processStartTime } from "../process/kill-tree";
 import { readJSON } from "./bot-store";
 
 export const LOCK_FILE = "botling.lock";
@@ -29,9 +28,7 @@ export interface OneXCheck {
 
 export const DEFAULT_ONE_X_PROCESS = /\/Contents\/MacOS\/botling(\s|$)/;
 
-const alive = (pid: number) => {
-  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-};
+const alive = (pid: number) => processAlive(pid);
 
 /** Whether a 1.x app is running and has `folder` as one of its projects. */
 export function heldBy1x(folder: string, check: OneXCheck): boolean {
@@ -49,12 +46,7 @@ export function heldBy1x(folder: string, check: OneXCheck): boolean {
     }
   } catch { /* An unreadable projects.json lists nothing. */ }
   if (!listed) return false;
-  try {
-    const out = execFileSync("ps", ["-axo", "args="], { encoding: "utf8", timeout: 3_000, env: { ...process.env, LC_ALL: "C" } });
-    return out.split("\n").some((line) => check.process.test(line));
-  } catch {
-    return false;
-  }
+  return processCommandLines().some((line) => check.process.test(line));
 }
 
 export type LockResult = { held: true } | { held: false; by: string };
