@@ -37,6 +37,19 @@ describe("the report page rule", () => {
     expect(line).not.toMatch(/Artifact tool|claude\.ai/);
   });
 
+  for (const engine of ["claude", "codex", "agy"] as const) {
+    it(`sends long reports to a ReportSpec v2 page and keeps chat to a brief conclusion plus link (${engine})`, () => {
+      for (const role of ["main", "manager", "bot"] as const) {
+        const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), tool);
+        const text = ours.system.split("\n").find((l) => l.includes("ReportSpec v2")) ?? "";
+        expect(text).toContain("--render-report");
+        expect(text).toMatch(/detailed or long report/);
+        expect(text).toMatch(/chat reply (carries|has) only a brief conclusion and the link/);
+        expect(text).toMatch(/never paste the report body/);
+      }
+    });
+  }
+
   it("adds nothing when the app has no report command", () => {
     const plain = botPrompts({ profile: profile("bot") });
     expect(desktopPrompts(plain, profile("bot"), null).system).toBe(desktopPrompts(plain, profile("bot")).system);
