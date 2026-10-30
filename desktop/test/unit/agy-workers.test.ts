@@ -203,6 +203,18 @@ it('requires an active other task for a dependency checkpoint',async()=>{
  await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'waiting_dependency',evidence:'await prerequisite',dependency_task_id:b.task_id});
  expect(h.m.completionDependencies.map(x=>x.id)).toEqual([b.task_id]);
 });
+it('treats a blank or null dependency_task_id on a non-dependency checkpoint as omitted',async()=>{
+ for(const blank of ['',' ',null]){
+  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'read-only status'});
+  h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();h.m.beginReport(a.task_id,1);
+  await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:'status report satisfies the read-only request',dependency_task_id:blank});
+  expect(h.m.completionDependencies.some(x=>x.id===a.task_id)).toBe(false);
+ }
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'read-only status'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();h.m.beginReport(a.task_id,1);
+ await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:'x',dependency_task_id:'some-id'})).rejects.toThrow('requires waiting_dependency');
+ await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'waiting_dependency',evidence:'x',dependency_task_id:''})).rejects.toThrow('dependency_task_id');
+});
 it('stale or duplicate report-turn completion cannot consume another run or exhaust reconciliation',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'});
  h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();

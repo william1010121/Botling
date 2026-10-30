@@ -83,7 +83,8 @@ export class AgyWorkers {
       if(args.outcome==='waiting_dependency'){
         const dependency=this.workers.get(String(args.dependency_task_id));
         if(!dependency||dependency===w||!dependency.active)throw new Error('Checkpoint needs another actively running dependency_task_id.');
-      }else if(args.dependency_task_id!==undefined)throw new Error('dependency_task_id requires waiting_dependency.');
+      }else if(args.dependency_task_id!==undefined&&args.dependency_task_id!==null&&!(typeof args.dependency_task_id==='string'&&!args.dependency_task_id.trim()))throw new Error('dependency_task_id requires waiting_dependency.');
+      // Models routinely fill an optional field with "" or null; that means "no dependency", not a failed checkpoint.
       w.checkpoint={outcome:String(args.outcome),evidence:args.evidence,...(args.outcome==='waiting_dependency'?{dependency_task_id:String(args.dependency_task_id)}:{})};
       w.reportPending=false;w.reportDispatching=false;this.activeReports.delete(w.id);this.save();
       return {task_id:w.id,run:w.run,...w.checkpoint};
