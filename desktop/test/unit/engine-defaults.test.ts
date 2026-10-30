@@ -41,7 +41,7 @@ describe("primary engine resolution", () => {
 describe("the app's engine defaults (settings.json)", () => {
   const view = (raw: Record<string, unknown>) => settingsView(raw).engineDefaults;
   it("starts as before: Claude only, nothing chosen", () => {
-    expect(view({})).toEqual({ engines: ["claude"], primary: null, models: { claude: null, codex: null, agy: null }, effort: null });
+    expect(view({})).toEqual({ engines: ["claude"], primary: null, models: { claude: null, codex: null, agy: null }, efforts: { claude: null, codex: null, agy: null } });
   });
   it("saves the engine set, keeping Claude, Codex, Antigravity order and at least one", () => {
     let raw = applySetting({}, { key: "defaultEngines", value: ["agy", "claude"] });
@@ -60,19 +60,24 @@ describe("the app's engine defaults (settings.json)", () => {
     // A hand-edited file cannot sneak one in either.
     expect(view({ defaultEngines: ["claude"], defaultPrimaryEngine: "agy" }).primary).toBeNull();
   });
-  it("saves a model per engine and one shared effort, empty meaning the engine's own default", () => {
+  it("saves a model and an effort per engine, empty meaning the engine's own default", () => {
     let raw = applySetting({}, { key: "defaultEngineModel", value: { engine: "codex", model: "gpt-x" } });
     raw = applySetting(raw, { key: "defaultEngineModel", value: { engine: "claude", model: "opus" } });
-    raw = applySetting(raw, { key: "defaultEffort", value: "high" });
-    expect(view(raw)).toMatchObject({ models: { claude: "opus", codex: "gpt-x", agy: null }, effort: "high" });
+    raw = applySetting(raw, { key: "defaultEffort", value: { engine: "claude", effort: "max" } });
+    raw = applySetting(raw, { key: "defaultEffort", value: { engine: "codex", effort: "low" } });
+    // A level the engine does not support is refused (kept as it was).
+    raw = applySetting(raw, { key: "defaultEffort", value: { engine: "agy", effort: "max" } });
+    expect(view(raw)).toMatchObject({ models: { claude: "opus", codex: "gpt-x", agy: null }, efforts: { claude: "max", codex: "low", agy: null } });
     raw = applySetting(raw, { key: "defaultEngineModel", value: { engine: "codex", model: null } });
-    raw = applySetting(raw, { key: "defaultEffort", value: null });
-    expect(view(raw)).toMatchObject({ models: { claude: "opus", codex: null }, effort: null });
+    raw = applySetting(raw, { key: "defaultEffort", value: { engine: "claude", effort: null } });
+    expect(view(raw)).toMatchObject({ models: { claude: "opus", codex: null }, efforts: { claude: null, codex: "low" } });
   });
   it("is validated by the contract", () => {
     expect(SettingsChange.safeParse({ key: "defaultEngines", value: ["claude", "codex"] }).success).toBe(true);
     expect(SettingsChange.safeParse({ key: "defaultEngines", value: [] }).success).toBe(false);
     expect(SettingsChange.safeParse({ key: "defaultPrimaryEngine", value: "both" }).success).toBe(false);
+    expect(SettingsChange.safeParse({ key: "defaultEffort", value: { engine: "codex", effort: "high" } }).success).toBe(true);
+    expect(SettingsChange.safeParse({ key: "defaultEffort", value: "high" }).success).toBe(false);
     expect(Command.safeParse({ type: "engineDefaults.applyAll" }).success).toBe(false);
     expect(Command.safeParse({ type: "engineDefaults.applyAll", confirmed: false }).success).toBe(false);
     expect(Command.safeParse({ type: "engineDefaults.applyAll", confirmed: true }).success).toBe(true);
@@ -86,7 +91,8 @@ describe("new bots take the app's defaults", () => {
     raw = applySetting(raw, { key: "defaultPrimaryEngine", value: "codex" });
     raw = applySetting(raw, { key: "defaultEngineModel", value: { engine: "claude", model: "sonnet" } });
     raw = applySetting(raw, { key: "defaultEngineModel", value: { engine: "codex", model: "gpt-x" } });
-    raw = applySetting(raw, { key: "defaultEffort", value: "medium" });
+    raw = applySetting(raw, { key: "defaultEffort", value: { engine: "claude", effort: "medium" } });
+    raw = applySetting(raw, { key: "defaultEffort", value: { engine: "codex", effort: "xhigh" } });
     const saved: Record<string, unknown> = {};
     seedEngineDefaults(raw, (key, value) => { saved[key] = value; });
     const heads = readHeads(saved.heads, saved.engine);
@@ -95,7 +101,8 @@ describe("new bots take the app's defaults", () => {
     expect(heads.answerWith).toBeNull();
     expect(resolvePrimary(heads, engineDefaultsFor(raw).primary)).toBe("codex");
     expect(heads.codexModel).toBe("gpt-x");
-    expect(saved).toMatchObject({ engine: "codex", model: "sonnet", effort: "medium" });
+    expect(saved).toMatchObject({ engine: "codex", model: "sonnet", efforts: { claude: "medium", codex: "xhigh" } });
+    expect(saved.effort).toBeUndefined();
   });
   it("seeds nothing new when the app has no defaults (a new bot is Claude as before)", () => {
     const saved: Record<string, unknown> = {};
@@ -104,11 +111,11 @@ describe("new bots take the app's defaults", () => {
     expect(saved.model).toBeUndefined();
   });
   it("maps the defaults to a bot's choices (what apply-to-all writes), clearing what the app leaves empty", () => {
-    const defaults = engineDefaultsFor({ defaultEngines: ["codex", "agy"], defaultPrimaryEngine: "agy", defaultEffort: "low" });
+    const defaults = engineDefaultsFor({ defaultEngines: ["codex", "agy"], defaultPrimaryEngine: "agy", defaultEfforts: { agy: "low", codex: "xhigh" } });
     const choices = botChoicesFromDefaults(defaults);
     expect(choices.engines).toEqual(["codex", "agy"]);
     expect(choices.primary).toBe("agy");
-    expect(choices).toMatchObject({ model: null, codexModel: null, agyModel: null, effort: "low" });
+    expect(choices).toMatchObject({ model: null, codexModel: null, agyModel: null, efforts: { claude: null, codex: "xhigh", agy: "low" } });
   });
 });
 
@@ -120,17 +127,18 @@ describe("through the core", () => {
     try {
       await c.call({ type: "boot.commit" });
       const old = await c.call({ type: "projects.add", folder: tempDir("engine-defaults-old") });
-      expect(await c.call({ type: "bot.settings", botId: old.botId })).toMatchObject({ engines: ["claude"], model: null, effort: null });
+      expect(await c.call({ type: "bot.settings", botId: old.botId })).toMatchObject({ engines: ["claude"], model: null, efforts: { claude: null, codex: null, agy: null } });
 
       await c.call({ type: "settings.set", change: { key: "defaultEngines", value: ["claude", "codex"] } });
       await c.call({ type: "settings.set", change: { key: "defaultPrimaryEngine", value: "codex" } });
       await c.call({ type: "settings.set", change: { key: "defaultEngineModel", value: { engine: "claude", model: "opus" } } });
-      await c.call({ type: "settings.set", change: { key: "defaultEffort", value: "high" } });
+      await c.call({ type: "settings.set", change: { key: "defaultEffort", value: { engine: "claude", effort: "high" } } });
+      await c.call({ type: "settings.set", change: { key: "defaultEffort", value: { engine: "codex", effort: "low" } } });
       // Changing the defaults alone leaves existing bots as they are.
       expect(await c.call({ type: "bot.settings", botId: old.botId })).toMatchObject({ engines: ["claude"], model: null });
 
       const fresh = await c.call({ type: "projects.add", folder: tempDir("engine-defaults-new") });
-      expect(await c.call({ type: "bot.settings", botId: fresh.botId })).toMatchObject({ engines: ["claude", "codex"], model: "opus", effort: "high", primary: null, primaryEffective: "codex" });
+      expect(await c.call({ type: "bot.settings", botId: fresh.botId })).toMatchObject({ engines: ["claude", "codex"], model: "opus", efforts: { claude: "high", codex: "low", agy: null }, primary: null, primaryEffective: "codex" });
 
       // Apply to all asks for confirmation: without it nothing happens.
       await expect(c.call({ type: "engineDefaults.applyAll" })).rejects.toThrow();
@@ -145,7 +153,7 @@ describe("through the core", () => {
       expect(result.failed).toEqual([]);
       expect(result.applied).toBeGreaterThanOrEqual(2);
       for (const botId of [old.botId, fresh.botId]) {
-        expect(await c.call({ type: "bot.settings", botId })).toMatchObject({ engines: ["claude", "codex"], model: "opus", effort: "high", primary: null, primaryEffective: "codex" });
+        expect(await c.call({ type: "bot.settings", botId })).toMatchObject({ engines: ["claude", "codex"], model: "opus", efforts: { claude: "high", codex: "low", agy: null }, primary: null, primaryEffective: "codex" });
       }
       expect(existsSync(join(dir, "settings.json"))).toBe(true);
       expect(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")).defaultPrimaryEngine).toBe("codex");

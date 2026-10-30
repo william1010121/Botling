@@ -132,14 +132,17 @@ describe("Settings' model and effort choices are dropdowns", () => {
     try {
       expect(host.querySelectorAll(".segmented")).toHaveLength(0);
       expect([...host.querySelectorAll(".settings-group > h3")].map((heading) => heading.textContent))
-        .toEqual(["Engines in this bot", "Claude", "Codex", "Shared settings"]);
+        .toEqual(["Engines in this bot", "Primary engine", "Claude", "Codex"]);
       expect(select(host, "Claude's model").closest("section")?.getAttribute("aria-label")).toBe("Claude");
       expect(select(host, "Claude subagents' model").closest("section")?.getAttribute("aria-label")).toBe("Claude");
       expect(select(host, "Codex's model").closest("section")?.getAttribute("aria-label")).toBe("Codex");
-      expect(select(host, "Reasoning effort").closest("section")?.textContent).toContain("Applies to every enabled engine.");
-      expect(select(host, "Reasoning effort").closest("section")?.getAttribute("aria-label")).toBe("Shared settings");
+      expect(select(host, "Claude thinking effort").closest("section")?.getAttribute("aria-label")).toBe("Claude");
+      expect(select(host, "Codex thinking effort").closest("section")?.getAttribute("aria-label")).toBe("Codex");
+      expect(options(select(host, "Codex thinking effort"))).toEqual(["", "low", "medium", "high", "xhigh"]);
       expect(options(select(host, "Claude's model"))).toEqual(["", "haiku", "sonnet", "opus"]);
-      expect(select(host, "Reasoning effort").value).toBe("high");
+      // The old single effort shows for each engine that has none of its own.
+      expect(select(host, "Claude thinking effort").value).toBe("high");
+      expect(select(host, "Codex thinking effort").value).toBe("high");
       expect(options(select(host, "Claude subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
       expect(options(select(host, "Codex's model"))).toEqual(["", "gpt-5-old", "gpt-6-luna", "gpt-6-sol"]);
       await choose(select(host, "Claude's model"), "opus");
@@ -152,8 +155,10 @@ describe("Settings' model and effort choices are dropdowns", () => {
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexModel: "gpt-6-sol" });
       await choose(select(host, "Codex's model"), "");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexModel: null });
-      await choose(select(host, "Reasoning effort"), "");
-      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", effort: null });
+      await choose(select(host, "Codex thinking effort"), "");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { codex: null } });
+      await choose(select(host, "Claude thinking effort"), "max");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { claude: "max" } });
     } finally { await done(); }
   });
 
@@ -166,15 +171,15 @@ describe("Settings' model and effort choices are dropdowns", () => {
     const { host, done } = await render(createElement(BotSettings, { client: fakeClient({}, sent, view), bot }));
     try {
       expect([...host.querySelectorAll(".settings-group > h3")].map((heading) => heading.textContent))
-        .toEqual(["Engines in this bot", name(engine), "Shared settings"]);
+        .toEqual(["Engines in this bot", name(engine)]);
       const active = host.querySelector<HTMLInputElement>(`input[aria-label="${name(engine)}"]`)!;
       const inactive = host.querySelector<HTMLInputElement>(`input[aria-label="${name(other)}"]`)!;
       expect(active.checked).toBe(true);
       expect(active.disabled).toBe(true);
       expect(inactive.checked).toBe(false);
       expect(inactive.disabled).toBe(false);
-      await choose(select(host, "Reasoning effort"), "high");
-      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", effort: "high" });
+      await choose(select(host, `${name(engine)} thinking effort`), "high");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { [engine]: "high" } });
       await act(async () => inactive.click());
       expect(sent).toContainEqual({ type: "heads.set", botId: "main", engines: [engine, other] });
       expect(host.querySelector('section[aria-label="Claude"]')).not.toBeNull();
@@ -199,7 +204,6 @@ describe("Settings' model and effort choices are dropdowns", () => {
         expect(sent).toContainEqual({ type: "heads.set", botId: "main", engines: ["codex"] });
         expect(host.querySelector('section[aria-label="Claude"]')).toBeNull();
         expect(host.querySelector('section[aria-label="Codex"]')).not.toBeNull();
-        expect(host.querySelector('section[aria-label="Shared settings"]')).not.toBeNull();
       }
     } finally { await done(); }
   });

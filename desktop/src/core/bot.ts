@@ -65,6 +65,7 @@ import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView, type WhiteboardPictureView,
 } from "../contract";
+import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
 import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
 import {
@@ -1812,13 +1813,15 @@ export class Bot {
   }
 
   /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`, `codexWorkers`). */
-  private choices(): { model: string | null; effort: string | null; subagentModel: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null } {
+  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null } {
     const settings = this.store.loadSettings();
     const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
     const workers = codexWorkerDefaults(settings.codexWorkers);
     return {
       model: typeof settings.model === "string" ? settings.model : null,
       effort: pick(settings.effort, ["low", "medium", "high", "xhigh", "max"]),
+      // Each engine's own effort, the old single one standing in where an engine has none.
+      efforts: effortsFor(settings),
       subagentModel: typeof settings.subagentModel === "string" ? settings.subagentModel : null,
       // None set: Codex's own config (~/.codex/config.toml).
       codexWorkers: workers.model || workers.effort || workers.fast !== null ? workers : null,
@@ -1830,11 +1833,12 @@ export class Bot {
    * (its own primary is cleared, so it follows the app's). Heads go away or start as with Settings → Engines in
    * this bot; a head already running keeps its model until it next wakes, as with its own settings.
    */
-  async applyEngineChoices(choices: { engines: Engine[]; model: string | null; effort: string | null; codexModel: string | null; agyModel: string | null }) {
+  async applyEngineChoices(choices: { engines: Engine[]; model: string | null; efforts: EngineEfforts; codexModel: string | null; agyModel: string | null }) {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     if (owner.headsSettings.engines.join() !== choices.engines.join()) await owner.setHeads(choices.engines);
-    owner.configure({ model: choices.model, effort: choices.effort, codexModel: choices.codexModel, agyModel: choices.agyModel, primary: null });
+    // The old single effort goes: every engine has exactly the app's value for it (or its own default).
+    owner.configure({ model: choices.model, effort: null, efforts: choices.efforts, codexModel: choices.codexModel, agyModel: choices.agyModel, primary: null });
   }
 
   /**
@@ -1859,14 +1863,14 @@ export class Bot {
       botId: owner.id, engines: [...owner.headsSettings.engines] as Engine[],
       primary: owner.headsSettings.answerWith && owner.headsSettings.answerWith !== "both" ? owner.headsSettings.answerWith : null,
       primaryEffective: resolvePrimary(owner.headsSettings, owner.appPrimary()),
-      model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"],
+      model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"], efforts: choices.efforts as BotSettingsView["efforts"],
       subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], codexModel: owner.headsSettings.codexModel ?? null,
       agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
     };
   }
 
   /** Changes its own choices; a head already running keeps its own until it next wakes. */
-  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null; primary?: Engine | null }): BotSettingsView {
+  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     const before = owner.settingsView();
@@ -1876,6 +1880,11 @@ export class Bot {
       owner.headsSettings.answerWith = change.primary;
       owner.saveHeads();
       owner.headsChanged();
+    }
+    if (change.efforts) {
+      for (const [engine, level] of Object.entries(change.efforts) as [Engine, string | null | undefined][]) {
+        if (level && !(EFFORTS_BY_ENGINE[engine] as readonly string[]).includes(level)) throw new ContractError("bad_request", `${displayName(engine)} has no ${level} effort.`);
+      }
     }
     for (const key of ["model", "effort", "subagentModel", "agyModel"] as const) {
       if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
@@ -1895,8 +1904,18 @@ export class Bot {
       if (claude?.head?.running) claude.restartFor({ told: model, shown: model }, true);
       else if (claude) owner.add({ id: newId(), role: "divider", text: `Switched to ${model}`, date: toSwiftDate() });
     }
-    if (change.effort !== undefined && change.effort !== before.effort) {
-      for (const bot of heads) bot.restartFor({ told: `${change.effort ?? "default"} effort`, shown: `${effortName(change.effort)} effort` }, true);
+    if (change.efforts) {
+      const saved = owner.store.loadSettings().efforts;
+      const merged: Record<string, unknown> = { ...(saved && typeof saved === "object" && !Array.isArray(saved) ? saved as Record<string, unknown> : {}) };
+      for (const [engine, level] of Object.entries(change.efforts)) { if (level === undefined) continue; if (level === null) delete merged[engine]; else merged[engine] = level; }
+      owner.store.saveSetting("efforts", Object.keys(merged).length ? merged : undefined);
+    }
+    // An engine whose effort (its own, or the old one it uses) changed: only its heads are told.
+    const after = owner.settingsView();
+    for (const engine of ["claude", "codex", "agy"] as const) {
+      const was = before.efforts?.[engine] ?? null, now = after.efforts?.[engine] ?? null;
+      if (was === now) continue;
+      for (const bot of heads) if (bot.engine === engine) bot.restartFor({ told: `${now ?? "default"} effort`, shown: `${effortName(now)} effort` }, true);
     }
     if (change.subagentModel !== undefined && change.subagentModel !== before.subagentModel) {
       const model = change.subagentModel;
@@ -2531,7 +2550,7 @@ export class Bot {
     const launch = this.options.launch?.() ?? { subagentHourCache: false };
     const start: SessionStart = {
       sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env, pluginTools: plugins.tools ?? [],
-      model: choices.model, effort: choices.effort, subagentModel: choices.subagentModel,
+      model: choices.model, effort: choices.efforts[this.engine], subagentModel: choices.subagentModel,
       subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
       addDirs: this.owner.options.addDirs?.() ?? [],
       // 1.x's "Auto-approve safe actions": on unless turned off.
@@ -2548,7 +2567,7 @@ export class Bot {
         codexWorkerConfig: worker => {
           if (!this.options.codexConfig) throw new Error("Codex worker transport unavailable.");
           return this.options.codexConfig(this.profile, { ...start, sessionId: worker.sessionId, resume: worker.resume,
-            systemPrompt: worker.systemPrompt ?? "", workerInstructions: "", codexModel: this.heads.codexModel, routinesFile: null,
+            systemPrompt: worker.systemPrompt ?? "", workerInstructions: "", codexModel: this.heads.codexModel, effort: choices.efforts.codex, routinesFile: null,
             autoMode: false, codexBypassPermissions: false, claudeBypassPermissions: false, addDirs: [] });
         } });
       head = config.transport === "acp"

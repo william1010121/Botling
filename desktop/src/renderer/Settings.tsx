@@ -9,13 +9,14 @@ import { UpdateActions,RecoveryCopies } from "./Updates";
 // and words, for what 2.0's core does. Everything here is global (settings.json); the shown bot's own
 // choices (its bot.json) are `BotSettings`, in the right panel one level in, as in 1.x. Each
 // control shows what the core saved: a change goes out, the answer (or `settings.updated`) comes back.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView, UsageView } from "../contract";
 import { asOf, countdown, dollars, isEmpty, percent, resetDay, staleSince, tokenCount, type Limits } from "./usage-text";
 import { MESSAGE_WIDTH_DEFAULT, MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX } from "../contract/message-width";
 import { Client, RequestFailed } from "./client";
 import { PanelFrame, PluginsPanel } from "./Plugins";
 import { faceURL } from "./avatars";
+import { EFFORTS_BY_ENGINE } from "../contract/efforts";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
@@ -435,6 +436,8 @@ export function AntigravityPermissions({client,settings,change}: {client:Client;
   </Group>;
 }
 
+/** Only the levels the engine's own control takes (`EFFORTS_BY_ENGINE`). */
+const effortOptions = (engine: "claude" | "codex" | "agy") => EFFORTS.filter((effort) => (EFFORTS_BY_ENGINE[engine] as readonly string[]).includes(effort.id));
 const ENGINE_NAMES = { claude: "Claude", codex: "Codex", agy: "Antigravity" } as const;
 type EngineId = keyof typeof ENGINE_NAMES;
 
@@ -486,15 +489,18 @@ function EngineDefaults({ client, settings, change, botId, botCount }: { client:
               onChange={(value) => change({ key: "defaultPrimaryEngine", value: value as EngineId | null })} />
           </Row>
           {defaults.engines.map((engine) => (
-            <Row key={engine} label={`${ENGINE_NAMES[engine]} model`}>
+            <React.Fragment key={engine}>
+            <Row label={`${ENGINE_NAMES[engine]} model`}>
               {botId
                 ? <ModelPicker label={`${ENGINE_NAMES[engine]}'s default model`} discovery={discovery[engine]} value={defaults.models[engine]} onChange={(model) => change({ key: "defaultEngineModel", value: { engine, model } })} />
                 : <SelectSetting label={`${ENGINE_NAMES[engine]}'s default model`} blank="Engine default" options={[]} value={defaults.models[engine]} onChange={(model) => change({ key: "defaultEngineModel", value: { engine, model } })} />}
             </Row>
+            <Row label={`${ENGINE_NAMES[engine]} thinking effort`}>
+              <SelectSetting label={`${ENGINE_NAMES[engine]} default thinking effort`} blank="Engine default" options={effortOptions(engine)} value={defaults.efforts[engine]}
+                onChange={(value) => change({ key: "defaultEffort", value: { engine, effort: value as SettingsView["engineDefaults"]["efforts"]["claude"] } })} />
+            </Row>
+            </React.Fragment>
           ))}
-          <Row label="Thinking effort" hint="A bot has one effort, shared by its engines.">
-            <SelectSetting label="Default thinking effort" blank="Engine default" options={EFFORTS} value={defaults.effort} onChange={(value) => change({ key: "defaultEffort", value: value as SettingsView["engineDefaults"]["effort"] })} />
-          </Row>
           <Row label="Apply to all bots" hint="Sets every bot's engines, models, effort and primary engine to these. Overwrites each bot's own choices.">
             {!confirming
               ? <button type="button" disabled={applying} onClick={() => { setOutcome(null); setConfirming(true); }}>Apply to all bots…</button>
@@ -588,6 +594,13 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
   const hasClaude = view.engines.includes("claude");
   const hasCodex = view.engines.includes("codex");
   const hasAgy = view.engines.includes("agy");
+  // Each engine has its own effort (the old single one shows for an engine that has none of its own).
+  const effortRow = (engine: "claude" | "codex" | "agy") => (
+    <Row label="Thinking effort">
+      <SelectSetting label={`${ENGINE_NAMES[engine]} thinking effort`} blank="Default" options={effortOptions(engine)} value={view.efforts?.[engine] ?? view.effort ?? null}
+        onChange={(value) => configure({ efforts: { [engine]: value as BotSettingsView["effort"] } })} />
+    </Row>
+  );
   return (
     <>
       <Group title="Engines in this bot" note="Choose a primary recipient in the composer. Enabled engines can collaborate when needed. Antigravity requires the verified official ACP runtime and Google sign-in.">
@@ -614,6 +627,7 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           <Row label="Model">
             <ModelPicker label="Claude's model" discovery={claudeModels} value={view.model} onChange={(model) => configure({ model })} />
           </Row>
+          {effortRow("claude")}
           <Row label="Subagents' model">
             <ModelPicker label="Claude subagents' model" blank="Inherit bot" discovery={claudeModels} value={view.subagentModel} subagents onChange={(subagentModel) => configure({ subagentModel })} />
           </Row>
@@ -624,19 +638,15 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           <Row label="Model">
             <ModelPicker label="Codex's model" discovery={codexModels} value={view.codexModel} onChange={(codexModel) => configure({ codexModel })} />
           </Row>
+          {effortRow("codex")}
         </Group>
       )}
       {hasAgy && <Group title="Antigravity" note="ACP uses single-action approval cards and app-managed tools. Native agents, workflows and global plugins are disabled.">
         <Row label="Model">
           <ModelPicker label="Antigravity model" discovery={agyModels} value={view.agyModel ?? null} onChange={(agyModel) => configure({ agyModel })} />
         </Row>
+        {effortRow("agy")}
       </Group>}
-      {/* Both heads use the bot's effort; keep this outside either engine's group. */}
-      <Group title="Shared settings" note="A head already awake goes on in the same conversation on the new choice just before its next message.">
-        <Row label="Reasoning effort" hint="Applies to every enabled engine.">
-          <SelectSetting label="Reasoning effort" blank="Default" options={EFFORTS} value={view.effort} onChange={(value) => configure({ effort: value as BotSettingsView["effort"] })} />
-        </Row>
-      </Group>
     </>
   );
 }

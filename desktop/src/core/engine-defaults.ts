@@ -6,9 +6,22 @@
 // primary chosen, every engine's own model and effort.
 import { ENGINES, isEngine, makeHeads, headsJSON, type Engine } from "./heads";
 
-export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
-export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+import { EFFORT_LEVELS, EFFORTS_BY_ENGINE, type EffortLevel } from "../contract/efforts";
+export { EFFORT_LEVELS, EFFORTS_BY_ENGINE, type EffortLevel };
 export type EngineModels = Record<Engine, string | null>;
+export type EngineEfforts = Record<Engine, EffortLevel | null>;
+const levelFor = (engine: Engine, value: unknown): EffortLevel | null => (EFFORTS_BY_ENGINE[engine] as readonly unknown[]).includes(value) ? value as EffortLevel : null;
+
+/**
+ * The effort a bot runs `engine` with, from its bot.json: the engine's own (`efforts`), else the old single `effort`
+ * (the value for every engine that has none of its own), else none (the engine's default). A level the engine does
+ * not support is not used.
+ */
+export function effortFor(settings: Record<string, unknown>, engine: Engine): EffortLevel | null {
+  const own = settings.efforts && typeof settings.efforts === "object" && !Array.isArray(settings.efforts) ? levelFor(engine, (settings.efforts as Record<string, unknown>)[engine]) : null;
+  return own ?? levelFor(engine, settings.effort);
+}
+export const effortsFor = (settings: Record<string, unknown>): EngineEfforts => ({ claude: effortFor(settings, "claude"), codex: effortFor(settings, "codex"), agy: effortFor(settings, "agy") });
 
 export interface EngineDefaults {
   /** Never empty, in Claude, Codex, Antigravity order. */
@@ -16,8 +29,8 @@ export interface EngineDefaults {
   /** One of `engines`, or null: each bot's first engine. */
   primary: Engine | null;
   models: EngineModels;
-  /** Shared by the engines of a bot (a bot has one effort). */
-  effort: EffortLevel | null;
+  /** Each engine's own thinking effort (null: the engine's default). */
+  efforts: EngineEfforts;
 }
 
 const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value.trim().slice(0, 200) : null);
@@ -28,12 +41,12 @@ export function engineDefaultsFor(raw: Record<string, unknown>): EngineDefaults 
   const engines = ENGINES.filter((engine) => list.includes(engine));
   if (!engines.length) engines.push("claude");
   const models = raw.defaultEngineModels && typeof raw.defaultEngineModels === "object" ? raw.defaultEngineModels as Record<string, unknown> : {};
-  const effort = (EFFORT_LEVELS as readonly unknown[]).includes(raw.defaultEffort) ? raw.defaultEffort as EffortLevel : null;
+  const efforts = raw.defaultEfforts && typeof raw.defaultEfforts === "object" ? raw.defaultEfforts as Record<string, unknown> : {};
   return {
     engines,
     primary: isEngine(raw.defaultPrimaryEngine) && engines.includes(raw.defaultPrimaryEngine) ? raw.defaultPrimaryEngine : null,
     models: { claude: text(models.claude), codex: text(models.codex), agy: text(models.agy) },
-    effort,
+    efforts: { claude: levelFor("claude", efforts.claude), codex: levelFor("codex", efforts.codex), agy: levelFor("agy", efforts.agy) },
   };
 }
 
@@ -45,7 +58,7 @@ export function changeEngineDefaults(raw: Record<string, unknown>, change:
   | { key: "defaultEngines"; value: Engine[] }
   | { key: "defaultPrimaryEngine"; value: Engine | null }
   | { key: "defaultEngineModel"; value: { engine: Engine; model: string | null } }
-  | { key: "defaultEffort"; value: EffortLevel | null }): Record<string, unknown> {
+  | { key: "defaultEffort"; value: { engine: Engine; effort: EffortLevel | null } }): Record<string, unknown> {
   const next = { ...raw };
   const before = engineDefaultsFor(raw);
   switch (change.key) {
@@ -67,9 +80,14 @@ export function changeEngineDefaults(raw: Record<string, unknown>, change:
       if (Object.keys(kept).length) next.defaultEngineModels = kept; else delete next.defaultEngineModels;
       break;
     }
-    case "defaultEffort":
-      if (change.value) next.defaultEffort = change.value; else delete next.defaultEffort;
+    case "defaultEffort": {
+      // A level the engine does not support is refused.
+      if (change.value.effort && !levelFor(change.value.engine, change.value.effort)) break;
+      const efforts = { ...before.efforts, [change.value.engine]: change.value.effort };
+      const kept = Object.fromEntries(ENGINES.flatMap((engine) => (efforts[engine] ? [[engine, efforts[engine]]] : [])));
+      if (Object.keys(kept).length) next.defaultEfforts = kept; else delete next.defaultEfforts;
       break;
+    }
   }
   return next;
 }
@@ -79,14 +97,14 @@ export interface BotChoices {
   engines: Engine[];
   primary: Engine | null;
   model: string | null;
-  effort: EffortLevel | null;
+  efforts: EngineEfforts;
   codexModel: string | null;
   agyModel: string | null;
 }
 export function botChoicesFromDefaults(defaults: EngineDefaults): BotChoices {
   return {
     engines: [...defaults.engines], primary: defaults.primary,
-    model: defaults.models.claude, effort: defaults.effort, codexModel: defaults.models.codex, agyModel: defaults.models.agy,
+    model: defaults.models.claude, efforts: { ...defaults.efforts }, codexModel: defaults.models.codex, agyModel: defaults.models.agy,
   };
 }
 
@@ -95,7 +113,7 @@ export function botChoicesFromDefaults(defaults: EngineDefaults): BotChoices {
  * a bot exactly as before. `engine` is the head the bot runs as (its primary, else its first engine).
  */
 export function seedBotChoices(raw: Record<string, unknown>, setSetting: (key: string, value: unknown) => void) {
-  const touched = ["defaultEngines", "defaultPrimaryEngine", "defaultEngineModels", "defaultEffort"].some((key) => raw[key] !== undefined);
+  const touched = ["defaultEngines", "defaultPrimaryEngine", "defaultEngineModels", "defaultEfforts"].some((key) => raw[key] !== undefined);
   if (!touched) return;
   const choices = botChoicesFromDefaults(engineDefaultsFor(raw));
   if (choices.engines.length > 1 || choices.engines[0] !== "claude" || choices.primary) {
@@ -106,6 +124,6 @@ export function seedBotChoices(raw: Record<string, unknown>, setSetting: (key: s
     setSetting("heads", headsJSON(makeHeads(["claude"], null, { codexModel: choices.codexModel })));
   }
   if (choices.model) setSetting("model", choices.model);
-  if (choices.effort) setSetting("effort", choices.effort);
+  if (ENGINES.some((engine) => choices.efforts[engine])) setSetting("efforts", Object.fromEntries(ENGINES.flatMap((engine) => (choices.efforts[engine] ? [[engine, choices.efforts[engine]]] : []))));
   if (choices.agyModel) setSetting("agyModel", choices.agyModel);
 }

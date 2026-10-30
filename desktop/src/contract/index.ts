@@ -706,7 +706,7 @@ export const SettingsView = z.strictObject({
     engines: z.array(Engine).min(1).max(3),
     primary: Engine.nullable(),
     models: z.strictObject({ claude: z.string().max(200).nullable(), codex: z.string().max(200).nullable(), agy: z.string().max(200).nullable() }),
-    effort: Effort.nullable(),
+    efforts: z.strictObject({ claude: Effort.nullable(), codex: Effort.nullable(), agy: Effort.nullable() }),
   }),
   resultPublishing: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]),
   stallReminderMinutes: z.number().int().min(0).max(10_000),
@@ -750,7 +750,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("defaultEngines"), value: z.array(Engine).min(1).max(3) }),
   z.strictObject({ key: z.literal("defaultPrimaryEngine"), value: Engine.nullable() }),
   z.strictObject({ key: z.literal("defaultEngineModel"), value: z.strictObject({ engine: Engine, model: ModelId.nullable() }) }),
-  z.strictObject({ key: z.literal("defaultEffort"), value: Effort.nullable() }),
+  z.strictObject({ key: z.literal("defaultEffort"), value: z.strictObject({ engine: Engine, effort: Effort.nullable() }) }),
   z.strictObject({ key: z.literal("resultPublishing"), value: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]) }),
   z.strictObject({ key: z.literal("stallReminderMinutes"), value: z.number().int().min(0).max(1_440) }),
   z.strictObject({ key: z.literal("rightPanelCollapsed"), value: z.boolean() }),
@@ -831,7 +831,10 @@ export const BotSettingsView = z.strictObject({
   /** The engine a message goes to when the composer has not been used: its own, else the app's, else its first. */
   primaryEffective: Engine.optional(),
   model: z.string().max(200).nullable(),
+  /** The old single effort; an engine with none of its own uses it. */
   effort: Effort.nullable(),
+  /** Each engine's effective effort (its own, else `effort`); the levels an engine does not support are never shown. */
+  efforts: z.strictObject({ claude: Effort.nullable(), codex: Effort.nullable(), agy: Effort.nullable() }).optional(),
   subagentModel: z.string().max(200).nullable(),
   codexModel: z.string().max(200).nullable(),
   agyModel: z.string().max(200).nullable().optional(),
@@ -1110,6 +1113,8 @@ export const Command = z.discriminatedUnion("type", [
     subagentModel: ModelId.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
     /** The bot's own primary engine (null: follow the app's default). */
     primary: Engine.nullable().optional(),
+    /** An engine's own effort (null: back to the old single effort, else the engine's default); only the keys given change. */
+    efforts: z.strictObject({ claude: Effort.nullable().optional(), codex: Effort.nullable().optional(), agy: Effort.nullable().optional() }).optional(),
   }),
   /** Settings → Engines and models → "Apply to all bots": every bot's engines, models, effort and primary become the app's defaults. Needs `confirmed: true`, as the UI asks first. */
   z.strictObject({ type: z.literal("engineDefaults.applyAll"), confirmed: z.literal(true) }),
