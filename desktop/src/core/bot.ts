@@ -2264,7 +2264,11 @@ export class Bot {
       this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
       this.updated();
     }
-    void this.deliver(turn, head);
+    // Handing the turn to the agent starts its process (ps for the process ledger, locks, fsyncs, the
+    // recent-chat briefing): synchronous work that took seconds on a busy machine. A message you send is
+    // accepted once its line is saved, so chat.send must answer first; deliver re-checks the turn.
+    if (turn.origin === "user") setImmediate(() => { void this.deliver(turn, head); });
+    else void this.deliver(turn, head);
   }
 
   /**

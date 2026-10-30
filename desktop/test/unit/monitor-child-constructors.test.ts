@@ -59,6 +59,8 @@ it("the actual bot coordinator constructor explicitly retains monitor eligibilit
     emit() {}, log() {}, approvalTimeoutMs: 60000, idleMs: 60000, interruptGraceMs: 1 });
   try {
     bot.send("already authorized task");
+    // The turn is handed to the agent right after chat.send has answered (Bot.begin), not inside it.
+    await new Promise((resolve) => setImmediate(resolve));
     expect(heads[0].config.monitorWorker).toBe(false);
     expect(decision(heads[0])).toEqual({});
   } finally { for (const head of heads) head.running = false; await bot.shutdown({ tidy: false }); }
