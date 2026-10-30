@@ -311,6 +311,8 @@ describe("operator release scripts in a throwaway HOME only", () => {
       writeFileSync(path, text);
     }
     put("build.mjs", readFileSync(resolve("build.mjs"), "utf8"));
+    put("scripts/terminal-runtime.mjs", "export function stageTerminalRuntime() {}\n");
+    put("scripts/package-agy-helper.mjs", "export function packageAgyHelper() {}\n");
     put("release-config.json", JSON.stringify({ publicKey }));
     put("package.json", JSON.stringify({ botlingStorageContract: { version: 1, epoch: 2 } }));
     symlinkSync(resolve("node_modules"), join(root, "node_modules"), "dir");

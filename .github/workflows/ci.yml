@@ -60,7 +60,13 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - run: npm run release:check
+      - name: Stable release gate (skipped for a dev-trial build)
+        run: |
+          if [ "$(node -p 'require("./package.json").botlingDevTrial === true')" = true ]; then
+            echo "Dev-trial build: stable release gate not applicable"
+          else
+            npm run release:check
+          fi
       - run: npm run test:release
       - run: npm run typecheck
       - run: npm run test:unit

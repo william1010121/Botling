@@ -4,6 +4,45 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 2.0.8
+
+A rollup of everything since 2.0.1, and the first build for Linux. It keeps the "Botling 2 Dev
+Trial" profile, so your chats and settings stay where they are. Download it by hand from the
+release page: this build has no signed update manifest, so the in-app updater does not offer it.
+
+### New
+
+- **Linux (x64) AppImage and .deb.** This is the first Linux build. It is untested on real
+  hardware. The Antigravity engine and in-place updates are macOS-only (see Known limitations).
+- **Antigravity bots can delegate to app-managed workers**, like Claude and Codex bots, with an
+  approval card for every worker file write, command, handoff and checkpoint. Antigravity can
+  also hand work to Claude or Codex, and there is no cap on concurrent Antigravity workers.
+- **Engine defaults.** Set a primary engine per bot, global defaults for engines and models, and
+  the thinking effort per engine, bot and launch.
+- **Detailed reports go to a report page.** The chat gets a short conclusion and a link.
+- **Codex shows its 5-hour limit** when it reports one.
+
+### Improved
+
+- Antigravity replies are short: three sentences, with long content moved to a report page.
+- Antigravity coordination tools run without an approval card, and a chat message to a busy
+  Antigravity bot is accepted while it waits on an approval.
+- Chat sends are answered before the turn is handed to the agent.
+- Closing a terminal tab is quiet when its shell exits.
+- Antigravity quota shows as ring cards in every state.
+
+### Fixed
+
+- Recovered worker cleanup obligations are kept after a report checkpoint.
+- Blank dependency ids on Antigravity checkpoints are accepted.
+- Stale test assertions and the CI release gate for dev-trial builds.
+
+### Known limitations
+
+- Linux: the Antigravity engine (its runtime is a macOS arm64 binary), in-place updates and
+  hiding the app (a macOS feature) are off. Claude and Codex engines need their CLIs installed.
+- The app is ad-hoc signed and not notarized on macOS, and nothing is signed on Linux.
+
 ## 2.0.3
 
 ### Fixed
