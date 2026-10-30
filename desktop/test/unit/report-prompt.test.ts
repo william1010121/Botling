@@ -123,7 +123,7 @@ describe("generated report writing guide", () => {
     expect(shipped).toContain("Give the reason for each inference and state what remains unchecked");
     expect(shipped).toContain("Do not assign mechanical confidence percentages");
     expect(shipped).not.toMatch(/Uncertainty with words \+ %|likelihood words \+ %|95–99|80–95|55–80|45–55|20–45|5–20/);
-    expect(shipped).toContain("prefer a flow plus a table of evidence");
+    expect(shipped).toContain("prefer a flowchart plus a table of evidence");
     expect(shipped).toContain("Distinguish observed links from pending inferences");
     expect(shipped).toContain("ASD-STE100-informed plain language");
     expect(shipped).toContain("20 English words or 30 Chinese characters");

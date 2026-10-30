@@ -35,6 +35,6 @@ it("chat.send answers once the user's line is saved, not after the agent's turn 
   expect(c.of("message.added").some((e) => (e.event as { message: { role: string } }).message.role === "user")).toBe(true);
   expect(ack).toBeLessThan(500);
   // The turn still starts and finishes as before.
-  const { turnId } = response.result as { turnId: string };
+  const { turnId } = (response as { result: unknown }).result as { turnId: string };
   await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === turnId), { what: "the turn to finish", timeout: 30_000 });
 });
