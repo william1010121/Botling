@@ -22,12 +22,14 @@ export function backgroundTaskView(value: unknown): BackgroundTaskView | null {
   if (monitor && task.status !== "running" && ["awaitingApproval", "running", "cancelling"].includes(monitor.execution)) {
     monitor = { ...monitor, execution: "interrupted", callback: ["delivered", "suppressed", "unknown"].includes(monitor.callback) ? monitor.callback : "uncertain" };
   }
+  const owner = task.owner && typeof task.owner === "object" ? task.owner as Record<string, unknown> : null;
   const parsed = BackgroundTaskView.safeParse({
     id: task.id, kind: task.kind, title: task.title, status: task.status,
     started, ended: ms(task.endedAt), detail: text(task.detail), fires: ms(task.fireAt),
     schedule: text(task.schedule), recurring: typeof task.recurring === "boolean" ? task.recurring : null,
     summary: text(task.summary),
     ...(monitor ? { monitor } : {}),
+    ...(owner && typeof owner.id === "string" && owner.id && typeof owner.label === "string" ? { owner: { kind: "subagent", id: owner.id.slice(0, 200), label: owner.label } } : {}),
   });
   return parsed.success ? parsed.data : null;
 }

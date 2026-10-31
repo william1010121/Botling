@@ -939,6 +939,7 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 .task-item:hover, .task-item:focus-visible, .task-item[aria-expanded="true"] { background: var(--chip); color: var(--text); }
 .task-item .task-mark { flex: none; display: inline-flex; justify-content: center; width: 12px; }
 .task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-owner { flex: 0 1 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11px; }
 .task-time { flex: none; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .task-output {
   width: min(360px, 100%); margin: 0; max-height: 180px; overflow: auto; padding: 8px 10px; border-radius: 8px;

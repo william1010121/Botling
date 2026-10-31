@@ -365,7 +365,13 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
       mark.innerHTML = glyph;
       mark.dataset.kind = task.kind;
     }
-    item.append(mark, name, time);
+    if (task.owner) {
+      const by = document.createElement("span");
+      by.className = "task-owner";
+      by.textContent = t("tasks.by", { name: task.owner.label });
+      by.title = by.textContent;
+      item.append(mark, name, by, time);
+    } else item.append(mark, name, time);
     item.addEventListener("click", () => {
       const id = key(origin(task), task.id);
       if (open.has(id)) {

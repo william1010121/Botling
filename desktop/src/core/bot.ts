@@ -68,7 +68,7 @@ import {
   Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
   type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
-import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall } from "./session-schedules";
+import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
 import { ReplyText, type StreamItem } from "./agent/stream";
 import {
   applyingReaction, archiveAll, archiveLine, characterCount, characterPrefix, compareReactions, reactionIntro, reactionUpdate, recentChat,
@@ -2662,8 +2662,34 @@ export class Bot {
     if (item.kind === "permission" && item.workerId) return this.ask(head, item, null);
     if (item.kind === "backgroundStarted") {
       // A Monitor running a command is a background shell task too.
-      const monitor = item.monitor || this.turn?.steps.findLast((step) => step.id === item.id)?.tool === "Monitor";
-      this.addBackgroundTask(item.id, monitor ? "monitor" : "command", item.description);
+      const call = this.toolCalls.get(item.id);
+      const monitor = item.monitor || (call ? call.tool === "Monitor" : this.turn?.steps.findLast((step) => step.id === item.id)?.tool === "Monitor");
+      if (call?.parent) this.addSubagentTask(call.parent, item.id, monitor ? "monitor" : "command", item.description || call.detail, call.detail);
+      else this.addBackgroundTask(item.id, monitor ? "monitor" : "command", item.description);
+      return;
+    }
+    // A subagent's own background work: a command claude moved to the background after its timeout, a wake-up, a cron job.
+    if (item.kind === "toolResult" && item.parent && item.launch?.background && !item.failed) {
+      const call = this.toolCalls.get(item.id);
+      if (call?.tool === "Bash") {
+        this.addSubagentTask(item.parent, item.id, "command", "", call.detail);
+        const task = this.findTask(item.id);
+        if (task) { task.outputFile = item.launch.outputFile ?? backgroundOutputFile(item.output) ?? task.outputFile; this.touchTask(item.id); }
+      }
+    }
+    if (item.kind === "toolUse" && item.parent) {
+      const call = scheduleCall(item.tool, item.input);
+      if (call) this.scheduleCalls.set(item.id, call);
+    }
+    if (item.kind === "scheduleResult" && item.parent) {
+      const call = this.scheduleCalls.get(item.id);
+      this.scheduleCalls.delete(item.id);
+      const task = call ? scheduledTask(item.id, call, item.result) : null;
+      if (task) this.placeSubagentTask(item.parent, task);
+      const tool = this.toolCalls.get(item.id)?.tool;
+      const cancellation = tool ? scheduleCancellation(tool, item.result) : null;
+      if (cancellation) this.cancelScheduled(cancellation, this.turn);
+      this.refreshScheduleDue();
       return;
     }
     // Subagents are followed whoever's turn it is; their own lines stop here.
@@ -2696,17 +2722,7 @@ export class Bot {
       if (task && !turn.tasks?.some((candidate) => candidate.id === task.id)) (turn.tasks ??= []).push(task);
       const tool = this.toolCalls.get(item.id)?.tool;
       const cancellation = tool ? scheduleCancellation(tool, item.result) : null;
-      if (cancellation) {
-        if (turn.tasks) turn.tasks = turn.tasks.filter((task) => !matchesCancellation(task, cancellation));
-        for (const record of this.records) {
-          const tasks = record.backgroundTasks as BackgroundTask[] | undefined;
-          if (!Array.isArray(tasks) || !tasks.some((task) => matchesCancellation(task, cancellation))) continue;
-          const kept = tasks.filter((task) => !matchesCancellation(task, cancellation));
-          if (kept.length) record.backgroundTasks = kept;
-          else delete record.backgroundTasks;
-          this.changed(record);
-        }
-      }
+      if (cancellation) this.cancelScheduled(cancellation, turn);
       this.refreshScheduleDue();
       return;
     }
@@ -2969,6 +2985,7 @@ export class Bot {
   private subagentEnded(id: string) {
     const subagent = this.subagents.get(id);
     if (!subagent) return;
+    this.endSubagentTasks(subagent.id);
     const mark = (steps: StepRecord[] | undefined) => {
       const step = steps?.findLast((candidate) => candidate.id === id);
       if (!step) return false;
@@ -3477,6 +3494,66 @@ export class Bot {
         execution: "running", callback: "unknown" };
     }
     (turn.tasks ??= []).push(task);
+  }
+
+  /** A wake-up or cron job was cancelled: out of the turn under way and of the replies that kept it. */
+  private cancelScheduled(cancellation: ScheduleCancellation, turn: Turn | null) {
+    if (turn?.tasks) turn.tasks = turn.tasks.filter((task) => !matchesCancellation(task, cancellation));
+    for (const record of this.records) {
+      const tasks = record.backgroundTasks as BackgroundTask[] | undefined;
+      if (!Array.isArray(tasks) || !tasks.some((task) => matchesCancellation(task, cancellation))) continue;
+      const kept = tasks.filter((task) => !matchesCancellation(task, cancellation));
+      if (kept.length) record.backgroundTasks = kept;
+      else delete record.backgroundTasks;
+      this.changed(record);
+    }
+  }
+
+  /** A kept task by its call's id: in the turn under way, or in a reply. */
+  private findTask(id: string): BackgroundTask | undefined {
+    return this.turn?.tasks?.find((task) => task.id === id)
+      ?? this.records.flatMap((record) => Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : []).find((task) => task.id === id);
+  }
+
+  private touchTask(id: string) {
+    if (this.turn?.tasks?.some((task) => task.id === id)) return;
+    const record = this.records.findLast((candidate) => Array.isArray(candidate.backgroundTasks) && (candidate.backgroundTasks as BackgroundTask[]).some((task) => task.id === id));
+    if (record) this.changed(record);
+  }
+
+  /** Background work a subagent started (the row labels it with the subagent), once. */
+  private addSubagentTask(ownerId: string, id: string, kind: BackgroundKind, title: string, detail: string) {
+    const owner = this.subagents.get(ownerId);
+    const call = owner?.steps.findLast((step) => step.id === id);
+    this.placeSubagentTask(ownerId, backgroundTask(id, kind, title || call?.title || detail, detail || call?.detail));
+  }
+
+  /** Keeps a task of a subagent: in the turn under way, else in the reply that has the subagent's step (or the head's latest). */
+  private placeSubagentTask(ownerId: string, task: BackgroundTask) {
+    const owner = this.subagents.get(ownerId);
+    if (!owner || owner.status !== "running" || this.findTask(task.id)) return;
+    task.owner = { id: owner.id, label: owner.description || owner.name || owner.type || "Subagent" };
+    const turn = this.turn;
+    if (turn?.open && turn.origin !== "tidy") { (turn.tasks ??= []).push(task); this.refreshScheduleDue(); return; }
+    const target = this.records.findLast((record) => record.steps?.some((step) => step.id === owner.id))
+      ?? this.records.findLast((record) => record.role === "bot" && !record.permissionTool && (record.engine ?? "claude") === this.engine);
+    if (!target) return;
+    target.backgroundTasks = [...(Array.isArray(target.backgroundTasks) ? target.backgroundTasks as BackgroundTask[] : []), task];
+    this.changed(target);
+    this.refreshScheduleDue();
+  }
+
+  /** The subagent is over: its background work went with it, so the row must not keep it running. */
+  private endSubagentTasks(ownerId: string) {
+    const summary = "Ended with its subagent.";
+    for (const task of this.turn?.tasks ?? []) if (task.owner?.id === ownerId && task.status === "running") endTask(task, "killed", summary);
+    for (const record of this.records) {
+      const tasks = Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : [];
+      let changed = false;
+      for (const task of tasks) if (task.owner?.id === ownerId && task.status === "running") { endTask(task, "killed", summary); changed = true; }
+      if (changed) this.changed(record);
+    }
+    this.refreshScheduleDue();
   }
 
   /** A background task reported back (`endBackgroundTask`): in the turn under way, or in the reply it belongs to. */

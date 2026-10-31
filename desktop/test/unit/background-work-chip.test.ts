@@ -75,3 +75,14 @@ it("keeps completed coordinator execution visible until its callback is resolved
   monitor.callback = "delivered";
   expect(draw(records).at(-1)!.tasks?.length ?? 0).toBe(0);
 });
+
+it("labels a subagent's task with who started it, and leaves the bot's own unlabeled", () => {
+  const owned = task("sub", { owner: { id: "toolu_a", label: "Build the thing" } });
+  const messages = draw([line("reply", "bot", now, [owned, task("mine")])]);
+  const row = taskChips("reply", messages.at(-1)!.tasks!);
+  document.body.append(row);
+  row.querySelector<HTMLButtonElement>(".task-group")!.click();
+  const by = (id: string) => row.querySelector(`.task-item[data-task="${id}"] .task-owner`)?.textContent ?? null;
+  expect(by("sub")).toBe("by Build the thing");
+  expect(by("mine")).toBeNull();
+});

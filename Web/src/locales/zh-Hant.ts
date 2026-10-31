@@ -98,6 +98,7 @@ export const zhHant: Dictionary = {
   "tasks.kind.monitor": "監看（Monitor）",
   "tasks.kind.wakeup": "排程喚醒（ScheduleWakeup）",
   "tasks.kind.cron": "排程工作（CronCreate）",
+  "tasks.by": "由 {name} 啟動",
   "tasks.kindDetail": "{kind}：{detail}",
   "tasks.elapsedHours": "{h} 小時 {m} 分",
   "tasks.elapsedMinutes": "{m} 分 {s} 秒",

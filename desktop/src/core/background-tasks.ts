@@ -31,6 +31,8 @@ export interface BackgroundTask {
   schedule?: string;
   recurring?: boolean;
   jobID?: string;
+  /** The subagent that started it (absent: the bot itself). */
+  owner?: { id: string; label: string };
   [key: string]: unknown;
 }
 

@@ -308,6 +308,8 @@ export const BackgroundTaskView = z.strictObject({
   started: z.number(), ended: z.number().nullable(), detail: z.string().nullable(),
   fires: z.number().nullable(), schedule: z.string().nullable(), recurring: z.boolean().nullable(),
   summary: z.string().nullable().optional(),
+  /** The subagent that started it; absent for the bot's own work. */
+  owner: z.strictObject({ kind: z.literal("subagent"), id: z.string().min(1).max(200), label: z.string() }).optional(),
   monitor: z.object({ ownerSession: z.string(), threadId: z.string().nullable(), turnId: z.string().nullable(),
     execution: z.enum(["awaitingApproval", "running", "cancelling", "succeeded", "failed", "cancelled", "interrupted", "ended"]),
     callback: z.enum(["none", "pending", "dispatching", "delivered", "suppressed", "uncertain", "unknown"]) }).optional(),

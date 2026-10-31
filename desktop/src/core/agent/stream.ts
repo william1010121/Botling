@@ -12,7 +12,7 @@ import { isConnectionLoss } from "../network-resume";
 export type StreamItem =
   | { kind: "measurementDispatch"; workerId: string; run: number; inheritRun?: number }
   | { kind: "measurement"; provider?: "claude" | "codex"; measurement: Omit<MeteredTurn, "botId" | "head" | "taskId"> }
-  | { kind: "scheduleResult"; id: string; result: ScheduleResult }
+  | { kind: "scheduleResult"; id: string; result: ScheduleResult; parent: string | null }
   | { kind: "init"; sessionId: string }
   /** A piece of the reply's text (`--include-partial-messages`). */
   | { kind: "delta"; text: string }
@@ -265,8 +265,8 @@ export function parseLine(line: string): StreamItem[] {
           const failed = part.is_error === true;
           const output = resultText(part.content);
           const items: StreamItem[] = [{ kind: "toolResult" as const, id: part.tool_use_id, output: cut(output), failed, parent, launch: failed ? null : launchOf(message.tool_use_result) }];
-          const schedule = !parent && !failed ? scheduleResult(message.tool_use_result) : null;
-          if (schedule) items.unshift({ kind: "scheduleResult", id: part.tool_use_id, result: schedule });
+          const schedule = !failed ? scheduleResult(message.tool_use_result) : null;
+          if (schedule) items.unshift({ kind: "scheduleResult", id: part.tool_use_id, result: schedule, parent });
           const denial = failed ? classifierDenial(part.tool_use_id, output, parent, message.tool_result_meta) : null;
           if (denial) items.push(denial);
           return items;

@@ -160,6 +160,8 @@ export interface TaskChipView {
   /** A cron job's five fields ("30 9 * * 1-5"), and whether it fires on every match. */
   schedule?: string | null;
   recurring?: boolean | null;
+  /** The subagent that started it (absent: the bot itself). */
+  owner?: { kind: "subagent"; id: string; label: string } | null;
 }
 
 /**
