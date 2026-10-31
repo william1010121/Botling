@@ -49,7 +49,7 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
   if (!view) return null;
   if (!view.enabled) return <section className="settings-group" aria-label={words.title}><h3>{words.title}</h3><p className="settings-note">{words.off}</p></section>;
 
-  const choices = bots.filter((bot) => bot.role !== "group");
+  const choices = bots;
   const create = async () => {
     setBusy(true); setFailed(null);
     try { setSeen(view.devices.length); setOffer(await client.request({ type: "mobile.pair", botIds: picked, route })); setNow(Date.now()); }

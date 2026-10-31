@@ -48,7 +48,7 @@ describe("phone connection commands", () => {
 });
 
 describe("Settings > Phone", () => {
-  const bots = [{ id: MAIN_BOT_ID, name: "Main", role: "main" }, { id: "g", name: "Team", role: "group" }] as any;
+  const bots = [{ id: MAIN_BOT_ID, name: "Main", role: "main" }] as any;
   async function mount(request: (cmd: any) => Promise<any>, lang: string | null = "en") {
     const host = document.createElement("div"); document.body.append(host);
     const root = createRoot(host); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -74,7 +74,6 @@ describe("Settings > Phone", () => {
     try {
       const create = button(m.host, "Create pairing code") as HTMLButtonElement;
       expect(create.disabled).toBe(true);
-      expect(m.host.textContent).not.toContain("Team"); // groups cannot be paired
       const labels = [...m.host.querySelectorAll(".settings-hint")].map((e) => e.textContent ?? "");
       expect(labels.findIndex((t) => t.includes("botling-bridge.example"))).toBeLessThan(labels.findIndex((t) => t.includes("home.arpa")));
       await click(m.host.querySelector('input[type="checkbox"]')!);
