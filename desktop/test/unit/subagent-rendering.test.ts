@@ -29,13 +29,16 @@ describe("token speed in the production chat page", () => {
     expect(showChild("agy", { tokens: 100, seconds: 4, timed: 1, estimated: true }).textContent).toBe("≈ 25.0 tok/s (est.)");
     expect(showChild("claude", undefined).textContent).toBe("— tok/s");
   });
-  it("shows the main bot's own speed above the input box, and removes it when nothing is timed", () => {
-    window.ccb.setState(chatState({ ...bot, subagents: 0, tokenSpeed: { tokPerSec: 42.04, estimated: false, engine: "codex" } }, { botId: "B", messages: [], running: null, live: [], tasks: [] }).state);
-    const label = document.getElementById("main-speed")!;
-    expect(label.textContent).toBe("42.0 tok/s");
-    expect(label.nextElementSibling?.id).toBe("composer-slot");
-    window.ccb.setState(chatState({ ...bot, subagents: 0 }, { botId: "B", messages: [], running: null, live: [], tasks: [] }).state);
+  it("shows the main bot's own speed on the latest bot message's header line, and removes it when nothing is timed", () => {
+    const two = { ...bot, subagents: 0 };
+    const messages = [0, 1].map((i) => ({ id: String(i), role: "bot" as const, text: `reply ${i}`, time: "2026-10-27T08:00:00Z", engine: "claude" as const }));
+    const show = (extra: Record<string, unknown>) => window.ccb.setState(chatState({ ...two, ...extra }, { botId: "B", messages, running: null, live: [], tasks: [] }).state);
+    show({ tokenSpeed: { tokPerSec: 42.04, estimated: false, engine: "codex" } });
+    const lines = [...document.querySelectorAll("#messages .speaker")].map((node) => node.textContent);
+    expect(lines).toEqual(["Main · Claude", "Main · Claude · 42.0 tok/s"]);
     expect(document.getElementById("main-speed")).toBeNull();
+    show({});
+    expect(document.querySelector(".speaker-speed")).toBeNull();
   });
 });
 

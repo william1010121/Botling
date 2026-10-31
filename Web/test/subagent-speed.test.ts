@@ -30,11 +30,27 @@ describe("token speed display (the value is computed in the core)", () => {
     expect(label.getAttribute("aria-label")).toContain(label.title);
     expect(subagentSpeedElement(header({ tokenSpeed: { tokPerSec: 9, estimated: true } })).title).toContain("no per-request timing");
   });
-  it("shows the head's speed above the composer and removes it again", () => {
-    document.body.innerHTML = '<div id="composer-slot"></div>';
-    showMainSpeed({ tokenSpeed: { tokPerSec: 12.34, estimated: false } } as ChatState);
-    expect(document.getElementById("main-speed")?.textContent).toBe("12.3 tok/s");
-    showMainSpeed({ tokenSpeed: null } as ChatState);
+  it("puts the head's speed on the latest bot message's header line, not above the composer", () => {
+    document.body.innerHTML = '<div id="composer-slot"></div><div id="list">'
+      + '<div class="row bot"><div class="speaker-column"><div class="speaker">botling · Claude</div><div class="bubble">old</div></div></div>'
+      + '<div class="row bot"><div class="speaker-column"><div class="speaker">botling · Claude</div><div class="bubble">new</div></div></div></div>';
+    const list = document.getElementById("list")!;
+    showMainSpeed({ tokenSpeed: { tokPerSec: 12.34, estimated: false } } as ChatState, list);
+    showMainSpeed({ tokenSpeed: { tokPerSec: 12.34, estimated: false } } as ChatState, list);
+    const lines = [...list.querySelectorAll(".speaker")].map((node) => node.textContent);
+    expect(lines).toEqual(["botling · Claude", "botling · Claude · 12.3 tok/s"]);
     expect(document.getElementById("main-speed")).toBeNull();
+    expect(document.querySelector("#composer-slot")?.previousElementSibling).toBeNull();
+    showMainSpeed({ tokenSpeed: null } as ChatState, list);
+    expect(list.querySelector(".speaker-speed")).toBeNull();
+    expect(list.querySelectorAll(".speaker")[1].textContent).toBe("botling · Claude");
+  });
+  it("adds a header line holding only the speed when the message has none", () => {
+    document.body.innerHTML = '<div id="list"><div class="row bot"><div class="bot-column"><div class="bubble">hi</div></div></div></div>';
+    const list = document.getElementById("list")!;
+    showMainSpeed({ tokenSpeed: { tokPerSec: 5, estimated: false } } as ChatState, list);
+    expect(list.querySelector(".bot-column")?.firstElementChild?.textContent).toBe("5.0 tok/s");
+    showMainSpeed({ tokenSpeed: null } as ChatState, list);
+    expect(list.querySelector(".speaker")).toBeNull();
   });
 });

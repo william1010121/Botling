@@ -371,7 +371,7 @@ class Chat {
     }
 
     this.showSubagentHeader(state);
-    showMainSpeed(state);
+    showMainSpeed(state, this.list);
     this.pins.update(state);
     this.floats.update(state);
     this.composer.update(state);
