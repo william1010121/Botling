@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { Clients, privateJSON, startBridge, type MobileCore } from './bridge';
 import { MutationLedger } from './ledger';
 import { closeWithCore } from './lifecycle';
+import { PairingStore } from './pairing';
 
 const absolute = z.string().refine(isAbsolute);
 const Config = z.strictObject({ origin: z.string().url(), host: z.string(), port: z.number().int().min(1).max(65535),
@@ -34,14 +35,20 @@ export function startConfiguredMobile(core: MobileCore & { shutdown(): Promise<v
   const generation = loadMobileGeneration(assets);
   const receipt = join(dataDir, 'mobile-ready.json');
   rmSync(receipt, { force: true });
-  const mobile = startBridge({ ...config, assets, generation,
+  // Paired phones live beside the hand-issued clients file; both authenticate the same way.
+  const pairing = new PairingStore(join(dataDir, 'mobile'));
+  const mobile = startBridge({ ...config, assets, generation, pairing,
     ready: () => {
       const temp = `${receipt}.${process.pid}.tmp`;
       writeFileSync(temp, JSON.stringify({ pid: process.pid, generation: generation.id, assets }), { mode: 0o600 });
       renameSync(temp, receipt);
     },
     tls: { cert: readFileSync(config.certFile), key: readFileSync(config.keyFile) },
-    clients: () => Clients.parse(privateJSON(config.clientsFile)), ledger: new MutationLedger(join(dataDir, 'mobile-mutations')), core }, failed);
+    clients: () => {
+      const issued = Clients.parse(privateJSON(config.clientsFile));
+      const ids = new Set(issued.map(c => c.id)); // a hand-issued id is never shadowed
+      return [...issued, ...Clients.parse(pairing.clients()).filter(c => !ids.has(c.id))];
+    }, ledger: new MutationLedger(join(dataDir, 'mobile-mutations')), core }, failed);
   closeWithCore(core, mobile);
   return mobile;
 }

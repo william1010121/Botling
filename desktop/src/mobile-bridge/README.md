@@ -140,3 +140,16 @@ not WebSocket/SSE. Public edge authentication may add protection but never repla
 Cloudflare account/token/DNS/tunnel resources are owned by flux-k8s; this code does not provision
 them or install/start cloudflared. Certificate issuance/trust and device access remain deployment
 acceptance tasks. No root process or privileged port is needed for the local listener.
+
+## One-time pairing
+
+`GET /api/mobile/core` is public and secret-free: `{ app, coreId, protocol, pairing: { ttlSeconds } }`.
+The Core ID is random, kept in `<data>/mobile/core-id.json`.
+
+Local setup prints a pairing link: `node out/mobile-bridge/pair.cjs <data>/mobile https://ORIGIN BOT_ID...`
+gives `https://ORIGIN/mobile/#pair=<secret>&core=<coreId>` (render it as a QR). The secret is in the
+fragment, valid 5 minutes, usable once, and only its SHA-256 is stored (`pairing-offers.json`, mode 0600).
+The page checks `coreId` against the descriptor, then `POST /api/mobile/pair { secret, deviceId }` returns a
+bearer token. That token is an ordinary client (explicit bots, 30 days) in `paired-clients.json`, merged
+with the clients file; pairing the same device again replaces its session. Unknown, used and expired codes
+all answer 401; five failures in a minute answer 429 for the rest of the window.

@@ -8,6 +8,7 @@ import { WorkspaceStore } from '../src/renderer/store';
 import { Icon } from '../src/renderer/icons';
 import { MobileError, MobileTransport, endpointURL } from './transport';
 import { clearDrafts } from './session';
+import { deviceId, redeemPairing, takePairingLink } from './pair';
 import { WebBridge, forgetLocal } from './web-bridge';
 
 const POLL_MS = 2_500;
@@ -91,6 +92,20 @@ export function WebApp() {
     } finally { connecting.current = false; }
   }, [lost]);
 
+  // A scanned pairing link: redeem it once for a token (the secret never leaves this function), then sign in
+  // exactly as a pasted token does. The fragment is cleared first; the token path stays available.
+  useEffect(() => {
+    const link = takePairingLink();
+    if (!link) return;
+    void (async () => {
+      setAuth('checking'); setMessage('Pairing…');
+      try { await connect(await redeemPairing(link, deviceId(), location.origin)); }
+      catch (cause) {
+        setAuth('signedOut'); setMessage(cause instanceof MobileError ? cause.message : 'Pairing failed. Show a new code on your computer.');
+      }
+    })();
+  }, [connect]);
+
   useEffect(() => connected ? startSync(connected) : undefined, [connected]);
   useEffect(() => () => connected?.bridge.close(), [connected]);
 
@@ -109,7 +124,7 @@ export function WebApp() {
     <form className="web-signin-card" onSubmit={event => { event.preventDefault(); void connect(tokenText); }}>
       <img className="web-signin-icon" src="./icon.svg" alt="" />
       <h1>Botling</h1>
-      <p className="web-signin-lead">Your bots, from any browser. Enter the access token your Botling gave you.</p>
+      <p className="web-signin-lead">Your bots, from any browser. Scan the pairing code shown by your Botling, or enter an access token.</p>
       {message && <p className="web-signin-message" role="alert">{message}</p>}
       <div className="web-signin-actions">
         <input className="web-token" type="password" autoComplete="off" spellCheck={false} aria-label="Access token" placeholder="Access token"

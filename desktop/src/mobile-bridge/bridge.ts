@@ -11,6 +11,7 @@ import { MAIN_BOT_ID } from '../core/store/records';
 import { MutationLedger } from './ledger';
 import { listenWithHandover } from './lifecycle';
 import { ALL_BOTS, botAllowed } from './scope';
+import type { PairingStore } from './pairing';
 export { ALL_BOTS, botAllowed };
 
 export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -22,7 +23,7 @@ export interface MobileCore { mobileCommand(raw: unknown, allowedBots: readonly 
 export interface BridgeOptions {
   origin: string; host: string; port: number; tls: ServerOptions; assets: string;
   generation?: MobileGeneration; ready?: () => void; updating?: () => boolean;
-  clients: () => Client[]; ledger: MutationLedger; core: MobileCore;
+  clients: () => Client[]; ledger: MutationLedger; core: MobileCore; pairing?: PairingStore;
 }
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 /** OS account is the setup authority. Never accept group/world-readable credential policy. */
@@ -31,11 +32,11 @@ export function privateJSON(file: string): unknown {
   if (!stat.isFile() || (stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())) throw new Error('Mobile configuration must be owner-only.');
   return JSON.parse(readFileSync(file, 'utf8'));
 }
-function authenticate(req: IncomingMessage, clients: Client[]): Client | undefined {
+export function authenticate(req: Pick<IncomingMessage, 'headers'>, clients: Client[], now = Date.now()): Client | undefined {
   const match = /^Bearer ([A-Za-z0-9_-]{43,128})$/.exec(req.headers.authorization ?? '');
   if (!match) return;
   const digest = Buffer.from(tokenHash(match[1]), 'hex');
-  return clients.find(c => c.expiresAt > Date.now() && timingSafeEqual(digest, Buffer.from(c.tokenHash, 'hex')));
+  return clients.find(c => c.expiresAt > now && timingSafeEqual(digest, Buffer.from(c.tokenHash, 'hex')));
 }
 const assets: Record<string, string> = { 'index.html': 'text/html; charset=utf-8', 'web.js': 'text/javascript; charset=utf-8',
   'styles.css': 'text/css; charset=utf-8', 'web.css': 'text/css; charset=utf-8', 'chat.html': 'text/html; charset=utf-8',
@@ -69,11 +70,12 @@ export function handler(options: BridgeOptions) {
     try { url = new URL(req.url ?? '/', origin); } catch { return refuse(400); }
     const api = url.pathname.startsWith('/api/mobile/');
     const publicAsset = req.method === 'GET' && url.pathname.startsWith('/mobile/');
+    const coreInfo = req.method === 'GET' && url.pathname === '/api/mobile/core'; // public, secret-free; still Host-checked
     const forbidden = () => api ? json(res, 403, { error: { code: 'access_denied' } }) : refuse(403);
     // The public shell may cross sites; data operations still require same-origin requests; never trust forwarded headers.
     // The sandboxed chat frame's CORS loads (KaTeX fonts) say `Origin: null`; only public assets accept it.
     if (req.headers.host !== origin.host || (req.headers.origin && req.headers.origin !== origin.origin && !(publicAsset && req.headers.origin === 'null'))
-      || (req.headers['sec-fetch-site'] === 'cross-site' && !publicAsset)) return forbidden();
+      || (req.headers['sec-fetch-site'] === 'cross-site' && !publicAsset && !coreInfo)) return forbidden();
     if (options.updating?.()) return json(res, 503, { error: { code: 'generation_updating' } });
     const generation = options.generation;
     if (publicAsset) {
@@ -104,6 +106,26 @@ export function handler(options: BridgeOptions) {
     // Origin keeps its existing versioned protocol contract; browser bearer clients are fenced too.
     const stale = () => generation && !!req.headers.origin && req.headers['x-botling-generation'] !== generation.id;
     if (stale()) return json(res, 409, { error: { code: 'generation_changed' } });
+    if (coreInfo) {
+      if (!options.pairing) return refuse(404);
+      try { return json(res, 200, options.pairing.descriptor()); } catch { return json(res, 503, { error: { code: 'core_unavailable' } }); }
+    }
+    if (url.pathname === '/api/mobile/pair' && url.search === '') {
+      if (!options.pairing) return refuse(404);
+      if (req.method !== 'POST') return refuse(405);
+      if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] ?? '')) return refuse(415);
+      let body: any;
+      try {
+        const chunks: Buffer[] = []; let size = 0;
+        for await (const chunk of req) { size += chunk.length; if (size > 2_048) { refuse(413); return; } chunks.push(Buffer.from(chunk)); }
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch { return refuse(400); }
+      try {
+        const result = options.pairing.redeem(body?.secret, body?.deviceId);
+        if (result.ok) return json(res, 200, { token: result.token, expiresAt: result.expiresAt, coreId: result.coreId });
+        return json(res, result.reason === 'limited' ? 429 : 401, { error: { code: result.reason === 'limited' ? 'pair_limited' : 'pair_invalid' } });
+      } catch { return json(res, 503, { error: { code: 'pair_unavailable' } }); }
+    }
     if (req.url !== '/api/mobile/command') return refuse(404);
     if (req.method !== 'POST') return refuse(405);
     let client: Pick<Client, 'id' | 'botIds' | 'expiresAt'> | undefined;

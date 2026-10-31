@@ -4,6 +4,16 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased (2.3.0)
+
+### New
+
+- **Pair a phone with a one-time QR link.** `out/mobile-bridge/pair.cjs PAIRING_DIR ORIGIN BOT_ID...`
+  prints a link that works once and expires in 5 minutes. Its secret is in the URL fragment, the
+  phone checks it reached the right Botling (public Core ID at `/api/mobile/core`) before sending it,
+  and each device keeps one session. A paired phone has exactly what a pasted token has. Pasting a
+  token still works.
+
 ## 2.2.0
 
 Adds app-managed git worktrees, a diff review view, and faster long chats. It keeps the "Botling 2
