@@ -701,6 +701,8 @@ export const SettingsView = z.strictObject({
   developerProject: BotId.nullable(),
   /** Phase 5b (2.0 only): main looks at GitHub Releases for a newer Botling 2 (once a day; off by default). */
   updateCheck: z.boolean(),
+  /** Keyboard shortcuts the user rebound (id to binding, see shortcuts.ts); an id left out has its default. */
+  shortcuts: z.record(z.string().max(40), z.string().max(40)).default({}),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -737,6 +739,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
+  /** All rebound shortcuts at once (an empty object: every default). */
+  z.strictObject({ key: z.literal("shortcuts"), value: z.record(z.string().max(40), z.string().max(40)) }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
 /** A newer Botling 2 on GitHub Releases (found by electron-updater); installation needs an explicit download and restart. */

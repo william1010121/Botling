@@ -1,3 +1,4 @@
+import { actionForEvent, bindingsFor, type Bindings } from "../../contract/shortcuts";
 import type { EditorBridge } from "../editor-surface";
 import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
 
@@ -32,16 +33,17 @@ export function onTransportDisconnect(disconnected: () => void): () => void {
   return () => { unsubscribe?.(); window.removeEventListener("pagehide", disconnected); };
 }
 
+let bindings: Bindings = bindingsFor({});
+/** The shell tells this page the keys now bound (before any, the defaults). */
+export function setShortcutBindings(next: Record<string, string>): void { bindings = bindingsFor(next); }
+const SHELL_COMMANDS: Record<string, string> = { settings: "settings", toggleRightPanel: "rightPanel", toggleSidebar: "sidebar", search: "search" };
+
 /** Existing application shortcuts become semantic actions; editing events never leave this root. */
 export function installNativeShellCommands(): void {
   if (!nativeChat) return;
   document.addEventListener("keydown", event => {
     if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
-    const key = event.key.toLowerCase();
-    const command = key === "," && (event.metaKey || event.ctrlKey) ? "settings"
-      : key === "i" && event.metaKey && event.ctrlKey ? "rightPanel"
-      : key === "s" && event.metaKey && event.ctrlKey ? "sidebar"
-      : key === "k" && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey ? "search" : null;
+    const command = SHELL_COMMANDS[actionForEvent(event, bindings) ?? ""] ?? null;
     if (!command) return;
     event.preventDefault();
     toShell({ botling: "action", action: { type: "shellCommand", command } });

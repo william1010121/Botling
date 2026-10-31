@@ -2,6 +2,7 @@ import {expect,it,vi} from 'vitest';
 vi.mock('electron',()=>{class BrowserWindow{webContents={reload:vi.fn(),reloadIgnoringCache:vi.fn()};}return{BrowserWindow,Menu:{}};});
 import {BrowserWindow} from 'electron';
 import {appMenuTemplate} from '../../src/main/app-menu';
+import {bindingsFor} from '../../src/contract/shortcuts';
 const flat=(items:any[]):any[]=>items.flatMap(i=>[i,...flat(Array.isArray(i.submenu)?i.submenu:[])]);
 it('Cmd+R reloads the window shell, never the focused native chat editor',()=>{
  const items=flat(appMenuTemplate('darwin')),win=new (BrowserWindow as any)(),editor={reload:vi.fn(),reloadIgnoringCache:vi.fn()};
@@ -28,4 +29,16 @@ it('Cmd+J targets the shell terminal even when a child editor has focus', () => 
  const item=flat(appMenuTemplate('darwin')).find(i=>i.accelerator==='CmdOrCtrl+J');
  item.click(item,win,{});item.click(item,undefined,{});
  expect(win.webContents.send).toHaveBeenCalledExactlyOnceWith('botling:terminal:toggle');
+});
+it('menu accelerators follow the saved bindings, and fall back to the defaults', () => {
+ const items=flat(appMenuTemplate('darwin',{reloadChat:async()=>true},bindingsFor({toggleTerminal:'Mod+T',reload:'Mod+Shift+L'})));
+ expect(items.find(i=>i.label==='Toggle Terminal').accelerator).toBe('CmdOrCtrl+T');
+ expect(items.find(i=>i.label==='Reload').accelerator).toBe('Shift+CmdOrCtrl+L');
+ expect(items.find(i=>i.label==='Force Reload').accelerator).toBe('Shift+CmdOrCtrl+R');
+ expect(items.find(i=>i.label==='Reload Chat Page').accelerator).toBe('Alt+CmdOrCtrl+R');
+ expect(items.some(i=>i.accelerator==='CmdOrCtrl+J')).toBe(false);
+});
+it('leaves the accelerators off while a new key is being recorded', () => {
+ const items=flat(appMenuTemplate('darwin',{reloadChat:async()=>true},bindingsFor({}),true));
+ for(const label of ['Toggle Terminal','Reload','Force Reload','Reload Chat Page'])expect(items.find(i=>i.label===label).accelerator).toBeUndefined();
 });

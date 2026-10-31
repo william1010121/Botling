@@ -9,6 +9,7 @@
 // opening that section beside the strip, and the bot's settings at the bottom. The bot's settings
 // live one level in (1.x's DetailPanel `showingSettings`): the slider button on the name row, or the
 // strip's bottom one, shows them in the overview's place, with Back.
+import { shortcutLabel } from "./shortcut-labels";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ShellOverlay, shellPortal } from "./ShellOverlay";
 import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type TeamRunView, type WaitingItemView, type WaitingView } from "../contract";
@@ -687,7 +688,7 @@ function RightStrip({ bot, bots, waiting, look, status, results, teams, watching
 export function RightToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const label = collapsed ? "Show right panel" : "Hide right panel";
   return (
-    <button type="button" className={`right-toggle${collapsed ? "" : " on"}`} onClick={onToggle} title={`${label} (⌃⌘I)`} aria-label={label} aria-pressed={!collapsed}>
+    <button type="button" className={`right-toggle${collapsed ? "" : " on"}`} onClick={onToggle} title={`${label} (${shortcutLabel("toggleRightPanel")})`} aria-label={label} aria-pressed={!collapsed}>
       <Icon name="sidebarRight" size={14} />
     </button>
   );

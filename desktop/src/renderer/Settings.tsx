@@ -17,10 +17,13 @@ import { Client, RequestFailed } from "./client";
 import { PanelFrame, PluginsPanel } from "./Plugins";
 import { faceURL } from "./avatars";
 import { EFFORTS_BY_ENGINE } from "../contract/efforts";
+import { FIXED_SHORTCUTS, SHORTCUTS, bindingsFor, comboFromEvent, findConflict, formatCombo, normalizeOverrides, resetBinding, setBinding, type ShortcutId } from "../contract/shortcuts";
+import { say, shellPlatform } from "./shortcut-labels";
+import type { Key } from "../../../Web/src/locales/en";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-export type SettingsSection = "general" | "appearance" | "engines" | "usage" | "permissions" | "plugins" | "doctor" | "updates" | "developer";
+export type SettingsSection = "general" | "appearance" | "engines" | "usage" | "permissions" | "plugins" | "doctor" | "updates" | "shortcuts" | "developer";
 type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
@@ -31,6 +34,7 @@ const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
   { id: "doctor", title: "Doctor", terms: "command-line tools claude codex antigravity install version login sign in check health" },
   { id: "updates", title: "Updates", terms: "updates version release github check new" },
+  { id: "shortcuts", title: "Shortcuts", terms: "keyboard shortcuts keys keybindings hotkeys rebind reset cmd ctrl terminal search reload 鍵盤 快速鍵 快捷鍵" },
   { id: "developer", title: "Developer", terms: "developer mode source project feedback not right" },
 ];
 
@@ -103,6 +107,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
             {current?.id === "doctor" && <DoctorSection client={client} />}
             {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
+            {shown && current?.id === "shortcuts" && <Shortcuts settings={shown} change={change} />}
             {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
           </div>
         </section>
@@ -214,6 +219,73 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
  * "not right" in any chat, with the chat around it; its manager may install builds it made (you confirm on a card in
  * the main bot's chat) and see the app's window (core/app-swap.ts).
  */
+/**
+ * Settings → Shortcuts: every key the app handles, grouped, with its action and current key. Click a key and press
+ * the new combination (Esc cancels); a key another shortcut or the system already has is refused with its name.
+ * Saved in settings.json and applied at once (the menu is rebuilt by main, the pages read the binding).
+ */
+function Shortcuts({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
+  const lang = settings.effectiveLanguage;
+  const platform = shellPlatform();
+  const overrides = useMemo(() => normalizeOverrides(settings.shortcuts), [settings.shortcuts]);
+  const bindings = bindingsFor(overrides);
+  const [recording, setRecording] = useState<ShortcutId | null>(null);
+  const [refusal, setRefusal] = useState<{ id: ShortcutId; text: string } | null>(null);
+  const latest = useRef({ overrides, change }); latest.current = { overrides, change };
+  const word = (key: string, values?: Record<string, string | number>) => say(lang, key as Key, values);
+  useEffect(() => {
+    if (!recording) return;
+    // The menu's accelerators step aside while a key is recorded, so Cmd+R and the like reach this page.
+    (window as unknown as { botling?: { shortcuts?: { suspend(on: boolean): void } } }).botling?.shortcuts?.suspend(true);
+    const onKey = (event: KeyboardEvent) => {
+      if (["Shift", "Control", "Alt", "Meta"].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation();
+      if (event.key === "Escape") { setRecording(null); setRefusal(null); return; }
+      const combo = comboFromEvent(event, platform);
+      if (!combo) { setRefusal({ id: recording, text: word("shortcuts.needModifier") }); return; }
+      const conflict = findConflict(recording, combo, latest.current.overrides);
+      if (conflict) {
+        const action = conflict.kind === "shortcut" ? word(`shortcuts.action.${conflict.id}`) : word(`shortcuts.fixed.${conflict.id}`);
+        setRefusal({ id: recording, text: word(conflict.kind === "shortcut" ? "shortcuts.conflict" : "shortcuts.reserved", { key: formatCombo(combo, platform), action }) });
+        return;
+      }
+      setRecording(null); setRefusal(null);
+      void latest.current.change({ key: "shortcuts", value: setBinding(latest.current.overrides, recording, combo) });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("keydown", onKey, true); (window as unknown as { botling?: { shortcuts?: { suspend(on: boolean): void } } }).botling?.shortcuts?.suspend(false); };
+  }, [recording, platform, lang]);
+  const groups = (["navigation", "panels", "view"] as const).map((group) => ({ group, items: SHORTCUTS.filter((entry) => entry.group === group) }));
+  return <>
+    {groups.map(({ group, items }) => (
+      <Group key={group} title={word(`shortcuts.group.${group}`)} note={group === "navigation" ? word("shortcuts.note") : undefined}>
+        {items.map((entry) => {
+          const isDefault = bindings[entry.id] === entry.default;
+          const action = word(`shortcuts.action.${entry.id}`);
+          return (
+            <Row key={entry.id} label={action} hint={refusal?.id === entry.id ? refusal.text : isDefault ? undefined : word("shortcuts.defaultKey", { key: formatCombo(entry.default, platform) })}>
+              <button type="button" aria-label={word("shortcuts.change", { action })} onClick={() => { setRefusal(null); setRecording(recording === entry.id ? null : entry.id); }}
+                onBlur={() => { if (recording === entry.id) { setRecording(null); setRefusal(null); } }}>
+                {recording === entry.id ? word("shortcuts.recording") : formatCombo(bindings[entry.id], platform)}
+              </button>
+              <button type="button" disabled={isDefault} onClick={() => { setRecording(null); setRefusal(null); void change({ key: "shortcuts", value: resetBinding(overrides, entry.id) }); }}>{word("shortcuts.reset")}</button>
+            </Row>
+          );
+        })}
+        {group === "view" && <div className="settings-actions"><button type="button" disabled={!Object.keys(overrides).length}
+          onClick={() => { setRecording(null); setRefusal(null); void change({ key: "shortcuts", value: {} }); }}>{word("shortcuts.resetAll")}</button></div>}
+      </Group>
+    ))}
+    {(["system", "chat"] as const).map((group) => (
+      <Group key={group} title={word(`shortcuts.group.${group}`)} note={group === "chat" ? word("shortcuts.fixedNote") : undefined}>
+        {FIXED_SHORTCUTS.filter((entry) => entry.group === group && (entry.platform === undefined || (entry.platform === "mac") === (platform === "darwin"))).map((entry) => (
+          <Row key={entry.id} label={word(`shortcuts.fixed.${entry.id}`)}><span className="settings-hint">{formatCombo(entry.combo, platform)}</span></Row>
+        ))}
+      </Group>
+    ))}
+  </>;
+}
+
 function Developer({ settings, change, bots }: { settings: SettingsView; change: (next: SettingsChange) => void; bots: BotView[] }) {
   const projects = bots.filter((candidate) => candidate.role === "manager" && candidate.id !== "DEC0DE00-0000-4000-8000-00000000DEC0");
   return (

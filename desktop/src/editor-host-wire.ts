@@ -41,7 +41,7 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
   return typeof result.text==='string'&&result.text.length<=32768&&['text','truncated','binary','unavailable'].includes(result.status);
  }
  if(direction==='down'&&value.botling==='composerResult')return Object.keys(value).every(key=>['botling','requestID','ok','error'].includes(key))&&typeof value.requestID==='string'&&value.requestID.length>0&&value.requestID.length<=80&&typeof value.ok==='boolean'&&(value.error===undefined||typeof value.error==='string'&&value.error.length<=4096);
- if(direction==='down')return ['widthRejected','widthPreview','state','stateDelta','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
+ if(direction==='down')return ['widthRejected','widthPreview','shortcuts','state','stateDelta','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);
   case 'request':{const parsed=EditorCardCommand.safeParse(value.cmd);return Number.isSafeInteger(value.id)&&value.id>=0&&parsed.success;}
