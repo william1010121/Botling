@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
-import { readHistoryState } from "../../src/core/durable/history-journal";
+import { readSubagentRows } from "../subagent-disk";
 import type { SubagentRecord } from "../../src/core/subagents";
 import { streamingText } from "../../src/core/bot";
 
@@ -190,7 +190,7 @@ describe("subagents", () => {
     expect(event.text).toBe("Sending a subagent. \n\nThe subagent found 3 things.");
     const historyFile = join(dir, "main", "subagents.json");
     // The durable journal is authoritative even before background checkpointing creates the file.
-    const saved = readHistoryState(historyFile).rows as SubagentRecord[];
+    const saved = readSubagentRows(historyFile) as SubagentRecord[];
     expect(saved).toHaveLength(1);
     expect(saved[0]).toMatchObject({ description: "Research the API", type: "general-purpose", prompt: "Look up the API and report", status: "completed", background: false, result: "Found 3 things.", agentID: "task-1" }); // task_started's task_id is the resume id (stream.ts), not the tool result's agentId
     expect(typeof saved[0].startedAt).toBe("number");
@@ -204,7 +204,7 @@ describe("subagents", () => {
     expect(JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8"))[0].subagentIDs).toEqual([saved[0].id]);
     await c.kill(); // SIGTERM: join the real core's durable shutdown, not SIGKILL teardown.
     expect(c.child.exitCode).toBe(0);
-    expect(readHistoryState(historyFile).rows).toEqual(saved);
+    expect(readSubagentRows(historyFile)).toEqual(saved);
     const reopened = core(dir);
     const retained = (await reopened.call({ type: "subagent.view", botId: MAIN, subagentId: saved[0].id })).subagent;
     expect(retained).toMatchObject({ status: "completed", result: "Found 3 things." });

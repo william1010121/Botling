@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir, until } from "../helpers";
-import { readHistoryState } from "../../src/core/durable/history-journal";
+import { readSubagentRows } from "../subagent-disk";
 import { CoreHarness, MAIN } from "../core-harness";
 
 const harnesses: CoreHarness[] = [];
@@ -117,12 +117,12 @@ describe("a Codex head", () => {
     }))), "utf8");
     expect(JSON.parse(workers)).toMatchObject([{ id: step.id, name: "Build the parser", run: 1, wasActive: false, reportPending: false }]);
     const historyFile = join(dir, "main", "subagents.json");
-    const saved = readHistoryState(historyFile).rows;
+    const saved = readSubagentRows(historyFile);
     expect(saved).toMatchObject([{ id: step.id, status: "completed", type: "codex-worker", result: "Worker did: Build the parser" }]);
     await c.kill(); // Graceful shutdown must retain the accepted report across checkpointing.
     expect(c.child.exitCode).toBe(0);
     // Codex may append its own tidy worker during shutdown; the accepted worker is unchanged.
-    expect(readHistoryState(historyFile).rows.filter(row => row.id === step.id)).toEqual(saved);
+    expect(readSubagentRows(historyFile).filter(row => row.id === step.id)).toEqual(saved);
     const reopened = core(dir);
     const retained = (await reopened.call({ type: "subagent.view", botId: MAIN, subagentId: step.id })).subagent;
     expect(retained).toMatchObject({ status: "completed", result: "Worker did: Build the parser" });

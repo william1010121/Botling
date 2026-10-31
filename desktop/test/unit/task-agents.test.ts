@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { TaskView, SubagentView } from "../../src/contract";
 import { readTaskCard, TaskBook, type TaskCard } from "../../src/core/tasks";
 import { readSubagent, SubagentBook, type SubagentRecord } from "../../src/core/subagents";
+import { encodeLine, foldLines } from "../../src/core/store/subagent-store";
 import { relatedTaskAgents, taskAgentIds } from "../../src/core/task-agents";
 import { subagentView } from "../../src/core/bot";
 import { CodexSession, type CodexOutput } from "../../src/core/agent/codex";
@@ -63,6 +64,8 @@ describe("authoritative task relationships", () => {
 
   it("preserves completed run evidence and actual thread/turn identity across continuation and reload", () => {
     const book = new SubagentBook();
+    const lines: string[] = [];
+    book.sink = (_id, line) => lines.push(encodeLine(line));
     const execution = { run: 1, ownerSessionId: "owner-session", threadId: "worker-thread", turnId: "turn-1" };
     const start = { id: "worker-task-id", description: "Build", type: "codex-worker", prompt: "First instructions", background: true, execution };
     book.started(start, 1);
@@ -71,19 +74,24 @@ describe("authoritative task relationships", () => {
     book.started({ ...start, prompt: "Follow-up", execution: { ...execution, run: 2, turnId: null } }, 3);
     book.execution(start.id, { ...execution, run: 2, turnId: "turn-2" });
     const saved = readSubagent(JSON.parse(JSON.stringify(book.get(start.id))))!;
-    expect(saved.previousRuns).toMatchObject([{ execution, prompt: "First instructions", status: "completed", result: "First report", steps: [{ title: "First progress" }] }]);
+    // The first run is a "run" line in its file, after its own steps; the record keeps only the count.
+    expect(foldLines(lines).runs.map(({ run, steps }) => ({ ...run, steps }))).toMatchObject([{ execution, prompt: "First instructions", status: "completed", result: "First report", steps: [{ title: "First progress" }] }]);
+    expect(saved).not.toHaveProperty("previousRuns");
+    expect(saved.runs).toBe(1);
     expect(saved).toMatchObject({ status: "running", prompt: "Follow-up", runStartedAt: 3, execution: { run: 2, threadId: "worker-thread", turnId: "turn-2" } });
     expect(saved.result).toBeUndefined();
-    const view = SubagentView.parse(subagentView(saved, "Owner", new SubagentBook([saved]), "codex"));
+    const view = SubagentView.parse(subagentView(saved, "Owner", new SubagentBook([saved]), "codex", foldLines(lines)));
     expect(view.steps.map((step) => step.title).join("\n")).toContain("First report");
     expect(view.steps.map((step) => step.title).join("\n")).toContain("Thread: worker-thread");
     book.started({ ...start, prompt: "Queued follow-up", execution: { ...execution, run: 3, turnId: null }, previousRunEnd: { status: "failed", result: "Run two failed" } }, 4);
-    expect(book.get(start.id)?.previousRuns?.at(-1)).toMatchObject({ status: "failed", result: "Run two failed", execution: { run: 2 } });
+    expect(foldLines(lines).runs.at(-1)?.run).toMatchObject({ status: "failed", result: "Run two failed", execution: { run: 2 } });
   });
 
   it("captures Codex's acknowledged thread and turn ids, then continues the same worker at run 2", () => {
     const session = new CodexSession({ cwd: "/tmp", instructions: "Coordinator", workerInstructions: "Worker", resumeThread: null, model: null, workerModel: null, effort: null, restoredWorkers: [], ownerSession: "owner-session" });
     const book = new SubagentBook();
+    const lines: string[] = [];
+    book.sink = (_id, line) => lines.push(encodeLine(line));
     const consume = (outputs: CodexOutput[]) => {
       for (const output of outputs) if (output.kind === "item") {
         const item = output.item;
@@ -110,7 +118,8 @@ describe("authoritative task relationships", () => {
     receive({ method: "item/completed", params: { threadId: "acknowledged-worker-thread", turnId: "acknowledged-turn-1", item: { type: "agentMessage", text: "First evidence", phase: "final_answer" } } });
     receive({ method: "turn/completed", params: { threadId: "acknowledged-worker-thread", turn: { id: "acknowledged-turn-1", status: "completed" } } });
     const follow = receive(call(102, "app_send_message", { task_id: workerId, message: "Fix the edge case" }));
-    expect(book.get(workerId)).toMatchObject({ status: "running", execution: { run: 2, threadId: "acknowledged-worker-thread", turnId: null }, previousRuns: [{ result: "First evidence", status: "completed" }] });
+    expect(book.get(workerId)).toMatchObject({ status: "running", execution: { run: 2, threadId: "acknowledged-worker-thread", turnId: null }, runs: 1 });
+    expect(foldLines(lines).runs).toMatchObject([{ run: { result: "First evidence", status: "completed" } }]);
     const nextRequestId = (follow.find((o) => o.kind === "write" && o.value.method === "turn/start") as any).value.id;
     receive({ id: nextRequestId, result: { turn: { id: "acknowledged-turn-2" } } });
     expect(book.get(workerId)?.execution?.turnId).toBe("acknowledged-turn-2");

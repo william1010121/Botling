@@ -82,7 +82,8 @@ import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
 import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest, type WhiteboardTag } from "./reply";
-import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
+import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
+import type { SubagentHistory } from "./store/subagent-store";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
 import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
 import { approvalSummary, doneDays, doneLogFile, readDoneLog, recordDone, type DoneDay, type DoneLog } from "./whiteboard-data";
@@ -352,7 +353,6 @@ export class Bot {
   // At most one pending write, retaining the book itself rather than queued snapshots.
   private subagentSaveTimer: NodeJS.Timeout | null = null;
   private subagentsDirty = false;
-  private subagentsCheckpointRequired = false;
   private subagentSaveRetryMs = 1_000;
   private head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
@@ -497,6 +497,8 @@ export class Bot {
     this.unread = primary ? 0 : this.store.loadUnread();
     this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard), (from,into) => this.measurementTaskMerged(from,into));
     this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set(this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }]))));
+    this.subagents.sink = (id, line) => { if (!this.readOnly) this.store.stageSubagentLine(id, line); };
+    this.subagents.loadSteps = (id) => this.store.readSubagentSteps(id).steps.slice(-500);
     if (!primary) {
       // The done log, brought up to the cards now: a new task trims old ones before the next save.
       this.doneLog = readDoneLog(this.store.loadDoneLog());
@@ -1268,9 +1270,8 @@ export class Bot {
       this.dirtySubagents.add(changed.id);
       if (changed.parentID) this.dirtySubagents.add(changed.parentID);
     } else this.allSubagentsDirty = true;
-    if (!progress) this.subagentsCheckpointRequired = true;
     // Only running text/token/runtime progress may lag disk by 500 ms. Starts, tool events,
-    // execution identity, terminal states and explicit user changes durably journal before returning.
+    // execution identity, terminal states and explicit user changes are appended before returning.
     if (progress && !this.shuttingDown) this.scheduleSubagentSave(500);
     else this.flushSubagents();
   }
@@ -1289,14 +1290,11 @@ export class Bot {
   private flushSubagents(progress = false) {
     if (this.subagentSaveTimer) { clearTimeout(this.subagentSaveTimer); this.subagentSaveTimer = null; }
     if (this.readOnly || !this.subagentsDirty) return;
-    if (!progress) this.subagentsCheckpointRequired = true;
     try {
       const changed = this.allSubagentsDirty ? undefined : this.dirtySubagents;
-      if (progress && !this.subagentsCheckpointRequired) this.store.saveWorkerProgress(this.subagents.list, changed);
-      else this.store.commitWorkerHistory(this.subagents.list, changed);
+      this.store.commitSubagents(this.subagents.list, changed);
       this.dirtySubagents.clear();
       this.allSubagentsDirty = false;
-      this.subagentsCheckpointRequired = false;
       this.subagentsDirty = false;
       this.subagentSaveRetryMs = 1_000;
     } catch (error) {
@@ -1439,7 +1437,9 @@ export class Bot {
     const task = Array.isArray(record?.backgroundTasks) ? (record.backgroundTasks as (BackgroundTask | null)[]).find((task) => task?.id === taskId) : undefined;
     if (!task) return { text: "" };
     const subagent = this.members.map(bot => bot.subagents.get(taskId)).find(Boolean);
-    return { text: await backgroundTaskOutput(task, subagent) };
+    // The recent steps of an agent are read from its file (its memory tail is empty after a restart).
+    const withSteps = subagent && !subagent.steps.length && subagent.stepCount ? { ...subagent, steps: this.members.find(bot => bot.subagents.get(taskId))?.subagentHistory(subagent).steps.slice(-4) ?? [] } : subagent;
+    return { text: await backgroundTaskOutput(task, withSteps) };
   }
 
   subagentView(id: string): ResultOf<"subagent.view"> {
@@ -1449,7 +1449,13 @@ export class Bot {
       if (peer) return peer.subagentView(id);
       throw new ContractError("not_found", "No such subagent.");
     }
-    return { subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) };
+    // Opened: its steps are read from its file now, not kept in memory.
+    return { subagent: subagentView(subagent, this.speaker, this.subagents, this.engine, this.subagentHistory(subagent)) };
+  }
+
+  subagentHistory(subagent: SubagentRecord): SubagentHistory {
+    try { return this.store.readSubagentSteps(subagent.id); }
+    catch (error) { this.log(`subagent ${subagent.id} steps cannot be read: ${String(error)}`); return { runs: [], steps: subagent.steps }; }
   }
 
   /** "garden · Codex" in a bot with two heads; else its name. */
@@ -2461,7 +2467,14 @@ export class Bot {
       ...this.members.flatMap(bot => bot.shownTurn?.steps ?? []),
       ...this.members.flatMap(bot => bot.subagents.list.flatMap(agent => agent.steps)),
     ];
-    return steps.some(step => readImagePaths(step).includes(path)) ? path : null;
+    if (steps.some(step => readImagePaths(step).includes(path))) return path;
+    // A subagent's older steps are on disk, not in memory.
+    for (const bot of this.members) for (const agent of bot.subagents.list) {
+      if (!agent.stepCount && !agent.runs) continue;
+      const saved = bot.subagentHistory(agent);
+      if ([...saved.runs.flatMap(run => run.steps), ...saved.steps].some(step => readImagePaths(step).includes(path))) return path;
+    }
+    return null;
   }
 
   private compose(turn: Turn, brief: boolean): string {
@@ -3014,7 +3027,9 @@ export class Bot {
     if (!subagent) return;
     this.saveSubagents(progress && subagent.status === "running", subagent);
     this.rowsChanged();
-    this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) });
+    // The current run's tail is in memory; earlier runs (rare) come from its file so an open view keeps them.
+    const live = subagent.runs ? { runs: this.subagentHistory(subagent).runs, steps: subagent.steps } : undefined;
+    this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine, live) });
     // Status/metadata are durably journaled; publish the task projection without rewriting cards.
     this.emit({ type: "tasks.updated", botId: this.id, tasks: this.owner.taskViews() });
     const top = subagent.parentID ? this.subagents.get(subagent.parentID) ?? subagent : subagent;
@@ -5113,7 +5128,7 @@ export class Bot {
     this.persist();
     for (const peer of this.peers) peer.persist();
     const saved = await Promise.allSettled(this.members.map(async bot => {
-      try { bot.flushSubagents(); if (!bot.readOnly) await bot.store.flushWorkerHistory(); }
+      try { bot.flushSubagents(); if (!bot.readOnly) bot.store.flushSubagents(); }
       catch (error) { bot.log(`subagents save failed during core swap: ${String(error)}`); throw error; }
       finally { if (bot.session.started) bot.store.saveHead(bot.session); }
     }));
@@ -5238,7 +5253,7 @@ export class Bot {
     const partnerError = await partner;
     try {
       let historyError: unknown;
-      try { this.flushSubagents(); if (!this.readOnly) await this.store.closeWorkerHistory(); }
+      try { this.flushSubagents(); if (!this.readOnly) this.store.flushSubagents(); }
       catch (error) { historyError = error; this.log(`subagents save failed during shutdown: ${String(error)}`); }
       this.persist();
       if (historyError) throw historyError;
@@ -5412,10 +5427,12 @@ function executionText(id: string, execution: SubagentExecution | undefined): st
   return [`Agent: ${id}`, ...(execution ? [`Run: ${execution.run}`, execution.threadId ? `Thread: ${execution.threadId}` : "", execution.turnId ? `Turn: ${execution.turnId}` : "", execution.ownerSessionId ? `Owner session: ${execution.ownerSessionId}` : ""] : [])].filter(Boolean).join("\n");
 }
 
-export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook, ownerEngine?: Engine): SubagentView {
+export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook, ownerEngine?: Engine, history?: SubagentHistory): SubagentView {
   const raw = subagent.runtime;
   const runtime = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   const text = (value: unknown) => typeof value === "string" && value.trim() ? clip(value.trim(), 200) : null;
+  const runs = history?.runs ?? [];
+  const current = history?.steps ?? subagent.steps;
   return {
     id: subagent.id.slice(0, 200),
     title: clip(subagent.description || "Subagent", 400) ?? "Subagent",
@@ -5430,14 +5447,18 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
     execution: subagent.execution ?? null,
     prompt: clip(subagent.prompt, 20_000) ?? "",
     steps: [
-      ...(subagent.previousRuns ?? []).flatMap((run, index) => [
-        { id: `history:${index}`, kind: "message" as const, title: `Previous run${run.execution ? ` ${run.execution.run}` : ""} · ${run.status}\n${executionText(subagent.id, run.execution)}\n\n${run.prompt}`, failed: false, done: true },
-        // Agent steps must keep their real drill-through id in history too.
-        ...run.steps.map((step) => ({ ...step, id: step.kind === "subagent" ? step.id : `history:${index}:${step.id}`, done: true })),
-        { id: `history:${index}:result`, kind: "text" as const, title: run.result || `Run ${run.status}.`, failed: run.status === "failed", done: true },
-      ]),
-      ...(subagent.previousRuns?.length ? [{ id: "current-run", kind: "message" as const, title: `Current run${subagent.execution ? ` ${subagent.execution.run}` : ""}\n${executionText(subagent.id, subagent.execution)}\n\n${subagent.prompt}`, failed: false, done: true }] : []),
-      ...subagent.steps,
+      ...runs.flatMap(({ run, steps }, index) => {
+        const execution = readExecution(run.execution);
+        const status = typeof run.status === "string" ? run.status : "stopped";
+        return [
+          { id: `history:${index}`, kind: "message" as const, title: `Previous run${execution ? ` ${execution.run}` : ""} · ${status}\n${executionText(subagent.id, execution)}\n\n${run.prompt ?? ""}`, failed: false, done: true },
+          // Agent steps must keep their real drill-through id in history too.
+          ...steps.slice(-200).map((step) => ({ ...step, id: step.kind === "subagent" ? step.id : `history:${index}:${step.id}`, done: true })),
+          { id: `history:${index}:result`, kind: "text" as const, title: run.result || `Run ${status}.`, failed: status === "failed", done: true },
+        ];
+      }),
+      ...(runs.length ? [{ id: "current-run", kind: "message" as const, title: `Current run${subagent.execution ? ` ${subagent.execution.run}` : ""}\n${executionText(subagent.id, subagent.execution)}\n\n${subagent.prompt}`, failed: false, done: true }] : []),
+      ...current,
     ].slice(-500).map((step) => stepView(step, book)),
     result: clip(subagent.result, 20_000),
     startedAt: iso(subagent.startedAt),

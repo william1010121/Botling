@@ -9,7 +9,7 @@ import { tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
 import { DEFAULT_TEAMS, loadTeams, parseTeam, prepareTeamsPlugin, runFolderName, teamFileText, teamSystem, teamTask, teamTools } from "../../src/core/teams";
 import { botName, projectBriefingText } from "../../src/core/projects";
-import { readHistoryState } from "../../src/core/durable/history-journal";
+import { readSubagentRows } from "../subagent-disk";
 import { headArguments } from "../../src/core/agent/head";
 import { listedRows, resultLinks, settledRows } from "../../src/contract";
 import golden from "../fixtures/teams-golden.json";
@@ -236,7 +236,7 @@ describe("teams, bots and settling through the core", () => {
     const settled = (await c.call({ type: "chat.snapshot" })).bots.find((b: any) => b.id === MAIN).subagentRows[0];
     expect(settled.settled).toBe(true);
     // Settling commits the journal before the asynchronous checkpoint is written.
-    const persisted = readHistoryState(join(dir, "main", "subagents.json")).rows.find((saved) => saved.id === row.id);
+    const persisted = readSubagentRows(join(dir, "main", "subagents.json")).find((saved) => saved.id === row.id);
     expect(persisted).toMatchObject({ id: row.id, status: "completed", dismissedAt: expect.any(Number) });
     await c.kill();
     c = core(dir);

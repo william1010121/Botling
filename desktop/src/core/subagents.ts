@@ -1,12 +1,18 @@
 // A bot's subagents (the Agent tool's), followed from claude's stream as the Swift `TraceBook`
-// does (Trace.swift), and kept in subagents.json in 1.x's `Subagent` format: what each was sent
-// to do, its tool calls and words (lines with its `parent_tool_use_id`), how it ended and what it
-// handed back. A subagent sent to the background ends only with its `task_notification`.
+// does (Trace.swift): what each was sent to do, its tool calls and words (lines with its
+// `parent_tool_use_id`), how it ended and what it handed back. A subagent sent to the background ends
+// only with its `task_notification`.
 //
+// What is kept: the records (no steps) in the index subagents.json, and each one's steps appended to
+// its own file (store/subagent-store.ts). `steps` here is only the recent tail of the current run, kept
+// so a tool's result can find its call; the whole history is read from disk when a subagent is opened.
+// Every step and run boundary goes to `sink`, which the store appends.
+
 // Dates are Swift dates (seconds since 2001); keys 2.0 does not know are kept on each record.
 import type { Launch } from "./agent/stream";
 import { characterPrefix } from "./briefing";
 import { fromSwiftDate, toSwiftDate, type StepRecord } from "./store/records";
+import type { SubagentLine } from "./store/subagent-store";
 
 export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
 
@@ -29,16 +35,6 @@ export interface SubagentExecution {
 }
 
 export interface PreviousRunEnd { status: SubagentStatus; result: string }
-
-export interface SubagentRun {
-  execution?: SubagentExecution;
-  prompt: string;
-  status: SubagentStatus;
-  startedAt: number;
-  endedAt?: number;
-  result?: string;
-  steps: StepRecord[];
-}
 
 /** Swift's absolute output counters: malformed/missing is unknown, never parent usage. */
 export function reportedOutputTokens(subagent: SubagentRecord): number | null {
@@ -78,7 +74,13 @@ export interface SubagentRecord {
   background: boolean;
   startedAt: number;
   endedAt?: number;
+  /** The tail of the current run (not the history: see the file's header). */
   steps: StepRecord[];
+  /** The current run's tool/Agent calls and all its steps, counted as they come (`steps` is only a tail). */
+  toolCount?: number;
+  stepCount?: number;
+  /** How many earlier runs it has (their steps are before a "run" line in its file). */
+  runs?: number;
   result?: string;
   parentID?: string;
   name?: string;
@@ -86,7 +88,6 @@ export interface SubagentRecord {
   providerCallIDs?: string[];
   model?: string;
   execution?: SubagentExecution;
-  previousRuns?: SubagentRun[];
   runStartedAt?: number;
   [key: string]: unknown;
 }
@@ -132,15 +133,11 @@ export function readSubagent(value: unknown): SubagentRecord | null {
   const execution = readExecution(raw.execution);
   if (execution) record.execution = execution;
   else delete record.execution;
-  if (Array.isArray(raw.previousRuns)) record.previousRuns = raw.previousRuns.flatMap((run) => {
-    const saved = run && typeof run === "object" ? readSubagent({ ...run, id: raw.id, previousRuns: undefined }) : null;
-    return saved ? [{ prompt: saved.prompt, status: saved.status, startedAt: saved.startedAt, endedAt: saved.endedAt, result: saved.result, steps: saved.steps, execution: saved.execution }] : [];
-  });
-  else delete record.previousRuns;
+  delete record.previousRuns;
   return record;
 }
 
-function readExecution(value: unknown): SubagentExecution | undefined {
+export function readExecution(value: unknown): SubagentExecution | undefined {
   if (!value || typeof value !== "object") return;
   const raw = value as Record<string, unknown>;
   if (typeof raw.run !== "number" || !Number.isSafeInteger(raw.run) || raw.run < 1) return;
@@ -149,10 +146,47 @@ function readExecution(value: unknown): SubagentExecution | undefined {
 }
 
 /** Its tool calls so far (`Subagent.toolCount`). */
-export const toolCount = (subagent: SubagentRecord) => subagent.steps.filter((step) => step.kind === "tool" || step.kind === "subagent").length;
+export const toolCount = (subagent: SubagentRecord) => subagent.toolCount ?? subagent.steps.filter((step) => step.kind === "tool" || step.kind === "subagent").length;
 
 export class SubagentBook {
+  /** Where each step and run boundary goes to be appended to the subagent's file. */
+  sink: ((id: string, line: SubagentLine) => void) | null = null;
+  /** The current run's last steps of a subagent loaded without them (set by the bot). */
+  loadSteps: ((id: string) => StepRecord[]) | null = null;
+  private readonly hydrated = new WeakSet<SubagentRecord>();
+
   constructor(public list: SubagentRecord[] = [], private retained: () => ReadonlySet<string> = () => new Set()) {}
+
+  /** Its recent steps, read from disk the first time a record loaded from the index is changed. */
+  private live(record: SubagentRecord): StepRecord[] {
+    if (!this.hydrated.has(record)) {
+      this.hydrated.add(record);
+      if (!record.steps.length && (record.stepCount ?? 0) > 0 && this.loadSteps) record.steps = this.loadSteps(record.id);
+    }
+    return record.steps;
+  }
+
+  private push(record: SubagentRecord, step: StepRecord) {
+    const steps = this.live(record);
+    steps.push(step);
+    record.stepCount = (record.stepCount ?? 0) + 1;
+    if (step.kind === "tool" || step.kind === "subagent") record.toolCount = (record.toolCount ?? 0) + 1;
+    if (steps.length > 1_000) steps.splice(0, steps.length - 500);
+    this.sink?.(record.id, { k: "step", step });
+  }
+
+  private patch(record: SubagentRecord, id: string, set: Partial<StepRecord>): StepRecord | undefined {
+    const step = this.live(record).findLast((candidate) => candidate.id === id);
+    if (!step) return undefined;
+    Object.assign(step, set);
+    this.sink?.(record.id, { k: "patch", id, set });
+    return step;
+  }
+
+  private create(record: SubagentRecord) {
+    this.hydrated.add(record);
+    this.list.push(record);
+  }
 
   get(id: string) { return this.list.find((subagent) => subagent.id === id || subagent.providerCallIDs?.includes(id)); }
   /** By its call's id, or by the agentId/name claude reaches it by. */
@@ -166,7 +200,7 @@ export class SubagentBook {
     if (item.parent) {
       const owner = this.get(item.parent);
       if (owner) {
-        owner.steps.push({ id: item.id, kind: isSubagent ? "subagent" : "tool", tool: item.tool, title: item.title, detail: item.detail, failed: false, done: false });
+        this.push(owner, { id: item.id, kind: isSubagent ? "subagent" : "tool", tool: item.tool, title: item.title, detail: item.detail, failed: false, done: false });
         changed = true;
       }
     }
@@ -179,7 +213,7 @@ export class SubagentBook {
     if (item.parent) record.parentID = item.parent;
     if (typeof item.input.name === "string" && item.input.name) record.name = item.input.name;
     if (typeof item.input.model === "string" && item.input.model) record.model = item.input.model;
-    this.list.push(record);
+    this.create(record);
     this.trim();
     return true;
   }
@@ -194,13 +228,7 @@ export class SubagentBook {
     }
     if (item.parent) {
       const owner = this.get(item.parent);
-      const step = owner?.steps.findLast((candidate) => candidate.id === item.id);
-      if (step) {
-        step.output = item.output;
-        step.failed = item.failed;
-        step.done = true;
-        changed = true;
-      }
+      if (owner && this.patch(owner, item.id, { output: item.output, failed: item.failed, done: true })) changed = true;
     }
     if (!subagent || subagent.status !== "running") return changed;
     if (subagent.background || item.launch?.background || item.output.startsWith("Async agent launched")) {
@@ -215,7 +243,7 @@ export class SubagentBook {
     const owner = this.get(parent);
     const words = text.trim();
     if (!owner || !words) return false;
-    owner.steps.push({ id: `${parent}:text:${owner.steps.length}`, kind: "text", title: words, failed: false, done: true });
+    this.push(owner, { id: `${parent}:text:${owner.stepCount ?? 0}`, kind: "text", title: words, failed: false, done: true });
     return true;
   }
 
@@ -225,11 +253,15 @@ export class SubagentBook {
       if(item.agentID)existing.agentID=item.agentID;
       if(item.id!==existing.id)existing.providerCallIDs=[...new Set([...(existing.providerCallIDs??[]),item.id])].slice(-20);
       if (existing.status !== "running" || (item.execution && existing.execution && item.execution.run !== existing.execution.run)) {
-        existing.previousRuns = [...(existing.previousRuns ?? []), {
+        this.sink?.(existing.id, { k: "run", run: {
           execution: existing.execution, prompt: existing.prompt, status: item.previousRunEnd?.status ?? existing.status,
-          startedAt: existing.runStartedAt ?? existing.startedAt, endedAt: item.previousRunEnd ? now : existing.endedAt, result: item.previousRunEnd?.result ?? existing.result, steps: existing.steps,
-        }];
+          startedAt: existing.runStartedAt ?? existing.startedAt, endedAt: item.previousRunEnd ? now : existing.endedAt, result: item.previousRunEnd?.result ?? existing.result,
+        } });
+        existing.runs = (existing.runs ?? 0) + 1;
         existing.steps = [];
+        existing.stepCount = 0;
+        existing.toolCount = 0;
+        this.hydrated.add(existing);
         existing.runStartedAt = now;
         delete existing.result;
         delete existing.endedAt;
@@ -247,7 +279,7 @@ export class SubagentBook {
     if (item.agentID) record.agentID = item.agentID;
     if (item.execution) record.execution = item.execution;
     if (item.execution) record.runStartedAt = now;
-    this.list.push(record);
+    this.create(record);
     this.trim();
     return true;
   }
@@ -294,8 +326,8 @@ export class SubagentBook {
     if (result !== undefined) subagent.result = result;
     // The call that started it, in the subagent that sent it.
     if (subagent.parentID) {
-      const step = this.get(subagent.parentID)?.steps.findLast((candidate) => candidate.id === subagent.id);
-      if (step) { step.done = true; step.failed = status === "failed"; }
+      const parent = this.get(subagent.parentID);
+      if (parent) this.patch(parent, subagent.id, { done: true, failed: status === "failed" });
     }
     this.trim();
   }
