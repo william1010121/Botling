@@ -20,16 +20,3 @@ it("persists identified chats and workers across restart/day rollover, deduplica
  ledger=new TokenFlowLedger(file);expect(ledger.records.size).toBe(2);expect(meteredPurpose([...ledger.records.values()][0])).toBe("unknown");
  expect([...ledger.totals("stable-bot").values()][0]).toEqual({input:60,output:20,cacheRead:40,cacheWrite:0});
 });
-
-it("summarizes all historical metered chats and workers without dropping totals at display retention", async()=>{
- const { meteredSummary } = await import("../../src/core/token-flow-summary");
- const ledger=new TokenFlowLedger(join(tempDir("flow-summary"),"usage.jsonl"));
- const now=Date.UTC(2026,9,30,12);
- for(let i=0;i<240;i++)ledger.records.set(String(i),turn({threadId:`chat-${i}`,endedAt:now,activities:i%2?["coordination"]:["execution"]}));
- ledger.records.set("old",turn({threadId:"old-chat",endedAt:Date.UTC(2026,8,1),activities:[]}));
- const snapshot=meteredSummary(ledger,"stable-bot",now);
- expect(snapshot.periods.all.length).toBeLessThanOrEqual(200);
- expect(snapshot.periods.all.reduce((n,g)=>n+g.tokens.output,0)).toBe(4820);
- expect(snapshot.periods.today.reduce((n,g)=>n+g.tokens.output,0)).toBe(4800);
- expect(snapshot.periods.all.filter(g=>g.purpose==="communication").reduce((n,g)=>n+g.tokens.output,0)).toBe(2400);
-});

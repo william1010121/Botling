@@ -99,20 +99,6 @@ it('restored conductor handoffs stop rather than dispatching a forbidden engine'
  b.conduct(actions);expect(b.partner).toBeNull();expect(b.conductor.records.every((r:any)=>r.state==='stopped')).toBe(true);expect(b.rounds).toBeNull();expect(h.launches).toEqual([]);
 });
 
-it('keeps Token Flow history valid for an agy owner without attributing agy counters to another engine',async()=>{
- const {tokenFlowHistory}=await import('../../src/core/token-flow-history');
- const {TokenFlowHistoryView}=await import('../../src/contract');
- const {readSubagent}=await import('../../src/core/subagents');
- const b=harness().make();
- const row={id:'agy-child',description:'unsupported metering',startedAt:100,endedAt:200,status:'completed',outputTokenCounters:{'message:agy':99},prompt:'',steps:[]};
- b.subagents.list.push(readSubagent(row)!);
- const partner=join(b.profile.storeDir,'partner-codex');mkdirSync(partner,{recursive:true});
- writeFileSync(join(partner,'subagents.json'),JSON.stringify([{...row,id:'saved-codex',outputTokenCounters:{'message:codex':20}}]));
- const view=TokenFlowHistoryView.parse(await tokenFlowHistory(b));
- expect(view.rows.map(r=>[r.id,r.head])).toEqual([['saved-codex','codex']]);
- expect(b.partner).toBeNull();
-});
-
 for(const full of [true,false]) it(`passes only the explicit Antigravity permission selection (${full}) into its head`,async()=>{
  const h=harness(full);await h.say(h.make());expect(h.launches[0]).toMatchObject({bypassPermissions:full,sessionId:session,resume:true});
 });

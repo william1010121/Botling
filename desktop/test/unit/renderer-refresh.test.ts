@@ -18,7 +18,6 @@ function fixture() {
   put("desktop/src/renderer/styles.css", '@import "../../../Web/src/tokens.css";\n.shell { color: red; }');
   put("desktop/src/renderer/terminal-assets/LICENSE.txt", "fixture terminal font licence");
   put("desktop/src/renderer/ModelPicker.css", '.model-picker { color: red; }');
-  put("desktop/src/renderer/token-flow.css", '.token-flow { color: red; }');
   put("desktop/src/renderer/ModelPicker.css", '.model-picker { color: red; }');
   put("desktop/src/renderer/chat-frame/chat.html", '<script src="chat.js"></script>');
   put("desktop/src/renderer/chat-frame/frame.css", '.frame { color: red; }');
@@ -87,7 +86,7 @@ it("every stylesheet the renderer imports is published and linked by the pages",
   for (const file of readdirSync("src/renderer").filter(name => name.endsWith(".tsx") || name.endsWith(".ts")))
     expect(readFileSync(join("src/renderer", file), "utf8"), `${file} must not import CSS (esbuild emits an unlinked renderer.css)`).not.toMatch(/import\s+["'][^"']+\.css["']/);
   for (const page of ["src/renderer/index.html", "mobile/index.html"])
-    expect(readFileSync(page, "utf8")).toMatch(/href="(\.\/)?token-flow\.css"/);
+    expect(readFileSync(page, "utf8")).toMatch(/href="(\.\/)?styles\.css"/);
   const f = fixture(); await buildRenderer(f);
-  expect(f.read("token-flow.css")).toContain(".token-flow");
+  expect(f.read("styles.css")).toContain(".shell");
 });
