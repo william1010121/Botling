@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   candidate:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     defaults:
       run:
@@ -23,10 +23,12 @@ jobs:
     env:
       BOTLING_RELEASE_BUILD: '1'
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      BOTLING_RELEASE_KEY: ${{ secrets.BOTLING_RELEASE_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -37,22 +39,33 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "$REF_TYPE" = tag ]; then
+          # A dev-trial build (botlingDevTrial true, like v2.0.1) keeps the "Botling 2 Dev Trial"
+          # profile and ships without a signed update manifest: only the tag is checked. A build with
+          # botlingDevTrial false is a stable production release and gets the full gate, unchanged.
+          if [ "$(node -p 'require("./package.json").botlingDevTrial === true')" = true ]; then
+            echo "TRIAL_BUILD=1" >> "$GITHUB_ENV"
+            VERSION=$(node -p 'require("./package.json").version')
+            if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "v$VERSION" ]; then echo "Tag must match desktop/package.json"; exit 1; fi
+          elif [ "$REF_TYPE" = tag ]; then
             node scripts/release-check.mjs --tag "$REF_NAME" --trust
           else
             node scripts/release-check.mjs --trust
           fi
       - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --prefix ../Web
       - run: npm run test:release
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:reports
+      - run: npx playwright-core install chromium-headless-shell
       - run: npm run test:web-isolation
       # Apple code signing is ad-hoc; no Developer ID/notarization is claimed.
       # Ed25519 update signing below is mandatory and independent of Apple signing.
       - name: Package macOS arm64 ZIP and DMG (never publishes)
         run: npm run dist:mac
       - name: Sign and verify the exact ZIP
+        # Skipped only for a dev-trial build when no signing key is configured.
+        if: ${{ env.TRIAL_BUILD != '1' || env.BOTLING_RELEASE_KEY != '' }}
         env:
           BOTLING_RELEASE_KEY: ${{ secrets.BOTLING_RELEASE_KEY }}
         run: |
@@ -65,7 +78,9 @@ jobs:
           VERSION=$(node -p 'require("./package.json").version')
           git rev-parse HEAD > dist/SOURCE_COMMIT.txt
           cd dist
-          shasum -a 256 "Botling-2-$VERSION-mac-arm64.zip" "Botling-2-$VERSION-mac-arm64.zip.manifest.json" "Botling-2-$VERSION-mac-arm64.dmg" > SHA256SUMS.txt
+          FILES="Botling-2-$VERSION-mac-arm64.zip Botling-2-$VERSION-mac-arm64.dmg"
+          if [ -f "Botling-2-$VERSION-mac-arm64.zip.manifest.json" ]; then FILES="$FILES Botling-2-$VERSION-mac-arm64.zip.manifest.json"; fi
+          shasum -a 256 $FILES > SHA256SUMS.txt
           echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
@@ -78,3 +93,46 @@ jobs:
             desktop/dist/Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64.dmg
             desktop/dist/SHA256SUMS.txt
             desktop/dist/SOURCE_COMMIT.txt
+
+  linux:
+    # First Linux build: AppImage and deb for x64. Not run on real hardware. Unsigned; no
+    # in-place updates (self-update is macOS-only), users download releases by hand.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      BOTLING_RELEASE_BUILD: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - name: Package Linux x64 AppImage and deb (never publishes)
+        run: npm run dist:linux
+      - name: Record source and checksums
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          git rev-parse HEAD > dist/SOURCE_COMMIT-linux.txt
+          cd dist
+          ls -la
+          sha256sum *.AppImage *.deb > SHA256SUMS-linux.txt
+          cat SHA256SUMS-linux.txt
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Botling-2-${{ env.RELEASE_VERSION }}-linux-x64-candidate
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/SHA256SUMS-linux.txt
+            desktop/dist/SOURCE_COMMIT-linux.txt

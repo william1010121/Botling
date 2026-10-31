@@ -146,8 +146,9 @@ describe("a bot's head", () => {
     mkdirSync(join(folder, "claude", "skills"), { recursive: true });
     mkdirSync(join(folder, "claude", ".claude-plugin"), { recursive: true });
     writeFileSync(join(folder, "claude", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "skills-pack", version: "1.0.0" }));
-    writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "skills-pack", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { claude: "claude" } }));
     writeFileSync(join(folder, "claude", "skills", "a.md"), "a skill");
+    // package.json last: it is what makes the folder a plugin, so a 100 ms scan never sees a half-written one.
+    writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "skills-pack", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { claude: "claude" } }));
     await until(async () => (await c.call({ type: "plugins.list" })).plugins.some((p: { name: string }) => p.name === "skills-pack"), { what: "the plugin" });
     expect(starts(dir)).toHaveLength(1); // An idle bot is not restarted until it has something to do.
     expect((await turn(c, "second")).event.status).toBe("done");

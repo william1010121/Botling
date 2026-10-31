@@ -1,5 +1,5 @@
 // Actual hot transaction + CoreSwapper + both generations of BotStore, synthetic profiles only.
-import { expect, it, beforeAll } from 'vitest';
+import { expect, it as baseIt, beforeAll } from 'vitest';
 import * as fs from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -9,9 +9,14 @@ import { BotStore } from '../../src/core/store/bot-store';
 import { HotInstaller, applyHot, bundlePrints, planInstall } from '../../src/main/hot-install';
 import { CoreSwapper } from '../../src/main/core-swap';
 import { tempDir, desktop } from '../helpers';
+// The historical planner is read from commit 65f0efa, which lives on a branch that is not in main's history
+// (a CI checkout does not have it), so these cases run only where that commit is present.
+const hasHistory=(()=>{try{execFileSync('git',['cat-file','-e','65f0efa^{commit}'],{cwd:desktop,stdio:'ignore'});return true;}catch{return false;}})();
+const it=baseIt.skipIf(!hasHistory) as typeof baseIt;
 let LegacyStore:typeof BotStore;
 let oldPlanner: { bundlePrints: typeof bundlePrints; planInstall: typeof planInstall };
 beforeAll(async()=>{
+  if(!hasHistory)return;
   const contents=execFileSync('git',['show','9024ad5:desktop/src/core/store/bot-store.ts'],{cwd:desktop,encoding:'utf8'});
   const result=await build({stdin:{contents,resolveDir:join(desktop,'src/core/store'),loader:'ts'},bundle:true,platform:'node',format:'cjs',target:'node22',write:false});
   const module={exports:{} as any};new Function('require','module','exports',result.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports);LegacyStore=module.exports.BotStore;

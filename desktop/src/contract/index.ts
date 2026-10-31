@@ -594,7 +594,7 @@ export type ImportView = z.infer<typeof ImportView>;
 export const RunningView = z.strictObject({ turnId: id, messageId: id });
 export type RunningView = z.infer<typeof RunningView>;
 /** A turn under way, with its head (two heads can work at once) and its steps so far. */
-export interface RunView { turnId: string; messageId: string; head: "claude" | "codex" | "agy"; live: StepView[] }
+export interface RunView { turnId: string; messageId: string; head?: "claude" | "codex" | "agy"; live: StepView[] }
 
 /** A routine: a routines.cron line ("legacy", system time) or an app-owned schedule (once / recurring in a zone). */
 export const RoutineView = z.strictObject({

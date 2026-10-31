@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tempDir } from '../helpers';
 import { AgyRuntimeInstaller, verifyArchive, assertLocalDestination } from '../../src/core/agy-runtime-install';
@@ -41,7 +41,9 @@ it('download failures do not publish partial runtimes', async () => {
 });
 it('rejects modified archives, unsupported hosts and external destinations before download', async () => {
   expect(() => verifyArchive(Buffer.from('tampered'))).toThrow('hash mismatch');
-  expect(() => assertLocalDestination('/Volumes/My-SSD/botling-work')).toThrow('local');
+  const linkRoot = tempDir('agy-install-link'), link = join(linkRoot, 'link');
+  symlinkSync(linkRoot, link);
+  expect(() => assertLocalDestination(link)).toThrow('local');
   const download = vi.fn();
   await expect(new AgyRuntimeInstaller({platform:'linux',download}).install('/tmp')).rejects.toThrow('macOS arm64');
   expect(download).not.toHaveBeenCalled();

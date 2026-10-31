@@ -108,7 +108,8 @@ describe("task lifecycle and retained history", () => {
     const { book, id } = started();
     const other = book.begin("other", "Other work", "claude", 3);
     book.replied("other-reply", { head: "claude", userMessage: "other" }, [{ name: "Other work", state: "running" }], 4);
-    const live = { tasks: book, engine: "claude", subagents: { list: [] }, records: [], shownTurn: { open: true, origin: "user", userId: "u" } };
+    const live: any = { tasks: book, engine: "claude", subagents: { list: [] }, records: [], shownTurn: { open: true, origin: "user", userId: "u" } };
+    live.members = [live];
     const views = () => Bot.prototype.taskViews.call(live as unknown as Bot);
     expect(views().find(t => t.id === id)!.atWork).toBe(true);
     expect(views().find(t => t.id === other)!.atWork).toBe(false);
@@ -127,7 +128,9 @@ describe("task lifecycle and retained history", () => {
     restored.keepOnly(new Set());
     expect(restored.tasks).toHaveLength(106);
     expect(restored.task(id)).toMatchObject({ state: "done", manuallyCompletedAt: 3 });
-    const views = Bot.prototype.taskViews.call({ tasks: restored, engine: "claude", subagents: { list: [] }, records: [] } as unknown as Bot);
+    const solo: Record<string, unknown> = { tasks: restored, engine: "claude", subagents: { list: [] }, peers: [], records: [] };
+    solo.members = [solo];
+    const views = Bot.prototype.taskViews.call(solo as unknown as Bot);
     expect(views).toHaveLength(106);
     expect(Event.safeParse({ type: "tasks.updated", botId: "main", tasks: views }).success).toBe(true);
     expect(taskGroups(views, false, Date.now()).done).toHaveLength(106);

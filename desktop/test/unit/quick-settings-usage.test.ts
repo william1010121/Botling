@@ -83,7 +83,7 @@ describe("quota readings in the production Quick settings popup", () => {
     await act(async () => vi.advanceTimersByTime(60_000));
     expect(ui.cards()[0].textContent).toContain("–5 hoursreset");
     expect(ui.cards()[0].textContent).not.toContain("0%");
-    await act(async () => vi.advanceTimersByTime(9 * 60_000));
+    await act(async () => vi.advanceTimersByTimeAsync(9 * 60_000)); // each minute's reload re-arms the next timer
     expect(host.textContent).toContain("as of 10 min ago");
     await ui.toggle(); expect(ui.off).toHaveBeenCalledOnce();
     const calls = ui.request.mock.calls.length;
@@ -97,10 +97,11 @@ describe("quota readings in the production Quick settings popup", () => {
     const ui = await mount(request); await ui.toggle();
     expect(ui.cards()).toHaveLength(3);
     for (const card of ui.cards()) { expect(card.textContent).toContain("unavailable"); expect(card.textContent).not.toContain("0%"); }
+    await act(async () => vi.advanceTimersByTime(2_000)); // manual retry is bounded to one per 2 s
     await act(async () => host.querySelector<HTMLButtonElement>(".quick-usage-note button")!.click());
     expect(ui.cards()[0].textContent).toContain("42%");
     request.mockRejectedValueOnce(new Error("offline")); await ui.finished();
-    expect(host.textContent).toContain("Quota readings unavailable.");
+    expect(host.textContent).toContain("Quota refresh failed");
     for (const card of ui.cards()) expect(card.getAttribute("aria-label")).toContain("Last-known");
     expect(host.textContent).toContain("Claude: quota refresh failed.");
     expect(host.textContent).toContain("Codex: quota refresh failed.");
@@ -205,11 +206,10 @@ describe("quota readings in the production Quick settings popup", () => {
     const request = vi.fn(() => new Promise<UsageView>(done => { resolve = done; }));
     const ui = await mount(request); await ui.toggle();
     const previous = resolve; await ui.toggle(); await ui.toggle();
+    // Reopening joins the one shared refresh (it is not a new request), so the outstanding answer is the reading.
     await act(async () => previous(limits()));
-    expect(ui.cards()[0].textContent).toContain("unavailable");
-    const value = limits(); value.claude.fiveHour!.used = .56;
-    await act(async () => resolve(value));
-    expect(ui.cards()[0].textContent).toContain("56%");
+    expect(ui.cards()[0].textContent).toContain("42%");
+    expect(ui.request).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -235,8 +235,9 @@ it("shows loading, failure, retry, then unavailable for Antigravity", async () =
   expect(quota()).toBe("Quota refresh failed");
   expect(host.textContent).not.toContain("secret");
   request.mockImplementation(async () => limits());
+  await act(async () => vi.advanceTimersByTime(2_000)); // manual retry is bounded to one per 2 s
   await act(async () => host.querySelector<HTMLButtonElement>(".quick-usage-note button")!.click());
-  expect(quota()).toBe("Quota readings unavailable");
+  expect(host.querySelector('[aria-label="Antigravity quota"] .quick-usage-note')).toBeNull();
   expect(ui.cards()[0].textContent).toContain("42%");
 });
 

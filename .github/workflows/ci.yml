@@ -28,6 +28,8 @@ jobs:
           cache: npm
           cache-dependency-path: Web/package-lock.json
       - run: npm ci
+      # Web typecheck/tests import ../desktop/src, which needs zod and friends.
+      - run: npm ci --no-audit --no-fund --prefix ../desktop
       - run: npm run typecheck
       - run: npm test
       - name: Built web output is committed
@@ -47,22 +49,33 @@ jobs:
 
   desktop:
     name: Electron 2 checks
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 30
     defaults:
       run:
         working-directory: desktop
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --no-audit --no-fund
-      - run: npm run release:check
+      # Desktop unit tests import ../Web/src (CodeMirror, markdown-it).
+      - run: npm ci --no-audit --no-fund --prefix ../Web
+      - name: Stable release gate (skipped for a dev-trial build)
+        run: |
+          if [ "$(node -p 'require("./package.json").botlingDevTrial === true')" = true ]; then
+            echo "Dev-trial build: stable release gate not applicable"
+          else
+            npm run release:check
+          fi
       - run: npm run test:release
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:reports
+      - run: npx playwright-core install chromium-headless-shell
       - run: npm run test:web-isolation
