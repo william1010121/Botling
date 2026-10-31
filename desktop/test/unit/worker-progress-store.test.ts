@@ -35,7 +35,7 @@ it("durably commits before returning; a fresh reader recovers every record befor
   await f.store.flushWorkerHistory();
   expect(decodeHistoryCheckpoint(JSON.parse(readFileSync(f.file,"utf8"))).rows).toEqual(list);
   expect(readdirSync(f.journal)).toEqual([]);
-  expect(statSync(f.file).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") expect(statSync(f.file).mode & 0o777).toBe(0o600); // Windows has no POSIX modes
   expect(readFileSync(join(f.root, "tasks.json"), "utf8")).toBe('[{"id":"unrelated"}]');
 });
 it("orders commits from competing stores and includes writes arriving during checkpoint in the next flush", async () => {

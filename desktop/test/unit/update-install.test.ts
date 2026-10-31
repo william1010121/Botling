@@ -319,6 +319,8 @@ describe("operator release scripts in a throwaway HOME only", () => {
     // Renderer/preload/licence generation is outside this trust-gate test.
     put("build-renderer.mjs", "export async function buildRenderer() {}\n");
     put("build-preloads.mjs", "export async function buildPreloads() {}\n");
+    put("scripts/terminal-runtime.mjs", "export async function stageTerminalRuntime() {}\n");
+    put("scripts/package-agy-helper.mjs", "export async function packageAgyHelper() {}\n");
     put("reports/licenses.mjs", 'export const NOTICES_FILE = "licenses.txt"; export const thirdPartyNotices = () => ({ missing: [], text: "fixture" });\n');
     put("src/main/main.ts", "console.log(__UPDATE_PUBLIC_KEY__);\n");
     for (const file of ["src/core/main.ts", "../Web/host/src/host.ts", "src/host/utility.ts", "src/core/plugins/check-cli.ts", "reports/cli-main.ts"]) put(file, 'console.log("fixture");\n');

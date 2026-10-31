@@ -8,7 +8,9 @@ import type { Fs, Run } from './hot-install';
 export const HOT_PENDING = 'hot-install-pending.json';
 const exchangeScript = 'ObjC.import("stdlib"); ObjC.bindFunction("renamex_np", ["int", ["char *", "char *", "unsigned int"]]); function run(argv) { if ($.renamex_np(argv[0], argv[1], 2) !== 0) throw Error("atomic bundle exchange failed"); }';
 export async function syncDirectory(path: string, fs: Fs) {
-  const handle = await fs.promises.open(path, 'r'); try { await handle.sync(); } finally { await handle.close(); }
+  // Windows cannot open a directory for fsync (EPERM/EISDIR); its rename is journalled by NTFS already.
+  let handle; try { handle = await fs.promises.open(path, 'r'); } catch (error) { if (process.platform === 'win32') return; throw error; }
+  try { await handle.sync(); } catch (error) { if (process.platform !== 'win32') throw error; } finally { await handle.close(); }
 }
 export async function durableJSON(file: string, value: unknown, fs: Fs) {
   await fs.promises.mkdir(dirname(file), { recursive: true });

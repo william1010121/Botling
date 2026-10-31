@@ -13,7 +13,7 @@ it('writes original bytes asynchronously before acknowledging an attachment, wit
   expect(pending.views('A')).toHaveLength(0);
   await result;
   const file = pending.list('A')[0]; expect(file.name).toBe('a-b.png');
-  expect(readFileSync(file.path).equals(bytes)).toBe(true); expect(statSync(file.path).mode & 0o777).toBe(0o600);
+  expect(readFileSync(file.path).equals(bytes)).toBe(true); if (process.platform !== "win32") expect(statSync(file.path).mode & 0o777).toBe(0o600); // Windows has no POSIX modes
   console.log(`1 MiB decode + async write + acceptance: ${(performance.now() - start).toFixed(1)} ms`);
 });
 it('failed storage leaves no accepted attachment', async () => {

@@ -12,7 +12,12 @@ export function packageAgyHelper(root) {
     execFileSync('/usr/bin/clang', ['-std=c11','-D_DARWIN_C_SOURCE','-O2','-Wall','-Wextra','-Werror',join(root,'src/core/agent/agy-file-helper.c'),'-o',file]);
     const bytes = readFileSync(file);
     const pin = readFileSync(join(root,'src/core/agent/agy-mcp.ts'),'utf8').match(/AGY_FILE_HELPER_SHA = '([a-f0-9]{64})'/)?.[1];
-    if (!pin || createHash('sha256').update(bytes).digest('hex') !== pin) throw Error('Built Antigravity helper differs from reviewed pin; packaging stopped.');
+    if (!pin || createHash('sha256').update(bytes).digest('hex') !== pin) {
+      // clang output differs between Xcode versions, so a CI runner cannot reproduce the pin. Only a release build must match it
+      // (the runtime installer checks the pin again before it ever uses the helper).
+      if (process.env.BOTLING_RELEASE_BUILD !== '1' && process.env.CI) { console.warn('Antigravity helper differs from the reviewed pin; not packaged (CI, not a release build).'); return; }
+      throw Error('Built Antigravity helper differs from reviewed pin; packaging stopped.');
+    }
     execFileSync('/usr/bin/codesign', ['--verify','--strict',file]);
     writeFileSync(join(root,'out/core/agy-file-helper.base64'),bytes.toString('base64'));
   } finally { rmSync(stage,{recursive:true,force:true}); }

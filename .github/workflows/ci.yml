@@ -48,9 +48,16 @@ jobs:
         run: swift test --skip-build --no-parallel
 
   desktop:
-    name: Electron 2 checks
-    runs-on: macos-26
-    timeout-minutes: 30
+    name: Electron 2 checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    # Windows is reported but does not block yet: ~40 test files still assume POSIX paths or spawn
+    # behaviour (tracked for 2.1.0). Remove this line when the Windows job is green.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, ubuntu-latest, windows-latest]
     defaults:
       run:
         working-directory: desktop
@@ -67,6 +74,8 @@ jobs:
       # Desktop unit tests import ../Web/src (CodeMirror, markdown-it).
       - run: npm ci --no-audit --no-fund --prefix ../Web
       - name: Stable release gate (skipped for a dev-trial build)
+        shell: bash
+        if: ${{ !cancelled() }}
         run: |
           if [ "$(node -p 'require("./package.json").botlingDevTrial === true')" = true ]; then
             echo "Dev-trial build: stable release gate not applicable"
@@ -74,8 +83,14 @@ jobs:
             npm run release:check
           fi
       - run: npm run test:release
+        if: ${{ !cancelled() }}
       - run: npm run typecheck
+        if: ${{ !cancelled() }}
       - run: npm run test:unit
+        if: ${{ !cancelled() }}
       - run: npm run test:reports
+        if: ${{ !cancelled() }}
       - run: npx playwright-core install chromium-headless-shell
+        if: ${{ !cancelled() }}
       - run: npm run test:web-isolation
+        if: ${{ !cancelled() }}

@@ -19,6 +19,7 @@ function fixture() {
   put("desktop/src/renderer/terminal-assets/LICENSE.txt", "fixture terminal font licence");
   put("desktop/src/renderer/ModelPicker.css", '.model-picker { color: red; }');
   put("desktop/src/renderer/token-flow.css", '.token-flow { color: red; }');
+  put("desktop/src/renderer/ModelPicker.css", '.model-picker { color: red; }');
   put("desktop/src/renderer/chat-frame/chat.html", '<script src="chat.js"></script>');
   put("desktop/src/renderer/chat-frame/frame.css", '.frame { color: red; }');
   put("Web/src/chat.css", '@import "tokens.css";\n.chat { color: red; }');

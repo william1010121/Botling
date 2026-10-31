@@ -1,0 +1,9 @@
+# Tests compare file contents byte for byte (golden prompts, fixtures); never let Windows checkouts add CRs.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff2 binary
+*.base64 text eol=lf

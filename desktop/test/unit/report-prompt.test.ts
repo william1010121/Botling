@@ -3,6 +3,7 @@
 // which stays exactly as it was. Without the command (headless tests) nothing is added.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { promptDoc } from "../../reports/v2/promptdoc";
 import { AGY_DELEGATION_POLICY } from "../../src/core/prompts-agy";
 import { botPrompts, desktopPrompts, codexLocalReportRule, codexWorkerInstructions, reportPageLine, type ReportTool } from "../../src/core/prompts";
@@ -58,7 +59,7 @@ describe("the report page rule", () => {
 });
 
 describe("the report page line as a shell command", () => {
-  it("keeps a spaced command path and a spaced artifacts path one argument each under zsh", async () => {
+  it.skipIf(spawnSync("zsh", ["-f", "-c", "true"]).error !== undefined)("keeps a spaced command path and a spaced artifacts path one argument each under zsh", async () => {
     const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, realpathSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");

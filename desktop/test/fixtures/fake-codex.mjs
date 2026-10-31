@@ -40,6 +40,7 @@
 // FAKE_CODEX_LOG: a file it appends {pid, args, cwd} to per start.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
+import { safeWritePath } from "./safe-write.mjs";
 import { randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -291,7 +292,7 @@ async function workerTurn(thread, turn, text) {
   const state = threads.get(thread);
   if (text.startsWith("FAKE-HANDOFF ")) {
     const file = text.slice("FAKE-HANDOFF ".length).trim();
-    const path = isAbsolute(file) ? file : join(process.cwd(), file);
+    const path = safeWritePath(file);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `## Current status\nHanded over by the fake Codex worker.\n## In progress\n${process.env.FAKE_HANDOFF_WORK ?? "Finish the parser."}\n## Waiting on you\n## Decided\n`);
     say(thread, turn, `Wrote ${file}.`);
@@ -299,7 +300,7 @@ async function workerTurn(thread, turn, text) {
   }
   if (text.startsWith("FAKE-TIDY ")) {
     const file = text.slice("FAKE-TIDY ".length).trim();
-    const path = isAbsolute(file) ? file : join(process.cwd(), file);
+    const path = safeWritePath(file);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, "## Current status\nTidied by the fake Codex worker.\n## In progress\n## Waiting on you\n## Decided\n");
     say(thread, turn, `Wrote ${file}.`);

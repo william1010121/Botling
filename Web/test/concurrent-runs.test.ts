@@ -51,7 +51,7 @@ describe("concurrent engine output through events, payload and chat DOM", () => 
     send({ type: "turn.steps", botId: "B", turnId: survivor, messageId: `m${survivor}`, steps: step("Still working") });
     expect(document.getElementById("messages")?.textContent).toContain("Still working");
     expect(store.getView().chat!.messages.map(m => [m.id, m.text])).toEqual([["ma", ended === "a" ? "First final" : "First output"], ["mb", ended === "b" ? "Second final" : "Second output"]]);
-    snapshot = { ...snapshot, seq, chat: { ...snapshot.chat!, ...store.getView().chat! } };
+    snapshot = { ...snapshot, seq, chat: { ...snapshot.chat!, ...store.getView().chat! } } as typeof snapshot;
     await store.resync(); draw();
     expect(document.querySelectorAll(".typing")).toHaveLength(1);
     expect(document.getElementById("messages")?.textContent).toContain(ended === "a" ? "Second output" : "First output");
