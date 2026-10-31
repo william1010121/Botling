@@ -756,6 +756,8 @@ export const UpdateView = z.strictObject({
   error: z.string().max(2_000).nullable(),
   installError: z.string().max(2_000).nullable().optional(),
   readyVersion: z.string().max(100).nullable().optional(),
+  /** 0 to 100 while a download is under way (the sidebar's update entry), else null. */
+  downloadPercent: z.number().min(0).max(100).nullable().optional(),
 });
 export type UpdateView = z.infer<typeof UpdateView>;
 

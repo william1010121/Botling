@@ -96,6 +96,12 @@ button { font: inherit; color: inherit; }
 .rail-plugins { position: relative; padding: 6px 10px 8px; border-top: 1px solid var(--line); }
 .rail-button { width: 100%; text-align: left; background: none; border: 0; border-radius: 10px; padding: 6px 10px; font-size: 13px; color: var(--muted); cursor: pointer; display: flex; align-items: center; gap: 8px; }
 .rail-button:hover, .rail-button.on { background: var(--hover); color: var(--text); }
+.rail-update { padding: 0 10px 4px; }
+.rail-update .rail-button { color: var(--text); }
+.rail-update .rail-button.error { color: var(--error); }
+.rail-update .rail-button:disabled { cursor: default; opacity: 0.8; }
+.rail-update-bar { height: 2px; margin: 2px 10px 0; border-radius: 1px; background: var(--chip); overflow: hidden; }
+.rail-update-bar > span { display: block; height: 100%; background: var(--orange); transition: width 0.3s; }
 .rail-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
 .plugins-panel, .plugin-panel {
   position: fixed; left: 258px; bottom: 16px; z-index: 30; width: 440px; max-height: 72vh; overflow-y: auto;

@@ -47,7 +47,7 @@ function desk(root: string, over: Partial<ConstructorParameters<typeof DevBuilds
   const running = readBuild(fakeApp(join(root, "Applications"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }));
   const launched: string[][] = [];
   const builds = new DevBuilds({
-    root: join(root, "core"), runningBuild: () => running, developer: () => dev, mainBot: () => main,
+    root: join(root, "core"), runningBuild: () => running, developer: () => dev, developerMode: () => true, mainBot: () => main,
     bot: (id) => [main, dev, other].find((bot) => bot.id === id) ?? null,
     appPid: 4242, appDataDir: join(root, "data"),
     launchInstaller: (command) => { launched.push(command); },
@@ -280,6 +280,21 @@ describe("a newer release", () => {
     main.notices.at(-1)!.onPick!(0);
     await vi.waitFor(() => expect(asks).toEqual(["install", "install"]));
     expect(main.notices.at(-1)!.choices).toBeDefined();
+  });
+
+  it("shows in the main bot's chat only while developer mode is on; otherwise the sidebar entry is the way to update", () => {
+    const root = tempDir("self-update");
+    let developerMode = false;
+    const { builds, main } = desk(root, { developerMode: () => developerMode, installRelease: async () => ({ ok: true }) });
+    expect(builds.announceRelease(release)).toBeNull();
+    expect(main.notices).toHaveLength(0);
+    // Not remembered as announced or declined: turning developer mode on shows it at the next check.
+    developerMode = true;
+    expect(builds.announceRelease(release)).not.toBeNull();
+    expect(main.notices).toHaveLength(1);
+    developerMode = false;
+    expect(builds.announceRelease({ ...release, version: "2.0.3" })).toBeNull();
+    expect(main.notices).toHaveLength(1);
   });
 
   it("Not now is remembered for that version; one that cannot be installed here says why, with no button", () => {

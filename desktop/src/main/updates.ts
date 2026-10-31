@@ -55,6 +55,7 @@ export interface UpdaterLike {
   downloadUpdate(): Promise<unknown>;
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
   on(event: "update-downloaded", listener: (info: UpdateInfoLike) => void): unknown;
+  on(event: "download-progress", listener: (progress: { percent: number }) => void): unknown;
 }
 
 export interface UpdaterOptions {
@@ -90,6 +91,7 @@ export class Updater {
   private error: string | null = null;
   private downloading: Promise<UpdateView> | null = null;
   private downloaded: string | null = null;
+  private percent: number | null = null;
 
   constructor(private readonly options: UpdaterOptions) {
     const updater = options.updater;
@@ -99,6 +101,9 @@ export class Updater {
     // A prerelease build (a trial) follows prereleases; a stable one does not.
     updater.allowPrerelease = (parseVersion(options.current)?.pre.length ?? 0) > 0;
     updater.on("update-downloaded", (info) => { this.downloaded = info.version; });
+    updater.on("download-progress", (progress) => {
+      this.percent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, Math.round(progress.percent))) : null;
+    });
   }
 
   /** The state as last known, without fetching. */
@@ -108,6 +113,7 @@ export class Updater {
     return {
       current: this.options.current, enabled, newer, checkedAt: saved?.checkedAt ?? null, error: this.error,
       installError: this.options.unavailable(), readyVersion: this.downloaded,
+      downloadPercent: this.percent,
     };
   }
 
@@ -142,10 +148,12 @@ export class Updater {
     const newer = this.options.load()?.newer;
     if (!newer || !this.stillNewer(newer)) throw new Error("There is no newer release.");
     this.downloading ??= (async () => {
+      this.percent = null;
       try { if (this.downloaded !== newer.version) await this.options.updater.downloadUpdate(); this.error = null; }
       catch (failure) { this.error = `Download failed: ${String((failure as Error)?.message ?? failure).slice(0, 300)}`; throw failure; }
+      finally { this.percent = null; }
       return this.view(enabled);
-    })().finally(() => { this.downloading = null; });
+    })().finally(() => { this.downloading = null; this.percent = null; });
     return this.downloading;
   }
 

@@ -448,6 +448,7 @@ export class Core {
       // Read each time: a hot install changes the bundle on disk under a running core.
       runningBuild: () => (app?.bundle ? readBuild(app.bundle) : null),
       developer: () => this.developerProject(),
+      developerMode: () => settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
       mainBot: () => this.bots.get(MAIN_BOT_ID)!,
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
       appPid: app?.pid ?? null,
