@@ -110,6 +110,20 @@ describe("prompts: the Swift app's strings", () => {
     }
   });
 
+  it("routes an explicit request for a peer engine through the handoff tag, not a subagent or CLI", () => {
+    const profile = { name: "Probe", role: "bot" as const, folder: "/fixture", memoryPath: ".bot/memory.md", job: null };
+    const heads = { engines: ["claude", "agy"] as ("claude" | "agy")[], handoffs: true, limits: DEFAULT_HEADS.limits };
+    const system = botPrompts({ profile, engine: "claude", heads }).system;
+    expect(system).toContain('<handoff to="agy" kind="task">');
+    expect(system).toContain('When the user asks you to call, use or ask Antigravity, end your reply with <handoff to="agy"');
+    expect(system).toContain("never emulate it with a subagent, the Agent tool or a local CLI");
+    expect(system).toContain("this overrides the default of using subagents");
+    const codex = headsRule({ ...heads, engines: ["claude", "codex", "agy"] }, "claude");
+    expect(codex).toContain('<handoff to="codex"');
+    expect(codex).toContain('<handoff to="agy"');
+    expect(headsRule({ ...heads, handoffs: false }, "claude")).not.toContain("never emulate");
+  });
+
   it("keeps the app's leads and notes", () => {
     expect(WAKE_LEAD).toBe(golden.notes.wakeLead);
     expect(TIDY_LEAD).toBe(golden.notes.tidyLead);
