@@ -3,6 +3,7 @@
 // Serves the built Botling Web (dist/) and answers the bridge routes with the all-bots browser
 // scope and the snapshot shape the bridge sends it (src/mobile-bridge/adapter.ts webSnapshot).
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +76,7 @@ const chatCSP = origin => `default-src 'none'; script-src 'self' blob:; style-sr
 const hostCSP = origin => `sandbox allow-scripts; default-src 'none'; script-src ${origin}/mobile/frame-host.js 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'`;
 // Every request the fixture saw (for isolation-check.mjs: what actually reached the server).
 const hits = [];
+const tickets = new Set();
 const server = createServer(async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
@@ -85,6 +87,18 @@ const server = createServer(async (req, res) => {
       const control = JSON.parse(body); if (typeof control.authenticated === 'boolean') authenticated = control.authenticated;
       if (typeof control.denied === 'boolean') denied = control.denied;
       res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}'); return;
+    }
+    // The event stream's sign-in, as the real bridge does it: a one-use ticket for a bearer request, then the stream by ticket.
+    if (req.method === 'POST' && req.url === '/api/mobile/ticket') {
+      if (!authenticated || req.headers.authorization !== `Bearer ${TOKEN}`) { res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":{"code":"auth_required"}}'); return; }
+      const ticket = randomBytes(32).toString('base64url'); tickets.add(ticket);
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ticket, expiresAt: Date.now() + 30_000 })); return;
+    }
+    if (req.method === 'GET' && req.url?.startsWith('/api/mobile/events?ticket=')) {
+      const ticket = req.url.slice('/api/mobile/events?ticket='.length);
+      if (!tickets.delete(ticket)) { res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":{"code":"ticket_invalid"}}'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.write('retry: 3000\nevent: ready\ndata: {}\n\n');
+      const beat = setInterval(() => res.write(': ping\n\n'), 15_000); res.on('close', () => clearInterval(beat)); return;
     }
     if (req.method === 'POST' && req.url === '/api/mobile/command') {
       if (!authenticated || req.headers.authorization !== `Bearer ${TOKEN}`) { res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":{"code":"auth_required"}}'); return; }

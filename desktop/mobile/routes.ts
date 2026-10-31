@@ -39,3 +39,32 @@ export async function pickRoute(routes: Route[], coreId: string, fetcher: typeof
   const index = results.indexOf(true);
   return index < 0 ? null : routes[index].origin;
 }
+
+/** The ways to reach one core, pinned when the phone signed in: the core id, the routes that core itself listed (plus the page's
+ * own origin), and the one in use. The token may go only to a route in this list that has just answered with the core id. */
+export class RouteBook {
+  private routes: Route[];
+  constructor(readonly coreId: string, routes: Route[], public origin: string) {
+    this.routes = routes.some(r => r.origin === origin) ? routes : [{ kind: 'tunnel', origin }, ...routes];
+  }
+  allowed(origin: string): boolean { return this.routes.some(r => r.origin === origin); }
+  /** Looks for a route that answers as this core, first in the core's own order. Nothing secret is sent while looking.
+   * Moves to it (and says which) only if there is one; the current route is kept when nothing answers. */
+  async recover(fetcher: typeof fetch = fetch, timeoutMs?: number): Promise<string | null> {
+    const found = await pickRoute(this.routes, this.coreId, fetcher, timeoutMs);
+    if (found && this.allowed(found)) this.origin = found;
+    return found;
+  }
+}
+/** Reads the public descriptor of the origin the page came from. Null when it does not answer, is not Botling, or (when the
+ * pairing link names a core) is a different core. */
+export async function loadRouteBook(origin: string, expectedCoreId: string | undefined, fetcher: typeof fetch = fetch, timeoutMs = PROBE_MS): Promise<RouteBook | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetcher(new URL('/api/mobile/core', origin), { cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer', signal: controller.signal });
+    const body = response.ok ? await response.json() : null;
+    if (!body || body.app !== 'botling' || !CORE.test(body.coreId) || (expectedCoreId && body.coreId !== expectedCoreId)) return null;
+    return new RouteBook(body.coreId, cleanRoutes(body.routes), new URL(origin).origin);
+  } catch { return null; } finally { clearTimeout(timer); }
+}

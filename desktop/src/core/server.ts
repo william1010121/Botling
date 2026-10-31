@@ -1394,6 +1394,10 @@ First write a test that shows this, then fix it.`;
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    if (this.changeListeners.size) {
+      const botId = event.type === "bot.updated" ? event.bot.id : "botId" in event ? event.botId : undefined;
+      for (const listener of [...this.changeListeners]) { try { listener(botId === undefined ? {} : { botId }); } catch { /* a listener never stops the core */ } }
+    }
     // A turn began: remember what its worktree looked like, so the review can show what the turn changed.
     if (event.type === "turn.started" && !this.removed.has(event.botId)) {
       const bot = this.bots.get(event.botId);
@@ -1408,6 +1412,13 @@ First write a test that shows this, then fix it.`;
       const bot = this.bots.get(event.botId);
       if (bot) this.catchUps.closedInterval(bot.catchUpChat(), event.message.id);
     }
+  }
+
+  private changeListeners = new Set<(change: { botId?: string }) => void>();
+  /** The phone bridge's event stream: told that something changed (and in which bot), never what. */
+  onChange(listener: (change: { botId?: string }) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
   }
 
   private mobileDesk: MobileDesk | null = null;

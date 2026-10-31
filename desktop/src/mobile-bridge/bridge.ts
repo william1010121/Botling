@@ -22,7 +22,14 @@ export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash
 export type Client = z.infer<typeof Client>;
 export const Clients = z.array(Client);
 export const mobileTypes = new Set(['chat.snapshot', 'chat.history', 'chat.send', 'chat.choose', 'chat.answer']);
-export interface MobileCore { mobileCommand(raw: unknown, allowedBots: readonly string[]): Promise<ResponseEnvelope> }
+export interface MobileCore {
+  mobileCommand(raw: unknown, allowedBots: readonly string[]): Promise<ResponseEnvelope>;
+  /** Something changed in the core (a bot's chat, or nothing bot-specific). Only that it changed: never what. */
+  onChange?(listener: (change: { botId?: string }) => void): () => void;
+}
+/** The calls a page of one listed route may make to another listed route, with its bearer token in a header. */
+const CROSS_ROUTE = new Set(['/api/mobile/command', '/api/mobile/ticket', '/api/mobile/events']);
+const NOTICE_MS = 250;
 export interface BridgeOptions {
   origin: string; host: string; port: number; tls: ServerOptions; assets: string;
   generation?: MobileGeneration; ready?: () => void; updating?: () => boolean;
@@ -79,15 +86,22 @@ export function handler(options: BridgeOptions) {
     const api = url.pathname.startsWith('/api/mobile/');
     const publicAsset = req.method === 'GET' && url.pathname.startsWith('/mobile/');
     const coreInfo = req.method === 'GET' && url.pathname === '/api/mobile/core'; // public, secret-free; still Host-checked
+    const crossData = CROSS_ROUTE.has(url.pathname) && ['GET', 'POST', 'OPTIONS'].includes(req.method ?? '');
     const forbidden = () => api ? json(res, 403, { error: { code: 'access_denied' } }) : refuse(403);
     // The public shell may cross sites; data operations still require same-origin requests; never trust forwarded headers.
     // The sandboxed chat frame's CORS loads (KaTeX fonts) say `Origin: null`; only public assets accept it.
     const self = origins.get(req.headers.host ?? '') ?? origin;
     const routeOrigin = req.headers.origin !== undefined && [...origins.values()].some(o => o.origin === req.headers.origin);
-    if (!origins.has(req.headers.host ?? '') || (req.headers.origin && req.headers.origin !== self.origin && !(publicAsset && req.headers.origin === 'null') && !(coreInfo && routeOrigin))
-      || (req.headers['sec-fetch-site'] === 'cross-site' && !publicAsset && !coreInfo)) return forbidden();
-    // A phone on one route probes the others: only the secret-free descriptor, only for this core's own origins, no credentials.
-    if (coreInfo && routeOrigin) { res.setHeader('Access-Control-Allow-Origin', req.headers.origin!); res.setHeader('Vary', 'Origin'); }
+    if (!origins.has(req.headers.host ?? '') || (req.headers.origin && req.headers.origin !== self.origin && !(publicAsset && req.headers.origin === 'null') && !((coreInfo || crossData) && routeOrigin))
+      || (req.headers['sec-fetch-site'] === 'cross-site' && !publicAsset && !coreInfo && !(crossData && routeOrigin))) return forbidden();
+    // A phone on one route probes the others (the secret-free descriptor), and once a route has proved it is this core,
+    // sends commands and ticket requests there: only for this core's own origins, with the bearer token in a header, no cookies.
+    if ((coreInfo || crossData) && routeOrigin) { res.setHeader('Access-Control-Allow-Origin', req.headers.origin!); res.setHeader('Vary', 'Origin'); }
+    if (req.method === 'OPTIONS') {
+      if (!crossData || !routeOrigin) return refuse(405);
+      res.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, POST', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Botling-Generation', 'Access-Control-Max-Age': '600' });
+      res.end(); return;
+    }
     if (options.updating?.()) return json(res, 503, { error: { code: 'generation_updating' } });
     const generation = options.generation;
     if (publicAsset) {
@@ -158,9 +172,17 @@ export function handler(options: BridgeOptions) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive' });
       res.write('retry: 3000\nevent: ready\ndata: {}\n\n');
       streams.add(res);
-      // The stream ends when the session is revoked or expires; until the core pushes changes it carries only a heartbeat.
+      // The core says that something changed; the phone then reads what it is allowed to read (a normal, checked request).
+      // Nothing of the change itself goes down this stream, and a change in a bot the phone may not read is not announced.
+      // A burst becomes one notice. The stream ends when the session is revoked or expires.
+      let notice: ReturnType<typeof setTimeout> | undefined, count = 0;
+      const stopListening = options.core.onChange?.(change => {
+        if (change.botId !== undefined && !botAllowed(client.botIds, change.botId)) return;
+        if (notice) return;
+        notice = setTimeout(() => { notice = undefined; if (!live()) { res.end(); return; } res.write(`event: changed\ndata: {"n":${++count}}\n\n`); }, NOTICE_MS);
+      });
       const beat = setInterval(() => { if (live()) res.write(': ping\n\n'); else res.end(); }, 15_000);
-      res.on('close', () => { clearInterval(beat); streams.delete(res); });
+      res.on('close', () => { clearInterval(beat); clearTimeout(notice); stopListening?.(); streams.delete(res); });
       return;
     }
     if (req.url !== '/api/mobile/command') return refuse(404);

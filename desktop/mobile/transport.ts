@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import type { RouteBook } from './routes';
+import { requestTicket } from './events';
 import { BotView, MessageView, TaskView, Command, PROTOCOL_VERSION, ResponseEnvelope, RequestId } from '../src/contract';
 
 // Validate just the fields rendered here; the core remains the authority for commands.
@@ -15,6 +17,8 @@ export class MobileError extends Error {
   /** `revoked`: refused before the bridge looked at the request (no bridge envelope): the session itself
    * is no longer accepted, unlike a bridge's refusal of one bot or command. */
   constructor(message: string, public auth = false, public uncertain = false, public denied = false, public revoked = false) { super(message); }
+  /** The request never got an answer (no connection): the case where another route may help. */
+  network = false;
 }
 
 export function endpointURL(input: string, origin: string): URL {
@@ -32,14 +36,38 @@ export function mobileGeneration(): Record<string, string> {
 }
 export class MobileTransport {
   private token: string;
+  private routes: RouteBook | null;
   private requests = new Set<AbortController>();
   private closed = false;
-  constructor(private endpoint: URL, token: string, private fetcher: typeof fetch = fetch) {
+  constructor(private endpoint: URL, token: string, private fetcher: typeof fetch = fetch, routes: RouteBook | null = null) {
+    this.routes = routes;
     if (!token.trim() || /[\r\n]/.test(token)) throw new MobileError('Enter the server’s access token.');
     this.token = token.trim();
   }
+  /** The route in use (its origin). */
+  get origin(): string { return this.endpoint.origin; }
+  /** Asks for a ticket for the event stream on the route in use. */
+  ticket(): Promise<string> { return requestTicket(this.origin, this.token, this.fetcher); }
+  /** After a failure to connect: if another route the core listed answers as this core, use it from now on.
+   * The token is not involved until that route has proved its identity (RouteBook.recover sends nothing secret). */
+  async recover(): Promise<boolean> {
+    if (this.closed || !this.routes) return false;
+    const before = this.origin, found = await this.routes.recover(this.fetcher);
+    if (this.closed || !found || found === before || !this.routes.allowed(found)) return false;
+    this.endpoint = endpointURL('/api/mobile/command', found);
+    return true;
+  }
   close() { this.closed = true; this.token = ''; for (const request of this.requests) request.abort(); this.requests.clear(); }
   async request(cmd: MobileCommand): Promise<unknown> {
+    try { return await this.send(cmd); }
+    catch (error) {
+      if (!(error instanceof MobileError) || !error.network || !(await this.recover())) throw error;
+      // A read is safe to repeat. A send is not: it may have arrived, so it is reported as unconfirmed and the next call uses the new route.
+      if (error.uncertain) throw error;
+      return this.send(cmd);
+    }
+  }
+  private async send(cmd: MobileCommand): Promise<unknown> {
     if (this.closed) throw new MobileError('Disconnected. Connect again.');
     const command = Command.parse(cmd);
     const id = crypto.randomUUID();
@@ -47,13 +75,14 @@ export class MobileTransport {
     this.requests.add(controller);
     const timer = setTimeout(() => controller.abort(), 15_000);
     const mutating = command.type !== 'chat.snapshot';
+    let reached = false;
     try {
       const fetcher = this.fetcher; // Native browser fetch must not receive the transport as `this`.
       const response = await fetcher(this.endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...mobileGeneration(), Authorization: `Bearer ${this.token}` },
         body: JSON.stringify({ v: PROTOCOL_VERSION, id, cmd: command }), signal: controller.signal,
         cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
-      });
+      }).then(r => { reached = true; return r; });
       if (response.status === 409) throw new MobileError('Botling was updated. Open /mobile/ again to load the current version; keep your draft before reloading.', false, false, true);
       if (response.status === 503 && (await response.clone().json().catch(() => null))?.error?.code === 'generation_updating') throw new MobileError('Botling is updating. Try again shortly; this request was not dispatched.');
       if (response.type === 'opaqueredirect' || response.status === 401) throw new MobileError('Your session expired or is unavailable. Connect again; drafts remain in this tab.', true);
@@ -76,7 +105,9 @@ export class MobileTransport {
       return envelope.result;
     } catch (error) {
       if (error instanceof MobileError) throw error;
-      throw new MobileError(mutating ? 'Delivery is unconfirmed. Refresh the chat before sending again; your draft is retained.' : 'Could not refresh. Check the connection and server endpoint.', false, mutating);
+      const failure = new MobileError(mutating ? 'Delivery is unconfirmed. Refresh the chat before sending again; your draft is retained.' : 'Could not refresh. Check the connection and server endpoint.', false, mutating);
+      failure.network = !reached && !(error instanceof DOMException && error.name === 'AbortError' && this.closed);
+      throw failure;
     } finally { clearTimeout(timer); this.requests.delete(controller); }
   }
   async snapshot(botId?: string) {

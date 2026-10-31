@@ -23,8 +23,15 @@ app and publishes it on GitHub Releases.
   route that answers with the same Core ID (one probe each, 2.5 seconds, at once).
 - **Short-lived event-stream tickets.** `POST /api/mobile/ticket` (bearer) returns a ticket valid
   30 seconds and usable once; `GET /api/mobile/events?ticket=...` opens the stream. The long-lived token
-  never appears in a URL. Until the core pushes changes the stream carries only a heartbeat; the phone
-  still polls.
+  never appears in a URL.
+- **Phone follows the core across routes.** If the connection drops, a signed-in phone looks for
+  another route the core listed (public descriptor only), checks it answers with the same Core ID, and
+  only then sends its token there. A send is never repeated automatically.
+- **The core pushes changes.** The event stream announces that something changed (no content, only for
+  bots the phone may read); the phone then reads as usual and polls every 30 seconds instead of 2.5
+  while the stream is up.
+- **Web isolation check** runs headless only (no window, no focus), uses an installed headless shell
+  when Playwright's pinned one is missing, stops on a time limit, and exits 2 when there is no browser.
 
 ### Fixed
 

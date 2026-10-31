@@ -14,7 +14,7 @@ Snapshot does not invoke `chat.read`, and exposes only selected chat data and au
 summaries, not global settings, plugin information, other bots' waiting lists or web sessions.
 Send returns the existing `{messageId, turnId: string|null}`; choose/answer preserve
 `{accepted: boolean}`, including false. Mobile answers cannot carry images.
-Streaming remains the frontend's five-second snapshot polling, not a new SSE/WebSocket route.
+The phone is told of changes over the event stream (below) and then reads the snapshot; polling remains the fallback.
 
 The pending-file check MUST execute in the core event loop with no await/IPC/defer before
 `handle(chat.send)`, whose current synchronous prefix consumes pending files. This protects
@@ -181,7 +181,19 @@ each as `Host` and checks `Origin` against the host asked, so data requests stay
 a phone probes. `GET /api/mobile/core` now also returns `routes: [{ kind, origin }]`. A pairing link made
 for one route that is opened on a later one hops to the first listed route that answers with the same Core
 ID, once (`&hop=1`); the secret is sent only to a route that proved it. After pairing, a token belongs to
-one origin: moving a signed-in session between routes is not done yet.
+one origin unless the phone follows the core to another listed route (next section).
+
+### Moving a signed-in session between routes
+
+When it signs in, the phone pins the core id and the routes that core itself listed (`mobile/routes.ts`
+`RouteBook`). If a request gets no answer at all (no connection, not an HTTP error), it asks every listed
+route for the public descriptor (no token, no credentials) and moves to the first, in the core's order,
+that answers with the pinned core id. Only then does the token go there. A host that is not in the list, or
+answers as another core, never receives it. A read is repeated on the new route; a send is not (it may have
+arrived): it is reported as unconfirmed and the next call uses the new route. The page keeps its own origin, so
+`/api/mobile/command`, `/ticket` and `/events` accept requests whose `Origin` is another listed route, with
+CORS for exactly those origins (preflight allows `Authorization`, `Content-Type`, `X-Botling-Generation`; no
+credentials). Pairing stays same-origin. The phone does not switch back to a better route by itself yet.
 
 ### Event stream tickets
 
@@ -190,4 +202,8 @@ the bearer token returns `{ ticket, expiresAt }` (30 seconds, single use, held i
 phone, at most 64 outstanding). `GET /api/mobile/events?ticket=T` redeems it (anything else in the query,
 or a bearer token, is refused) and opens `text/event-stream`: `retry`, `event: ready`, then a `: ping`
 every 15 seconds, closing when the session is revoked or expires. At most 16 streams at once. The core
-does not push changes yet, so phones keep polling; `mobile/events.ts` is the client half.
+tells the stream when something changed: `event: changed`, with no content at all (a counter only), at most
+about every 250 ms (a burst is one notice), and only for changes in bots that phone may read or that belong to
+no bot. The phone then reads with a normal, checked snapshot request. `mobile/events.ts` (`watchEvents`) is the
+client half: a new ticket for every connection, growing waits after a drop, stops for good when the session is
+gone. While the stream is up the phone's polling slows to 30 seconds (a safety net); without it, 2.5 seconds.
