@@ -236,17 +236,14 @@ export class WorktreeManager {
     });
   }
 
-  /** The folder an agent session should start in: the current worktree, if it is still there and git agrees. */
-  async sessionFolder(): Promise<{ path: string; record: WorktreeRecord } | null> {
-    return this.serial(async () => {
-      const stored = this.read();
-      const record = stored.items.find((item) => item.id === stored.current && item.status === "active");
-      if (!record || !existsSync(record.path)) return null;
-      const main = await this.main();
-      if (!main.ok) return null;
-      const found = await this.registered(main.top).catch(() => null);
-      return found?.get(safeReal(record.path)) === record.branch ? { path: record.path, record } : null;
-    });
+  /**
+   * The folder an agent session should start in: the current worktree while it is still there (a
+   * checkout has a `.git` file). Synchronous: a session starts without waiting on git.
+   */
+  sessionFolder(): { path: string; record: WorktreeRecord } | null {
+    const stored = this.read();
+    const record = stored.items.find((item) => item.id === stored.current && item.status === "active");
+    return record && existsSync(join(record.path, ".git")) ? { path: record.path, record } : null;
   }
 
   private active(id: string): { stored: Stored; record: WorktreeRecord } | null {

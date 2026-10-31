@@ -69,6 +69,7 @@ import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
+import { WorktreeDesk } from "./worktree-desk";
 import { DevBuilds, devWorkRoot, readBuild, spawnInstaller } from "./app-swap";
 
 /** What the core asks of main (app-swap.ts); planBuild and installBuild carry a build's path. */
@@ -170,6 +171,7 @@ export class Core {
   private componentStamp = 0;
   /** Developer mode's builds and screenshots (1.x's Workspace+Developer.swift). */
   readonly devBuilds: DevBuilds;
+  readonly worktrees: WorktreeDesk;
   /** The plugin and component library, watched (`scanComponents` on a change, and every `componentScanMs`). */
   private libraryWatch: FolderWatch | null = null;
   /** Bots' memory files, watched (`refreshWaiting` on a change, and every `waitingScanMs`). */
@@ -263,6 +265,14 @@ export class Core {
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
     this.profiles = profiles;
+    this.worktrees = new WorktreeDesk({
+      dataDir: options.dataDir,
+      settings: () => { const view = settingsView(readSettings(Layout.settings(options.dataDir))); return { enabled: view.worktrees, root: view.worktreeRoot }; },
+      devWork: () => devWorkRoot(),
+      isDeveloper: (botId) => this.developerProject()?.id === botId,
+      // The folder its session starts in changed: an awake one starts again before its next message.
+      moved: (botId, reason) => this.bots.get(botId)?.restartBeforeNextMessage(reason),
+    });
     this.newBot = (profile) => {
       const bot = build(profile);
       this.bots.set(profile.id, bot);
@@ -295,7 +305,13 @@ export class Core {
         // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
-          : profile.role === "manager" && profile.id !== MAINTAINER_ID && !group ? () => this.devBuilds.briefing(bot) : undefined,
+          : profile.id !== MAINTAINER_ID && !group
+            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.worktrees.current(profile) !== null) : "", this.worktrees.note(profile)].filter(Boolean).join("\n\n")
+            : undefined,
+        worktree: profile.role === "main" || profile.id === MAINTAINER_ID || group ? undefined : () => {
+          const cwd = this.worktrees.sessionFolder(profile);
+          return cwd === profile.folder ? null : { cwd, addDirs: this.worktrees.extraDirs(profile) };
+        },
         addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.problem).map((other) => join(other.folder, ".bot"))
           // Maintainer: the folders you let it read (<need-folder>).
           : profile.id === MAINTAINER_ID ? () => this.maintainer.approvedFolders() : undefined,
@@ -1475,6 +1491,13 @@ First write a test that shows this, then fix it.`;
     return { accepted: true };
   }
 
+  /** A project's or bot's own profile: team chats and Maintainer have no worktrees. */
+  private worktreeProfile(id: string) {
+    const bot = this.bots.get(id);
+    if (!bot || id === MAINTAINER_ID || this.removed.has(id)) throw new ContractError("not_found", "No such project.");
+    return bot.profile;
+  }
+
   private bot(id: string): Bot {
     const bot = this.bots.get(id) ?? this.groups.chat(id);
     if (!bot) throw new ContractError("not_found", "No such bot.");
@@ -1565,6 +1588,12 @@ First write a test that shows this, then fix it.`;
       case "settings.set": return this.changeSetting(cmd.change);
       case "engineDefaults.applyAll": return this.applyEngineDefaultsToAll();
       case "bot.settings": return this.bot(cmd.botId).settingsView();
+      case "worktrees.list": return this.worktrees.view(this.worktreeProfile(cmd.botId));
+      case "worktrees.create": return this.worktrees.create(this.worktreeProfile(cmd.botId), cmd.name, cmd.base);
+      case "worktrees.use": return this.worktrees.use(this.worktreeProfile(cmd.botId), cmd.worktreeId);
+      case "worktrees.merge": return this.worktrees.merge(this.worktreeProfile(cmd.botId), cmd.worktreeId);
+      case "worktrees.discard": return this.worktrees.discard(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.force === true);
+      case "worktrees.terminal": return this.worktrees.terminal(this.worktreeProfile(cmd.botId), cmd.worktreeId);
       case "bot.configure": {
         const { type: _type, botId, ...change } = cmd;
         return this.bot(botId).configure(change);
