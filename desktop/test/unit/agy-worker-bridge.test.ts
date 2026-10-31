@@ -4,7 +4,7 @@ import {mkdtempSync,mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const fixture=vi.hoisted(()=>({workers:[] as any[]}));
-vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true,agyMixedRuntimeEnabled:()=>true,agyPairAllowed:()=>false}));
+vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true}));
 vi.mock('../../src/core/process/tree',async original=>({...await original<any>(),processTreeAdapter:()=>({spawn(){throw Error('Real process spawning forbidden');}})}));
 vi.mock('../../src/core/agent/agy-worker-router',()=>({createAgyWorkerHead:(config:any,handlers:any)=>{
  const worker={config,handlers,answers:[] as any[],stopped:false,start(){handlers.onItem({kind:'init',sessionId:config.sessionId});},send(){},answer(...args:any[]){this.answers.push(args);},async terminate(){this.stopped=true;return {killed:[],forced:false};}};fixture.workers.push(worker);return worker;
@@ -29,14 +29,14 @@ async function setup(worker=false){
  },close(){}};
  return {head,bridge:(head as any).bridge,events,prompts,acknowledged};
 }
-it('connects both worker engines through exact grants and owner-specific cards, then correlates the report',async()=>{
- const h=await setup(),args={engine:'codex',instructions:'offline fixture only'};
- h.bridge.grant('botling_app_handoff',args);const task=await h.bridge.invoke('app_handoff',args);expect(fixture.workers[0].config.workerEngine).toBe('codex');
+it('connects the agy worker through exact grants and owner-specific cards, then correlates the report',async()=>{
+ const h=await setup(),args={engine:'agy',instructions:'offline fixture only'};
+ h.bridge.grant('botling_app_handoff',args);const task=await h.bridge.invoke('app_handoff',args);expect(fixture.workers[0].config.workerEngine).toBe('agy');
  const child=fixture.workers[0];child.handlers.onItem({kind:'permission',requestId:'p',tool:'write',summary:'fixture',input:{path:'x'}});
  const card=h.events.findLast(e=>e.kind==='permission');expect(card.workerId).toBe(task.task_id);h.head.answer(card.requestId,false,{path:'x'});expect(child.answers[0][1]).toBe(false);
  child.handlers.onItem({kind:'result',ok:true,text:'must stay failed',error:'',subtype:'end_turn'});await settle();expect(h.prompts).toEqual([]);expect(h.head.completionDependencies).toHaveLength(1);
  h.acknowledged.available=true;await (h.head as any).drain();await settle();
- expect(h.prompts[0]).toContain(`task_id="${task.task_id}" run="1" engine="codex" status="failed"`);expect(h.head.completionDependencies).toEqual([]);expect(child.stopped).toBe(true);
+ expect(h.prompts[0]).toContain(`task_id="${task.task_id}" run="1" engine="agy" status="failed"`);expect(h.head.completionDependencies).toEqual([]);expect(child.stopped).toBe(true);
 });
 it('uncertain report reconciliation needs no approval card and never replays the worker task',async()=>{
  const h=await setup(),args={instructions:'offline'},task=await(async()=>{h.bridge.grant('botling_app_handoff',args);return h.bridge.invoke('app_handoff',args);})();

@@ -6,7 +6,7 @@ import {mkdtempSync,mkdirSync,existsSync,writeFileSync,readFileSync} from 'node:
 import {join,dirname,resolve} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {interactiveAuthGuard} from './auth-guard';
-vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true,agyMixedRuntimeEnabled:()=>false,agyPairAllowed:()=>false}));
+vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true}));
 vi.mock('../../src/core/process/tree',async original=>{const actual=await original<typeof import('../../src/core/process/tree')>();const adapter=actual.processTreeAdapter();return {...actual,processTreeAdapter:()=>adapter};});
 import {AgyAcpHead,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
 import {verifyAgyFileHelper} from '../../src/core/agent/agy-mcp';

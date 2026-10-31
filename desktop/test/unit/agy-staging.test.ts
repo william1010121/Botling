@@ -3,7 +3,7 @@ import {mkdtempSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const fake=vi.hoisted(()=>({heads:[] as any[]}));
-vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true,agyMixedRuntimeEnabled:()=>false,agyPairAllowed:()=>false}));
+vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true}));
 vi.mock('../../src/core/agent/agy-acp',()=>({AgyAcpHead:class {
  running=false;pid=-1;completionDependencies=[];exited=Promise.resolve();answers:any[]=[];
  constructor(readonly config:any,readonly handlers:any){fake.heads.push(this);}

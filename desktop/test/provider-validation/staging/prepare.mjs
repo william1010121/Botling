@@ -11,7 +11,7 @@ const acpCommand='/Volumes/My-SSD/botling-work/agy-engine-20261028/desktop/.cach
 const gate=resolve(desktop,'src/core/agent/agy-capabilities.ts');
 const plugin={name:'private-staging-capabilities',setup(b){b.onLoad({filter:/agy-capabilities\.ts$/},args=>{
  if(resolve(args.path)!==gate)throw Error('Unexpected gate module');
- return {contents:'export const agyWorkerRuntimeEnabled=()=>true; export const agyMixedRuntimeEnabled=()=>false; export const agyPairAllowed=()=>false;',loader:'ts'};
+ return {contents:'export const agyWorkerRuntimeEnabled=()=>true;',loader:'ts'};
 });}};
 const node={absWorkingDir:desktop,bundle:true,platform:'node',format:'cjs',target:'node22',external:['electron','node-pty'],logLevel:'warning'};
 await build({...node,entryPoints:[join(source,'main.ts')],outfile:join(out,'main.cjs'),plugins:[plugin]});
