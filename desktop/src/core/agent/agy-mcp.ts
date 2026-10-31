@@ -1,7 +1,7 @@
 // Built-in, loopback-only tool transport. No external plugin installation or credentials.
 import type { StreamItem } from './stream';
 import { executableEnvironment } from '../process/executable';
-import { agyWorkerRuntimeEnabled, agyMixedRuntimeEnabled } from './agy-capabilities';
+import { agyWorkerRuntimeEnabled } from './agy-capabilities';
 import { createServer, type Server } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, type ChildProcess } from 'node:child_process';
@@ -66,7 +66,7 @@ export class AgyMcpBridge {
   constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void) {
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
     this.tools = delegate && agyWorkerRuntimeEnabled()
-      ? AGY_WORKER_TOOLS.map(tool => tool.name === 'app_handoff' && !agyMixedRuntimeEnabled()
+      ? AGY_WORKER_TOOLS.map(tool => tool.name === 'app_handoff'
         ? {...tool, inputSchema:schema({instructions:text,name:text,engine:{type:'string',enum:['agy']}},['instructions'])} : tool)
       : [...AGY_LOCAL_TOOLS];
     this.base = realpathSync(cwd);
@@ -163,7 +163,7 @@ export class AgyMcpBridge {
     // permission (workers' own tool calls keep their normal approval flow), so they need no user card.
     if (AGY_AUTO_ALLOWED_TOOLS.has(name)) {
       if(!agyWorkerRuntimeEnabled() || !this.delegate)throw new Error('Workers unavailable.');
-      if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy' && !agyMixedRuntimeEnabled())throw new Error('Cross-engine workers unavailable.');
+      if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy')throw new Error('Cross-engine workers unavailable.');
       return this.delegate(name,args);
     }
     if (!full && !grants.length && AGY_WORKER_TOOLS.some(tool=>tool.name===name)) {
@@ -210,7 +210,7 @@ export class AgyMcpBridge {
       return name==='write_file'?'File written.':output.slice(0,200_000)+(output.length>200_000?'\n[Truncated at 200000 characters]':'');
     }
     if(!agyWorkerRuntimeEnabled() || !this.delegate)throw new Error('Workers unavailable.');
-    if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy' && !agyMixedRuntimeEnabled())throw new Error('Cross-engine workers unavailable.');
+    if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy')throw new Error('Cross-engine workers unavailable.');
     return this.delegate(name,args);
   }
   private command(command:string, full = false):Promise<{exitCode:number|null;output:string}> {

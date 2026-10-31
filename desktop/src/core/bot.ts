@@ -3,10 +3,8 @@ import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
 import { RESTART_NOTE, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
-import { AgyCodexHead } from "./agent/agy-codex-head";
-import { agyPairAllowed } from "./agent/agy-capabilities";
 import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
-import { AGY_EXECUTION_BLOCKED, AgyHead, type AgyConfig } from "./agent/agy";
+import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
 // claude process), the turn under way, the tool approvals it is waiting on, its task cards
 // (tasks.json) and subagents (subagents.json).
@@ -221,7 +219,7 @@ export interface BotOptions {
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
-type AgentHead = ClaudeHead | CodexHead | AgyHead | AgyAcpHead;
+type AgentHead = ClaudeHead | CodexHead | AgyAcpHead;
 
 interface Turn {
   id: string;
@@ -501,10 +499,6 @@ export class Bot {
       const saved = this.store.loadSettings().agyConversation;
       if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.session = { sessionId: saved, started: true }; this.briefing = false; }
     }
-    if (this.mixedCodex) {
-      const saved = this.store.loadSettings().mixedCodexConversation;
-      if (typeof saved === "string" && /^[0-9a-f-]{36}$/i.test(saved)) { this.session = {sessionId:saved,started:true}; this.briefing = false; }
-    }
     this.conductor = new Conductor(this.headsSettings);
     this.load();
     // Subagents that were running when the app went away went with their process.
@@ -553,11 +547,7 @@ export class Bot {
     return owner.engine !== head ? owner.engine : owner.partner?.engine ?? otherHead(head, this.heads);
   }
 
-  private get singleActionApprovals(): boolean { return this.engine === "agy" || this.mixedCodex; }
-
-  private get mixedCodex(): boolean {
-    return this.engine === "codex" && this.headsSettings.engines.includes("agy") && agyPairAllowed("codex", "agy");
-  }
+  private get singleActionApprovals(): boolean { return this.engine === "agy"; }
 
   /** Execution policy, including on-demand and restored routes (not just selected heads). */
   private allowsEngineRoute(head: Engine, from: Engine = this.engine): boolean {
@@ -2515,22 +2505,13 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: this.profile.folder, sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown,
-        workerBypassPermissions: () => ({ codex: this.options.launch?.().codexBypassPermissions === true }),
-        codexWorkerConfig: worker => {
-          if (!this.options.codexConfig) throw new Error("Codex worker transport unavailable.");
-          return this.options.codexConfig(this.profile, { ...start, sessionId: worker.sessionId, resume: worker.resume,
-            systemPrompt: worker.systemPrompt ?? "", workerInstructions: "", codexModel: this.heads.codexModel, effort: choices.efforts.codex, routinesFile: null,
-            autoMode: false, codexBypassPermissions: false, claudeBypassPermissions: false, addDirs: [] });
-        } });
-      head = config.transport === "acp"
-        ? new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) })
-        : new AgyHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) });
+        bypassPermissions: launch.agyBypassPermissions === true, model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
+      if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
+      head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) });
     } else if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
-      const configured = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
-      const config = this.mixedCodex ? {...configured,autoMode:false,bypassPermissions:false,componentEditor:null,workerInstructions:null,routinesFile:null,writableRoots:[]} : configured;
-      if ((this.mixedCodex || this.restartRecovery) && config.resume) {
+      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
+      if (this.restartRecovery && config.resume) {
         const thread = config.threads.thread(config.sessionId);
         if (!thread || (config.workerInstructions && !config.threads.isManaged(config.sessionId, thread))) throw new Error("Mixed Codex conversation mapping unavailable; identity retained, no replacement or replay.");
       }
@@ -2538,8 +2519,7 @@ export class Bot {
       const restartTurn=this.restartProviderTurn;
       this.restartProviderTurn=undefined;
       this.restartWorkerRecords=undefined;
-      head = new (this.mixedCodex ? AgyCodexHead : CodexHead)({...config, restartWorkers, restartTurn, strictResume:this.restartRecovery && config.resume}, { onItem: item => {
-        if (this.mixedCodex && item.kind === "init") { this.store.saveSetting("mixedCodexConversation", item.sessionId); this.store.saveSetting("mixedCodexRecovery", undefined); }
+      head = new CodexHead({...config, restartWorkers, restartTurn, strictResume:this.restartRecovery && config.resume}, { onItem: item => {
         this.onItem(head, item);
       }, onExit: exit => this.onExit(head, exit) });
     } else {
@@ -2558,7 +2538,6 @@ export class Bot {
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
   private newSession() {
-    if (this.mixedCodex && !this.readOnly) { this.store.saveSetting("mixedCodexConversation", undefined); this.store.saveSetting("mixedCodexRecovery", undefined); }
     if (this.engine === "agy" && !this.readOnly) {
       this.store.saveSetting("agyConversation", undefined);
       this.store.saveSetting("agyRecovery", undefined);
@@ -3353,7 +3332,7 @@ export class Bot {
     let failedTurn = false;
     if (turn?.open && turn.head === head) {
       // A resume of a session claude no longer has: start a new session and send the message again, once.
-      if (!this.restartRecovery && this.engine !== "agy" && !this.mixedCodex && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
+      if (!this.restartRecovery && this.engine !== "agy" && exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
         this.log(`resuming session ${this.session.sessionId} failed (${why}: ${exit.stderr.slice(0, 200)}); starting a new session`);
         this.newSession();
         this.store.saveHead(this.session);
@@ -3376,7 +3355,7 @@ export class Bot {
     if (exit.expected && this.restarting === head) {
       // Ended to start again before a message: the same session goes on (`--resume`).
       this.restarting = null;
-    } else if (this.restartRecovery || (exit.expected && (this.engine === "agy" || this.mixedCodex))) {
+    } else if (this.restartRecovery || (exit.expected && this.engine === "agy")) {
       // agy resumes by its actual conversation ID after cancel, sleep or shutdown.
       this.briefing = !this.session.started;
     } else if (exit.expected) {
@@ -3386,10 +3365,7 @@ export class Bot {
       // Nobody asked it to exit (1.x's `.exited`): it is asleep, and the next message wakes a new
       // session, briefed from memory.md and the chat. A non-zero exit is said in the chat (1.x:
       // its stderr, else "claude exited unexpectedly"); a failed turn already says it.
-      if (this.mixedCodex) {
-        this.store.saveSetting("mixedCodexRecovery", {sessionId:this.session.sessionId,state:"resume-required",reason:exit.stderr.slice(-1000)||why});
-        this.briefing = !this.session.started;
-      } else if (this.engine === "agy") {
+      if (this.engine === "agy") {
         // Preserve identity across failed resumes, the next explicit message and app restart.
         this.store.saveSetting("agyRecovery", { sessionId: this.session.sessionId, state: "resume-required", reason: exit.stderr.slice(-1000) || why });
         this.briefing = !this.session.started;

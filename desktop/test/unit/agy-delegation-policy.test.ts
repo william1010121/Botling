@@ -1,5 +1,5 @@
 import {expect,it,vi} from 'vitest';
-vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true,agyMixedRuntimeEnabled:()=>false}));
+vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>true}));
 import {botPrompts} from '../../src/core/prompts';
 import {AGY_WORKER_TOOLS} from '../../src/core/agent/agy-mcp';
 const profile={name:'Probe',role:'bot' as const,folder:'/fixture',memoryPath:'.bot/memory.md',job:null};

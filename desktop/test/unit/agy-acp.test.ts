@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {AgyMcpBridge} from '../../src/core/agent/agy-mcp';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 const gate=vi.hoisted(()=>({workers:true}));
-vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>gate.workers,agyMixedRuntimeEnabled:()=>false,agyPairAllowed:()=>false}));
+vi.mock('../../src/core/agent/agy-capabilities',()=>({agyWorkerRuntimeEnabled:()=>gate.workers}));
 import {AgyAcpProtocol,AgyAcpHead,AGY_REPLY_REMINDER,ACP_TOOLS,verifyAcpRuntime} from '../../src/core/agent/agy-acp';
 const clients:AgyAcpProtocol[]=[];
 afterEach(()=>{gate.workers=true;clients.splice(0).forEach(c=>c.close());});

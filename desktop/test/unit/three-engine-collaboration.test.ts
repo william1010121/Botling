@@ -30,7 +30,6 @@ import {mainProfile} from '../../src/core/store/workspace';
 import {botPrompts} from '../../src/core/prompts';
 import {CodexThreads} from '../../src/core/agent/codex';
 import {AgyWorkers} from '../../src/core/agent/agy-workers';
-import {createAgyWorkerHead,codexWorkerConfig} from '../../src/core/agent/agy-worker-router';
 import {until} from '../helpers';
 const bots:Bot[]=[],managers:AgyWorkers[]=[];
 const settle=()=>new Promise<void>(r=>setImmediate(r));
