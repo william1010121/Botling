@@ -10,7 +10,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const desktop = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -42,7 +42,7 @@ if (args.includes("--mac")) platforms.push(Platform.MAC);
 if (args.includes("--win")) platforms.push(Platform.WINDOWS);
 if (args.includes("--linux")) platforms.push(Platform.LINUX);
 if (!platforms.length) platforms.push(Platform.current());
-const config = (await import(join(desktop, "electron-builder.config.cjs"))).default;
+const config = (await import(pathToFileURL(join(desktop, "electron-builder.config.cjs")).href)).default;
 // The config's targets (macOS: an arm64 zip and DMG), or with --dir only the unpacked app (for this machine's arch).
 const targets = new Map();
 for (const platform of platforms) {
