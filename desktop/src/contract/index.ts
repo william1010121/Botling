@@ -173,7 +173,7 @@ export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: 
 export const PendingFileView = z.strictObject({ id, name: z.string().max(400), kind: z.enum(["image", "video", "file"]) });
 
 /** One thing waiting on you (1.x's `Workspace.Waiting`): a bot's open question, or its memory's "Waiting on you". */
-export const WaitingItemView = z.strictObject({ botId: BotId, text: z.string().max(400), messageId: id.nullable(), /** A question in a group's chat: the group (1.x's `groupID`). Phase 5a. */ groupId: BotId.optional(),
+export const WaitingItemView = z.strictObject({ botId: BotId, text: z.string().max(400), messageId: id.nullable(),
   /** When the question was asked (its line's time, ISO-8601); absent for a memory.md line. */ at: z.string().max(40).optional() });
 export type WaitingItemView = z.infer<typeof WaitingItemView>;
 /** What the right panels show: what waits on you across the bots, and each manager's first "In progress" line. */
@@ -494,7 +494,7 @@ export const BotView = z.strictObject({
   id: BotId,
   name: z.string().max(200),
   /** main: the front desk; manager: works in a project folder; bot: a bot of its own. */
-  role: z.enum(["main", "manager", "bot", "group"]),
+  role: z.enum(["main", "manager", "bot"]),
   /** An avatar shape (`AvatarShape` in the Swift app: circle, square, …). */
   avatar: z.string().max(40),
   folder: z.string().max(4_000),
@@ -530,8 +530,6 @@ export const BotView = z.strictObject({
   guest: BotId.nullable().optional(),
   /** Its tasks running or waiting on you ("3 tasks" beside its name; 1.x's `openTaskCount`). */
   openTasks: z.number().int().nonnegative().optional(),
-  /** A group chat's members, in turn order. */
-  members: z.array(BotId).max(200).optional(),
   /** When its chat's newest line was said (ISO-8601; null: no lines): the column lists chats newest first (`lastActivity`). Phase 5a. */
   lastActivity: z.string().max(40).nullable().optional(),
   /** The bot's own component list (bot.json `components`); null: no list (a group has every component). Phase 5a. */
@@ -968,10 +966,6 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bots.create"), name: z.string().min(1).max(400), job: z.string().min(1).max(4_000) }),
   /** Removes a bot of its own or a project from the left column and stops it. Its folders stay on disk. */
   z.strictObject({ type: z.literal("bots.remove"), botId }),
-  /** Group chats (1.x's GroupChat.swift): made with a name and its members, changed, deleted with its conversation. */
-  z.strictObject({ type: z.literal("groups.create"), name: z.string().min(1).max(400), members: z.array(BotId).min(1).max(200) }),
-  z.strictObject({ type: z.literal("groups.edit"), groupId: BotId, name: z.string().min(1).max(400), members: z.array(BotId).min(1).max(200) }),
-  z.strictObject({ type: z.literal("groups.delete"), groupId: BotId }),
   /** The links handed over in a bot's chat, newest first (the right panel's Results). */
   z.strictObject({ type: z.literal("results.list"), botId }),
   /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
@@ -1169,14 +1163,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
+  "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
-
-/** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
-export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
-export type TeamRunView = z.infer<typeof TeamRunView>;
 
 /** A link handed over in a chat (`[label](url)`, 1.x's `Chip`). */
 export const ResultView = z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) });
@@ -1228,14 +1218,11 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; doctor?: DoctorView; waiting?: WaitingView; teams?: TeamRunView[]; spec?: SpecStateView | null };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; doctor?: DoctorView; waiting?: WaitingView; spec?: SpecStateView | null };
   "chat.history": { messages: MessageView[]; hasMore: boolean; older: number; /** With `until`: the line is in `messages`. */ found: boolean };
   "subagent.settle": { changed: boolean };
   "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
-  "groups.create": { groupId: string };
-  "groups.edit": Record<string, never>;
-  "groups.delete": Record<string, never>;
   "bots.remove": { removed: boolean };
   "results.list": { results: ResultView[] };
   "result.open": { opened: boolean };
@@ -1387,8 +1374,6 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
   /** A bot of its own or a project was taken out of the left column. */
   z.strictObject({ type: z.literal("bot.removed"), botId }),
-  /** The temporary teams at work changed (one started or finished). */
-  z.strictObject({ type: z.literal("teams.updated"), teams: z.array(TeamRunView).max(50) }),
   /** The core is being replaced by a newer build : draining, updating; null: called off. */
   z.strictObject({ type: z.literal("core.swap"), phase: z.enum(["draining", "updating"]).nullable() }),
 ]);

@@ -31,12 +31,11 @@ import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
 import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
-import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
 import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView, type WhiteboardView,
-  type SettingsChange, type SettingsView, type TeamRunView, type SpecAction,
+  type SettingsChange, type SettingsView, type SpecAction,
 } from "../contract";
 import { filePath, pageInCard } from "./specs";
 import { PAGE_COMPONENT } from "./preview-url";
@@ -56,7 +55,6 @@ import { botDescription, latestAction } from "./whiteboard-data";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { Conversations } from "./conversations";
-import { GroupChats } from "./group-chats";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
@@ -204,12 +202,8 @@ export class Core {
   private loadedClaudeParts = "[]";
   /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
   private snapshotHeld = false;
-  /** The temporary teams at work (`runningTeams`). */
-  readonly teams: TeamDesk;
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
   readonly conversations: Conversations;
-  /** Group chats (Phase 4c): a name and members; each group's chat is a bot that never runs. */
-  readonly groups: GroupChats;
   /** Bots taken out of the left column: what they still say goes nowhere. */
   private removed = new Set<string>();
   /** Bots plugins made that you removed (`plugin/name`, lower case; removed-bots.json), so they stay removed. */
@@ -253,8 +247,6 @@ export class Core {
     if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
     // The library has the app's own preview card now (seeded just above).
     if (this.components.library.rescan()) this.componentStamp = this.components.library.stamp;
-    // The temporary teams: the ccb-teams plugin (team files from before plugins move into it once).
-    prepareTeamsPlugin(join(options.dataDir, "plugins"), join(options.dataDir, "teams"));
     try {
       const removed = readJSON(join(options.dataDir, "removed-bots.json"));
       if (Array.isArray(removed)) for (const key of removed) if (typeof key === "string") this.removedPluginBots.add(key);
@@ -278,7 +270,7 @@ export class Core {
       this.bots.set(profile.id, bot);
       return bot;
     };
-    const build = (profile: BotProfile, group = false): Bot => {
+    const build = (profile: BotProfile): Bot => {
       const bot: Bot = new Bot({
         profile,
         deferStartup: options.deferStartup && !this.activated,
@@ -286,11 +278,11 @@ export class Core {
         agyConfig: options.agyConfig,
         codexConfig: codexConfig ? (p, session) => ({
           ...codexConfig(p, session, threads),
-          componentEditor: group ? null : editorBinding(p, session),
+          componentEditor: editorBinding(p, session),
           editorStarted: (pid) => { if (pid > 0) this.ledger.record(pid); },
         }) : null,
         claimWaitMs: options.claimWaitMs,
-        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === MAINTAINER_ID || group ? null : this.worktrees.sessionFolder(profile)),
+        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === MAINTAINER_ID ? null : this.worktrees.sessionFolder(profile)),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
         tidyTimeoutMs: options.tidyTimeoutMs,
         quitTidyMs: options.quitTidyMs,
@@ -305,10 +297,10 @@ export class Core {
         // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
-          : profile.id !== MAINTAINER_ID && !group
+          : profile.id !== MAINTAINER_ID
             ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.worktrees.current(profile) !== null) : "", this.worktrees.note(profile)].filter(Boolean).join("\n\n")
             : undefined,
-        worktree: profile.role === "main" || profile.id === MAINTAINER_ID || group ? undefined : () => {
+        worktree: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => {
           const cwd = this.worktrees.sessionFolder(profile);
           return cwd === profile.folder ? null : { cwd, addDirs: this.worktrees.extraDirs(profile) };
         },
@@ -330,8 +322,6 @@ export class Core {
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
-        // A group's chat shows as a group with its members.
-        ...(group ? { viewExtras: () => ({ role: "group" as const, members: this.groups?.members(this.groups.group(profile.id) ?? { id: "", name: "", members: [] }).map((member) => member.id) ?? [] }) } : {}),
       });
       return bot;
     };
@@ -361,20 +351,6 @@ export class Core {
       log: (line) => this.log(line),
       timing: options.groupTiming,
     });
-    this.groups = new GroupChats({
-      root: options.dataDir,
-      members: () => this.conversations.members(),
-      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
-      mainBotId: MAIN_BOT_ID,
-      conversations: this.conversations,
-      makeChat: (profile) => build(profile, true),
-      afterMainTurn: () => this.deliverInboxes(),
-      changed: (id, removed) => {
-        if (removed) this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
-        else this.groups.chat(id)?.refresh();
-      },
-      log: (line) => this.log(line),
-    });
     this.maintainer = new MaintainerDesk({
       root: options.dataDir,
       maintainer: () => this.bots.get(MAINTAINER_ID) ?? null,
@@ -387,13 +363,12 @@ export class Core {
     });
     this.specs = new SpecDesk({
       // Every chat a spec can be in (`chatsWithPins`).
-      chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!])), ...this.groups.groups.flatMap((group) => this.groups.chat(group.id) ?? [])],
+      chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!]))],
       library: this.components.library,
       commands: this.components.commands,
       maintainer: this.maintainer,
       maintainerBot: () => this.bots.get(MAINTAINER_ID) ?? null,
       member: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
-      isGroup: (bot) => !!this.groups.group(bot.id),
       bots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id)).map((id) => this.bots.get(id)!),
       emit: (spec) => this.event({ type: "spec.updated", spec }),
       componentsChanged: () => this.componentsTick(),
@@ -439,21 +414,6 @@ export class Core {
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
         log: (line) => this.log(line),
       },
-    });
-    this.teams = new TeamDesk({
-      root: options.dataDir,
-      // A team's head runs as bots' heads do (the real CLI, or the fake one), in its own folder, asking nothing.
-      config: (folder, spec, tools, session) => options.headConfig(
-        { id: "team", name: spec.title, role: "bot", avatar: "cloud", folder, memoryPath: ".bot/memory.md", storeDir: folder, tools, job: null, problem: null },
-        { sessionId: session.sessionId, resume: false, systemPrompt: session.systemPrompt, model: session.model, pluginDirs: this.plugins.registry.claudeDirectories(), pluginEnv: this.plugins.registry.secretEnvironment(), pluginTools: this.plugins.registry.claudeTools() },
-      ),
-      language: () => this.language(),
-      results: () => { const chosen = this.settings().results; return isResultPublishing(chosen) ? chosen : "artifactUnlessSensitive"; },
-      teams: () => this.teamSpecs(),
-      tell: (text) => this.bots.get(MAIN_BOT_ID)?.appNotice(text),
-      changed: () => this.event({ type: "teams.updated", teams: this.teamViews() }),
-      ledger: this.ledger,
-      log: (line) => this.log(line),
     });
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.lastPlugins = JSON.stringify(this.plugins.view());
@@ -739,7 +699,7 @@ First write a test that shows this, then fix it.`;
   /**
    * The project list the main bot wakes with and its routines get (`Workspace.projectBriefing`): each
    * project's and bot's memory and inbox file and a question waiting in its own chat, Maintainer's, the
-   * <open-question> note when one asks, and the temporary teams it can start.
+   * <open-question> note when one asks.
    */
   projectBriefing(): string {
     const row = (profile: BotProfile, about: string): BriefingRow => ({
@@ -751,17 +711,7 @@ First write a test that shows this, then fix it.`;
       projects: this.profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID).map((profile) => row(profile, `folder ${profile.folder}`)),
       bots: this.profiles.filter((profile) => profile.role === "bot").map((profile) => row(profile, firstLine(profile.job ?? ""))),
       maintainer: row(maintainer, "plugin-library extensions and in-chat components only"),
-      teams: this.teamSpecs(),
     });
-  }
-
-  /** The teams there are now: agents in enabled plugins' Claude parts (`loadTeams`). */
-  teamSpecs(): TeamSpec[] {
-    return loadTeams(this.plugins.registry.agentFiles());
-  }
-
-  private teamViews(): TeamRunView[] {
-    return this.teams.running.slice(0, 50).map((run) => ({ id: run.id, name: run.spec.name.slice(0, 200), title: run.spec.title.slice(0, 200), task: run.task.slice(0, 4_000), startedAt: run.startedAt }));
   }
 
   /** An awake main bot hears about bots made or removed with its next message (`briefAwakeMainBot`). */
@@ -940,9 +890,9 @@ First write a test that shows this, then fix it.`;
 
   /** A bot's question was settled in its own chat: so is its copy (`closeCopies`). */
   private closeCopiesOf(botId: string, messageId: string) {
-    const original = this.bots.get(botId)?.line(messageId) ?? this.groups.chat(botId)?.line(messageId);
+    const original = this.bots.get(botId)?.line(messageId);
     if (original?.ignoredAt) {
-      const chats = [...this.bots.values(), ...this.groups.groups.flatMap(group => this.groups.chat(group.id) ?? [])];
+      const chats = [...this.bots.values()];
       for (const [copy, source] of this.copies) if (source.botId === botId && source.questionId === messageId) this.copies.delete(copy);
       for (const chat of chats) chat.syncIgnoredCopies(botId, messageId, original.ignoredAt);
       return;
@@ -987,7 +937,7 @@ First write a test that shows this, then fix it.`;
     const doing: WaitingView["doing"] = {};
     // Use the recorded choices, not a possibly unrelated opening sentence. This is only a
     // preview: the original question, recommendations and permission actions stay in chat.
-    const addQuestion = (botId: string, chat: Bot | null | undefined, question: { id: string; text: string }, groupId?: string) => {
+    const addQuestion = (botId: string, chat: Bot | null | undefined, question: { id: string; text: string }) => {
       const legacyText = firstLine(question.text).slice(0, 400);
       // Older versions keyed an ignored item by its first line; changing the preview must not revive it.
       if (ignored.has(`${botId}-${legacyText}`)) return;
@@ -998,7 +948,7 @@ First write a test that shows this, then fix it.`;
       const questionLead = /[?？][*_`]*$/.test(legacyText.trim()) ? `${legacyText} — ` : "";
       const preview = labels.length ? questionLead + labels.join(" / ") : legacyText;
       const text = preview.length > 400 ? `${preview.slice(0, 399)}…` : preview;
-      out.push({ botId, text, messageId: question.id, ...(groupId ? { groupId } : {}), ...asked(chat, question.id) });
+      out.push({ botId, text, messageId: question.id, ...asked(chat, question.id) });
     };
     for (const profile of this.profiles) {
       if (profile.role === "main") continue;
@@ -1012,19 +962,12 @@ First write a test that shows this, then fix it.`;
       else for (const item of this.memoryFiles.items(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
     for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) addQuestion(MAIN_BOT_ID, this.bots.get(MAIN_BOT_ID), question);
-    // Questions in group chats: the member that asked (else the group), and the group (1.x's `inGroups`).
-    for (const group of this.groups?.groups ?? []) {
-      for (const question of this.groups.chat(group.id)?.openQuestions() ?? []) {
-        addQuestion(question.sourceID ?? group.id, this.groups.chat(group.id), question, group.id);
-      }
-    }
     const acked = [...ignored].filter((key) => key.includes("-task:")).slice(-200);
     return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
   }
 
   /**
-   * The main bot's whiteboard: for every bot but the main bot (groups are its sections, drawn from
-   * their members), its memory.md's "Current status", "In progress" and "Decided" (its "Waiting on you" is in `waiting()`), its task cards and its chat's results. Read when
+   * The main bot's whiteboard: for every bot but the main bot, its memory.md's "Current status", "In progress" and "Decided" (its "Waiting on you" is in `waiting()`), its task cards and its chat's results. Read when
    * asked; the page asks every few seconds while the whiteboard is shown.
    */
   whiteboard(): WhiteboardView {
@@ -1118,21 +1061,20 @@ First write a test that shows this, then fix it.`;
    * `/**`), ones that are projects already get the task, the rest are asked about on one card.
    */
   private projectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
-    // Teams, new bots and <open-question> (`Workspace.handle`): only the main bot pulls up teams and
+    // New bots and <open-question> (`Workspace.handle`): only the main bot
     // shows other bots' cards; it makes bots when you ask it, and Maintainer may too. From anyone else
     // they are left out, as in 1.x. They act once the reply is in.
     const main = bot.id === MAIN_BOT_ID;
     const later: (() => void)[] = [];
     const rest: BotRequest[] = [];
     for (const request of requests) {
-      if (request.kind === "team") { if (main) later.push(() => this.teams.start(request.name, request.task)); }
-      else if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
+      if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
       // A bot's <suggest-component>: a chip under its reply; Maintainer's <component-spec>: into that spec (`Workspace.handle`).
       else if (request.kind === "suggestComponent") later.push(() => this.specs.suggest(request.name, request.draft, this.bots.get(bot.id) ?? bot));
       else if (request.kind === "componentSpec") { if (bot.id === MAINTAINER_ID) later.push(() => this.specs.applyUpdate(request.id, request.json, bot.lines().findLast((line) => line.role === "bot")?.text ?? "")); }
       // Developer mode (`proposeBuild`, `sendScreenshot`): a project's manager (the desk checks it is the developer
-      // project); from the main bot or a group they do nothing, as in 1.x.
+      // project); from the main bot they do nothing, as in 1.x.
       else if (request.kind === "installBuild") { if (bot.profile.role === "manager") later.push(() => this.devBuilds.propose(request.path, request.note, bot)); }
       else if (request.kind === "appScreenshot") { if (bot.profile.role === "manager") later.push(() => this.devBuilds.screenshot(bot)); }
       else rest.push(request);
@@ -1312,15 +1254,6 @@ First write a test that shows this, then fix it.`;
 
   private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files: string[] }): Promise<ResultOf<"chat.send">> {
     if (!text.trim() && !options.files.length) throw new ContractError("bad_request", "Nothing to send.");
-    // You wrote in a group (`postToGroup`, after the plugins' beforeSend).
-    if (this.groups.group(bot.id)) {
-      const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
-      if ("stoppedBy" in outcome) {
-        const messageId = bot.appNotice(`Plugin "${outcome.stoppedBy}" stopped this message: ${text}`);
-        return { messageId, turnId: null, stoppedBy: outcome.stoppedBy };
-      }
-      return { ...this.groups.post(bot.id, outcome.send.slice(0, 100_000) || text, options.files, options.replyTo), turnId: null };
-    }
     const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
     if ("stoppedBy" in outcome) {
       const plugin = this.plugins.registry.plugin(outcome.stoppedBy);
@@ -1455,17 +1388,10 @@ First write a test that shows this, then fix it.`;
       .finally(() => this.inflight.delete(message.id));
   }
 
-  /** Your pick on a called-in bot's line goes back to it (`answerCallIn`), or in a group to that member (`answerInGroup`); null: not such a line. */
+  /** Your pick on a called-in bot's line goes back to it (`answerCallIn`); null: not such a line. */
   private calledInPick(botId: string, messageId: string, index: number): { accepted: boolean } | null {
     const chat = this.bot(botId);
     const record = chat.line(messageId);
-    if (record && this.groups.group(botId) && record.role === "bot" && typeof record.sourceID === "string") {
-      const label = record.choices?.[index]?.label;
-      if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
-      if (!this.groups.answer(botId, record, pickedNote(label))) { chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED }); return { accepted: false }; }
-      chat.settleAppQuestion(messageId, { chosen: index });
-      return { accepted: true };
-    }
     if (!record || !this.conversations.isCalledIn(record, chat.id)) return null;
     const label = record.choices?.[index]?.label;
     if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
@@ -1481,13 +1407,6 @@ First write a test that shows this, then fix it.`;
   private calledInAnswer(botId: string, messageId: string, text: string, files: number): { accepted: boolean } | null {
     const chat = this.bot(botId);
     const record = chat.line(messageId);
-    if (record && this.groups.group(botId) && record.role === "bot" && typeof record.sourceID === "string" && record.choices?.length) {
-      const shown = answerLabel(text.trim(), files);
-      if (!shown || !isOpenQuestion(record)) return { accepted: false };
-      if (!this.groups.answer(botId, record, answeredNote(shown))) { chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED }); return { accepted: false }; }
-      chat.settleAppQuestion(messageId, { answer: shown });
-      return { accepted: true };
-    }
     if (!record || !this.conversations.isCalledIn(record, chat.id) || !record.choices?.length) return null;
     const shown = answerLabel(text.trim(), files);
     if (!shown || !isOpenQuestion(record)) return { accepted: false };
@@ -1499,7 +1418,7 @@ First write a test that shows this, then fix it.`;
     return { accepted: true };
   }
 
-  /** A project's or bot's own profile: team chats and Maintainer have no worktrees. */
+  /** A project's or bot's own profile: Maintainer has no worktrees. */
   private worktreeProfile(id: string) {
     const bot = this.bots.get(id);
     if (!bot || id === MAINTAINER_ID || this.removed.has(id)) throw new ContractError("not_found", "No such project.");
@@ -1507,7 +1426,7 @@ First write a test that shows this, then fix it.`;
   }
 
   private bot(id: string): Bot {
-    const bot = this.bots.get(id) ?? this.groups.chat(id);
+    const bot = this.bots.get(id);
     if (!bot) throw new ContractError("not_found", "No such bot.");
     return bot;
   }
@@ -1551,17 +1470,6 @@ First write a test that shows this, then fix it.`;
         return { botId: made.botId, created: made.kind === "made" };
       }
       case "bots.remove": return this.removeBot(cmd.botId);
-      case "groups.create": {
-        const group = this.groups.create(cmd.name, cmd.members);
-        if (!group) throw new ContractError("bad_request", "A group needs a name and at least one member.");
-        return { groupId: group.id };
-      }
-      case "groups.edit":
-        if (!this.groups.edit(cmd.groupId, cmd.name, cmd.members)) throw new ContractError(this.groups.group(cmd.groupId) ? "bad_request" : "not_found", "No such group, or no name or member.");
-        return {};
-      case "groups.delete":
-        if (!(await this.groups.delete(cmd.groupId))) throw new ContractError("not_found", "No such group.");
-        return {};
       case "subagent.settle": return this.bot(cmd.botId).settleSubagent(cmd.subagentId, cmd.settled);
       case "task.complete": return this.bot(cmd.botId).completeTask(cmd.taskId);
       case "link.authorize": {
@@ -1718,12 +1626,9 @@ First write a test that shows this, then fix it.`;
   }
 
   snapshot(botId?: string): ResultOf<"chat.snapshot"> {
-    const bot = this.bots.get(botId ?? MAIN_BOT_ID) ?? (botId ? this.groups.chat(botId) ?? undefined : undefined);
+    const bot = this.bots.get(botId ?? MAIN_BOT_ID);
     if (botId && !bot) throw new ContractError("not_found", "No such bot.");
-    // The groups before Maintainer (who stays last).
     const views = this.order.map((id) => this.bots.get(id)!.view());
-    const at = views.findIndex((view) => view.id === MAINTAINER_ID);
-    views.splice(at < 0 ? views.length : at, 0, ...this.groups.groups.flatMap((group) => this.groups.chat(group.id)?.view() ?? []));
     return {
       epoch: this.epoch,
       seq: this.seq,
@@ -1735,7 +1640,6 @@ First write a test that shows this, then fix it.`;
       settings: this.settingsNow(),
       doctor: this.doctor.view(),
       waiting: this.waiting(),
-      teams: this.teamViews(),
       spec: this.specs.openId ? this.specs.payload(this.specs.openId) : null,
     };
   }
@@ -1874,7 +1778,7 @@ First write a test that shows this, then fix it.`;
     // Invoke every participant even if one throws synchronously, and never let an early
     // rejection reach the process exit boundary while another durable flush is pending.
     const participants = [...this.bots.values()].map(bot => () => bot.shutdown({ tidy }));
-    participants.push(() => this.plugins.shutdown(), () => this.teams.shutdown());
+    participants.push(() => this.plugins.shutdown());
     const results = await Promise.allSettled(participants.map(stop => Promise.resolve().then(stop)));
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, "Core shutdown failed", { cause: failures[0] });

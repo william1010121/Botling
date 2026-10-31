@@ -145,7 +145,7 @@ describe("import from 1.x", () => {
     expect(new BotStore(join(target, "main")).loadAlwaysAllowed()).toEqual(["WebFetch", "Bash(npm test)", "Edit(//Users/me/garden/notes.md)"]);
   });
 
-  it("1.x's group chats come over: groups.json and each group's chat (Phase 4c)", async () => {
+  it("1.x's group chats: their files come over untouched, but 2.x no longer shows groups", async () => {
     const dir = tempDir("import");
     const { source } = writeSwiftFixture(dir);
     const group = "6B000000-0000-4000-8000-0000000000AA";
@@ -159,9 +159,10 @@ describe("import from 1.x", () => {
     const target = join(dir, "botling2");
     const core = new CoreHarness(target, { BOTLING_IMPORT_FROM: source });
     harnesses.push(core);
-    const snapshot = await core.call({ type: "chat.snapshot", botId: group });
-    expect(snapshot.bots.find((bot: { id: string }) => bot.id === group)).toMatchObject({ role: "group", name: "Team", members: [MAIN, IDS.manager] });
-    expect(snapshot.chat.messages.map((m: { text: string; sourceId?: string }) => [m.text, m.sourceId ?? null])).toEqual([["hello all", null], ["Hi!", MAIN]]);
+    const snapshot = await core.call({ type: "chat.snapshot" });
+    expect(snapshot.bots.some((bot: { id: string }) => bot.id === group)).toBe(false);
+    expect(JSON.parse(readFileSync(join(target, "groups.json"), "utf8"))).toEqual([{ id: group, name: "Team", members: [MAIN, IDS.manager] }]);
+    expect(existsSync(join(target, "groups", group, "chat.json"))).toBe(true);
   });
 
   it("the core imports on its first start only, and shows the imported bots and chats", async () => {

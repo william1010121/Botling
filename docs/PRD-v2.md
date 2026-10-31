@@ -147,7 +147,7 @@ The plugin manifest is npm's `package.json`. This matches the VS Code extension 
 | `hooks` (bot hooks) | Plugin host | Before sending, after a reply, on wake, before sleep: can modify content or block it | Normalize `\(…\)` to `$…$` before sending |
 | `routines` | Plugin host | Add scheduled jobs, written into the bot's `routines.cron` | Back up the plugin library weekly |
 | `settings` | Shell | Declare settings; Botling generates toggles and menus in the settings subpage automatically | laas's auto-spacing |
-| `claude` (Claude part) | Bot process | Skills, agents (temporary teams), MCP, hooks | Research team, GitHub MCP |
+| `claude` (Claude part) | Bot process | Skills, agents, MCP, hooks | GitHub MCP |
 
 ### 6.4 Plugin API (draft)
 
@@ -338,7 +338,7 @@ Things to be clear about:
 | Now | v2 |
 |---|---|
 | `~/.claudecodebot/components/choices/` | Built-in plugin `ccb-choices` (components extension point); templates you've modified are carried over as-is |
-| `~/.claudecodebot/teams/*.md` | `claude/agents/*.md` in built-in plugin `ccb-teams` |
+| `~/.claudecodebot/teams/*.md` | (temporary teams removed in 2.x; the files are left alone) |
 | Component team (Haiku) | `ccb-core:component-editor`, dispatched by the Maintainer |
 | Component work log | The Maintainer's conversation history |
 | `template.prev.html` | git history |
@@ -356,7 +356,6 @@ Migration happens automatically on the first launch of the new version; old fold
 | `ccb-markdown` | Basic Markdown rendering for messages, chips, images and video |
 | `ccb-latex` | KaTeX formulas, formula preview in the composer |
 | `ccb-choices` | Multiple-choice component (including "Other") |
-| `ccb-teams` | Temporary teams: research team, prototype team |
 | `ccb-core` | `component-editor` (Haiku), `daily-summary` skill |
 
 Built-in plugins also live in `~/.claudecodebot/plugins` and, like any other plugin, can be changed by the Maintainer; if a change breaks one, it can be rolled back the same way.
@@ -370,7 +369,7 @@ Built-in plugins also live in `~/.claudecodebot/plugins` and, like any other plu
 | **P1 Web chat surface + LaTeX** | Message list and composer become web-based; no feature may be lost (Markdown, chips, multiple choice, attachments, replies, images and video, CJK input methods); add KaTeX | All current tests pass; `$\alpha$` and `$$\int$$` render correctly; `$5 and $10` is not misdetected; pressing Enter while choosing a Zhuyin candidate does not send |
 | **P2 Plugin skeleton + web extension points** | `package.json` format, loader, activate and deactivate, `composer` / `renderers` / `components` / `settings`; built-in plugins switch to this system; `botling --check-plugin` | Install a test plugin from a folder and it can change the composer and message rendering; break it on purpose and Botling disables it instead of crashing |
 | **P3 Plugin host (Node)** | JSON-RPC, `commands` / `hooks` / `routines` / `storage` / `notify`; automatic restart on crash | A test plugin's `beforeSend` can change outgoing text; after killing the host process, it recovers within 3 seconds |
-| **P4 Claude part** | A plugin's `claude/` is passed to bots with `--plugin-dir`; teams are now read from agents | Bots can use a skill brought by a plugin; temporary teams still spin up |
+| **P4 Claude part** | A plugin's `claude/` is passed to bots with `--plugin-dir`; (temporary teams were later removed) | Bots can use a skill brought by a plugin |
 | **P5 Maintainer + hot reload** | Built-in project, inbox flow, git, version numbers, checks, hot reload, roll back; component team merged in | Report "add Other" beside a multiple-choice component; it makes the change, commits, and the screen updates in place; break it on purpose and Botling keeps using the previous version |
 | **P6 Turning existing projects into plugins** | Consent flow for reading external folders, and the flow for turning an existing project into a plugin | Say "make laas-copy a Botling plugin" and, without your involvement, `;a` → `\alpha` works in the composer |
 | **P7 External plugins** | Install from git, npm, zip; permission consent card; Keychain for secrets; panels extension point | Install a plugin that brings an MCP server and managers can use its tools; it always asks you before installing |

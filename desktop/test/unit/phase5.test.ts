@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ComponentLibrary, componentMentions } from "../../src/core/components/library";
-import { callInPrompt, groupPrompt, transcriptBefore, type Member } from "../../src/core/groups";
+import { callInPrompt, transcriptBefore, type Member } from "../../src/core/groups";
 import type { ChatRecord } from "../../src/core/store/records";
 import { slashLists } from "../../src/renderer/payload";
 import { problemReport } from "../../src/core/maintainer";
@@ -53,7 +53,6 @@ describe("the / menu and its mention note (ComponentMentions, mentionNote)", () 
     const before = transcriptBefore(newest, messages);
     const mentionNote = (text: string) => components.mentionNote(text);
     expect(callInPrompt({ member: members[1]!, host: "Main bot", chat: messages, transcript: before, newest, ask: null, speakerName, mentionNote })).toBe(golden.callIn);
-    expect(groupPrompt({ member: members[1]!, group: "Pair", members, mainBotId: members[0]!.id, addressed: false, chat: messages, transcript: before, newest, ask: null, speakerName, mentionNote })).toBe(golden.groupTurn);
   });
 
   it("the menu lists the bot's own components first, the rest of the library after", () => {

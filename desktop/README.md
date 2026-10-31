@@ -22,12 +22,12 @@ Phase 4a done: the chat page on its own origin with plugins' web parts in it, at
 Settings in React, the main bot's world (Add project, `<new-project>`, the project list it wakes
 with, inbox delivery, "Waiting on you" and the right panel), and the web AIs (Gemini, ChatGPT,
 Claude in the app's own browser, their conversations saved for the main bot, its `webBriefing`).
-Phase 4b done: temporary teams (`<team>`, the ccb-teams plugin, a run per team in `runs/`), bots of
+Phase 4b done (temporary teams were later removed, see "Removed features" below): bots of
 their own (New bot, `<new-bot>`, a plugin's `bots.create`), removing a bot or a project (nothing on
 disk is deleted), `<open-question>` copies, subagent rows in the left column with settling, the right
 panel's Results and Settled and its folded strip, and the team lines back in the main bot's project
 list (checked string for string against the Swift code). Phase 4c done: new bots and projects on the
-app's engine defaults, `<need-folder>`, @ call-ins and bots' @, group chats (their prompts checked
+app's engine defaults, `<need-folder>`, @ call-ins and bots' @ (group chats were later removed; their prompts checked
 string for string against the Swift code), the right panel's Tasks list, pinned bots, the left
 column's search (⌘K) and fold, and the root causes of two e2e flakes. Phase 5a done: Maintainer's rest
 (component specs and `<suggest-component>`, a card's reports, Revert from the library's git, component
@@ -46,6 +46,15 @@ not need: `desktop/` builds, tests and packages with the Swift tree absent (the 
 art is in `desktop/assets/avatars-static`, the web AIs' page readers in `desktop/resources/`). Web/src is *bundled from source* into the desktop's chat frame (its packages come
 from `desktop/node_modules`), so `cd Web && npm run build` (output in git-ignored `Web/dist`) is not needed;
 `Web/src/contract.json` is read (for the shared `ccb.save` limit), never written.
+
+## Removed features
+
+Temporary teams (the `<team>` tag, `core/teams.ts`, the built-in `ccb-teams` plugin, the Now card's team
+rows, `teams.updated` and the snapshot's `teams`) and group chats ("New group", the `group` role,
+`groups.create/edit/delete`, `GroupChats`) were removed on the user's decision. The main bot uses
+subagents instead of teams. Nothing on disk is deleted: old `runs/`, `plugins/ccb-teams/`,
+`teams.v1-backup/`, `groups.json` and `groups/` stay as they are and are never read. @ call-ins,
+bots' @, hand-offs, the shared chat of several heads and subagent rows are separate features and stay.
 
 ## Verified updates and first open
 
@@ -156,8 +165,7 @@ In the fake CLI (`npm run dev:fake`) a message can start with a directive: `/too
 it: try Allow once / Don't allow), `/tool:WebFetch https://x` (a tool that can be "always" allowed),
 `/slow` (streams until Stop), `/stubborn` (ignores Stop and SIGTERM: the tree is killed), `/card`,
 `/crash`, `/resume` (says which session it runs and whether it was resumed), `/choices`, `/task`,
-`/team` (a `<team>` request; since Phase 4b a team's task, `(App: A task from the main bot)` + the
-task, is read as the user's words, so `/say`, `/linger` … work in it), `/react <message id>`, `/agent` (a subagent that reads a file and
+`/react <message id>`, `/agent` (a subagent that reads a file and
 reports), `/bgagent` and `/bgagent:silent` (a background subagent that reports later in claude's own
 turn, which says something or only `<no-reply/>`). App notes in a message (`(App: …` paragraphs) are
 not echoed; the tidy note is answered `OK` after writing the memory file it names.
@@ -275,12 +283,12 @@ Files: `src/contract/` (the typed contract), `src/core/` (core process: `server.
 <core>/projects/DEC0DE00-…/     Maintainer's chat files (1.x's fixed id)
 <core>/bots/<ID>/           1.x's: a bot of its own's folder (New bot, <new-bot>, a plugin's bots.create);
                             its projects.json row has `job` (and `plugin` when a plugin made it)
-<core>/plugins/ccb-teams/   1.x's: the temporary teams as Claude Code agents (claude/agents/<team>.md)
-<core>/runs/<yyyyMMdd-HHmmss>-<team>/   1.x's: a team's run (artifacts/ for its result page)
+<core>/plugins/ccb-teams/   old: the removed temporary teams' agent files; no longer read or made, left alone
+<core>/runs/<yyyyMMdd-HHmmss>-<team>/   old: a removed team's run folder; left alone
 <core>/removed-bots.json    1.x's: bots plugins made that you removed (`plugin/name`), not made again
 <core>/folders.json         1.x's: folders you let Maintainer read (<need-folder>), a list of paths
 <core>/bot-mentions.json    1.x's: the bot @s delivered (message, sender, recipient, body, ISO date), ≤ 500
-<core>/groups.json          1.x's: group chats ({id, name, members}); groups/<ID>/ each group's chat files
+<core>/groups.json          1.x's: group chats ({id, name, members}); groups/<ID>/ each group's chat files (the feature is removed: the files are kept, never read or deleted)
 ```
 
 bot.json keys 2.0 now writes too: `heads` and `engine` (1.x's); since Phase 3a `routineRuns` (when
@@ -310,8 +318,8 @@ and `pinnedBots`. A group's chat takes the chat commands (`chat.snapshot`, `chat
 
 Version 9 (Phase 4b) adds: `bots.create` (New bot), `bots.remove`, `subagent.settle`, `results.list`,
 main-only `result.open`; `BotView.job` and `BotView.subagentRows` (`SubagentRowView`: id, title,
-status, head, start/end, `unsettledAt`, `settled`, prompt); events `bot.removed` and `teams.updated`,
-the snapshot's `teams` (`TeamRunView`); settings' `rightPanelCollapsed`. The shared helpers
+status, head, start/end, `unsettledAt`, `settled`, prompt); event `bot.removed`;
+settings' `rightPanelCollapsed`. The shared helpers
 `resultLinks` (1.x's `Bot.results`), `listedRows` / `settledRows` (`TraceBook.listed` / `.settled`)
 live in the contract so the renderer and the core use the same code.
 
@@ -535,7 +543,7 @@ CCB_DESKTOP_PROMPT_EXPORT=$PWD/desktop/test/fixtures/prompts-golden.json TZ=UTC 
   sent again once.
 - **One bubble per reply** stays (Phase 1b): 2.0's reply text has every text block of the turn, so
   1.x's "lift tags written before a tool call" is not needed.
-- **Unsupported requests are visible**: rather than silently dropping `<team>`, `<new-bot>`, … a
+- **Unsupported requests are visible**: rather than silently dropping `<component>`, `<new-bot>`, … a
   notice says nothing happened.
   A project bot's chat files stay in 2.0's folder; only `.bot/` (memory, archive) is shared. The
   archive of a project bot is the project's `.bot/archive/` as in 1.x, so both apps' lines can land
@@ -756,8 +764,8 @@ Tests after item 5: unit 283, e2e 38, typecheck, all green (the full e2e suite f
 
 | Piece | What it does | Evidence |
 | --- | --- | --- |
-| Temporary teams (`core/teams.ts`) | Teams.swift + `Workspace.startTeam`: TeamSpec (parse, file text, the research and prototype defaults), TeamPrompts (system with the language and results rules, tools plus Artifact unless results stay local, the task line); the `ccb-teams` plugin made once (old `teams/` files move in, `teams.v1-backup`); teams are the agents of enabled plugins' Claude parts (not ccb-core's), the first of a name wins. The main bot's `<team>` starts one turn of a head that asks nothing (no `--permission-prompt-tool`; a permission request is refused) in `runs/<stamp>-<team>/`; its reply comes back as "Research team: …", a failure as "… did not finish: …"; stopped after an hour; managers' `<team>` is left out as in 1.x | `unit/teams.test.ts` (**12 system prompts, tools, the task, the agent files and 5 parsed files equal to what Swift wrote**, `test/fixtures/teams-golden.json`; a run through the core: folder, arguments, input, the reply, `teams.updated`), `e2e/phase4b.spec.ts` (the Now card while it works) |
-| The project list | 1.x's `projectBriefing` again with the team lines and, when a project or bot asks, the `<open-question>` note; the main bot's wake note and routines get it; an awake main bot hears "(App: The list of projects and bots changed.)" when bots come and go | `unit/teams.test.ts` (**empty, plain and asking lists equal to Swift's** for the same projects and bot), `unit/head.test.ts`, `unit/projects.test.ts` |
+| ~~Temporary teams~~ (removed) | `core/teams.ts`, the `<team>` tag, the `ccb-teams` plugin, the Now card's team rows, the `teams.updated` event and the snapshot's `teams` are gone. The main bot's prompt tells it to use subagents. Old `runs/` and `plugins/ccb-teams` stay on disk, unread. | `unit/removed-teams-groups.test.ts` |
+| The project list | 1.x's `projectBriefing` again and, when a project or bot asks, the `<open-question>` note; the main bot's wake note and routines get it; an awake main bot hears "(App: The list of projects and bots changed.)" when bots come and go | `unit/removed-teams-groups.test.ts`, `unit/head.test.ts`, `unit/projects.test.ts` |
 | Bots of their own | `makeBot`: `botName` (one line, no quotes/@/<>/\`, 40 characters), the app's names and projects' names taken, the same name (any case) gives that bot back, its folder `bots/<ID>/` with `.bot/`, its row in projects.json with `job` (and `plugin`), "New bot "X": …" in the main chat, set up at once with 1.x's "(App) You were just created. Your job: …" relay. From the New bot form (`bots.create`), the main bot's or Maintainer's `<new-bot>` ("There is already a bot called …", "No bot was made: …"), and a plugin's `bots.create` (with the `bots` permission; a bot you removed is not made again) | `unit/teams.test.ts`, `unit/plugin-host.test.ts`, `e2e/phase4b.spec.ts` |
 | Removing | A row's menu: Remove bot… (1.x) and Remove project… (2.0), a confirmation; the bot stops at once (no tidy), leaves the list, projects.json and the main bot's project list; its copies in the main chat are closed "No longer needed"; nothing on disk is deleted (its folder, `.bot/`, chat files) | `unit/teams.test.ts` (also after a restart; the main bot and Maintainer are refused), `e2e/phase4b.spec.ts` |
 | `<open-question>` | `showOpenQuestion`: the project's own card shows in the main chat as "Name: question" with its buttons (1.x's `sourceID` / `sourceMessageID`); a pick or words on it go to the project's question; settled in its own chat, the copy follows; what waits on you lists it once | `unit/teams.test.ts` |
@@ -777,8 +785,7 @@ CCB_DESKTOP_TEAMS_EXPORT=$PWD/desktop/test/fixtures/teams-golden.json TZ=UTC \
 
 ### Decisions (Phase 4b)
 
-- **Group chats are not part of teams** in 1.x (GroupChat.swift is its own feature: "New group",
-  members, a shared conversation), so they are not built here; they stay a gap.
+- **Group chats and temporary teams were removed** (user decision, 2026-10-31).
 - **Removing a project exists in 2.0** (1.x only removes bots of their own): the same semantics as
   1.x's `removeBot` — it stops at once, leaves the list and projects.json, and nothing on disk is
   deleted (the project's files, its `.bot/` notes, its chat files). Adding the folder again makes it a
@@ -806,7 +813,7 @@ CCB_DESKTOP_TEAMS_EXPORT=$PWD/desktop/test/fixtures/teams-golden.json TZ=UTC \
 | Engine defaults (`settings.ts`, `server.ts`) | 1.x's `seedEngineDefaults`: a new project or bot gets the app's subagent model and Codex workers' choice in its bot.json; a change of either in Settings is written to every bot (and its other head), as 1.x's `setSubagentModelDefault` / `setCodexWorkerDefaults`; heads start on the bot's own values (no app-wide fallback any more) | `unit/phase4a.test.ts` (seeding, applying to all, a bot's own change kept until the next app change) |
 | `<need-folder>` (`maintainer.ts`) | Maintainer's request: "Maintainer wants to read "…". It will only read, never change files there. Allow it?" (Allow · Won't ask again / Don't allow) in its chat; allowed folders in folders.json and its `--add-dir`; its process starts again in the same session before its next message (1.x's `restart(.mayRead)`); a folder inside one allowed is allowed at once; 1.x's `folderAnswer` texts | `unit/maintainer.test.ts` (ask, allow, the restart with the same session and `--add-dir`, inside, don't allow, others' tags ignored) |
 | @ call-ins and bots' @ (`groups.ts`, `conversations.ts`) | 1.x's CallIn.swift and BotMentions.swift: @Name in a bot's chat calls that bot in (its turn hidden in its own chat, woken with its briefing if asleep), its line under its own name and face, its chat keeping "Called into X's chat with @: …" and the reply; the chat's bot gets `callInNote` and later `heardSinceLastTurn`; picks and words on a guest's line go back to it; a bot's line starting with @Name calls that bot in (tags not acting; one per reply; bot-mentions.json; at most 3 per message of yours; "Not sent with @: …" notices). The @ menu offers the main bot and Maintainer first, every bot after @@ (Web/src's own menu) | `unit/groups.test.ts` (**the call-in, bot call-in and 15 group prompts, the transcript, the reaction snapshot, mentions, line candidates, PASS, names equal to what Swift wrote**, `test/fixtures/groups-golden.json`), `unit/conversations.test.ts`, `e2e/phase4c.spec.ts`, screenshot `phase4c-callin.png` |
-| Group chats (`group-chats.ts`) | 1.x's GroupChat.swift: New group (a name, who is in it), a group row with who is writing or who is in it, Edit group… / Delete group… in its menu; a message with @names goes to them, else to everyone in turn (the main bot as the front desk, the others answer only about their own work or say PASS), each seeing what the ones before said; tags act for the main bot and named bots; "Did not answer this time: …"; renamed / added / taken out said in the chat; deleting removes its conversation (as 1.x); the right panel's "In the group" and Just done; 1.x's groups.json and groups/ come over in the import | `unit/conversations.test.ts`, `unit/importer.test.ts`, `e2e/phase4c.spec.ts`, screenshot `phase4c-group.png` |
+| ~~Group chats~~ (removed) | "New group", the group row, Edit/Delete group, the `groups.*` commands, the `group` role and `GroupChats` are gone. @ call-ins and bots' @ (`conversations.ts`) stay. Old `groups.json` and `groups/` stay on disk, never read or deleted. | `unit/removed-teams-groups.test.ts`, `unit/conversations.test.ts`, `unit/importer.test.ts` |
 | The right panel's Tasks (`RightPanel.tsx`) | 1.x 1.20's TaskPanel: the status line, tasks under way (running first, newest first, then waiting), the open one (pressed, on a chip under a reply, or the latest running) as a card with Now / Next / Blocked, "May be stuck" and Ask it to report, Started · updated, Jump to chat; tasks waiting on you under Waiting on you; the latest three finished under Just done; "N tasks" beside a bot's name (running and waiting). Cards settle by themselves when the owner's turn ends without saying (ported in Phase 2a) | `e2e/phase4c.spec.ts`, screenshot `phase4c-tasks.png` |
 | The left column (`App.tsx`, `Rail.tsx`) | 1.x's RailView / RailStrip: a pin at a row's end on hover and Pin / Unpin in its menu (Pinned, in the order pinned; settings.json `pinnedBots`), the search field (⌘K; name or a project's folder name, case and accents ignored; Return opens the first, Esc goes back to the input box; "No bots match"), the fold into a strip of faces with hover tips, unread dots and a + menu (⌃⌘S; `railCollapsed`) | `e2e/phase4c.spec.ts`, screenshots `phase4c-pinned.png`, `phase4c-strip.png` |
 
@@ -828,8 +835,7 @@ CCB_DESKTOP_GROUPS_EXPORT=$PWD/desktop/test/fixtures/groups-golden.json TZ=UTC \
   restarts it before the next message).
 - ~~**Allowed folders are not imported**~~ 1.x's folders.json is imported, as are approved commands
   and each bot's always-allow rules (bot.json).
-- **A group chat is deleted with its folder** (1.x does), the one place 2.0 deletes chat files; the
-  bots' own chats and notes stay.
+- **Group chats are removed**; an old group's files are kept on disk, never read or deleted.
 - **The `/` component mention note is not added** to guests' prompts (2.0 has no `/` menu yet); the
   prompts are otherwise 1.x's strings.
 - **Guest turns are hidden turns of the bot's own head** (like the tidy, but they may ask for tools,

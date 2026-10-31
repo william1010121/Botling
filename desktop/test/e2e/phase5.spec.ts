@@ -1,6 +1,6 @@
 // Phase 5a in the real app: the / menu offers components; "Make into component" on a reply has Maintainer
 // build it, the chip says Building…, then the component shows under the reply; Edit spec opens the spec
-// panel in the right panel; a group's question waits on you there. Screenshots go to desktop/.tmp/screens/.
+// panel in the right panel. Screenshots go to desktop/.tmp/screens/.
 import { expect, test } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -61,28 +61,6 @@ test("the / menu, Make into component, the component under its reply, and its sp
     await expect(spec.locator("body")).toContainText("test-board");
     await expect(spec.locator("body")).toContainText("Filled by Main bot");
     await shot(page, "phase5a-spec-panel");
-  } finally {
-    await app.close();
-  }
-});
-
-test("a group's question waits on you in the group's right panel", async () => {
-  const dataDir = tempDir("e2e-5a-group");
-  const { app, page, chat } = await launch({ dataDir });
-  try {
-    await page.setViewportSize({ width: 1280, height: 820 });
-    await page.getByRole("button", { name: "New group" }).click();
-    const form = page.getByRole("form", { name: "New group" });
-    await form.getByRole("textbox", { name: "Group name" }).fill("Desk");
-    await form.getByRole("checkbox", { name: "Main bot" }).check();
-    await form.getByRole("checkbox", { name: "Maintainer" }).check();
-    await form.getByRole("button", { name: "Create" }).click();
-    await expect(page.locator(".group-row")).toHaveClass(/selected/);
-    await say(chat, "@Maintainer /guestsay Which colour?\\n<choices>\\n- Red\\n- Blue\\n</choices>");
-    await expect(chat.locator(".row.bot", { hasText: "Which colour?" })).toBeVisible();
-    const waiting = page.locator(".detail-panel .waiting-item", { hasText: "Which colour?" });
-    await expect(waiting).toBeVisible();
-    await shot(page, "phase5a-group-waiting");
   } finally {
     await app.close();
   }

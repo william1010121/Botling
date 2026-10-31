@@ -31,9 +31,9 @@ async function mount(selectedTask: string | null = null, extra: Partial<RightPan
   const root = createRoot(host);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   const props: RightPanelProps = {
-    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "working", text: "Writing…" }, results: [], teams: [], watching: null,
+    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "working", text: "Writing…" }, results: [], watching: null,
     tasks, messages: [], selectedTask, collapsed: false,
-    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
     ...extra,
   };
   const render = (next: Partial<RightPanelProps> = {}) => act(async () => root.render(createElement(RightPanel, { ...props, ...next })));

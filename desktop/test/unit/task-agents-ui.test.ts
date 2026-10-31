@@ -90,8 +90,8 @@ describe("task card to actual subagent details", () => {
     const bot = owner();
     for (const id of ["legacy-card", "empty-card"]) {
       const markup = renderToStaticMarkup(createElement(RightPanel, {
-        bot: bot.view(), bots: [bot.view()], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], teams: [], watching: null, tasks: bot.taskViews(), messages: [], selectedTask: id, collapsed: false,
-        onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+        bot: bot.view(), bots: [bot.view()], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, tasks: bot.taskViews(), messages: [], selectedTask: id, collapsed: false,
+        onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
       }));
       expect(markup).toContain("task-card");
       expect(markup).not.toContain("task-agents");

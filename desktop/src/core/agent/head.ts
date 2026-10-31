@@ -47,7 +47,7 @@ export interface HeadConfig {
   harmlessTools?: string[];
   /** Plugins' Claude parts (`--plugin-dir`); none in harmless mode. */
   pluginDirs?: string[];
-  /** false: nothing is asked about (a temporary team, 1.x's `asksPermission` off): no permission prompt tool. */
+  /** false: nothing is asked about (`asksPermission` off): no permission prompt tool. */
   askPermission?: boolean;
   /** With `resume`: go on in a copy of that session (`--fork-session`), leaving it as it was. */
   forkSession?: boolean;

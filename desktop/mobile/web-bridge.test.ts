@@ -5,7 +5,7 @@ import { WorkspaceStore } from '../src/renderer/store';
 import { MobileError } from './transport';
 import { WebBridge, type CommandTransport } from './web-bridge';
 
-const snapshot = (seq: number, botId = 'main') => ({ epoch: 'e', seq, imported: null, components: {}, waiting: { items: [], doing: {} }, teams: [],
+const snapshot = (seq: number, botId = 'main') => ({ epoch: 'e', seq, imported: null, components: {}, waiting: { items: [], doing: {} }, 
   settings: { effectiveLanguage: 'en', botLook: 'cute', rightPanelCollapsed: false, railCollapsed: false, pinnedBots: [] },
   bots: ['main', 'maintainer', 'project'].map(id => ({ id, name: id, role: id === 'main' ? 'main' : 'manager' })),
   chat: { botId, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, catchUp: null, intervalSummaries: [], pins: [], floating: [], pinChoices: [] } });

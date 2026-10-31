@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { DoctorView, SpecStateView, TeamRunView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { DoctorView, SpecStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex" | "agy"; live: StepView[] }
@@ -55,8 +55,6 @@ export interface WorkspaceView {
   waiting: WaitingView;
   /** The component spec open in the right panel (Phase 5a), if any. */
   spec?: SpecStateView | null;
-  /** The temporary teams at work (the main bot's Now card). */
-  teams: TeamRunView[];
   /** The core is being replaced by a newer build (a fresh snapshot from the new core clears it). */
   coreSwap?: "draining" | "updating" | null;
 }
@@ -75,7 +73,7 @@ const chatBotKey = (bot: BotView): string => {
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
-  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null, waiting: { items: [], doing: {} }, teams: [], spec: null };
+  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null, waiting: { items: [], doing: {} }, spec: null };
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
@@ -200,7 +198,7 @@ export class WorkspaceStore {
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ ...run })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null, coreSwap: null });
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, doctor: snapshot.doctor ?? this.view.doctor, waiting: snapshot.waiting ?? this.view.waiting, spec: snapshot.spec ?? null, coreSwap: null });
     } catch (error) {
       // A failed obsolete request must not discard a later user's selection.
       if (generation !== this.selectionGeneration) return;
@@ -255,7 +253,6 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "settings.updated") return { ...view, settings: event.settings };
   if (event.type === "waiting.updated") return { ...view, waiting: event.waiting };
   if (event.type === "spec.updated") return { ...view, spec: event.spec };
-  if (event.type === "teams.updated") return { ...view, teams: event.teams };
   if (event.type === "core.swap") return { ...view, coreSwap: event.phase };
   if (event.type === "bot.removed") return { ...view, bots: view.bots.filter((bot) => bot.id !== event.botId) };
   if (event.type === "bot.updated") {

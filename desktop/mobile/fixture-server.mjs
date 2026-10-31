@@ -26,7 +26,6 @@ const bots = [
   bot('proj-rl', 'RL', 'manager', { openTasks: 2, approvals: 1, lastActivity: minutes(300) }),
   bot('proj-disk', 'disk', 'manager', { openTasks: 1, phase: 'asleep', lastActivity: minutes(400) }),
   bot('bot-news', 'Morning news', 'bot', { job: 'A short news digest each morning', phase: 'asleep', lastActivity: minutes(900) }),
-  bot('group-release', 'Release crew', 'group', { members: [MAINTAINER, 'proj-botling'], heads: ['claude'], lastActivity: minutes(1000) }),
 ];
 const message = (id, role, text, extra = {}) => ({ id, role, text, time: minutes(extra.ago ?? 5), ...Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'ago')) });
 const task = (id, name, state, now, owner = 'claude') => ({ id, name, state, owner, now, next: null, blocked: null, messageIds: [], updatedAt: minutes(2), createdAt: minutes(120) });
@@ -68,7 +67,7 @@ const settings = { language: null, effectiveLanguage: 'en', botLook: 'cute', cha
 const waiting = { items: [{ botId: 'proj-rl', text: 'Approve the training run budget', messageId: null }], doing: { 'proj-botling': 'Task 與報告重新設計' } };
 let seq = 0, authenticated = true, denied = false;
 const TOKEN = 'f'.repeat(43);
-const snapshot = botId => ({ epoch: 'fixture', seq, bots, imported: null, chat: chats.get(botId ?? MAIN) ?? null, components, settings, waiting, teams: [] });
+const snapshot = botId => ({ epoch: 'fixture', seq, bots, imported: null, chat: chats.get(botId ?? MAIN) ?? null, components, settings, waiting, });
 const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml', webmanifest: 'application/manifest+json', woff2: 'font/woff2' };
 // The bridge's policies (src/mobile-bridge/bridge.ts webChatCSP, frameHostCSP) for this origin.
 const chatCSP = origin => `default-src 'none'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; frame-src ${origin}/mobile/frame-host.html; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'self'`;

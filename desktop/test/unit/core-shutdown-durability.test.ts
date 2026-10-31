@@ -8,22 +8,21 @@ import { desktop, tempDir } from '../helpers';
 
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return {promise,resolve};}
 function fixture(syncFailure=false){
-  const delayed=deferred(), plugins=deferred(), teams=deferred();
+  const delayed=deferred(), plugins=deferred();
   const failure=new Error('checkpoint failed');
   const core=Object.create(Core.prototype) as any;
   core.options={dataDir:tempDir('shutdown')};
   core.bots=new Map([['failed',{shutdown:()=>syncFailure?(()=>{throw failure;})():Promise.reject(failure)}],['pending',{shutdown:()=>delayed.promise}]]);
   core.options={dataDir:mkdtempSync(join(tmpdir(),'core-shutdown-'))};
-  core.plugins={shutdown:vi.fn(()=>plugins.promise)};core.teams={shutdown:vi.fn(()=>teams.promise)};
-  return {core,delayed,plugins,teams,failure};
+  core.plugins={shutdown:vi.fn(()=>plugins.promise)};
+  return {core,delayed,plugins,failure};
 }
 it.each([false,true])('Core.shutdown settles every participant before rejecting (sync=%s)',async sync=>{
   const f=fixture(sync);let finished=false;
   const outcome=f.core.shutdown().then(()=>{finished=true;return null;},(e:unknown)=>{finished=true;return e;});
   await new Promise(setImmediate);expect(finished).toBe(false);
-  expect(f.core.plugins.shutdown).toHaveBeenCalledOnce();expect(f.core.teams.shutdown).toHaveBeenCalledOnce();
-  f.delayed.resolve();f.plugins.resolve();await new Promise(setImmediate);expect(finished).toBe(false);
-  f.teams.resolve();expect(await outcome).toBeInstanceOf(Error);
+  expect(f.core.plugins.shutdown).toHaveBeenCalledOnce();
+  f.delayed.resolve();f.plugins.resolve();expect(await outcome).toBeInstanceOf(Error);
 });
 it.each([false,true])('actual main signal boundary waits, exits once and reports failure (failure=%s)',async failed=>{
   const pending=deferred(), handlers=new Map<string,()=>void>(), exit=vi.fn(), write=vi.fn();
@@ -49,8 +48,7 @@ it('actual stdin-close wiring waits for Core participants and uses the shared no
   });
   handlers.get('close')!();handlers.get('SIGTERM')!();
   await new Promise(setImmediate);expect(exit).not.toHaveBeenCalled();
-  f.delayed.resolve();f.plugins.resolve();await new Promise(setImmediate);expect(exit).not.toHaveBeenCalled();
-  f.teams.resolve();await new Promise(setImmediate);
+  f.delayed.resolve();f.plugins.resolve();await new Promise(setImmediate);
   expect(exit).toHaveBeenCalledExactlyOnceWith(1);
   expect(write.mock.calls.flat().join('')).toContain('checkpoint failed');
 });

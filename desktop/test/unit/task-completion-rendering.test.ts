@@ -18,9 +18,9 @@ describe("Mark complete in the production task panel", () => {
     const root = createRoot(host);
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
     const render = () => root.render(createElement(RightPanel, {
-      bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], teams: [], watching: null,
+      bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null,
       tasks: book.tasks.map((card) => taskView(card, new Set())), messages: [{ id: "user", role: "user", text: "helo", time: new Date().toISOString() }], selectedTask: id, collapsed: false,
-      onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask: complete, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+      onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask: complete, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
     } satisfies RightPanelProps));
     const complete = vi.fn((taskId: string) => { book.complete(taskId, 3); render(); });
     try {

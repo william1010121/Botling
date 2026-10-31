@@ -26,7 +26,7 @@ it.each(['permissionTool', 'denialAsks', 'appQuestions'] as const)('mobile %s re
     bot.denialAsks.set(record.id, { tool: 'Bash', rule: 'Bash(example)', summary: 'example', allowedBefore: false });
   } else bot.appQuestions.set(record.id, effect); // Same callback boundary as App install confirmations; never invokes an installer.
   const core: any = Object.create(Core.prototype);
-  Object.assign(core, { activated: true, bots: new Map([[botId, bot]]), groups: { group: () => null }, conversations: { isCalledIn: () => false } });
+  Object.assign(core, { activated: true, bots: new Map([[botId, bot]]), conversations: { isCalledIn: () => false } });
   const token = 'a'.repeat(43);
   const options: BridgeOptions = { origin: 'https://127.0.0.1:8443', host: '127.0.0.1', port: 8443, tls: {}, assets: dir,
     clients: () => [{ id: 'phone', tokenHash: tokenHash(token), botIds: [botId], expiresAt: Date.now() + 60_000 }], ledger: new MutationLedger(join(dir, 'ledger')), core };

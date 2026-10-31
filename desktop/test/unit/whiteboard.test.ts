@@ -28,8 +28,7 @@ const main = bot(2, "Main bot", "main");
 const site = bot(11, "Site", "manager", { lastActivity: new Date().toISOString() });
 const paper = bot(12, "Paper", "manager", { lastActivity: new Date().toISOString() });
 const news = bot(13, "News", "bot", { job: "Morning news", lastActivity: new Date(Date.now() - 1000).toISOString() }); // strictly older than Paper: equal timestamps made the order a coin flip
-const group = bot(20, "Writing", "group", { members: [paper.id] });
-const bots = [main, site, paper, news, group];
+const bots = [main, site, paper, news];
 const today = new Date().toISOString();
 const data: WhiteboardView = { bots: [
   { botId: site.id, currentStatus: ["The theme is live."], inProgress: ["Dark mode"], decided: ["Kept the old URLs"],
@@ -53,7 +52,7 @@ describe("whiteboard data", () => {
     expect(isOpenQuestion({ ...record, answer: "先不要改" })).toBe(false);
   });
 
-  it("puts the bots with something for you in Waiting, the rest on the shelf; no card for the main bot or a group with no question", () => {
+  it("puts the bots with something for you in Waiting, the rest on the shelf; no card for the main bot", () => {
     const byBot = new Map(data.bots.map((entry) => [entry.botId, entry]));
     const lanes = boardLanes(bots, byBot, waiting);
     expect([lanes.waiting, lanes.running, lanes.quiet].map((lane) => lane.map((entry) => entry.name))).toEqual([["Site"], [], ["Paper", "News"]]);
@@ -134,28 +133,25 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
 
   it("puts a bot once: Waiting (even while running), else Running, else the shelf (pinned, then ready, then latest)", () => {
     const byBot = new Map([[helped.id, empty(helped.id)]]);
-    const lanes = boardLanes([main, stale, fresh, asking, busy, helped, approving, pinnedBot, silent, group], byBot, asks, new Set([pinnedBot.id]));
+    const lanes = boardLanes([main, stale, fresh, asking, busy, helped, approving, pinnedBot, silent], byBot, asks, new Set([pinnedBot.id]));
     expect(lanes.waiting.map((entry) => entry.name)).toEqual(["Asking", "Approving"]);
     expect(lanes.running.map((entry) => entry.name)).toEqual(["Busy", "Helped"]);
     expect(lanes.quiet.map((entry) => entry.name)).toEqual(["Pinned", "Fresh", "Stale", "Silent"]);
     // A running task's subagent at work counts as running.
     const atWork = boardLanes([stale], new Map([[stale.id, empty(stale.id, [task("r", "Build", "running", old, { atWork: true })])]]), none);
     expect(atWork.running.map((entry) => entry.name)).toEqual(["Stale"]);
-    // A group chat shows only with a question of its own.
-    const groupAsk: WaitingView = { items: [{ botId: group.id, text: "Who writes?", messageId: "Q2", groupId: group.id }], doing: {} };
-    expect(boardLanes([group], new Map(), groupAsk).waiting.map((entry) => entry.name)).toEqual(["Writing"]);
   });
 
   it("lists every thing waiting on you oldest first, with its kind, age and the chat that answers it", () => {
     const ago = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
     const entry = bot(50, "Many", "bot", { approvals: 2 });
-    const view: WaitingView = { items: [{ botId: entry.id, text: "Ship it?", messageId: "Q3", at: ago(1) }, { botId: entry.id, text: "Pick a name", messageId: null }, { botId: entry.id, text: "In the group", messageId: "Q4", groupId: group.id, at: ago(5) }], doing: {} };
+    const view: WaitingView = { items: [{ botId: entry.id, text: "Ship it?", messageId: "Q3", at: ago(1) }, { botId: entry.id, text: "Pick a name", messageId: null }, { botId: entry.id, text: "In the group", messageId: "Q4", at: ago(5) }], doing: {} };
     const wb = empty(entry.id, [task("w", "Domain", "waiting", ago(9), { blocked: "Which domain?", history: [{ kind: "waiting", at: ago(3), text: "Which domain?" }] })],
       { approvals: [{ tool: "Bash", text: "npm publish", at: ago(2) }] });
     const list = waitingAsks(entry, view, wb);
     expect(list).toHaveLength(waitingCount(entry, view, wb));
     expect(list.map((ask) => [ask.kind, ask.code ?? ask.text, ageLabel(ask.at, now), ask.open])).toEqual([
-      ["question", "In the group", "5h", group.id],
+      ["question", "In the group", "5h", entry.id],
       ["call", "Domain · Which domain?", "3h", entry.id],
       ["approval", "npm publish", "2h", entry.id],
       ["question", "Ship it?", "1h", entry.id],

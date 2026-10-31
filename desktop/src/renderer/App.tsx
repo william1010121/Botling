@@ -26,7 +26,7 @@ import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { Worktrees } from "./Worktrees";
 import { Review, type ReviewTarget } from "./Review";
-import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
+import { BotMenu, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
 import { Icon } from "./icons";
 import { SpecFrame } from "./SpecFrame";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
@@ -48,9 +48,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [creating, setCreating] = useState(false);
   const [menu, setMenu] = useState<{ bot: BotView; x: number; y: number } | null>(null);
   const [removing, setRemoving] = useState<BotView | null>(null);
-  /** The group being made (null: a new one) or changed, and the one being asked about before it is deleted. */
-  const [editingGroup, setEditingGroup] = useState<{ group: BotView | null } | null>(null);
-  const [deletingGroup, setDeletingGroup] = useState<BotView | null>(null);
   /** The task card pressed open in the right panel (`selectedTask`); pressed again, it closes. */
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const selectTask = useCallback((id: string) => setSelectedTask((current) => (current === id ? null : id)), []);
@@ -160,21 +157,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "bots.remove", botId: target.id }).catch(fail);
   }, [client, fail]);
 
-  // Group chats: made (and shown), changed, deleted with their conversation.
-  const saveGroup = useCallback((made: { name: string; members: string[] } | null) => {
-    const editing = editingGroup;
-    setEditingGroup(null);
-    if (!made || !editing) return;
-    setError(null);
-    if (editing.group) void client.request({ type: "groups.edit", groupId: editing.group.id, name: made.name.slice(0, 400), members: made.members }).catch(fail);
-    else void client.request({ type: "groups.create", name: made.name.slice(0, 400), members: made.members }).then((result) => { void store.select(result.groupId); }, fail);
-  }, [client, store, fail, editingGroup]);
-  const deleteGroup = useCallback((target: BotView) => {
-    setDeletingGroup(null);
-    setError(null);
-    void client.request({ type: "groups.delete", groupId: target.id }).catch(fail);
-  }, [client, fail]);
-
   // A result opens in the browser or with its own app; main checks it is one of this chat's links.
   const openResult = useCallback((result: ResultView) => {
     if (!chat) return;
@@ -199,7 +181,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
           onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
-          onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }} onNewGroup={() => setEditingGroup({ group: null })}
+          onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }}
           settingsControl={web ? null : <SidebarSettings compact client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />} />
       ) : (
       <aside className="rail">
@@ -219,14 +201,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             if (!hits.length) return <div className="rail-empty">No bots match</div>;
             return hits.map((candidate) => (
               <div key={candidate.id} className="bot-entry">
-                {candidate.role === "group" ? (
-                  <GroupRow group={candidate} bots={view.bots} selected={candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
-                    onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} onMenu={(x, y) => setMenu({ bot: candidate, x, y })} />
-                ) : (
                   <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={candidate.id === chat?.botId && !watching}
                     waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
                     onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} />
-                )}
               </div>
             ));
           })() : (
@@ -235,10 +212,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                 <div key={candidate.id} className="bot-entry">
                   {section === "pinned" && <h4 className="rail-section">Pinned</h4>}
                   {section === "rest" && pinned.length > 0 && <div className="rail-rule" />}
-                  {candidate.role === "group" ? (
-                    <GroupRow group={candidate} bots={view.bots} selected={candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
-                      onSelect={() => selectBot(candidate.id)} onMenu={(x, y) => setMenu({ bot: candidate, x, y })} />
-                  ) : <BotRow
+                  <BotRow
                     bot={candidate}
                     look={view.settings?.botLook ?? "original"}
                     selected={candidate.id === chat?.botId && !watching}
@@ -247,7 +221,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                     pinned={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? pinned.includes(candidate.id) : undefined}
                     onTogglePin={() => togglePin(candidate.id)}
                     onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
-                  />}
+                  />
                   <SubagentRows bot={candidate} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null}
                     onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
                 </div>
@@ -261,8 +235,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           <button type="button" className="rail-button" onClick={addProject}><Icon name="plus" size={13} />Add project</button>
           <button type="button" className={`rail-button new-bot-button${makingBot ? " on" : ""}`} onClick={() => setMakingBot(!makingBot)}
             title="A bot of its own, with its own memory and routines (a morning news bot, say)"><Icon name="sparkles" size={13} />New bot</button>
-          <button type="button" className="rail-button new-group-button" onClick={() => setEditingGroup({ group: null })}
-            title="A group chat with some of your bots"><Icon name="plus" size={13} />New group</button>
         </div>
         <UpdateEntry client={client} />
         <PluginsButton client={client} plugins={view.plugins} />
@@ -284,7 +256,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           {!web && <span className="terminal-controls" ref={setTerminalControls} />}
           {bot && chat && !web && (
             <span className="chat-actions">
-              {bot.role !== "group" && <RoutinesButton client={client} botId={bot.id} />}
+              <RoutinesButton client={client} botId={bot.id} />
             </span>
           )}
         </header>
@@ -325,10 +297,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {bot && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} />}
       {bot && !openSpec && (
         <TaskDetails
-          onDrawerSettings={() => setBotSettings(true)} groupDialogOpen={editingGroup !== null}
+          onDrawerSettings={() => setBotSettings(true)}
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
-          results={results} teams={view.teams} watching={watching} collapsed={collapsed}
+          results={results} watching={watching} collapsed={collapsed}
           tasks={chat?.botId === bot.id ? chat.tasks ?? [] : []} messages={chat?.botId === bot.id ? chat.messages : []}
           summarized={chat?.botId === bot.id ? new Set([...(chat.catchUp?.ids ?? []), ...(chat.intervalSummaries ?? []).flatMap((summary) => summary.ids)]) : undefined}
           selectedTask={selectedTask} onSelectTask={selectTask}
@@ -337,7 +309,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             const message: ShellMessage = { botling: "jumpToTask", messageID: messageId, taskID: taskId };
             postToChat(message);
           }}
-          onEditGroup={() => setEditingGroup({ group: bot })}
           onAskForReport={(task, replyTo) => {
             // "Ask it to report" (`askForReport`): a short message of yours to the task's owner, on the task's card.
             const two = bot.heads.length > 1;
@@ -345,25 +316,21 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
               ...(replyTo ? { replyTo } : {}), ...(two && task.owner ? { to: task.owner } : {}) }).catch(fail);
           }}
           onSelect={selectBot}
-          onIgnore={(item) => void client.request(item.messageId ? { type: "chat.ignoreQuestion", botId: item.groupId ?? item.botId, messageId: item.messageId } : { type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
+          onIgnore={(item) => void client.request(item.messageId ? { type: "chat.ignoreQuestion", botId: item.botId, messageId: item.messageId } : { type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
           onOpenResult={openResult}
           onOpenSubagent={(row) => openSubagent(bot.id, row)}
           onUnsettle={(row) => settleSubagent(bot.id, row, false)}
           onSettings={openBotSettings}
           showingSettings={botSettings}
           settingsPage={botSettings ? <BotSettings client={client} bot={bot} /> : undefined}
-          worktrees={bot.role === "main" || bot.role === "group" ? undefined : <Worktrees client={client} bot={bot} lang={view.settings?.effectiveLanguage ?? null} onReview={(target) => setReviewing({ botId: bot.id, target })} />}
+          worktrees={bot.role === "main" ? undefined : <Worktrees client={client} bot={bot} lang={view.settings?.effectiveLanguage ?? null} onReview={(target) => setReviewing({ botId: bot.id, target })} />}
           onCloseSettings={() => setBotSettings(false)}
           onExpand={toggleRight}
         />
       )}
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
-        onRemove={() => { if (menu.bot.role === "group") setDeletingGroup(menu.bot); else setRemoving(menu.bot); setMenu(null); }}
-        pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }}
-        onEditGroup={() => { setEditingGroup({ group: menu.bot }); setMenu(null); }} />}
-      {editingGroup && <GroupForm group={editingGroup.group} bots={view.bots} look={view.settings?.botLook ?? "original"} onDone={saveGroup}
-        faceOf={(candidate) => faceURL(candidate, view.settings?.botLook ?? "original", {})} />}
-      {deletingGroup && <DeleteGroupDialog group={deletingGroup} onCancel={() => setDeletingGroup(null)} onDelete={() => deleteGroup(deletingGroup)} />}
+        onRemove={() => { setRemoving(menu.bot); setMenu(null); }}
+        pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>
@@ -381,7 +348,6 @@ function status(bot: BotView): string {
 }
 
 function statusText(bot: BotView): string {
-  if (bot.role === "group") return `${bot.members?.length ?? 0} bot${bot.members?.length === 1 ? "" : "s"}`;
   // 1.x Workspace+Components.statusText: an outage wins over work; approvals win over retries.
   if ((bot.phase === "awake" || bot.phase === "asleep") && bot.connection === "disconnected") return "網路中斷";
   // Codex waiting to try a refused request again (the chat's typing bubble says when).
@@ -429,7 +395,7 @@ export function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned,
 
 /**
  * The left column's rows (1.x's RailView): the main bot and Maintainer, then the pinned ones in the order
- * they were pinned, then the rest — groups, projects and bots together — the one with the newest line
+ * they were pinned, then the rest — projects and bots together — the one with the newest line
  * first, as in Messages (`entries`, `RailLayout.pinnedFirst`).
  */
 export function railOrder(bots: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
@@ -481,9 +447,9 @@ function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 }
 
 /** The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover for name and status. */
-function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, onNewGroup, settingsControl }: {
+function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, settingsControl }: {
   bots: BotView[]; pinned: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
-  onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; onNewGroup: () => void; settingsControl: ReactNode;
+  onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; settingsControl: ReactNode;
 }) {
   const [tip, setTip] = useState<{ bot: BotView; y: number } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -506,7 +472,7 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
                 aria-label={[bot.name, ...parts].join(", ")} onClick={() => onSelect(bot.id)}
                 onMouseEnter={(event) => setTip({ bot, y: event.currentTarget.getBoundingClientRect().top + 20 })} onMouseLeave={() => setTip(null)}
                 onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
-                {bot.role === "group" ? <GroupFace size={28} /> : <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />}
+                <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
                 {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
                 {unread && <span className="strip-unread" aria-hidden="true" />}
               </button>
@@ -521,12 +487,11 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
         </div>
       )}
       <div className="strip-add">
-        <button type="button" className="strip-plus" title="Add a project, a bot or a group" aria-label="Add a project, a bot or a group" aria-expanded={adding} onClick={() => setAdding(!adding)}><Icon name="plus" size={13} /></button>
+        <button type="button" className="strip-plus" title="Add a project or a bot" aria-label="Add a project or a bot" aria-expanded={adding} onClick={() => setAdding(!adding)}><Icon name="plus" size={13} /></button>
         {adding && (
           <ShellOverlay><div className="strip-add-menu" role="menu">
             <button type="button" role="menuitem" onClick={() => { setAdding(false); onAddProject(); }}>Add project…</button>
             <button type="button" role="menuitem" onClick={() => { setAdding(false); onNewBot(); }}>New bot…</button>
-            <button type="button" role="menuitem" onClick={() => { setAdding(false); onNewGroup(); }}>New group…</button>
           </div></ShellOverlay>
         )}
       </div>

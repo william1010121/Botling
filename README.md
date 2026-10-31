@@ -204,8 +204,8 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
 ### Also
 
 - **A main bot and one manager per project.** The main bot answers "how is X going?" from each
-  manager's `memory.md`, hands work over through project inboxes, and calls up a temporary
-  research or prototype team for anything else. Make bots of your own too.
+  manager's `memory.md`, hands work over through project inboxes, and uses subagents for
+  anything else. Make bots of your own too.
 - **Bots that sleep.** Each bot is a long-lived `claude` process that naps after 50 idle minutes,
   writing down what matters first, and wakes when you or a routine need it.
 - **Decisions as buttons**, with a recommended option and what each one costs; tool permission
@@ -229,7 +229,7 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   you send your next message (off by default). Each point links its sources, opened in a
   read-only view of the conversation. The summaries are written by a read-only `codex exec`
   outside the chat; Settings → General → Chat summaries sets thresholds, model and prompt.
-- **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies, group chats,
+- **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies,
   result pages as preview cards, and an input box that works with CJK input methods.
 - **Call in any bot with `@name`.** It answers in your chat and keeps the work, with its steps,
   in its own chat too.
@@ -299,8 +299,8 @@ project's own notes live in `<project>/.bot/`, which is git-ignored.
 - **Each head** is one long-lived process: Claude runs as
   `claude -p --input-format stream-json --output-format stream-json`, Codex as
   `codex app-server`. A two-headed bot runs both side by side. Bots talk back through a few tags
-  in their replies (`<choices>`, `<team>`, `<show>`, `<component>`, `<plugin>`, `<install>`,
-  `<handoff>`), which the app turns into buttons, teams, hand-offs and requests.
+  in their replies (`<choices>`, `<show>`, `<component>`, `<plugin>`, `<install>`,
+  `<handoff>`), which the app turns into buttons, hand-offs and requests.
 - **The app keeps the books**: it tracks subagents, Codex workers, background commands and
   hand-off budgets itself, and runs the completion verification judge after each reply.
 - **Memory** is plain markdown: `memory.md` with four sections, an `inbox.md` per project, and

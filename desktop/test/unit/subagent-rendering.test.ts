@@ -88,8 +88,8 @@ it.each([false, true])("keeps the restored owner avatar and truthful running sta
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   try {
     await act(async () => root.render(createElement(RightPanel, {
-      bot: parent, bots: [parent], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], teams: [], watching: null, tasks: [], messages: [], selectedTask: null, collapsed,
-      onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent: onOpen, onUnsettle: onRestore, onSettings() {}, onExpand() {},
+      bot: parent, bots: [parent], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, tasks: [], messages: [], selectedTask: null, collapsed,
+      onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent: onOpen, onUnsettle: onRestore, onSettings() {}, onExpand() {},
     })));
     if (collapsed) await act(async () => host.querySelector<HTMLButtonElement>('[data-section="settled"]')!.click());
     expect(host.querySelector(".settled-open")?.getAttribute("aria-label")).toContain("running");

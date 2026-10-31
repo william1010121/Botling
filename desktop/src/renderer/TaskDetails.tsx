@@ -1,32 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { RightPanel, RightToggle, type RightPanelProps } from "./RightPanel";
 import { ShellOverlay } from "./ShellOverlay";
 
 const narrowQuery = "(max-width: 860px)";
 
 /** A local drawer at narrow widths; the desktop's saved panel preference is never changed. */
-export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => void; groupDialogOpen: boolean }) {
+export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => void }) {
   const [narrow, setNarrow] = useState(() => window.matchMedia?.(narrowQuery).matches ?? false);
   const [open, setOpen] = useState(false);
   const drawer = useRef<HTMLDivElement>(null);
   const entry = useRef<HTMLButtonElement>(null);
-  const groupHandoff = useRef(false);
   const close = () => setOpen(false);
-  useEffect(() => {
-    if (groupHandoff.current && !props.groupDialogOpen) {
-      groupHandoff.current = false;
-      // GroupForm closes on pointerdown; restore after the browser's default focus action.
-      const timer = setTimeout(() => entry.current?.focus(), 0);
-      return () => clearTimeout(timer);
-    }
-  }, [props.groupDialogOpen]);
-  const editGroup = () => {
-    // Dispose focus trapping/inert before GroupForm mounts and autofocuses its name field.
-    flushSync(close);
-    groupHandoff.current = true;
-    props.onEditGroup();
-  };
   useEffect(() => {
     const query = window.matchMedia?.(narrowQuery);
     if (!query) return;
@@ -81,7 +65,7 @@ export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => v
         <div className="task-details-backdrop" aria-hidden="true" onClick={close} />
         <div className="task-details-sheet">
           <header className="task-details-header"><span>Details</span><button type="button" onClick={close} aria-label="Close Details">Close</button></header>
-          <RightPanel {...props} collapsed={false} onSettings={props.onDrawerSettings} onEditGroup={editGroup}
+          <RightPanel {...props} collapsed={false} onSettings={props.onDrawerSettings}
             onSelect={id => { close(); props.onSelect(id); }}
             onOpenSubagent={row => { close(); props.onOpenSubagent(row); }}
             onOpenResult={result => { close(); props.onOpenResult(result); }}

@@ -19,7 +19,7 @@ const origin = 'https://bridge.example.invalid';
 const bot = (id: string, name: string, role: string, folder = '') => ({ id, name, role, avatar: 'circle', folder, phase: 'awake', working: false, approvals: 0,
   unread: 0, subagents: 0, problem: null, heads: ['claude'], job: null, subagentRows: [], openTasks: 2, lastActivity: null });
 const bots = [bot(MAIN_BOT_ID, 'Main bot', 'main'), bot(MAINTAINER_BOT_ID, 'Maintainer', 'bot'), bot('project-a', 'botling', 'manager', '/Users/someone/tool/botling'),
-  bot('project-b', 'hotel', 'manager', '/Users/someone/hotel'), bot('group-1', 'Crew', 'group')];
+  bot('project-b', 'hotel', 'manager', '/Users/someone/hotel')];
 function access(handled: unknown[] = []): MobileAccess {
   return {
     pending: () => [],
@@ -28,7 +28,7 @@ function access(handled: unknown[] = []): MobileAccess {
       components: { card: { name: 'card' } }, plugins: { plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null },
       settings: { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false,
         pinnedBots: ['project-b'], developerMode: true, developerProject: 'project-a', claudeBypassPermissions: true, summaryPrompt: 'secret prompt' },
-      doctor: { problems: [] }, waiting: { items: [], doing: {} }, web: { sites: [] }, teams: [], spec: null } as any),
+      doctor: { problems: [] }, waiting: { items: [], doing: {} }, web: { sites: [] }, spec: null } as any),
     handle: async (command) => { handled.push(command); return { messageId: 'm', turnId: null }; },
   };
 }
@@ -44,7 +44,7 @@ it('the browser scope snapshot lists every bot the desktop does, with display se
   const response = await mobileCommand(access(), { v: 10, id: 's', cmd: { type: 'chat.snapshot', botId: 'project-a' } }, [ALL_BOTS]);
   expect(response.ok).toBe(true);
   const result = (response as any).result;
-  expect(result.bots.map((row: any) => row.id)).toEqual([MAIN_BOT_ID, MAINTAINER_BOT_ID, 'project-a', 'project-b', 'group-1']);
+  expect(result.bots.map((row: any) => row.id)).toEqual([MAIN_BOT_ID, MAINTAINER_BOT_ID, 'project-a', 'project-b']);
   expect(result.bots.find((row: any) => row.id === 'project-a')).toMatchObject({ folder: 'botling', openTasks: 2, avatar: 'circle', phase: 'awake' });
   expect(result.chat.botId).toBe('project-a');
   expect(result.components).toEqual({ card: { name: 'card' } });

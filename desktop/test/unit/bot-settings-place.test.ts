@@ -26,9 +26,9 @@ async function render(element: ReturnType<typeof createElement>) {
 
 function panel(extra: Partial<RightPanelProps>, calls: string[]) {
   return createElement(RightPanel, {
-    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "idle", text: "Idle" }, results: [], teams: [], watching: null,
+    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "idle", text: "Idle" }, results: [], watching: null,
     tasks: [], messages: [], selectedTask: null, collapsed: false,
-    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {},
+    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {},
     onSettings() { calls.push("settings"); }, onCloseSettings() { calls.push("close"); }, onExpand() { calls.push("expand"); },
     ...extra,
   } satisfies RightPanelProps);
@@ -66,13 +66,6 @@ describe("a bot's settings are in the right panel", () => {
       await act(async () => host.querySelector<HTMLButtonElement>(".strip-settings")!.click());
       expect(calls).toEqual(["settings"]);
     } finally { await done(); }
-  });
-
-  it("a group's panel has no bot settings button", async () => {
-    const group = { ...bot, id: "g", role: "group", members: [] } as unknown as BotView;
-    const { host, done } = await render(panel({ bot: group, bots: [group] }, []));
-    try { expect(host.querySelector("button[aria-label='Bot settings']")).toBeNull(); }
-    finally { await done(); }
   });
 
   it("the Settings sheet has no \"This bot\" section", async () => {

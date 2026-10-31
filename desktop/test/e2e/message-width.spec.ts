@@ -76,7 +76,7 @@ test("both edges resize symmetrically, preview before saving, cancel, and double
   } finally { await app.close(); }
 });
 
-test("Appearance slider applies to main, another bot and group chats, and survives a full app relaunch", async () => {
+test("Appearance slider applies to main and another bot, and survives a full app relaunch", async () => {
   const dataDir = tempDir("width-relaunch");
   let run = await launch({ dataDir, chat: transcript });
   try {
@@ -92,13 +92,6 @@ test("Appearance slider applies to main, another bot and group chats, and surviv
     await aligned(chat, 900);
     await page.locator(".bot-row", { hasText: "Maintainer" }).click();
     await aligned(chat, 900);
-    await page.getByRole("button", { name: "New group", exact: true }).click();
-    const group = page.getByRole("form", { name: "New group" });
-    await group.getByRole("textbox", { name: "Group name" }).fill("Width study");
-    await group.getByRole("checkbox", { name: "Main bot" }).check();
-    await group.getByRole("checkbox", { name: "Maintainer" }).check();
-    await group.getByRole("button", { name: "Create", exact: true }).click();
-    await expect(page.locator(".group-row")).toHaveClass(/selected/);
     await aligned(chat, 900);
     await run.app.close();
     run = await launch({ dataDir });

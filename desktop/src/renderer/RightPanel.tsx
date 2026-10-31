@@ -1,5 +1,5 @@
 // The right panel (1.x's DetailPanel): the bot on screen, its Now card (status; a manager's first
-// "In progress" line from its memory.md; the main bot's temporary teams at work), its tasks grouped
+// "In progress" line from its memory.md), its tasks grouped
 // into Needs you / Running / Done (design R2-3: a row each, opened in place, a timeline on hover) and, for the main
 // bot, "Waiting on you" — every bot's open question or its memory's "Waiting on you", each opening
 // that bot's chat, with × to ignore it (1.x's WaitingList). Then Results ("Just done" for the main
@@ -12,16 +12,15 @@
 import { shortcutLabel } from "./shortcut-labels";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ShellOverlay, shellPortal } from "./ShellOverlay";
-import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type TeamRunView, type WaitingItemView, type WaitingView } from "../contract";
+import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type WaitingItemView, type WaitingView } from "../contract";
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
 import { OwnerMark, useMinuteClock } from "./Rail";
 
-type Section = "waiting" | "members" | "results" | "settled";
+type Section = "waiting" | "results" | "settled";
 
-/** What waits on you in this panel: everything for the main bot, a group's own questions in its chat (1.x's `groupID`). */
+/** What waits on you in this panel: everything for the main bot. */
 export function panelWaiting(bot: BotView, waiting: WaitingView): WaitingItemView[] {
-  if (bot.role === "group") return waiting.items.filter((item) => item.groupId === bot.id);
   return bot.role === "main" ? waiting.items : [];
 }
 
@@ -32,7 +31,6 @@ export interface RightPanelProps {
   look: "original" | "cute";
   status: { key: string; text: string };
   results: ResultView[];
-  teams: TeamRunView[];
   /** The subagent shown in the chat's place, if any. */
   watching: string | null;
   /** The bot's task cards and its chat's lines (for "Jump to chat"), and the card pressed open. */
@@ -45,8 +43,6 @@ export interface RightPanelProps {
   onJumpToTask: (messageId: string, taskId: string) => void;
   onAskForReport: (task: TaskView, replyTo: string | null) => void;
   onCompleteTask: (id: string) => void;
-  /** A group's "Rename, add or take out members". */
-  onEditGroup: () => void;
   collapsed: boolean;
   onSelect: (botId: string) => void;
   onIgnore: (item: WaitingItemView) => void;
@@ -69,60 +65,7 @@ const isArtifact = (url: string) => /^https:\/\/(www\.)?claude\.ai\/(code\/)?art
 
 export function RightPanel(props: RightPanelProps) {
   if (props.collapsed) return <RightStrip {...props} />;
-  return props.bot.role === "group" ? <GroupPanel {...props} /> : <OpenPanel {...props} />;
-}
-
-/** The right column for a group (1.x's GroupPanel): who is in it, and what was handed in. */
-function GroupPanel({ bot, bots, waiting, look, results, onSelect, onIgnore, onOpenResult, onEditGroup }: RightPanelProps) {
-  const members = groupMembers(bot, bots);
-  const items = panelWaiting(bot, waiting);
-  return (
-    <aside className="detail-panel" aria-label="Details">
-      <div className="detail-head">
-        <span className="detail-name">{bot.name}</span>
-        <span className="bot-gap" />
-        <button type="button" className="group-edit" title="Rename, add or take out members" aria-label="Edit group" onClick={onEditGroup}><Icon name="sliders" size={14} /></button>
-      </div>
-      {items.length > 0 && (
-        <section className="detail-section">
-          <h3>Waiting on you</h3>
-          <WaitingList items={items} bots={bots} look={look} onSelect={onSelect} onIgnore={onIgnore} />
-        </section>
-      )}
-      <section className="detail-section">
-        <h3>In the group</h3>
-        <div className="now-card group-members-card">
-          <GroupMembers group={bot} members={members} look={look} onSelect={onSelect} />
-          <p className="group-hint">Without @, everyone here reads your message in turn and answers only if it concerns them. @name talks to one of them.</p>
-        </div>
-      </section>
-      {results.length > 0 && (
-        <section className="detail-section results-section">
-          <h3>Just done</h3>
-          <div className="result-list">
-            {results.slice(0, 3).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} onOpen={onOpenResult} />)}
-          </div>
-        </section>
-      )}
-    </aside>
-  );
-}
-
-const groupMembers = (group: BotView, bots: BotView[]) => (group.members ?? []).map((id) => bots.find((candidate) => candidate.id === id)).filter((member): member is BotView => !!member);
-
-/** The members of a group, each opening its own chat, with who is writing now (1.x's GroupMemberRow). */
-function GroupMembers({ group, members, look, onSelect }: { group: BotView; members: BotView[]; look: "original" | "cute"; onSelect: (botId: string) => void }) {
-  return (
-    <>
-      {members.map((member) => (
-        <button key={member.id} type="button" className="group-member" data-bot={member.id} onClick={() => onSelect(member.id)}>
-          <img src={faceURL(member, look, { asleep: member.phase === "asleep" && !member.working, working: member.working })} alt="" />
-          <span className="group-member-name">{member.name}</span>
-          {group.guest === member.id && <span className="group-member-writing">writing…</span>}
-        </button>
-      ))}
-    </>
-  );
+  return <OpenPanel {...props} />;
 }
 
 /** The bot's settings in the overview's place (1.x's SettingsPage): Back, "Settings", then the page. */
@@ -143,7 +86,7 @@ function OpenPanel(props: RightPanelProps) {
   return <Overview {...props} />;
 }
 
-function Overview({ worktrees, bot, bots, waiting, look, status, results, teams, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask, onSettings }: RightPanelProps) {
+function Overview({ worktrees, bot, bots, waiting, look, status, results, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask, onSettings }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
@@ -152,7 +95,7 @@ function Overview({ worktrees, bot, bots, waiting, look, status, results, teams,
   const tasks = all.filter((task) => task.name.trim().length > 0);
   const active = activeTasks(tasks);
   // While a task is under way its card says what the bot does; the bot's own line would be a bare "Writing…" card.
-  const showNow = active.length === 0 || (bot.role === "main" && teams.length > 0);
+  const showNow = active.length === 0;
   const finished = finishedTasks(tasks);
   return (
     <aside className="detail-panel" aria-label="Details">
@@ -166,13 +109,6 @@ function Overview({ worktrees, bot, bots, waiting, look, status, results, teams,
         {tasks.length === 0 && <h3>Tasks</h3>}
         {showNow && <div className="now-card">
           <div className="now-line"><span className="now-dot" data-status={status.key} aria-hidden="true" />{status.text}</div>
-          {bot.role === "main" && teams.map((run) => (
-            <div key={run.id} className="team-run" title={run.task} data-team={run.name}>
-              <img className="team-face" src={avatarURL("cloud")} alt="" />
-              <span className="team-title">{run.title}</span>
-              <span className="team-time">{Math.max(1, Math.floor((now - run.startedAt) / 60_000))} min</span>
-            </div>
-          ))}
         </div>}
         {active.length === 0 && (doing ? <div className="now-doing">{doing}</div> : !bot.working && <div className="task-none">Nothing under way</div>)}
         <TaskGroups key={bot.id} tasks={tasks} now={now} working={bot.working} messages={messages} summarized={summarized} selected={selectedTask}
@@ -561,7 +497,7 @@ function WaitingList({ items, bots, look, onSelect, onIgnore }: { items: Waiting
         const owner = bots.find((candidate) => candidate.id === item.botId);
         return (
           <li key={`${item.botId}-${item.text}`} className="waiting-item" data-bot={item.botId}>
-            <button type="button" className="waiting-open" onClick={() => onSelect(item.groupId ?? item.botId)} title={owner ? `Open ${item.groupId ? "the group's" : `${owner.name}'s`} chat` : undefined}>
+            <button type="button" className="waiting-open" onClick={() => onSelect(item.botId)} title={owner ? `Open ${owner.name}'s chat` : undefined}>
               {owner && <img className="waiting-avatar" src={faceURL(owner, look, {})} alt="" />}
               <span className="waiting-text">{item.text}</span>
               <span className="waiting-chevron" aria-hidden="true">›</span>
@@ -611,16 +547,13 @@ function SettledList({ avatar, look, rows, watching, onOpen, onUnsettle }: { ava
 }
 
 /** The panel folded (1.x's RightStrip): the face, an icon per section with something in it, the bot's settings. */
-function RightStrip({ bot, bots, waiting, look, status, results, teams, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSettings, onExpand }: RightPanelProps) {
+function RightStrip({ bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSettings, onExpand }: RightPanelProps) {
   const [open, setOpen] = useState<Section | null>(null);
   const [tip, setTip] = useState(false);
   const items = panelWaiting(bot, waiting);
-  const group = bot.role === "group";
-  const members = group ? groupMembers(bot, bots) : [];
-  const settled = group ? [] : settledRows(bot.subagentRows);
+  const settled = settledRows(bot.subagentRows);
   const counts = ([
     { section: "waiting", count: items.length },
-    { section: "members", count: members.length },
     { section: "results", count: results.length },
     { section: "settled", count: settled.length },
   ] as { section: Section; count: number }[]).filter((entry) => entry.count > 0);
@@ -634,10 +567,10 @@ function RightStrip({ bot, bots, waiting, look, status, results, teams, watching
     return () => { window.removeEventListener("keydown", key); window.removeEventListener("pointerdown", away, true); };
   }, [open]);
   // The face's tip: the Now card's status, then what the bot is doing, if it says (`nowDetail`).
-  const doing = bot.role === "manager" ? waiting.doing[bot.id] : bot.role === "main" ? teams[0]?.title : undefined;
+  const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const detail = doing?.trim() ? `${status.text} · ${doing.trim()}` : status.text;
-  const title = (section: Section) => (section === "waiting" ? "Waiting on you" : section === "members" ? "In the group" : section === "results" ? (bot.role === "main" || group ? "Just done" : "Results") : "Settled");
-  const symbol = (section: Section) => (section === "waiting" ? "bubbleAlert" : section === "members" ? "people" : section === "results" ? "arrowUpRight" : "checkCircle") as "bubbleAlert" | "people" | "arrowUpRight" | "checkCircle";
+  const title = (section: Section) => (section === "waiting" ? "Waiting on you" : section === "results" ? (bot.role === "main" ? "Just done" : "Results") : "Settled");
+  const symbol = (section: Section) => (section === "waiting" ? "bubbleAlert" : section === "results" ? "arrowUpRight" : "checkCircle") as "bubbleAlert" | "arrowUpRight" | "checkCircle";
   const badge = (count: number) => (count > 99 ? "99+" : String(count));
   return (
     <aside className="right-strip" aria-label="Details (folded)">
@@ -665,7 +598,6 @@ function RightStrip({ bot, bots, waiting, look, status, results, teams, watching
               <div className="strip-flyout-head"><span>{title(section)}</span><span className="strip-esc">Esc to close</span></div>
               <div className="strip-flyout-body">
                 {section === "waiting" && <WaitingList items={items} bots={bots} look={look} onSelect={(id) => { setOpen(null); onSelect(id); }} onIgnore={onIgnore} />}
-                {section === "members" && <div className="strip-members"><GroupMembers group={bot} members={members} look={look} onSelect={(id) => { setOpen(null); onSelect(id); }} /></div>}
                 {section === "results" && (
                   <div className="result-list">
                     {results.slice(0, 12).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} compact onOpen={(chosen) => { setOpen(null); onOpenResult(chosen); }} />)}
@@ -678,11 +610,9 @@ function RightStrip({ bot, bots, waiting, look, status, results, teams, watching
         </div>
       ))}
       <div className="strip-gap" />
-      {!group && (
-        <button type="button" className="strip-settings" title={`${bot.name}'s settings`} aria-label="Bot settings" onClick={onSettings}>
-          <Icon name="sliders" size={14} />
-        </button>
-      )}
+      <button type="button" className="strip-settings" title={`${bot.name}'s settings`} aria-label="Bot settings" onClick={onSettings}>
+        <Icon name="sliders" size={14} />
+      </button>
     </aside>
   );
 }

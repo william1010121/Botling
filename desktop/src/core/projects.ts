@@ -221,11 +221,11 @@ export class MemoryFiles {
 export interface BriefingRow { name: string; about: string; memory: string; inbox: string; question: string | null }
 
 /**
- * `Workspace.projectBriefing`: the project list and the teams the main bot gets each time it wakes
+ * `Workspace.projectBriefing`: the project list the main bot gets each time it wakes
  * (and with its routines): each project's and bot's memory and inbox file and a question waiting in
- * its own chat, Maintainer's, the <open-question> note when any of them asks, and the teams.
+ * its own chat, Maintainer's, and the <open-question> note when any of them asks.
  */
-export function projectBriefingText(input: { projects: BriefingRow[]; bots: BriefingRow[]; maintainer: BriefingRow; teams: { name: string; title: string; description: string }[] }): string {
+export function projectBriefingText(input: { projects: BriefingRow[]; bots: BriefingRow[]; maintainer: BriefingRow}): string {
   const note = (row: BriefingRow) => (row.question !== null ? `; open question in its chat: ${firstLine(row.question)}` : "");
   const line = (row: BriefingRow) => `- ${row.name} (${row.about}): memory file ${row.memory}; inbox file ${row.inbox}${note(row)}`;
   const projectLines = input.projects.length ? input.projects.map(line).join("\n") : "(No projects yet.)";
@@ -233,6 +233,5 @@ export function projectBriefingText(input: { projects: BriefingRow[]; bots: Brie
   const maintainerLine = line(input.maintainer);
   const asking = [...input.projects, ...input.bots, input.maintainer].some((row) => row.question !== null);
   const cardLine = asking ? '\n(App: A decision marked "open question in its chat" already has its card there. To bring it up, write <open-question from="its name"/> in your reply: the app shows that same card here. Never write a new choices block for it.)' : "";
-  const teamLines = input.teams.map((team) => `- ${team.name} (${team.title}): ${team.description}`).join("\n");
-  return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}\n${maintainerLine}${cardLine}\n(App: Temporary teams you can start, with <team name="name">task</team>.)\n${teamLines}`;
+  return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}\n${maintainerLine}${cardLine}`;
 }

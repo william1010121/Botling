@@ -1,8 +1,7 @@
 // Phase 4b in the real app: New bot (the form, the bot set up and shown), a bot's subagent rows in
 // the left column (open, settle into the right panel's Settled, bring back), Results / "Just done"
 // (opened by main, only links of that chat), the right panel folded into its strip (icons with
-// counts, a section beside the strip, kept in settings.json), a temporary team in the main bot's Now
-// card and its reply in the chat, and removing a bot (its folder stays). Screenshots go to
+// counts, a section beside the strip, kept in settings.json), and removing a bot (its folder stays). Screenshots go to
 // desktop/.tmp/screens/.
 import { expect, test } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -110,22 +109,6 @@ test("New bot, subagent rows and Settled, Results, the folded strip, removing a 
     // The main bot has no menu.
     await page.locator(`.bot-row[data-bot="${MAIN}"]`).click({ button: "right" });
     await expect(page.getByRole("menuitem")).toHaveCount(0);
-  } finally {
-    await app.close();
-  }
-});
-
-test("a temporary team: in the main bot's Now card while it works, its reply in the chat", async () => {
-  const { app, page, chat } = await launch({ env: { FAKE_CLAUDE_LINGER_MS: "2500" } });
-  try {
-    await page.setViewportSize({ width: 1180, height: 800 });
-    await say(chat, "/say Handed to the Research team.\n<team name=\"research\">/linger compare three note apps</team>");
-    const team = page.locator(".now-card .team-run");
-    await expect(team).toHaveCount(1);
-    await expect(team.locator(".team-title")).toHaveText("Research team");
-    await expect(team).toHaveAttribute("title", "/linger compare three note apps");
-    await expect(chat.locator(".row.notice").last()).toContainText("Research team: Thinking it over.", { timeout: 15_000 });
-    await expect(team).toHaveCount(0);
   } finally {
     await app.close();
   }

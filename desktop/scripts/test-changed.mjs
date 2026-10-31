@@ -3,7 +3,7 @@
 // i.e. uncommitted work; staged, unstaged and untracked files always count). Related means:
 //   - a changed test file itself;
 //   - a unit test that imports a changed file, directly or not (vitest's module graph);
-//   - a unit test named after a changed source file (src/core/teams.ts → test/unit/teams*.test.ts),
+//   - a unit test named after a changed source file (src/core/groups.ts → test/unit/groups*.test.ts),
 //     which catches the tests that drive the built core over core-harness.ts instead of importing it;
 //   - a unit test whose text names a changed file (electron-builder.config.cjs, build.mjs, …), for
 //     files that tests read or run rather than import.

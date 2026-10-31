@@ -16,7 +16,7 @@
 //   tool     — (long-lived) asks to run a Bash command and reports whether it was allowed:
 //              "/tool <command>" asks for <command> (default "echo hi"); "/tool:WebFetch …" asks for another tool
 //   resume   — replies with how it was started: "session <id> resumed=<bool>"
-//   choices  — asks with a <choices> block;  task — replies with a <task …/> line;  team — a <team> request
+//   choices  — asks with a <choices> block;  task — replies with a <task …/> line
 //   react    — "/react <message id>": a reaction-only reply (👍 on that line)
 //   agent    — (long-lived) sends a subagent (Agent tool) that reads a file and reports back, then says so
 //   bgagent  — (long-lived) sends one to the background; it reports a moment later, and claude starts
@@ -107,7 +107,7 @@ function helper(ignoreTerm) {
 }
 
 function directive(prompt) {
-  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|team|react|agent|bgagent)(?::([A-Za-z]+))?\s*/.exec(prompt);
+  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|react|agent|bgagent)(?::([A-Za-z]+))?\s*/.exec(prompt);
   return match ? { mode: match[1], tool: match[2] ?? "Bash", rest: prompt.slice(match[0].length) } : { mode: envMode, tool: "Bash", rest: prompt };
 }
 
@@ -276,9 +276,7 @@ async function backgroundTurn(job) {
 async function turn(job) {
   init();
   if (job.background) return backgroundTurn(job);
-  // A temporary team's task (TeamPrompts.task): the words after the app's line are the task.
-  const TEAM_TASK = "(App: A task from the main bot)\n";
-  const prompt = job.text.startsWith(TEAM_TASK) ? job.text.slice(TEAM_TASK.length) : job.text;
+  const prompt = job.text;
   if (prompt.startsWith("(App: You have been idle")) {
     // The tidy: write the memory file it names, then OK.
     const file = /Update (\S+) with/.exec(prompt)?.[1];
@@ -512,7 +510,6 @@ async function turn(job) {
     : mode === "resume" ? `session ${session} resumed=${!!resumed}`
     : mode === "choices" ? "Which way?\n<choices>\n* Fast | done today\n- Slow | costs a week\n</choices>"
     : mode === "task" ? "Working on the docs.\n<task name=\"Docs\" now=\"writing the intro\" next=\"examples\" state=\"running\"/>"
-    : mode === "team" ? "<team name=\"research\">Find X</team>Handed to the research team."
     : mode === "react" ? `<reaction message="${rest.trim()}" emoji="👍" present="true"/>`
     : `You said: ${rest}`;
   const text = await stream(reply);

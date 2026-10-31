@@ -58,7 +58,7 @@ export class WorktreeDesk {
     return log;
   }
 
-  /** Main and team chats have no worktrees of their own. */
+  /** The main bot has no worktrees of its own. */
   private eligible(profile: BotProfile) { return profile.role !== "main" && !profile.problem; }
 
   /** The folder this bot's session starts in: its current worktree, or its project folder. */

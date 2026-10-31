@@ -92,7 +92,7 @@ export const askCount = (asks: Ask[]) => asks.reduce((sum, ask) => sum + ask.cou
 export function waitingAsks(bot: BotView, waiting: WaitingView, data: WhiteboardBotView | undefined): Ask[] {
   const out: Ask[] = [];
   for (const item of waitingFor(bot, waiting)) {
-    out.push({ key: `q:${item.messageId ?? item.text}`, kind: item.messageId ? "question" : "call", text: item.text, code: null, at: item.at ?? null, open: item.groupId ?? item.botId, count: 1, ack: item.messageId ? null : { botId: item.botId, text: item.text } });
+    out.push({ key: `q:${item.messageId ?? item.text}`, kind: item.messageId ? "question" : "call", text: item.text, code: null, at: item.at ?? null, open: item.botId, count: 1, ack: item.messageId ? null : { botId: item.botId, text: item.text } });
   }
   for (const task of named(waitingTasks(bot, waiting, data))) {
     const why = task.blocked ?? task.now;
@@ -126,8 +126,8 @@ export function laneStatus(bot: BotView, data: WhiteboardBotView | undefined): {
 export interface Lanes { waiting: BotView[]; running: BotView[]; quiet: BotView[] }
 
 /**
- * The board's three lanes. Waiting on you: every bot (or group chat) with something for you, most
- * first. Running: bots at work with nothing for you, latest first. The rest (no group chats) on the
+ * The board's three lanes. Waiting on you: every bot with something for you, most
+ * first. Running: bots at work with nothing for you, latest first. The rest on the
  * shelf: pinned first, then the ready ones, then by their last update. Each bot shows once.
  */
 export function boardLanes(bots: BotView[], byBot: ReadonlyMap<string, WhiteboardBotView>, waiting: WaitingView, pinned: ReadonlySet<string> = new Set()): Lanes {
@@ -136,10 +136,9 @@ export function boardLanes(bots: BotView[], byBot: ReadonlyMap<string, Whiteboar
   for (const bot of bots) {
     if (bot.role === "main") continue;
     const data = byBot.get(bot.id);
-    const count = bot.role === "group" ? waitingFor(bot, waiting).length : waitingCount(bot, waiting, data);
+    const count = waitingCount(bot, waiting, data);
     counts.set(bot.id, count);
     if (count > 0) out.waiting.push(bot);
-    else if (bot.role === "group") continue;
     else if (isRunning(bot, data)) out.running.push(bot);
     else out.quiet.push(bot);
   }
@@ -154,7 +153,7 @@ export function boardLanes(bots: BotView[], byBot: ReadonlyMap<string, Whiteboar
 /** Where the open work is: bots with something waiting on you or under way, most waiting first. */
 export function openRanking(bots: BotView[], byBot: ReadonlyMap<string, WhiteboardBotView>, waiting: WaitingView): { bot: BotView; waiting: number; active: number }[] {
   return bots.filter((bot) => bot.role !== "main")
-    .map((bot) => ({ bot, waiting: bot.role === "group" ? waitingFor(bot, waiting).length : waitingCount(bot, waiting, byBot.get(bot.id)), active: taskCounts(byBot.get(bot.id)?.tasks ?? []).active }))
+    .map((bot) => ({ bot, waiting: waitingCount(bot, waiting, byBot.get(bot.id)), active: taskCounts(byBot.get(bot.id)?.tasks ?? []).active }))
     .filter((row) => row.waiting + row.active > 0)
     .sort((a, b) => b.waiting - a.waiting || b.active - a.active);
 }
@@ -423,7 +422,7 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
   const canvas = useRef<HTMLDivElement>(null);
   const waitingLane = useRef<HTMLElement>(null);
   const openBot = open ? bots.find((bot) => bot.id === open.botId) ?? null : null;
-  const cards = bots.filter((bot) => bot.role !== "main" && bot.role !== "group");
+  const cards = bots.filter((bot) => bot.role !== "main");
   // The first pictures on the Running lane are drawn; past MOST_PICTURES a card shows its line.
   const pictured = new Set(lanes.running.filter((bot) => drawnPicture(byBot.get(bot.id), components)).slice(0, MOST_PICTURES).map((bot) => bot.id));
 
@@ -510,7 +509,7 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
                 <div className="lane-grid">
                   {lanes.waiting.map((bot) => (
                     <WaitingCard key={bot.id} bot={bot} data={byBot.get(bot.id)} waiting={waiting} asks={asks.get(bot.id) ?? []} now={now} face={face(bot)} lang={lang}
-                      onPress={(element) => (bot.role === "group" ? onOpenChat(bot.id) : press(bot, element))} onOpenChat={onOpenChat} onNotify={notify} />
+                      onPress={(element) => press(bot, element)} onOpenChat={onOpenChat} onNotify={notify} />
                   ))}
                 </div>
               </section>
@@ -694,11 +693,11 @@ function WaitingCard({ bot, data, waiting, asks, now, face, lang, onPress, onOpe
   onPress: (element: HTMLElement) => void; onOpenChat: (botId: string) => void; onNotify: (ask: Ask) => void;
 }) {
   const counts = taskCounts(data?.tasks ?? []);
-  const status = bot.role === "group" ? { key: "", text: `${bot.members?.length ?? 0} bots` } : laneStatus(bot, data);
+  const status = laneStatus(bot, data);
   const when = shortTime(bot.lastActivity, now);
   return (
     <article className="wb-card ask-card waiting" data-bot={bot.id} aria-label={`${bot.name}: ${askCount(asks)} waiting on you`}>
-      <button type="button" className="wb-card-head wb-card-open" onClick={(event) => onPress(event.currentTarget)} title={bot.role === "group" ? `Open ${bot.name}` : `${bot.name}'s report`}>
+      <button type="button" className="wb-card-head wb-card-open" onClick={(event) => onPress(event.currentTarget)} title={`${bot.name}'s report`}>
         <img className="wb-face" src={face} alt="" />
         <span className="wb-card-name">{bot.name}</span>
         <span className="wb-pill">{askCount(asks)} waiting</span>
@@ -719,12 +718,10 @@ function WaitingCard({ bot, data, waiting, asks, now, face, lang, onPress, onOpe
         })}
         {asks.length > MOST_ASKS && <li className="wb-ask-more">+{askCount(asks.slice(MOST_ASKS))} more in the report</li>}
       </ul>
-      {bot.role !== "group" && (
-        <span className="wb-card-foot">
-          <Latest bot={bot} data={data} waiting={waiting} one />
-          {counts.total > 0 && <span className="wb-foot-count"><b>{counts.done}</b>/{counts.total}</span>}
-        </span>
-      )}
+      <span className="wb-card-foot">
+        <Latest bot={bot} data={data} waiting={waiting} one />
+        {counts.total > 0 && <span className="wb-foot-count"><b>{counts.done}</b>/{counts.total}</span>}
+      </span>
       {counts.total > 0 && <StateBar counts={counts} />}
     </article>
   );

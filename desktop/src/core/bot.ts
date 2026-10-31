@@ -42,7 +42,7 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 // - A reply's tags are acted on (reply.ts): <choices> become buttons whose pick goes back as the
 //   user's answer, <task> lines move the task cards, <reaction> lines set the bot's reaction,
 //   <no-reply/> leaves a turn claude started itself (a background subagent reporting) unshown.
-//   Other requests (<team>, <component>, …) are taken out and a notice says 2.0 cannot do them yet.
+//   Other requests (<component>, …) are taken out and a notice says 2.0 cannot do them yet.
 // - A project bot shares its project's .bot/ with 1.x.
 // - A conversation has one storage owner and app-owned Claude/Codex/Antigravity peers.
 //   Each peer has its own process, turns, approvals and partner-<engine>/ files.
@@ -211,8 +211,6 @@ export interface BotOptions {
   worktree?: () => { cwd: string; addDirs: string[] } | null;
   /** Another bot answering in its chat right now (a call-in's speaker). */
   guest?: () => string | null;
-  /** What its row shows beyond its own (a group's chat: the group and its members). */
-  viewExtras?: () => Partial<BotView>;
   /** What a line shows besides itself: the specs made from it, the component it already is (Phase 5a). */
   lineExtras?: (bot: Bot, record: ChatRecord) => { specs?: SpecChipView[]; component?: string };
   /** Its specs changed (the spec panel follows). */
@@ -861,7 +859,7 @@ export class Bot {
   private swapHold = false;
 
   /**
-   * Says `text` (its turn in a group chat, or in a chat it was called into) and returns the reply,
+   * Says `text` (its turn in a chat it was called into) and returns the reply,
    * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
    * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
    */
@@ -927,13 +925,7 @@ export class Bot {
     this.add(copy);
   }
 
-  /** A group chat's new name (`editGroup`). */
-  rename(name: string) {
-    this.options.profile.name = name;
-    this.updated();
-  }
-
-  /** Files you sent with a line that is not a message to it (a group's), copied where they stay (1.x's `keep`). */
+  /** Files you sent with a line that is not a message to it, copied where they stay (1.x's `keep`). */
   keepFiles(files: string[]): { url: string; kind: string; path: string }[] {
     return files.flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []).map((kept) => ({ url: kept.url, kind: kept.kind, path: kept.path }));
   }
@@ -1281,7 +1273,6 @@ export class Bot {
       openTasks: shownTasks(this.owner.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length,
       components: this.components,
       lastActivity: this.records.length ? iso(this.records.at(-1)!.date) : null,
-      ...(this.options.viewExtras?.() ?? {}),
     };
   }
 
@@ -2010,7 +2001,7 @@ export class Bot {
 
   /** No silent fallback to a Claude worker/plugin from an Antigravity reply. */
   private handleRequests(requests: BotRequest[]): BotRequest[] {
-    const unavailable = new Set(["team", "component", "plugin", "newBot", "newProject", "suggestComponent", "componentSpec"]);
+    const unavailable = new Set(["component", "plugin", "newBot", "newProject", "suggestComponent", "componentSpec"]);
     const blocked = this.engine === "agy" ? requests.filter(request => unavailable.has(request.kind)) : [];
     const supported = requests.filter(request => !blocked.includes(request));
     return [...blocked, ...(supported.length && this.options.onRequests ? this.options.onRequests(this.owner, supported) : supported)];
@@ -5131,7 +5122,7 @@ export function preview(record: ChatRecord): string {
 }
 
 /** Tags held back while still being written, and those that end with their opening `>` (attributes only). */
-const BLOCK_TAGS = ["choices", "show", "team", "component", "new-bot", "new-project", "plugin", "install-build", "install", "need-folder",
+const BLOCK_TAGS = ["choices", "show", "component", "new-bot", "new-project", "plugin", "install-build", "install", "need-folder",
   "give-component", "take-component", "suggest-component", "component-spec", "component-declined", "open-question", "no-reply",
   "task", "reaction", "decision-ref", "app-screenshot", "end", "block"];
 const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-question", "app-screenshot"]);

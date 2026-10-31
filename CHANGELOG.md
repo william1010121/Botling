@@ -6,6 +6,8 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+- Removed: Temporary teams. The main bot no longer starts a separate hidden Claude with a `<team>` tag; it uses subagents, which show their steps in the right panel. The team rows in the right panel, the built-in research and prototype teams and the `ccb-teams` fallback are gone. Old `runs/` folders and `plugins/ccb-teams` are left on disk and not read.
+- Removed: The "New group" entry and group chats (creating, editing and deleting a group, the group row and its right panel). Hand-offs between bots, @ call-ins and the shared chat of several heads are not affected. Old `groups.json` and `groups/` files are kept on disk and not read, and the app starts normally with them.
 - Fixed: When the app attached a git worktree, every agent (Claude, Codex workers, Antigravity) is told its working folder is that worktree, to use relative paths, and not to make worktrees of its own; Antigravity can also reach the project's memory files.
 - Fixed: @ mention search stops at a space instead of previewing all following text.
 - Fixed: Bots asked to call another engine now hand off to it instead of emulating it with a subagent.

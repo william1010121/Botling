@@ -7,7 +7,7 @@
 // - <reaction …/> on a line of its own sets the bot's own reaction;
 // - <show> becomes a component display (kept in 1.x's `displays` format; 2.0 does not draw them yet);
 // - <whiteboard> (2.0 only) sets the bot's picture on the main bot's whiteboard, drawn nowhere in the chat;
-// - the other requests (<team>, <component>, <plugin>, <install>, <new-bot>, <new-project>, …) are
+// - the other requests (<component>, <plugin>, <install>, <new-bot>, <new-project>, …) are
 //   parsed and taken out of the text, so the chat never shows raw tags; 2.0 acts on none of them yet
 //   and says so (bot.ts).
 // Offsets are UTF-16, as NSString's and the chat page's.
@@ -15,7 +15,6 @@ import { refreshSeconds } from "./components/library";
 import { REACTION_PALETTE } from "./briefing";
 
 export type BotRequest =
-  | { kind: "team"; name: string; task: string }
   | { kind: "component"; name: string; request: string }
   | { kind: "plugin"; request: string }
   | { kind: "folder"; path: string }
@@ -61,7 +60,7 @@ export interface Parsed {
 const decisionReferenceTag = () => /^ {0,3}<decision-ref\s+id="([0-9A-Fa-f-]{36})"\s*\/>[ \t]*$/gm;
 const quotedHTMLRegion = () => /<(pre|code|blockquote)\b[^>]*>[\s\S]*?<\/\1\s*>|<!--[\s\S]*?-->/gi;
 const choicesBlock = () => /<choices>\s*([\s\S]*?)\s*<\/choices>/g;
-const requestTag = () => /<(team|component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*([\s\S]*?)\s*<\/\1>/g;
+const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*([\s\S]*?)\s*<\/\1>/g;
 const pluginTag = () => /<plugin>\s*([\s\S]*?)\s*<\/plugin>/g;
 const folderTag = () => /<need-folder>\s*([\s\S]*?)\s*<\/need-folder>/g;
 const installTag = () => /<install>\s*([\s\S]*?)\s*<\/install>/g;
@@ -240,7 +239,7 @@ export function parseReply(reply: string): Parsed {
   const tagged: BotRequest[] = [];
   take(requestTag, ([kind, name, content]) => {
     const n = trimWS(name!);
-    tagged.unshift(kind === "team" ? { kind: "team", name: n, task: content! } : kind === "new-bot" ? { kind: "newBot", name: n, job: content! } : { kind: "component", name: n, request: content! });
+    tagged.unshift(kind === "new-bot" ? { kind: "newBot", name: n, job: content! } : { kind: "component", name: n, request: content! });
   });
   requests.push(...tagged);
   take(pluginTag, ([request]) => requests.push({ kind: "plugin", request: request! }));
@@ -328,7 +327,6 @@ export function saysNothing(reply: string): boolean {
 /** What the chat says about a request 2.0 cannot act on yet. */
 export function unsupportedRequest(request: BotRequest): string {
   switch (request.kind) {
-    case "team": return `a temporary team ("${request.name}")`;
     case "component": return `a component change ("${request.name}")`;
     case "plugin": return "a change to Botling (a plugin)";
     case "folder": return "access to another folder";

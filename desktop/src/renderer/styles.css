@@ -328,11 +328,6 @@ button { font: inherit; color: inherit; }
 .task-details-sheet > .detail-panel { display: flex; width: 100%; min-height: 0; flex: 1; border: 0; padding: 20px 20px max(20px, env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
 @media (max-width: 860px) { .chat-header { padding-right: 84px; } }
 
-/* The Now card's temporary teams (TaskPanel.swift: a cloud face, the title, minutes). */
-.team-run { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.team-face { width: 22px; height: 22px; flex-shrink: 0; }
-.team-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.team-time { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 
 /* Results (44 pt rows on Theme.bubble, the label and an arrow) and Settled (36 pt rows, ↩ back). */
 .result-list, .settled-list { display: flex; flex-direction: column; gap: 6px; }
@@ -566,28 +561,8 @@ button { font: inherit; color: inherit; }
 .task-event-text { font-size: 12.5px; padding-bottom: 8px; min-width: 0; overflow-wrap: anywhere; }
 .task-event-label { color: var(--faint); font-size: 11px; margin-right: 4px; }
 
-/* Phase 4c: group chats (1.x's GroupRow, GroupForm, GroupPanel). */
-.group-face { flex-shrink: 0; border-radius: 50%; background: var(--chip); color: var(--text); display: inline-flex; align-items: center; justify-content: center; }
-.group-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
-.group-members { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.group-writing { font-size: 12px; color: #8DB5FF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.group-form { width: 360px; display: flex; flex-direction: column; gap: 12px; }
-.group-form h2 { margin: 0; font-size: 15px; }
-.group-name-input { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--ground); color: var(--text); font-size: 13px; outline: none; }
-.group-who { font-size: 12px; color: var(--faint); }
-.group-pick { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-.group-member-pick { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
-.group-member-pick img { width: 20px; height: 20px; }
 .dialog-primary { background: var(--blue); color: #fff; border: 0; border-radius: 8px; padding: 5px 14px; font-size: 13px; cursor: pointer; }
 .dialog-primary:disabled { opacity: 0.45; cursor: default; }
-.group-edit { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
-.group-edit:hover { background: var(--hover); color: var(--text); }
-.group-members-card { gap: 8px; }
-.group-member { display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 2px 0; cursor: pointer; text-align: left; font-size: 13.5px; }
-.group-member img { width: 24px; height: 24px; }
-.group-member-name { flex: 1; }
-.group-member-writing { font-size: 12px; color: #8DB5FF; }
-.group-hint { margin: 4px 0 0; font-size: 12px; color: var(--faint); line-height: 1.45; }
 
 /* The component spec workspace in the right panel (Phase 5a; 1.x's spec panel: 340 pt, wide 560). */
 .spec-panel { width: 340px; flex-shrink: 0; display: flex; background: var(--side); border-left: 1px solid var(--line); }

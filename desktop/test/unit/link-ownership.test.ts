@@ -36,18 +36,6 @@ it('D8 generated preview reply context keeps its own author authority without st
  expect(await c.call({type:'link.authorize',botId:MAIN,url,messageId:guest})).toEqual({result:true,linked:false});
 });
 
-it('E2 user links include group guest/notice lines while components retain exact authorship',async()=>{
- const data=tempDir('e2-group-links'),group=randomUUID().toUpperCase(),guestId=randomUUID(),hostId=randomUUID(),noticeId=randomUUID();mkdirSync(join(data,'groups',group),{recursive:true});writeFileSync(join(data,'groups.json'),JSON.stringify([{id:group,name:'Synthetic group',members:[MAIN,GUEST]}]));
- writeFileSync(join(data,'groups',group,'chat.json'),JSON.stringify([swiftLine({id:guestId,role:'bot',sourceID:GUEST,text:'[guest](file:///guest-group.html)'}),swiftLine({id:hostId,role:'bot',sourceID:MAIN,text:'[main](https://example.org/main-group)'}),swiftLine({id:noticeId,role:'notice',text:'Called into another chat: [notice](file:///notice-group.txt)'}),swiftLine({id:randomUUID(),role:'user',text:'[private](file:///user-private.txt)'})]));
- const c=new CoreHarness(data);running.push(c);
- expect((await c.call({type:'link.authorize',source:'user',botId:group,url:'file:///guest-group.html'})).linked).toBe(true);
- expect((await c.call({type:'link.authorize',source:'user',botId:group,url:'file:///notice-group.txt'})).linked).toBe(true);
- expect((await c.call({type:'link.authorize',source:'user',botId:group,url:'file:///user-private.txt'})).linked).toBe(false);
- expect((await c.call({type:'link.authorize',botId:group,url:'file:///notice-group.txt',messageId:guestId})).linked).toBe(false);
- expect((await c.call({type:'link.authorize',botId:group,url:'https://example.org/main-group',messageId:guestId})).linked).toBe(false);
- expect((await c.call({type:'link.authorize',botId:group,url:'file:///guest-group.html',messageId:guestId})).linked).toBe(true);
-});
-
 it('F6 legacy pins inherit their pin bot author without borrowing guest links',async()=>{
  const data=tempDir('legacy-pin'),pin=randomUUID().toUpperCase();mkdirSync(join(data,'main'));writeFileSync(join(data,'main/pins.json'),JSON.stringify([{id:pin,name:'todo',data:'{}',refresh:'manual',minutes:15,size:'2x2',makingLive:false}]));writeFileSync(join(data,'main/chat.json'),JSON.stringify([swiftLine({id:randomUUID(),role:'bot',text:'[own](https://example.org/pin-own)'}),swiftLine({id:randomUUID(),role:'bot',sourceID:GUEST,text:'[guest](https://example.org/pin-guest)'})]));const c=new CoreHarness(data);running.push(c);
  expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-own'})).linked).toBe(true);expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-guest'})).linked).toBe(false);

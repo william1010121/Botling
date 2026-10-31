@@ -59,6 +59,5 @@ export function webSnapshot(snapshot: ResultOf<'chat.snapshot'>) {
       chatAvatarSize: settings.chatAvatarSize, messageColumnWidth: settings.messageColumnWidth, rightPanelCollapsed: settings.rightPanelCollapsed,
       railCollapsed: settings.railCollapsed, pinnedBots: settings.pinnedBots } : undefined,
     waiting: snapshot.waiting,
-    teams: snapshot.teams,
   };
 }

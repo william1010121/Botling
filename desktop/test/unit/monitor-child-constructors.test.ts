@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { ClaudeHead, type HeadConfig } from "../../src/core/agent/head";
-import { TeamDesk, DEFAULT_TEAMS } from "../../src/core/teams";
 import { tempDir } from "../helpers";
 const base: HeadConfig = { command: "/never-launch", cwd: "/tmp", sessionId: "owner", resume: false, allowedTools: ["Monitor"], monitorWorker: false };
 const heads: ClaudeHead[] = [];
@@ -16,16 +15,6 @@ function decision(head: ClaudeHead) {
   return (write.mock.calls.at(-1)![0] as any).response.response;
 }
 afterEach(() => { heads.length = 0; vi.restoreAllMocks(); });
-it("standalone teams override inherited coordinator identity before any Monitor hook", async () => {
-  mockTransport();
-  const desk = new TeamDesk({ root: tempDir("monitor-team"), config: () => ({ ...base }), language: () => "en", results: () => "local",
-    teams: () => [{ ...DEFAULT_TEAMS[0], tools: ["Monitor"] }], tell() {}, changed() {}, log() {} } as any);
-  try {
-    expect(desk.start(DEFAULT_TEAMS[0].name, "authorized task")).not.toBeNull();
-    expect(heads[0].config.monitorWorker).toBe(true);
-    expect(decision(heads[0])).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
-  } finally { await desk.shutdown(); }
-});
 it("missing head ownership fails closed; an explicitly trusted coordinator keeps its normal permissions", () => {
   const handlers = { onItem() {}, onExit() {} };
   expect(decision(new ClaudeHead({ ...base, monitorWorker: undefined }, handlers))).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });

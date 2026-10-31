@@ -134,37 +134,13 @@ test("the left column: pin a bot to the top, search it (⌘K), fold it into a st
   }
 });
 
-test("a group chat: New group, everyone answers in turn under their own names, @name one of them, delete it", async () => {
-  const dataDir = tempDir("e2e-4c-group");
-  const { app, page, chat } = await launch({ dataDir });
+test("the left column has no New group entry any more", async () => {
+  const { app, page } = await launch({ dataDir: tempDir("e2e-4c-nogroup") });
   try {
     await page.setViewportSize({ width: 1280, height: 820 });
-    await page.getByRole("button", { name: "New group" }).click();
-    const form = page.getByRole("form", { name: "New group" });
-    await expect(form.getByRole("button", { name: "Create" })).toBeDisabled();
-    await form.getByRole("textbox", { name: "Group name" }).fill("Desk");
-    await form.getByRole("checkbox", { name: "Main bot" }).check();
-    await form.getByRole("checkbox", { name: "Maintainer" }).check();
-    await form.getByRole("button", { name: "Create" }).click();
-    const row = page.locator('.group-row');
-    await expect(row).toHaveClass(/selected/);
-    await expect(row.locator(".group-members")).toHaveText("Main bot, Maintainer");
-    await expect(page.locator(".detail-panel .group-member-name")).toHaveText(["Main bot", "Maintainer"]);
-    await expect(chat.getByRole("textbox", { name: "Message" })).toBeVisible();
-    // Everyone in turn: the main bot (the front desk) answers; Maintainer says PASS (nothing shows).
-    await say(chat, "hello all");
-    await expect(chat.locator(".row.bot[data-id]", { hasText: "Main bot here: hello all" })).toBeVisible();
-    // @Maintainer: only Maintainer.
-    await say(chat, "@Maintainer which components do we have?");
-    await expect(chat.locator(".row.bot[data-id]", { hasText: "Maintainer here: @Maintainer which components do we have?" })).toBeVisible();
-    await expect(chat.locator(".row.bot[data-id]")).toHaveCount(2);
-    await shot(page, "phase4c-group");
-    // Delete it from its row's menu: its conversation goes.
-    await row.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Delete group…" }).click();
-    await page.getByRole("alertdialog").getByRole("button", { name: "Delete group" }).click();
+    await expect(page.getByRole("button", { name: "New bot" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "New group" })).toHaveCount(0);
     await expect(page.locator(".group-row")).toHaveCount(0);
-    expect(JSON.parse(readFileSync(join(dataDir, "core", "groups.json"), "utf8"))).toEqual([]);
   } finally {
     await app.close();
   }

@@ -122,9 +122,9 @@ async function panel(tasks: TaskView[], selectedTask: string | null, status = { 
   const root = createRoot(host);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   await act(async () => root.render(createElement(RightPanel, {
-    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status, results: [], teams: [], watching: null,
+    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status, results: [], watching: null,
     tasks, messages: [], selectedTask, collapsed: false,
-    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
   } satisfies RightPanelProps)));
   return { host, done: async () => { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; } };
 }

@@ -23,9 +23,9 @@ async function mount() {
   const root = createRoot(host);
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   await act(async () => root.render(createElement(RightPanel, {
-    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], teams: [], watching: null,
+    bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null,
     tasks: [task], messages: [], selectedTask: "t1", collapsed: false,
-    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
   } satisfies RightPanelProps)));
   return { host, done: async () => { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; } };
 }

@@ -34,8 +34,6 @@ export interface SpecDeskDeps {
   maintainerBot: () => Bot | null;
   /** A bot by id (the one that said a line in a chat not its own). */
   member: (id: string) => Bot | null;
-  /** Whether `bot` is a group's chat (no one bot behind its lines). */
-  isGroup: (bot: Bot) => boolean;
   /** The bots a component can go to (`botsWithComponents`, Maintainer left out). */
   bots: () => Bot[];
   /** The panel's spec changed, opened or closed. */
@@ -553,8 +551,6 @@ export class SpecDesk {
     const reply = chat.lines().find((line) => line.id === spec.messageID);
     if (!reply) return;
     const writer = this.writerOf(reply, chat);
-    // A group's own line has no one bot behind it.
-    if (this.deps.isGroup(writer)) return;
     const pages = replyPages(reply, spec.page ?? null).map((page) => page.path);
     const request = fillRequest(spec, name, { text: reply.text, when: shortTime(reply.date, this.deps.clock()), preview: previewOf(reply) }, pages, this.library.catalog([name]));
     const writerName = this.name(writer);

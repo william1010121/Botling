@@ -23,7 +23,7 @@ const client={request:async(cmd:any)=>{
  throw Error('Unexpected fixture command');
 }} as unknown as Client;
 createRoot(document.getElementById('root')!).render(createElement(RightPanel,{
- bot,bots:[bot],waiting:{items:[],doing:{}},look:'original',status:{key:'idle',text:'Idle'},results:[],teams:[],watching:null,tasks:[],messages:[],selectedTask:null,collapsed:false,
- onSelectTask(){},onJumpToTask(){},onAskForReport(){},onCompleteTask(){},onEditGroup(){},onSelect(){},onIgnore(){},onOpenResult(){},onOpenSubagent(){},onUnsettle(){},onSettings(){},onCloseSettings(){},onExpand(){},
+ bot,bots:[bot],waiting:{items:[],doing:{}},look:'original',status:{key:'idle',text:'Idle'},results:[],watching:null,tasks:[],messages:[],selectedTask:null,collapsed:false,
+ onSelectTask(){},onJumpToTask(){},onAskForReport(){},onCompleteTask(){},onSelect(){},onIgnore(){},onOpenResult(){},onOpenSubagent(){},onUnsettle(){},onSettings(){},onCloseSettings(){},onExpand(){},
  showingSettings:true,settingsPage:createElement(BotSettings,{client,bot}),
 }));

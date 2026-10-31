@@ -81,7 +81,6 @@ function reactions(message: MessageView): WebMessage["reactions"] {
 }
 
 export function placeholder(bot: BotView): string {
-  if (bot.role === "group") return "Message everyone, or @name one bot…";
   return bot.role === "main" ? "Make a wish, or ask how things are going…" : `Message ${bot.name}…`;
 }
 
@@ -171,12 +170,7 @@ const OFFERED = ["6A0B0000-0000-4000-8000-000000000002", "DEC0DE00-0000-4000-800
 
 /** The bots you can @ in `bot`'s chat (`callInView`): the main bot and Maintainer first, then every other bot. */
 export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[]; allMentions: string[] } {
-  // In a group, @ names its members (`group.names`).
-  if (bot.role === "group") {
-    const names = (bot.members ?? []).map((id) => bots.find((other) => other.id === id)?.name).filter((name): name is string => !!name);
-    return { mentions: names, allMentions: names };
-  }
-  const callable = bots.filter((other) => other.id !== bot.id && other.role !== "group");
+  const callable = bots.filter((other) => other.id !== bot.id);
   const first = callable.filter((other) => OFFERED.includes(other.id));
   const rest = callable.filter((other) => !OFFERED.includes(other.id));
   return { mentions: first.map((other) => other.name), allMentions: [...first, ...rest].map((other) => other.name) };
@@ -277,7 +271,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     working: runs.length > 0 || !!answering,
     // Codex waiting to try a refused request again: the typing bubble says so (`retry-note`).
     retrying: runs.length > 0 && bot.codexRetry ? { ...bot.codexRetry } : null,
-    waitingForWorkers: bot.role !== "group" && runs.length === 0 && !answering && bot.subagents > 0,
+    waitingForWorkers: runs.length === 0 && !answering && bot.subagents > 0,
     avatar: answering ? (look === "cute" ? faceURL(answering, "cute", { working: true }) : avatarURL(answering.avatar, "open"))
       : look === "cute" ? faceURL(bot, "cute", { engine: activeHead, working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
     ...(bots.length ? mentionNames(bot, bots) : {}),
