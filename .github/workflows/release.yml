@@ -57,6 +57,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:reports
+      - run: npx playwright-core install chromium-headless-shell
       - run: npm run test:web-isolation
       # Apple code signing is ad-hoc; no Developer ID/notarization is claimed.
       # Ed25519 update signing below is mandatory and independent of Apple signing.

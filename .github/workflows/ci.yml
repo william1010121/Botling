@@ -77,4 +77,5 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
       - run: npm run test:reports
+      - run: npx playwright-core install chromium-headless-shell
       - run: npm run test:web-isolation
