@@ -22,7 +22,7 @@ function fixture(extra = {}) {
   writeFileSync(file, JSON.stringify([question]));
   const events: any[] = [];
   const open = () => new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit(event) { events.push(event); }, deferStartup: true,
-    routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0, oneX: { folder: null, process: /never/ } });
+    routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
   return { file, question, events, open };
 }
 const botOf = (core: Core): any => (core as any).bot(PROJECT);

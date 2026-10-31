@@ -6,7 +6,7 @@
 //   run since (bot.json `routineRuns`, 1.x's key); a job seen for the first time starts from now.
 // - `scheduled-routines.json` beside it: app-owned schedules (Codex's `app_routines` tool and the
 //   app's own UI): once (`at`, an instant) or recurring (`cron` in an IANA time zone). Each change is
-//   a short locked read/modify/atomic-write transaction (durable/atomic.ts, as Phase 0's JobStore);
+//   a short locked read/modify/atomic-write transaction (durable/atomic.ts, as Phase 0's removed JobStore);
 //   persistence precedes dispatch: a job is written `claimed` before it is handed to the bot and
 //   `fired`/`pending` after, so a crash in between leaves it `claimed` — shown as
 //   `delivery_uncertain` and never sent again. Corrupt state is reported, never read as empty.
@@ -16,8 +16,7 @@
 //
 // The file format is 1.x's (Swift JSONEncoder: dates as seconds since 2001-01-01, nil keys left
 // out), so either app can read the other's file. 2.0 locks with its own lock file
-// (`scheduled-routines.json.botling2.lock`, not 1.x's flock): the project lock (store/lock.ts)
-// keeps the two apps from working on one bot at once.
+// (`scheduled-routines.json.botling2.lock`, not 1.x's flock).
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";

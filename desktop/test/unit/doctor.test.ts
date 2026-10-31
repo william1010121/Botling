@@ -114,7 +114,7 @@ describe("Doctor parity with the Swift CLI self-check", () => {
     const emitted: Outbound[] = [];
     const latest = vi.fn(async () => null);
     const doctor = new Doctor({ locate: () => null, latest });
-    const core = new Core({ dataDir: tempDir("doctor-core"), doctor, headConfig: (_profile, session) => ({ command: process.execPath, cwd: tempDir("doctor-head"), sessionId: session.sessionId, resume: false, allowedTools: [] }), emit: message => emitted.push(message), deferStartup: true, routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0, oneX: { folder: null, process: /never/ } });
+    const core = new Core({ dataDir: tempDir("doctor-core"), doctor, headConfig: (_profile, session) => ({ command: process.execPath, cwd: tempDir("doctor-head"), sessionId: session.sessionId, resume: false, allowedTools: [] }), emit: message => emitted.push(message), deferStartup: true, routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
     const call = async (cmd: unknown) => {
       const id = `doctor-${emitted.length}`;
       await core.receive({ v: PROTOCOL_VERSION, id, cmd });

@@ -157,8 +157,6 @@ export interface PageLook { lang?: string | null; chatAvatarSize?: number | null
 
 /** The app's / commands (`SlashCommands.all`); the bots' rules say what each means. */
 export const SLASH_COMMANDS = [{ name: "design", about: "Make a Claude Design and get its claude.ai link" }];
-/** Developer mode only, in the developer project's chat: the app answers it (`SlashCommands.share`). */
-export const SHARE_COMMAND = { name: "share", about: "Share a feature you built: check it, then open a pull request to Botling" };
 
 /** A bot's own components first in the / menu; a chat without a list (a group) has them all. */
 export function slashLists(bot: BotView, names: string[]): { slashComponents: string[]; slashLibrary: string[] } {
@@ -185,7 +183,7 @@ export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[
 }
 
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
-  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [], feedback = false, share = false }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean; share?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
+  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [], feedback = false }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   // A line another bot said here (called in with @): its name and face (`speaker`).
   const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
@@ -267,7 +265,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
         component: chip.component, display: chip.display ? displayView(chip.display) : null, filling: chip.filling })) : null,
       component: message.component ?? null,
       feedback: message.feedback ?? null,
-      completionVerification: message.completionVerification ? { ...message.completionVerification, verdict: message.completionVerification.verdict as never } : null,
     };
   });
   // Another bot answering here (called in with @) while the chat's own bot is not at work: its typing bubble.
@@ -300,7 +297,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
         retrying: head === "codex" ? bot.codexRetry ?? null : null };
     }) } : {}),
     // The / menu: the app's commands, then the bot's own components, then the rest of the library (`ChatPayload`).
-    slashCommands: share ? [...SLASH_COMMANDS, SHARE_COMMAND] : SLASH_COMMANDS,
+    slashCommands: SLASH_COMMANDS,
     ...slashLists(bot, Object.keys(components).sort()),
     ...headsParts(chat.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).

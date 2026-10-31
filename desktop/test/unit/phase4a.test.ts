@@ -238,7 +238,7 @@ describe("settings (AppSettings.swift's keys)", () => {
     expect(empty).toMatchObject({
       language: null, effectiveLanguage: "en", botLook: "cute", chatAvatarSize: null, catchUpEnabled: true, intervalSummaryEnabled: false,
       thresholdsCustomized: false, catchUpThreshold: 3, intervalSummaryThreshold: 3, catchUpModel: "gpt-6-luna", summaryPrompt: null,
-      completionVerification: false, completionVerificationModel: "gpt-6-luna", subagentModel: null, subagentHourCache: false,
+      subagentModel: null, subagentHourCache: false,
       codexWorkersFollow: true, codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: "sonnet",
       resultPublishing: "artifactUnlessSensitive", stallReminderMinutes: 15,
     });

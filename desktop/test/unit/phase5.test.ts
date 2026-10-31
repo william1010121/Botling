@@ -15,10 +15,6 @@ import {
   fieldsFromJSON, filledData, fillRequest, firstBuildRequest, lastCommand, outputMatches, pageText, parseFields, purposeLine, replyPages, sayRequest, shortTime, slug,
   specSummary, tagNote, updateSpec, type ComponentSpec,
 } from "../../src/core/specs";
-import {
-  CLASSIFIER_PROMPT, FOLLOW_UP, JUDGE_MODEL, JUDGMENT_SCHEMA, TERMINAL_FOLLOW_UP, classifierArguments, classifierMessage, hasLiveWorkerOwner, parseVerdict, review,
-  turnEnd, wakeupId, type TurnEnd,
-} from "../../src/core/promise-check";
 import { tempDir } from "../helpers";
 
 const golden = JSON.parse(readFileSync(join(__dirname, "..", "fixtures", "phase5-golden.json"), "utf8"));
@@ -167,52 +163,5 @@ describe("component specs (ComponentSpec.swift): drafts, edits, Maintainer's upd
     expect(purposeLine(plain, "Shop")).toBe(R.purposeNone);
     expect(COMPONENT_ACTIONS.map((action) => actionHeader(action, "ID"))).toEqual(R.headers);
     for (const { answer, data, problem } of S.fills) expect([answer, filledData(answer, "test-board")]).toEqual([answer, data !== undefined ? { data } : { problem }]);
-  });
-});
-
-describe("the completion judge (PromiseCheck.swift)", () => {
-  const C = golden.more.completion;
-  const ends = (): [string, TurnEnd][] => {
-    const plain = turnEnd({ reply: "Done: the parser is faster. See /tmp/a/b.", workPending: false, task: "Make the parser faster", conversation: "[user] Make the parser faster",
-      actions: ["Bash: Run; input: npm test; done: true; failed: false; output: ok"], memory: "## Current status\n", evaluatedAt: "2026-10-25T04:00:00Z", timeZone: "UTC" });
-    const workers: TurnEnd = { ...plain, workPending: true, terminalRequired: true, signals: [{ kind: "end", evidence: "merged abc123" }], completed: ["Task: old\nReported complete: merged"],
-      workerDependencies: [{ id: "w1", run: 1, task: "長".repeat(1500), state: "running", callback: "app_task_result", taskTruncated: false }, { id: "w2", run: 2, task: "report", state: "reportQueued", outcome: "completed", taskTruncated: false }],
-      scheduledWakeups: [{ id: wakeupId("routine:r1"), task: "Check again", fireAt: new Date(1_792_900_000_000).toISOString().replace(".000", ""), callback: "app_routine", taskTruncated: false },
-        { id: "s2", task: "Past", fireAt: new Date(1_700_000_000_000).toISOString().replace(".000", ""), callback: "session_wakeup", taskTruncated: false }] };
-    const long: TurnEnd = { ...plain, reply: "r".repeat(7000), task: "t".repeat(13000), conversation: "c".repeat(13000),
-      dependencies: Array.from({ length: 30 }, (_, i) => `dep ${i} ` + "d".repeat(1300)), actions: Array.from({ length: 15 }, (_, i) => `act ${i} ` + "a".repeat(1700)) };
-    const huge: TurnEnd = { ...plain, conversation: "中文".repeat(6000), memory: "記".repeat(6000), reply: "答".repeat(6000), task: "務".repeat(12000),
-      dependencies: Array.from({ length: 24 }, () => "依".repeat(1200)), actions: Array.from({ length: 12 }, () => "動".repeat(1600)) };
-    return [["plain", plain], ["workers", workers], ["long", long], ["huge", huge]];
-  };
-
-  it("its instructions, schema and arguments are 1.x's", () => {
-    expect(FOLLOW_UP).toBe(C.followUp);
-    expect(TERMINAL_FOLLOW_UP).toBe(C.terminalFollowUp);
-    expect(CLASSIFIER_PROMPT).toBe(C.classifierPrompt);
-    expect(JUDGMENT_SCHEMA).toBe(C.schema);
-    expect(JUDGE_MODEL).toBe(C.judgeModel);
-    expect(wakeupId("routine:r1")).toBe(C.wakeupID);
-    expect(classifierArguments("THE MESSAGE", "/tmp/judge", "gpt-x")).toEqual(C.arguments);
-  });
-
-  it("the evidence record, bounded as 1.x bounds it; the reviews; the parsing", () => {
-    const made = ends();
-    for (const { end, message, live } of C.messages) {
-      const turn = made.find(([label]) => label === end)![1];
-      expect([end, JSON.parse(classifierMessage(turn))]).toEqual([end, JSON.parse(message)]);
-      expect([end, classifierMessage(turn)]).toEqual([end, message]);
-      expect([end, hasLiveWorkerOwner(turn)]).toEqual([end, live]);
-    }
-    for (const entry of C.reviews) {
-      const turn = made.find(([label]) => label === entry.end)![1];
-      const reviewed = review({ verdict: entry.verdict, reason: entry.verdict === "COMPLETE" ? "done" : entry.verdict === "WAITING_USER" ? "needs key" : entry.verdict === "UNKNOWN" ? "unclear" : entry.verdict === "WAITING_TIMER" ? (entry.wakeupID === "s2" ? "past" : "cooldown") : entry.verdict === "WAITING_DEPENDENCY" ? "w1 owns it" : "more", wakeupID: entry.wakeupID }, turn);
-      expect([entry.end, entry.verdict, reviewed.verdict, reviewed.reason]).toEqual([entry.end, entry.verdict, entry.reviewed, entry.reason]);
-    }
-    for (const entry of C.parses) {
-      let parsed: unknown;
-      try { const judgment = parseVerdict(entry.text); parsed = { verdict: judgment.verdict, reason: judgment.reason, wakeupID: judgment.wakeupID ?? null }; } catch { parsed = "failed"; }
-      expect([entry.text, parsed]).toEqual([entry.text, entry.failed ? "failed" : { verdict: entry.verdict, reason: entry.reason, wakeupID: entry.wakeupID }]);
-    }
   });
 });

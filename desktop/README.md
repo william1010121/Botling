@@ -6,7 +6,7 @@ Status: **Phase 0 spikes done on macOS; Phase 1b done: several bots with 1.x-com
 read-only 1.x import, a long-lived claude head per bot with approvals, and a React shell hosting the
 reused Web/src chat page. Phase 2a done: 1.x's generated instructions (checked string for string
 against the Swift code), sleep/wake/tidy as 1.x, steering a running reply, the reply tags (choices,
-no-reply, task cards, reactions), Agent-tool subagents, the chat archive and a project lock. Phase 2b
+no-reply, task cards, reactions), Agent-tool subagents, the chat archive. Phase 2b
 done: a Codex head (`codex app-server`, as a coordinator with app-managed workers), and Claude and
 Codex as two heads of one bot (claim, hand-offs with their budgets, shared decisions), with the
 Codex prompts checked string for string against the Swift code. Phase 3a done: two-head timing as
@@ -31,7 +31,7 @@ app's engine defaults, `<need-folder>`, @ call-ins and bots' @, group chats (the
 string for string against the Swift code), the right panel's Tasks list, pinned bots, the left
 column's search (⌘K) and fold, and the root causes of two e2e flakes. Phase 5a done: Maintainer's rest
 (component specs and `<suggest-component>`, a card's reports, Revert from the library's git, component
-shots, the `/` component menu and its mention note), the Phase 4c leftovers, completion verification,
+shots, the `/` component menu and its mention note), the Phase 4c leftovers,
 the "not right" feedback relay, and Codex's worker return routes, model list and model switching. Phase 5b
 done (macOS): electron-builder makes a runnable arm64 `.app`, zip and DMG with Electron's fuses hardened, ad-hoc
 signed (ready for a Developer ID and notarization from the environment), test-only variables ignored, the
@@ -118,9 +118,7 @@ tests never read the real folder. Try it on a copy: `BOTLING_IMPORT_FROM=… BOT
 Other knobs (all optional): `BOTLING_APPROVAL_TIMEOUT_MS` (default 10 min, as 1.x),
 `BOTLING_IDLE_MS` (a head tidies and sleeps after 30 min idle), `BOTLING_TIDY_TIMEOUT_MS` (the tidy
 turn's limit, 5 min), `BOTLING_QUIT_TIDY_MS` (how long an awake bot may tidy when the app quits; unset: no limit, as
-in 1.x; 0: no tidy), `BOTLING_1X_DIR` (1.x's data folder, to see whether 1.x has a project open; packaged
-builds use `~/.claudecodebot`, development runs only what this names), `BOTLING_1X_PROCESS` (a regex
-for 1.x's command line, default `…/Contents/MacOS/botling`), `BOTLING_LANGUAGES` (system languages,
+in 1.x; 0: no tidy), `BOTLING_LANGUAGES` (system languages,
 set by main, for the reply language when settings.json names none), `BOTLING_INTERRUPT_GRACE_MS` (how long Stop
 waits for claude before ending the tree, 2 s), `BOTLING_HARMLESS=0` (real tools, CLAUDE.md, MCP and
 saved sessions in `npm run dev`), `BOTLING_HARMLESS_TOOLS=Bash` (tools that exist in harmless mode),
@@ -211,7 +209,7 @@ three messages; `FAKE_CODEX_EXEC_LOG`, `FAKE_CODEX_EXEC_FAIL=1`, `FAKE_CODEX_EXE
 │ Core: validates again, routes by bot · first start: read-only import of a 1.x folder            │
 │ Bot (bot.ts), one per bot: chat.json/bot.json/tasks.json/subagents.json in 1.x's format ·       │
 │   one turn at a time (steered) · approvals · reply tags (reply.ts) · tasks.ts · subagents.ts ·    │
-│   prompts.ts + briefing.ts (Prompts.swift, wake/tidy, archive) · store/lock.ts (project lock)     │
+│   prompts.ts + briefing.ts (Prompts.swift, wake/tidy, archive) ·                                 │
 │   ClaudeHead (agent/head.ts): one long-lived `claude -p --input-format stream-json` per bot,     │
 │   own process group, --session-id then --resume, --permission-prompt-tool stdio; stream.ts parses│
 │   or CodexHead (agent/codex.ts): one `codex app-server` per bot (CodexSession = the protocol),    │
@@ -220,7 +218,7 @@ three messages; `FAKE_CODEX_EXEC_LOG`, `FAKE_CODEX_EXEC_FAIL=1`, `FAKE_CODEX_EXE
 │   heads.ts: hand-off tags, the Conductor (budgets, hand-backs, the limit card), notes            │
 │ routines.ts (routines.cron + scheduled-routines.json, the 30 s clock) · catchup.ts (summaries)   │
 │ components/ (library, commands after Allow, pins, pictures by token) · agent/monitors.ts         │
-│ ProcessLedger: ends heads a crashed core left · durable/ (atomic files, locks; JobStore spike)  │
+│ ProcessLedger: ends heads a crashed core left · durable/ (atomic files, locks)  │
 │ plugins/ (registry, sealed secrets, host client) · maintainer.ts (Maintainer's desk, installs)   │
 └──────────────┬───────────────────────────────────────────────────────────────────────────────────┘
                │ JSON-RPC lines on stdio, every message checked (host-client.ts)
@@ -431,18 +429,7 @@ Plan for the real implementation:
    `claude.cmd`/`.exe` resolution (no `shell: true`), paths with spaces, and Defender-held files for
    the atomic rename retry in `atomic.ts`.
 
-**5 — Durable jobs.** `JobStore` (JSON + `writeFileAtomic` + `withFileLock`, portable Node, no
-`flock`): `pending → claimed (persisted before dispatch) → delivered`; a claim whose core is gone
-becomes `delivery_uncertain` at the next start and is never re-sent; only the claiming run can
-confirm delivery. With real processes and SIGKILL: killed after claim → that job uncertain, the
-rest delivered once; killed between deliver and confirm → delivered exactly once, marked
-uncertain; three cores racing over 60 jobs → each delivered exactly once; a writer killed at 15
-random moments never left a torn file; a dead holder's lock is broken, a live one's respected; an
-unreadable store is reported, never treated as empty. *Not covered:* sleep/resume, DST and cron
-(the Swift `ScheduledRoutines` semantics still need porting), network filesystems, Windows
-(`rename` over an open file), pid reuse beyond the start-time check. Phase 3a's routines use the same
-atomic files and locks with 1.x's scheduled-routines.json and its claim → dispatch → fired contract
-(`core/routines.ts`); the JobStore class itself stays a spike.
+**5 — Durable jobs.** The Phase 0 `JobStore` spike is removed (nothing used it); `durable/atomic.ts` (`writeFileAtomic`, `withFileLock`) stays, and Phase 3a's routines use those atomic files and locks with 1.x's scheduled-routines.json and its claim → dispatch → fired contract (`core/routines.ts`).
 
 ## Phase 1b: what was built and how it was checked
 
@@ -514,7 +501,6 @@ nothing from it is committed.
 | Sleep/wake/tidy | After `idleMs` with nothing under way (no turn, approval, waiting message, running subagent) the tidy turn runs (hidden, approvals refused), then stdin is closed; the next message starts a **new session** whose first message is wake line + recent lines + reactions intro + the words (1.x's order). The app starting is a wake; quitting tidies awake idle bots (bounded) | `unit/head.test.ts` (tidy text sent, memory file written, new session, exact briefing), `e2e/phase2a.spec.ts` (header "Tidying its notes…", screenshot `tidying.png`) |
 | Steering | A message during a user's reply with no approval open and no subagent at work: the reply so far stays as a cut-off bubble, the two parts go as one (`(I sent this in parts…)`), then `interrupt` (message first, as 1.x); otherwise it waits and goes when the turn ends | `unit/lifecycle.test.ts`, `unit/core.test.ts`, `e2e/phase2a.spec.ts` (`steering.png`), **live**: real claude cut the counting turn and answered both parts in one reply |
 | Subagents (`core/subagents.ts`, `agent/stream.ts`) | TraceBook's rules: Agent/Task calls, `task_started`, lines with `parent_tool_use_id`, structured launch results, `task_notification` (hand-back report, "still waiting"); subagents.json in 1.x's format (40 ended kept); steps carry status and tool count; `subagent.view` + the page's own subagent view (back button); a background one keeps the bot awake; claude's own reporting turn is shown | `unit/stream.test.ts`, `unit/lifecycle.test.ts`, `e2e/phase2a.spec.ts`, screenshots `subagent-running.png`, `subagent-view.png` |
-| Project lock (`core/store/lock.ts`) | A manager takes `<project>/.bot/botling.lock` (pid, start time, host); a live holder elsewhere — or a running 1.x whose projects.json lists the folder — only puts a notice in the chat (1.x has no lock, so the bot keeps working); a dead holder's lock is taken over; tried again on each send | `unit/lifecycle.test.ts` (two cores, stale lock, a 1.x stand-in process), `e2e/phase2a.spec.ts` (`locked-project.png`) |
 | Contract v3 | `chat.answer`, `chat.react`, `subagent.view`, `chat.send.replyTo`, `chat.choose.text`; events `message.removed`, `tasks.updated`, `subagent.updated`; `tidying` phase; step status/count; message reactions/replyTo | `unit/contract.test.ts`, the rest |
 
 Tests: unit 109 (vitest), e2e 19 (Playwright/Electron), all green. Live (real `claude` 2.1.310,
@@ -551,7 +537,6 @@ CCB_DESKTOP_PROMPT_EXPORT=$PWD/desktop/test/fixtures/prompts-golden.json TZ=UTC 
   1.x's "lift tags written before a tool call" is not needed.
 - **Unsupported requests are visible**: rather than silently dropping `<team>`, `<new-bot>`, … a
   notice says nothing happened.
-- **Project lock**: 1.x code is not changed, so 1.x is detected (running app + its projects.json).
   A project bot's chat files stay in 2.0's folder; only `.bot/` (memory, archive) is shared. The
   archive of a project bot is the project's `.bot/archive/` as in 1.x, so both apps' lines can land
   in it (not at the same time).
@@ -625,7 +610,7 @@ only, deleted afterwards.
   shows the reply at the end too); your two messages' task cards join (1.x leaves the first as it was).
 - **Routines run only while the app runs** (decided earlier). 2.0 locks scheduled-routines.json with
   its own lock file (`…botling2.lock`), not 1.x's `flock`; as in 1.x, nothing keeps the two apps off one
-  bot (the project lock only adds a notice). The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
+  bot (there is no project lock). The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
   (2.0 has none of them yet).
 - **No auto mode yet**, so a monitored command always asks (Allow once), as 1.x does without it.
 - **Component commands**: 1.x's approvals model (per folder and command, remembered); 1.x's
@@ -757,7 +742,7 @@ Tests after item 5: unit 283, e2e 38, typecheck, all green (the full e2e suite f
   own; the Phase 3b decision (panels only) is superseded. The chat origin serves a plugin's files only
   when its manifest names them.
 - **Settings keep 1.x's keys** in settings.json and bot.json; settings 2.0 cannot act on yet
-  (completion verification, reminders) are kept and shown, not used. The contract stayed at v7 for them.
+  (reminders; the removed completion-verification keys stay in the file untouched) are kept and shown, not used. The contract stayed at v7 for them.
 - **A project is added only by you**: the page cannot name a folder (`projects.add` is not a renderer
   command); "Add project" goes through main's picker, `<new-project>` through a card you answer.
 - **An inbox is emptied only after its bot took the text** (1.x empties it first): a bot that cannot
@@ -865,7 +850,6 @@ CCB_DESKTOP_GROUPS_EXPORT=$PWD/desktop/test/fixtures/groups-golden.json TZ=UTC \
 | Reports and Revert (`maintainer.ts`, `main.ts`) | A card's ⋯ "Report a problem…" and change requests go to Maintainer as 1.x words them (where the card is, how it refreshes, when its data is from), with the card's screenshot (main captures it) and pasted pictures as the relay's attachments; the component shows as being worked on until Maintainer's turn ends; Revert puts back the version before its last change from the plugin library's git (changes not committed are committed first) | `unit/phase5.test.ts` (**6 problem reports equal to Swift's**), `unit/maintainer.test.ts` (**4 relays equal to Swift's**, git log after Revert) |
 | Component specs (`specs.ts`, `spec-desk.ts`, `SpecFrame.tsx`) | 1.x's ComponentSpec + Workspace+Specs: "Make into component" hands Maintainer the first build (`build-first`); its `<component-spec>` fills the spec; the component landing goes on the bots' lists and the bot that wrote the reply draws it under its reply in a quiet turn (`fillRequest`); a bot's `<suggest-component>` is a chip until pressed; "Edit spec" opens the spec panel (Web/src's spec page in the right panel): edits, answers, words (`shape`), Build it, a change built as the next version (`change`), queued words, Test run through the command allow flow, Cancel; specs.json in 1.x's format | `unit/phase5.test.ts` (**drafts of 4 replies, 11 edit/update steps, every request (draft, first build ×2, say ×2, change ×3, build ×2, Board, fill ×2) and fills equal to Swift's**), `unit/specs.test.ts`, `e2e/phase5.spec.ts`, screenshots `phase5a-built.png`, `phase5a-spec-panel.png`, `phase5a-verified-suggested.png` |
 | Component shots (`core/component-shot.ts`, `main/shot.ts`) | `electron <desktop> --component-shot <folder> [--out --data --folder --surfaces --sizes]`: no core, a throwaway profile; the real chat page draws the component in a reply, as Board tiles, opened above the input box and floating (hidden offscreen windows), a probe in each component page measures it; each frame is pictured and judged, a contact sheet and report.json are written, 1.x's summary printed; exit 0/1/2/3. Maintainer's instructions now name this build's command | `unit/shots.test.ts` (**usage, parsing, data, judging and summaries equal to Swift's**), `e2e/shot.spec.ts` (a good and a broken component, a bad folder), screenshot `phase5a-shot-sheet.png` |
-| Completion verification (`promise-check.ts`, `bot.ts`) | 1.x's PromiseCheck: with Settings' toggle on, each finished reply is judged by an isolated, read-only `codex exec` (1.x's arguments and prompt) from a bounded evidence record (authorization, conversation, steps, memory, live Codex workers and monitors, running subagents, routines, end/block signals); the verdict shows under the reply; CONTINUE delivers 1.x's follow-up (twice without progress: paused), NEEDS_TERMINAL_SIGNAL asks for evidence, WAITING_USER says "Blocked: …", UNKNOWN/UNAVAILABLE say so; Stop suspends it | `unit/phase5.test.ts` (**strings, arguments, 4 evidence records byte for byte, 28 reviews, parses equal to Swift's**), `unit/completion.test.ts`, `e2e/phase5.spec.ts` |
 | "Not right" feedback (`feedback.ts`, `server.ts`, Settings → Developer) | Developer mode with Botling's source project: replies get the flag; the report goes to that project as 1.x writes it, with the chat as you saw it (main captures the frame) and your pictures; feedback.md keeps every report; the relay shows short | `unit/feedback.test.ts` (**the report equal to Swift's**) |
 | Codex parity | Worker return routes: work handed to Codex that it gives a worker goes back with the worker's report (`managedTaskHandoffs`); the Codex model menu from `codex app-server`'s `model/list` (once per run); switching Claude's model, effort, subagents' model or Codex's model: awake heads go on in the same session before their next message ("Restarted → Opus", told so), asleep "Switched to …" | `unit/two-heads.test.ts`, `unit/switching.test.ts` |
 
@@ -882,16 +866,13 @@ CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
 ### Decisions (Phase 5a)
 
 - **No brief from a copy of the writer's session** (1.x's ComponentBrief forks the session): Maintainer's
-  first build goes without one, as 1.x does when there is no session.
+  first build goes without one, as 1.x does when there is no session. (Phase 5c added the fork; it was removed again in 2.1.0 as unused, so the reply goes straight to Maintainer.)
 - **A component that lands before Maintainer names it in `<component-spec>` finishes the build** (1.x would
   wait for its template to change again: the editor's work usually comes before Maintainer's answer).
 - **Specs from result-page preview cards** were deferred here; implemented in Phase 5c below.
 - **The spec panel takes the right panel's place** while its chat is shown (340 pt, wide 560).
 - **The column follows 1.x**: the main bot, Maintainer, the pinned rows, then groups, projects and bots with
   the newest line first (Phase 4c had Maintainer last and no sorting).
-- **Completion verification**: the hand-back of handed work is not held until the judgment (1.x holds it);
-  paused handed work and the judge's state are not merged (1.x's `pausedCompletionContext`); a background
-  command chip is not a dependency (2.0 has none); otherwise 1.x's rules and strings.
 - **Developer mode is only the feedback relay**: the developer briefing, build installs and app screenshots
   are not ported; the setting keeps 1.x's keys (`developerMode`, `developerProjectID`).
 - **A model switch while awake restarts in the same session before the next message** and tells the head

@@ -5,9 +5,6 @@
 // "Edit spec" opens the spec in the right panel, where the user and Maintainer change it; once built,
 // what the user types there is a change built as its next version. A command (Test run, the component's
 // Command) runs only once the user allows it, as for any component card; nothing runs by itself.
-//
-// Since Phase 5c the first build waits for a brief from a copy of the writer's session (`ComponentBrief`,
-// component-brief.ts) when claude still has that session.
 import type { Bot, GuestAnswer } from "./bot";
 import type { Clock } from "./briefing";
 import type { ComponentCommands } from "./components/commands";
@@ -15,7 +12,6 @@ import { BUILT_INS, type ComponentLibrary } from "./components/library";
 import type { ComponentInfoView, DisplayView, SpecChipView, SpecStateView } from "../contract";
 import type { MaintainerDesk } from "./maintainer";
 import { preview as previewOf } from "./bot";
-import { briefRequest } from "./component-brief";
 import { pageOfCard } from "./page-preview";
 import {
   answerOpenQuestions, answerQuestion, buildRequest, changeRequest, clip, draftRequest, draftSpec, editSpecValue, filledData, fillRequest, firstBuildRequest,
@@ -47,13 +43,6 @@ export interface SpecDeskDeps {
   /** The library's working state changed. */
   componentsChanged: () => void;
   clock: () => Clock;
-  /**
-   * Writes the brief for a reply (`briefWriter`): a fork of `bot`'s claude session `session` asked
-   * `prompt`; null: none. Unset: no brief, the request goes at once.
-   */
-  brief?: (job: { bot: Bot; session: string; prompt: string }) => Promise<string | null>;
-  /** Whether claude still has `session`, started in `folder` (`sessionExists`). */
-  sessionExists?: (session: string, folder: string) => boolean;
   log: (line: string) => void;
   timing?: typeof FILL_TIMING;
 }
@@ -151,51 +140,23 @@ export class SpecDesk {
     const spec = this.spec(chat, id);
     if (!spec || !SpecDesk.unstarted(spec)) return;
     const writer = spec.bots[0] ?? this.name(chat);
-    const message = chat.lines().find((line) => line.id === spec.messageID);
-    const fork = message ? this.briefJob(message, chat) : null;
     spec.status = "building";
     spec.asked = true;
-    spec.conversation.push({ kind: "event", text: fork ? `Asked a copy of ${fork.name}'s session for a brief for Maintainer` : "Sent to Maintainer to build the first version" });
+    spec.conversation.push({ kind: "event", text: "Sent to Maintainer to build the first version" });
     this.store(spec, chat);
     const had = this.library.names.includes(spec.name);
     this.builds.set(spec.name, { chat: chat.id, spec: id, version: had ? this.library.versionOf(spec.name) : null, before: [...this.library.names] });
     this.markWorking(spec.name, "built from a reply");
-    const write = this.deps.brief;
-    if (!fork || !write) { this.sendFirstBuild(id, null, chat, writer); return; }
-    void write(fork.job).catch(() => null).then((brief) => this.takeBrief(brief, id, chat, writer, fork.name));
+    this.sendFirstBuild(id, chat, writer);
   }
 
-  /**
-   * The fork that can write the reply's brief (`briefJob(for:in:)`): the bot that wrote it, the claude
-   * session it wrote it in (when claude still has that transcript), its folder. Null: none.
-   */
-  private briefJob(record: ChatRecord, chat: Bot): { job: { bot: Bot; session: string; prompt: string }; name: string } | null {
-    if (record.role !== "bot" || typeof record.session !== "string" || !record.session || record.engine === "codex") return null;
-    const bot = this.writerOf(record, chat);
-    const folder = bot.profile.folder;
-    if (!this.deps.sessionExists?.(record.session, folder)) return null;
-    const asked = this.askedBefore(record, chat);
-    const prompt = briefRequest({ when: shortTime(record.date, this.deps.clock()), preview: previewOf(record) }, asked, folder);
-    return { job: { bot, session: record.session, prompt }, name: this.name(bot) };
-  }
-
-  /** The fork's brief (or none): kept on the spec, and Maintainer's request goes now. A spec cancelled meanwhile sends nothing (`takeBrief`). */
-  private takeBrief(brief: string | null, id: string, chat: Bot, writer: string, bot: string) {
-    if (!chat.specs.some((spec) => spec.id === id && spec.status === "building")) return;
-    this.edit(chat, id, (spec) => {
-      if (brief === null) delete spec.brief; else spec.brief = brief;
-      spec.conversation.push({ kind: "event", text: brief === null ? `${bot} gave no brief; sent to Maintainer to build the first version` : `Sent to Maintainer with ${bot}'s brief to build the first version` });
-    });
-    this.sendFirstBuild(id, brief, chat, writer);
-  }
-
-  private sendFirstBuild(id: string, brief: string | null, chat: Bot, writer: string) {
+  private sendFirstBuild(id: string, chat: Bot, writer: string) {
     const spec = chat.specs.find((candidate) => candidate.id === id);
     if (!spec) return;
     const record = chat.lines().find((line) => line.id === spec.messageID);
     const asked = record ? this.askedBefore(record, chat) : null;
     this.deps.maintainer.handTo(firstBuildRequest(spec, {
-      reply: record?.text ?? "", pages: record ? replyPages(record, spec.page ?? null) : [], ran: record ? lastCommand(record) : null, asked, brief, bot: writer,
+      reply: record?.text ?? "", pages: record ? replyPages(record, spec.page ?? null) : [], ran: record ? lastCommand(record) : null, asked, bot: writer,
     }));
   }
 

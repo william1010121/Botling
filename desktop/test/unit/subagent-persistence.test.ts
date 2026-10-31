@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { tempDir } from "../helpers";
 import { Bot } from "../../src/core/bot";
 import { drainBots } from "../../src/core/hot-swap";
-import { ProjectLock } from "../../src/core/store/lock";
 import type { CodexItem } from "../../src/core/agent/codex";
 import { BotStore } from "../../src/core/store/bot-store";
 import { readSubagentRows } from "../subagent-disk";
@@ -23,19 +22,17 @@ afterEach(async () => {
 function fixture(primary?: Bot) {
   const root=tempDir('subagent-journal'); roots.push(root);
   const profile=mainProfile(root), events: any[]=[], log=vi.fn();
-  const lock=new ProjectLock(root,root,{folder:null,process:/never-match-test/});
-  const release=vi.spyOn(lock,'release');
   const bot=new Bot({profile,primary,engine:primary?'codex':'claude',deferStartup:true,welcome:false,
     headConfig(){throw Error('No CLI in persistence tests');},prompts(){throw Error('No turn');},
     ledger:new ProcessLedger(join(root,'ledger.json')),emit:event=>events.push(event),log,
-    approvalTimeoutMs:100,idleMs:100,interruptGraceMs:100,lock});
+    approvalTimeoutMs:100,idleMs:100,interruptGraceMs:100});
   bots.push(bot);
   const folder=primary?join(primary.profile.storeDir,'partner-codex'):profile.storeDir;
   const file=join(folder,'subagents.json');
   const send=(item:CodexItem)=>(bot as any).onSubagentItem(item);
   const start=(id='worker')=>send({kind:'subagentStarted',id,description:'Worker',type:'codex-worker',prompt:'Work',background:false});
   const text=(value:string,id='worker')=>send({kind:'subagentText',parent:id,text:value});
-  return {bot,folder,file,steps:join(folder,'subagents'),disk:()=>readSubagentRows(file),send,start,text,events,release,log};
+  return {bot,folder,file,steps:join(folder,'subagents'),disk:()=>readSubagentRows(file),send,start,text,events,log};
 }
 it('coalesces running progress at 500ms while critical state is durable before return',async()=>{
   const f=fixture(); f.start();
@@ -77,22 +74,20 @@ it('failed step append throws before publishing; retry includes terminal state a
   f.text('concurrent progress','other');await vi.advanceTimersByTimeAsync(1000);
   expect(f.disk()).toEqual(f.bot.subagents.list);
 });
-it('shutdown flushes appended steps and both heads before releasing their locks',async()=>{
+it('shutdown flushes appended steps and both heads',async()=>{
   const f=fixture(),p=fixture(f.bot);(f.bot as any).partners.set(p.bot.engine,p.bot);
   f.start();p.start();f.text('primary');p.text('partner');
   await f.bot.shutdown({tidy:false});
   for(const current of [f,p]){
     expect(readSubagentRows(current.file)).toEqual(current.bot.subagents.list);
-    expect(current.release).toHaveBeenCalledTimes(1);
   }
 });
-it('a failed index write rejects shutdown but preserves chat and releases both locks; explicit retry succeeds',async()=>{
+it('a failed index write rejects shutdown but preserves chat; explicit retry succeeds',async()=>{
   const f=fixture(),p=fixture(f.bot);(f.bot as any).partners.set(p.bot.engine,p.bot);
   f.start();p.start();await f.bot.flushForSwap();f.text('primary');p.text('partner');
   const savedCheckpoint=readFileSync(f.file);
   rmSync(f.file);mkdirSync(f.file);
   await expect(f.bot.shutdown({tidy:false})).rejects.toThrow();
-  expect(f.release).toHaveBeenCalledTimes(1);expect(p.release).toHaveBeenCalledTimes(1);
   expect(existsSync(join(f.folder,'chat.json'))).toBe(true);
   rmSync(f.file,{recursive:true});writeFileSync(f.file,savedCheckpoint);
   await f.bot.shutdown({tidy:false});expect(readSubagentRows(f.file)).toEqual(f.bot.subagents.list);
@@ -112,11 +107,11 @@ it('message acceptance keeps durable chat and worker state',async()=>{
   expect(f.disk()[0].status).toBe('running');
   await f.bot.flushForSwap();expect(readSubagentRows(f.file)).toEqual(f.bot.subagents.list);
 });
-it('chat write failures are not accepted and shutdown still releases the lock',async()=>{
+it('chat write failures are not accepted and shutdown still rejects',async()=>{
   const f=fixture();f.bot.holdForSwap(true);
   const file=join(f.folder,'chat.json');if(existsSync(file))rmSync(file);mkdirSync(file,{recursive:true});
   expect(()=>f.bot.send('must not acknowledge')).toThrow();
-  await expect(f.bot.shutdown({tidy:false})).rejects.toThrow();expect(f.release).toHaveBeenCalledTimes(1);
+  await expect(f.bot.shutdown({tidy:false})).rejects.toThrow();
   rmSync(file,{recursive:true});
 });
 
@@ -146,9 +141,8 @@ it('a restarted bot loads the index without steps; opening one subagent reads ju
   writeFileSync(worker,readFileSync(worker,'utf8')+'{corrupt\n');
   rmSync(join(f.steps,'other.jsonl')); // a missing file is an empty history
   const profile=mainProfile(roots[0]!),events:any[]=[];
-  const lock=new ProjectLock(roots[0]!,roots[0]!,{folder:null,process:/never-match-test/});
   const bot=new Bot({profile,engine:'claude',deferStartup:true,welcome:false,headConfig(){throw Error('No CLI');},prompts(){throw Error('No turn');},
-    ledger:new ProcessLedger(join(roots[0]!,'ledger2.json')),emit:e=>events.push(e),log:vi.fn(),approvalTimeoutMs:100,idleMs:100,interruptGraceMs:100,lock});
+    ledger:new ProcessLedger(join(roots[0]!,'ledger2.json')),emit:e=>events.push(e),log:vi.fn(),approvalTimeoutMs:100,idleMs:100,interruptGraceMs:100});
   bots.push(bot);
   expect(bot.subagents.list.map(s=>s.id)).toEqual(['worker','other']);
   expect(bot.subagents.list.every(s=>s.steps.length===0)).toBe(true);

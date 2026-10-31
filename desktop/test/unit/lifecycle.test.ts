@@ -2,12 +2,10 @@
 // their answers, task cards in tasks.json, reactions, requests 2.0 cannot do), a message while a
 // reply runs (merged, or waiting behind an approval), subagents (subagents.json, step status, the
 // subagent's view, a background one reporting in claude's own turn, <no-reply/>), the chat archive,
-// and the project lock (another 2.0, or a running 1.x).
+// and the streaming text.
 import { afterEach, describe, expect, it } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
 import { readSubagentRows } from "../subagent-disk";
@@ -15,7 +13,6 @@ import type { SubagentRecord } from "../../src/core/subagents";
 import { streamingText } from "../../src/core/bot";
 
 const harnesses: CoreHarness[] = [];
-const others: ChildProcess[] = [];
 const core = (dataDir: string, env: Record<string, string> = {}) => {
   const harness = new CoreHarness(dataDir, { FAKE_CLAUDE_INPUT: join(dataDir, "input.log"), ...env });
   harnesses.push(harness);
@@ -23,7 +20,6 @@ const core = (dataDir: string, env: Record<string, string> = {}) => {
 };
 afterEach(async () => {
   for (const harness of harnesses.splice(0)) if (harness.child.exitCode === null && harness.child.signalCode === null) await harness.kill("SIGKILL");
-  for (const child of others.splice(0)) child.kill("SIGKILL");
 });
 
 const inputs = (dir: string): string[] =>
@@ -33,14 +29,6 @@ async function turn(c: CoreHarness, text: string, botId = MAIN) {
   const { turnId, messageId } = await c.call({ type: "chat.send", botId, text });
   const finished = await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === turnId), { what: `the end of "${text}"` });
   return { turnId, messageId, event: finished.event as { status: string; text: string } };
-}
-
-const PROJECT = "44444444-4444-4444-8444-444444444444";
-/** A data folder with one project bot (a manager) working in `folder`. */
-function withProject(dir: string, folder: string) {
-  mkdirSync(folder, { recursive: true });
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "projects.json"), JSON.stringify([{ id: PROJECT, name: "garden", folder: pathToFileURL(folder).href + "/", avatar: "hexagon" }]));
 }
 
 describe("reply tags", () => {
@@ -252,64 +240,6 @@ describe("the chat archive", () => {
     const text = readFileSync(join(folder, files[0]!), "utf8");
     expect(text).toMatch(/\] User: keep this\n\n/);
     expect(text).toMatch(/\] You: You said: keep this\n\n/);
-  });
-});
-
-describe("the project lock", () => {
-  it("a second 2.0 on the same project keeps working and only gets a notice (1.x has no lock)", async () => {
-    const root = tempDir("lock");
-    const folder = join(root, "garden");
-    const a = join(root, "a");
-    const b = join(root, "b");
-    withProject(a, folder);
-    withProject(b, folder);
-    const first = core(a);
-    await turn(first, "mine now", PROJECT);
-    expect(JSON.parse(readFileSync(join(folder, ".bot", "botling.lock"), "utf8"))).toMatchObject({ app: "Botling 2.0", pid: first.child.pid });
-    const second = core(b);
-    const snapshot = await second.call({ type: "chat.snapshot", botId: PROJECT });
-    const bot = snapshot.bots.find((candidate: { id: string }) => candidate.id === PROJECT);
-    expect(bot.problem).toBeNull();
-    expect((await turn(second, "me too", PROJECT)).event.status).toBe("done");
-    expect(JSON.stringify(await second.call({ type: "chat.snapshot", botId: PROJECT }))).toMatch(/Another Botling \(Botling 2\.0, pid \d+\) has this project open\. Both may write/);
-    // The main bot is not affected.
-    expect((await turn(second, "hi")).event.status).toBe("done");
-    await first.kill("SIGTERM");
-    expect(existsSync(join(folder, ".bot", "botling.lock"))).toBe(false);
-    expect((await turn(second, "now me", PROJECT)).event.status).toBe("done");
-    expect((await second.call({ type: "chat.snapshot", botId: PROJECT })).bots.find((x: { id: string }) => x.id === PROJECT).problem).toBeNull();
-  });
-
-  it("a lock left by a core that is gone is taken over", async () => {
-    const root = tempDir("lock");
-    const folder = join(root, "garden");
-    const data = join(root, "a");
-    withProject(data, folder);
-    mkdirSync(join(folder, ".bot"), { recursive: true });
-    writeFileSync(join(folder, ".bot", "botling.lock"), JSON.stringify({ app: "Botling 2.0", pid: 999_999, started: "x", host: (await import("node:os")).hostname(), dataDir: "/gone", at: "" }));
-    const c = core(data);
-    expect((await turn(c, "hello", PROJECT)).event.status).toBe("done");
-  });
-
-  it("a running 1.x that has the project does not stop the 2.0 bot (notice only)", async () => {
-    const root = tempDir("lock");
-    const folder = join(root, "garden");
-    const data = join(root, "a");
-    withProject(data, folder);
-    const oneX = join(root, "claudecodebot");
-    mkdirSync(oneX, { recursive: true });
-    writeFileSync(join(oneX, "projects.json"), JSON.stringify([{ id: PROJECT, name: "garden", folder: pathToFileURL(folder).href + "/", avatar: "hexagon" }]));
-    // A stand-in for the 1.x app: a process whose command line the check is told to look for.
-    const standIn = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "botling-1x-stand-in"], { stdio: "ignore" });
-    others.push(standIn);
-    const c = core(data, { BOTLING_1X_DIR: oneX, BOTLING_1X_PROCESS: "botling-1x-stand-in" });
-    const bot = (await c.call({ type: "chat.snapshot", botId: PROJECT })).bots.find((x: { id: string }) => x.id === PROJECT);
-    expect(bot.problem).toBeNull();
-    expect((await turn(c, "hi", PROJECT)).event.status).toBe("done");
-    expect(JSON.stringify(await c.call({ type: "chat.snapshot", botId: PROJECT }))).toMatch(/Botling 1\.x is running and has this project open\. Both may write/);
-    standIn.kill("SIGKILL");
-    await until(() => standIn.exitCode !== null || standIn.signalCode !== null);
-    expect((await turn(c, "1.x quit", PROJECT)).event.status).toBe("done");
   });
 });
 

@@ -5,17 +5,12 @@ import { startConfiguredMobile } from '../mobile-bridge/start';
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
 import { retrieveQuota } from "./quota";
-import { appendFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { CLASSIFIER_TIMEOUT_MS, codexClassifier } from "./promise-check";
 import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core, type AppAnswer, type AppOp } from "./server";
 import { Doctor } from "./doctor";
-import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
-import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
 import { Layout } from "./store/workspace";
 import { readSettings } from "./settings";
 import { claudeSessionPermissionConfig, type HeadConfig } from "./agent/head";
@@ -150,16 +145,6 @@ const queryModels = modelDiscoveryService(async (engine, folder) => {
   return discoverModels(engine, { file: engine === "claude" ? process.env.BOTLING_CLAUDE_PATH ?? "claude" : process.env.BOTLING_CODEX_PATH ?? "codex", cwd: folder });
 });
 
-/** The completion judge (`PromiseCheck.codexClassifier`): the real Codex CLI, or the fake one's `exec`. */
-function classifier() {
-  const kind = process.env.BOTLING_AGENT ?? "fake";
-  const timeout = number(process.env.BOTLING_JUDGE_TIMEOUT_MS, CLASSIFIER_TIMEOUT_MS);
-  const tmp = process.env.TMPDIR ?? tmpdir();
-  if (kind === "claude") return (model: string) => codexClassifier({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }, model, tmp, timeout);
-  const script = process.env.BOTLING_FAKE_CODEX;
-  return script ? (model: string) => codexClassifier({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, model, tmp, timeout) : null;
-}
-
 /**
  * Node for the plugin host: BOTLING_NODE_PATH, else the Node this core runs on — under Electron that is
  * Electron itself run as Node (development; packaged builds turn that fuse off, see the README's gaps).
@@ -231,8 +216,6 @@ const core = new Core({
   },
   // Whether claude kept a session's transcript (only whether one is there). The fake CLI keeps one only under a
   // CLAUDE_CONFIG_DIR a test gives it: without one, a test never looks in the user's own ~/.claude.
-  claudeSessionExists: (process.env.BOTLING_AGENT ?? "fake") === "claude" || process.env.CLAUDE_CONFIG_DIR ? (session, folder) => claudeSessionExists(session, folder) : () => false,
-  briefTimeoutMs: number(process.env.BOTLING_BRIEF_TIMEOUT_MS, 120_000),
   codexConfig,
   claimWaitMs: number(process.env.BOTLING_CLAIM_WAIT_MS, 20_000),
   // How long a bot answering in another chat waits for a busy one and may take ("busy,named,answer,named" in ms; 1.x's `groupTiming`).
@@ -252,13 +235,7 @@ const core = new Core({
   stallMinuteMs: number(process.env.BOTLING_STALL_MINUTE_MS, 60_000),
   // Whether Claude's API answers again, while a bot waits for the network (BOTLING_NETWORK_PROBE_URL: another address, for tests).
   networkProbe: () => probeNetwork(process.env.BOTLING_NETWORK_PROBE_URL || probeEndpoint()),
-  // /share's git push and gh: for real, or (tests: BOTLING_FAKE_SHARE_LOG) written to a file and answered with a link.
-  ...(process.env.BOTLING_FAKE_SHARE_LOG ? { shareRunner: async (args: string[]) => {
-    appendFileSync(process.env.BOTLING_FAKE_SHARE_LOG!, JSON.stringify(args) + "\n");
-    return { ok: true, output: args[0] === "gh" && args[2] === "create" ? "https://github.com/william1010121/Botling/pull/1" : "" };
-  } } : {}),
   summarizer: summarizer(),
-  classifier: classifier(),
   codexModels: codexModels(),
   engineModels: (engine, profile) => queryModels(engine, profile.folder),
   // The library and memory files are watched; these are the slow looks that catch what a watcher missed.
@@ -271,12 +248,7 @@ const core = new Core({
   // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
   firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
-  // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   app: appBridge,
-  oneX: {
-    folder: process.env.BOTLING_1X_DIR || null,
-    process: process.env.BOTLING_1X_PROCESS ? new RegExp(process.env.BOTLING_1X_PROCESS) : DEFAULT_ONE_X_PROCESS,
-  },
 });
 // Disabled by default. Configuration and bind failures never terminate the desktop core.
 try {

@@ -37,7 +37,8 @@ import { codexAutoRiskConfig } from "./auto-risk-policy";
 // Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
 import { approveIsolatedGit, isolatedGitOwnership, type IsolatedGitOwnership } from "./isolated-git";
-import type { WorkerDependency } from "../promise-check";
+/** A live worker or monitored command as the head reports it (what keeps a head from idling). */
+export interface WorkerDependency { id: string; run: number; task: string; state: "running" | "reportQueued"; callback?: string; outcome?: string; taskTruncated: boolean }
 import type { SubagentExecution } from "../subagents";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";

@@ -12,7 +12,7 @@ export function detailsFixture(group = false) {
   const snapshot = (botId = group ? team.id : primary.id): ResultOf<'chat.snapshot'> => ({ epoch: 'fixture', seq: 1, imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null }, teams: [], waiting: { items: [], doing: {} },
     settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: collapsed, railCollapsed: false, pinnedBots: [],
       catchUpEnabled: false, intervalSummaryEnabled: false, thresholdsCustomized: false, catchUpThreshold: 3, intervalSummaryThreshold: 3,
-      catchUpModel: 'fixture', summaryPrompt: null, defaultSummaryPrompt: '', completionVerification: false, completionVerificationModel: 'fixture',
+      catchUpModel: 'fixture', summaryPrompt: null, defaultSummaryPrompt: '',
       subagentModel: null, subagentHourCache: false, claudeBypassPermissions: false, codexBypassPermissions: false, codexWorkersFollow: true,
       codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: 'sonnet', resultPublishing: 'localOnly', stallReminderMinutes: 15,
       developerMode: false, developerProject: null, updateCheck: false },

@@ -7,7 +7,6 @@ import { CodexHead, CodexThreads } from "../../src/core/agent/codex";
 import { AgentTurn, type TurnOutcome } from "../../src/core/agent/runner";
 import { askModels } from "../../src/core/agent/codex-models";
 import { codexSummarizer } from "../../src/core/catchup";
-import { codexClassifier } from "../../src/core/promise-check";
 import { fakeCli, fakeCodex, tempDir, until } from "../helpers";
 
 const heads: (ClaudeHead | CodexHead)[] = [];
@@ -107,10 +106,9 @@ describe.skipIf(process.platform === "win32")("CLI launch from Finder's minimal 
     expect(models.length).toBeGreaterThan(0);
   });
 
-  it("starts Codex's summary and completion subprocesses under the same minimal PATH", async () => {
+  it("starts Codex's summary subprocess under the same minimal PATH", async () => {
     const { home, env } = guiHome();
     install(home, "codex");
     expect(await codexSummarizer({ file: "codex", env }, 3000)("hello", "test-model", "en")).toEqual(["Nothing to say."]);
-    expect(await codexClassifier({ file: "codex", env }, "test-model", home, 3000)("hello")).toMatchObject({ verdict: "COMPLETE" });
   });
 });

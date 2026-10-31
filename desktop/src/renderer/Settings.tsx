@@ -547,12 +547,6 @@ function Engines({ client, settings, change, codexModels, modelBotId, botCount }
         </Row>
         <Toggle label="Fast mode" hint="service_tier = priority: faster replies, uses more of your limits" checked={!!workers.fast} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, fast: value } })} />
       </Group>
-      <Group title="Completion verification" note="After a reply, an isolated Codex judge checks whether the authorized task is done; unfinished work is continued (twice without progress: paused). Uses your Codex login.">
-        <Toggle label="Verify completion automatically" checked={settings.completionVerification} onChange={(value) => change({ key: "completionVerification", value })} />
-        <Row label="Verification model" hint={`Current verification model: ${settings.completionVerificationModel}`}>
-          <SelectSetting label="Verification model" options={codexOptions(codexModels)} value={settings.completionVerificationModel} disabled={!settings.completionVerification} onChange={(value) => change({ key: "completionVerificationModel", value })} />
-        </Row>
-      </Group>
       <Group title="Component editor" note="Maintainer's component editor; written into the plugin library when the app next starts.">
         <Row label="Model">
           <SelectSetting label="Component editor's model" options={MODELS} value={settings.componentEditorModel} onChange={(value) => { if (value) change({ key: "componentEditorModel", value: value as SettingsView["componentEditorModel"] }); }} />
