@@ -460,6 +460,10 @@ function General({ client, settings, change, bot, codexModels, modelBotId }: { c
         <div className="settings-preview"><img src={faceURL(preview, settings.botLook)} alt="Preview" width={size} height={size} /></div>
         <div className="settings-actions"><button type="button" disabled={settings.chatAvatarSize === null} onClick={() => change({ key: "chatAvatarSize", value: null })}>Use default size</button></div>
       </Group>
+      <Group title="Pasting" note="A paste over either limit becomes a chip in the input box instead of text. 0 turns that limit off.">
+        <Row label="Collapse pastes over (characters)"><input type="number" aria-label="Collapse pastes over characters" min={0} max={1000000} value={settings.pasteCollapseChars} onChange={(event) => { const value = Number(event.target.value); if (event.target.value !== "" && Number.isInteger(value) && value >= 0 && value <= 1_000_000) change({ key: "pasteCollapseChars", value }); }} /></Row>
+        <Row label="Collapse pastes over (lines)"><input type="number" aria-label="Collapse pastes over lines" min={0} max={100000} value={settings.pasteCollapseLines} onChange={(event) => { const value = Number(event.target.value); if (event.target.value !== "" && Number.isInteger(value) && value >= 0 && value <= 100_000) change({ key: "pasteCollapseLines", value }); }} /></Row>
+      </Group>
       <Group title="Chat summaries">
         <Toggle label="Summarize unread messages" checked={settings.catchUpEnabled} onChange={(value) => change({ key: "catchUpEnabled", value })} />
         <Toggle label="Summarize between your messages" checked={settings.intervalSummaryEnabled} onChange={(value) => change({ key: "intervalSummaryEnabled", value })} />

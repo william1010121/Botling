@@ -177,6 +177,14 @@ export const zhHant: Dictionary = {
   "composer.inLibrary": "共用元件庫裡的{kind}",
   "composer.cancelReply": "取消回覆",
   "composer.removeFile": "移除 {name}",
+  // paste-collapse.ts: a long paste kept as a chip
+  "paste.title": "貼上的文字",
+  "paste.lines": "{lines} 行",
+  "paste.stats": "{lines} 行 · {chars} 字",
+  "paste.copy": "複製",
+  "paste.expand": "展開到輸入框",
+  "paste.close": "關閉",
+  "paste.remove": "移除貼上的文字",
   // composer.ts, more
   "composer.answerWith": "回答者",
   "composer.answerHint": "{keys} · 或輸入 @codex",

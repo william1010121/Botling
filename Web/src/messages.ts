@@ -14,6 +14,7 @@ import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
 import { taskCardChips } from "./task-cards";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
+import { openPasteDialog, pasteChip, splitPasted } from "./paste-collapse";
 import { escapeHTML } from "./util";
 import { characterAvatar } from "./animated-avatar";
 
@@ -525,11 +526,19 @@ function userBody(message: MessageView): HTMLElement {
     body.append(quote);
   }
   if (message.attachments?.length) body.append(attachmentStrip(message.attachments));
-  if (message.text) {
+  const { text, pasted } = splitPasted(message.text);
+  if (text) {
     const bubble = document.createElement("div");
     bubble.className = "bubble user-bubble";
-    bubble.innerHTML = escapeHTML(message.text).replace(/\n/g, "<br>");
+    bubble.innerHTML = escapeHTML(text).replace(/\n/g, "<br>");
     body.append(bubble);
+  }
+  // A long paste folded away when it was sent: the chip under the bubble opens it in a dialog.
+  if (pasted !== null) {
+    const strip = document.createElement("div");
+    strip.className = "attachments";
+    strip.append(pasteChip(pasted, () => openPasteDialog(pasted)));
+    body.append(strip);
   }
   return body;
 }

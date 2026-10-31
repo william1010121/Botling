@@ -428,6 +428,9 @@ export interface ChatState {
   tokenSpeed?: { tokPerSec: number; estimated: boolean; engine?: string } | null;
   /** Message avatar size; absent keeps the responsive CSS defaults. */
   chatAvatarSize?: number | null;
+  /** A paste over this many characters / lines is kept as a chip; 0 turns that limit off; absent: 1000 / 15. */
+  pasteCollapseChars?: number | null;
+  pasteCollapseLines?: number | null;
   botID: string;
   botName: string;
   messages: MessageView[];

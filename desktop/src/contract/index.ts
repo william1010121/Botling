@@ -697,6 +697,9 @@ export const SettingsView = z.strictObject({
   chatAvatarSize: z.number().int().min(32).max(96).nullable(),
   /** Botling 2 only: null uses the default 640px column. */
   messageColumnWidth: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable().default(null),
+  /** A paste over this many characters / lines becomes a chip in the composer; 0 turns that limit off. */
+  pasteCollapseChars: z.number().int().min(0).max(1_000_000).default(1000),
+  pasteCollapseLines: z.number().int().min(0).max(100_000).default(15),
   catchUpEnabled: z.boolean(),
   intervalSummaryEnabled: z.boolean(),
   thresholdsCustomized: z.boolean(),
@@ -750,6 +753,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("botLook"), value: z.enum(["original", "cute"]) }),
   z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
   z.strictObject({ key: z.literal("messageColumnWidth"), value: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable() }),
+  z.strictObject({ key: z.literal("pasteCollapseChars"), value: z.number().int().min(0).max(1_000_000) }),
+  z.strictObject({ key: z.literal("pasteCollapseLines"), value: z.number().int().min(0).max(100_000) }),
   z.strictObject({ key: z.literal("catchUpEnabled"), value: z.boolean() }),
   z.strictObject({ key: z.literal("intervalSummaryEnabled"), value: z.boolean() }),
   z.strictObject({ key: z.literal("thresholdsCustomized"), value: z.boolean() }),

@@ -180,6 +180,14 @@ export const en = {
   "composer.inLibrary": "{kind} in the shared library",
   "composer.cancelReply": "Cancel reply",
   "composer.removeFile": "Remove {name}",
+  // paste-collapse.ts: a long paste kept as a chip
+  "paste.title": "Pasted text",
+  "paste.lines": "{lines} lines",
+  "paste.stats": "{lines} lines · {chars} chars",
+  "paste.copy": "Copy",
+  "paste.expand": "Expand into input",
+  "paste.close": "Close",
+  "paste.remove": "Remove pasted text",
   // composer.ts, more
   "composer.answerWith": "Answer with",
   "composer.answerHint": "{keys} · or type @codex",

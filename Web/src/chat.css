@@ -193,6 +193,45 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
   background: var(--chip); border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none;
 }
 
+/* A long paste kept out of the box: the chip (box and sent message), its preview above the box, the dialog. */
+.paste-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px 0; }
+.paste-row[hidden], .paste-preview[hidden] { display: none; }
+.paste-chip {
+  display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--chip); color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+}
+.paste-chip svg { color: var(--muted); flex-shrink: 0; }
+.paste-chip:hover { border-color: #3A3A42; }
+.paste-chip[aria-expanded="true"] { border-color: var(--blue); }
+.paste-chip-count { color: var(--muted); font-size: 12px; }
+.attachments > .paste-chip { height: 36px; border: none; }
+.attachments > .paste-chip:hover { background: #34343C; }
+.paste-remove, .paste-x {
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  border: none; background: transparent; color: var(--muted); cursor: pointer;
+}
+.paste-remove { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 10px; }
+.paste-x { width: 22px; height: 22px; border-radius: 6px; }
+.paste-remove:hover, .paste-x:hover { background: #34343C; color: var(--text); }
+.paste-preview { position: absolute; bottom: calc(100% + 8px); left: 0; right: 0; z-index: 15; }
+.paste-panel {
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bubble); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.paste-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.paste-title { font-size: 13px; font-weight: 600; }
+.paste-stats { font-size: 12px; color: var(--muted); }
+.paste-gap { flex: 1; }
+.paste-action { height: 28px; padding: 0 10px; border: none; border-radius: 8px; background: var(--chip); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.paste-action:hover { background: #34343C; }
+.paste-body {
+  margin: 0; padding: 12px 14px; height: 210px; overflow: auto; white-space: pre;
+  font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text);
+}
+.paste-veil { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(14, 14, 16, 0.62); }
+.paste-dialog { width: min(560px, calc(100vw - 32px)); height: min(400px, calc(100vh - 32px)); }
+.paste-dialog .paste-body { flex: 1; height: auto; }
+
 .open-source {
   margin-top: 10px; min-height: 28px; padding: 0;
   border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer;

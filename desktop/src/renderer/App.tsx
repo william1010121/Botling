@@ -641,7 +641,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     }
     const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, {
       components: current.components, board: current.board, look: current.settings?.botLook ?? "original",
-      lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, bots: current.bots,
+      lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, pasteCollapseChars: current.settings?.pasteCollapseChars, pasteCollapseLines: current.settings?.pasteCollapseLines, bots: current.bots,
       // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
     });

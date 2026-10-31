@@ -40,6 +40,8 @@ export function writeSettings(file: string, settings: RawSettings) {
 const oneOf = <T extends string>(list: readonly T[], value: unknown): T | null => (typeof value === "string" && (list as readonly string[]).includes(value) ? value as T : null);
 const bool = (value: unknown, fallback: boolean) => (typeof value === "boolean" ? value : fallback);
 const int = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null);
+/** A whole number from 0 to `max` (0 turns a limit off), `fallback` when missing or invalid. */
+const count = (value: unknown, fallback: number, max: number) => { const n = int(value); return n !== null && n >= 0 ? Math.min(n, max) : fallback; };
 const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
 
 /** Codex workers' own choices (`CodexWorkerDefaults`): a tolerant read, an unknown effort is none. */
@@ -61,6 +63,8 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
     messageColumnWidth: messageWidth(raw.messageColumnWidth),
+    pasteCollapseChars: count(raw.pasteCollapseChars, 1000, 1_000_000),
+    pasteCollapseLines: count(raw.pasteCollapseLines, 15, 100_000),
     catchUpEnabled: bool(raw.catchUpEnabledChoice, true),
     intervalSummaryEnabled: bool(raw.intervalSummaryEnabledChoice, false),
     thresholdsCustomized: typeof raw.summaryThresholdsCustomizedChoice === "boolean" ? raw.summaryThresholdsCustomizedChoice : catchUpThreshold !== THRESHOLD || intervalThreshold !== THRESHOLD,
@@ -103,6 +107,8 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "botLook": set("botLookChoice", change.value); break;
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
     case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
+    case "pasteCollapseChars": set("pasteCollapseChars", count(change.value, 1000, 1_000_000)); break;
+    case "pasteCollapseLines": set("pasteCollapseLines", count(change.value, 15, 100_000)); break;
     case "catchUpEnabled": set("catchUpEnabledChoice", change.value); break;
     case "intervalSummaryEnabled": set("intervalSummaryEnabledChoice", change.value); break;
     case "thresholdsCustomized":

@@ -172,7 +172,7 @@ export function componentInfos(components: Record<string, ComponentInfoView>): R
 }
 
 /** What the app's settings change in the page: its language, the avatars' size and look. */
-export interface PageLook { lang?: string | null; chatAvatarSize?: number | null; look?: Look }
+export interface PageLook { lang?: string | null; chatAvatarSize?: number | null; pasteCollapseChars?: number; pasteCollapseLines?: number; look?: Look }
 
 /** The app's / commands (`SlashCommands.all`); the bots' rules say what each means. */
 export const SLASH_COMMANDS = [{ name: "design", about: "Make a Claude Design and get its claude.ai link" }];
@@ -197,7 +197,7 @@ export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[
 }
 
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
-  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [], feedback = false }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
+  { components = {}, board = false, lang = null, chatAvatarSize = null, pasteCollapseChars, pasteCollapseLines, look = "original", bots = [], feedback = false }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   // A line another bot said here (called in with @): its name and face (`speaker`).
   const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
@@ -300,6 +300,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     placeholder: placeholder(bot),
     ...(lang ? { lang } : {}),
     ...(chatAvatarSize ? { chatAvatarSize } : {}),
+    ...(pasteCollapseChars !== undefined ? { pasteCollapseChars } : {}),
+    ...(pasteCollapseLines !== undefined ? { pasteCollapseLines } : {}),
     replyingTo,
     pendingFiles: (chat.pendingFiles ?? []).map((file) => ({ id: file.id, name: file.name, kind: file.kind, url: attachmentURL(bot.id, `pending:${file.id}`) })),
     components: componentInfos(components),

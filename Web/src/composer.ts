@@ -10,6 +10,7 @@ import { composerHost, DeliveryUncertain, type DeliveryResult } from "./composer
 import { escapeRegExp, shared } from "./contract";
 import { language, t } from "./i18n";
 import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
+import { copyAction, pasteChip, pastePanel, pasteLimits, shouldCollapse, withPasted, type PasteLimits } from "./paste-collapse";
 import { escapeHTML } from "./util";
 import type { AnswerWithView, ChatState, Draft } from "./types";
 
@@ -54,6 +55,12 @@ export class Composer {
   private readonly filesRow: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
   private hasFiles = false;
+  /** A long paste kept out of the editor, per chat: shown as a chip, sent with the message. */
+  private readonly pasted = new Map<string, string>();
+  private pasteLimits: PasteLimits = pasteLimits({});
+  private pasteOpen = false;
+  private readonly pasteRow: HTMLElement;
+  private readonly pastePreview: HTMLElement;
   private readonly sending = new Set<string>();
   private readonly submissionStates = new Map<string, { text: string; uncertain?: string }>();
   private readonly submissionStatus = document.createElement("div");
@@ -105,6 +112,12 @@ export class Composer {
     this.replyBar.className = "reply-bar";
     this.filesRow = document.createElement("div");
     this.filesRow.className = "pending-files";
+    this.pasteRow = document.createElement("div");
+    this.pasteRow.className = "paste-row";
+    this.pasteRow.hidden = true;
+    this.pastePreview = document.createElement("div");
+    this.pastePreview.className = "paste-preview";
+    this.pastePreview.hidden = true;
 
     // The text on top, the toolbar under it: + and "Answer with" on the left, send on the right.
     const row = document.createElement("div");
@@ -138,7 +151,7 @@ export class Composer {
     this.mentionList.className = "mention-list";
     this.mentionList.setAttribute("role", "listbox");
     this.mentionList.hidden = true;
-    this.root.append(this.mentionList, this.replyBar, this.filesRow, row, tools);
+    this.root.append(this.mentionList, this.pastePreview, this.replyBar, this.pasteRow, this.filesRow, row, tools);
     parent.append(this.root);
 
     this.view = new EditorView({
@@ -167,7 +180,7 @@ export class Composer {
             // Suppress CodeMirror's file-to-text insertion, but let the drop bubble to
             // watchFileDrops, which attaches each file once for the whole chat.
             drop: (event) => (event.dataTransfer?.files.length ?? 0) > 0,
-            paste: (event) => this.takeFiles(event.clipboardData),
+            paste: (event) => this.takeFiles(event.clipboardData) || this.takePaste(event.clipboardData),
             // Leaving the box (another bot clicked, the app closing) saves the draft now.
             blur: () => { if (this.draftTimer !== null) this.saveDraft(); return false; },
           }),
@@ -487,6 +500,8 @@ export class Composer {
       this.replyBar.innerHTML = "";
     }
 
+    this.pasteLimits = pasteLimits(state);
+    this.drawPaste();
     this.hasFiles = state.pendingFiles.length > 0;
     this.filesRow.hidden = !this.hasFiles;
     this.filesRow.innerHTML = "";
@@ -511,12 +526,14 @@ export class Composer {
   submit(): boolean {
     if (this.draftKey && this.models.blocked(this.draftKey)) return false;
     let text = this.text;
-    if (text.trim() === "" && !this.hasFiles) return true;
     const key = this.draftKey;
+    const pasted = this.pasted.get(key ?? "") ?? null;
+    if (text.trim() === "" && !this.hasFiles && !pasted) return true;
     if (key && (this.sending.has(key) || this.submissionStates.get(key)?.uncertain)) { this.drawSubmissionStatus(); return true; }
     const original = text;
     const typed = this.answer ? answerPrefix(text, this.answer) : null;
     if (typed) text = typed.rest;
+    text = withPasted(text, pasted);
     const to = this.answer ? typed?.id ?? this.answerPicks.get(this.answerChat)?.id ?? this.answer.chosen : undefined;
     if (composerHost && key) {
       this.saveDraft();
@@ -529,6 +546,7 @@ export class Composer {
       const accepted = () => {
         this.submissionStates.delete(key);
         if (this.draftKey === key) {
+          if (this.pasted.get(key) === pasted) this.setPasted(key, null);
           if (this.text === original) { this.setText(""); this.saveDraft(); }
         } else if (this.drafts.get(key)?.text === original) {
           this.drafts.delete(key);
@@ -553,6 +571,7 @@ export class Composer {
       return true;
     }
     post({ type: "send", text, ...(to ? { to } : {}) });
+    this.setPasted(key ?? "", null);
     this.setText("");
     this.saveDraft();
     return true;
@@ -662,7 +681,54 @@ export class Composer {
   }
 
   private refreshSend(): void {
-    this.sendButton.disabled = !!(this.draftKey && (this.sending.has(this.draftKey) || this.models.blocked(this.draftKey))) || (this.text.trim() === "" && !this.hasFiles);
+    this.sendButton.disabled = !!(this.draftKey && (this.sending.has(this.draftKey) || this.models.blocked(this.draftKey))) || (this.text.trim() === "" && !this.hasFiles && !this.pasted.has(this.draftKey ?? ""));
+  }
+
+  /** A paste over the limits stays out of the editor: one chip per chat (another paste joins it). */
+  private takePaste(data: DataTransfer | null): boolean {
+    const text = data?.getData("text/plain") ?? "";
+    if (!shouldCollapse(text, this.pasteLimits)) return false;
+    const key = this.draftKey ?? "";
+    const before = this.pasted.get(key);
+    this.setPasted(key, before ? `${before}\n${text}` : text);
+    return true;
+  }
+
+  private setPasted(key: string, text: string | null): void {
+    if (text === null) this.pasted.delete(key);
+    else this.pasted.set(key, text);
+    if (key !== (this.draftKey ?? "")) return;
+    if (text === null) this.pasteOpen = false;
+    this.drawPaste();
+    this.refreshSend();
+  }
+
+  /** The chip with its remove button, and the preview above the box while it is open. */
+  private drawPaste(): void {
+    const key = this.draftKey ?? "";
+    const text = this.pasted.get(key);
+    this.pasteRow.replaceChildren();
+    this.pasteRow.hidden = text === undefined;
+    this.pastePreview.replaceChildren();
+    this.pastePreview.hidden = text === undefined || !this.pasteOpen;
+    if (text === undefined) return;
+    const chip = pasteChip(text, () => { this.pasteOpen = !this.pasteOpen; this.drawPaste(); });
+    chip.setAttribute("aria-expanded", String(this.pasteOpen));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "paste-remove";
+    remove.setAttribute("aria-label", t("paste.remove"));
+    remove.innerHTML = `<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>`;
+    remove.addEventListener("click", () => { this.setPasted(key, null); this.view.focus(); });
+    this.pasteRow.append(chip, remove);
+    if (!this.pasteOpen) return;
+    const close = () => { this.pasteOpen = false; this.drawPaste(); };
+    const expand = () => {
+      // Back into the editor at the caret; the chip goes.
+      this.setPasted(key, null);
+      this.insert(text);
+    };
+    this.pastePreview.append(pastePanel(text, [copyAction(text), { label: t("paste.expand"), run: expand }], close));
   }
 
   /** Pasted or dropped files (screenshots too) go to Swift; plain text pastes as text. */
