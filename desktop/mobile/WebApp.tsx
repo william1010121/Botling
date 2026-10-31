@@ -8,17 +8,22 @@ import { WorkspaceStore } from '../src/renderer/store';
 import { Icon } from '../src/renderer/icons';
 import { MobileError, MobileTransport, endpointURL } from './transport';
 import { clearDrafts } from './session';
+import { watchEvents } from './events';
+import { loadRouteBook, type RouteBook } from './routes';
+import { betterRoute, deviceId, redeemPairing, takePairingLink } from './pair';
 import { WebBridge, forgetLocal } from './web-bridge';
 
 const POLL_MS = 2_500;
+/** While the event stream is up, a slow read is only a safety net. */
+const LIVE_POLL_MS = 30_000;
 type Auth = 'checking' | 'signedOut' | 'denied' | 'unavailable';
 const TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
-export interface Connected { bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void }; shown: { value: boolean } }
+export interface Connected { transport: MobileTransport; bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void }; shown: { value: boolean } }
 
 function storage(): Storage | null { try { return window.localStorage; } catch { return null; } }
 
-export function connectWorkspace(token: string, onAuthLost: (error: MobileError) => void, fetcher: typeof fetch = fetch): Connected {
-  const transport = new MobileTransport(endpointURL('/api/mobile/command', location.origin), token, fetcher);
+export function connectWorkspace(token: string, onAuthLost: (error: MobileError) => void, fetcher: typeof fetch = fetch, routes: RouteBook | null = null): Connected {
+  const transport = new MobileTransport(endpointURL('/api/mobile/command', location.origin), token, fetcher, routes);
   const wake = { poke: () => {} };
   const shown = { value: false };
   const bridge = new WebBridge({ transport, storage: storage(), onAuthLost,
@@ -31,12 +36,12 @@ export function connectWorkspace(token: string, onAuthLost: (error: MobileError)
   const store = new WorkspaceStore(botId => client.request({ type: 'chat.snapshot', ...(botId ? { botId } : {}) })
     .catch(error => { if (shown.value && bridge.closed) return new Promise<never>(() => {}); throw error; }));
   client.onEvent(event => store.receive(event));
-  return { bridge, client, store, wake, shown };
+  return { transport, bridge, client, store, wake, shown };
 }
 
 /** Re-reads the chat on screen every few seconds (and soon after a send); resyncs the store when it changed. */
-export function startSync(connected: Connected, interval = POLL_MS): () => void {
-  let stopped = false, busy = false, timer: ReturnType<typeof setTimeout> | undefined;
+export function startSync(connected: Connected, interval = POLL_MS, liveInterval = LIVE_POLL_MS): () => void {
+  let stopped = false, busy = false, live = false, timer: ReturnType<typeof setTimeout> | undefined;
   const tick = async () => {
     clearTimeout(timer);
     if (stopped) return;
@@ -48,14 +53,18 @@ export function startSync(connected: Connected, interval = POLL_MS): () => void 
       } catch { /* The next tick tries again; an ended session has closed the bridge (onAuthLost). */ }
       finally { busy = false; }
     }
-    if (!stopped && !connected.bridge.closed) timer = setTimeout(tick, interval);
+    if (!stopped && !connected.bridge.closed) timer = setTimeout(tick, live ? liveInterval : interval);
   };
   connected.wake.poke = () => { clearTimeout(timer); timer = setTimeout(tick, 300); };
   const visible = () => { if (!document.hidden) { clearTimeout(timer); void tick(); } };
   document.addEventListener('visibilitychange', visible);
   window.addEventListener('online', visible);
   timer = setTimeout(tick, interval);
-  return () => { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visible); window.removeEventListener('online', visible); };
+  // The core says when something changed; reading stays the (checked) snapshot request.
+  const stopEvents = watchEvents({ origin: () => connected.transport.origin, ticket: () => connected.transport.ticket(), recover: () => connected.transport.recover(),
+    onChange: () => { clearTimeout(timer); timer = setTimeout(tick, 100); },
+    onLive: value => { live = value; if (!value) { clearTimeout(timer); timer = setTimeout(tick, 300); } } });
+  return () => { stopped = true; stopEvents(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible); window.removeEventListener('online', visible); };
 }
 
 const narrowQuery = '(max-width: 700px)';
@@ -73,14 +82,16 @@ export function WebApp() {
     setAuth('signedOut'); setMessage(error.message);
   }, []);
 
-  const connect = useCallback(async (token: string) => {
+  const connect = useCallback(async (token: string, coreId?: string) => {
     if (connecting.current) return;
     connecting.current = true; setAuth('checking'); setMessage('');
     try {
       if (!TOKEN.test(token.trim())) throw new MobileError('Enter the server’s access token.', true);
       // A fresh bridge each time: an ended one stays closed. Its first read settles either way.
       let ended: MobileError | undefined;
-      const next = connectWorkspace(token, error => { ended = error; lost(error); });
+      // The core's own list of routes, pinned to its id: where this session may follow it if the connection drops.
+      const routes = await loadRouteBook(location.origin, coreId);
+      const next = connectWorkspace(token, error => { ended = error; lost(error); }, undefined, routes);
       try { await next.store.resync(); } catch (cause) { next.bridge.close(); throw ended ?? cause; }
       next.shown.value = true;
       setTokenText('');
@@ -90,6 +101,25 @@ export function WebApp() {
       setMessage(cause instanceof MobileError ? cause.message : 'Sign-in is unavailable. Try again.');
     } finally { connecting.current = false; }
   }, [lost]);
+
+  // A scanned pairing link: redeem it once for a token (the secret never leaves this function), then sign in
+  // exactly as a pasted token does. The fragment is cleared first; the token path stays available.
+  useEffect(() => {
+    const link = takePairingLink();
+    if (!link) return;
+    void (async () => {
+      setAuth('checking'); setMessage('Pairing…');
+      try {
+        // A route the core lists ahead of this one may be reachable (the home network, say): continue there.
+        const better = await betterRoute(link, location.origin);
+        if (better) { location.replace(better); return; }
+        await connect(await redeemPairing(link, deviceId(), location.origin), link.coreId);
+      }
+      catch (cause) {
+        setAuth('signedOut'); setMessage(cause instanceof MobileError ? cause.message : 'Pairing failed. Show a new code on your computer.');
+      }
+    })();
+  }, [connect]);
 
   useEffect(() => connected ? startSync(connected) : undefined, [connected]);
   useEffect(() => () => connected?.bridge.close(), [connected]);
@@ -109,7 +139,7 @@ export function WebApp() {
     <form className="web-signin-card" onSubmit={event => { event.preventDefault(); void connect(tokenText); }}>
       <img className="web-signin-icon" src="./icon.svg" alt="" />
       <h1>Botling</h1>
-      <p className="web-signin-lead">Your bots, from any browser. Enter the access token your Botling gave you.</p>
+      <p className="web-signin-lead">Your bots, from any browser. Scan the pairing code shown by your Botling, or enter an access token.</p>
       {message && <p className="web-signin-message" role="alert">{message}</p>}
       <div className="web-signin-actions">
         <input className="web-token" type="password" autoComplete="off" spellCheck={false} aria-label="Access token" placeholder="Access token"

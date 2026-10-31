@@ -10,6 +10,39 @@ app and publishes it on GitHub Releases.
 - Fixed: @ mention search stops at a space instead of previewing all following text.
 - Fixed: Bots asked to call another engine now hand off to it instead of emulating it with a subagent.
 
+
+### New
+
+- **Pair a phone with a one-time QR link.** `out/mobile-bridge/pair.cjs PAIRING_DIR ORIGIN BOT_ID...`
+  prints a link that works once and expires in 5 minutes. Its secret is in the URL fragment, the
+  phone checks it reached the right Botling (public Core ID at `/api/mobile/core`) before sending it,
+  and each device keeps one session. A paired phone has exactly what a pasted token has. Pasting a
+  token still works.
+- **Phone settings.** Settings > Phone makes a pairing code as a QR picture (pick the bots the phone
+  may use), lists the routes a phone tries, and lists paired phones with a Revoke button. A revoked
+  phone is refused on its next request. The same is available as `pair.cjs devices PAIRING_DIR` and
+  `pair.cjs revoke PAIRING_DIR DEVICE_ID`. English and Traditional Chinese.
+- **Ordered routes.** The mobile config may add `originKind` and `routes` (`lan`, `tailscale`,
+  `tunnel` entries, HTTPS origins). The Core ID descriptor lists them in order, the bridge accepts
+  each as its own host, and a phone that opens a pairing link on a slower route moves to an earlier
+  route that answers with the same Core ID (one probe each, 2.5 seconds, at once).
+- **Short-lived event-stream tickets.** `POST /api/mobile/ticket` (bearer) returns a ticket valid
+  30 seconds and usable once; `GET /api/mobile/events?ticket=...` opens the stream. The long-lived token
+  never appears in a URL.
+- **Phone follows the core across routes.** If the connection drops, a signed-in phone looks for
+  another route the core listed (public descriptor only), checks it answers with the same Core ID, and
+  only then sends its token there. A send is never repeated automatically.
+- **The core pushes changes.** The event stream announces that something changed (no content, only for
+  bots the phone may read); the phone then reads as usual and polls every 30 seconds instead of 2.5
+  while the stream is up.
+- **Web isolation check** runs headless only (no window, no focus), uses an installed headless shell
+  when Playwright's pinned one is missing, stops on a time limit, and exits 2 when there is no browser.
+
+### Fixed
+
+- A stranger's wrong pairing guesses no longer lock out a valid code: past five wrong guesses a
+  minute they get 429, but a valid code still pairs.
+
 ## 2.2.0
 
 Adds app-managed git worktrees, a diff review view, and faster long chats. It keeps the "Botling 2

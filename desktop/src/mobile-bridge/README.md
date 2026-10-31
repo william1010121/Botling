@@ -14,7 +14,7 @@ Snapshot does not invoke `chat.read`, and exposes only selected chat data and au
 summaries, not global settings, plugin information, other bots' waiting lists or web sessions.
 Send returns the existing `{messageId, turnId: string|null}`; choose/answer preserve
 `{accepted: boolean}`, including false. Mobile answers cannot carry images.
-Streaming remains the frontend's five-second snapshot polling, not a new SSE/WebSocket route.
+The phone is told of changes over the event stream (below) and then reads the snapshot; polling remains the fallback.
 
 The pending-file check MUST execute in the core event loop with no await/IPC/defer before
 `handle(chat.send)`, whose current synchronous prefix consumes pending files. This protects
@@ -140,3 +140,70 @@ not WebSocket/SSE. Public edge authentication may add protection but never repla
 Cloudflare account/token/DNS/tunnel resources are owned by flux-k8s; this code does not provision
 them or install/start cloudflared. Certificate issuance/trust and device access remain deployment
 acceptance tasks. No root process or privileged port is needed for the local listener.
+
+## One-time pairing
+
+`GET /api/mobile/core` is public and secret-free: `{ app, coreId, protocol, pairing: { ttlSeconds } }`.
+The Core ID is random, kept in `<data>/mobile/core-id.json`.
+
+Local setup prints a pairing link: `node out/mobile-bridge/pair.cjs <data>/mobile https://ORIGIN BOT_ID...`
+gives `https://ORIGIN/mobile/#pair=<secret>&core=<coreId>` (render it as a QR). The secret is in the
+fragment, valid 5 minutes, usable once, and only its SHA-256 is stored (`pairing-offers.json`, mode 0600).
+The page checks `coreId` against the descriptor, then `POST /api/mobile/pair { secret, deviceId }` returns a
+bearer token. That token is an ordinary client (explicit bots, 30 days) in `paired-clients.json`, merged
+with the clients file; pairing the same device again replaces its session. Unknown, used and expired codes
+all answer 401; past five wrong guesses in a minute they answer 429 for the rest of the window, but a
+valid code is never refused (it has 256 bits; the limit is about noise, not guessing).
+
+### Phone settings, devices and the command line
+
+Settings > Phone (desktop) makes the code as a QR picture for the bots you tick, and lists and revokes
+paired phones; the same store is used by `node out/mobile-bridge/pair.cjs devices <data>/mobile` and
+`... revoke <data>/mobile DEVICE_ID`. Only the desktop (a renderer command to the core) lists or revokes:
+a paired phone cannot see or end another phone's session. Revoking takes effect on the phone's next
+request; an open event stream ends within 15 seconds. Hand-issued tokens in the clients file are not
+listed; edit that file to revoke them.
+
+### Routes
+
+`config.json` may name how the core is reached, in the order a phone should try:
+
+```json
+{ "origin": "https://botling-bridge.example", "originKind": "tunnel",
+  "routes": [{ "kind": "lan", "origin": "https://botling.home.arpa" }, { "kind": "tailscale", "origin": "https://mac.tailnet.ts.net" }] }
+```
+
+`origin` is the first route (`originKind` defaults to `tunnel`); `routes` adds up to five more (`lan`,
+`tailscale`, `tunnel`; HTTPS origins, no path). Nothing is discovered or set up: each name must already
+reach this listener (DNS, Tailscale Serve, tunnel) with a certificate valid for it. The bridge accepts
+each as `Host` and checks `Origin` against the host asked, so data requests stay same-origin; only
+`GET /api/mobile/core` may be read from another listed route (CORS for exactly those origins), which is how
+a phone probes. `GET /api/mobile/core` now also returns `routes: [{ kind, origin }]`. A pairing link made
+for one route that is opened on a later one hops to the first listed route that answers with the same Core
+ID, once (`&hop=1`); the secret is sent only to a route that proved it. After pairing, a token belongs to
+one origin unless the phone follows the core to another listed route (next section).
+
+### Moving a signed-in session between routes
+
+When it signs in, the phone pins the core id and the routes that core itself listed (`mobile/routes.ts`
+`RouteBook`). If a request gets no answer at all (no connection, not an HTTP error), it asks every listed
+route for the public descriptor (no token, no credentials) and moves to the first, in the core's order,
+that answers with the pinned core id. Only then does the token go there. A host that is not in the list, or
+answers as another core, never receives it. A read is repeated on the new route; a send is not (it may have
+arrived): it is reported as unconfirmed and the next call uses the new route. The page keeps its own origin, so
+`/api/mobile/command`, `/ticket` and `/events` accept requests whose `Origin` is another listed route, with
+CORS for exactly those origins (preflight allows `Authorization`, `Content-Type`, `X-Botling-Generation`; no
+credentials). Pairing stays same-origin. The phone does not switch back to a better route by itself yet.
+
+### Event stream tickets
+
+`EventSource` cannot send headers, so the token must not go in its URL. `POST /api/mobile/ticket` with
+the bearer token returns `{ ticket, expiresAt }` (30 seconds, single use, held in memory, bound to that
+phone, at most 64 outstanding). `GET /api/mobile/events?ticket=T` redeems it (anything else in the query,
+or a bearer token, is refused) and opens `text/event-stream`: `retry`, `event: ready`, then a `: ping`
+every 15 seconds, closing when the session is revoked or expires. At most 16 streams at once. The core
+tells the stream when something changed: `event: changed`, with no content at all (a counter only), at most
+about every 250 ms (a burst is one notice), and only for changes in bots that phone may read or that belong to
+no bot. The phone then reads with a normal, checked snapshot request. `mobile/events.ts` (`watchEvents`) is the
+client half: a new ticket for every connection, growing waits after a drop, stops for good when the session is
+gone. While the stream is up the phone's polling slows to 30 seconds (a safety net); without it, 2.5 seconds.
