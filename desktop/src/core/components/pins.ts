@@ -15,6 +15,8 @@ export interface PinRecord {
   id: string;
   name: string;
   command?: string;
+  /** The command is the component's own Command line (not a tag's command="…"): it follows the component when that changes. */
+  followsComponent?: boolean;
   data: string;
   ranAt?: number;
   refresh: PinRefresh;
@@ -118,6 +120,7 @@ export function readPin(value: unknown): PinRecord | null {
     refresh, minutes: clampMinutes(typeof v.minutes === "number" ? v.minutes : DEFAULT_MINUTES), size, makingLive: v.makingLive === true,
   } as PinRecord;
   if (typeof v.command !== "string") delete pin.command;
+  if (typeof v.followsComponent !== "boolean") delete pin.followsComponent;
   if (typeof v.seconds === "number") pin.seconds = clampSeconds(v.seconds); else delete pin.seconds;
   const height = clampPanelHeight(v.panelHeight as number);
   if (height !== undefined) pin.panelHeight = height; else delete pin.panelHeight;

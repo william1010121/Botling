@@ -4301,9 +4301,35 @@ export class Bot {
     if (this.options.primary) return this.options.primary.pinsView();
     const context = this.context;
     if (!context) return { pins: [], floating: [], pinChoices: [] };
+    this.syncPinCommands();
     const floating = this.pins.filter((pin) => pin.float).length;
     const views = this.pins.map((pin) => pinView(context, pin, this.commandFolder, floating));
     return { pins: views, floating: views.filter((view) => view.float), pinChoices: this.pinChoices() };
+  }
+
+  /**
+   * A pin keeps the Command its component had when it was pinned; when the component's Command line changes (an update,
+   * a fix), a pin that follows the component takes the new one, so its card and ↻ stop running the old line. A pin made from a
+   * tag with its own command="…" keeps that. Pins from before `followsComponent` existed follow unless a shown card of that
+   * component carried exactly their command.
+   */
+  private syncPinCommands() {
+    const context = this.context;
+    if (!context || this.readOnly) return;
+    let changed = false;
+    for (const pin of this.pins) {
+      if (!pin.command || pin.followsComponent === false) continue;
+      const current = context.library.command(pin.name);
+      if (!current || current === pin.command) continue;
+      if (pin.followsComponent !== true) {
+        const own = this.records.some((record) => record.role === "bot" && ((record.displays ?? []) as Display[]).some((display) => display.name === pin.name && display.command === pin.command));
+        if (own) continue;
+      }
+      pin.command = current;
+      pin.followsComponent = true;
+      changed = true;
+    }
+    if (changed) this.savePins();
   }
 
   /** The picker's list (`ChatPayload.pinChoices`): components it drew (newest first), then its own others with a Command. */
@@ -4368,12 +4394,14 @@ export class Bot {
         if (state.data !== null) { data = state.data; ranAt = state.ranAt !== null ? toSwiftDate(state.ranAt) : undefined; }
       } else if (data === "null") return { pinned: false };
       pin = this.newPin(id, display.name, command, data, refresh, minutes, seconds, ranAt);
+      if (command) pin.followsComponent = display.command === undefined || display.command === null;
       // Persist provenance from the stored reply, never from a component action payload.
       if(record.role === "bot")pin.linkAuthor=typeof record.sourceID === "string"?record.sourceID.toUpperCase():this.id;
     } else if (from.name && context.library.names.includes(from.name)) {
       const command = context.library.command(from.name);
       if (!command) return { pinned: false };
       pin = this.newPin(id, from.name, command, "null", refresh, minutes, seconds);
+      pin.followsComponent = true;
       pin.linkAuthor=this.id;
     } else {
       return { pinned: false };
@@ -4483,6 +4511,7 @@ export class Bot {
   pinCommand(id: string, shown: { command?: string; folder?: string; detail?: string; approve?: boolean; force?: boolean }): ResultOf<"pin.command"> {
     if (this.options.primary) return this.options.primary.pinCommand(id, shown);
     const context = this.context;
+    this.syncPinCommands();
     const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === id.toUpperCase());
     if (!context || !pin?.command) return { accepted: false };
     const folder = this.commandFolder;
@@ -4523,6 +4552,7 @@ export class Bot {
     const context = this.context;
     if (!context) return 0;
     let count = 0;
+    this.syncPinCommands();
     for (const pin of this.pins) {
       if (!pin.command || !context.commands.isApproved(pin.command, this.commandFolder)) continue;
       const last = context.commands.lastRan(`pin/${pin.id}`) ?? (pin.ranAt !== undefined ? Date.UTC(2001, 0, 1) + pin.ranAt * 1000 : null);
