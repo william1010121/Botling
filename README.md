@@ -19,7 +19,6 @@ components you can pin, and change the app itself with plugins. All local, on th
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 <br>
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple&logoColor=white)](#requirements)
-[![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white)](Package.swift)
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-D97757?logo=claude&logoColor=white)](https://docs.claude.com/en/docs/claude-code)
 
 [**Download**](https://github.com/william1010121/Botling/releases/latest) ·
@@ -373,55 +372,27 @@ Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for the PR flo
 
 ## Build from source
 
-The Electron app in `desktop/` is the current app (see `desktop/README.md`); it builds and tests
-without the Swift tree. What follows is the archived Swift 1.x app (`Sources/`, `Tests/`,
-`Package.swift`), which CI no longer builds. It needs Swift 6.2 (Xcode 26), and its web chat
-resources are no longer committed: its web view assets, plugins and plugin host come from
-`cd Web && npm run build` (output in `Web/dist`), so it may not build as is.
-
-```bash
-git clone https://github.com/william1010121/Botling.git botling
-cd botling
-swift run botling          # build and run a debug build
-scripts/make-app.sh              # or build dist/Botling.app and its zip (version from VERSION)
-SINGLE_ARCH=1 scripts/make-app.sh   # faster: this Mac's architecture only
-```
-
-Working on the chat surface, plugins or tests:
+The Electron app in `desktop/` is the app (see `desktop/README.md`). The archived Swift 1.x app
+was removed from `main`; it remains in git history (up to v1.20.0).
 
 ```bash
 cd Web && npm ci && npm test && npm run build        # chat surface, built-in plugins, plugin host
-scripts/test-fast.sh                                 # app tests, split over several serial processes (~15 s)
-scripts/test-fast.sh Conductor --skip Live           # only test ids matching a regex
-scripts/test-all.sh                                  # reference run: full build, all tests in one serial process, as CI
-CCB_LIVE=1 swift test --filter Live                  # acceptance tests with the real claude (costs tokens)
-CCB_SNAPSHOT=/tmp/chat.png swift run botling   # render a sample chat to a PNG and quit
+cd ../desktop && npm ci && npm run typecheck && npx vitest run test/unit
 ```
-
-The app tests use a fake claude. `scripts/test-fast.sh` rebuilds only the test bundle (and the
-app when `Sources/ClaudeCodeBot` changed), then runs every test in shards that each run serially,
-spread by last run's timings (`.build/test-timings.json`, logs in `.build/test-shards/`). The
-tests share the main actor, so one process running them in parallel (`swift test` without
-`--no-parallel`) lets one test's blocking work starve another's short wait; use the scripts.
 
 | Path | What |
 |---|---|
-| `Sources/ClaudeCodeBotCore` | Bots and their Claude and Codex processes, hand-offs, completion verification, workspace, routines, components, web bots, plugin registry, plugin host client, installer |
-| `Sources/ClaudeCodeBot` | The SwiftUI app and the web view bridge |
+| `desktop/` | The Electron app (core, renderer, packaging) |
 | `Web/src` | The chat surface (TypeScript), with its five locales in `Web/src/locales` |
 | `Web/host` | The Node plugin host |
 | `Web/plugins` | Built-in plugins (`ccb-latex`) |
+| `Assets/` | App icon used by packaging |
 | `docs/` | Product docs, flowcharts and README images |
-
-The screenshots in this README are drawn by the app's own snapshot mode (`CCB_SNAPSHOT`,
-`CCB_RAIL_SNAPSHOT`, `CCB_RIGHT_SNAPSHOT`, `CCB_SPEC_SNAPSHOT`,
-`CCB_SETTINGS_SNAPSHOT`) with sample data; `scripts/make-hero.swift` puts the hero picture
-together from them.
 
 ## Versioning & releases
 
 Botling uses [semantic versioning](https://semver.org); the current version is in
-[`VERSION`](VERSION) and every change is in [CHANGELOG.md](CHANGELOG.md). Pushing a `v<version>`
+`desktop/package.json` and every change is in [CHANGELOG.md](CHANGELOG.md). Pushing a `v<version>`
 tag runs the [release workflow](.github/workflows/release.yml), which tests, builds the universal
 app and publishes it on [GitHub Releases](https://github.com/william1010121/Botling/releases).
 
@@ -431,11 +402,6 @@ app and publishes it on [GitHub Releases](https://github.com/william1010121/Botl
 the GNU General Public License, version 3 or (at your option) any later version. Releases up to
 and including 1.14.2 were MIT-licensed.
 
-The built-in plugins bundle KaTeX, markdown-it and CodeMirror (all MIT). The web bots' LaTeX
-snippets and live preview are [web-laas](https://github.com/william1010121/web-laas)
-(GPL-3.0-or-later), which bundles MathJax and mhchemParser (Apache-2.0); their notices ship in
-the app as
-[`web-laas/THIRD_PARTY_NOTICES.txt`](Sources/ClaudeCodeBot/Resources/web-laas/THIRD_PARTY_NOTICES.txt),
-rebuilt by `scripts/build-web-laas.sh`.
+The built-in plugins bundle KaTeX, markdown-it and CodeMirror (all MIT).
 
 Botling is an independent project and is not affiliated with Anthropic or OpenAI.

@@ -14,8 +14,8 @@ personal.
 ```bash
 git clone https://github.com/william1010121/Botling.git botling
 cd botling
-swift run botling      # Swift 6.2 (Xcode 26), macOS 14+
-cd Web && npm ci             # only when you change the chat surface or plugins
+cd Web && npm ci             # chat surface and plugins
+cd ../desktop && npm ci      # the Electron app
 ```
 
 The easiest way to work on the app is from the app: turn on **Settings → Developer mode** and
@@ -33,9 +33,8 @@ app's window, and gets every reply you mark "Not right".
    (cd desktop && npm run typecheck && npx vitest run test/unit)
    ```
 4. Add a line to [CHANGELOG.md](CHANGELOG.md) (under Added, Changed or Fixed) saying what changes
-   for someone using the app. Leave `VERSION` alone; releases bump it.
-5. For a visible change, attach a screenshot. The snapshot mode draws one with sample data, for
-   example `CCB_SNAPSHOT=/tmp/chat.png swift run botling`.
+   for someone using the app. Leave the version alone; releases bump it.
+5. For a visible change, attach a screenshot (sample data only).
 
 By contributing you agree that your work is released under the
 [GNU General Public License v3.0 or later](LICENSE).

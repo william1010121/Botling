@@ -1,7 +1,7 @@
 name: CI
 
 # Answers one question: does it build, and do the fast, deterministic tests pass? The archived
-# Swift 1.x app (Sources/, Tests/, Package.swift) is no longer built here.
+# Swift 1.x app was removed (see git history up to v1.20.0).
 
 on:
   push:
