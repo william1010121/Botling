@@ -7,7 +7,7 @@ import type {HeadHandlers} from './head';
 import type {StreamItem} from './stream';
 import type {CodexItem} from './codex';
 import type {AgyConfig} from './agy';
-import {processStartTime} from '../process/ledger';
+import {groupAlive,processStartTime} from '../process/kill-tree';
 import type {TerminateResult} from '../process/tree';
 
 export interface AgyWorkerHead {
@@ -147,7 +147,7 @@ export class AgyWorkers {
     return w.processes.every(({pid,started})=>{
       const current=processStartTime(pid);
       if(current&&current!==started)return true; // old group cannot coexist with a reused leader PID.
-      try{process.kill(-pid,0);return false;}catch(error){return (error as NodeJS.ErrnoException).code==='ESRCH';}
+      return !groupAlive(pid);
     });
   }
   /** Cleanup is a completion dependency and keeps the worker in running until it finishes; never release it on failure. */

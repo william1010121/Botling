@@ -12,8 +12,8 @@
 // Windows (unverified): there are no process groups; each reported pid is ended with
 // `taskkill /PID <pid> /T /F` (the tree by parent links at that moment). Planned: a Job Object with
 // KILL_ON_JOB_CLOSE per host that main assigns each reported pid to.
-import { spawn } from "node:child_process";
-import { ProcessLedger, processStartTime } from "../core/process/ledger";
+import { ProcessLedger } from "../core/process/ledger";
+import { groupAlive, killTree, processAlive, processStartTime, signalGroup } from "../core/process/kill-tree";
 
 const LIMIT = 2_000;
 
@@ -45,22 +45,20 @@ export class PluginChildren {
   add(host: number, pid: unknown) {
     if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 1) return;
     if (pid === process.pid || (this.options.protectedPids?.() ?? []).includes(pid)) return;
-    if (!alive(pid)) return;
+    if (!processAlive(pid)) return;
     let set = this.groups.get(host);
     if (!set) { set = new Set(); this.groups.set(host, set); }
     if (set.has(pid)) return;
     if (set.size >= LIMIT) this.prune(host, set);
     if (set.size >= LIMIT) { this.options.log?.(`plugin host ${host} started over ${LIMIT} processes at once; not keeping more`); return; }
     set.add(pid);
-    if (this.platform !== "win32") {
-      // `ps` for the leader's start time: off main's current task (the host may start many at once).
-      setImmediate(() => {
-        if (!set!.has(pid)) return;
-        const started = processStartTime(pid);
-        if (started) this.started.set(pid, started);
-        try { this.ledger?.record(pid); } catch { /* best effort */ }
-      });
-    }
+    // Look up identity off the current task (the host may start many at once).
+    setImmediate(() => {
+      if (!set!.has(pid)) return;
+      const started = processStartTime(pid);
+      if (started) this.started.set(pid, started);
+      try { this.ledger?.record(pid); } catch { /* best effort */ }
+    });
   }
 
   private readonly ending = new Set<Promise<void>>();
@@ -83,9 +81,12 @@ export class PluginChildren {
     const pids = [...set].filter((pid) => {
       const recorded = this.started.get(pid);
       this.started.delete(pid);
-      if (this.platform === "win32") return alive(pid);
-      if (!groupExists(pid)) { try { this.ledger?.forget(pid); } catch { /* best effort */ } return false; }
-      if (recorded && alive(pid)) {
+      if (this.platform === "win32") {
+        if (!processAlive(pid)) return false;
+        return !recorded || processStartTime(pid) === recorded;
+      }
+      if (!groupAlive(pid)) { try { this.ledger?.forget(pid); } catch { /* best effort */ } return false; }
+      if (recorded && processAlive(pid)) {
         const now = processStartTime(pid);
         if (now && now !== recorded) return false;
       }
@@ -94,21 +95,22 @@ export class PluginChildren {
     if (!pids.length) return Promise.resolve();
     this.options.log?.(`ending ${pids.length} process group${pids.length === 1 ? "" : "s"} plugin host ${host} started`);
     if (this.platform === "win32") {
-      return Promise.all(pids.map((pid) => taskkill(pid))).then(() => {});
+      for (const pid of pids) killTree(pid, "SIGKILL");
+      return Promise.resolve();
     }
-    for (const pid of pids) signal(pid, "SIGTERM");
+    for (const pid of pids) signalGroup(pid, "SIGTERM");
     return new Promise((resolve) => {
       const finish = () => {
         for (const pid of pids) {
-          signal(pid, "SIGKILL");
+          signalGroup(pid, "SIGKILL");
           try { this.ledger?.forget(pid); } catch { /* best effort */ }
         }
         resolve();
       };
-      if (graceMs <= 0 || pids.every((pid) => !groupExists(pid))) { finish(); return; }
+      if (graceMs <= 0 || pids.every((pid) => !groupAlive(pid))) { finish(); return; }
       const started = Date.now();
       const timer = setInterval(() => {
-        if (pids.every((pid) => !groupExists(pid)) || Date.now() - started >= graceMs) { clearInterval(timer); finish(); }
+        if (pids.every((pid) => !groupAlive(pid)) || Date.now() - started >= graceMs) { clearInterval(timer); finish(); }
       }, 50);
     });
   }
@@ -122,7 +124,7 @@ export class PluginChildren {
   /** Forgets groups that are gone (so a long-running host's list stays short). */
   private prune(host: number, set: Set<number>) {
     for (const pid of set) {
-      if (this.platform === "win32" ? !alive(pid) : !groupExists(pid)) {
+      if (this.platform === "win32" ? !processAlive(pid) : !groupAlive(pid)) {
         set.delete(pid);
         this.started.delete(pid);
         try { this.ledger?.forget(pid); } catch { /* best effort */ }
@@ -130,24 +132,4 @@ export class PluginChildren {
     }
     if (!set.size) this.groups.delete(host);
   }
-}
-
-function signal(pgid: number, name: NodeJS.Signals) {
-  try { process.kill(-pgid, name); } catch { /* the group is gone */ }
-}
-
-function alive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-}
-
-function groupExists(pgid: number): boolean {
-  try { process.kill(-pgid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-}
-
-function taskkill(pid: number): Promise<void> {
-  return new Promise((resolve) => {
-    const kill = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-    kill.once("exit", () => resolve());
-    kill.once("error", () => resolve());
-  });
 }

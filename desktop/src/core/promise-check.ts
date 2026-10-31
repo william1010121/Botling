@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import { childEnvironment } from "./agent/runner";
 import { resolveExecutable } from "./process/executable";
+import { killTree } from "./process/kill-tree";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -282,7 +283,7 @@ export function codexClassifier(command: { file: string; prefixArgs?: string[]; 
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      try { process.platform !== "win32" && child.pid ? process.kill(-child.pid, "SIGKILL") : child.kill("SIGKILL"); } catch { /* gone */ }
+      if (!(child.pid && killTree(child.pid, "SIGKILL"))) { try { child.kill("SIGKILL"); } catch { /* gone */ } }
       done(new ClassifierFailure(FAILURES.timedOut));
     }, timeoutMs);
     child.once("error", (error) => {

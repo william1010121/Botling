@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BotTerminals, installedShells } from '../../src/main/terminal';
+import { BotTerminals } from '../../src/main/terminal';
+import { installedShells } from '../../src/core/shell';
 import { TerminalRequest } from '../../src/contract/terminal';
 import type { IPty } from 'node-pty';
 

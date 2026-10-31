@@ -10,6 +10,8 @@
 // that very template with the card's Command; each `{name}` gets one single-quoted value of
 // letters, digits and . _ / - only. Nothing a card sends ever becomes a command of its own.
 import { spawn } from "node:child_process";
+import { commandShell } from "../shell";
+import { killTree } from "../process/kill-tree";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -92,11 +94,9 @@ export function detailValues(value: unknown): Record<string, string> | null {
 
 /** The shell a command runs in: the user's login shell setup as 1.x (zsh -lc on macOS). */
 function shell(command: string): [string, string[]] {
-  if (process.platform === "win32") return [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", command]];
   // Tests: a plain shell, so the user's own login files are never read.
-  if (process.env.BOTLING_PLAIN_SHELL === "1") return ["/bin/sh", ["-c", command]];
-  if (process.platform === "darwin" && existsSync("/bin/zsh")) return ["/bin/zsh", ["-lc", command]];
-  return ["/bin/sh", ["-lc", command]];
+  if (process.env.BOTLING_PLAIN_SHELL === "1" && process.platform !== "win32") return ["/bin/sh", ["-c", command]];
+  return commandShell(command);
 }
 
 function environment(): NodeJS.ProcessEnv {
@@ -126,10 +126,8 @@ export function execute(command: string, folder: string, timeoutMs = COMMAND_TIM
     let timedOut = false;
     let finished = false;
     const signal = (name: NodeJS.Signals) => {
-      try {
-        if (process.platform !== "win32" && child.pid) process.kill(-child.pid, name);
-        else child.kill(name);
-      } catch { /* gone */ }
+      if (child.pid && killTree(child.pid, name)) return;
+      try { child.kill(name); } catch { /* gone */ }
     };
     const stop = () => {
       signal("SIGTERM");
