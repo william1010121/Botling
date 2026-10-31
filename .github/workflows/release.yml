@@ -1,6 +1,11 @@
 name: Electron 2 release candidate
 
 # Prepares assets only. Creating/publishing the GitHub release is an operator gate.
+#
+# macOS is signed with a Developer ID certificate and notarized by electron-builder, from the repository secrets
+# CSC_LINK, CSC_KEY_PASSWORD, APPLE_API_KEY (the .p8 text), APPLE_API_KEY_ID and APPLE_API_ISSUER. A tag build
+# without them fails: an ad-hoc signed macOS build cannot update itself, so it must not become a release.
+# Windows is unsigned (the first install shows SmartScreen's warning; updates work). Linux is not signed.
 on:
   workflow_dispatch:
   push:
@@ -16,13 +21,12 @@ concurrency:
 jobs:
   candidate:
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: desktop
     env:
       BOTLING_RELEASE_BUILD: '1'
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,9 +62,51 @@ jobs:
       - run: npm run test:reports
       - run: npx playwright-core install chromium-headless-shell
       - run: npm run test:web-isolation
-      # Apple code signing is ad-hoc until the Developer ID step (PR1.5) is in: such a build cannot update itself.
-      - name: Package macOS arm64 ZIP and DMG, and the update feed (never publishes)
-        run: npm run dist:mac
+      - name: Require signing credentials (a tag build is never ad-hoc signed)
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          missing=""
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -z "$missing" ]; then
+            echo "SIGNED_BUILD=1" >> "$GITHUB_ENV"
+            # electron-builder wants the notarization key as a file path; the secret holds its text.
+            key="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY_ID.p8"
+            ( umask 077; printf '%s' "$APPLE_API_KEY" > "$key" )
+            echo "APPLE_API_KEY_FILE=$key" >> "$GITHUB_ENV"
+          elif [ "$REF_TYPE" = tag ]; then
+            echo "::error::Missing signing secrets:$missing. A tag build must be Developer ID signed and notarized."
+            exit 1
+          else
+            echo "::warning::Missing signing secrets:$missing. This candidate is ad-hoc signed and cannot update itself."
+          fi
+      - name: Package macOS arm64 ZIP and DMG, and the update feed (signed and notarized when credentials are set; never publishes)
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          if [ "$SIGNED_BUILD" = 1 ]; then export APPLE_API_KEY="$APPLE_API_KEY_FILE"; else unset CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_ID APPLE_API_ISSUER; fi
+          npm run dist:mac
+      - name: Verify the signature, notarization and Gatekeeper on the shipped ZIP
+        if: ${{ env.SIGNED_BUILD == '1' }}
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          rm -rf "$RUNNER_TEMP/verify" && mkdir "$RUNNER_TEMP/verify"
+          ditto -x -k "dist/Botling-2-$VERSION-mac-arm64.zip" "$RUNNER_TEMP/verify"
+          APP="$RUNNER_TEMP/verify/Botling 2.app"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dvv "$APP" 2>&1 | grep -E "Authority=Developer ID Application|TeamIdentifier=FR6FXUQLQH|flags=.*runtime"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
       - name: Check the installers and the update feed
         run: node scripts/release-check.mjs --artifacts dist --platform mac
       - name: Record source and checksums
@@ -82,6 +128,50 @@ jobs:
             desktop/dist/Botling-2-${{ env.RELEASE_VERSION }}-mac-arm64.dmg
             desktop/dist/SHA256SUMS.txt
             desktop/dist/SOURCE_COMMIT.txt
+
+  windows:
+    # Windows x64: NSIS installer (updates itself through electron-updater). Unsigned. Not run on real hardware.
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      BOTLING_RELEASE_BUILD: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - name: Package Windows installer and the update feed (never publishes)
+        run: npm run dist:win
+      - name: Check the installer and the update feed
+        shell: bash
+        run: node scripts/release-check.mjs --artifacts dist --platform win
+      - name: Record source and checksums
+        shell: bash
+        run: |
+          VERSION=$(node -p 'require("./package.json").version')
+          git rev-parse HEAD > dist/SOURCE_COMMIT-win.txt
+          cd dist
+          sha256sum *.exe latest.yml > SHA256SUMS-win.txt
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Botling-2-${{ env.RELEASE_VERSION }}-win-candidate
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/latest.yml
+            desktop/dist/SHA256SUMS-win.txt
+            desktop/dist/SOURCE_COMMIT-win.txt
 
   linux:
     # Linux: AppImage (updates itself through electron-updater) and deb (cannot; it opens the release page).
