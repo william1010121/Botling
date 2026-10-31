@@ -19,17 +19,6 @@ test('C4 large Chinese HTML without meta uses a bounded UTF8 prefix despite a cu
  }finally{await run.app.close();}
 });
 
-test('C5 dismiss persists across relaunch for one failure; a new identical failure still appears',async()=>{
- const data=tempDir('c5');let run=await launch({dataDir:data});const executable=await run.app.evaluate(()=>process.execPath);const target=dirname(dirname(dirname(executable)));await run.app.close();
- const roots:string[]=[];
- const failed=()=>{const token=randomUUID(),root=join(dirname(target),'.botling-update-c5-'+token);roots.push(root);mkdirSync(root);writeFileSync(join(root,'owner.json'),JSON.stringify({pid:99999999,target,dataDir:data,token}));writeFileSync(join(root,'result'),'failed:14\n');writeFileSync(join(data,'update-pending.json'),JSON.stringify({root,target,token,version:'2.0.1',executable:'TestApp'}));};
- try{
-  failed();run=await launch({dataDir:data});const banner=run.page.getByRole('alert',{name:'Update recovery'});await expect(banner).toContainText('failed:14');await run.page.screenshot({path:join(process.cwd(),'.cache/evidence/review-c/recovery-banner.png')});await banner.getByRole('button',{name:'Dismiss'}).click();await expect(banner).toHaveCount(0);await run.app.close();
-  run=await launch({dataDir:data});expect((await post(run.page,{v:10,id:'dismissed-check',cmd:{type:'updates.check',manual:false}})).result.recoveryError).toBeNull();await expect(run.page.getByRole('alert',{name:'Update recovery'})).toHaveCount(0);await run.app.close();
-  failed();run=await launch({dataDir:data});await expect(run.page.getByRole('alert',{name:'Update recovery'})).toContainText('failed:14');
- }finally{await run.app.close().catch(()=>{});for(const root of roots)rmSync(root,{recursive:true,force:true});}
-});
-
 test('C6 component opens cannot borrow user links or ordinary click authority',async()=>{
  const file=join(tempDir('c6'),'synthetic.txt');writeFileSync(file,'synthetic');const local=pathToFileURL(file).href;
  const run=await launch({chat:[swiftLine({id:randomUUID().toUpperCase(),role:'user',text:`[ordinary](https://example.org/user-only) [user file](${local})`}),swiftLine({id:randomUUID().toUpperCase(),role:'bot',text:'[bot owned](https://example.org/bot-owned)',state:'done'})]});
@@ -49,18 +38,3 @@ test('C6 component opens cannot borrow user links or ordinary click authority',a
  }finally{await run.app.close();}
 });
 
-test('C2 fatal restore startup shows exact recovery paths without starting core or opening its persistent profile',async()=>{
- const primer=await launch();const executable=await primer.app.evaluate(()=>process.execPath);await primer.app.close();
- const target=dirname(dirname(dirname(executable))),data=tempDir('c2-blocked'),token=randomUUID(),root=join(dirname(target),'.botling-update-c2-'+token);
- mkdirSync(join(root,'data-before'),{recursive:true});writeFileSync(join(root,'data-before/schema'),'complete old snapshot');
- mkdirSync(join(data,'core'));writeFileSync(join(data,'core/schema'),'candidate data');mkdirSync(join(data,'electron'));writeFileSync(join(data,'electron/sentinel'),'persistent profile');
- writeFileSync(join(root,'owner.json'),JSON.stringify({target,dataDir:data,token,pid:99999999}));writeFileSync(join(root,'result'),'failed:19\n');writeFileSync(join(data,'update-pending.json'),JSON.stringify({target,root,token,version:'2.0.1',executable:'TestApp'}));
- let run:Awaited<ReturnType<typeof launch>>|undefined;
- try{
-  run=await launch({dataDir:data,waitForState:false});await expect(run.page.getByRole('alert',{name:'Update recovery'})).toContainText(join(root,'data-before'));
-  expect(await run.app.evaluate(()=>(globalThis as any).__botlingCorePid())).toBeUndefined();
-  expect(await run.app.evaluate(({app})=>app.getPath('userData'))).not.toBe(join(data,'electron'));
-  expect(readFileSync(join(data,'core/schema'),'utf8')).toBe('candidate data');expect(readFileSync(join(data,'electron/sentinel'),'utf8')).toBe('persistent profile');expect(existsSync(join(root,'data-before/schema'))).toBe(true);
-  await run.page.screenshot({path:join(process.cwd(),'.cache/evidence/review-c/blocked-recovery.png')});
- }finally{await run?.app.close().catch(()=>{});rmSync(root,{recursive:true,force:true});}
-});

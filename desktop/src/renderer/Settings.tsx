@@ -4,7 +4,7 @@ import { ModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { postToChat } from "./editor-surface";
-import { UpdateActions,RecoveryCopies } from "./Updates";
+import { UpdateActions } from "./Updates";
 // The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
 // and words, for what 2.0's core does. Everything here is global (settings.json); the shown bot's own
 // choices (its bot.json) are `BotSettings`, in the right panel one level in, as in 1.x. Each
@@ -181,7 +181,7 @@ function LimitRow({ name, limits, now }: { name: string; limits: Limits; now: nu
   );
 }
 
-/** Settings → Updates: discovery, verification, explicit restart. */
+/** Settings → Updates: discovery (electron-updater), explicit download and restart. */
 function Updates({ client, settings, change }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void }) {
   const [state, setState] = useState<UpdateView | null>(null);
   const [checking, setChecking] = useState(false);
@@ -206,7 +206,6 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
           {found && <button type="button" onClick={() => void client.request({ type: "updates.open" }).catch(() => {})}>Open release page</button>}
         </span>
       </Row>
-      <RecoveryCopies client={client} />
     </Group>
   );
 }
@@ -214,7 +213,7 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
 /**
  * Developer mode (1.x's Settings → Developer): one project is Botling's own source and gets what you flag as
  * "not right" in any chat, with the chat around it; its manager may install builds it made (you confirm on a card in
- * the main bot's chat) and see the app's window (core/self-update.ts).
+ * the main bot's chat) and see the app's window (core/app-swap.ts).
  */
 function Developer({ settings, change, bots }: { settings: SettingsView; change: (next: SettingsChange) => void; bots: BotView[] }) {
   const projects = bots.filter((candidate) => candidate.role === "manager" && candidate.id !== "DEC0DE00-0000-4000-8000-00000000DEC0");

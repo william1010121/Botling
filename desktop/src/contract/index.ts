@@ -761,7 +761,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
-/** A newer Botling 2 on GitHub Releases; installation requires a signed manifest and explicit restart. */
+/** A newer Botling 2 on GitHub Releases (found by electron-updater); installation needs an explicit download and restart. */
 export const ReleaseView = z.strictObject({
   version: z.string().max(100), name: z.string().max(400), url: z.string().max(2_000), publishedAt: z.string().max(100).nullable(),
   /** This platform's download on the release page, when it has one. */
@@ -778,13 +778,8 @@ export const UpdateView = z.strictObject({
   error: z.string().max(2_000).nullable(),
   installError: z.string().max(2_000).nullable().optional(),
   readyVersion: z.string().max(100).nullable().optional(),
-  recoveryError: z.string().max(8_000).nullable().optional(),
-  recoveryId: z.string().max(200).nullable().optional(),
 });
 export type UpdateView = z.infer<typeof UpdateView>;
-
-/** Recovery copies are local and retained until a specific, confirmed deletion. */
-export interface RetainedUpdateCopy {id:string;path:string;bytes:number;kind:'data'|'app';role:'snapshot'|'newer'|'restore'|'previous-app'|'failed-app';deletable:boolean;reason:string|null}
 
 /** Tokens (1.x's `TokenUsage`). */
 const TokensView = z.strictObject({ input: z.number().int().nonnegative(), output: z.number().int().nonnegative(), cacheWrite: z.number().int().nonnegative(), cacheRead: z.number().int().nonnegative() });
@@ -1100,9 +1095,6 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("updates.open") }),
   z.strictObject({ type: z.literal("updates.stage") }),
   z.strictObject({ type: z.literal("updates.restart") }),
-  z.strictObject({type:z.literal("updates.copies")}),
-  z.strictObject({type:z.literal("updates.deleteCopy"),id:z.string().regex(/^[a-f0-9]{64}$/)}),
-  z.strictObject({ type: z.literal("updates.dismiss"), id:z.string().min(1).max(200) }),
   /** Main: reload this window's native chat page in place (new chat assets/preload; state comes back from the core). */
   z.strictObject({ type: z.literal("chat.reloadPage") }),
   /** A bot's own choices (bot.json). */
@@ -1177,10 +1169,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "tokenFlow.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "tokenFlow.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "chat.reloadPage"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1312,10 +1304,7 @@ export interface Results {
   "updates.open": { opened: boolean };
   "updates.stage": UpdateView;
   "updates.restart": { restarting: boolean };
-  "updates.dismiss": {dismissed:boolean};
   "chat.reloadPage": { reloaded: boolean };
-  "updates.copies": RetainedUpdateCopy[];
-  "updates.deleteCopy": {deleted:boolean};
   "boot.commit": Record<string, never>;
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;
@@ -1403,7 +1392,7 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bot.removed"), botId }),
   /** The temporary teams at work changed (one started or finished). */
   z.strictObject({ type: z.literal("teams.updated"), teams: z.array(TeamRunView).max(50) }),
-  /** The core is being replaced by a newer build (docs/core-hot-swap.md): draining, updating; null: called off. */
+  /** The core is being replaced by a newer build : draining, updating; null: called off. */
   z.strictObject({ type: z.literal("core.swap"), phase: z.enum(["draining", "updating"]).nullable() }),
 ]);
 export type Event = z.infer<typeof Event>;

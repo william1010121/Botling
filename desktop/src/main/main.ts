@@ -16,28 +16,16 @@ import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost,reloa
 import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
-import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
+import { autoUpdater } from "electron-updater";
+import { CHECK_EVERY_MS, Updater } from "./updates";
 import { reportPreviewURL, shellReportNavigation } from "./report-preview";
 import { previewResponse } from "./preview-response";
-import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
-import {blockingRecovery,persistentDataIdentity,dataVolumeError,recoveryCopies,deleteRecoveryCopies,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
-import {RecoveryWindowHost} from "./recovery-window";
-import {retainedUpdateCopies,deleteRetainedUpdateCopy} from "./update-copies";
 import {InputTraceWriter,syntheticTraceContext,acceptTraceIPC} from "./input-trace";
 import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
 import {directoryDefaults,packagedDataDir} from "./main-environment";
 import { StartupMarks } from "../startup-marks";
-declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
-import { installCoreSwap } from "./core-swap-main";
-import { authorizeStorageStartup, checkStorageStartup } from "./storage-startup";
-import { authenticateLocalBuild } from "./hot-auth";
-import { HotTransaction, HOT_PENDING } from "./hot-transaction";
-import { HotInstaller } from "./hot-install";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import * as originalFs from "original-fs";
 import { copyDoctorFix } from "./doctor-copy";
 import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
@@ -80,38 +68,20 @@ if (reportAt >= 0) {
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
 const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
-  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? packagedDataDir(app.getPath("appData"), devTrial) : join(root, ".data")));
+  : resolve(process.env.BOTLING_DATA_DIR || (app.isPackaged ? packagedDataDir(app.getPath("appData"), devTrial) : join(root, ".data")));
 const installedApp = dirname(dirname(dirname(process.execPath)));
-const installProfilePin = app.isPackaged && dataDir === packagedDataDir(app.getPath("appData"), devTrial)
-  ? { dataDir, appDataDir: app.getPath("appData"), devTrial } : undefined;
-const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
-const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
-const startupRecovery = shotMode ? null : volumeRecovery() || blockingRecovery(dataDir,installedApp);
-// Refusal must precede renderer configuration, profile creation, and log setup.
-if (app.isPackaged && !shotMode && !startupRecovery) {
-  try {
-    checkStorageStartup({ dataDir, target: installedApp, version: app.getVersion(), argv: process.argv,
-      packageContract: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).botlingStorageContract,
-      coreContract: JSON.parse(readFileSync(join(root, "out/core/storage-contract.json"), "utf8")),
-      fs: originalFs as unknown as typeof import("node:fs") });
-  } catch (error) {
-    writeSync(2, `Storage startup refused: ${String(error)}\n`);
-    process.exit(1);
-  }
-}
-const renderer = startupRecovery ? { directory: join(root, "out/renderer"), development: false }
-  : rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
-/** Where the shell and chat page come from; a hot install (hot-install.ts) points it at a copy of the new build's. */
-let rendererDir = renderer.directory;
-/** After a hot install pages are served with no-store, so nothing cached from the previous build is reused. */
-let rendererNoStore = renderer.development;
+const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
+/** Where the shell and chat page come from (a developer build can name its own folder). */
+const rendererDir = renderer.directory;
+/** Developer builds serve pages with no-store, so nothing cached is reused. */
+const rendererNoStore = renderer.development;
 if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell, Alt+Cmd+R the chat page`);
 // Preloads re-run on each page reload; a developer build dir (--botling-preload-dir) can supply them.
-const preloadDir = startupRecovery ? join(root, "out/preload") : preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
-const traceContext=!shotMode&&!startupRecovery?syntheticTraceContext({packaged:app.isPackaged,dataDir,syntheticBase:join(root,".cache/test-data"),env:process.env}):null;
+const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
+const traceContext=!shotMode?syntheticTraceContext({packaged:app.isPackaged,dataDir,syntheticBase:join(root,".cache/test-data"),env:process.env}):null;
 let traceWriter:InputTraceWriter|null=null;
-if(!startupRecovery)mkdirSync(dataDir, { recursive: true });
-const profileDir = startupRecovery ? mkdtempSync(join(process.env.TMPDIR || tmpdir(), "botling-recovery-ui-")) : join(dataDir,"electron");
+mkdirSync(dataDir, { recursive: true });
+const profileDir = join(dataDir,"electron");
 // Everything Electron keeps (partitions, caches, logs) lives under the data dir, never the default.
 app.setPath("userData", profileDir);
 app.setPath("sessionData", profileDir);
@@ -169,7 +139,6 @@ if (!shotMode && !app.requestSingleInstanceLock({ dataDir })) {
 let mainWindow: BrowserWindow | null = null;
 const openingWindows = new WeakMap<BrowserWindow, Promise<boolean>>();
 const appContents = new Set<number>();
-const recoveryContents = new Set<number>();
 
 const terminals = new BotTerminals((owner, event) => {
   const contents = webContents.fromId(owner) ?? undefined;
@@ -193,27 +162,7 @@ const core: CoreClient = new CoreClient({
   },
   audit: note,
   milestone: (name) => startup.mark(name),
-  app: async (op, args): Promise<{ ok: boolean; file?: string; error?: string; plan?: unknown }> => {
-    if (op === "planBuild") {
-      // A developer build's card (core/self-update.ts): would it install without a restart?
-      const { plan } = await hotInstaller.plan(args.path ?? "");
-      return { ok: true, plan };
-    }
-    if (op === "installBuild") return withInstallRequest(async () => {
-      // The user confirmed a hot install on the card. Main compares again and only installs in place when the kernel is the same.
-      const planned = await hotInstaller.plan(args.path ?? "");
-      if (planned.plan.blocked) return { ok: false, error: planned.plan.mode === "restart" ? planned.plan.reasons.join("; ") : "Build verification failed" };
-      if (args.mode !== planned.plan.mode) return { ok: false, error: "Install mode changed since confirmation. Ask again with the current build." };
-      if (planned.plan.mode === "restart") {
-        const verified = hotInstaller.verified(args.path ?? "");
-        if (!verified) return { ok: false, error: "Verified restart candidate unavailable" };
-        await installer.stageLocal(verified.zip, verified.version);
-        await restartWithContinuation();
-        setImmediate(() => app.quit());
-        return { ok: true };
-      }
-      return hotInstaller.install({ path: args.path ?? "", requester: args.requester ?? "", note: args.note ?? "", from: args.from ?? "", to: args.to ?? "" });
-    });
+  app: async (op): Promise<{ ok: boolean; file?: string; error?: string }> => {
     if (op === "quit") {
       // An install of a developer build: the script outside the app waits for it to quit.
       note("quitting to install a developer build");
@@ -221,15 +170,10 @@ const core: CoreClient = new CoreClient({
       return { ok: true };
     }
     if (op === "installRelease") return withInstallRequest(async () => {
-      // The user picked Install and restart on the update notice in the main bot's chat (core/self-update.ts):
-      // download and verify the newer release unless it is already, then restart on it.
+      // The user picked Install and restart on the update notice in the main bot's chat (core/app-swap.ts):
+      // download the newer release unless it is already, then restart on it.
       try {
-        const state = await updater.check(true);
-        if (!state.newer) return { ok: false, error: "There is no newer release." };
-        if (installer.ready !== state.newer.version) await installer.stage(state.newer);
-        note(`installing release ${state.newer.version} and restarting`);
-        await restartWithContinuation();
-        setImmediate(() => app.quit());
+        await installRelease();
         return { ok: true };
       } catch (error) {
         return { ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) };
@@ -254,110 +198,26 @@ const core: CoreClient = new CoreClient({
 });
 
 let lastEpoch: string | null = null;
-// Serialize signed developer/release requests; a hot apply continues after its immediate reply.
+// One install request at a time (a release's download and restart).
 let installRequestBusy = false;
-let hotRecoveryReady = !existsSync(join(dataDir, HOT_PENDING));
 async function withInstallRequest<T>(action: () => Promise<T>): Promise<T> {
-  if (installRequestBusy || hotInstaller.installing) throw new Error("Another install is in progress");
+  if (installRequestBusy) throw new Error("Another install is in progress");
   installRequestBusy = true;
   try { return await action(); } finally { installRequestBusy = false; }
 }
-// Core hot swap (docs/core-hot-swap.md): a newer core build replaces the running one without an app restart.
-const coreSwap = installCoreSwap({ core, root, dataDir, packaged: app.isPackaged, devTrial, argv: process.argv, note });
 
 /**
- * Developer builds installed without a restart when the kernel is the same (hot-install.ts, docs/core-hot-swap.md):
- * only for a packaged app bundle, only the build the core's confirmed card names (never a folder from argv).
- * Reads bundles with original-fs: app.asar as the file it is, not through Electron's cache of the running one.
- */
-const run = promisify(execFile);
-const hotInstaller: HotInstaller = new HotInstaller({
-  target: app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app") ? installedApp : null,
-  dataDir,
-  authenticate: (path) => authenticateLocalBuild(path, installedApp, __UPDATE_PUBLIC_KEY__, originalFs as unknown as typeof import("node:fs"), (file, args) => run(file, args, { timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024 }), process.arch, installProfilePin),
-  fs: originalFs as unknown as typeof import("node:fs"),
-  run: (file, args) => run(file, args, { timeout: 10 * 60_000 }),
-  notify: (report) => { note(`hot install: ${JSON.stringify({ ok: report.ok, applied: report.applied, disk: report.disk, error: report.error })}`); core.reportInstall(report); },
-  ports: {
-    coreScript: (): string => core.script,
-    swapCore: async (script) => {
-      const outcome = await coreSwap.swap({ script });
-      if (!outcome.ok) return outcome;
-      const configured = process.env.BOTLING_MOBILE_CONFIG !== undefined ? !!process.env.BOTLING_MOBILE_CONFIG : existsSync(join(dataDir, "core/mobile/config.json"));
-      if (!configured) return outcome;
-      const deadline = Date.now() + 20_000;
-      while (Date.now() < deadline) {
-        try {
-          const receipt = JSON.parse(readFileSync(join(dataDir, "core/mobile-ready.json"), "utf8"));
-          if (receipt.pid === core.pid && receipt.assets === join(installedApp, "Contents/Resources/mobile") && /^[a-f0-9]{64}$/.test(receipt.generation)) return outcome;
-        } catch { /* Wait for this generation's private TLS listener, never accept an older receipt. */ }
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      return { ok: false, stage: "start", rolledBack: false, error: "Mobile generation did not become ready" };
-    },
-    useRenderer: (dir) => { const before = rendererDir; rendererDir = dir; rendererNoStore = true; return before; },
-    reloadChat: async () => {
-      const window = mainWindow;
-      if (!window || window.isDestroyed()) return true;
-      await session.defaultSession.clearCache().catch(() => {});
-      return reloadNativeEditor(window.webContents);
-    },
-    reloadShell: async () => {
-      const window = mainWindow;
-      if (!window || window.isDestroyed()) return true; // The next window loads the new shell.
-      await session.defaultSession.clearCache().catch(() => {});
-      const contents = window.webContents;
-      const loaded = new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), 30_000);
-        contents.once("did-finish-load", () => { clearTimeout(timer); resolve(true); });
-      });
-      contents.reloadIgnoringCache();
-      if (!(await loaded)) return false;
-      // Up means React has the core's first state, as for an update's boot receipt.
-      const deadline = Date.now() + 30_000;
-      while (Date.now() < deadline && !window.isDestroyed()) {
-        if (await contents.executeJavaScript(`Boolean(document.querySelector('.shell[data-ready="1"]'))`).catch(() => false)) return true;
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
-      return false;
-    },
-    log: note,
-  },
-});
-
-/**
- * GitHub Releases discovery, enabled by default. Installation is verified and requires a click.
- * Tests (unpackaged only) point it at a JSON file with BOTLING_TEST_UPDATE_FEED.
+ * Released versions (updates.ts): electron-updater against GitHub Releases, the same on every platform.
+ * A development run and a Linux .deb cannot update themselves; they only see that a newer version exists.
  */
 const updatesFile = join(dataDir, "updates.json");
-const installer = new VerifiedInstaller({
-  current: app.getVersion(), appPath: installedApp, dataDir,
-  profilePin: installProfilePin, bundleFs: originalFs as unknown as typeof import("node:fs"),
-  publicKey: __UPDATE_PUBLIC_KEY__, platform: app.isPackaged ? process.platform : "development", arch: process.arch,
-  fetch: (url) => net.fetch(url, { signal: AbortSignal.timeout(120_000) }),
-  launchArgs: process.argv.filter(arg => arg === "--use-mock-keychain" || /^--remote-debugging-port=\d+$/.test(arg)),
-});
-async function restartWithContinuation() {
-  await core.prepareRestart();
-  try { await installer.restart(process.pid); }
-  catch(error){core.cancelRestart();throw error;}
-}
 const updater = new Updater({
   current: app.getVersion(),
-  platform: process.platform,
-  arch: process.arch,
-  installStatus: () => ({ installError: installer.unavailable(), readyVersion: installer.ready, ...visibleRecovery(dataDir) }),
+  updater: autoUpdater,
+  unavailable: () => !app.isPackaged ? "this is a development run, which does not update itself."
+    : process.platform === "linux" && !process.env.APPIMAGE ? "this Linux package (.deb) cannot update itself; download the new version from the release page."
+    : null,
   enabled: async () => ((await core.call({ type: "settings.get" })) as { updateCheck?: boolean }).updateCheck === true,
-  fetchFeed: async () => {
-    const test = !app.isPackaged ? process.env.BOTLING_TEST_UPDATE_FEED : undefined;
-    if (test) return JSON.parse(readFileSync(test, "utf8"));
-    const response = await net.fetch(FEED, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": `Botling/${app.getVersion()}` },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
-  },
   load: () => {
     try {
       const value = JSON.parse(readFileSync(updatesFile, "utf8"));
@@ -366,14 +226,26 @@ const updater = new Updater({
   },
   save: (state) => { try { writeFileSync(updatesFile, JSON.stringify(state)); } catch { /* the next check tries again */ } },
 });
+/** Downloads the newer release if needed, saves running work, then quits and installs. */
+async function installRelease() {
+  const state = await updater.check(true);
+  if (!state.newer) throw new Error("There is no newer release.");
+  if (updater.ready !== state.newer.version) await updater.download();
+  note(`installing release ${state.newer.version} and restarting`);
+  await restartWithContinuation();
+}
+async function restartWithContinuation() {
+  await core.prepareRestart();
+  try { updater.restart(); }
+  catch (error) { core.cancelRestart(); throw error; }
+}
 /**
- * A newer release goes to the main bot's chat as an update notice (core/self-update.ts, once per version and
+ * A newer release goes to the main bot's chat as an update notice (core/app-swap.ts, once per version and
  * run); installing it waits for the user's pick there. Checked at start and every 6 hours, as Settings has it.
  */
 function announce(view: UpdateView): UpdateView {
   if (view.enabled && view.newer) {
-    const unavailable = installer.unavailable() ?? (view.newer.asset ? null : "this release has no download for this computer.");
-    core.announceRelease({ version: view.newer.version, name: view.newer.name, url: view.newer.url, current: app.getVersion(), unavailable });
+    core.announceRelease({ version: view.newer.version, name: view.newer.name, url: view.newer.url, current: app.getVersion(), unavailable: view.installError ?? null });
   }
   return view;
 }
@@ -398,19 +270,16 @@ function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   env.BOTLING_DATA_DIR = join(dataDir, "core");
-  // Developer mode's builds (core/self-update.ts): main's pid (the install script waits for it to quit), the
+  // Developer mode's builds (core/app-swap.ts): main's pid (the install script waits for it to quit), the
   // data folder the new build opens with, and the bundle this is (macOS app bundles only).
   env.BOTLING_MAIN_PID = String(process.pid);
   // The core adds its own milestone (its bots loaded) to main's startup log.
   if (!shotMode) env.BOTLING_STARTUP_LOG = join(profileDir, "logs", "startup.log");
   env.BOTLING_APP_DATA_DIR = dataDir;
-  // The folder this build opens with when nothing names one (from Finder): a developer build moved off an
-  // external volume takes its data there too (core/self-update.ts, `localDataMove`).
-  if (app.isPackaged) env.BOTLING_APP_LOCAL_DATA_DIR = packagedDataDir(app.getPath("appData"), devTrial);
-  else delete env.BOTLING_APP_LOCAL_DATA_DIR;
+  delete env.BOTLING_APP_LOCAL_DATA_DIR;
   if (app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app")) env.BOTLING_APP_BUNDLE = installedApp;
   else delete env.BOTLING_APP_BUNDLE;
-  env.BOTLING_UPDATE_PENDING = process.argv.some(arg => arg.startsWith("--botling-update-token=")) ? "1" : "0";
+  env.BOTLING_UPDATE_PENDING = "0";
   // Maintainer's component-shot command: this build in shot mode (1.x: "'<botling>' --component-shot").
   const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
   const self = `env -u ELECTRON_RUN_AS_NODE ${quoted(process.execPath)}${app.isPackaged ? "" : ` ${quoted(root)}`}`;
@@ -712,30 +581,15 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "result.open": return openResult(cmd.botId, cmd.url);
     case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true,cmd.preview===true);
     case "doctor.copy": return copyDoctorFix(cmd.tool, await core.call({ type: "doctor.view" }), text => clipboard.writeText(text));
-    case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "chat.reloadPage": return { reloaded: await reloadNativeEditor(sender) };
     case "updates.check": return announce(await updater.check(cmd.manual));
-    case "updates.copies": return retainedUpdateCopies(dataDir,installedApp,await runningAppBundles());
-    case "updates.deleteCopy": {
-      const copy=(await retainedUpdateCopies(dataDir,installedApp,await runningAppBundles())).find(copy=>copy.id===cmd.id);
-      if(!copy)throw new Error("The recovery copy changed. Refresh the list.");
-      if(!copy.deletable)throw new Error(copy.reason!);
-      const confirmation=await dialog.showMessageBox(BrowserWindow.fromWebContents(sender)!,{type:'warning',buttons:['Keep copy','Permanently delete this copy'],defaultId:0,cancelId:0,
-        message:copy.role==='newer'?'Delete NEWER candidate user data?':'Delete this retained recovery copy?',
-        detail:copy.path+'\n'+copy.bytes.toLocaleString()+' bytes\n'+(copy.role==='newer'?'This is data written by the newer candidate, possibly containing messages absent from the older snapshot. ':'')+'This deletes only the selected copy and cannot be undone.'});
-      if(confirmation.response!==1)return{deleted:false};
-      await deleteRetainedUpdateCopy(dataDir,installedApp,cmd.id,await runningAppBundles());return{deleted:true};
-    }
     case "updates.stage": return withInstallRequest(async () => {
       const state = await updater.check(true);
       if (!state.newer) throw new Error("There is no newer release to download");
-      await installer.stage(state.newer);
-      return updater.view(state.enabled);
+      return updater.download();
     });
     case "updates.restart": return withInstallRequest(async () => {
       await restartWithContinuation();
-      // Let the explicit click's response reach the renderer before normal core shutdown.
-      setImmediate(() => app.quit());
       return { restarting: true };
     });
     case "updates.open": {
@@ -775,7 +629,6 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     if(nativeRule!==null){if(!nativeRule){details.preventDefault();note("blocked native editor navigation");}return;}
     const isApp = appContents.has(contents.id);
     if (details.isMainFrame) {
-      if(recoveryContents.has(contents.id))return; // The recovery window refuses every navigation in will-navigate.
       if (isApp && !details.url.startsWith(`${APP_ORIGIN}/`)) {
         details.preventDefault();
         note(`blocked top-frame navigation of the app to ${details.url}`);
@@ -958,7 +811,7 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 
 app.whenReady().then(async () => {
   startup.mark("app.ready");
-  Menu.setApplicationMenu(Menu.buildFromTemplate([...appMenuTemplate(process.platform,{reloadChat:reloadNativeEditor}), ...coreSwap.menu]));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform,{reloadChat:reloadNativeEditor})));
   // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
   // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
   nativeTheme.themeSource = "dark";
@@ -975,130 +828,14 @@ app.whenReady().then(async () => {
       });
     return;
   }
-  let recoveryMode=Boolean(startupRecovery);
-  const restartNormal = () => {
-    app.relaunch({args:[...process.argv.slice(1).filter(arg=>!arg.startsWith('--botling-update-token=')&&!arg.startsWith('--botling-update-data=')),'--botling-update-data='+dataDir]});app.quit();
-  };
-  const recoveryHost=new RecoveryWindowHost<BrowserWindow>();
-  let recoveryIssue:NonNullable<ReturnType<typeof blockingRecovery>>;
-  let acting=false,renderGeneration=0;
-  let cachedCopies:Awaited<ReturnType<typeof recoveryCopies>>=[],copiesIssue='';
-  const renderRecovery=async(error?:string,busy?:string)=>{
-    const generation=++renderGeneration,issue=recoveryIssue;
-    const window=recoveryHost.get(makeRecoveryWindow);
-    if(!busy||copiesIssue!==issue.id){
-      if(!busy)await window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error,cachedCopies,'Inspecting retained copies…')));
-      cachedCopies=await recoveryCopies(issue);copiesIssue=issue.id;
-    }
-    const copies=cachedCopies;
-    if(generation===renderGeneration&&!window.isDestroyed())await window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error,copies,busy)));
-  };
-  function makeRecoveryWindow(){
-    const previousWindow=mainWindow;
-    const window=new BrowserWindow({width:900,height:700,show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
-    window.once("ready-to-show",()=>{if(!hidden)window.show();});mainWindow=window;
-    if(previousWindow&&!previousWindow.isDestroyed())previousWindow.destroy();
-    recoveryContents.add(window.webContents.id);const recoveryID=window.webContents.id;
-    window.on("closed",()=>{recoveryContents.delete(recoveryID);if(mainWindow===window)mainWindow=null;});
-    window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
-    window.webContents.on('will-navigate',(event,url)=>{
-      event.preventDefault();if(acting)return;
-      const issue=recoveryIssue;let action:URL;try{action=new URL(url);}catch{return;}
-      if(action.protocol!=='botling-recovery:'||action.hostname!=='action'||action.searchParams.get('id')!==issue.id)return;
-      if(action.pathname==='/retry'&&issue.code===27){if(volumeRecovery())showRecovery(volumeRecovery()!);else restartNormal();return;}
-      if(action.pathname==='/open'){
-        const path=issue.paths?.find(p=>p.label!=='Current data'&&existsSync(p.path))?.path;
-        if(path)void shell.openPath(path).catch(()=>{});return;
-      }
-      if(!['/continue','/delete'].includes(action.pathname))return;
-      acting=true;let lastProgress=0;
-      const progress=(message:string)=>{if(Date.now()-lastProgress>250){lastProgress=Date.now();void renderRecovery(undefined,message).catch(error=>note(String(error)));}};
-      void (async()=>{
-        if(action.pathname==='/delete'){
-          const copies=await recoveryCopies(issue),older=copies.filter(copy=>copy.role!=='newer');
-          const confirmation=await dialog.showMessageBox(window,{type:'warning',buttons:['Keep copies','Delete older recovery copies'],defaultId:0,cancelId:0,message:'Permanently delete older recovery copies?',detail:older.map(copy=>copy.path+' ('+copy.bytes.toLocaleString()+' bytes)').join('\n')+'\nNewer candidate data is kept. The live core data must be validated. A running or only available app is kept.'});
-          if(confirmation.response===1)await deleteRecoveryCopies(issue,await runningAppBundles(),false,progress);
-          // Newer candidate data requires its own confirmation identifying the exact path/size.
-          const newer=copies.find(copy=>copy.role==='newer');
-          if(newer){const choice=await dialog.showMessageBox(window,{type:'warning',buttons:['Keep newer data','Delete this NEWER data copy'],defaultId:0,cancelId:0,message:'Delete NEWER candidate user data?',detail:newer.path+'\n'+newer.bytes.toLocaleString()+' bytes\nThis may contain newer messages absent from the older snapshot. This cannot be undone.'});
-            if(choice.response===1){const copy=(await retainedUpdateCopies(dataDir,installedApp,await runningAppBundles())).find(copy=>copy.path===newer.path);if(!copy)throw new Error('The newer copy changed. Refresh the page.');await deleteRetainedUpdateCopy(dataDir,installedApp,copy.id,await runningAppBundles());}}
-          acting=false;showRecovery(issue);return;
-        }
-        const current=blockingRecovery(dataDir,installedApp);
-        if(current)await completeRecovery(dataDir,installedApp,issue.id,progress);
-        else if(!existsSync(dataDir)||volumeRecovery())throw new Error('The original data directory is unavailable.');
-        restartNormal();
-      })().catch(error=>{acting=false;showRecovery(blockingRecovery(dataDir,installedApp)||issue,String(error.message||error));});
-    });return window;
-  }
-  const showRecovery = (issue: NonNullable<ReturnType<typeof blockingRecovery>>,error?:string) => {
-    recoveryMode=true;recoveryIssue=issue;
-    if(issue.code!==27)recoveryIssue={...issue,...issueFor(issue.dataDir,issue.target,issue.root,issue.code,issue.id.slice(0,issue.id.lastIndexOf(':')),issue.at)};
-    void renderRecovery(error).catch(error=>note('Recovery display: '+String(error)));
-  };
-  app.on("activate", () => { if (!hotRecoveryReady) return; if (!mainWindow) {const blocked=volumeRecovery()||blockingRecovery(dataDir,installedApp);if(blocked)showRecovery(blocked);else if(recoveryMode)restartNormal();else createWindow();} });
-  if(startupRecovery){showRecovery(startupRecovery);return;}
-  // A hot transaction can have crashed after the atomic exchange but before runtime acceptance.
-  // Do not start a core or serve pages from a recovered on-disk generation in this process.
-  try {
-    const restored = await new HotTransaction(dataDir, originalFs as unknown as typeof import("node:fs"), (file, args) => run(file, args)).recover(installedApp);
-    if (restored) { app.relaunch(); app.quit(); return; }
-    hotRecoveryReady = true;
-  } catch (error) { note(`Hot-install recovery blocked startup: ${String(error)}`); app.quit(); return; }
-  await recoverUpdates(dataDir, installedApp, false);
-  const blocked=blockingRecovery(dataDir,installedApp);
-  if(blocked){showRecovery(blocked);return;}
   startup.mark("recovery.done");
   if(traceContext){try{traceWriter=await InputTraceWriter.open(traceContext);}catch(error){note('Synthetic trace disabled: '+String(error));}}
-  const collect=()=>void recoverUpdates(dataDir,installedApp).catch(error=>note('Update cleanup: '+String(error)));
-  const sweep=setInterval(collect,30_000);sweep.unref();
-  if (app.isPackaged) {
-    try {
-      await authorizeStorageStartup({ dataDir, target: installedApp, version: app.getVersion(), argv: process.argv,
-        packageContract: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).botlingStorageContract,
-        coreContract: JSON.parse(readFileSync(join(root, "out/core/storage-contract.json"), "utf8")),
-        fs: originalFs as unknown as typeof import("node:fs") });
-    } catch (error) {
-      hotRecoveryReady = false;
-      note(`Storage startup refused: ${String(error)}`);
-      dialog.showErrorBox("Protected storage update required", String((error as Error).message));
-      app.quit(); return;
-    }
-  }
+  app.on("activate", () => { if (!mainWindow) createWindow(); });
   startup.mark("core.start");
   core.start();
   createWindow();
-  collect();
   checkForRelease();
   setInterval(checkForRelease, CHECK_EVERY_MS).unref();
-  mainWindow?.webContents.once("did-finish-load", () => {
-    if (!process.argv.some((arg) => arg.startsWith("--botling-update-token="))) return;
-    // A loaded HTML file alone is not a healthy boot: React must receive the core's first state.
-    void (async () => {
-      await core.call({ type: "settings.get" });
-      while (mainWindow && !mainWindow.isDestroyed()) {
-        const ready = await mainWindow.webContents.executeJavaScript(`Boolean(document.querySelector('.shell[data-ready="1"]'))`);
-        if (ready && acknowledgeUpdateBoot(dataDir, installedApp, app.getVersion(), process.argv)) {
-          const pending = JSON.parse(readFileSync(join(dataDir, "update-pending.json"), "utf8"));
-          while (mainWindow && !mainWindow.isDestroyed()) {
-            const decision=await commitUpdateReceipt(dataDir,installedApp,app.getVersion(),process.argv,originalDataIdentity);
-            if(decision==='committed'){
-              await core.commitUpdateBoot();
-              await writeRecord(join(dataDir,'update-last-boot.json'),{token:pending.token,receipt:readFileSync(join(pending.root,'boot.ok'),'utf8'),version:app.getVersion(),activated:true,orphan:existsSync(join(dataDir,'update-orphan-commit.json'))});
-              writeFileSync(join(pending.root,"activated.ok"),pending.token,{mode:0o600});
-              collect();return;
-            }
-            if(decision==='blocked'){
-              await core.stop();const issue=blockingRecovery(dataDir,installedApp)||issueFor(dataDir,installedApp,dirname(installedApp),25);showRecovery(issue);return;
-            }
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    })().catch(error => note("Update boot handoff: "+String(error)));
-  });
 });
 
 app.on("second-instance", () => {
@@ -1125,10 +862,10 @@ app.on("before-quit", (event) => {
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
   const terminalShutdown = terminals.closeAll();
   web.closeAll();
-  void Promise.allSettled([terminalShutdown, core.stop(), installer.discard(), ...flushes]).then(async () => {
+  void Promise.allSettled([terminalShutdown, core.stop(), ...flushes]).then(async () => {
     ipcMain.removeAllListeners(TEST_TRACE_CHANNEL);
     try{await traceWriter?.close();}catch(error){note('Synthetic trace flush failed: '+String(error));}
-    if(startupRecovery)rmSync(profileDir,{recursive:true,force:true});app.exit(0);
+    app.exit(0);
   });
 });
 
@@ -1138,7 +875,6 @@ app.on("before-quit", (event) => {
   const window = mainWindow;
   return window && !window.isDestroyed() ? (await windowPicture(window.webContents)).toDataURL() : null;
 };
-(globalThis as unknown as { __botlingSwapCore: typeof coreSwap.swap }).__botlingSwapCore = coreSwap.swap;
 (globalThis as unknown as { __botlingShotCommand: string | undefined }).__botlingShotCommand = shotMode ? undefined : coreEnvironment().BOTLING_SHOT_COMMAND;
 (globalThis as unknown as { __botlingCheckCommand: string | undefined }).__botlingCheckCommand = shotMode ? undefined : coreEnvironment().BOTLING_CHECK_COMMAND;
 (globalThis as unknown as { __botlingHostPids: () => number[] }).__botlingHostPids = () => core.hostPids;

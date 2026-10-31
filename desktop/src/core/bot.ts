@@ -5065,7 +5065,7 @@ export class Bot {
   }
 
   // ------------------------------------------------------------------------------------------
-  // Core hot swap (hot-swap.ts, docs/core-hot-swap.md): this bot and its partner head as one.
+  // Core hot swap (hot-swap.ts): this bot and its partner head as one.
 
   holdForSwap(hold: boolean) {
     this.swapHold = hold;

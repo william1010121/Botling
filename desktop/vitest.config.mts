@@ -2,13 +2,12 @@ import { existsSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 
 // Tests that exercise macOS-only machinery. They are not run elsewhere because the code under test
-// cannot run there (ditto, codesign, osascript, renamex_np, the Antigravity helper), not because they fail.
-// The first group is the old self-updater that 2.1.0 replaces with electron-updater (then these go away).
+// cannot run there (ditto, codesign, the Antigravity helper, a .app bundle's install script), not because they fail.
 const macOnly = [
-  "update-install", "update-maintenance", "update-spawn", "self-update", "review-c", "review-d", "review-e", "review-f",
-  "hot-install", "mobile-hot-apply", "history-hot-compatibility",
+  "app-swap",
   "agy-mcp", "agy-acp", "agy-full-permission", "agy-runtime-settings", "agy-runtime-settings-core", "agy-workers",
 ].map((name) => `test/unit/${name}.test.ts`);
+
 // Reads the packaged helper, which only a macOS arm64 build whose clang output matches the reviewed pin produces.
 const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/unit/agy-runtime-install.test.ts"];
 

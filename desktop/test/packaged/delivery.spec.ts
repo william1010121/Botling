@@ -12,7 +12,7 @@ test("ZIP and read-only DMG contain the intact signed app; the DMG is signed and
   const app = process.env.BOTLING_PACKAGED_APP ?? join(desktop, "dist/mac-arm64/Botling 2.app");
   const dist = dirname(dirname(app));
   const version = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8")).version;
-  const stem = join(dist, `Botling-2-${version}-mac-arm64-unsigned-updates`);
+  const stem = join(dist, `Botling-2-${version}-mac-arm64`);
   const base = tempDir("pkg-delivery"), unzipped = join(base, "unzipped");
   const run = (command: string, args: string[]) => execFileSync(command, args, { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] });
   const digest = (bundle: string) => createHash("sha256").update(readFileSync(join(bundle, "Contents/Resources/app.asar"))).digest("hex");

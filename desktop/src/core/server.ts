@@ -78,11 +78,10 @@ import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAI
 import { EXTRACTORS_PLUGIN, WebShelf, askAboutWebText, decodeReading, extractorCall, extractorFor, installExtractors, webBriefing, webSites, type WebSite } from "./web";
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
-import { DevBuilds, devWorkRoot, installTarget, readBuild, spawnInstaller } from "./self-update";
-import { parsePlan } from "../hot-install-plan";
+import { DevBuilds, devWorkRoot, readBuild, spawnInstaller } from "./app-swap";
 
-/** What the core asks of main (self-update.ts); planBuild and installBuild carry a build's path. */
-export type AppOp = "screenshot" | "quit" | "installRelease" | "planBuild" | "installBuild";
+/** What the core asks of main (app-swap.ts); planBuild and installBuild carry a build's path. */
+export type AppOp = "screenshot" | "quit" | "installRelease";
 export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown }
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
 
@@ -159,15 +158,13 @@ export interface CoreOptions {
   /** The web AIs the column lists (1.x's three unless a test names its own). */
   webSites?: WebSite[];
   /**
-   * The app around the core, for developer mode's <install-build> and <app-screenshot/> (self-update.ts):
+   * The app around the core, for developer mode's <install-build> and <app-screenshot/> (app-swap.ts):
    * main's pid and data folder, the app bundle it runs from (null: not a bundle), and what main does on
    * request: a picture of its window, or quitting so the install script can swap the build. Null: no app.
    */
   app?: {
     pid: number | null;
     dataDir: string | null;
-    /** The data folder the app opens with when nothing names one (packaged builds; ~/Library/Application Support/…). */
-    localDataDir?: string | null;
     bundle: string | null;
     request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
   } | null;
@@ -507,21 +504,15 @@ export class Core {
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
       appPid: app?.pid ?? null,
       appDataDir: app?.dataDir ?? null,
-      localDataDir: app?.localDataDir ?? null,
-      // The app the user runs lives on this Mac's disk; only development work goes on the work drive.
-      installTarget: (running) => installTarget(running, homedir()),
       devWork: () => devWorkRoot(),
       launchInstaller: (command, log) => {
-        spawnInstaller(command, log);
+        // Running work resumes on the new build (restart-continuation.ts); a failed checkpoint stops the install.
+        this.prepareRestart();
+        try { spawnInstaller(command, log); } catch (error) { this.cancelRestart(); throw error; }
         // Bots write their notes as the app quits; the script waits for that.
         void app?.request("quit");
       },
       installRelease: app ? () => app.request("installRelease") : undefined,
-      planBuild: app ? async (path) => {
-        const answer = await app.request("planBuild", { path });
-        return (answer.ok ? parsePlan(answer.plan) : null) ?? { mode: "restart", blocked: true, reasons: [answer.error ?? "main could not authenticate the build"] };
-      } : undefined,
-      hotInstall: app ? (request) => app.request("installBuild", request) : undefined,
       captureWindow: async () => {
         if (!app) return null;
         try { const answer = await app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }
@@ -1989,7 +1980,7 @@ First write a test that shows this, then fix it.`;
   }
 
   // ------------------------------------------------------------------------------------------
-  // Core hot swap (hot-swap.ts; main/core-swap.ts runs it)
+  // Core hot swap (hot-swap.ts)
 
   /** Drained for a swap: quitting now hands over instead of tidying. */
   private swapping = false;

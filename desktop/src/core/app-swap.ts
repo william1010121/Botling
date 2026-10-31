@@ -1,20 +1,17 @@
-// Developer mode's own builds (1.x's SelfUpdate.swift and Workspace+Developer.swift): the project that
-// is Botling's own source may ask, with `<install-build path="…/Botling 2.app">what changed</install-build>`,
-// to install a build it made. The user confirms on a card in the main bot's chat; then a small script
-// outside the app waits for it to quit (bots write their notes first), moves the running build aside,
-// puts the new one in its place and opens it. The new build says it came up by writing `healthy` once it
-// has run `HEALTHY_AFTER_MS`; if it does not within `HEALTH_WAIT_S`, the script puts the old build back,
-// opens it, and writes `rolled-back`. Either way the next start tells the bot that asked how it went.
+// Installing a developer build (`<install-build path="…/Botling 2.app">what changed</install-build>`): the project
+// that is Botling's own source may ask to install a build it made. The user confirms on a card in the main bot's
+// chat; then a small script outside the app waits for it to quit (bots write their notes first), moves the running
+// build aside, puts the new one in its place and opens it. The new build says it came up by writing `healthy` once
+// it has run `HEALTHY_AFTER_MS`; if it does not within `HEALTH_WAIT_S`, the script puts the old build back, opens it,
+// and writes `rolled-back`. Either way the next start tells the bot that asked how it went.
 // `<app-screenshot/>` sends that bot a picture of the app's window.
 //
-// Signed releases (main/updates.ts finds them, main/update-install.ts installs them) are announced the
-// same way: an update notice in the main bot's chat, installed and restarted on only after the user's
-// pick there (`announceRelease`).
+// This is the only way the app replaces itself without electron-updater (main/updates.ts), which installs
+// released versions: notices about those are announced here, in the main bot's chat (`announceRelease`).
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { writeFileAtomic } from "./durable/atomic";
-import { planText, PART_NAMES, type HotReport, type InstallPlan } from "../hot-install-plan";
 
 /** Seconds the new build has to come up. */
 export const HEALTH_WAIT_S = 90;
@@ -78,37 +75,10 @@ export function externalVolume(path: string): string | null {
   return match ? join("/Volumes", match[1]!) : null;
 }
 
-/**
- * Where a developer build is installed: in place of the running one when that is on this Mac's own disk;
- * else (running from an external volume) as ~/Applications/<same name>.app. Only development work lives on
- * the external drive; the app the user runs does not. The copy on the drive is left as it is and is the one
- * opened again if the new build does not come up.
- */
-export function installTarget(running: string, home: string): string {
-  return externalVolume(running) && home.startsWith("/") ? join(home, "Applications", basename(running)) : resolve(running);
-}
-
 /** Resolve existing symlinks, retaining lexical paths for destinations that do not exist yet. */
 function physicalPath(path: string): string {
   try { return realpathSync(path); } catch { return resolve(path); }
 }
-
-/**
- * Where external data goes when installing a local build (including an app already local): the data folder
- * it opens with when nothing names one (`localDataDir`, ~/Library/Application Support/Botling 2 Dev Trial for
- * a dev trial build), when the data is on an external volume now. Null: it stays where it is. The script
- * copies it there (leaving the copy on the drive as it is) only if this Mac's disk has room.
- */
-export function localDataMove(dataDir: string | null, _running: string, target: string, localDataDir: string | null | undefined): string | null {
-  if (!dataDir || !localDataDir || !localDataDir.startsWith("/") || !dataDir.startsWith("/")) return null;
-  if (!externalVolume(physicalPath(dataDir)) || externalVolume(localDataDir) || externalVolume(physicalPath(dirname(localDataDir))) || externalVolume(physicalPath(target))) return null;
-  const local = resolve(localDataDir);
-  const source = physicalPath(dataDir);
-  return local === source || local.startsWith(`${source}/`) ? null : local;
-}
-
-/** Room the data's copy must leave free on this Mac's disk, beyond its own size (KiB; the script's MARGIN). */
-export const DATA_MARGIN_KB = 2 * 1024 * 1024;
 
 /** Whether a folder is there: on an external volume only when that volume is mounted (not an empty /Volumes stub). */
 export function folderAvailable(path: string): boolean {
@@ -138,8 +108,6 @@ export interface InstallState {
   startedAt: string;
   /** Where the running build was moved. */
   backup: string;
-  /** Why this install restarts (main's comparison: "restart (kernel changed: main process)"); absent before hot installs existed. */
-  mode?: string;
 }
 
 export const updateFolder = (root: string) => join(root, "self-update");
@@ -173,26 +141,14 @@ export function setFailures(root: string, count: number) {
 }
 
 /**
- * The script, run as: install.sh pid target new backup healthy rolled-back seconds data-dir previous [local-data].
- * (1.x's, with the new build opened with the data folder this one uses.) `previous` is the running build,
- * opened again when the new one fails; it differs from `target` when the build moves off an external volume
- * (`installTarget`), and is then left untouched. A target that is not there yet needs no backup.
- *
- * `local-data` (`localDataMove`): the data folder moves with the build. Once the app has quit, the data is
- * copied there (without the old builds kept in self-update/backups, or Electron's single-instance lock) if the disk has room for it plus
- * DATA_MARGIN_KB, the old folder's path is rewritten to the new one in the copy's text files, and the new
- * build opens with an explicit BOTLING_DATA_DIR matching the health check (it says
- * it is up in the copy's self-update/healthy). The data on the drive is never changed but for its finished
- * install state; it is what the old build reopens with if the new one does not come up, and the copy is then
- * set aside. Without room, the data stays on the drive and the new build opens with it, as before.
+ * The script, run as: install.sh pid target new backup healthy rolled-back seconds data-dir previous.
+ * `previous` is the running build, opened again when the new one fails. A target that is not there yet needs no backup.
  */
 export const INSTALL_SCRIPT = `#!/bin/bash
 # Installs a new Botling 2 build while the old one quits; puts the old one back if the
-# new one does not come up. Written by Botling 2 (core/self-update.ts, after 1.x's SelfUpdate.swift).
-PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"; DATA="$8"; PREVIOUS="\${9:-$2}"; LOCAL="\${10:-}"
+# new one does not come up. Written by Botling 2 (core/app-swap.ts, after 1.x's SelfUpdate.swift).
+PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"; DATA="$8"; PREVIOUS="\${9:-$2}"
 OPEN="\${BOTLING_TEST_OPEN:-/usr/bin/open}"
-MARGIN=${DATA_MARGIN_KB}
-NEWDATA="$DATA"; MOVED=""; ASIDE=""
 say() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
 launch() (
   # The installer is a core child: its data override names core/, not the app profile.
@@ -203,36 +159,6 @@ launch() (
 )
 reopen() { launch "$1" "$DATA"; }
 putback() { if [ -n "$BACKUP" ]; then mv "$BACKUP" "$TARGET"; fi; }
-kib() { if [ -e "$1" ]; then du -sk "$1" 2>/dev/null | awk '{print $1}'; else echo 0; fi; }
-movedata() {
-  case "$HEALTHY" in "$DATA"/*) ;; *) say "the install state is not in $DATA; the data stays there"; return 1;; esac
-  local skip parent need free part
-  skip="$(dirname "$HEALTHY")/backups"
-  need=$(( $(kib "$DATA") - $(kib "$skip") + MARGIN ))
-  parent="$(dirname "$LOCAL")"
-  mkdir -p "$parent" || { say "could not make $parent; the data stays in $DATA"; return 1; }
-  free="\${BOTLING_TEST_FREE_KB:-$(df -Pk "$parent" | awk 'NR==2 {print $4}')}"
-  if [ -z "$free" ] || [ "$free" -lt "$need" ]; then
-    say "not enough room for the data on this disk ($free KiB free, $need KiB needed with the margin); it stays in $DATA"; return 1
-  fi
-  part="$LOCAL.partial"
-  rm -rf "$part"
-  say "copying the data from $DATA to $LOCAL (without \${skip#"$DATA"/})"
-  if ! /usr/bin/rsync -a --exclude "/\${skip#"$DATA"/}/" --exclude "/electron/Singleton*" "$DATA/" "$part/"; then
-    say "could not copy the data; it stays in $DATA"; rm -rf "$part"; return 1
-  fi
-  find "$part" -type f -print0 | xargs -0 grep -lIF -- "$DATA" 2>/dev/null | while IFS= read -r file; do
-    OLDDIR="$DATA" NEWDIR="$LOCAL" /usr/bin/perl -pi -e 's/\\Q$ENV{OLDDIR}\\E/$ENV{NEWDIR}/g' "$file" && say "rewrote the data folder's path in \${file#"$part"/}"
-  done
-  if [ -e "$LOCAL" ]; then
-    ASIDE="$LOCAL.before-$(date '+%Y%m%d-%H%M%S')"
-    say "moving the data already at $LOCAL to $ASIDE"
-    mv "$LOCAL" "$ASIDE" || { say "could not; the data stays in $DATA"; ASIDE=""; rm -rf "$part"; return 1; }
-  fi
-  mv "$part" "$LOCAL" || { say "could not put the copy in place; the data stays in $DATA"; rm -rf "$part"; if [ -n "$ASIDE" ]; then mv "$ASIDE" "$LOCAL"; fi; return 1; }
-  HEALTHY="$LOCAL/\${HEALTHY#"$DATA"/}"; NEWDATA="$LOCAL"; MOVED=1
-  return 0
-}
 say "waiting for Botling 2 ($PID) to quit"
 for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
 if kill -0 "$PID" 2>/dev/null; then say "it did not quit; nothing changed"; echo "did not quit" > "$ROLLED"; exit 1; fi
@@ -248,40 +174,24 @@ if ! /usr/bin/ditto "$NEW" "$TARGET"; then
   say "could not copy the new build; putting the old one back"
   rm -rf "$TARGET"; putback; echo "could not copy the new build" > "$ROLLED"; reopen "$PREVIOUS"; exit 1
 fi
-if [ -n "$LOCAL" ] && [ -n "$DATA" ]; then movedata; fi
-say "opening the new build\${MOVED:+ with the data in $LOCAL}"
-launch "$TARGET" "$NEWDATA"
+say "opening the new build"
+launch "$TARGET" "$DATA"
 for i in $(seq 1 "$WAIT"); do
-  if [ -f "$HEALTHY" ]; then
-    say "the new build is up"
-    if [ -n "$MOVED" ]; then
-      OLDSTATE="$(dirname "$ROLLED")/state.json"
-      mv "$OLDSTATE" "$OLDSTATE.moved" 2>/dev/null
-      printf 'Botling 2 now keeps its data in %s (copied %s by the install of %s).\\nThis folder is left as it was; the build on the drive opens with it.\\n' "$LOCAL" "$(date '+%Y-%m-%d %H:%M:%S')" "$TARGET" > "$DATA/MOVED-TO-LOCAL-DISK.txt"
-    fi
-    exit 0
-  fi
+  if [ -f "$HEALTHY" ]; then say "the new build is up"; exit 0; fi
   sleep 1
 done
 say "the new build did not come up in $WAIT seconds; putting the old one back"
 pkill -f "$TARGET/Contents/MacOS/" ; sleep 2
 rm -rf "$TARGET.failed"; mv "$TARGET" "$TARGET.failed" 2>/dev/null
 putback
-if [ -n "$MOVED" ]; then
-  FAILED="$LOCAL.failed-$(date '+%Y%m%d-%H%M%S')"
-  say "setting the data copy aside as $FAILED; the build on the drive opens with $DATA"
-  mv "$LOCAL" "$FAILED"
-  if [ -n "$ASIDE" ]; then mv "$ASIDE" "$LOCAL"; fi
-fi
 echo "the new build did not come up in $WAIT seconds" > "$ROLLED"
 reopen "$PREVIOUS"
 exit 1
 `;
 
 /** Writes the state and the script; returns the command that runs the script (detached; the app quits right after). */
-export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), mode?: string, target = from.path, localData = ""): string[] {
-  // Pin the source before migration replaces a local alias (symlink) with the real copy.
-  // Rollback and the detached script must still name the original data on the drive.
+export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), target = from.path): string[] {
+  // Rollback and the detached script must name the real folders, not an alias.
   root = physicalPath(root);
   if (dataDir) dataDir = physicalPath(dataDir);
   const folder = updateFolder(root);
@@ -289,10 +199,10 @@ export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, req
   for (const marker of [healthyFile(root), rolledBackFile(root)]) rmSync(marker, { force: true });
   const stamp = `${now.toISOString().slice(0, 10)}-${Math.floor(now.getTime() / 1000)}`;
   const backup = join(folder, "backups", `Botling-2-${from.version.replace(/[^0-9A-Za-z.-]/g, "_")}-${stamp}.app`);
-  const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup, ...(mode ? { mode } : {}) };
+  const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup };
   writeFileAtomic(stateFile(root), JSON.stringify(state, null, 2));
   writeFileSync(scriptFile(root), INSTALL_SCRIPT, { mode: 0o700 });
-  return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), target, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir, from.path, ...(localData ? [localData] : [])];
+  return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), target, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir, from.path];
 }
 
 /** How the last install went, read at start: null when none was under way. */
@@ -325,7 +235,7 @@ export function finishInstall(root: string) {
 /** Files whose changes alter what bots are told or allowed to do (repo-relative endings); a build that changes them says so on its card. */
 export const SENSITIVE_PATHS = [
   "src/core/prompts.ts", "src/core/prompts-codex-text.ts", "src/core/maintainer-text.ts", "src/core/agent/head.ts",
-  "src/core/agent/codex.ts", "src/core/agent/codex-tools.json", "src/core/settings.ts", "src/core/self-update.ts",
+  "src/core/agent/codex.ts", "src/core/agent/codex-tools.json", "src/core/settings.ts", "src/core/app-swap.ts",
   "src/core/permission-rules.ts", "src/core/store/workspace.ts",
 ];
 /** Changed lines with these anywhere count too. */
@@ -372,24 +282,13 @@ export interface DevBuildDeps {
   /** Main's pid (the script waits for it to quit) and its data folder (the new build opens with it). */
   appPid: number | null;
   appDataDir: string | null;
-  /** Where a build replacing `running` is installed (`installTarget`); absent: in its place. */
-  installTarget?: (running: string) => string;
-  /** The data folder the app opens with when nothing names one (packaged: ~/Library/Application Support/…); the data moves there with a build that moves off an external volume (`localDataMove`). */
-  localDataDir?: string | null;
   /** Where developer work goes (`devWorkRoot`); absent or null: beside the project. */
   devWork?: () => string | null;
   /** Starts the script detached, then asks main to quit. */
   launchInstaller: (command: string[], log: string) => void;
   /** A PNG of the app's window, or null. */
   captureWindow: () => Promise<string | null>;
-  /**
-   * Main compares a build with the running one (main/hot-install.ts): hot when only the core, chat page or
-   * shell changed. Absent: every install restarts, as before.
-   */
-  planBuild?: (path: string) => Promise<InstallPlan>;
-  /** Main authenticates the confirmed mode: hot apply, or snapshot-protected restart. */
-  hotInstall?: (request: { mode: "hot" | "restart"; path: string; requester: string; note: string; from: string; to: string }) => Promise<{ ok: boolean; error?: string }>;
-  /** Main downloads and verifies the newer release, then quits for its install (`update-install.ts`). */
+  /** Main downloads the newer release and restarts on it (`main/updates.ts`). */
   installRelease?: () => Promise<{ ok: boolean; error?: string }>;
   log: (line: string) => void;
 }
@@ -416,13 +315,6 @@ function bundlePath(raw: string): string | null {
 
 export class DevBuilds {
   constructor(private deps: DevBuildDeps) {}
-
-  /** Where a build replacing `running` goes (`installTarget`). */
-  private target(running: BuildInfo): string { return this.deps.installTarget?.(running.path) ?? running.path; }
-  /** Whether it goes somewhere else than the running build (off an external volume). */
-  private moves(running: BuildInfo): boolean { return resolve(this.target(running)) !== resolve(running.path); }
-  /** Where the data goes with this install (`localDataMove`); null: it stays. */
-  private dataMove(running: BuildInfo): string | null { return localDataMove(this.deps.appDataDir, running.path, this.target(running), this.deps.localDataDir); }
 
   /** What the developer project's manager is told on top of a manager's usual instructions (`developerBriefing`). */
   briefing(bot: DeskBot): string {
@@ -463,24 +355,13 @@ export class DevBuilds {
     if (!build) return refuse(`there is no app bundle at ${path}.`);
     if (build.bundleID !== running.bundleID) return refuse(`${path} is not Botling 2 (${build.bundleID}).`);
     if (build.path === running.path) return refuse("that is the build running now; build into desktop/dist/ and point at that.");
-    // Main must authenticate the candidate even when a restart is expected.
-    if (!this.deps.planBuild) return refuse("signed build verification is unavailable.");
-    // Main compares the builds first, so the card can say whether the app restarts.
-    return this.deps.planBuild(build.path).then(
-      (plan) => plan.blocked ? refuse(plan.mode === "restart" ? plan.reasons.join("; ") : "Build verification failed") : this.card(build, running, note, from, plan),
-      (error) => refuse(`could not authenticate the build: ${(error as Error).message}`),
-    );
+    return this.card(build, running, note, from);
   }
 
-  /** The confirm card; `plan` null: not compared (always a restart, as in 1.x). */
-  private card(build: BuildInfo, running: BuildInfo, note: string, from: DeskBot, plan: InstallPlan | null) {
+  /** The confirm card. */
+  private card(build: BuildInfo, running: BuildInfo, note: string, from: DeskBot) {
     const main = this.deps.mainBot();
-    const hot = plan?.mode === "hot";
-    const lines = [hot ? `**${from.profile.name}** wants to install a new Botling build without restarting.` : `**${from.profile.name}** wants to install a new Botling build and restart.`, "", `- New: ${buildLabel(build)}`, `- Running: ${buildLabel(running)}`];
-    if (plan) lines.push(`- Expected: ${planText(plan)}`);
-    // Authenticated installs use the snapshot-protected main installer in place; never promise
-    // the legacy helper's implicit app/data relocation on this card.
-    lines.push(`- Installed in place: ${running.path}. Existing data stays in its current location.`);
+    const lines = [`**${from.profile.name}** wants to install a new Botling build and restart.`, "", `- New: ${buildLabel(build)}`, `- Running: ${buildLabel(running)}`, `- Installed in place: ${running.path}. Existing data stays in its current location.`];
     const what = note.trim();
     if (what) lines.push("", what);
     if (build.dirty) lines.push("", "It was built from uncommitted changes.");
@@ -495,24 +376,17 @@ export class DevBuilds {
     } else {
       lines.push("", "Which commits these are is not known, so changes to what bots may do cannot be shown.");
     }
-    if (hot) {
-      lines.push("", "The app keeps running: the new build is installed for the next launch, and its changed parts are applied in place. Bots finish their turns (or pause between tool calls) and go on in the same conversations. If the new core fails its self-check, the running one stays and the app on disk is put back.");
-    } else {
-      lines.push("", `Bots save their original conversations and unfinished work before restart. Supported work resumes automatically; pending permissions or uncertain execution stay paused for reconciliation. If the new build does not come up within ${HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
-    }
-    const install = hot ? "Install and hot-apply" : "Install and restart";
+    lines.push("", `Bots save their original conversations and unfinished work before restart. Supported work resumes automatically; pending permissions or uncertain execution stay paused for reconciliation. If the new build does not come up within ${HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
+    const install = "Install and restart";
     main.appNotice(lines.join("\n"), [
       { label: sensitive ? `${install} anyway` : install, recommended: !sensitive },
       { label: "Not now", recommended: sensitive },
-    ], (index) => this.answer(build, from.id, what, index === 0, plan), { sourceID: from.id });
-    from.queueNote(`(App: The user sees a card asking to install ${buildLabel(build)}${plan ? ` (${planText(plan)})` : ""}. Nothing happens until they pick.)`);
+    ], (index) => this.answer(build, from.id, what, index === 0), { sourceID: from.id });
+    from.queueNote(`(App: The user sees a card asking to install ${buildLabel(build)}. Nothing happens until they pick.)`);
   }
 
-  /**
-   * Your pick on a build card (`answerBuild`). The builds are compared again: if the way it installs is no
-   * longer what the card said (it was rebuilt meanwhile), nothing is installed and the bot is told to ask again.
-   */
-  answer(build: BuildInfo, requester: string, note: string, install: boolean, shown: InstallPlan | null = null): Promise<void> | void {
+  /** Your pick on a build card (`answerBuild`): the script is written and started, and the app quits for it. */
+  answer(build: BuildInfo, requester: string, note: string, install: boolean): void {
     const asker = this.deps.bot(requester);
     if (!install) {
       asker?.queueNote(`(App: The user chose not to install ${buildLabel(build)} now.)`);
@@ -520,50 +394,14 @@ export class DevBuilds {
     }
     const running = this.deps.runningBuild();
     if (!running || !this.deps.appPid) return;
-    if (!this.deps.planBuild) { asker?.queueNote("(App: Signed build verification is unavailable. Nothing was installed.)"); return; }
-    return this.deps.planBuild(build.path).then(async (plan) => {
-      if (plan.blocked) { this.deps.mainBot().appNotice(`Build refused: ${plan.mode === "restart" ? plan.reasons.join("; ") : "verification failed"}`); return; }
-      if (shown && plan.mode !== shown.mode) {
-        const why = `${buildLabel(build)} changed since the card was shown (it now means ${planText(plan)}), so nothing was installed.`;
-        this.deps.mainBot().appNotice(`${why} Ask again to see it.`, undefined, undefined, { sourceID: requester });
-        asker?.queueNote(`(App: ${why} Ask again with <install-build> if it should be installed.)`);
-        return;
-      }
-      // Main routes incompatible storage/kernel generations through the signed restart installer,
-      // which snapshots quiescent data before candidate boot. Never use the legacy developer helper.
-      const answer = await this.deps.hotInstall!({ mode: plan.mode, path: build.path, requester, note, from: buildLabel(running), to: buildLabel(build) })
-        .catch((error) => ({ ok: false, error: (error as Error).message }));
-      if (answer.ok) { this.deps.log(`installing ${buildLabel(build)} for ${requester} (${plan.mode})`); return; }
-      this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${answer.error ?? "main refused"}. Nothing was installed.`, undefined, undefined, { sourceID: requester });
-      asker?.queueNote(`(App: ${buildLabel(build)} was not installed: ${answer.error ?? "main refused"}.)`);
-    }, (error) => { this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${(error as Error).message}`); });
-  }
-
-  /** Main's report of a hot install (main/hot-install.ts), to this core whether it is the new one or the one that stayed. */
-  hotOutcome(report: HotReport) {
-    const main = this.deps.mainBot();
-    const asker = this.deps.bot(report.requester);
-    const applied = report.applied.map((part) => PART_NAMES[part]).join(", ");
-    if (report.ok) {
-      setFailures(this.deps.root, 0);
-      const what = applied ? `hot-applied: ${applied}` : "hot-applied: nothing besides the version differed";
-      main.appNotice(`Botling installed ${report.to} (was ${report.from}) for ${asker?.profile.name ?? "a bot"} without restarting — ${what}. The kernel is unchanged; the next launch starts this build too.`, undefined, undefined, { sourceID: report.requester });
-      try {
-        asker?.relay(`(App) Botling installed ${report.to}, the build you asked to install${report.note ? ` (${report.note})` : ""}, without restarting — ${what}. Check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);
-      } catch (error) { this.deps.log(`could not tell ${report.requester}: ${(error as Error).message}`); }
-      return;
-    }
-    const count = failures(this.deps.root) + 1;
-    setFailures(this.deps.root, count);
-    const paused = count >= FAILURE_LIMIT ? ` That is ${count} in a row: installing is paused until developer mode is turned off and on again.` : "";
-    const still = applied ? ` Still running from the new build: ${applied}.` : "";
-    const disk = report.disk === "stuck"
-      ? ` The app on disk could not be put back, so it is now the new build while the old one runs: restart required (the next launch starts ${report.to}).`
-      : report.disk === "restored" ? ` The app on disk was put back to ${report.from}.` : " The app on disk was not changed.";
-    main.appNotice(`The new build ${report.to} could not be hot-applied: ${report.error ?? "it failed"}. ${report.from} keeps running.${still}${disk}${paused}`, undefined, undefined, { sourceID: report.requester });
     try {
-      asker?.relay(`(App) The build you asked to install, ${report.to}, could not be hot-applied: ${report.error ?? "it failed"}. ${report.from} keeps running.${still}${disk} Find out why before trying again.${paused}`);
-    } catch (error) { this.deps.log(`could not tell ${report.requester}: ${(error as Error).message}`); }
+      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid, this.deps.appDataDir ?? "");
+      this.deps.log(`installing ${buildLabel(build)} for ${requester}`);
+      this.deps.launchInstaller(command, installLog(this.deps.root));
+    } catch (error) {
+      this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${(error as Error).message}. Nothing was installed.`, undefined, undefined, { sourceID: requester });
+      asker?.queueNote(`(App: ${buildLabel(build)} was not installed: ${(error as Error).message}.)`);
+    }
   }
 
   /**
@@ -580,7 +418,7 @@ export class DevBuilds {
         markHealthy(this.deps.root);
         setFailures(this.deps.root, 0);
         const asker = this.deps.bot(state.requesterID);
-        const how = state.mode ? ` — ${state.mode.replace(/^restart/, "restarted")}` : "";
+        const how = "";
         main.appNotice(`Botling restarted on ${buildLabel(state.to)} (was ${buildLabel(state.from)}), installed for ${asker?.profile.name ?? "a bot"}${how}.`, undefined, undefined, { sourceID: state.requesterID });
         try {
           asker?.relay(`(App) Botling restarted on ${buildLabel(state.to)}, the build you asked to install${state.note ? ` (${state.note})` : ""}${how}. Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);

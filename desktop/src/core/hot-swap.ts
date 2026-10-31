@@ -1,4 +1,4 @@
-// The core's side of a hot swap (main/core-swap.ts runs the swap; docs/core-hot-swap.md).
+// The core side of draining and handing over running heads. Since 2.1.0 only the restart continuation (restart-continuation.ts) uses it; there is no core hot swap.
 //
 // Draining: no turn begins any more (what arrives waits in the bot's queue and is handed over);
 // turns under way finish on their own, within `timeoutMs`. One still running then is stopped at a

@@ -1,6 +1,8 @@
 // electron-builder's configuration for Botling 2.0 (Phase 5b). `npm run dist:mac` (scripts/package.mjs)
-// builds out/ first, then this. Nothing here publishes: the package script always passes
-// `publish: "never"`, and there is no publish provider.
+// builds out/ first, then this. The package script always passes `publish: "never"`: nothing is uploaded from
+// here (the release workflow does that). The `publish` provider below only makes electron-builder write
+// latest.yml / latest-mac.yml / latest-linux.yml next to the installers and app-update.yml into the app, which is
+// what electron-updater (src/main/updates.ts) reads from GitHub Releases.
 //
 // Signing is decided by the environment, so a machine without certificates still builds:
 //   - macOS: CSC_LINK (+ CSC_KEY_PASSWORD) or CSC_NAME name a Developer ID Application certificate →
@@ -47,7 +49,8 @@ module.exports = {
   npmRebuild: false,
   nodeGypRebuild: false,
   buildDependenciesFromSource: false,
-  extraMetadata: { main: "out/main/main.cjs", botlingUpdates: env.BOTLING_UNSIGNED_UPDATES === "1" ? "unsigned-updates" : "verified-updates" },
+  extraMetadata: { main: "out/main/main.cjs" },
+  publish: [{ provider: "github", owner: "william1010121", repo: "Botling", releaseType: "release" }],
   // Electron's fuses, flipped in the binary before it is signed (https://www.electronjs.org/docs/latest/tutorial/fuses).
   electronFuses: {
     runAsNode: false, // the core and the plugin host are utility processes; Maintainer's check is `--check-plugin`
@@ -80,7 +83,7 @@ module.exports = {
   dmg: {
     // package.mjs ad-hoc signs the container when there is no certificate.
     sign: macCertificate,
-    // Self-updates authenticate the ZIP; there is no DMG update blockmap to publish.
+    // Updates come from the ZIP (latest-mac.yml); the DMG is only for the first install.
     writeUpdateInfo: false,
     contents: devTrial ? [
       { x: 150, y: 180, type: "file" },
@@ -102,5 +105,5 @@ module.exports = {
     synopsis: "Bots that work in your projects",
     executableName: "botling2",
   },
-  artifactName: "Botling-2-${version}-${os}-${arch}" + (env.BOTLING_UNSIGNED_UPDATES === "1" ? "-unsigned-updates" : "") + ".${ext}",
+  artifactName: "Botling-2-${version}-${os}-${arch}.${ext}",
 };

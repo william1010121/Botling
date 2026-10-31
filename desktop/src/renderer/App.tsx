@@ -9,7 +9,6 @@ import { ReportViewer } from "./ReportViewer";
 import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
-import { UpdateBanner } from "./Updates";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
@@ -319,7 +318,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             </div>
           </div>
         )}
-        <UpdateBanner client={client} enabled={view.settings?.updateCheck} />
         {view.coreSwap && <div className="core-swap" role="status" data-phase={view.coreSwap}>{view.coreSwap === "draining" ? "Updating Botling's core: finishing replies under way…" : "Updating Botling's core…"}</div>}
         {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
         {bot && chat?.heads?.rounds && (
