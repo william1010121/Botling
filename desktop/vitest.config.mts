@@ -9,9 +9,6 @@ const macOnly = [
   "hot-install", "mobile-hot-apply", "history-hot-compatibility",
   "agy-mcp", "agy-acp", "agy-full-permission", "agy-runtime-settings", "agy-runtime-settings-core", "agy-workers",
 ].map((name) => `test/unit/${name}.test.ts`);
-// These insist on a checkout under /Volumes/My-SSD (a rule of the author's machine).
-const mySsdOnly = ["input-trace-harness", "input-trace-main"].map((name) => `test/unit/${name}.test.ts`);
-
 // Reads the packaged helper, which only a macOS arm64 build whose clang output matches the reviewed pin produces.
 const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/unit/agy-runtime-install.test.ts"];
 
@@ -23,7 +20,6 @@ export default defineConfig({
       "**/node_modules/**",
       ...(process.platform === "darwin" ? [] : macOnly),
       ...needsHelper,
-      ...(process.cwd().startsWith("/Volumes/My-SSD/") ? [] : mySsdOnly),
     ],
     testTimeout: 30_000,
     hookTimeout: 30_000,
