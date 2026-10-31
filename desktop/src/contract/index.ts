@@ -658,9 +658,9 @@ const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 const ModelId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\/-]+$/);
 export const SettingsView = z.strictObject({
   agyAcpPath: z.string().nullable().optional(),
-  language: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]).nullable(),
+  language: z.enum(["en", "zh-Hant"]).nullable(),
   /** The language in effect: the chosen one, else the system's (`AppLanguage.preferred`). */
-  effectiveLanguage: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]),
+  effectiveLanguage: z.enum(["en", "zh-Hant"]),
   botLook: z.enum(["original", "cute"]),
   chatAvatarSize: z.number().int().min(32).max(96).nullable(),
   /** Botling 2 only: null uses the default 640px column. */
@@ -709,7 +709,7 @@ export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
 export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("agyAcpPath"), value: z.string().max(4096).nullable() }),
-  z.strictObject({ key: z.literal("language"), value: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]).nullable() }),
+  z.strictObject({ key: z.literal("language"), value: z.enum(["en", "zh-Hant"]).nullable() }),
   z.strictObject({ key: z.literal("botLook"), value: z.enum(["original", "cute"]) }),
   z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
   z.strictObject({ key: z.literal("messageColumnWidth"), value: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable() }),

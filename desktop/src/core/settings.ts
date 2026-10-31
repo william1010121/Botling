@@ -10,9 +10,10 @@ import { writeFileAtomic } from "./durable/atomic";
 import { DEFAULT_WRITING_PROMPT, JUDGE_MODEL } from "./catchup";
 import type { SettingsChange, SettingsView } from "../contract";
 import { messageWidth } from "../contract/message-width";
+import { savedLanguage } from "./prompts";
 import { changeEngineDefaults, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
 
-export const LANGUAGES = ["en", "zh-Hant", "zh-Hans", "ja", "ko"] as const;
+export const LANGUAGES = ["en", "zh-Hant"] as const;
 export const BOT_MODELS = ["haiku", "sonnet", "opus"] as const;
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const RESULT_PUBLISHING = ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const;
@@ -54,8 +55,8 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
   const stall = int(raw.stallReminderMinutes);
   return {
     agyAcpPath: text(raw.agyAcpPath)?.trim() ?? null,
-    language: oneOf(LANGUAGES, raw.languageChoice),
-    effectiveLanguage: oneOf(LANGUAGES, raw.languageChoice) ?? systemLanguage,
+    language: savedLanguage(raw.languageChoice) ?? null,
+    effectiveLanguage: savedLanguage(raw.languageChoice) ?? systemLanguage,
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
     messageColumnWidth: messageWidth(raw.messageColumnWidth),

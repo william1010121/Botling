@@ -46,7 +46,7 @@ import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
 import type { Engine, Heads } from "./heads";
-import { botPrompts, desktopPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts, type ReportTool } from "./prompts";
+import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, type BotPrompts, type ReportTool } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
@@ -1495,7 +1495,7 @@ First write a test that shows this, then fix it.`;
   /** The app's language: settings.json's, else the system's (`AppLanguage.preferred`). */
   private language() {
     const settings = this.settings();
-    return isAppLanguage(settings.language) ? settings.language : preferredLanguage(this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale]);
+    return savedLanguage(settings.language) ?? preferredLanguage(this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale]);
   }
 
   private summaries(bot: Bot): { catchUp: CatchUpViewData | null; intervalSummaries: CatchUpViewData[] } {
@@ -1509,7 +1509,7 @@ First write a test that shows this, then fix it.`;
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
     return desktopPrompts(botPrompts({
       profile: { ...profile, instructions: profile.instructions ?? null },
-      language: isAppLanguage(settings.language) ? settings.language : preferredLanguage(languages),
+      language: savedLanguage(settings.language) ?? preferredLanguage(languages),
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
       engine,
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,

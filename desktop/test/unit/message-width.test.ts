@@ -11,7 +11,7 @@ describe("Botling 2 message column width", () => {
   it("old settings use the default, and malformed values do not break other settings", () => {
     for (const value of [undefined, null, "800", {}, NaN, Infinity]) {
       expect(messageWidth(value)).toBeNull();
-      expect(settingsView({ messageColumnWidth: value, languageChoice: "ja" })).toMatchObject({ messageColumnWidth: null, effectiveLanguage: "ja" });
+      expect(settingsView({ messageColumnWidth: value, languageChoice: "zh-Hant" })).toMatchObject({ messageColumnWidth: null, effectiveLanguage: "zh-Hant" });
     }
     expect(SettingsView.parse(settingsView({})).messageColumnWidth).toBeNull();
   });

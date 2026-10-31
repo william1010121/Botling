@@ -18,6 +18,9 @@ interface GoldenPrompt {
   output: Record<string, string>;
 }
 
+// Swift still exports the languages 2.1.0 dropped (ja, ko, zh-Hans); the desktop app has only these two.
+const keptLanguages = (entries: GoldenPrompt[]) => entries.filter((entry) => ["en", "zh-Hant"].includes(entry.input.language));
+
 function promptsFor(input: GoldenPrompt["input"], engine: "claude" | "codex" = "claude") {
   const { profile } = input;
   return botPrompts({
@@ -54,7 +57,7 @@ describe("prompts: the Swift app's strings", () => {
     expect(golden.prompts.length).toBeGreaterThanOrEqual(13);
   });
 
-  for (const entry of golden.prompts as GoldenPrompt[]) {
+  for (const entry of keptLanguages(golden.prompts as GoldenPrompt[])) {
     it(`matches ${entry.name}`, () => {
       const ours = promptsFor(entry.input);
       for (const key of ["system", "headsRule", "wake", "tidy", "handoff", "resume"] as const) {
@@ -65,7 +68,7 @@ describe("prompts: the Swift app's strings", () => {
     });
   }
 
-  for (const entry of golden.codexPrompts as GoldenPrompt[]) {
+  for (const entry of keptLanguages(golden.codexPrompts as GoldenPrompt[])) {
     it(`matches ${entry.name} (a Codex head)`, () => {
       const ours = promptsFor(entry.input, "codex");
       for (const key of ["system", "headsRule", "wake", "tidy", "handoff", "resume", "codexWorkerSystem"] as const) {

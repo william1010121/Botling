@@ -36,7 +36,6 @@ const SECTIONS: { id: Section; title: string; terms: string }[] = [
 
 const LANGUAGES: { id: SettingsView["language"]; label: string }[] = [
   { id: null, label: "System default" }, { id: "en", label: "English" }, { id: "zh-Hant", label: "繁體中文" },
-  { id: "zh-Hans", label: "简体中文" }, { id: "ja", label: "日本語" }, { id: "ko", label: "한국어" },
 ];
 const MODELS = [{ id: "haiku", label: "Haiku" }, { id: "sonnet", label: "Sonnet" }, { id: "opus", label: "Opus" }] as const;
 const EFFORTS = [{ id: "low", label: "Low" }, { id: "medium", label: "Medium" }, { id: "high", label: "High" }, { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" }] as const;

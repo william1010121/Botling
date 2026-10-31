@@ -44,9 +44,9 @@ it("the actual shell sends no packet for unrelated activity, batches tokens, and
     expect(posted.mock.calls[0][0]).toMatchObject({ botling: "stateDelta", patch: { changed: [{ id: "m", text: "startxxxxxxxxxx" }] } });
     expect(JSON.stringify(posted.mock.calls[0][0])).not.toContain("template-marker");
     posted.mockClear();
-    await act(async () => event({ type: "settings.updated", settings: { effectiveLanguage: "ja", messageColumnWidth: 720 } as SettingsView }));
+    await act(async () => event({ type: "settings.updated", settings: { effectiveLanguage: "zh-Hant", messageColumnWidth: 720 } as SettingsView }));
     await act(async () => vi.advanceTimersByTime(32));
-    expect(posted.mock.calls[0][0]).toMatchObject({ botling: "stateDelta", patch: { changed: [], base: { lang: "ja" } }, messageColumnWidth: 720 });
+    expect(posted.mock.calls[0][0]).toMatchObject({ botling: "stateDelta", patch: { changed: [], base: { lang: "zh-Hant" } }, messageColumnWidth: 720 });
     expect(posted.mock.calls[0][0].patch).not.toHaveProperty("components");
     posted.mockClear();
     await act(async () => event({ type: "components.updated", components: { demo: { ...components.demo, version: 2, template: "<p>version-two</p>" } } }));

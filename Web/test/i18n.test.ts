@@ -6,7 +6,7 @@ import { refreshWords, intervalRow } from "../src/refresh";
 import { taskChips } from "../src/tasks";
 import type { ChatState, MessageView, PinView, StepView } from "../src/types";
 
-// The chat page's own words in the app's five languages: every word in every language, and the
+// The chat page's own words in the app's two languages: every word in every language, and the
 // language the app sends with the state reaching what the page draws.
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -19,7 +19,12 @@ describe("the dictionaries", () => {
   const english = dictionaries.en;
   const keys = Object.keys(english) as Key[];
 
-  it("have every word in all five languages, none empty, with the same {marks}", () => {
+  it("are only English and Traditional Chinese", () => {
+    expect([...languages]).toEqual(["en", "zh-Hant"]);
+    expect(Object.keys(dictionaries)).toEqual(["en", "zh-Hant"]);
+  });
+
+  it("have every word in all two languages, none empty, with the same {marks}", () => {
     expect(keys.length).toBeGreaterThan(0);
     for (const lang of languages) {
       const dictionary = dictionaries[lang];
@@ -38,8 +43,8 @@ describe("the dictionaries", () => {
     setLanguage("en");
     expect(t("steps.steps", { n: 1 })).toBe("1 step");
     expect(t("steps.steps", { n: 3 })).toBe("3 steps");
-    setLanguage("ja");
-    expect(t("steps.steps", { n: 3 })).toBe("3 ステップ");
+    setLanguage("zh-Hant");
+    expect(t("steps.steps", { n: 3 })).toBe("3 個步驟");
     // Anything the app does not have is English.
     setLanguage("fr");
     expect(t("steps.worked")).toBe("Worked");
@@ -69,39 +74,37 @@ describe("the language the app sends", () => {
   afterEach(() => setLanguage("en"));
 
   it("draws the page's words in it, and again in a new one", () => {
-    window.ccb.setState(state("ja"));
-    expect(toggle()).toBe("作業済み · 2 ステップ");
-    expect(document.documentElement.lang).toBe("ja");
     window.ccb.setState(state("zh-Hant"));
     expect(toggle()).toBe("已處理 · 2 個步驟");
+    expect(document.documentElement.lang).toBe("zh-Hant");
     window.ccb.setState(state());
     expect(toggle()).toBe("Worked · 2 steps");
   });
 });
 
-describe("menus and rows in Japanese", () => {
+describe("menus and rows in Traditional Chinese", () => {
   afterEach(() => setLanguage("en"));
 
-  it("a pin's refresh and float entries, and its interval row with the number before the words", () => {
-    setLanguage("ja");
-    expect(refreshWords("interval", 15)).toBe("15 分ごと");
-    expect(refreshWords("shown", 15)).toBe("表示されたとき");
+  it("a pin's refresh and float entries, and its interval row with the word before the number", () => {
+    setLanguage("zh-Hant");
+    expect(refreshWords("interval", 15)).toBe("每 15 分鐘");
+    expect(refreshWords("shown", 15)).toBe("顯示時");
     const pin = { id: "p1" } as PinView;
-    expect(globalItems({ pin, botName: "garden", global: false, blocked: null })[0].label).toBe("すべてのボットに表示");
-    expect(globalItems({ pin, botName: "garden", global: true, blocked: null })[0].label).toBe("garden のみ");
+    expect(globalItems({ pin, botName: "garden", global: false, blocked: null })[0].label).toBe("顯示在所有 Bot");
+    expect(globalItems({ pin, botName: "garden", global: true, blocked: null })[0].label).toBe("只在 garden");
     const row = intervalRow({ start: { count: 30, unit: "sec" }, set: () => {} }, true);
     const line = row.querySelector(".refresh-interval-line")!;
-    expect([...line.children].map((child) => child.className)).toEqual(["refresh-interval-count", "refresh-interval-unit", "refresh-interval-pick"]);
-    expect(line.querySelector(".refresh-interval-pick")!.textContent).toBe("ごと");
-    expect(line.querySelector(".refresh-interval-pick")!.getAttribute("aria-label")).toBe("30 秒ごと");
-    expect([...line.querySelectorAll("option")].map((option) => option.textContent)).toEqual(["秒", "分"]);
+    expect([...line.children].map((child) => child.className)).toEqual(["refresh-interval-pick", "refresh-interval-count", "refresh-interval-unit"]);
+    expect(line.querySelector(".refresh-interval-pick")!.textContent).toBe("每");
+    expect(line.querySelector(".refresh-interval-pick")!.getAttribute("aria-label")).toBe("每 30 秒");
+    expect([...line.querySelectorAll("option")].map((option) => option.textContent)).toEqual(["秒", "分鐘"]);
   });
 
   it("the background-work row", () => {
-    setLanguage("ja");
+    setLanguage("zh-Hant");
     const now = Date.now();
     const row = taskChips("m1", [{ id: "a", kind: "agent", title: "Review", status: "running", started: now, ended: null, detail: null, message: "m1" }]);
-    expect(row.querySelector(".task-summary")!.getAttribute("aria-label")).toBe("バックグラウンド作業：サブエージェント 1 件実行中");
+    expect(row.querySelector(".task-summary")!.getAttribute("aria-label")).toBe("背景工作：1 個子代理執行中");
   });
 });
 

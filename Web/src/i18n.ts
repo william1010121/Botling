@@ -1,5 +1,5 @@
 /**
- * The chat page's own words in the app's five languages. The app says which one in every state
+ * The chat page's own words in the app's two languages. The app says which one in every state
  * (`ChatState.lang`, from Settings → General → Language); a page not told says English. What bots
  * wrote, components and the user's own data are never put through `t`.
  *
@@ -10,16 +10,13 @@
 
 import { en, type Dictionary, type Key, type Word } from "./locales/en";
 import { zhHant } from "./locales/zh-Hant";
-import { zhHans } from "./locales/zh-Hans";
-import { ja } from "./locales/ja";
-import { ko } from "./locales/ko";
 
-export type Lang = "en" | "zh-Hant" | "zh-Hans" | "ja" | "ko";
-export const languages: readonly Lang[] = ["en", "zh-Hant", "zh-Hans", "ja", "ko"];
+export type Lang = "en" | "zh-Hant";
+export const languages: readonly Lang[] = ["en", "zh-Hant"];
 
 export type { Key };
 
-export const dictionaries: Record<Lang, Dictionary> = { en, "zh-Hant": zhHant, "zh-Hans": zhHans, ja, ko };
+export const dictionaries: Record<Lang, Dictionary> = { en, "zh-Hant": zhHant };
 
 let current: Lang = "en";
 

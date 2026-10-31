@@ -22,10 +22,13 @@ describe("Catch-up text, as Swift writes it", () => {
   });
 
   it("instructions in every language, the isolated codex exec's arguments, the schema and the range key", () => {
-    for (const [language, text] of Object.entries(golden.instructions)) expect(instructions(language as never)).toBe(text);
-    expect(summaryArguments("hello", "/tmp/catchup", "gpt-test", "ja")).toEqual(golden.arguments);
+    // Swift's golden still has the languages 2.1.0 dropped; only the two kept are compared.
+    for (const language of ["en", "zh-Hant"] as const) expect(instructions(language)).toBe((golden.instructions as Record<string, string>)[language]);
+    // The golden's arguments were made for Japanese: everything but that language's instructions is compared.
+    const own = (args: string[]) => args.filter((arg) => !arg.startsWith("developer_instructions="));
+    expect(own(summaryArguments("hello", "/tmp/catchup", "gpt-test", "zh-Hant"))).toEqual(own(golden.arguments));
     expect(SUMMARY_SCHEMA).toBe(golden.schema);
-    expect(rangeKey(records.slice(3, 7), "ja")).toBe(golden.key);
+    expect(rangeKey(records.slice(3, 7), "zh-Hant")).toBe(golden.key.replace(/-ja$/, "-zh-Hant"));
   });
 
   it("which lines are unread, and which make an interval", () => {
