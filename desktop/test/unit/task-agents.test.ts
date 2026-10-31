@@ -158,7 +158,8 @@ it("persists multiple Codex workers on the correct task; real detail requests, u
   writeFileSync(gate, "go");
   await until(() => c.of("tasks.updated").findLast((e) => (e.event as any).tasks.some((candidate: any) => candidate.id === task.id && candidate.relatedAgents.length === 2 && candidate.relatedAgents.every((agent: any) => agent.status === "completed"))));
   // The card stays at work until the coordinator's own turn has ended, which follows the last worker.
-  await until(async () => !(await c.chat()).tasks.find((candidate: any) => candidate.id === task.id)?.atWork, { what: "the task to leave work" });
+  let quiet = 0; // at work flickers between the last worker's report and the coordinator's follow-up turn: require it to stay off
+  await until(async () => { quiet = (await c.chat()).tasks.find((candidate: any) => candidate.id === task.id)?.atWork ? 0 : quiet + 1; return quiet >= 8; }, { every: 100, what: "the task to leave work" });
   const refreshed = (await c.chat()).tasks.find((candidate: any) => candidate.id === task.id);
   expect(refreshed.atWork).toBe(false);
   expect(refreshed.relatedAgents.map((agent: any) => agent.id)).toEqual(ids);
