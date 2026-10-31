@@ -1,6 +1,6 @@
 // Phase 2a in the real app (Electron, the reused Web/src chat page, the fake CLI): a bot's
 // question answered with its buttons, a task card's chip, a subagent's card and its own view, a
-// message added while a reply runs, tidying before sleep, and a project another Botling has open.
+// message added while a reply runs, tidying before sleep.
 // Saves screenshots to desktop/.tmp/screens/ for a person to look at.
 import { expect, test } from "@playwright/test";
 import { mkdirSync, readFileSync } from "node:fs";

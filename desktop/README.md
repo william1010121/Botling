@@ -864,7 +864,7 @@ CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
 ### Decisions (Phase 5a)
 
 - **No brief from a copy of the writer's session** (1.x's ComponentBrief forks the session): Maintainer's
-  first build goes without one, as 1.x does when there is no session.
+  first build goes without one, as 1.x does when there is no session. (Phase 5c added the fork; it was removed again in 2.1.0 as unused, so the reply goes straight to Maintainer.)
 - **A component that lands before Maintainer names it in `<component-spec>` finishes the build** (1.x would
   wait for its template to change again: the editor's work usually comes before Maintainer's answer).
 - **Specs from result-page preview cards** were deferred here; implemented in Phase 5c below.

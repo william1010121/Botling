@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { ClaudeHead, type HeadConfig } from "../../src/core/agent/head";
 import { TeamDesk, DEFAULT_TEAMS } from "../../src/core/teams";
-import { briefConfig, writeBrief } from "../../src/core/component-brief";
 import { tempDir } from "../helpers";
 const base: HeadConfig = { command: "/never-launch", cwd: "/tmp", sessionId: "owner", resume: false, allowedTools: ["Monitor"], monitorWorker: false };
 const heads: ClaudeHead[] = [];
@@ -26,15 +25,6 @@ it("standalone teams override inherited coordinator identity before any Monitor 
     expect(heads[0].config.monitorWorker).toBe(true);
     expect(decision(heads[0])).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
   } finally { await desk.shutdown(); }
-});
-it("component brief factory and direct writer both classify the fork as a child", async () => {
-  mockTransport();
-  expect(briefConfig(base).monitorWorker).toBe(true);
-  const done = writeBrief(base, "brief");
-  try {
-    expect(heads[0].config.monitorWorker).toBe(true);
-    expect(decision(heads[0])).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
-  } finally { (heads[0] as any).handlers.onItem({ kind: "result", ok: true, text: "brief" }); await done; }
 });
 it("missing head ownership fails closed; an explicitly trusted coordinator keeps its normal permissions", () => {
   const handlers = { onItem() {}, onExit() {} };

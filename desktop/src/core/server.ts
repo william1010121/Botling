@@ -48,7 +48,6 @@ import type { Engine, Heads } from "./heads";
 import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, type BotPrompts, type ReportTool } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
-import { briefConfig, writeBrief } from "./component-brief";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
@@ -89,10 +88,6 @@ export interface CoreOptions {
   groupTiming?: typeof GROUP_TIMING;
   /** How to run a bot's head for a session. */
   headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
-  /** Whether claude still has a session's transcript, started in a folder (1.x's `claudeSessionExists`); unset: never. */
-  claudeSessionExists?: (session: string, folder: string) => boolean;
-  /** How long a component brief may take (1.x: 120 s). */
-  briefTimeoutMs?: number;
   /** How to run a Codex head (threads: <data>/codex-threads); null when Codex is not available. */
   agyConfig?: ((profile: BotProfile, config: AgyConfig) => AgyConfig) | null;
   codexConfig?: ((profile: BotProfile, session: SessionStartCodex, threads: CodexThreads) => CodexHeadConfig) | null;
@@ -401,14 +396,6 @@ export class Core {
       emit: (spec) => this.event({ type: "spec.updated", spec }),
       componentsChanged: () => this.componentsTick(),
       clock: () => ({}),
-      // "Make into component": a read-only fork of the writer's claude session writes Maintainer a brief.
-      brief: ({ bot, session, prompt }) => {
-        const choices = bot.settingsView();
-        const config = briefConfig(options.headConfig(bot.profile, { sessionId: session.toLowerCase(), resume: true, systemPrompt: "", model: choices.model, effort: choices.effort }));
-        this.log(`specs: asking a copy of ${bot.profile.name}'s session for a component brief`);
-        return writeBrief(config, prompt, options.briefTimeoutMs);
-      },
-      sessionExists: (session, folder) => options.claudeSessionExists?.(session, folder) ?? false,
       log: (line) => this.log(`specs: ${line}`),
     });
     const host = options.plugins ?? null;
