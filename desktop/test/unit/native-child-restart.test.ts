@@ -44,3 +44,24 @@ it('a resumed native provider call updates the original background task through 
  apply({kind:'subagentEnded',id:'agent-id',status:'completed',summary:'Existing evidence'});
  expect(bot.endBackground).toHaveBeenCalledWith('original-call','completed','Existing evidence');expect(bot.subagentEnded).toHaveBeenCalledWith('original-call');expect(subagents.list).toHaveLength(1);
 });
+it('a native child without a matching checkpoint is listed as unresumable instead of failing the whole context',()=>{
+ const root=tempDir('native-degrade'),cwd=join(root,'work'),sessionId='parent-session';
+ const file=(agentId:string)=>join(root,'projects',projectFolderName(cwd),sessionId,'subagents',`agent-${agentId}.jsonl`);
+ const rows=[{type:'user',message:{content:'Research only'}},{type:'assistant',message:{content:[{type:'tool_use',id:'read-1'}]}},{type:'user',message:{content:[{type:'tool_result',tool_use_id:'read-1',content:'evidence'}]}}];
+ for(const agentId of ['good-agent','bad-agent']){mkdirSync(dirname(file(agentId)),{recursive:true});writeFileSync(file(agentId),rows.map(r=>JSON.stringify({...r,sessionId,agentId,isSidechain:true})).join('\n'));}
+ const good={id:'good-call',agentId:'good-agent',checkpoint:'read-1',prompt:'Research only',description:'Good'};
+ const bad={id:'bad-call',agentId:'bad-agent',checkpoint:'unknown-call',prompt:'Other work',description:'Bad'};
+ const note=nativeRestartContext([good,bad],{cwd,sessionId,configDir:root});
+ expect(note).toContain('could not be resumed');
+ const data=JSON.parse(note.split('\n').at(-1)!);
+ expect(data).toHaveLength(1);expect(data[0]).toMatchObject({agentId:'good-agent',state:'continue'});
+ expect(note).toContain('bad-agent');expect(note).toContain('no matching acknowledged checkpoint');
+ const only=nativeRestartContext([bad],{cwd,sessionId,configDir:root});
+ expect(only).toContain('could not be resumed');expect(only).toContain('Other work');
+});
+it('a native child with no checkpoint does not block the main bot entry',()=>{
+ const children=[{id:'running-call',agentID:'agent',status:'running',prompt:'Research only',description:'Research',steps:[]}];
+ const owner={owner:{id:'chat'},engine:'claude',partner:null,peers:[],readOnly:false,head:null,turn:null,queue:[],approvals:new Map(),subagents:{running:children},session:{sessionId:'parent',started:true}};
+ const [entry]=Bot.prototype.restartEntries.call(owner as unknown as Bot);
+ expect(entry.blocked).toBeUndefined();expect(entry.continue).toBe(true);
+});
