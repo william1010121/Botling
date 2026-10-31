@@ -1,7 +1,7 @@
 // One bot's files, in the same folder layout and formats as the Swift app's `BotStore`:
 //   chat.json        its chat lines (the newest HISTORY_LIMIT), an array of ChatMessage
 //   bot.json         its settings (model, alwaysAllowed, unread, …); keys 2.0 does not use are kept
-//   subagents.json + subagents.json.journal/   versioned checkpoint plus durable worker changes
+//   subagents.json + subagents/<id>.jsonl      2.1+: a small index, and each subagent's steps appended to its own file
 //   tasks.json, pins.json, specs.json          complete atomic files
 //   head.json        2.0 only: the claude session its head resumes
 //   done-days.json   2.0 only: when its tasks were finished, the last 14 days (the whiteboard's chart)
@@ -10,7 +10,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
-import { HistoryJournal, readHistoryState } from "../durable/history-journal";
+import { SubagentStore, type SubagentHistory, type SubagentLine } from "./subagent-store";
 import { HISTORY_LIMIT, isChatRecord, type ChatRecord } from "./records";
 
 export class StoreError extends Error {
@@ -42,11 +42,11 @@ export function readJSON(file: string): unknown {
 export class BotStore {
   constructor(readonly directory: string) {}
 
-  private workerJournal?: HistoryJournal;
+  private subagentStore?: SubagentStore;
+  private get subagents(): SubagentStore { return this.subagentStore ??= new SubagentStore(this.directory); }
 
-  /** Flush the versioned checkpoint before releasing a profile or handing it over. */
-  async flushWorkerHistory(): Promise<void> { await this.workerJournal?.flush(); }
-  async closeWorkerHistory(): Promise<void> { await this.workerJournal?.close(); }
+  /** Append what is still staged (a subagent's steps) to its file. Called when the core stops or swaps. */
+  flushSubagents(): void { this.subagentStore?.flush(); }
 
   private path(name: string) {
     return join(this.directory, name);
@@ -109,9 +109,8 @@ export class BotStore {
   /** A list file kept as it is (subagents.json, tasks.json, …): its entries, or [] when missing. */
   loadList(name: (typeof CHAT_FILES)[number]): unknown[] {
     if (name === "subagents.json") {
-      const recovered = readHistoryState(this.path(name));
-      this.workerJournal = HistoryJournal.forFile(this.path(name), recovered);
-      return recovered.rows;
+      try { return this.subagents.load(); }
+      catch (error) { throw error instanceof StoreError ? error : new StoreError(this.path(name), (error as Error).message); }
     }
     const value = readJSON(this.path(name));
     // subagents-progress.json belonged to an unreleased incompatible implementation.
@@ -120,25 +119,22 @@ export class BotStore {
     return Array.isArray(value) ? value : [];
   }
 
-  /** Other lists replace their file; worker updates commit a journal and checkpoint off-thread. */
+  /** Other lists replace their file; the subagents are the index (their staged steps are appended first). */
   saveList(name: (typeof CHAT_FILES)[number], list: unknown[]) {
-    if (name === "subagents.json") this.commitWorkerHistory(list);
+    if (name === "subagents.json") this.commitSubagents(list);
     else writeFileAtomic(this.path(name), JSON.stringify(list));
   }
 
-  /** Running progress uses the same durable journal as critical changes. The bot coalesces it. */
-  saveWorkerProgress(list: unknown[], changedIds?: ReadonlySet<string>): void {
-    this.commitWorkerHistory(list, changedIds);
+  /** A subagent's step or run boundary, appended to its file at the next commit. */
+  stageSubagentLine(id: string, line: SubagentLine): void { this.subagents.stage(id, line); }
+
+  /** Appends the staged lines and rewrites the (small) index when an entry changed. Only `changedIds` are re-encoded. */
+  commitSubagents(list: unknown[], changedIds?: ReadonlySet<string>): void {
+    this.subagents.commit(list as Record<string, unknown>[], changedIds);
   }
 
-  /** The synchronous return acknowledges a small fsynced transaction, not an unfinished write.
-   * Only changed records are diffed; unchanged retained history is never JSON encoded here.
-   * readHistory replays the journal until the off-thread versioned checkpoint completes.
-   */
-  commitWorkerHistory(list: unknown[], changedIds?: ReadonlySet<string>): void {
-    this.workerJournal ??= HistoryJournal.forFile(this.path("subagents.json"));
-    this.workerJournal.commit(list, changedIds);
-  }
+  /** One subagent's steps and earlier runs, read from its file. */
+  readSubagentSteps(id: string): SubagentHistory { return this.subagents.readSteps(id); }
 
   /** The bot's picture on the main bot's whiteboard (whiteboard.json, 2.0 only), as kept; null: none. */
   loadWhiteboard(): unknown {
