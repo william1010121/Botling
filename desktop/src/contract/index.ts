@@ -148,6 +148,8 @@ export const SubagentView = z.strictObject({
     serviceTier: z.string().max(200).nullable(),
   }).nullable().optional(),
   outputTokens: z.number().nonnegative().nullable().optional(),
+  /** The shared token-speed definition (core/token-speed.ts); `estimated`: a whole-turn value, no per-request timing (Antigravity). */
+  tokenSpeed: z.strictObject({ tokPerSec: z.number().positive(), estimated: z.boolean() }).nullable().optional(),
   execution: z.strictObject({
     run: z.number().int().positive(),
     ownerSessionId: z.string().max(200).nullable(),
@@ -490,6 +492,8 @@ export const DelegationRowView = z.strictObject({
 export type DelegationRowView = z.infer<typeof DelegationRowView>;
 
 export const BotView = z.strictObject({
+  /** The head turn's token speed (core/token-speed.ts), from the head that last finished a request; null: nothing timed yet. */
+  tokenSpeed: z.strictObject({ tokPerSec: z.number().positive(), estimated: z.boolean(), engine: z.enum(["claude", "codex", "agy"]) }).nullable().optional(),
   delegationRows: z.array(DelegationRowView).max(500).optional(),
   id: BotId,
   name: z.string().max(200),

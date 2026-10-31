@@ -1,3 +1,4 @@
+import { agyPromptRequest } from "../token-speed";
 import { parseAntigravityUsage, quotaError, quotaUnavailable, registerAntigravityQuotaReader } from "../antigravity-quota";
 import type { AntigravityQuotaView } from "../../contract";
 import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
@@ -153,12 +154,17 @@ export class AgyAcpProtocol {
       this.emit({ kind: "command", id: uuid, state: "started" });
       this.submitting = true;
       this.transport.onPolicy?.("active", `${this.mode === "yolo" ? "Full permission" : "Approval mode"} active for this turn.`);
+      const promptStart = Date.now();
       const result = await this.call("session/prompt", { sessionId: this.sessionId, prompt }, 30 * 60_000);
+      const promptEnd = Date.now();
       this.cancelApprovals();
       const usage = obj(result.usage);
       const count = (key: string) => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] as number : 0;
       if (result.usage) this.emit({kind:"usage",totalCost:0,tokens:{input:Math.max(0,count("inputTokens")-count("cachedReadTokens")),output:count("outputTokens")+count("thoughtTokens"),cacheRead:count("cachedReadTokens"),cacheWrite:count("cachedWriteTokens")}});
       const reason = this.turnFailure ?? (epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason));
+      // ACP gives one usage block per prompt and no per-request timing: the whole prompt turn, an estimate.
+      const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, reason === "end_turn");
+      if (request) this.emit({ kind: "request", request });
       this.emit({ kind: "result", ok: reason === "end_turn", text: this.text, error: reason === "end_turn" ? "" : `Antigravity stopped: ${reason || "unknown reason"}`, subtype: reason });
       return reason === "end_turn";
     } catch (error) {

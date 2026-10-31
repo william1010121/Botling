@@ -199,8 +199,10 @@ export const en = {
   "float.fold": "Fold to one line",
   "float.stop": "Stop floating",
   // main.ts: watching a subagent, plugin panels
-  "subagent.speed": "≈ {value} tok/s · avg",
-  "subagent.speedHint": "Reported output tokens ÷ elapsed time since this subagent started (including tools, waiting and pauses between resumed runs). Updates when usage is reported; freezes at completion. An estimated average, not model decoding speed. — means insufficient data.",
+  "subagent.speed": "{value} tok/s",
+  "subagent.speedEstimated": "≈ {value} tok/s (est.)",
+  "subagent.speedHint": "Output tokens ÷ model generation time, summed over this agent's finished requests (tokens and seconds summed separately). Waiting, tools and unfinished or over-300 s requests are not counted. Same definition as the token-speed tool. — means nothing timed yet.",
+  "subagent.speedHintEstimated": "Estimate: this engine reports one usage total per prompt and no per-request timing, so the value is output tokens ÷ the whole prompt turn (tool waits included). Not model decoding speed.",
   "subagent.back": "Back to {bot}'s chat",
   "subagent.of": "Subagent of {bot}",
   "subagent.unknown": "unknown",

@@ -9,6 +9,7 @@
 // Every step and run boundary goes to `sink`, which the store appends.
 
 // Dates are Swift dates (seconds since 2001); keys 2.0 does not know are kept on each record.
+import { addSample, readTotals, type RequestEvent, type SpeedTotals } from "./token-speed";
 import type { Launch } from "./agent/stream";
 import { characterPrefix } from "./briefing";
 import { fromSwiftDate, toSwiftDate, type StepRecord } from "./store/records";
@@ -89,6 +90,8 @@ export interface SubagentRecord {
   model?: string;
   execution?: SubagentExecution;
   runStartedAt?: number;
+  /** Running token-speed sums of its finished requests (token-speed.ts); absent: none timed. */
+  speed?: SpeedTotals;
   [key: string]: unknown;
 }
 
@@ -299,6 +302,17 @@ export class SubagentBook {
     child.runtime = runtime;
     if (model) child.model = model;
     return changed;
+  }
+
+  /** A finished request of this child, into its running token-speed sums (see token-speed.ts). */
+  speed(id: string, request: RequestEvent): boolean {
+    const child = this.resolve(id);
+    if (!child) return false;
+    const before = readTotals(child.speed);
+    const after = addSample(before, request.sample, request.estimated === true);
+    if (after.timed === (before?.timed ?? 0)) return false;
+    child.speed = after;
+    return true;
   }
 
   output(id: string, counter: string, tokens: number): boolean {

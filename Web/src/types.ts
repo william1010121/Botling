@@ -404,6 +404,8 @@ export interface Draft {
 export interface SubagentHeaderView {
   /** Output reported by this child only; timestamps are epoch milliseconds. */
   outputTokens?: number | null;
+  /** Core-computed (one definition for all engines); estimated: a whole-turn value (Antigravity). */
+  tokenSpeed?: { tokPerSec: number; estimated: boolean } | null;
   startedAt?: number | null;
   endedAt?: number | null;
   id: string;
@@ -420,6 +422,8 @@ export interface SubagentHeaderView {
 }
 
 export interface ChatState {
+  /** The head's own token speed; absent or null: nothing timed yet. */
+  tokenSpeed?: { tokPerSec: number; estimated: boolean; engine?: string } | null;
   /** Message avatar size; absent keeps the responsive CSS defaults. */
   chatAvatarSize?: number | null;
   botID: string;

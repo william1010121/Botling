@@ -7,6 +7,7 @@ import { Composer, sendFile } from "./composer";
 import { extensions, feedback, jumpTo, makeComponents, messageElement, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
+import { showMainSpeed } from "./subagent-speed";
 import { PinArea } from "./pins";
 import { IntervalSummaries, onCatchUpToggle } from "./catchup";
 import { FloatLayer } from "./float";
@@ -370,6 +371,7 @@ class Chat {
     }
 
     this.showSubagentHeader(state);
+    showMainSpeed(state);
     this.pins.update(state);
     this.floats.update(state);
     this.composer.update(state);

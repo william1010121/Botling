@@ -119,6 +119,7 @@ export class AgyWorkers {
     const onItem=(item:StreamItem)=>{
       if(this.closed||!w.active||w.run!==run)return;
       if(item.kind==='usage'){this.emit(item);return;}
+      if(item.kind==='request'){this.emit({kind:'request',request:{...item.request,scope:w.id}});return;}
       if(item.kind==='init'){
         if(w.sessionId&&w.sessionId!==item.sessionId){finish('failed','Worker changed its saved conversation identity.');return;}
         w.sessionId=item.sessionId;this.save();return;
