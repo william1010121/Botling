@@ -94,3 +94,20 @@ main checkout of a git repository. `worktreeRoot` overrides the folder.
   that worktree's tree (`<bot store dir>/review-turns.json`, last 30 per worktree, dropped on merge/discard). It is
   taken asynchronously at the start of the turn, so a file the agent writes in the first milliseconds is counted in
   the turn before it. A session in the project folder records nothing (the project folder is somebody's checkout).
+
+## Review view, Commit and Open PR (UI)
+
+The Worktrees section has **Review changes** (the project's working tree against HEAD, read only) and, per worktree,
+**Review**. The view (`renderer/Review.tsx`) takes the chat's place: files with A/M/D/R and +/-, a unified or split diff
+loaded one file at a time, scope (against the base / uncommitted / one turn). A click on a line number comments on it;
+**Send to agent** sends every pending comment as one `chat.send` to the bot that owns the worktree (place, quoted
+code, comment; `renderer/review-comments.ts`).
+
+**Commit** and **Open PR** exist for app-made worktrees only (`core/publish.ts`), never the main checkout:
+
+- Commit: `git add -A` then `git commit -m <message>` in the worktree; hooks and signing run as the user configured.
+- Open PR: refuses with uncommitted changes, with no commits beyond the base, with no remote, and with no `gh` (each
+  says what to do). Otherwise: `git push --set-upstream <origin|first remote> HEAD:refs/heads/<branch>`, then
+  `gh pr create --base <base> --head <branch> --title --body`; a PR already open for the branch is reported, not
+  duplicated (the new commits are still pushed). Title and body start from the commits (one commit: its subject and body;
+  else the branch name and a list). The link is kept on the record (`pr`) and shown in the worktree's row.

@@ -79,6 +79,7 @@ export function Worktrees({ client, bot, lang, onReview }: { client: Client; bot
                   <span className="task-row-name">{item.branch}</span>
                   <span className="task-line">{worktreeLine(item, words)}</span>
                 </button>
+                {item.pr && <button type="button" className="rv-link worktree-pr" title={item.pr} onClick={() => void client.request({ type: "link.open", source: "user", botId: bot.id, url: item.pr! }).catch(() => {})}>{look.viewPr}</button>}
                 {using && <span className="task-summary-tag">{words.inUse}</span>}
               </div>
               {expanded && (

@@ -1024,3 +1024,7 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 .review-send .worktree-note { margin: 0; }
 .review-primary { background: var(--blue); color: #fff; }
 .review-primary:disabled, .review-bar .task-report:disabled, .review-send .task-report:disabled { opacity: .5; cursor: default; }
+.review-form { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--side); }
+.review-form .worktree-input { flex: none; }
+.review-bar .task-report[aria-pressed="true"] { background: var(--selected); }
+.worktree-pr { flex-shrink: 0; }
