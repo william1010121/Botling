@@ -25,6 +25,7 @@ import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { Worktrees } from "./Worktrees";
+import { Review, type ReviewTarget } from "./Review";
 import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
 import { Icon } from "./icons";
 import { SpecFrame } from "./SpecFrame";
@@ -56,6 +57,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const now = useMinuteClock();
   /** The main bot's main view: its chat, or the whiteboard of every bot (kept for the next start). */
   const [whiteboardOn, setWhiteboardOn] = useWhiteboardChoice();
+  /** The Review view of a worktree (or the main checkout), shown in the chat's place. */
+  const [reviewing, setReviewing] = useState<{ botId: string; target: ReviewTarget } | null>(null);
   const collapsed = view.settings?.rightPanelCollapsed ?? false;
   const toggleRight = useCallback(() => {
     void client.request({ type: "settings.set", change: { key: "rightPanelCollapsed", value: !(store.getView().settings?.rightPanelCollapsed ?? false) } }).catch(() => {});
@@ -112,6 +115,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
   const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching;
+  const review = reviewing && bot && reviewing.botId === bot.id && !watching ? reviewing.target : null;
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -269,7 +273,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </aside>
       )}
       <section className="chat-pane">
-        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}`}>
+        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}${review ? " review-on" : ""}`}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.name}</span>}
@@ -310,6 +314,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             statusOf={(candidate) => ({ key: status(candidate), text: statusText(candidate) })}
             onOpenChat={(botId) => { setWhiteboardOn(false); selectBot(botId); }} onError={fail} />
         )}
+        {review && bot && <Review client={client} bot={bot} target={review} lang={view.settings?.effectiveLanguage ?? null} onClose={() => setReviewing(null)} />}
         {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} />
         {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} shortcutLabel={shortcutLabel("toggleTerminal")} />}
@@ -347,7 +352,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           onSettings={openBotSettings}
           showingSettings={botSettings}
           settingsPage={botSettings ? <BotSettings client={client} bot={bot} /> : undefined}
-          worktrees={bot.role === "main" || bot.role === "group" ? undefined : <Worktrees client={client} bot={bot} lang={view.settings?.effectiveLanguage ?? null} />}
+          worktrees={bot.role === "main" || bot.role === "group" ? undefined : <Worktrees client={client} bot={bot} lang={view.settings?.effectiveLanguage ?? null} onReview={(target) => setReviewing({ botId: bot.id, target })} />}
           onCloseSettings={() => setBotSettings(false)}
           onExpand={toggleRight}
         />

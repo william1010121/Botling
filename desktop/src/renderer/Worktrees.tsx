@@ -6,11 +6,14 @@ import { useCallback, useEffect, useState } from "react";
 import type { BotView, WorktreeAction, WorktreesView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { worktreeLine, worktreeWords } from "./worktree-text";
+import { reviewWords } from "./review-text";
+import type { ReviewTarget } from "./Review";
 
 const POLL_MS = 10_000;
 
-export function Worktrees({ client, bot, lang }: { client: Client; bot: BotView; lang: string | null }) {
+export function Worktrees({ client, bot, lang, onReview }: { client: Client; bot: BotView; lang: string | null; onReview?: (target: ReviewTarget) => void }) {
   const words = worktreeWords(lang);
+  const look = reviewWords(lang);
   const [view, setView] = useState<WorktreesView | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [naming, setNaming] = useState<string | null>(null);
@@ -51,7 +54,10 @@ export function Worktrees({ client, bot, lang }: { client: Client; bot: BotView;
     <section className="detail-section worktrees-section" aria-label={words.title}>
       <div className="worktrees-head">
         <h3>{words.title}</h3>
-        {naming === null && <button type="button" className="task-report" disabled={busy} onClick={() => { setNaming(""); setNote(null); }}>{words.add}</button>}
+        <span className="worktree-buttons">
+          {onReview && <button type="button" className="task-report" onClick={() => onReview({ worktreeId: null, branch: null, base: null, path: null })}>{look.reviewMain}</button>}
+          {naming === null && <button type="button" className="task-report" disabled={busy} onClick={() => { setNaming(""); setNote(null); }}>{words.add}</button>}
+        </span>
       </div>
       {naming !== null && (
         <form className="worktree-new" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
@@ -87,6 +93,7 @@ export function Worktrees({ client, bot, lang }: { client: Client; bot: BotView;
                     </>
                   ) : (
                     <div className="worktree-buttons">
+                      {onReview && <button type="button" className="task-report" disabled={item.missing} onClick={() => onReview({ worktreeId: item.id, branch: item.branch, base: item.base, path: item.path })}>{look.review}</button>}
                       <button type="button" className="task-report" disabled={busy || item.missing} onClick={() => void act(client.request({ type: "worktrees.use", botId: bot.id, worktreeId: using ? null : item.id }))}>{using ? words.useFolder : words.workHere}</button>
                       <button type="button" className="task-report" disabled={busy || item.missing} onClick={() => void act(client.request({ type: "worktrees.terminal", botId: bot.id, worktreeId: item.id }))}>{words.terminal}</button>
                       <button type="button" className="task-report" disabled={busy || item.missing} onClick={() => void act(client.request({ type: "worktrees.merge", botId: bot.id, worktreeId: item.id }))}>{words.merge(item.base)}</button>
