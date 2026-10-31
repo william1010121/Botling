@@ -1,0 +1,7 @@
+{
+  "empty": { "startupMs": 3000, "coreRssMB": 160, "appendSaveMs": 50 },
+  "bots50": { "startupMs": 6000, "coreRssMB": 700, "firstSnapshotMB": 4, "appendSaveMs": 60 },
+  "chat500": { "startupMs": 3000, "firstSnapshotMB": 20, "openChatMB": 20, "openChatMs": 400, "coreRssMB": 500, "loadMs": 200, "appendSaveMs": 200, "heapMB": 30 },
+  "chat5k": { "startupMs": 3000, "firstSnapshotMB": 5, "openChatMB": 5, "openChatMs": 200, "coreRssMB": 350, "loadMs": 100 },
+  "chat20k": { "startupMs": 8000, "firstSnapshotMB": 12, "openChatMB": 12, "openChatMs": 300, "coreRssMB": 450, "loadMs": 150, "heapMB": 30 }
+}

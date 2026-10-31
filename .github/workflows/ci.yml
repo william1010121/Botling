@@ -33,6 +33,25 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  perf:
+    name: Performance budgets
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      # The core imports ../Web/src (see the desktop job).
+      - run: npm ci --no-audit --no-fund --prefix ../Web
+      - run: npm run perf
+
   desktop:
     name: Electron 2 checks (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
