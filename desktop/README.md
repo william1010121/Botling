@@ -220,7 +220,7 @@ three messages; `FAKE_CODEX_EXEC_LOG`, `FAKE_CODEX_EXEC_FAIL=1`, `FAKE_CODEX_EXE
 │   heads.ts: hand-off tags, the Conductor (budgets, hand-backs, the limit card), notes            │
 │ routines.ts (routines.cron + scheduled-routines.json, the 30 s clock) · catchup.ts (summaries)   │
 │ components/ (library, commands after Allow, pins, pictures by token) · agent/monitors.ts         │
-│ ProcessLedger: ends heads a crashed core left · durable/ (atomic files, locks; JobStore spike)  │
+│ ProcessLedger: ends heads a crashed core left · durable/ (atomic files, locks)  │
 │ plugins/ (registry, sealed secrets, host client) · maintainer.ts (Maintainer's desk, installs)   │
 └──────────────┬───────────────────────────────────────────────────────────────────────────────────┘
                │ JSON-RPC lines on stdio, every message checked (host-client.ts)
@@ -431,18 +431,7 @@ Plan for the real implementation:
    `claude.cmd`/`.exe` resolution (no `shell: true`), paths with spaces, and Defender-held files for
    the atomic rename retry in `atomic.ts`.
 
-**5 — Durable jobs.** `JobStore` (JSON + `writeFileAtomic` + `withFileLock`, portable Node, no
-`flock`): `pending → claimed (persisted before dispatch) → delivered`; a claim whose core is gone
-becomes `delivery_uncertain` at the next start and is never re-sent; only the claiming run can
-confirm delivery. With real processes and SIGKILL: killed after claim → that job uncertain, the
-rest delivered once; killed between deliver and confirm → delivered exactly once, marked
-uncertain; three cores racing over 60 jobs → each delivered exactly once; a writer killed at 15
-random moments never left a torn file; a dead holder's lock is broken, a live one's respected; an
-unreadable store is reported, never treated as empty. *Not covered:* sleep/resume, DST and cron
-(the Swift `ScheduledRoutines` semantics still need porting), network filesystems, Windows
-(`rename` over an open file), pid reuse beyond the start-time check. Phase 3a's routines use the same
-atomic files and locks with 1.x's scheduled-routines.json and its claim → dispatch → fired contract
-(`core/routines.ts`); the JobStore class itself stays a spike.
+**5 — Durable jobs.** The Phase 0 `JobStore` spike is removed (nothing used it); `durable/atomic.ts` (`writeFileAtomic`, `withFileLock`) stays, and Phase 3a's routines use those atomic files and locks with 1.x's scheduled-routines.json and its claim → dispatch → fired contract (`core/routines.ts`).
 
 ## Phase 1b: what was built and how it was checked
 
