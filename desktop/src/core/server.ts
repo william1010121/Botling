@@ -37,7 +37,7 @@ import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView, type WhiteboardView,
-  type SettingsChange, type SettingsView, type WebStateView, type TeamRunView, type SpecAction,
+  type SettingsChange, type SettingsView, type TeamRunView, type SpecAction,
 } from "../contract";
 import { filePath, pageInCard } from "./specs";
 import { PAGE_COMPONENT } from "./preview-url";
@@ -74,7 +74,6 @@ import { Plugins, type BotInfo } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
-import { EXTRACTORS_PLUGIN, WebShelf, askAboutWebText, decodeReading, extractorCall, extractorFor, installExtractors, webBriefing, webSites, type WebSite } from "./web";
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
 import { DevBuilds, devWorkRoot, readBuild, spawnInstaller } from "./app-swap";
@@ -152,10 +151,6 @@ export interface CoreOptions {
   reports?: ReportTool | null;
   /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
   firstSnapshotDelayMs?: number;
-  /** The app's own copy of the web AIs' page readers (1.x's Resources/web-extractors); null: none. */
-  webExtractors?: string | null;
-  /** The web AIs the column lists (1.x's three unless a test names its own). */
-  webSites?: WebSite[];
   /**
    * The app around the core, for developer mode's <install-build> and <app-screenshot/> (app-swap.ts):
    * main's pid and data folder, the app bundle it runs from (null: not a bundle), and what main does on
@@ -224,10 +219,6 @@ export class Core {
   private loadedClaudeParts = "[]";
   /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
   private snapshotHeld = false;
-  /** The web AIs' conversations and their saved text (<data>/web). */
-  readonly web: WebShelf;
-  private lastWeb = "";
-  private webQueued = false;
   /** The temporary teams at work (`runningTeams`). */
   readonly teams: TeamDesk;
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
@@ -283,10 +274,6 @@ export class Core {
       const removed = readJSON(join(options.dataDir, "removed-bots.json"));
       if (Array.isArray(removed)) for (const key of removed) if (typeof key === "string") this.removedPluginBots.add(key);
     } catch { /* none */ }
-    // The web AIs' page readers: the plugin ccb-web-extractors (Maintainer's to fix), the app's copy as the fallback.
-    installExtractors(join(options.dataDir, "plugins"), options.webExtractors ?? null, () => builtInManifest(EXTRACTORS_PLUGIN, "Web page readers",
-      `Reads the conversation on a web AI's page (${(options.webSites ?? webSites()).map((site) => site.name).join(", ")}) into text for the main bot. One script per site; README.md has the contract.`, []));
-    this.web = new WebShelf(join(options.dataDir, "web"), options.webSites ?? webSites(), () => this.webChanged());
     const appMaintainer = maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null));
     const profiles = [...loaded.profiles, appMaintainer];
     const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig);
@@ -325,8 +312,7 @@ export class Core {
         welcome: profile.id === MAIN_BOT_ID && !this.imported,
         projectBriefing: profile.role === "main" ? () => this.projectBriefing() : undefined,
         // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
-        // …and where the web AIs' saved conversations are (`webBriefing`).
-        wakeNote: profile.role === "main" ? () => [this.projectBriefing(), webBriefing(this.web)].filter(Boolean).join("\n\n")
+        wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
           : profile.role === "manager" && profile.id !== MAINTAINER_ID && !group ? () => this.devBuilds.briefing(bot) : undefined,
         addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.problem).map((other) => join(other.folder, ".bot"))
@@ -1625,35 +1611,11 @@ First write a test that shows this, then fix it.`;
   }
 
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
-    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "web.state", "link.authorize"]).has(cmd.type)) {
+    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "link.authorize"]).has(cmd.type)) {
       throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
     }
     switch (cmd.type) {
       case "boot.commit": { const first = !this.activated; this.activate(); if (first) this.event({type:"plugins.updated",plugins:this.plugins.view()}); return {}; }
-      case "web.open": {
-        const site = this.webSite(cmd.site);
-        if (cmd.conversationId) {
-          this.web.show(this.webRow(cmd.site, cmd.conversationId).row, site);
-          this.web.showing(site);
-        } else {
-          this.web.openFresh(site);
-        }
-        return this.webView();
-      }
-      case "web.new": this.web.startNew(this.webSite(cmd.site)); return this.webView();
-      case "web.settle": { const { site, row } = this.webRow(cmd.site, cmd.conversationId); this.web.settle(row, site); return this.webView(); }
-      case "web.ask": return this.askMainBot(cmd.site, cmd.conversationId);
-      case "web.leave": this.web.showing(null); return this.webView();
-      case "web.page": this.web.pageChanged(this.webSite(cmd.site), cmd.page, cmd.url, cmd.title); return {};
-      case "web.read": return { file: this.web.record(this.webSite(cmd.site), cmd.page, cmd.url, cmd.title, decodeReading(cmd.json), cmd.settled) };
-      case "web.front": this.web.bringToFront(cmd.page, this.webSite(cmd.site)); return {};
-      case "web.closed": this.web.closed(cmd.page); return {};
-      case "web.handled": this.web.handled(this.webSite(cmd.site)); return {};
-      case "web.reader": {
-        const found = extractorFor(this.webSite(cmd.site), join(this.options.dataDir, "plugins"), this.options.webExtractors ?? null);
-        return { code: found ? extractorCall(found.source) : null, hash: found ? createHash("sha256").update(found.source).digest("hex") : null };
-      }
-      case "web.state": return this.webView();
       case "chat.snapshot": {
         const delay = this.options.firstSnapshotDelayMs ?? 0;
         if (delay > 0 && !this.snapshotHeld) {
@@ -1859,70 +1821,9 @@ First write a test that shows this, then fix it.`;
       settings: this.settingsNow(),
       doctor: this.doctor.view(),
       waiting: this.waiting(),
-      web: this.webView(),
       teams: this.teamViews(),
       spec: this.specs.openId ? this.specs.payload(this.specs.openId) : null,
     };
-  }
-
-  // -------------------------------------------------------------------------------------------
-  // Web AIs (1.x's WebShelf in the core; main shows the sites and reads their pages)
-
-  webView(): WebStateView {
-    const web = this.web;
-    return {
-      folder: web.folder,
-      sites: web.sites.map((site) => ({
-        id: site.id, name: site.name, accent: site.accent, host: site.host, startURL: site.startURL, insideDomains: site.insideDomains.slice(0, 20),
-        status: web.status.get(site.id) ?? { kind: "reading" },
-        open: web.open.get(site.id) ?? null,
-        requested: web.requested.get(site.id) ?? null,
-        front: web.frontPage(site),
-        pages: [...web.pages.entries()].filter(([, row]) => web.conversation(row, site)).slice(0, 50).map(([page, row]) => ({ page, row })),
-        toReadAgain: web.toReadAgain(site).slice(0, 50).map((row) => ({ id: row.id, url: row.url })),
-        conversations: web.conversations(site).slice(0, 500).map((row) => ({
-          id: row.id, url: row.url, title: row.title.slice(0, 2_000), messages: row.messages, savedAt: row.savedAt ?? null, updatedAt: row.updatedAt,
-          file: web.filePath(row, site), question: row.question?.slice(0, 4_000) ?? null, awaiting: row.askedAt !== undefined, settled: row.settledAt !== undefined,
-        })),
-      })),
-    };
-  }
-
-  /** Something about the web AIs changed: the windows (and main, which shows the sites) are told once, after the change. */
-  private webChanged() {
-    if (this.webQueued) return;
-    this.webQueued = true;
-    queueMicrotask(() => {
-      this.webQueued = false;
-      const view = this.webView();
-      const text = JSON.stringify(view);
-      if (text === this.lastWeb) return;
-      this.lastWeb = text;
-      this.event({ type: "web.updated", web: view });
-    });
-  }
-
-  private webSite(id: string): WebSite {
-    const site = this.web.site(id);
-    if (!site) throw new ContractError("not_found", "No such web site.");
-    return site;
-  }
-
-  private webRow(siteId: string, conversationId: string) {
-    const site = this.webSite(siteId);
-    const row = this.web.conversation(conversationId, site);
-    if (!row) throw new ContractError("not_found", "No such conversation.");
-    return { site, row };
-  }
-
-  /** "Ask Main bot about this": the main bot gets a message naming the saved file (`askMainBot`). */
-  private async askMainBot(siteId: string, conversationId: string): Promise<ResultOf<"web.ask">> {
-    const { site, row } = this.webRow(siteId, conversationId);
-    const file = this.web.filePath(row, site);
-    if (!file) throw new ContractError("bad_request", "This conversation has no saved text yet.");
-    this.web.showing(null);
-    const sent = await this.send(MAIN_BOT_ID, askAboutWebText(row.title || site.name, site, file), {});
-    return { botId: MAIN_BOT_ID, messageId: sent.messageId };
   }
 
   private settingsNow(): SettingsView {

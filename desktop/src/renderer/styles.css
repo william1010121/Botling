@@ -28,8 +28,8 @@ button { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 10px; border: 0; border-radius: 12px;
   background: transparent; cursor: pointer; text-align: left; -webkit-app-region: no-drag;
 }
-.bot-row:hover, .web-site-row:hover { background: var(--hover); }
-.bot-row.selected, .web-site-row.selected { background: var(--selected); }
+.bot-row:hover { background: var(--hover); }
+.bot-row.selected { background: var(--selected); }
 .bot-avatar { width: 32px; height: 32px; flex-shrink: 0; }
 .bot-name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bot-name.main { font-weight: 600; }
@@ -396,53 +396,8 @@ button { font: inherit; color: inherit; }
 .strip-settings { width: 40px; height: 40px; border: 0; background: none; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .strip-settings:hover { color: var(--text); }
 
-/* Web AIs (WebSiteViews.swift): the left column's "Web" section, a site in the chat column, its right panel. */
 .chat-column { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .chat-column[hidden] { display: none; }
-.web-rail { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
-.web-rail-title { font-size: 12px; font-weight: 500; color: var(--faint); padding: 6px 10px 0; height: 28px; display: flex; align-items: center; }
-.web-site-row {
-  display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 10px; border: 0; border-radius: 12px; color: var(--text);
-  background: transparent; cursor: pointer; text-align: left; -webkit-app-region: no-drag;
-}
-.web-site-name { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.web-face { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: #fff; font-weight: 600; }
-.web-count { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
-.web-row { display: flex; align-items: center; min-height: 30px; border-radius: 10px; -webkit-app-region: no-drag; }
-.web-row.selected { background: var(--selected); }
-.web-row:hover { background: var(--hover); }
-.web-row.selected:hover { background: var(--selected); }
-.web-row-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 0 4px 0 26px; min-height: 30px; background: none; border: 0; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer; }
-.web-row.selected .web-row-open, .web-row.awaiting .web-row-open { color: var(--text); }
-.web-row-arrow { color: var(--faint); font-size: 11px; }
-.web-row-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.web-settle { width: 24px; height: 30px; flex-shrink: 0; background: none; border: 0; color: var(--faint); font-size: 12px; cursor: pointer; margin-right: 6px; opacity: 0; }
-.web-row:hover .web-settle, .web-row:not(.awaiting) .web-settle { opacity: 1; }
-.web-settle:hover { color: var(--text); }
-.web-row .bot-dot { margin-right: 2px; }
-.web-more { background: none; border: 0; color: var(--faint); font-size: 12px; text-align: left; padding: 0 0 0 45px; height: 24px; cursor: pointer; }
-.web-pane { flex: 1; min-height: 0; display: flex; padding: 0 20px 20px; }
-.web-card { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bubble); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-.web-strip { height: 36px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
-.web-address { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.web-status { color: var(--faint); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
-.web-status.saved { color: var(--green); }
-.web-status.unreadable { color: var(--orange); }
-.web-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
-.web-page { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: var(--ground); }
-.web-page-note { color: var(--faint); font-size: 13px; }
-.web-question { gap: 6px; }
-.web-question-title { font-weight: 600; font-size: 14px; }
-.web-question-meta { font-size: 12px; color: var(--muted); }
-.web-question-file { font-size: 12px; color: var(--faint); word-break: break-all; }
-.web-ask { margin-top: 10px; width: 100%; min-height: 40px; background: none; border: 1px solid rgba(76, 141, 255, 0.7); border-radius: 10px; color: var(--text); font-size: 14px; cursor: pointer; }
-.web-ask:disabled { color: var(--faint); cursor: default; }
-.web-hint { margin: 0; color: var(--faint); font-size: 13px; line-height: 1.45; }
-.web-questions { list-style: none; margin: 0 0 6px; padding: 4px 0; background: var(--bubble); border-radius: 14px; overflow: hidden; }
-.web-question-row { width: 100%; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; background: none; border: 0; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer; }
-.web-question-row.selected { background: var(--selected); color: var(--text); }
-.web-when { font-size: 12px; color: var(--faint); }
-.web-new { width: 100%; min-height: 40px; background: var(--chip); border: 0; border-radius: 10px; color: var(--text); font-size: 14px; cursor: pointer; }
 
 /* Phase 4c: the left column's search (⌘K), pinned rows, the fold into a strip of faces (1.x's RailView, RailStrip). */
 .rail-top { position: relative; }
