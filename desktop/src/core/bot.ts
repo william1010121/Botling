@@ -2739,6 +2739,9 @@ export class Bot {
         if (step.kind !== "subagent" || this.subagents.get(item.id)?.status !== "running") step.done = true;
         step.failed = item.failed;
         if (item.output) step.output = item.output;
+        // A Bash call claude moved to the background itself (it outlived its timeout) said `is_backgrounded: false`
+        // at `task_started`; only this result (`backgroundTaskId`) tells, so it is background work from here.
+        if (item.launch?.background && step.tool === "Bash" && !item.failed && !item.parent) this.addBackgroundTask(item.id, "command", "");
         const task = turn.tasks?.find((task) => task.id === item.id);
         if (task) task.outputFile = item.launch?.outputFile ?? backgroundOutputFile(item.output) ?? task.outputFile;
         this.emitSteps(turn);
