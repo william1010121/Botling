@@ -4,24 +4,33 @@
 // same-origin access to the chat page / app shell, cookies and storage.
 //
 //   node mobile/build.mjs && node mobile/isolation-check.mjs [out-dir]
-// Env: BOTLING_CHROMIUM (a Chromium/headless_shell executable; default: Playwright's own),
-//      FIXTURE_COMPONENTS_DIR (optional real templates). Exit 1 when any check fails.
+// Env: BOTLING_CHROMIUM (a headless_shell executable; default: the newest headless shell in the Playwright cache),
+//      FIXTURE_COMPONENTS_DIR (optional real templates). Exit 1 when any check fails, 2 when there is no headless
+//      browser to run it with. Runs headless only: no window opens, no focus is taken. Every wait has a limit.
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
+import { HEADLESS_ARGS, findHeadlessBrowser } from './browser.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.argv[2] ?? join(here, 'dist-isolation');
 mkdirSync(out, { recursive: true });
+const found = findHeadlessBrowser();
+if (found.error) { console.error(JSON.stringify({ passed: false, skipped: true, reason: found.error })); process.exit(2); }
 const fixture = spawn(process.execPath, [join(here, 'fixture-server.mjs')], { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] });
+const stopFixture = () => { try { fixture.kill(); } catch { /* already gone */ } };
+process.on('exit', stopFixture);
 const base = await new Promise((resolve, reject) => {
-  fixture.stdout.on('data', chunk => { const match = /http:\/\/[^\s]+\/mobile\//.exec(String(chunk)); if (match) resolve(match[0]); });
-  fixture.on('exit', () => reject(new Error('fixture exited')));
-});
+  const timer = setTimeout(() => reject(new Error('fixture did not start in 20 s')), 20_000);
+  fixture.stdout.on('data', chunk => { const match = /http:\/\/[^\s]+\/mobile\//.exec(String(chunk)); if (match) { clearTimeout(timer); resolve(match[0]); } });
+  fixture.on('exit', () => { clearTimeout(timer); reject(new Error('fixture exited')); });
+}).catch(error => { stopFixture(); throw error; });
 const shellOrigin = new URL(base).origin;
-const browser = await chromium.launch({ headless: true, ...(process.env.BOTLING_CHROMIUM ? { executablePath: process.env.BOTLING_CHROMIUM } : {}) });
+const browser = await chromium.launch({ headless: true, executablePath: found.path, args: HEADLESS_ARGS, timeout: 30_000 }).catch(error => { stopFixture(); throw error; });
+// A check that never finishes must not hang the run: the whole thing is cut off.
+const watchdog = setTimeout(() => { console.error(JSON.stringify({ passed: false, failures: ['isolation check timed out after 120 s'] })); stopFixture(); process.exit(1); }, 120_000);
 const result = { base, frames: [], playwrightRequestEvents: [], serverHits: [], hostHeaders: null, failures: [] };
 try {
   const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 })).newPage();
@@ -96,7 +105,7 @@ try {
   await page.waitForTimeout(800);
   // What reached the server while the cards probed, apart from the shell's own polling (its exact Origin).
   result.serverHits = (await (await fetch(`${shellOrigin}/fixture/hits`)).json()).slice(hitsBefore)
-    .filter(hit => !(hit.url === '/api/mobile/command' && hit.origin === shellOrigin) && hit.url !== '/fixture/hits');
+    .filter(hit => !(hit.origin === shellOrigin && (hit.url === '/api/mobile/command' || hit.url === '/api/mobile/ticket' || hit.url.startsWith('/api/mobile/events?ticket='))) && hit.url !== '/fixture/hits');
   const shell = await page.evaluate(() => ({ url: location.href, shellAlive: !!document.querySelector('.shell'), cookie: document.cookie }));
   result.shellAfter = shell;
   // The CPU card in view, for the record.
@@ -127,8 +136,9 @@ try {
   if (!shell.shellAlive || !shell.url.startsWith(base)) result.failures.push('the shell was navigated or torn down by a card');
   if (!/^sandbox allow-scripts;/.test(result.hostHeaders?.csp ?? '')) result.failures.push(`frame host CSP: ${result.hostHeaders?.csp}`);
 } finally {
-  await browser.close();
-  fixture.kill();
+  clearTimeout(watchdog);
+  await browser.close().catch(() => undefined);
+  stopFixture();
 }
 result.passed = result.failures.length === 0;
 writeFileSync(join(out, 'card-isolation.json'), `${JSON.stringify(result, null, 2)}\n`);
