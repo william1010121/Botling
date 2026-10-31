@@ -17,7 +17,7 @@ import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
 import { WEB, type FrameMessage } from "./protocol";
 import { cardHostPage, desktopCardURL, showInHost } from "../web-pages";
-import { toShell, fromShell, nativeChat, installNativeShellCommands } from "./transport";
+import { toShell, fromShell, nativeChat, installNativeShellCommands, setShortcutBindings } from "./transport";
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
 import { applyPatch } from "../../../../Web/src/patch";
@@ -186,6 +186,8 @@ fromShell(message => {
     }
   } else if (message.botling === "widthRejected") {
     column.rejected(message.value, message.actual);
+  } else if (message.botling === "shortcuts") {
+    setShortcutBindings(message.bindings);
   } else if (message.botling === "widthPreview") {
     column.preview(message.value);
   } else if (message.botling === "messageWidthPointer") {

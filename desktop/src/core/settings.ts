@@ -10,6 +10,7 @@ import { writeFileAtomic } from "./durable/atomic";
 import { DEFAULT_WRITING_PROMPT, JUDGE_MODEL } from "./catchup";
 import type { SettingsChange, SettingsView } from "../contract";
 import { messageWidth } from "../contract/message-width";
+import { normalizeOverrides } from "../contract/shortcuts";
 import { savedLanguage } from "./prompts";
 import { changeEngineDefaults, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
 
@@ -86,6 +87,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     developerMode: bool(raw.developerMode, false),
     developerProject: typeof raw.developerProjectID === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw.developerProjectID) ? raw.developerProjectID.toUpperCase() : null,
     updateCheck: bool(raw.updateCheckEnabled, true),
+    shortcuts: normalizeOverrides(raw.shortcutBindings),
   };
 }
 
@@ -130,6 +132,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     // 1.x keeps the project when developer mode goes off (`setDeveloperMode(_:project:)`).
     case "developerMode": set("developerMode", change.value); break;
     case "updateCheck": set("updateCheckEnabled", change.value); break;
+    case "shortcuts": { const kept = normalizeOverrides(change.value); set("shortcutBindings", Object.keys(kept).length ? kept : null); break; }
     case "developerProject": if (change.value) set("developerProjectID", change.value.toUpperCase()); break;
     // 1.x keeps the list (an empty one too) once anything was pinned.
     case "pinnedBots": set("pinnedBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;

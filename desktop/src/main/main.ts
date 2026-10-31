@@ -15,6 +15,7 @@ import {configureHiddenApp,hidden} from "./hidden-mode";
 import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
 import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
+import {bindingsFor} from "../contract/shortcuts";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { autoUpdater } from "electron-updater";
 import { CHECK_EVERY_MS, Updater } from "./updates";
@@ -144,12 +145,27 @@ const terminals = new BotTerminals((owner, event) => {
   sendTerminalEvent(contents, event);
 });
 const deletedTerminalBots = new Set<string>();
+// The application menu's accelerators follow Settings > Shortcuts; rebuilt whenever they change.
+let shortcutOverrides: unknown = {};
+let menuSignature = "";
+let menuSuspended = false;
+let suspendTimer: NodeJS.Timeout | undefined;
+function applyMenu(overrides: unknown) {
+  if (!app.isReady()) { shortcutOverrides = overrides; return; }
+  const bindings = bindingsFor(overrides);
+  const signature = JSON.stringify([bindings, menuSuspended]);
+  shortcutOverrides = overrides;
+  if (signature === menuSignature) return;
+  menuSignature = signature;
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, { reloadChat: reloadNativeEditor }, bindings, menuSuspended)));
+}
 const core: CoreClient = new CoreClient({
   script: join(root, "out", "core", "main.cjs"),
   hostScript: join(root, "out", "host", "host-utility.mjs"),
   ledgerFile: join(dataDir, "core", "children.json"),
   env: coreEnvironment(),
   onEvent: (event) => {
+    if (event.event.type === 'settings.updated') applyMenu(event.event.settings.shortcuts);
     if (event.event.type === 'bot.removed') { deletedTerminalBots.add(event.event.botId); terminals.remove(event.event.botId); }
     broadcast(event);
   },
@@ -360,6 +376,15 @@ ipcMain.on(TEST_TRACE_CHANNEL,(event,record:unknown)=>acceptTraceIPC(traceWriter
   return{owned:appContents.has(event.sender.id),isMainFrame:frame===event.sender.mainFrame,
     url:frame.url,contentsId:event.sender.id,processId:frame.processId,routingId:frame.routingId};
 },record));
+
+// Settings > Shortcuts is recording a key: the menu's accelerators step aside so the key reaches the page (a minute at most).
+ipcMain.on("botling:shortcuts:suspend", (event, on: unknown) => {
+  if (!fromAppFrame(event)) return;
+  clearTimeout(suspendTimer);
+  menuSuspended = on === true;
+  if (menuSuspended) suspendTimer = setTimeout(() => { menuSuspended = false; applyMenu(shortcutOverrides); }, 60_000);
+  applyMenu(shortcutOverrides);
+});
 
 ipcMain.on("botling:post", (event, raw: unknown) => {
   if (!fromAppFrame(event)) return;
@@ -784,7 +809,9 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 
 app.whenReady().then(async () => {
   startup.mark("app.ready");
-  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform,{reloadChat:reloadNativeEditor})));
+  applyMenu(shortcutOverrides);
+  // The saved shortcuts: the menu starts on the defaults and is rebuilt once the core answers (and on every change).
+  void core.call({ type: "settings.get" }).then(settings => applyMenu((settings as { shortcuts?: unknown }).shortcuts), () => {});
   // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
   // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
   nativeTheme.themeSource = "dark";

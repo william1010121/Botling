@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld("botling", Object.freeze({
       return () => ipcRenderer.removeListener('botling:terminal:toggle', handler);
     },
   }) } : {}),
+  ...(process.isMainFrame ? { shortcuts: Object.freeze({
+    /** Settings > Shortcuts is recording a key: main takes the menu's accelerators off meanwhile. */
+    suspend: (on: boolean) => ipcRenderer.send('botling:shortcuts:suspend', on === true),
+  }) } : {}),
   // Only main selects the native-editor shell; child frames never receive this bridge.
   ...(process.isMainFrame&&process.argv.includes("--botling-editor-shell=1")?{editorHost:editorBridge(ipcRenderer,"shell")} : {}),
   platform: process.platform,

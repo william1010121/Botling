@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { terminalToggleAction } from './terminal-toggle';
 import { createPortal } from 'react-dom';
 import { ShellOverlay } from './ShellOverlay';
 import { Terminal } from '@xterm/xterm';
@@ -8,23 +9,30 @@ import type { TerminalBridge, TerminalState, TerminalEvent } from '../contract/t
 const bridge = () => (window as unknown as { botling?: { terminal?: TerminalBridge } }).botling?.terminal;
 
 /** Mounted for the lifetime of the shell page; hiding never destroys a PTY or emulator. */
-export function TerminalPanels({ botId, botIds, onHide, toggleHost }: { botId?: string; botIds: string[]; onHide?: () => void; toggleHost?: HTMLElement | null }) {
+export function TerminalPanels({ botId, botIds, onHide, toggleHost, shortcutLabel = '⌘J' }: { botId?: string; botIds: string[]; onHide?: () => void; toggleHost?: HTMLElement | null; shortcutLabel?: string }) {
   const [opened, setOpened] = useState<string[]>([]);
   const [visible, setVisible] = useState<Record<string, boolean>>({});
+  // What each mounted panel reports up: how many shells it has (once started) and how to open one.
+  const shells = useRef<Record<string, number | undefined>>({});
+  const openers = useRef<Record<string, () => void>>({});
   const toggle = () => {
-    if (!botId) return;
-    if (visible[botId]) requestAnimationFrame(() => onHide?.());
+    const action = terminalToggleAction({ botExists: !!botId && botIds.includes(botId), visible: !!botId && !!visible[botId], shells: botId ? shells.current[botId] : undefined });
+    if (!botId || action === 'none') return;
+    if (action === 'hide') requestAnimationFrame(() => onHide?.());
     setOpened(ids => ids.includes(botId) ? ids : [...ids, botId]);
-    setVisible(value => ({ ...value, [botId]: !value[botId] }));
+    setVisible(value => ({ ...value, [botId]: action !== 'hide' }));
+    // An empty panel gets a shell, as with +. A panel not yet mounted opens its first shell as it starts.
+    if (action === 'open' || action === 'show-and-open') openers.current[botId]?.();
   };
-  useEffect(() => bridge()?.onToggle(toggle), [botId, visible]);
+  const latestToggle = useRef(toggle); latestToggle.current = toggle;
+  useEffect(() => bridge()?.onToggle(() => latestToggle.current()), []);
   if (!bridge()) return null;
   return <>
-    {toggleHost && createPortal(<button className="terminal-toggle" disabled={!botId} aria-expanded={!!botId && !!visible[botId]} onClick={toggle} title="Toggle terminal (⌘J)">Terminal</button>, toggleHost)}
-    {opened.filter(id => botIds.includes(id)).map(id => <TerminalPanel key={id} botId={id} visible={id === botId && !!visible[id]} hide={() => { setVisible(v => ({ ...v, [id]: false })); requestAnimationFrame(() => onHide?.()); }} />)}
+    {toggleHost && createPortal(<button className="terminal-toggle" disabled={!botId || !botIds.includes(botId)} aria-expanded={!!botId && !!visible[botId]} onClick={toggle} title={`Toggle terminal (${shortcutLabel})`}>Terminal</button>, toggleHost)}
+    {opened.filter(id => botIds.includes(id)).map(id => <TerminalPanel key={id} botId={id} report={count => { shells.current[id] = count; }} register={open => { if (open) openers.current[id] = open; else delete openers.current[id]; }} visible={id === botId && !!visible[id]} hide={() => { setVisible(v => ({ ...v, [id]: false })); requestAnimationFrame(() => onHide?.()); }} />)}
   </>;
 }
-function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boolean; hide: () => void }) {
+function TerminalPanel({ botId, visible, hide, report, register }: { botId: string; visible: boolean; hide: () => void; report: (count: number | undefined) => void; register: (open: (() => void) | null) => void }) {
   const [height, setHeight] = useState(300);
   const [viewportHeight, setViewportHeight] = useState(window.innerHeight);
   useEffect(() => {
@@ -46,13 +54,18 @@ function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boole
   const closing = useRef(new Set<string>());
   const api = bridge()!;
   const fail = (e: unknown) => setError(String(e));
+  const busyNow = useRef(true);
   const add = async () => {
+    busyNow.current = true;
     setBusy(true); setError('');
     try {
       const tab = await api.request({ type: 'open', botId, ...(shell ? { shell } : {}) }) as TerminalState;
       setTabs(t => [...t, tab]); setActive(tab.sessionId);
-    } catch (e) { fail(e); } finally { setBusy(false); }
+    } catch (e) { fail(e); } finally { busyNow.current = false; setBusy(false); }
   };
+  const addNow = useRef(add); addNow.current = add;
+  useEffect(() => { register(() => { if (!busyNow.current) void addNow.current(); }); return () => { register(null); report(undefined); }; }, []);
+  useEffect(() => { if (!busy) report(tabs.length); }, [busy, tabs.length]);
   useEffect(() => {
     if (initialized.current) return; initialized.current = true;
     void (async () => {
@@ -60,9 +73,9 @@ function TerminalPanel({ botId, visible, hide }: { botId: string; visible: boole
         const available = await api.request({ type: 'shells' }) as { shells: string[]; defaultShell: string };
         setShells(available.shells); setShell(available.defaultShell);
         const existing = await api.request({ type: 'list', botId }) as TerminalState[];
-        if (existing.length) { setTabs(existing); setActive(existing[0].sessionId); setBusy(false); }
+        if (existing.length) { setTabs(existing); setActive(existing[0].sessionId); busyNow.current = false; setBusy(false); }
         else await add();
-      } catch (e) { fail(e); setBusy(false); }
+      } catch (e) { fail(e); busyNow.current = false; setBusy(false); }
     })();
   }, []);
   const close = async (tab: TerminalState) => {

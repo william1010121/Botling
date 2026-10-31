@@ -10,6 +10,8 @@ import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { actionForEvent, bindingsFor } from "../contract/shortcuts";
+import { setShortcutLabels, shortcutLabel } from "./shortcut-labels";
 import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
@@ -79,13 +81,16 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     const next = now.includes(botId) ? now.filter((id) => id !== botId) : [...now, botId];
     void client.request({ type: "settings.set", change: { key: "pinnedBots", value: next } }).catch(() => {});
   }, [client, store]);
-  // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x; ⌃⌘I folds or opens the right panel; ⌃⌘S the left column; ⌘K searches it.
+  // The app's keys (Settings > Shortcuts): ⌘, Settings, ⌃⌘I the right panel, ⌃⌘S the left column, ⌘K its search, by default.
+  const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); openSettings(); }
-      if ((event.key === "i" || event.key === "I") && event.metaKey && event.ctrlKey) { event.preventDefault(); toggleRight(); }
-      if ((event.key === "s" || event.key === "S") && event.metaKey && event.ctrlKey) { event.preventDefault(); toggleRail(); }
-      if ((event.key === "k" || event.key === "K") && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) { event.preventDefault(); startSearch(); }
+      switch (actionForEvent(event, shortcutBindings)) {
+        case "settings": event.preventDefault(); openSettings(); break;
+        case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
+        case "toggleSidebar": event.preventDefault(); toggleRail(); break;
+        case "search": event.preventDefault(); startSearch(); break;
+      }
     };
     const onCommand = (event: Event) => {
       switch ((event as CustomEvent).detail) {
@@ -98,7 +103,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     window.addEventListener("botling:chat-command", onCommand);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleRail, startSearch]);
+  }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   // The spec open in the right panel, when it is made from a line of the chat on screen.
@@ -201,7 +206,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
               if (event.key === "Escape") { event.preventDefault(); setQuery(""); search.current?.blur(); focusComposer(); }
               if (event.key === "Enter") { const first = searchHits(view.bots, pinned, query)[0]; if (first) { selectBot(first.id); setQuery(""); focusComposer(); } }
             }} />
-          {!query && <span className="rail-search-key" aria-hidden="true">⌘K</span>}
+          {!query && <span className="rail-search-key" aria-hidden="true">{shortcutLabel("search")}</span>}
         </div>
         <nav className="bots" aria-label="Bots">
           {query.trim() ? (() => {
@@ -306,7 +311,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} />
-        {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} />}
+        {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} shortcutLabel={shortcutLabel("toggleTerminal")} />}
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
@@ -462,7 +467,7 @@ function focusComposer() {
 function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
   return (
-    <button type="button" className={`rail-toggle${collapsed ? "" : " on"}`} onClick={onToggle} title={`${label} (⌃⌘S)`} aria-label={label} aria-pressed={!collapsed}>
+    <button type="button" className={`rail-toggle${collapsed ? "" : " on"}`} onClick={onToggle} title={`${label} (${shortcutLabel("toggleSidebar")})`} aria-label={label} aria-pressed={!collapsed}>
       <Icon name="sidebarLeft" size={14} />
     </button>
   );
@@ -606,6 +611,11 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     }, () => {});
   }, [client]);
   useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, plugins]);
+  // The chat page relays the app's keys too, so it is told which they are (again when it reloads).
+  const savedShortcuts = useSyncExternalStore(store.subscribe, () => store.getView().settings?.shortcuts);
+  const shortcutBindings = useMemo(() => bindingsFor(savedShortcuts), [savedShortcuts]);
+  const pushShortcuts = useCallback(() => postToChat({ botling: "shortcuts", bindings: shortcutBindings }), [shortcutBindings]);
+  useEffect(() => { if (ready.current) pushShortcuts(); }, [pushShortcuts]);
 
   // The frame owns loss detection and text input. The shell only restores its window before
   // typing, never serializes a key, and keeps explicit shell targets authoritative.
@@ -804,6 +814,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           // A page that (re)loaded has no plugins yet.
           lastSpecs.current = "";
           pushPlugins();
+          pushShortcuts();
           return;
         case "resync":
           push();

@@ -1,5 +1,6 @@
 import { ShellOverlay } from "./ShellOverlay";
 // The 1.x sidebar gear's quick controls and shortcuts. Permissions remain the engine's own.
+import { shortcutLabel } from "./shortcut-labels";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { DoctorView, PluginsView, SettingsView } from "../contract";
 import { Client, RequestFailed } from "./client";
@@ -90,7 +91,7 @@ export function SidebarSettings({ client, settings, plugins, doctor, compact = f
           <button type="button" aria-label="Plugins" onClick={() => openSection("plugins")}><span>Plugins</span><span aria-hidden="true">{plugins ? `${plugins.plugins.filter(plugin => plugin.enabled).length} on` : "›"}</span></button>
           <button type="button" onClick={() => openSection("usage")}>Usage by bot<span aria-hidden="true">›</span></button>
           <button type="button" onClick={() => openSection("developer")}>Developer settings…<span aria-hidden="true">›</span></button>
-          <button type="button" className="all-settings" onClick={() => openSection()}>All settings…<span aria-hidden="true">⌘ ,</span></button>
+          <button type="button" className="all-settings" onClick={() => openSection()}>All settings…<span aria-hidden="true">{shortcutLabel("settings")}</span></button>
         </div>
       </div></ShellOverlay>}
     </div>
