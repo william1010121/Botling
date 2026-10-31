@@ -1,8 +1,7 @@
 name: CI
 
-# Answers one question: does it build, and do the fast, deterministic tests pass? Tests that run
-# real processes or wait on real time are marked `.integration` / `.wallClock` and skip themselves
-# when CI is set (GitHub sets it); they run locally with `swift test`.
+# Answers one question: does it build, and do the fast, deterministic tests pass? The archived
+# Swift 1.x app (Sources/, Tests/, Package.swift) is no longer built here.
 
 on:
   push:
@@ -32,20 +31,7 @@ jobs:
       - run: npm ci --no-audit --no-fund --prefix ../desktop
       - run: npm run typecheck
       - run: npm test
-      - name: Built web output is committed
-        run: |
-          npm run build
-          git diff --exit-code -- ../Sources/ClaudeCodeBot/Resources
-
-  swift:
-    runs-on: macos-26
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build
-        run: swift build --build-tests
-      - name: Fast tests
-        run: swift test --skip-build --no-parallel
+      - run: npm run build
 
   desktop:
     name: Electron 2 checks (${{ matrix.os }})

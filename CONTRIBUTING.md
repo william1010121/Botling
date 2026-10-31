@@ -26,12 +26,11 @@ app's window, and gets every reply you mark "Not right".
 ## Pull requests
 
 1. Branch from `main` and keep each PR to one change.
-2. If you change `Web/`, rebuild it (`cd Web && npm run build`) and commit the output in
-   `Sources/ClaudeCodeBot/Resources`; CI checks that it is up to date.
+2. Web build output (`Web/dist`) is not committed.
 3. Run the checks CI runs:
    ```bash
    (cd Web && npm run typecheck && npm test && npm run build)
-   swift build --build-tests && swift test
+   (cd desktop && npm run typecheck && npx vitest run test/unit)
    ```
 4. Add a line to [CHANGELOG.md](CHANGELOG.md) (under Added, Changed or Fixed) saying what changes
    for someone using the app. Leave `VERSION` alone; releases bump it.

@@ -21,7 +21,7 @@ await Promise.all([
   build({ entryPoints: [join(web, "host/src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(stage, "host/host.mjs") }),
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(stage, "host/check-plugin.cjs") }),
 ]);
-const extractors = join(here, "..", "Sources", "ClaudeCodeBot", "Resources", "web-extractors");
+const extractors = join(here, "..", "resources", "web-extractors");
 mkdirSync(join(stage, "web-extractors"), { recursive: true });
 for (const name of readdirSync(extractors).filter((name) => name.endsWith(".js") || name.endsWith(".md"))) cpSync(join(extractors, name), join(stage, "web-extractors", name));
 // Move each part in (host/ keeps main's host-utility.mjs: only the files built here are replaced).

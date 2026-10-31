@@ -257,7 +257,7 @@ describe("web AIs: the shelf (WebShelf)", () => {
 });
 
 describe("web AIs: page readers, the main bot, the 1.x import", () => {
-  const bundled = join(desktop, "..", "Sources", "ClaudeCodeBot", "Resources", "web-extractors");
+  const bundled = join(desktop, "resources", "web-extractors");
 
   it("every site has a page reader in the app; the plugin's copy wins and one edited by hand is kept", () => {
     const library = join(tempDir("web-readers"), "plugins");

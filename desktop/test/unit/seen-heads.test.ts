@@ -21,7 +21,7 @@ const chat = {
 } as unknown as ChatView;
 
 beforeAll(() => {
-  const art = join(__dirname, "../../..", "Sources/ClaudeCodeBotCore/Resources/CharacterArt/avatars-static");
+  const art = join(__dirname, "../../assets/avatars-static");
   vi.stubGlobal("__CHARACTERS__", Object.fromEntries(["claude", "gpt"].map((engine) => [engine, Object.fromEntries(["idle", "working", "thinking", "sleepy"].map((mood) => [mood, readFileSync(join(art, engine, `${mood}.png`)).toString("base64")]))])));
 });
 

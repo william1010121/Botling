@@ -373,8 +373,11 @@ Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for the PR flo
 
 ## Build from source
 
-Swift 6.2 (Xcode 26) is needed. The web chat is prebuilt and committed in
-`Sources/ClaudeCodeBot/Resources`, so `swift build` does not need npm.
+The Electron app in `desktop/` is the current app (see `desktop/README.md`); it builds and tests
+without the Swift tree. What follows is the archived Swift 1.x app (`Sources/`, `Tests/`,
+`Package.swift`), which CI no longer builds. It needs Swift 6.2 (Xcode 26), and its web chat
+resources are no longer committed: its web view assets, plugins and plugin host come from
+`cd Web && npm run build` (output in `Web/dist`), so it may not build as is.
 
 ```bash
 git clone https://github.com/william1010121/Botling.git botling

@@ -6,7 +6,7 @@ import { packageAgyHelper } from './scripts/package-agy-helper.mjs';
 //
 // Web/src is bundled from its sources here; its packages (markdown-it, KaTeX, CodeMirror) come
 // from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install and its
-// own build output (Sources/ClaudeCodeBot/Resources) is never touched.
+// own build output (Web/dist) is never touched.
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -62,9 +62,8 @@ writeFileSync(join(out, "report", NOTICES_FILE), notices.text);
 // (electron-builder copies them outside app.asar, where bots can read them).
 cpSync(join(here, "docs", "report-blocks.md"), join(out, "report", "report-blocks.md"));
 cpSync(join(here, "reports", "v2", "NOTICE"), join(out, "report", "NOTICE"));
-// The web AIs' page readers as 1.x ships them (Sources/ClaudeCodeBot/Resources/web-extractors, read
-// only): the core puts them in the plugin library's ccb-web-extractors and falls back to them.
-const extractors = join(here, "..", "Sources", "ClaudeCodeBot", "Resources", "web-extractors");
+// The web AIs' page readers (resources/web-extractors): the core puts them in the plugin library's ccb-web-extractors and falls back to them.
+const extractors = join(here, "resources", "web-extractors");
 mkdirSync(join(out, "web-extractors"), { recursive: true });
 for (const name of readdirSync(extractors).filter((name) => name.endsWith(".js") || name.endsWith(".md"))) {
   cpSync(join(extractors, name), join(out, "web-extractors", name));

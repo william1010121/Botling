@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 // them: the script's source, then `extract(document)`. The pages are FIXTURES that mimic
 // each site's turn structure (Gemini, ChatGPT, Claude), not saved copies of the real sites.
 const here = dirname(fileURLToPath(import.meta.url));
-const readers = join(here, "../../Sources/ClaudeCodeBot/Resources/web-extractors");
+const readers = join(here, "../../desktop/resources/web-extractors");
 
 type Reading = { title: string | null; turns: { role: string; text: string }[] } | { error: string };
 

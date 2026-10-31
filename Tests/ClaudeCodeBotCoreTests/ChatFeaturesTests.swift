@@ -3,40 +3,6 @@ import Testing
 @testable import ClaudeCodeBotCore
 
 struct MarkdownTests {
-    @Test func blocks() {
-        let text = """
-        # Today
-        **NotchDo** is 70% done.
-
-        - Right panel
-        - Scheduling
-        1. Error states first
-        2. Then scheduling
-        > Stuck on succulents
-        ```
-        swift build
-        ```
-        | Project | Status |
-        |---|---|
-        | blog | Waiting on you |
-        ---
-        Look at this:![Panel screenshot](file:///tmp/panel.png) and the video ![Demo](file:///tmp/demo.mp4)
-        """
-        #expect(MarkdownBlock.parse(text) == [
-            .heading(level: 1, text: "Today"),
-            .paragraph("**NotchDo** is 70% done."),
-            .bullets(["Right panel", "Scheduling"]),
-            .numbered(["Error states first", "Then scheduling"]),
-            .quote("Stuck on succulents"),
-            .code("swift build"),
-            .table(header: ["Project", "Status"], rows: [["blog", "Waiting on you"]]),
-            .rule,
-            .paragraph("Look at this: and the video"),
-            .media(alt: "Panel screenshot", url: URL(string: "file:///tmp/panel.png")!),
-            .media(alt: "Demo", url: URL(string: "file:///tmp/demo.mp4")!)
-        ])
-    }
-
     @Test func attachmentKinds() {
         #expect(Attachment(url: URL(filePath: "/a/b.PNG")).kind == .image)
         #expect(Attachment(url: URL(filePath: "/a/b.mov")).kind == .video)

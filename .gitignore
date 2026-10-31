@@ -1,6 +1,7 @@
 .build/
 .swiftpm/
 Web/node_modules/
+Web/dist/
 *.xcodeproj/
 .DS_Store
 dist/
