@@ -669,7 +669,8 @@ export const SettingsView = z.strictObject({
   thresholdsCustomized: z.boolean(),
   catchUpThreshold: z.number().int().min(1).max(50),
   intervalSummaryThreshold: z.number().int().min(1).max(50),
-  catchUpModel: z.string().max(200),
+  /** The Catch-up summary model: an engine and one of its models (an older Codex-only setting reads as Codex). */
+  catchUpModel: z.strictObject({ engine: Engine, model: z.string().max(200) }),
   summaryPrompt: z.string().max(20_000).nullable(),
   defaultSummaryPrompt: z.string().max(2_000),
   subagentModel: BotModel.nullable(),
@@ -717,7 +718,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("thresholdsCustomized"), value: z.boolean() }),
   z.strictObject({ key: z.literal("catchUpThreshold"), value: z.number().int().min(1).max(50) }),
   z.strictObject({ key: z.literal("intervalSummaryThreshold"), value: z.number().int().min(1).max(50) }),
-  z.strictObject({ key: z.literal("catchUpModel"), value: ModelId.nullable() }),
+  z.strictObject({ key: z.literal("catchUpModel"), value: z.strictObject({ engine: Engine, model: ModelId }).nullable() }),
   z.strictObject({ key: z.literal("summaryPrompt"), value: z.string().max(20_000).nullable() }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
   z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),

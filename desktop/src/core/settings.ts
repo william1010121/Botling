@@ -7,7 +7,7 @@
 // Per-bot choices (model, effort, the subagents' model) live in each bot's bot.json (BotStore.swift).
 import { readFileSync } from "node:fs";
 import { writeFileAtomic } from "./durable/atomic";
-import { DEFAULT_WRITING_PROMPT, JUDGE_MODEL } from "./catchup";
+import { DEFAULT_WRITING_PROMPT, savedSummaryModel } from "./catchup";
 import type { SettingsChange, SettingsView } from "../contract";
 import { messageWidth } from "../contract/message-width";
 import { normalizeOverrides } from "../contract/shortcuts";
@@ -66,7 +66,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     thresholdsCustomized: typeof raw.summaryThresholdsCustomizedChoice === "boolean" ? raw.summaryThresholdsCustomizedChoice : catchUpThreshold !== THRESHOLD || intervalThreshold !== THRESHOLD,
     catchUpThreshold,
     intervalSummaryThreshold: intervalThreshold,
-    catchUpModel: text(raw.catchUpModelChoice) ?? JUDGE_MODEL,
+    catchUpModel: savedSummaryModel(raw),
     summaryPrompt: text(raw.summaryPromptChoice),
     defaultSummaryPrompt: DEFAULT_WRITING_PROMPT,
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
@@ -110,7 +110,13 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
       break;
     case "catchUpThreshold": set("catchUpThresholdChoice", clampThreshold(change.value)); set("summaryThresholdsCustomizedChoice", true); break;
     case "intervalSummaryThreshold": set("intervalSummaryThresholdChoice", clampThreshold(change.value)); set("summaryThresholdsCustomizedChoice", true); break;
-    case "catchUpModel": set("catchUpModelChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
+    case "catchUpModel": {
+      const model = change.value?.model.trim();
+      set("catchUpModelChoice", model || null);
+      // Codex stays unmarked: an older Botling reads the model id alone as a Codex model.
+      set("catchUpModelEngine", model && change.value!.engine !== "codex" ? change.value!.engine : null);
+      break;
+    }
     case "summaryPrompt": set("summaryPromptChoice", change.value && change.value.trim() ? change.value : null); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
     case "claudeBypassPermissions": set("claudeBypassPermissions", change.value); break;

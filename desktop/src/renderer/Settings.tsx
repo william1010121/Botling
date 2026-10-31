@@ -1,6 +1,6 @@
 import { useUsageRefresh } from "./QuickSettingsUsage";
 import { AntigravityQuota } from "./AntigravityQuota";
-import { ModelPicker, useModelDiscovery } from "./ModelPicker";
+import { ModelPicker, SummaryModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { postToChat } from "./editor-surface";
@@ -99,7 +99,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
           </header>
           {problem && <p className="settings-problem" role="alert">{problem}</p>}
           <div className="settings-body">
-            {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} codexModels={codexModels} />}
+            {shown && current?.id === "general" && <General client={client} settings={shown} change={change} bot={bot} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
             {shown && current?.id === "engines" && <Engines client={client} settings={shown} change={change} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} botCount={bots.length} />}
             {current?.id === "usage" && <Usage client={client} />}
@@ -389,7 +389,27 @@ function Appearance({ settings, change }: { settings: SettingsView; change: (nex
   </Group>;
 }
 
-function General({ settings, change, bot, codexModels }: { settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null; codexModels: CodexModelOption[] }) {
+/**
+ * The model lists of every engine for the summary picker. With a bot to ask, the engines report their own (as the
+ * pickers elsewhere do); without one, Codex's own list and Claude's three aliases stand in, and Antigravity has none.
+ */
+function useSummaryDiscovery(client: Client, botId: string | null, codexModels: CodexModelOption[]) {
+  const asked = {
+    claude: useModelDiscovery(client, botId ?? "", "claude", !!botId),
+    codex: useModelDiscovery(client, botId ?? "", "codex", !!botId),
+    agy: useModelDiscovery(client, botId ?? "", "agy", !!botId),
+  };
+  if (botId) return asked;
+  const ready = (models: { id: string; name: string; isDefault: boolean }[], source: string) => ({ status: "ready" as const, source, message: "", models: models.map((model) => ({ ...model, efforts: null })) });
+  return {
+    claude: { ...asked.claude, result: ready(MODELS.map((model) => ({ id: model.id, name: model.label, isDefault: false })), "Claude Code") },
+    codex: { ...asked.codex, result: ready(codexModels, "Codex") },
+    agy: asked.agy,
+  };
+}
+
+function General({ client, settings, change, bot, codexModels, modelBotId }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null; codexModels: CodexModelOption[]; modelBotId: string | null }) {
+  const summaryDiscovery = useSummaryDiscovery(client, modelBotId, codexModels);
   const [prompt, setPrompt] = useState(settings.summaryPrompt ?? settings.defaultSummaryPrompt);
   useEffect(() => setPrompt(settings.summaryPrompt ?? settings.defaultSummaryPrompt), [settings.summaryPrompt, settings.defaultSummaryPrompt]);
   const size = settings.chatAvatarSize ?? 48;
@@ -433,8 +453,10 @@ function General({ settings, change, bot, codexModels }: { settings: SettingsVie
             <button type="button" onClick={() => change({ key: "thresholdsCustomized", value: true })}>Adjust individually</button>
           </Row>
         )}
-        <Row label="Summary model" hint={`Current summary model: ${settings.catchUpModel}`}>
-          <SelectSetting label="Summary model" options={codexOptions(codexModels)} value={settings.catchUpModel} onChange={(value) => change({ key: "catchUpModel", value })} />
+        <Row label="Summary model" hint={`Current summary model: ${ENGINE_NAMES[settings.catchUpModel.engine]} · ${settings.catchUpModel.model}`}>
+          <SummaryModelPicker label="Summary model" value={settings.catchUpModel} discovery={summaryDiscovery} unavailable={["agy"]}
+            unavailableNote="Antigravity models can't write summaries: it has no read-only one-shot mode."
+            onChange={(value) => change({ key: "catchUpModel", value })} />
         </Row>
         <div className="settings-prompt">
           <div className="settings-label">Summary prompt <span className="settings-tag">{settings.summaryPrompt ? "Custom" : "Default"}</span></div>
