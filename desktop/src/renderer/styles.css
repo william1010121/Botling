@@ -991,6 +991,6 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 
 @font-face { font-family: "Botling Terminal"; src: url("terminal-assets/MesloLGS-NF-Regular.ttf") format("truetype"); font-display: block; }
 .settings-fold { all: unset; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; color: inherit; font: inherit; }
-.settings-fold:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; border-radius: 4px; }
+.settings-fold:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; border-radius: 4px; }
 .settings-confirm { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; font-size: 12px; color: var(--muted); }
 .settings-confirm span { flex-basis: 100%; text-align: right; }
