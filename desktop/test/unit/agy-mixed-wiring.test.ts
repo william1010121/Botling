@@ -26,7 +26,7 @@ vi.mock('../../src/core/agent/agy-acp',()=>({verifyAcpRuntime(){},AgyAcpHead:cla
 vi.mock('../../src/core/agent/codex',async original=>({...await original<any>(),CodexHead:class extends fixture.Head{constructor(c:any,h:any){super('codex',c,h);}}}));
 vi.mock('../../src/core/agent/head',async original=>({...await original<any>(),ClaudeHead:class{constructor(){throw Error('Claude construction forbidden in offline fixture');}}}));
 vi.mock('../../src/core/process/tree',async original=>({...await original<any>(),processTreeAdapter:()=>({spawn(){throw Error('All process spawning forbidden in offline fixture');}})}));
-vi.mock('../../src/core/process/ledger',async original=>({...await original<any>(),processStartTime:()=> 'fixture-start'}));
+vi.mock('../../src/core/process/kill-tree',async original=>({...await original<any>(),processStartTime:()=> 'fixture-start'}));
 import {Bot} from '../../src/core/bot';
 import {mainProfile} from '../../src/core/store/workspace';
 import {botPrompts} from '../../src/core/prompts';
