@@ -8,7 +8,7 @@ import { WorkspaceStore } from '../src/renderer/store';
 import { Icon } from '../src/renderer/icons';
 import { MobileError, MobileTransport, endpointURL } from './transport';
 import { clearDrafts } from './session';
-import { deviceId, redeemPairing, takePairingLink } from './pair';
+import { betterRoute, deviceId, redeemPairing, takePairingLink } from './pair';
 import { WebBridge, forgetLocal } from './web-bridge';
 
 const POLL_MS = 2_500;
@@ -99,7 +99,12 @@ export function WebApp() {
     if (!link) return;
     void (async () => {
       setAuth('checking'); setMessage('Pairing…');
-      try { await connect(await redeemPairing(link, deviceId(), location.origin)); }
+      try {
+        // A route the core lists ahead of this one may be reachable (the home network, say): continue there.
+        const better = await betterRoute(link, location.origin);
+        if (better) { location.replace(better); return; }
+        await connect(await redeemPairing(link, deviceId(), location.origin));
+      }
       catch (cause) {
         setAuth('signedOut'); setMessage(cause instanceof MobileError ? cause.message : 'Pairing failed. Show a new code on your computer.');
       }

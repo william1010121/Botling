@@ -11,11 +11,14 @@ import { MAIN_BOT_ID } from '../core/store/records';
 import { MutationLedger } from './ledger';
 import { listenWithHandover } from './lifecycle';
 import { ALL_BOTS, botAllowed } from './scope';
-import type { PairingStore } from './pairing';
+import type { PairingStore, Route } from './pairing';
+import { TicketStore } from './tickets';
 export { ALL_BOTS, botAllowed };
 
 export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
-  botIds: z.array(z.string().min(1).refine(id => id !== ALL_BOTS, 'Bearer clients need explicit bot ids.')).min(1), expiresAt: z.number().int().positive() });
+  botIds: z.array(z.string().min(1).refine(id => id !== ALL_BOTS, 'Bearer clients need explicit bot ids.')).min(1), expiresAt: z.number().int().positive(),
+  /** Set for paired phones (pairing.ts): when, and the phone's own short name. Display only. */
+  pairedAt: z.number().int().positive().optional(), label: z.string().max(40).optional() });
 export type Client = z.infer<typeof Client>;
 export const Clients = z.array(Client);
 export const mobileTypes = new Set(['chat.snapshot', 'chat.history', 'chat.send', 'chat.choose', 'chat.answer']);
@@ -24,6 +27,8 @@ export interface BridgeOptions {
   origin: string; host: string; port: number; tls: ServerOptions; assets: string;
   generation?: MobileGeneration; ready?: () => void; updating?: () => boolean;
   clients: () => Client[]; ledger: MutationLedger; core: MobileCore; pairing?: PairingStore;
+  /** More HTTPS origins that reach this same listener (LAN name, Tailscale name): each is accepted as Host/Origin. */
+  routes?: Route[]; tickets?: TicketStore;
 }
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 /** OS account is the setup authority. Never accept group/world-readable credential policy. */
@@ -60,6 +65,9 @@ export const frameHostCSP = (origin: string) => [
 function json(res: ServerResponse, status: number, value: unknown) { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); }
 export function handler(options: BridgeOptions) {
   const origin = new URL(options.origin);
+  const origins = new Map([origin, ...(options.routes ?? []).map(r => new URL(r.origin))].map(o => [o.host, o] as const));
+  const tickets = options.tickets ?? new TicketStore();
+  const streams = new Set<ServerResponse>();
   return async (req: IncomingMessage, res: ServerResponse) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -74,8 +82,12 @@ export function handler(options: BridgeOptions) {
     const forbidden = () => api ? json(res, 403, { error: { code: 'access_denied' } }) : refuse(403);
     // The public shell may cross sites; data operations still require same-origin requests; never trust forwarded headers.
     // The sandboxed chat frame's CORS loads (KaTeX fonts) say `Origin: null`; only public assets accept it.
-    if (req.headers.host !== origin.host || (req.headers.origin && req.headers.origin !== origin.origin && !(publicAsset && req.headers.origin === 'null'))
+    const self = origins.get(req.headers.host ?? '') ?? origin;
+    const routeOrigin = req.headers.origin !== undefined && [...origins.values()].some(o => o.origin === req.headers.origin);
+    if (!origins.has(req.headers.host ?? '') || (req.headers.origin && req.headers.origin !== self.origin && !(publicAsset && req.headers.origin === 'null') && !(coreInfo && routeOrigin))
       || (req.headers['sec-fetch-site'] === 'cross-site' && !publicAsset && !coreInfo)) return forbidden();
+    // A phone on one route probes the others: only the secret-free descriptor, only for this core's own origins, no credentials.
+    if (coreInfo && routeOrigin) { res.setHeader('Access-Control-Allow-Origin', req.headers.origin!); res.setHeader('Vary', 'Origin'); }
     if (options.updating?.()) return json(res, 503, { error: { code: 'generation_updating' } });
     const generation = options.generation;
     if (publicAsset) {
@@ -94,22 +106,22 @@ export function handler(options: BridgeOptions) {
       try {
         const body = generation ? generationBytes(generation, name) : readFileSync(join(options.assets, name));
         if (!body) return refuse(404);
-        if (name === 'chat.html') res.setHeader('Content-Security-Policy', webChatCSP(origin.origin).replaceAll("/mobile/", generation ? `/mobile/g/${generation.id}/` : "/mobile/"));
-        if (name === 'frame-host.html') res.setHeader('Content-Security-Policy', frameHostCSP(origin.origin).replaceAll("/mobile/", generation ? `/mobile/g/${generation.id}/` : "/mobile/"));
+        if (name === 'chat.html') res.setHeader('Content-Security-Policy', webChatCSP(self.origin).replaceAll("/mobile/", generation ? `/mobile/g/${generation.id}/` : "/mobile/"));
+        if (name === 'frame-host.html') res.setHeader('Content-Security-Policy', frameHostCSP(self.origin).replaceAll("/mobile/", generation ? `/mobile/g/${generation.id}/` : "/mobile/"));
         if (font) res.setHeader('Access-Control-Allow-Origin', '*');
         res.writeHead(200, { 'Content-Type': font ? 'font/woff2' : assets[name] }); res.end(body);
       }
       catch { refuse(404); }
       return;
     }
-    // Browser clients must match the page generation. Bearer automation without a browser
-    // Origin keeps its existing versioned protocol contract; browser bearer clients are fenced too.
-    const stale = () => generation && !!req.headers.origin && req.headers['x-botling-generation'] !== generation.id;
-    if (stale()) return json(res, 409, { error: { code: 'generation_changed' } });
     if (coreInfo) {
       if (!options.pairing) return refuse(404);
       try { return json(res, 200, options.pairing.descriptor()); } catch { return json(res, 503, { error: { code: 'core_unavailable' } }); }
     }
+    // Browser clients must match the page generation. Bearer automation without a browser
+    // Origin keeps its existing versioned protocol contract; browser bearer clients are fenced too.
+    const stale = () => generation && !!req.headers.origin && req.headers['x-botling-generation'] !== generation.id;
+    if (stale()) return json(res, 409, { error: { code: 'generation_changed' } });
     if (url.pathname === '/api/mobile/pair' && url.search === '') {
       if (!options.pairing) return refuse(404);
       if (req.method !== 'POST') return refuse(405);
@@ -121,10 +133,35 @@ export function handler(options: BridgeOptions) {
         body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch { return refuse(400); }
       try {
-        const result = options.pairing.redeem(body?.secret, body?.deviceId);
+        const result = options.pairing.redeem(body?.secret, body?.deviceId, body?.name);
         if (result.ok) return json(res, 200, { token: result.token, expiresAt: result.expiresAt, coreId: result.coreId });
         return json(res, result.reason === 'limited' ? 429 : 401, { error: { code: result.reason === 'limited' ? 'pair_limited' : 'pair_invalid' } });
       } catch { return json(res, 503, { error: { code: 'pair_unavailable' } }); }
+    }
+    if (url.pathname === '/api/mobile/ticket' && url.search === '') {
+      if (req.method !== 'POST') return refuse(405);
+      let asked: Client | undefined;
+      try { asked = authenticate(req, Clients.parse(options.clients())); } catch { return json(res, 503, { error: { code: 'auth_unavailable' } }); }
+      if (!asked) return json(res, 401, { error: { code: 'auth_required' } });
+      const issued = tickets.issue(asked.id);
+      return issued ? json(res, 200, issued) : json(res, 429, { error: { code: 'ticket_limited' } });
+    }
+    if (url.pathname === '/api/mobile/events') {
+      if (req.method !== 'GET') return refuse(405);
+      // The ticket is the only secret in this URL, and it is already spent when the stream opens.
+      const ticket = [...url.searchParams.keys()].join() === 'ticket' ? url.searchParams.get('ticket') : null;
+      const clientId = tickets.redeem(ticket);
+      const live = () => { try { return Clients.parse(options.clients()).find(c => c.id === clientId && c.expiresAt > Date.now()); } catch { return undefined; } };
+      const client = clientId ? live() : undefined;
+      if (!client) return json(res, 401, { error: { code: 'ticket_invalid' } });
+      if (streams.size >= 16) return json(res, 429, { error: { code: 'stream_limited' } });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive' });
+      res.write('retry: 3000\nevent: ready\ndata: {}\n\n');
+      streams.add(res);
+      // The stream ends when the session is revoked or expires; until the core pushes changes it carries only a heartbeat.
+      const beat = setInterval(() => { if (live()) res.write(': ping\n\n'); else res.end(); }, 15_000);
+      res.on('close', () => { clearInterval(beat); streams.delete(res); });
+      return;
     }
     if (req.url !== '/api/mobile/command') return refuse(404);
     if (req.method !== 'POST') return refuse(405);
@@ -178,6 +215,10 @@ export function startBridge(options: BridgeOptions, failed: (error: Error) => vo
   if (!privateHost || origin.protocol !== 'https:' || origin.origin !== options.origin
     || !Number.isInteger(options.port) || options.port < 1 || options.port > 65535
     || !options.tls.key || !options.tls.cert) throw new Error('Explicit private bind address, valid listener port and HTTPS origin/TLS certificate required.');
+  for (const route of options.routes ?? []) {
+    const parsed = new URL(route.origin);
+    if (parsed.protocol !== 'https:' || parsed.origin !== route.origin) throw new Error('Every route must be an HTTPS origin without a path.');
+  }
   Clients.parse(options.clients());
   const handle = handler(options);
   const server = createServer({ ...options.tls, minVersion: 'TLSv1.2' }, (req, res) => { void handle(req, res).catch(() => { res.destroy(); }); });

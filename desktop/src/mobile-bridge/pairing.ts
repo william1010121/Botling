@@ -21,13 +21,18 @@ const sha = (text: string) => createHash('sha256').update(text).digest();
 
 interface Offer { secretHash: string; botIds: string[]; expiresAt: number }
 export type Redeemed = { ok: true; token: string; expiresAt: number; coreId: string } | { ok: false; reason: 'invalid' | 'limited' };
-export interface CoreDescriptor { app: 'botling'; coreId: string; protocol: typeof PROTOCOL_VERSION; pairing: { ttlSeconds: number } }
+/** A way to reach this core, in the order a phone should try. Only routes the user configured are listed. */
+export interface Route { kind: 'lan' | 'tailscale' | 'tunnel'; origin: string }
+export interface CoreDescriptor { app: 'botling'; coreId: string; protocol: typeof PROTOCOL_VERSION; routes: Route[]; pairing: { ttlSeconds: number } }
+/** A paired phone as the desktop lists it. The id is the device id (never the token or its hash). */
+export interface Device { id: string; label: string; pairedAt: number; expiresAt: number; botIds: string[] }
+const label = (value: unknown) => typeof value === 'string' ? value.replace(/[^\p{L}\p{N} ._()-]/gu, '').trim().slice(0, 40) : '';
 
 export const pairingURL = (origin: string, coreId: string, secret: string) => `${origin}/mobile/#pair=${secret}&core=${coreId}`;
 
 export class PairingStore {
   private failures: number[] = [];
-  constructor(private dir: string, private now: () => number = Date.now) {
+  constructor(private dir: string, private now: () => number = Date.now, private routes: Route[] = []) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const stat = statSync(dir);
     if (!stat.isDirectory() || (stat.mode & 0o077) || (process.getuid && stat.uid !== process.getuid()))
@@ -50,7 +55,7 @@ export class PairingStore {
     });
   }
   descriptor(): CoreDescriptor {
-    return { app: 'botling', coreId: this.coreId(), protocol: PROTOCOL_VERSION, pairing: { ttlSeconds: PAIR_TTL_MS / 1000 } };
+    return { app: 'botling', coreId: this.coreId(), protocol: PROTOCOL_VERSION, routes: this.routes.map(r => ({ ...r })), pairing: { ttlSeconds: PAIR_TTL_MS / 1000 } };
   }
   /** Local setup only. Returns the secret once; it is not recoverable afterwards. */
   createOffer(botIds: string[]): { secret: string; expiresAt: number } {
@@ -66,13 +71,15 @@ export class PairingStore {
       return { secret, expiresAt: offer.expiresAt };
     });
   }
-  /** Unknown, used, expired and malformed all fail the same way; failures are limited globally (the bridge
-   * sits behind a tunnel, so a per-address limit would see one address). */
-  redeem(secret: unknown, deviceId: unknown): Redeemed {
+  /** Unknown, used, expired and malformed all fail the same way. Wrong guesses are counted and, past the limit,
+   * answered 'limited'. The limit is global (behind a tunnel every request has one address) and applies only to
+   * wrong guesses: a valid code is still honored, so a stranger's junk cannot lock the owner out. The code has
+   * 256 bits, so throttling is about noise, not about guessing. */
+  redeem(secret: unknown, deviceId: unknown, name?: unknown): Redeemed {
     const now = this.now();
     this.failures = this.failures.filter(t => now - t < FAIL_WINDOW_MS);
-    if (this.failures.length >= FAIL_LIMIT) return { ok: false, reason: 'limited' };
-    const fail = (): Redeemed => { this.failures.push(now); return { ok: false, reason: 'invalid' }; };
+    const limited = this.failures.length >= FAIL_LIMIT;
+    const fail = (): Redeemed => { if (!limited) this.failures.push(now); return { ok: false, reason: limited ? 'limited' : 'invalid' }; };
     if (typeof secret !== 'string' || !SECRET.test(secret) || typeof deviceId !== 'string' || !DEVICE_ID.test(deviceId)) return fail();
     const offersFile = this.file('pairing-offers.json');
     const pairedFile = this.file('paired-clients.json');
@@ -86,7 +93,8 @@ export class PairingStore {
       if (live.length !== offers.length) writeFileAtomic(offersFile, JSON.stringify(live)); // single use, before issuing
       if (!match) return null;
       const token = randomBytes(32).toString('base64url');
-      const client: Client = { id: `pair-${deviceId}`, tokenHash: sha(token).toString('hex'), botIds: match.botIds, expiresAt: now + PAIRED_TTL_MS };
+      const client: Client = { id: `pair-${deviceId}`, tokenHash: sha(token).toString('hex'), botIds: match.botIds, expiresAt: now + PAIRED_TTL_MS,
+        pairedAt: now, label: label(name) || undefined };
       withFileLock(pairedFile, () => {
         const others = this.read<Client[]>('paired-clients.json', []).filter(c => c.id !== client.id && c.expiresAt > now);
         writeFileAtomic(pairedFile, JSON.stringify([...others, client])); // one session per device
@@ -94,6 +102,24 @@ export class PairingStore {
       return { token, expiresAt: client.expiresAt };
     });
     return result ? { ok: true, ...result, coreId: this.coreId() } : fail();
+  }
+  /** Paired phones, newest first. Local setup only: a phone never lists or revokes another phone. */
+  devices(): Device[] {
+    return this.clients().filter(c => c.id.startsWith('pair-'))
+      .map(c => ({ id: c.id.slice(5), label: c.label ?? '', pairedAt: c.pairedAt ?? 0, expiresAt: c.expiresAt, botIds: [...c.botIds] }))
+      .sort((a, b) => b.pairedAt - a.pairedAt);
+  }
+  /** Ends a paired phone's session at once (the bridge re-reads clients on every request). Returns whether one existed. */
+  revoke(deviceId: string): boolean {
+    if (!DEVICE_ID.test(deviceId)) return false;
+    const file = this.file('paired-clients.json');
+    return withFileLock(file, () => {
+      const all = this.read<Client[]>('paired-clients.json', []);
+      const kept = all.filter(c => c.id !== `pair-${deviceId}`);
+      if (kept.length === all.length) return false;
+      writeFileAtomic(file, JSON.stringify(kept));
+      return true;
+    });
   }
   /** Paired sessions still valid; the bridge merges these with the hand-issued clients file. */
   clients(): Client[] {

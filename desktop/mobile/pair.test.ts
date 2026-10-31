@@ -17,7 +17,7 @@ describe('redeemPairing', () => {
     const fetcher = vi.fn(async (url: any, init?: any) => {
       calls.push(`${init?.method ?? 'GET'} ${new URL(String(url), 'https://h.example').pathname}`);
       if (String(url).endsWith('/core')) return new Response(JSON.stringify({ app: 'botling', coreId: core, protocol: 10, pairing: { ttlSeconds: 300 } }));
-      expect(JSON.parse(init.body)).toEqual({ secret: SECRET, deviceId: DEVICE });
+      expect(JSON.parse(init.body)).toEqual({ secret: SECRET, deviceId: DEVICE, name: expect.any(String) });
       expect(init.credentials).toBe('omit');
       return new Response(JSON.stringify({ token: 'T'.repeat(43), expiresAt: 5, coreId: core }));
     }) as unknown as typeof fetch;

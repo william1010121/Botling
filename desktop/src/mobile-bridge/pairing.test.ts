@@ -25,7 +25,7 @@ describe('core descriptor', () => {
     expect(new PairingStore(dir).coreId()).toBe(id);
     expect(new PairingStore(temp()).coreId()).not.toBe(id);
     const d = new PairingStore(dir).descriptor();
-    expect(d).toEqual({ app: 'botling', coreId: id, protocol: 10, pairing: { ttlSeconds: 300 } });
+    expect(d).toEqual({ app: 'botling', coreId: id, protocol: 10, routes: [], pairing: { ttlSeconds: 300 } });
   });
 });
 
@@ -77,14 +77,17 @@ describe('pairing offers', () => {
     expect(store.redeem('short', DEVICE)).toEqual({ ok: false, reason: 'invalid' });
     expect(store.redeem(store.createOffer(['bot-a']).secret, 'bad id!')).toEqual({ ok: false, reason: 'invalid' });
   });
-  it('rate-limits failed attempts, even for a valid secret, until the window passes', () => {
+  it('rate-limits wrong guesses until the window passes, but never refuses a valid code', () => {
     let now = 0;
     const store = new PairingStore(temp(), () => now);
     const offer = store.createOffer(['bot-a']);
     for (let i = 0; i < 5; i++) expect(store.redeem('z'.repeat(43), DEVICE)).toEqual({ ok: false, reason: 'invalid' });
-    expect(store.redeem(offer.secret, DEVICE)).toEqual({ ok: false, reason: 'limited' });
+    expect(store.redeem('y'.repeat(43), DEVICE)).toEqual({ ok: false, reason: 'limited' });
+    expect(store.redeem(offer.secret, DEVICE).ok).toBe(true); // the owner is not locked out by a stranger's junk
+    const next = store.createOffer(['bot-a']);
     now += 61_000;
-    expect(store.redeem(offer.secret, DEVICE).ok).toBe(true);
+    expect(store.redeem('x'.repeat(43), DEVICE)).toEqual({ ok: false, reason: 'invalid' }); // the window passed
+    expect(store.redeem(next.secret, 'g'.repeat(22)).ok).toBe(true);
   });
   it('stores only hashes, owner-only, and never the secret or token', () => {
     const dir = temp(); const store = new PairingStore(dir);

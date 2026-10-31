@@ -13,6 +13,23 @@ app and publishes it on GitHub Releases.
   phone checks it reached the right Botling (public Core ID at `/api/mobile/core`) before sending it,
   and each device keeps one session. A paired phone has exactly what a pasted token has. Pasting a
   token still works.
+- **Phone settings.** Settings > Phone makes a pairing code as a QR picture (pick the bots the phone
+  may use), lists the routes a phone tries, and lists paired phones with a Revoke button. A revoked
+  phone is refused on its next request. The same is available as `pair.cjs devices PAIRING_DIR` and
+  `pair.cjs revoke PAIRING_DIR DEVICE_ID`. English and Traditional Chinese.
+- **Ordered routes.** The mobile config may add `originKind` and `routes` (`lan`, `tailscale`,
+  `tunnel` entries, HTTPS origins). The Core ID descriptor lists them in order, the bridge accepts
+  each as its own host, and a phone that opens a pairing link on a slower route moves to an earlier
+  route that answers with the same Core ID (one probe each, 2.5 seconds, at once).
+- **Short-lived event-stream tickets.** `POST /api/mobile/ticket` (bearer) returns a ticket valid
+  30 seconds and usable once; `GET /api/mobile/events?ticket=...` opens the stream. The long-lived token
+  never appears in a URL. Until the core pushes changes the stream carries only a heartbeat; the phone
+  still polls.
+
+### Fixed
+
+- A stranger's wrong pairing guesses no longer lock out a valid code: past five wrong guesses a
+  minute they get 429, but a valid code still pairs.
 
 ## 2.2.0
 

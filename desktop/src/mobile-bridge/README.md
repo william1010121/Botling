@@ -152,4 +152,42 @@ fragment, valid 5 minutes, usable once, and only its SHA-256 is stored (`pairing
 The page checks `coreId` against the descriptor, then `POST /api/mobile/pair { secret, deviceId }` returns a
 bearer token. That token is an ordinary client (explicit bots, 30 days) in `paired-clients.json`, merged
 with the clients file; pairing the same device again replaces its session. Unknown, used and expired codes
-all answer 401; five failures in a minute answer 429 for the rest of the window.
+all answer 401; past five wrong guesses in a minute they answer 429 for the rest of the window, but a
+valid code is never refused (it has 256 bits; the limit is about noise, not guessing).
+
+### Phone settings, devices and the command line
+
+Settings > Phone (desktop) makes the code as a QR picture for the bots you tick, and lists and revokes
+paired phones; the same store is used by `node out/mobile-bridge/pair.cjs devices <data>/mobile` and
+`... revoke <data>/mobile DEVICE_ID`. Only the desktop (a renderer command to the core) lists or revokes:
+a paired phone cannot see or end another phone's session. Revoking takes effect on the phone's next
+request; an open event stream ends within 15 seconds. Hand-issued tokens in the clients file are not
+listed; edit that file to revoke them.
+
+### Routes
+
+`config.json` may name how the core is reached, in the order a phone should try:
+
+```json
+{ "origin": "https://botling-bridge.example", "originKind": "tunnel",
+  "routes": [{ "kind": "lan", "origin": "https://botling.home.arpa" }, { "kind": "tailscale", "origin": "https://mac.tailnet.ts.net" }] }
+```
+
+`origin` is the first route (`originKind` defaults to `tunnel`); `routes` adds up to five more (`lan`,
+`tailscale`, `tunnel`; HTTPS origins, no path). Nothing is discovered or set up: each name must already
+reach this listener (DNS, Tailscale Serve, tunnel) with a certificate valid for it. The bridge accepts
+each as `Host` and checks `Origin` against the host asked, so data requests stay same-origin; only
+`GET /api/mobile/core` may be read from another listed route (CORS for exactly those origins), which is how
+a phone probes. `GET /api/mobile/core` now also returns `routes: [{ kind, origin }]`. A pairing link made
+for one route that is opened on a later one hops to the first listed route that answers with the same Core
+ID, once (`&hop=1`); the secret is sent only to a route that proved it. After pairing, a token belongs to
+one origin: moving a signed-in session between routes is not done yet.
+
+### Event stream tickets
+
+`EventSource` cannot send headers, so the token must not go in its URL. `POST /api/mobile/ticket` with
+the bearer token returns `{ ticket, expiresAt }` (30 seconds, single use, held in memory, bound to that
+phone, at most 64 outstanding). `GET /api/mobile/events?ticket=T` redeems it (anything else in the query,
+or a bearer token, is refused) and opens `text/event-stream`: `retry`, `event: ready`, then a `: ping`
+every 15 seconds, closing when the session is revoked or expires. At most 16 streams at once. The core
+does not push changes yet, so phones keep polling; `mobile/events.ts` is the client half.

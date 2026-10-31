@@ -3,14 +3,15 @@
 // removed from the address bar before anything else happens. The secret goes only to the core whose public
 // descriptor carries the core id the link names.
 import { MobileError, endpointURL, mobileGeneration } from './transport';
+import { cleanRoutes, pickRoute } from './routes';
 
-export interface PairingLink { secret: string; coreId: string }
+export interface PairingLink { secret: string; coreId: string; hopped?: boolean }
 const SECRET = /^[A-Za-z0-9_-]{43}$/, CORE = /^[a-f0-9]{32}$/;
 
 export function parsePairingFragment(hash: string): PairingLink | null {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
   const secret = params.get('pair') ?? '', coreId = params.get('core') ?? '';
-  return SECRET.test(secret) && CORE.test(coreId) ? { secret, coreId } : null;
+  return SECRET.test(secret) && CORE.test(coreId) ? { secret, coreId, ...(params.get('hop') === '1' ? { hopped: true } : {}) } : null;
 }
 /** Reads the link, then drops the fragment from the address bar and history entry. */
 export function takePairingLink(): PairingLink | null {
@@ -18,6 +19,23 @@ export function takePairingLink(): PairingLink | null {
   if (location.hash.includes('pair=')) history.replaceState(null, '', location.pathname + location.search);
   return link;
 }
+/** A short name for the paired-phones list (what the desktop shows), from the browser's own description. */
+export function deviceName(agent = typeof navigator !== 'undefined' ? navigator.userAgent : ''): string {
+  return /iPhone/.test(agent) ? 'iPhone' : /iPad/.test(agent) ? 'iPad' : /Android/.test(agent) ? 'Android' : /Macintosh/.test(agent) ? 'Mac browser' : /Windows/.test(agent) ? 'Windows browser' : 'Browser';
+}
+/** If an earlier route in the core's own list is reachable and is not this page's origin, the link to open there
+ * instead (marked so it moves at most once). The secret goes only to a route that answered with this core's id. */
+export async function betterRoute(link: PairingLink, origin: string, fetcher: typeof fetch = fetch, timeoutMs?: number): Promise<string | null> {
+  if (link.hopped) return null;
+  const init = { cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' } as const;
+  const info = await fetcher(endpointURL('/api/mobile/core', origin), { ...init, headers: mobileGeneration() }).then(r => r.ok ? r.json() : null).catch(() => null);
+  if (!info || info.app !== 'botling' || info.coreId !== link.coreId) return null;
+  const routes = cleanRoutes(info.routes), here = new URL(origin).origin;
+  const best = await pickRoute(routes, link.coreId, fetcher, timeoutMs);
+  if (!best || best === here) return null;
+  return `${best}/mobile/#pair=${link.secret}&core=${link.coreId}&hop=1`;
+}
+
 /** A random id for this browser; one pairing session per device (a new pairing replaces the old one). */
 export function deviceId(): string {
   const key = 'botling-device-id';
@@ -39,7 +57,7 @@ export async function redeemPairing(link: PairingLink, device: string, origin: s
   if (!info || info.app !== 'botling') throw new MobileError('Could not reach Botling. Check the connection and scan the code again.');
   if (info.coreId !== link.coreId) throw new MobileError('This code is for a different Botling. Open the link on the Botling that showed it.', true);
   const response = await fetcher(endpointURL('/api/mobile/pair', origin), { ...init, method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...mobileGeneration() }, body: JSON.stringify({ secret: link.secret, deviceId: device }) }).catch(() => null);
+    headers: { 'Content-Type': 'application/json', ...mobileGeneration() }, body: JSON.stringify({ secret: link.secret, deviceId: device, name: deviceName() }) }).catch(() => null);
   if (!response) throw new MobileError('Could not reach Botling. Check the connection and try again.');
   if (response.status === 429) throw new MobileError('Too many attempts. Wait a minute, then show a new code.', true);
   if (response.status === 401) throw new MobileError('This code has expired or already been used. Show a new code on your computer.', true);
