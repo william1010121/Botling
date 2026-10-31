@@ -54,3 +54,14 @@ it('does not show a previous chat’s delayed search in the current chat', async
  await new Promise(resolve=>setTimeout(resolve,0));
  expect(document.querySelector('.mention-file')).toBeNull();expect(composer.text).toBe('');
 });
+it('stops the file picker at whitespace so plain text after @foo stays plain', async()=>{
+ const search = vi.fn(async()=>({files:[{path:'foo.ts',url:'file:///project/foo.ts'}],limited:false}));
+ setComposerHost({send:async()=>{},searchFiles:search,previewFile:async()=>({text:'x',status:'text'})});
+ composer=new Composer(document.body);
+ composer.update({botID:'A',botName:'A',messages:[],working:false,avatar:'',placeholder:'',replyingTo:null,pendingFiles:[],components:{}} as ChatState);
+ composer.setText('@foo and more text');composer.view.dispatch({selection:{anchor:composer.text.length}});
+ await new Promise(resolve=>setTimeout(resolve,200));
+ expect(search).not.toHaveBeenCalled();
+ expect(document.querySelector('.mention-file')).toBeNull();
+ expect((document.querySelector('.mention-list') as HTMLElement).hidden).toBe(true);
+});
