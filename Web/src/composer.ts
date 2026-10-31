@@ -296,8 +296,8 @@ export class Composer {
     const before = line.text.slice(0, head - line.from);
     const bots = this.allMentions.length > 0;
     // Like the app: an @ right after Chinese text counts; one inside a word (a@b) does not.
-    const atAt = bots ? /(?:^|[^A-Za-z0-9_@])@@([^@\n]{0,40})$/.exec(before) : null;
-    const at = (bots || composerHost?.searchFiles) && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\n]{0,40})$/.exec(before) : null;
+    const atAt = bots ? /(?:^|[^A-Za-z0-9_@])@@([^@\s]{0,40})$/.exec(before) : null;
+    const at = (bots || composerHost?.searchFiles) && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\s]{0,40})$/.exec(before) : null;
     // A / starts a word (after a space, a bracket or quote, or Chinese); a/b and ~/x are paths.
     const slash = !atAt && !at && this.slashItems.length ? slashQuery.exec(before) : null;
     const match = atAt ?? at ?? slash;
