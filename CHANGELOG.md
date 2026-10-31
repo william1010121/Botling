@@ -4,6 +4,11 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+- Fixed: @ mention search stops at a space instead of previewing all following text.
+- Fixed: Bots asked to call another engine now hand off to it instead of emulating it with a subagent.
+
 ## 2.2.0
 
 Adds app-managed git worktrees, a diff review view, and faster long chats. It keeps the "Botling 2
