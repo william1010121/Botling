@@ -2,9 +2,11 @@
 // folder a session starts in, what the agent is told, and the Worktrees control's actions as the
 // contract has them. The server wires it; settings and the developer project are read through deps.
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { WorktreeAction, WorktreesView } from "../contract";
+import type { ReviewDiffView, ReviewFilesView, ReviewScope, WorktreeAction, WorktreesView } from "../contract";
 import type { BotProfile } from "./store/workspace";
+import { ReviewError, TurnLog, headCommit, mergeBase, reviewDiff, reviewFiles, snapshotTree } from "./review";
 import { WorktreeManager, type WorktreeRecord, type WorktreeResult } from "./worktrees";
 
 export interface WorktreeDeskDeps {
@@ -21,9 +23,12 @@ export interface WorktreeDeskDeps {
 }
 
 const failed = (message: string): WorktreeAction => ({ ok: false, message });
+const noFiles = (message: string, scope: ReviewScope): ReviewFilesView => ({ ok: false, message, scope, from: "", to: "", base: "", files: [], additions: 0, deletions: 0, capped: false, turns: [], turn: null });
+const noDiff = (message: string, path: string): ReviewDiffView => ({ ok: false, message, path, binary: false, additions: 0, deletions: 0, tooLarge: false, truncated: false, hunks: [] });
 
 export class WorktreeDesk {
   private managers = new Map<string, WorktreeManager>();
+  private logs = new Map<string, TurnLog>();
   constructor(private deps: WorktreeDeskDeps) {}
 
   /** Where the next worktree of this bot goes. */
@@ -41,6 +46,12 @@ export class WorktreeDesk {
       this.managers.set(profile.id, manager);
     }
     return manager;
+  }
+
+  private turns(profile: BotProfile): TurnLog {
+    let log = this.logs.get(profile.id);
+    if (!log) { log = new TurnLog(join(profile.storeDir, "review-turns.json")); this.logs.set(profile.id, log); }
+    return log;
   }
 
   /** Main and team chats have no worktrees of their own. */
@@ -106,14 +117,77 @@ export class WorktreeDesk {
   async merge(profile: BotProfile, id: string): Promise<WorktreeAction> {
     const off = this.guard(profile); if (off) return off;
     const result = await this.manager(profile).merge(id);
+    if (result.ok) this.turns(profile).drop(id);
     return this.done(profile, result, result.ok ? `Merged ${result.merged} commit${result.merged === 1 ? "" : "s"} and removed the worktree.` : "", "your worktree was merged and removed; you are in the project folder again");
   }
 
   async discard(profile: BotProfile, id: string, force: boolean): Promise<WorktreeAction> {
     const off = this.guard(profile); if (off) return off;
     const result = await this.manager(profile).discard(id, force);
+    if (result.ok) this.turns(profile).drop(id);
     if (!result.ok) return { ok: false, message: result.message, ...(result.code === "dirty" || result.code === "unmerged" ? { confirm: true } : {}) };
     return this.done(profile, result, "Discarded the worktree and its branch.", "your worktree was discarded; you are in the project folder again");
+  }
+
+  /** A turn began in this bot's session: remember its worktree's tree, for the per-turn review. */
+  async turnStarted(profile: BotProfile, turnId: string): Promise<void> {
+    try {
+      if (!this.deps.settings().enabled || !this.eligible(profile)) return;
+      const found = this.manager(profile).sessionFolder();
+      if (!found) return;
+      const tree = await snapshotTree(found.path);
+      this.turns(profile).add(found.record.id, { id: turnId, at: new Date().toISOString(), tree });
+    } catch { /* a turn is never held up, or failed, by this */ }
+  }
+
+  /** Where a review looks: the main checkout (`id` null) or an active worktree. */
+  private async place(profile: BotProfile, id: string | null): Promise<{ cwd: string; record: WorktreeRecord | null } | string> {
+    if (!this.deps.settings().enabled || !this.eligible(profile)) return "Worktrees are off for this project.";
+    const manager = this.manager(profile);
+    if (id === null) {
+      const top = await manager.top();
+      return top ? { cwd: top, record: null } : "This project folder is not the main checkout of a git repository.";
+    }
+    const record = manager.get(id);
+    if (!record || !existsSync(join(record.path, ".git"))) return "That worktree is not there.";
+    return { cwd: record.path, record };
+  }
+
+  /** The files changed in a worktree (or the main checkout) for a scope, and the commits/trees they are compared between. */
+  async reviewFiles(profile: BotProfile, id: string | null, scope: ReviewScope, turn?: string): Promise<ReviewFilesView> {
+    const place = await this.place(profile, id);
+    if (typeof place === "string") return noFiles(place, scope);
+    const { cwd, record } = place;
+    try {
+      const turns = record ? this.turns(profile).list(record.id) : [];
+      let from: string | null, base: string, picked: string | null = null;
+      let to = await snapshotTree(cwd);
+      if (scope === "turn") {
+        const at = turns.findIndex((candidate) => candidate.id === turn);
+        if (at < 0) return { ...noFiles("That turn was not recorded.", scope), turns: turns.map(({ id, at }) => ({ id, at })) };
+        from = turns[at].tree; picked = turns[at].id; base = "turn";
+        if (turns[at + 1]) to = turns[at + 1].tree;
+      } else if (scope === "branch" && record) {
+        from = await mergeBase(cwd, record.base, record.baseCommit); base = record.base;
+      } else {
+        from = await headCommit(cwd); base = "HEAD";
+      }
+      const summary = await reviewFiles(cwd, from, to);
+      return { ok: true, message: "", scope, from: from ?? "", to, base, ...summary, turns: turns.map(({ id, at }) => ({ id, at })), turn: picked };
+    } catch (error) {
+      return noFiles(error instanceof ReviewError ? error.message : `Could not read the changes: ${(error as Error).message}`, scope);
+    }
+  }
+
+  /** One file's diff between the two revisions `reviewFiles` returned. */
+  async reviewDiff(profile: BotProfile, id: string | null, from: string, to: string, path: string, oldPath: string | undefined, force: boolean): Promise<ReviewDiffView> {
+    const place = await this.place(profile, id);
+    if (typeof place === "string") return noDiff(place, path);
+    try {
+      return { ok: true, message: "", ...(await reviewDiff(place.cwd, from || null, to, { path, ...(oldPath ? { oldPath } : {}) }, force)) };
+    } catch (error) {
+      return noDiff(error instanceof ReviewError ? error.message : `Could not read the diff: ${(error as Error).message}`, path);
+    }
   }
 
   async terminal(profile: BotProfile, id: string): Promise<WorktreeAction> {

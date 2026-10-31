@@ -45,7 +45,7 @@ Never inside the project folder: creating files there would touch the main check
 4. **Discard**: removes worktree and branch. With uncommitted changes or unmerged commits it refuses
    (`dirty`/`unmerged`) until called with `force`, which the UI only does after the user confirms a dialog naming
    what will be lost. Record becomes `abandoned`.
-5. Open a PR: not in this part. Part 2 (diff/PR review panel) builds on the records and `ahead` counts.
+5. Review (`core/review.ts`): see "Review" below. Commit and Open PR: see the end of that section.
 
 Safety: the main checkout is changed only by the ff-merge in step 3; nothing is removed except by `git worktree remove`
 on a path that is recorded and listed by `git worktree list`; every refusal says what happened ("nothing was merged").
@@ -73,3 +73,24 @@ unchanged as the fallback.
 selection and prompt wording above. On by default because nothing happens until the user presses "New worktree"
 (or a worktree exists), so it costs non-developers nothing; the control only appears for projects that are the
 main checkout of a git repository. `worktreeRoot` overrides the folder.
+
+## Review (diff API)
+
+`review.files` / `review.diff` (contract) read what changed in a worktree, or in the project's main checkout
+(`worktreeId: null`, against HEAD). Read only: nothing in the checkout, its index or its refs is changed.
+
+- **Comparison.** The end is always a *tree of the working directory now* (`snapshotTree`: a temporary copy of the
+  index, `git add -A`, `git write-tree`; only objects are written, ignored files are left out). So uncommitted and
+  untracked files are in it, with no `git add -N`. The start depends on the scope:
+  - `branch`: the merge-base of the base branch and HEAD (everything the worktree adds, committed or not);
+  - `uncommitted`: HEAD;
+  - `turn`: the tree recorded when that agent turn began, up to the tree recorded when the next one began (or now).
+- `review.files` returns the files (A/M/D/R, +/-, binary) and the `from`/`to` it used; `review.diff` takes both back so
+  the list and every file are of the same two trees.
+- **Guards.** At most 1000 files listed. One file is shown up to 2000 changed lines; a bigger one comes back
+  `tooLarge` with no hunks until asked again with `force`, which then caps at 20000 lines. A line over 2000
+  characters is cut. Paths must be inside the checkout; `from`/`to` must be object ids.
+- **Per-turn snapshots.** On each `turn.started` of a bot whose session runs in an app-made worktree, the desk records
+  that worktree's tree (`<bot store dir>/review-turns.json`, last 30 per worktree, dropped on merge/discard). It is
+  taken asynchronously at the start of the turn, so a file the agent writes in the first milliseconds is counted in
+  the turn before it. A session in the project folder records nothing (the project folder is somebody's checkout).

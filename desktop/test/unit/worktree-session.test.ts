@@ -47,6 +47,16 @@ describe("worktrees in the core", () => {
     expect(lines(join(dir, "input.log")).some((entry) => String(entry.text).includes("(App: Worktree.") && String(entry.text).includes(tree.path))).toBe(true);
     expect(git(repo, "status", "--porcelain", "--", ".", ":!.bot")).toBe("");
 
+    // The review sees the worktree's changes, and the turn that started above was recorded by the real turn event.
+    writeFileSync(join(tree.path, "review-me.txt"), "r\n");
+    const review = await c.call({ type: "review.files", botId: BOT, worktreeId: tree.id, scope: "branch" });
+    expect(review).toMatchObject({ ok: true, base: "main" });
+    expect(review.files.map((f: any) => f.path)).toEqual(["review-me.txt"]);
+    await until(async () => (await c.call({ type: "review.files", botId: BOT, worktreeId: tree.id, scope: "branch" })).turns.length >= 1);
+    const turn = (await c.call({ type: "review.files", botId: BOT, worktreeId: tree.id, scope: "branch" })).turns[0];
+    expect((await c.call({ type: "review.files", botId: BOT, worktreeId: tree.id, scope: "turn", turn: turn.id })).files.map((f: any) => f.path)).toEqual(["review-me.txt"]);
+    expect(await c.call({ type: "review.diff", botId: BOT, worktreeId: null, from: "", to: review.to, path: "../x" })).toMatchObject({ ok: false });
+
     // Work that would be lost needs a confirmation; then the session is back in the project folder.
     writeFileSync(join(tree.path, "wip.txt"), "wip");
     expect(await c.call({ type: "worktrees.discard", botId: BOT, worktreeId: tree.id })).toMatchObject({ ok: false, confirm: true });

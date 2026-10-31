@@ -834,6 +834,38 @@ export const WorktreeAction = z.strictObject({
 });
 export type WorktreeAction = z.infer<typeof WorktreeAction>;
 
+/** Review of a checkout's changes (core/review.ts): the files, and one file's diff. */
+export const ReviewScope = z.enum(["branch", "uncommitted", "turn"]);
+export type ReviewScope = z.infer<typeof ReviewScope>;
+const reviewRev = z.string().regex(/^([0-9a-f]{40,64})?$/);
+export const ReviewFilesView = z.strictObject({
+  ok: z.boolean(), message: z.string().max(2_000),
+  scope: ReviewScope,
+  /** What the files are compared from and to (commits or trees; "" is the empty tree): pass both back to `review.diff`. */
+  from: reviewRev, to: reviewRev,
+  /** The branch the changes are counted from, for a title ("main"). */
+  base: z.string().max(300),
+  files: z.array(z.strictObject({
+    path: z.string().max(4096), oldPath: z.string().max(4096).optional(), status: z.enum(["A", "M", "D", "R"]),
+    additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative(), binary: z.boolean(),
+  })).max(1000),
+  additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative(), capped: z.boolean(),
+  /** The agent turns recorded in this worktree, oldest first; `turn` is the one the files are of. */
+  turns: z.array(z.strictObject({ id: z.string().max(64), at: z.string().max(64) })).max(30),
+  turn: z.string().max(64).nullable(),
+});
+export type ReviewFilesView = z.infer<typeof ReviewFilesView>;
+export const ReviewDiffView = z.strictObject({
+  ok: z.boolean(), message: z.string().max(2_000),
+  path: z.string().max(4096), binary: z.boolean(), additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative(),
+  tooLarge: z.boolean(), truncated: z.boolean(),
+  hunks: z.array(z.strictObject({
+    header: z.string().max(2_200),
+    lines: z.array(z.strictObject({ t: z.enum(["ctx", "add", "del"]), o: z.number().int().optional(), n: z.number().int().optional(), text: z.string().max(2_100) })).max(20_000),
+  })).max(20_000),
+});
+export type ReviewDiffView = z.infer<typeof ReviewDiffView>;
+
 export const BotSettingsView = z.strictObject({
   botId: id,
   engines: z.array(z.enum(["claude", "codex", "agy"])).min(1).max(3),
@@ -1066,6 +1098,9 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("worktrees.merge"), botId, worktreeId: z.string().max(64) }),
   z.strictObject({ type: z.literal("worktrees.discard"), botId, worktreeId: z.string().max(64), force: z.boolean().optional() }),
   z.strictObject({ type: z.literal("worktrees.terminal"), botId, worktreeId: z.string().max(64) }),
+  /** Review of a worktree's changes (`worktreeId` null: the project's main checkout, against HEAD). */
+  z.strictObject({ type: z.literal("review.files"), botId, worktreeId: z.string().max(64).nullable(), scope: ReviewScope, turn: z.string().max(64).optional() }),
+  z.strictObject({ type: z.literal("review.diff"), botId, worktreeId: z.string().max(64).nullable(), from: reviewRev, to: reviewRev.min(40), path: z.string().min(1).max(4096), oldPath: z.string().max(4096).optional(), force: z.boolean().optional() }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
   z.strictObject({
     type: z.literal("bot.configure"), botId, model: ModelId.nullable().optional(), effort: Effort.nullable().optional(),
@@ -1116,7 +1151,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1264,6 +1299,8 @@ export interface Results {
   "worktrees.merge": WorktreeAction;
   "worktrees.discard": WorktreeAction;
   "worktrees.terminal": WorktreeAction;
+  "review.files": ReviewFilesView;
+  "review.diff": ReviewDiffView;
   "bot.configure": BotSettingsView;
   "engineDefaults.applyAll": { applied: number; failed: { botId: string; name: string; reason: string }[] };
   "plugins.loaded": Record<string, never>;
