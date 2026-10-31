@@ -61,9 +61,12 @@ export class AgyMcpBridge {
   private scratch: string | undefined;
   readonly tools: AgyTool[];
   private base: string;
+  private extra: { raw: string; real: string }[];
   private rootIdentity: string[];
   private protectedIdentity: string[];
-  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void) {
+  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void, extraRoots: string[] = []) {
+    // The project's .bot when the session starts in an app worktree (the same extra folder Claude and Codex get).
+    this.extra = extraRoots.flatMap(dir => { try { return [{ raw: resolve(dir), real: realpathSync(dir) }]; } catch { return []; } });
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
     this.tools = delegate && agyWorkerRuntimeEnabled()
       ? AGY_WORKER_TOOLS.map(tool => tool.name === 'app_handoff'
@@ -193,16 +196,21 @@ export class AgyMcpBridge {
         const stat=statSync(path); if(!stat.isFile()||stat.size>2_000_000)throw new Error('Regular file required (maximum 2 MB).');
         const output=readFileSync(path,'utf8');return output.slice(0,200_000)+(output.length>200_000?'\n[Truncated at 200000 characters]':'');
       }
-      const rel=relative(this.base,resolve(this.base,args.path));
-      if(!rel||rel==='..'||rel.startsWith('../')||isAbsolute(rel))throw new Error('Path is outside the workspace.');
-      const protectedRel=relative(this.base,resolve(this.protectedPath));
+      const target=resolve(this.base,args.path);
+      const under=(root:string)=>{const r=relative(root,target);return !!r&&r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
+      const extra=under(this.base)?undefined:this.extra.find(dir=>under(dir.raw)||under(dir.real));
+      const base=extra?extra.real:this.base;
+      if(!extra&&!under(this.base))throw new Error('Path is outside the workspace.');
+      const rel=relative(base,under(base)?target:resolve(extra!.real,relative(extra!.raw,target)));
+      const rootStat=statSync(base,{bigint:true}), rootIdentity=base===this.base?this.rootIdentity:[String(rootStat.dev),String(rootStat.ino)];
+      const protectedRel=relative(base,resolve(this.protectedPath));
       if(rel===protectedRel||rel.startsWith(protectedRel+'/'))throw new Error('Protected ACP state.');
       if(this.stopped||epoch!==this.epoch)throw new Error('Tool cancelled.');
       if(name==='write_file'&&(typeof args.content!=='string'||Buffer.byteLength(args.content,'utf8')>2_000_000))throw new Error('File content required (maximum 2 MB).');
-      verifyAgyFileHelper(this.helperPath, this.base);
+      verifyAgyFileHelper(this.helperPath, base);
       // openat walks anchored directory FDs, rejects every symlink and never truncates before fstat.
       const output = await new Promise<string>((resolve,reject)=>{
-        const child=execFile(this.helperPath!,[name==='read_file'?'read':'write',this.base,...this.rootIdentity,...this.protectedIdentity,rel],{timeout:10_000,maxBuffer:2_100_000},(error,stdout)=>{this.fileProcesses.delete(child);error?reject(new Error('Workspace file access refused.')):resolve(stdout);});
+        const child=execFile(this.helperPath!,[name==='read_file'?'read':'write',base,...rootIdentity,...this.protectedIdentity,rel],{timeout:10_000,maxBuffer:2_100_000},(error,stdout)=>{this.fileProcesses.delete(child);error?reject(new Error('Workspace file access refused.')):resolve(stdout);});
         this.fileProcesses.add(child);
         child.stdin?.on("error",()=>{});
         child.stdin?.end(name==='write_file'?args.content as string:undefined);

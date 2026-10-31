@@ -290,7 +290,7 @@ export class Core {
           editorStarted: (pid) => { if (pid > 0) this.ledger.record(pid); },
         }) : null,
         claimWaitMs: options.claimWaitMs,
-        prompts: (engine, heads) => this.prompts(profile, engine, heads),
+        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === MAINTAINER_ID || group ? null : this.worktrees.sessionFolder(profile)),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
         tidyTimeoutMs: options.tidyTimeoutMs,
         quitTidyMs: options.quitTidyMs,
@@ -1377,7 +1377,8 @@ First write a test that shows this, then fix it.`;
   }
 
   /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
-  prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null): BotPrompts {
+  /** `workingFolder`: the app worktree the session starts in, when there is one. */
+  prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null, workingFolder: string | null = null): BotPrompts {
     const settings = this.settings();
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
     return desktopPrompts(botPrompts({
@@ -1386,6 +1387,7 @@ First write a test that shows this, then fix it.`;
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
       engine,
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
+      workingFolder: workingFolder !== profile.folder ? workingFolder : null,
     }), profile, this.options.reports ?? null);
   }
 

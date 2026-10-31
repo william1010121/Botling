@@ -176,3 +176,14 @@ it('filePath aliases share exact one-action grants with canonical paths and reta
   await expect(b.invoke('write_file',args)).rejects.toThrow('No matching');
  }
 });
+it('reaches the project .bot only when it is passed as an extra folder, and nothing else outside the workspace',async()=>{
+ const {cwd}=setup();const project=mkdtempSync(join(tmpdir(),'botling-agy-project-'));mkdirSync(join(project,'.bot'));writeFileSync(join(project,'.bot','memory.md'),'remembered');writeFileSync(join(project,'secret.txt'),'no');
+ const without=new AgyMcpBridge(cwd,join(cwd,'private-profile'),undefined,undefined,helperPath);bridges.push(without);
+ without.grant('botling_read_file',{path:join(project,'.bot','memory.md')});
+ await expect(without.invoke('read_file',{path:join(project,'.bot','memory.md')})).rejects.toThrow(/outside/);
+ const withDir=new AgyMcpBridge(cwd,join(cwd,'private-profile'),undefined,undefined,helperPath,()=>false,undefined,[join(project,'.bot')]);bridges.push(withDir);
+ withDir.grant('botling_read_file',{path:join(project,'.bot','memory.md')});
+ expect(await withDir.invoke('read_file',{path:join(project,'.bot','memory.md')})).toBe('remembered');
+ for(const path of [join(project,'secret.txt'),join(project,'.bot','..','secret.txt')]){withDir.grant('botling_read_file',{path});await expect(withDir.invoke('read_file',{path})).rejects.toThrow(/outside/);}
+ rmSync(project,{recursive:true,force:true});
+});

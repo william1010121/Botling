@@ -82,7 +82,7 @@ export class WorktreeDesk {
   note(profile: BotProfile): string {
     const record = this.current(profile);
     if (!record) return "";
-    return `(App: Worktree. The app made a git worktree for this work and your working directory is in it: branch ${record.branch}, folder ${record.path}, made from ${record.base}. Edit, build, test and commit there. Do not run git worktree yourself and do not change the main checkout at ${profile.folder}: when the work is committed, say so; the user merges or discards the worktree from the app. Your memory and inbox stay in the project folder: memory is ${join(profile.folder, profile.memoryPath)}; read and write that file, not a .bot folder under your working directory.)`;
+    return `(App: Worktree. The app made a git worktree for this work and your working directory is in it: branch ${record.branch}, folder ${record.path}, made from ${record.base}. You are already inside that worktree (${record.path}): use relative paths, do not cd to the project folder and do not edit its files. Edit, build, test and commit here. Do not run git worktree yourself and do not change the main checkout at ${profile.folder}: when the work is committed, say so; the user merges or discards the worktree from the app. Your memory and inbox stay in the project folder: memory is ${join(profile.folder, profile.memoryPath)}; read and write that file, not a .bot folder under your working directory.)`;
   }
 
   async view(profile: BotProfile): Promise<WorktreesView> {

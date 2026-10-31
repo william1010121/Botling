@@ -44,6 +44,7 @@ describe("worktree desk", () => {
     expect(desk.extraDirs(profile)).toEqual([join(profile.folder, ".bot")]);
     expect(desk.note(profile)).toContain(`branch bot/fix-it, folder ${folder}`);
     expect(desk.note(profile)).toContain(join(profile.folder, ".bot", "memory.md"));
+    expect(desk.note(profile)).toMatch(/already inside that worktree .*use relative paths, do not cd to the project folder/);
     expect((await desk.use(profile, null)).ok).toBe(true);
     expect(desk.sessionFolder(profile)).toBe(profile.folder);
   });

@@ -12,6 +12,8 @@ export interface AgyConfig {
   canStartReport?: () => boolean;
   prefixArgs?: string[];
   cwd: string;
+  /** More folders the file tools may use: the project's `.bot` when the session starts in an app worktree. */
+  addDirs?: string[];
   env?: Record<string, string | undefined>;
   sessionId: string;
   resume: boolean;
