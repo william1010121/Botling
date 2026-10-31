@@ -4,6 +4,38 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 2.2.0
+
+Adds app-managed git worktrees, a diff review view, and faster long chats. It keeps the "Botling 2
+Dev Trial" profile, so your chats and settings stay where they are. Updates arrive in the app.
+
+### New
+
+- **App-managed git worktrees.** Create, list, merge and discard worktrees for a bot. They are
+  controlled from the right panel and from Developer settings, and a session can run inside one.
+- **Review view.** Shows a worktree's changes as unified or split diffs with syntax colours. Inline
+  comments are sent to the agent. **Commit** and **Open PR** commit everything, push the branch and
+  run `gh pr create`, and the PR link is kept on the worktree.
+- **Performance benchmark and CI budget gate.** Chat history is paged: only the newest page is sent
+  and older pages load on demand.
+- **Choose the Catch-up summary model** from Claude, Codex and Antigravity models.
+- **Cmd+J** opens a shell in an empty terminal panel, and a rebindable **Shortcuts** page is in
+  Settings.
+- **Subagent background work** is labelled with the subagent in the chat's bottom task row, and
+  commands Claude moves to the background after their timeout are tracked.
+- **Sidebar update entry.** The main bot's update notice is shown only in developer mode.
+
+### Improved
+
+- The Worktrees panel puts its header on its own row, with actions in a toolbar below.
+- Restart continuation: an unmatched subagent no longer blocks the main bot from resuming. A plain
+  quit and relaunch now also resumes in-flight turns, within a 15-minute journal limit.
+- The release workflow publishes the GitHub release itself.
+
+### Removed
+
+- The archived Swift 1.x app (Sources, Tests, Package.swift, Examples, scripts).
+
 ## 2.1.0
 
 A cleanup and infrastructure release. It keeps the "Botling 2 Dev Trial" profile, so your chats and

@@ -1,6 +1,6 @@
 {
   "name": "botling-desktop",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "homepage": "https://github.com/william1010121/Botling",
   "description": "Botling 2.0: cross-platform desktop app (React + TypeScript + Electron).",
