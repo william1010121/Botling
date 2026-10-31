@@ -24,6 +24,7 @@ import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
+import { Worktrees } from "./Worktrees";
 import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
 import { Icon } from "./icons";
 import { SpecFrame } from "./SpecFrame";
@@ -346,6 +347,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           onSettings={openBotSettings}
           showingSettings={botSettings}
           settingsPage={botSettings ? <BotSettings client={client} bot={bot} /> : undefined}
+          worktrees={bot.role === "main" || bot.role === "group" ? undefined : <Worktrees client={client} bot={bot} lang={view.settings?.effectiveLanguage ?? null} />}
           onCloseSettings={() => setBotSettings(false)}
           onExpand={toggleRight}
         />
