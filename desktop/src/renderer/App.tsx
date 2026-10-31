@@ -18,6 +18,7 @@ import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
+import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
@@ -253,6 +254,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           <button type="button" className="rail-button new-group-button" onClick={() => setEditingGroup({ group: null })}
             title="A group chat with some of your bots"><Icon name="plus" size={13} />New group</button>
         </div>
+        <UpdateEntry client={client} />
         <PluginsButton client={client} plugins={view.plugins} />
         <div className="rail-settings">
           <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} doctor={view.doctor} settingsOpen={settingsOpen} onOpen={openSettings} />

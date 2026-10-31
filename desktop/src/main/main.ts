@@ -232,8 +232,8 @@ async function restartWithContinuation() {
   catch (error) { core.cancelRestart(); throw error; }
 }
 /**
- * A newer release goes to the main bot's chat as an update notice (core/app-swap.ts, once per version and
- * run); installing it waits for the user's pick there. Checked at start and every 6 hours, as Settings has it.
+ * A newer release goes to the main bot's chat as an update notice, in developer mode only (core/app-swap.ts, once per version and
+ * run); installing it waits for the user's pick there. Everyone else has the sidebar's update entry. Checked at start and every 6 hours, as Settings has it.
  */
 function announce(view: UpdateView): UpdateView {
   if (view.enabled && view.newer) {

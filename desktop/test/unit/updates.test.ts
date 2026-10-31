@@ -32,19 +32,21 @@ describe("Updater", () => {
     let now = 1_000_000;
     const calls = { check: 0, download: 0, install: [] as unknown[][] };
     let downloaded: ((info: UpdateInfoLike) => void) | null = null;
+    let progress: ((progress: { percent: number }) => void) | null = null;
+    let midDownload: (() => void) | null = null;
     const newest = opts.newest === undefined ? info("2.0.2") : opts.newest;
     const fake: UpdaterLike = {
       autoDownload: true, autoInstallOnAppQuit: true, allowPrerelease: true, allowDowngrade: true,
       checkForUpdates: async () => { calls.check++; if (opts.fail) throw opts.fail; return newest ? { isUpdateAvailable: true, updateInfo: newest } : null; },
-      downloadUpdate: async () => { calls.download++; downloaded?.(newest!); return []; },
+      downloadUpdate: async () => { calls.download++; progress?.({ percent: 42.4 }); midDownload?.(); downloaded?.(newest!); return []; },
       quitAndInstall: (...args) => { calls.install.push(args); },
-      on: (_event, listener) => { downloaded = listener; },
+      on: ((event: string, listener: never) => { if (event === "download-progress") progress = listener; else downloaded = listener; }) as UpdaterLike["on"],
     };
     const updater = new Updater({
       current: opts.current ?? "2.0.0", updater: fake, enabled: async () => enabled, unavailable: () => opts.unavailable ?? null,
       load: () => saved, save: (state) => { saved = state; }, now: () => now,
     });
-    return { updater, fake, calls, tick: (ms: number) => { now += ms; } };
+    return { updater, fake, calls, onDownload: (fn: () => void) => { midDownload = fn; }, tick: (ms: number) => { now += ms; } };
   }
 
   it("never downloads or installs by itself, and a stable build ignores prereleases", () => {
@@ -54,7 +56,7 @@ describe("Updater", () => {
   });
   it("off: looks only when asked (Check now)", async () => {
     const { updater, calls } = make(false);
-    expect(await updater.check(false)).toEqual({ current: "2.0.0", enabled: false, newer: null, checkedAt: null, error: null, installError: null, readyVersion: null });
+    expect(await updater.check(false)).toEqual({ current: "2.0.0", enabled: false, newer: null, checkedAt: null, error: null, installError: null, readyVersion: null, downloadPercent: null });
     expect(calls.check).toBe(0);
     const view = await updater.check(true);
     expect(view.newer?.version).toBe("2.0.2");
@@ -92,6 +94,16 @@ describe("Updater", () => {
     expect(calls.install).toHaveLength(0);
     updater.restart();
     expect(calls.install).toEqual([[true, true]]);
+  });
+  it("reports the download's progress while it runs, and none before or after", async () => {
+    const { updater, onDownload } = make(true);
+    await updater.check(true);
+    expect(updater.view(true).downloadPercent).toBeNull();
+    const seen: (number | null | undefined)[] = [];
+    onDownload(() => seen.push(updater.view(true).downloadPercent));
+    await updater.download();
+    expect(seen).toEqual([42]);
+    expect(updater.view(true)).toMatchObject({ readyVersion: "2.0.2", downloadPercent: null });
   });
   it("where it cannot update itself (a development run, a Linux .deb) it says why and downloads nothing", async () => {
     const { updater, calls } = make(true, { unavailable: "this Linux package (.deb) cannot update itself." });

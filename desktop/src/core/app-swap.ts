@@ -277,6 +277,8 @@ export interface DevBuildDeps {
   runningBuild: () => BuildInfo | null;
   /** The developer project's bot while developer mode is on. */
   developer: () => DeskBot | null;
+  /** Whether developer mode is on (Settings → Developer). The main bot's update notice is shown only then. */
+  developerMode: () => boolean;
   mainBot: () => DeskBot;
   bot: (id: string) => DeskBot | null;
   /** Main's pid (the script waits for it to quit) and its data folder (the new build opens with it). */
@@ -447,6 +449,8 @@ export class DevBuilds {
    * Not now is remembered for that version.
    */
   announceRelease(release: ReleaseNotice): string | null {
+    // Everyone else updates from the sidebar entry (renderer/UpdateEntry.tsx); the chat notice is for developers.
+    if (!this.deps.developerMode()) return null;
     if (this.announced.has(release.version) || declinedRelease(this.deps.root) === release.version) return null;
     this.announced.add(release.version);
     const main = this.deps.mainBot();
