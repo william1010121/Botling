@@ -5004,7 +5004,7 @@ export class Bot {
         : active && turn && !turn.reply.text && !turn.steps.length ? "Prompt delivery has no confirmed response yet; reconcile the original conversation before retrying."
         : bot.turn?.steps.some(step=>step.kind==="tool"&&!step.done) ? "A tool call had no confirmed result. Reconcile its outcome before continuing."
         : bot.deferred || bot.paused || bot.claimHold ? "Paused or deferred work needs explicit reconciliation."
-        : nativeChildren?.some(child=>!child.agentId||!child.checkpoint) ? "Native child lacks an observed agent ID or acknowledged tool-result checkpoint. Original assignment remains in subagent history; no replacement was started."
+        : nativeChildren?.some(child=>!child.agentId) ? "Native child lacks an observed agent ID. Original assignment remains in subagent history; no replacement was started."
         : bot.subagents.running.length && !workers?.length && !nativeChildren?.length ? "This child transport has no safe restart contract."
         : workers?.some(w => w.wasActive && (!w.restartSafe || !w.thread)) ? "A worker has pending approval, tool execution, or unconfirmed delivery. Reconcile the original task."
         : active && !bot.session.started ? "Provider session creation was not confirmed." : undefined;
