@@ -1,3 +1,4 @@
+import { CodexRequestTracker } from "../token-speed";
 import {claudeConfigFolder} from '../claude-files';
 import {inspectClaudeRestart, type ClaudeRestartOutcome} from '../claude-restart';
 import { RESTART_NOTE } from '../restart-continuation';
@@ -396,6 +397,7 @@ export class CodexSession {
     if (method && value.id !== undefined) return this.serverRequest(method, value.id, params);
     if (method) {
       const out=this.notification(method, params);
+      out.push(...this.requests(method, params));
       if(method === "thread/tokenUsage/updated" && typeof params.threadId === "string") {
         const worker=[...this.workers.values()].find(w=>w.thread===params.threadId&&!w.role);
         const snapshot=this.usageMeter.snapshot(params.threadId);
@@ -1402,6 +1404,17 @@ export class CodexSession {
     out.push(...(worker.loaded && !worker.role ? this.startWorkerTurn(task, text) : this.startWorkerThread(task)));
     out.push(...this.pendingChanged());
     return out;
+  }
+
+  private speed = new CodexRequestTracker();
+
+  /** One finished model request per `thread/tokenUsage/updated`: the head's (scope null) or a worker's. */
+  private requests(method: string, params: any): CodexOutput[] {
+    if (typeof params.threadId !== "string") return [];
+    const worker = [...this.workers.values()].find(w => w.thread === params.threadId && !w.role);
+    const scope = worker ? worker.id : params.threadId === this.threadId ? null : undefined;
+    if (scope === undefined) return [];
+    return this.speed.observe(scope, method, params, Date.now()).map(request => this.item({ kind: "request", request }));
   }
 
   private workerLine(method: string, params: any, worker: Worker): CodexOutput[] {

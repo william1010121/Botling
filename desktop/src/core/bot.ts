@@ -69,6 +69,7 @@ import {
   type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
 import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
+import { addSample, readTotals, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
 import { ReplyText, type StreamItem } from "./agent/stream";
 import {
   applyingReaction, archiveAll, archiveLine, characterCount, characterPrefix, compareReactions, reactionIntro, reactionUpdate, recentChat,
@@ -1273,8 +1274,34 @@ export class Bot {
       openTasks: shownTasks(this.owner.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length,
       components: this.components,
       lastActivity: this.records.length ? iso(this.records.at(-1)!.date) : null,
+      tokenSpeed: this.tokenSpeed(),
     };
   }
+
+  /** The head turn's token speed: the member whose head last finished a request. */
+  private tokenSpeed(): BotView["tokenSpeed"] {
+    const latest = this.members.filter(bot => bot.mainSpeed).sort((a, b) => b.mainSpeedAt - a.mainSpeedAt)[0];
+    const view = latest ? speedView(latest.mainSpeed) : null;
+    return view && latest ? { ...view, engine: latest.engine } : null;
+  }
+
+  /** A finished model request of this head (scope null) or of one of its subagents. */
+  private noteRequest(event: RequestEvent) {
+    if (event.scope === null) {
+      const before = this.mainSpeed?.timed ?? 0;
+      this.mainSpeed = addSample(this.mainSpeed, event.sample, event.estimated === true);
+      if (this.mainSpeed.timed === before) return;
+      this.mainSpeedAt = Date.now();
+      this.updated();
+      return;
+    }
+    const child = this.subagents.get(event.scope);
+    if (child && this.subagents.speed(child.id, event)) this.subagentChanged(child, true);
+  }
+
+  /** Running sums of this head's own finished requests this session (never persisted; subagents keep theirs in their records). */
+  private mainSpeed: SpeedTotals | undefined;
+  private mainSpeedAt = 0;
 
   /** Its row changed outside its own work (a guest answering in its chat): told again. */
   refresh() {
@@ -2593,6 +2620,7 @@ export class Bot {
 
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
+    if (item.kind === "request") { this.noteRequest(item.request); return; }
     if (item.kind === "measurementDispatch") { this.recordMeasurementDispatch(item); return; }
     if (item.kind === "measurement") { this.recordMeasurement(item.measurement, item.provider); return; }
     this.settleSessionSchedules();
@@ -5276,6 +5304,7 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
       : subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : ownerEngine ?? "claude",
     runtime: runtime ? { reasoningEffort: text(runtime.reasoningEffort), serviceTier: text(runtime.serviceTier) } : null,
     outputTokens: reportedOutputTokens(subagent),
+    tokenSpeed: speedView(readTotals(subagent.speed)),
     execution: subagent.execution ?? null,
     prompt: clip(subagent.prompt, 20_000) ?? "",
     steps: [

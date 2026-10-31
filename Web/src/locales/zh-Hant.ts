@@ -196,8 +196,10 @@ export const zhHant: Dictionary = {
   "float.fold": "收合成一行",
   "float.stop": "停止浮動",
   // main.ts: watching a subagent, plugin panels
-  "subagent.speed": "≈ {value} tok/s · 平均",
-  "subagent.speedHint": "已回報的輸出 tokens ÷ 子代理啟動至今的經過時間（包含工具、等待及恢復執行前的暫停）。隨用量回報更新，完成後固定。這是估算平均，非模型生成速度；— 表示資料不足。",
+  "subagent.speed": "{value} tok/s",
+  "subagent.speedEstimated": "≈ {value} tok/s（估計）",
+  "subagent.speedHint": "輸出 tokens ÷ 模型實際生成時間，加總此代理所有已完成的請求（tokens 與秒數分別加總）。不含等待、工具，以及未完成或超過 300 秒的請求。定義與 token-speed 工具相同；— 表示尚無可計時的資料。",
+  "subagent.speedHintEstimated": "估計值：此引擎每次提示只回報一份用量、沒有逐請求計時，因此是輸出 tokens ÷ 整個提示回合（含工具等待）。不是模型生成速度。",
   "subagent.back": "回到 {bot} 的聊天",
   "subagent.of": "{bot} 的子代理",
   "subagent.unknown": "未知",

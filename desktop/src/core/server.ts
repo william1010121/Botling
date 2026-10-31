@@ -7,6 +7,7 @@ import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
 import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
+import { MobileDesk, OFF as MOBILE_OFF } from '../mobile-bridge/desk';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
 // transport-agnostic: `receive` takes whatever arrived, `emit` is where answers and events go. It
 // validates everything it receives itself — main validating first is defense in depth, not the
@@ -1328,6 +1329,10 @@ First write a test that shows this, then fix it.`;
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    if (this.changeListeners.size) {
+      const botId = event.type === "bot.updated" ? event.bot.id : "botId" in event ? event.botId : undefined;
+      for (const listener of [...this.changeListeners]) { try { listener(botId === undefined ? {} : { botId }); } catch { /* a listener never stops the core */ } }
+    }
     // A turn began: remember what its worktree looked like, so the review can show what the turn changed.
     if (event.type === "turn.started" && !this.removed.has(event.botId)) {
       const bot = this.bots.get(event.botId);
@@ -1343,6 +1348,18 @@ First write a test that shows this, then fix it.`;
       if (bot) this.catchUps.closedInterval(bot.catchUpChat(), event.message.id);
     }
   }
+
+  private changeListeners = new Set<(change: { botId?: string }) => void>();
+  /** The phone bridge's event stream: told that something changed (and in which bot), never what. */
+  onChange(listener: (change: { botId?: string }) => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
+
+  private mobileDesk: MobileDesk | null = null;
+  /** Called once by the bridge's start when the phone connection is configured (mobile-bridge/start.ts). */
+  attachMobile(desk: MobileDesk) { this.mobileDesk = desk; }
+  private mobileOr(): MobileDesk { if (!this.mobileDesk) throw new Error("The phone connection is not set up."); return this.mobileDesk; }
 
   /** Private mobile transport: the guard and handle's synchronous send prefix share this loop. */
   mobileCommand(raw: unknown, allowedBots: readonly string[]) {
@@ -1504,6 +1521,13 @@ First write a test that shows this, then fix it.`;
       case "settings.set": return this.changeSetting(cmd.change);
       case "engineDefaults.applyAll": return this.applyEngineDefaultsToAll();
       case "bot.settings": return this.bot(cmd.botId).settingsView();
+      case "mobile.view": return this.mobileDesk ? this.mobileDesk.view() : MOBILE_OFF;
+      case "mobile.pair": {
+        const unknown = cmd.botIds.find((id) => !this.bots.has(id));
+        if (unknown) throw new Error("Unknown bot.");
+        return this.mobileOr().pair(cmd.botIds, cmd.route);
+      }
+      case "mobile.revoke": return this.mobileOr().revoke(cmd.deviceId);
       case "worktrees.list": return this.worktrees.view(this.worktreeProfile(cmd.botId));
       case "worktrees.create": return this.worktrees.create(this.worktreeProfile(cmd.botId), cmd.name, cmd.base);
       case "worktrees.use": return this.worktrees.use(this.worktreeProfile(cmd.botId), cmd.worktreeId);

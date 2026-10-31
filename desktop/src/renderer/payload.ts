@@ -269,6 +269,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     messages,
     ...(chat.history?.hasMore ? { history: chat.history } : {}),
     working: runs.length > 0 || !!answering,
+    ...(bot.tokenSpeed ? { tokenSpeed: bot.tokenSpeed } : {}),
     // Codex waiting to try a refused request again: the typing bubble says so (`retry-note`).
     retrying: runs.length > 0 && bot.codexRetry ? { ...bot.codexRetry } : null,
     waitingForWorkers: runs.length === 0 && !answering && bot.subagents > 0,
@@ -368,7 +369,7 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     subagent: {
       id: subagent.id, title: subagent.title, owner: subagent.owner, status: subagent.status, type: subagent.type,
       engine: subagent.engine ?? (subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : bot.heads[0] ?? "claude"), model: subagent.model,
-      runtime: subagent.runtime ?? null, outputTokens: subagent.outputTokens ?? null,
+      runtime: subagent.runtime ?? null, outputTokens: subagent.outputTokens ?? null, tokenSpeed: subagent.tokenSpeed ?? null,
       startedAt: new Date(subagent.startedAt).getTime(), endedAt: subagent.endedAt ? new Date(subagent.endedAt).getTime() : null,
     },
   };

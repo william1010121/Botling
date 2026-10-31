@@ -61,8 +61,10 @@ it('signed in, shows the desktop renderer with every bot and sends the bearer to
   expect(commands.every(cmd => ['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer'].includes(cmd.type))).toBe(true);
   await act(async () => { (container.querySelector('.web-sign-out') as HTMLButtonElement).click(); });
   await flush();
-  expect(new Set(paths)).toEqual(new Set(['/api/mobile/command']));
-  expect(headers.every(h => h.Authorization === `Bearer ${TOKEN}` && !('X-Botling-CSRF' in h))).toBe(true);
+  // The public descriptor is read first, with nothing secret; everything else carries the token.
+  expect(new Set(paths)).toEqual(new Set(['/api/mobile/core', '/api/mobile/command']));
+  expect(paths[0]).toBe('/api/mobile/core'); expect(headers[0]?.Authorization).toBeUndefined();
+  expect(headers.slice(1).every(h => h.Authorization === `Bearer ${TOKEN}` && !('X-Botling-CSRF' in h))).toBe(true);
   expect(container.querySelector('.shell')).toBeNull();
   expect(container.querySelector('input.web-token')).not.toBeNull();
   expect((container.querySelector('input.web-token') as HTMLInputElement).value).toBe('');

@@ -16,10 +16,33 @@ beforeAll(async () => {
 });
 afterEach(() => { window.ccb.setState(chatState({ ...bot, subagents: 0 }, { botId: "empty", messages: [], running: null, live: [], tasks: [] }).state); sent.length = 0; vi.useRealTimers(); });
 
+describe("token speed in the production chat page", () => {
+  const showChild = (engine: "claude" | "codex" | "agy", speed: Record<string, unknown> | undefined) => {
+    const child = readSubagent({ id: `c-${engine}`, description: "Work", prompt: "p", type: engine === "codex" ? "codex-worker" : "general-purpose", status: "completed", background: true, startedAt: 0, endedAt: 9, steps: [], runtime: { engine }, ...(speed ? { speed } : {}) })!;
+    window.ccb.setState(subagentState(bot, SubagentView.parse(subagentView(child, bot.name, new SubagentBook([child]), engine))).state);
+    return document.getElementById("subagent-bar")!.querySelector(".subagent-speed")!;
+  };
+  it.each(["claude", "codex", "agy"] as const)("shows %s subagent speed in the title row, from the shared definition", (engine) => {
+    expect(showChild(engine, { tokens: 213, seconds: 11, timed: 3 }).textContent).toBe("19.4 tok/s");
+  });
+  it("marks a whole-turn estimate (Antigravity has no per-request timing) and shows a dash with nothing timed", () => {
+    expect(showChild("agy", { tokens: 100, seconds: 4, timed: 1, estimated: true }).textContent).toBe("≈ 25.0 tok/s (est.)");
+    expect(showChild("claude", undefined).textContent).toBe("— tok/s");
+  });
+  it("shows the main bot's own speed above the input box, and removes it when nothing is timed", () => {
+    window.ccb.setState(chatState({ ...bot, subagents: 0, tokenSpeed: { tokPerSec: 42.04, estimated: false, engine: "codex" } }, { botId: "B", messages: [], running: null, live: [], tasks: [] }).state);
+    const label = document.getElementById("main-speed")!;
+    expect(label.textContent).toBe("42.0 tok/s");
+    expect(label.nextElementSibling?.id).toBe("composer-slot");
+    window.ccb.setState(chatState({ ...bot, subagents: 0 }, { botId: "B", messages: [], running: null, live: [], tasks: [] }).state);
+    expect(document.getElementById("main-speed")).toBeNull();
+  });
+});
+
 describe("desktop payload rendered by the production chat page", () => {
-  it("renders actual child settings, freezes reported throughput at failure, and returns to the parent", () => {
+  it("renders actual child settings, keeps the core-computed throughput after failure, and returns to the parent", () => {
     vi.useFakeTimers(); vi.setSystemTime(978307204000);
-    const child = readSubagent({ id: "review", description: "Review", prompt: "Check patch", type: "codex-worker", model: "actual-child", status: "running", background: true, startedAt: 0, steps: [], runtime: { engine: "codex", reasoningEffort: "high", serviceTier: "priority" }, outputTokenCounters: { "thread:child": 100 } })!;
+    const child = readSubagent({ id: "review", description: "Review", prompt: "Check patch", type: "codex-worker", model: "actual-child", status: "running", background: true, startedAt: 0, steps: [], runtime: { engine: "codex", reasoningEffort: "high", serviceTier: "priority" }, outputTokenCounters: { "thread:child": 100 }, speed: { tokens: 100, seconds: 4, timed: 1 } })!;
     const show = () => window.ccb.setState(subagentState(bot, SubagentView.parse(subagentView(child, bot.name, new SubagentBook([child]), "claude"))).state);
     show();
     const header = () => document.getElementById("subagent-bar")!;

@@ -148,6 +148,8 @@ export const SubagentView = z.strictObject({
     serviceTier: z.string().max(200).nullable(),
   }).nullable().optional(),
   outputTokens: z.number().nonnegative().nullable().optional(),
+  /** The shared token-speed definition (core/token-speed.ts); `estimated`: a whole-turn value, no per-request timing (Antigravity). */
+  tokenSpeed: z.strictObject({ tokPerSec: z.number().positive(), estimated: z.boolean() }).nullable().optional(),
   execution: z.strictObject({
     run: z.number().int().positive(),
     ownerSessionId: z.string().max(200).nullable(),
@@ -490,6 +492,8 @@ export const DelegationRowView = z.strictObject({
 export type DelegationRowView = z.infer<typeof DelegationRowView>;
 
 export const BotView = z.strictObject({
+  /** The head turn's token speed (core/token-speed.ts), from the head that last finished a request; null: nothing timed yet. */
+  tokenSpeed: z.strictObject({ tokPerSec: z.number().positive(), estimated: z.boolean(), engine: z.enum(["claude", "codex", "agy"]) }).nullable().optional(),
   delegationRows: z.array(DelegationRowView).max(500).optional(),
   id: BotId,
   name: z.string().max(200),
@@ -834,6 +838,17 @@ export const WorktreeAction = z.strictObject({
 });
 export type WorktreeAction = z.infer<typeof WorktreeAction>;
 
+/** The phone connection (mobile-bridge/desk.ts): off until the bridge is configured, then its routes in the order a phone
+ * tries them and the paired phones. A pairing link is a secret shown once, so it is only in `MobilePairView`. */
+export const MobileRouteView = z.strictObject({ kind: z.enum(["lan", "tailscale", "tunnel"]), origin: z.string().max(300) });
+export const MobileDeskView = z.strictObject({
+  enabled: z.boolean(), routes: z.array(MobileRouteView).max(6),
+  devices: z.array(z.strictObject({ id: z.string().max(64), label: z.string().max(40), pairedAt: z.number(), expiresAt: z.number(), botIds: z.array(z.string().max(64)).max(200) })).max(200),
+});
+export type MobileDeskView = z.infer<typeof MobileDeskView>;
+export const MobilePairView = z.strictObject({ url: z.string().max(600), expiresAt: z.number(), route: MobileRouteView });
+export type MobilePairView = z.infer<typeof MobilePairView>;
+
 /** The pull request form's start (title and body from the commits) and what opening one did (core/publish.ts). */
 export const PrDraftView = z.strictObject({
   ok: z.boolean(), message: z.string().max(2_000),
@@ -1098,6 +1113,10 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.reloadPage") }),
   /** A bot's own choices (bot.json). */
   z.strictObject({ type: z.literal("bot.settings"), botId }),
+  /** The phone connection: its routes and paired phones; a one-time pairing link for the bots named; ending one phone's session. */
+  z.strictObject({ type: z.literal("mobile.view") }),
+  z.strictObject({ type: z.literal("mobile.pair"), botIds: z.array(botId).min(1).max(50), route: z.number().int().min(0).max(5).optional() }),
+  z.strictObject({ type: z.literal("mobile.revoke"), deviceId: z.string().max(64) }),
   /** App-managed git worktrees of a project (core/worktrees.ts). */
   z.strictObject({ type: z.literal("worktrees.list"), botId }),
   z.strictObject({ type: z.literal("worktrees.create"), botId, name: z.string().trim().min(1).max(80), base: z.string().trim().min(1).max(200).optional() }),
@@ -1161,7 +1180,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1296,6 +1315,9 @@ export interface Results {
   "chat.reloadPage": { reloaded: boolean };
   "boot.commit": Record<string, never>;
   "bot.settings": BotSettingsView;
+  "mobile.view": MobileDeskView;
+  "mobile.pair": MobilePairView;
+  "mobile.revoke": MobileDeskView;
   "worktrees.list": WorktreesView;
   "worktrees.create": WorktreeAction;
   "worktrees.use": WorktreeAction;

@@ -2,6 +2,7 @@
 // line means (text, a tool call and its result, a permission request, the end of a turn), as
 // plain items. Ported from the Swift app's `StreamEvent` (activity titles, permission summaries).
 
+import type { RequestEvent } from "../token-speed";
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
 import type { MeteredTurn } from "../token-flow-ledger";
@@ -61,6 +62,8 @@ export type StreamItem =
   | { kind: "result"; ok: boolean; text: string; error: string; subtype: string }
   /** The session's cost so far (dollars; Codex: 0) and this turn's tokens (Phase 5c, 1.x's `.usage`). */
   | { kind: "usage"; totalCost: number; tokens: TokenUsage; measurement?: Omit<MeteredTurn, "botId" | "head" | "taskId"> }
+  /** One finished model request (the shared token-speed definition): scope null is the head turn, a string a subagent. */
+  | { kind: "request"; request: RequestEvent }
   /** The subscription's limits as the CLI last reported them (`.rateLimits`, `.codexRateLimits`). */
   | { kind: "rateLimits"; engine: "claude" | "codex"; limits: RateLimits };
 

@@ -8,9 +8,44 @@ app and publishes it on GitHub Releases.
 
 - Removed: Temporary teams. The main bot no longer starts a separate hidden Claude with a `<team>` tag; it uses subagents, which show their steps in the right panel. The team rows in the right panel, the built-in research and prototype teams and the `ccb-teams` fallback are gone. Old `runs/` folders and `plugins/ccb-teams` are left on disk and not read.
 - Removed: The "New group" entry and group chats (creating, editing and deleting a group, the group row and its right panel). Hand-offs between bots, @ call-ins and the shared chat of several heads are not affected. Old `groups.json` and `groups/` files are kept on disk and not read, and the app starts normally with them.
+- Changed: Token speed is now measured the same way for Claude, Codex and Antigravity and for the main bot, aligned with the token-speed tool.
 - Fixed: When the app attached a git worktree, every agent (Claude, Codex workers, Antigravity) is told its working folder is that worktree, to use relative paths, and not to make worktrees of its own; Antigravity can also reach the project's memory files.
 - Fixed: @ mention search stops at a space instead of previewing all following text.
 - Fixed: Bots asked to call another engine now hand off to it instead of emulating it with a subagent.
+- Fixed: Antigravity workers no longer marked Failed when a harmless command exits non-zero.
+
+
+### New
+
+- **Pair a phone with a one-time QR link.** `out/mobile-bridge/pair.cjs PAIRING_DIR ORIGIN BOT_ID...`
+  prints a link that works once and expires in 5 minutes. Its secret is in the URL fragment, the
+  phone checks it reached the right Botling (public Core ID at `/api/mobile/core`) before sending it,
+  and each device keeps one session. A paired phone has exactly what a pasted token has. Pasting a
+  token still works.
+- **Phone settings.** Settings > Phone makes a pairing code as a QR picture (pick the bots the phone
+  may use), lists the routes a phone tries, and lists paired phones with a Revoke button. A revoked
+  phone is refused on its next request. The same is available as `pair.cjs devices PAIRING_DIR` and
+  `pair.cjs revoke PAIRING_DIR DEVICE_ID`. English and Traditional Chinese.
+- **Ordered routes.** The mobile config may add `originKind` and `routes` (`lan`, `tailscale`,
+  `tunnel` entries, HTTPS origins). The Core ID descriptor lists them in order, the bridge accepts
+  each as its own host, and a phone that opens a pairing link on a slower route moves to an earlier
+  route that answers with the same Core ID (one probe each, 2.5 seconds, at once).
+- **Short-lived event-stream tickets.** `POST /api/mobile/ticket` (bearer) returns a ticket valid
+  30 seconds and usable once; `GET /api/mobile/events?ticket=...` opens the stream. The long-lived token
+  never appears in a URL.
+- **Phone follows the core across routes.** If the connection drops, a signed-in phone looks for
+  another route the core listed (public descriptor only), checks it answers with the same Core ID, and
+  only then sends its token there. A send is never repeated automatically.
+- **The core pushes changes.** The event stream announces that something changed (no content, only for
+  bots the phone may read); the phone then reads as usual and polls every 30 seconds instead of 2.5
+  while the stream is up.
+- **Web isolation check** runs headless only (no window, no focus), uses an installed headless shell
+  when Playwright's pinned one is missing, stops on a time limit, and exits 2 when there is no browser.
+
+### Fixed
+
+- A stranger's wrong pairing guesses no longer lock out a valid code: past five wrong guesses a
+  minute they get 429, but a valid code still pairs.
 
 ## 2.2.0
 

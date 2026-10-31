@@ -49,6 +49,8 @@ await Promise.all([
   build({ entryPoints: [join(here, "src/host/utility.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(out, "host/host-utility.mjs") }),
   // `ccb plugin check` for Maintainer (the checks the registry runs), as a small command.
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(out, "host/check-plugin.cjs") }),
+  // `pair.cjs PAIRING_DIR ORIGIN BOT_ID...`: prints a one-time phone pairing link (src/mobile-bridge/pair-cli.ts).
+  build({ ...node, entryPoints: [join(here, "src/mobile-bridge/pair-cli.ts")], outfile: join(out, "mobile-bridge/pair.cjs") }),
   buildRenderer({ root: here }),
 ]);
 packageAgyHelper(here);

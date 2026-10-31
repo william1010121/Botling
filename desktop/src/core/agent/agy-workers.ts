@@ -119,6 +119,7 @@ export class AgyWorkers {
     const onItem=(item:StreamItem)=>{
       if(this.closed||!w.active||w.run!==run)return;
       if(item.kind==='usage'){this.emit(item);return;}
+      if(item.kind==='request'){this.emit({kind:'request',request:{...item.request,scope:w.id}});return;}
       if(item.kind==='init'){
         if(w.sessionId&&w.sessionId!==item.sessionId){finish('failed','Worker changed its saved conversation identity.');return;}
         w.sessionId=item.sessionId;this.save();return;
@@ -131,7 +132,8 @@ export class AgyWorkers {
       }
       if(item.kind==='permissionCancelled'){w.denied=true;if(w.approvals.delete(item.requestId))this.emit({...item,requestId:`worker:${w.id}:${run}:${item.requestId}`});return;}
       if(item.kind==='delta'){this.emit({kind:'subagentText',parent:w.id,text:item.text});return;}
-      if(item.kind==='toolUse'||item.kind==='toolResult'){if(item.kind==='toolResult'&&item.failed)w.denied=true;this.emit({...item,parent:w.id,id:`${w.id}:${run}:${item.id}`});}
+      // A failed tool result (non-zero exit, e.g. git outside a repo) is normal work, not a denial; only approval denial/cancel sets w.denied.
+      if(item.kind==='toolUse'||item.kind==='toolResult'){this.emit({...item,parent:w.id,id:`${w.id}:${run}:${item.id}`});}
     };
     try{
       w.head=this.factory({...this.config,worker:true,workerEngine:w.engine,processStarted:pid=>{

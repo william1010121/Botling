@@ -1,3 +1,4 @@
+import { ClaudeRequestTracker } from "../token-speed";
 import { claudeMonitorDecision, MONITOR_HOOK } from "./monitor-policy";
 import { claudeAutoRiskSettings } from "./auto-risk-policy";
 // A bot's head: one long-lived `claude -p --input-format stream-json` process (as the Swift app's
@@ -200,6 +201,7 @@ export class ClaudeHead {
   }
 
   private flowMeter?: ClaudeTokenFlowMeter;
+  private speed = new ClaudeRequestTracker();
   private failMonitorPolicy() {
     this.monitorPolicyFailed = true;
     if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
@@ -226,6 +228,7 @@ export class ClaudeHead {
         response: claudeMonitorDecision(message.request.input, this.config.monitorWorker !== false) } });
       return;
     }
+    for (const request of this.speed.observe(message, Date.now())) this.handlers.onItem({ kind: "request", request });
     for (const item of parseLine(line)) {
       if (item.kind === "unsupportedRequest") {
         // A request the app does not handle gets an error at once, so claude does not wait.
@@ -258,6 +261,7 @@ export class ClaudeHead {
       if (data.length > 4_500_000) continue;
       blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: data.toString("base64") } });
     }
+    this.speed.boundary(null, Date.now());
     const content = blocks.length ? [{ type: "text", text }, ...blocks] : text;
     const message = { type: "user", message: { role: "user", content }, uuid: uuid.toLowerCase() };
     if (this.monitorInit) this.queuedMessages.push(message); else this.write(message);
