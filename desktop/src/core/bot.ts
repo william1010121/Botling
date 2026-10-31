@@ -206,6 +206,8 @@ export interface BotOptions {
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
   addDirs?: () => string[];
+  /** App-managed worktree (core/worktree-desk.ts): where its session starts instead of the project folder, and what else it may use there. */
+  worktree?: () => { cwd: string; addDirs: string[] } | null;
   /** Another bot answering in its chat right now (a call-in's speaker). */
   guest?: () => string | null;
   /** What its row shows beyond its own (a group's chat: the group and its members). */
@@ -2501,16 +2503,19 @@ export class Bot {
       claudeBypassPermissions: launch.claudeBypassPermissions === true,
       codexBypassPermissions: launch.codexBypassPermissions === true,
     };
+    // An app-made worktree: the session starts there; the project's .bot (memory, inbox) stays reachable.
+    const tree = this.owner.options.worktree?.() ?? null;
     let head: AgentHead;
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
-      const config = this.options.agyConfig(this.profile, { command: "agy", cwd: this.profile.folder, sessionId: start.sessionId, resume: start.resume,
+      const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, sessionId: start.sessionId, resume: start.resume,
         bypassPermissions: launch.agyBypassPermissions === true, model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) });
     } else if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
-      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
+      const base = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
+      const config = tree ? { ...base, cwd: tree.cwd, writableRoots: [...new Set([...(base.writableRoots ?? []), ...tree.addDirs])] } : base;
       if (this.restartRecovery && config.resume) {
         const thread = config.threads.thread(config.sessionId);
         if (!thread || (config.workerInstructions && !config.threads.isManaged(config.sessionId, thread))) throw new Error("Mixed Codex conversation mapping unavailable; identity retained, no replacement or replay.");
@@ -2523,7 +2528,8 @@ export class Bot {
         this.onItem(head, item);
       }, onExit: exit => this.onExit(head, exit) });
     } else {
-      const config = this.options.headConfig(this.profile, start);
+      const base = this.options.headConfig(this.profile, start);
+      const config = tree ? { ...base, cwd: tree.cwd, addDirs: [...new Set([...(base.addDirs ?? []), ...tree.addDirs])] } : base;
       head = new ClaudeHead({ ...config, monitorWorker: false }, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
     }
     head.start();

@@ -86,6 +86,8 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     pinnedBots: [...new Set(readSettingsList(raw.pinnedBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
     developerMode: bool(raw.developerMode, false),
     developerProject: typeof raw.developerProjectID === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw.developerProjectID) ? raw.developerProjectID.toUpperCase() : null,
+    worktrees: bool(raw.worktreesEnabled, true),
+    worktreeRoot: text(raw.worktreeRootChoice),
     updateCheck: bool(raw.updateCheckEnabled, true),
     shortcuts: normalizeOverrides(raw.shortcutBindings),
   };
@@ -137,6 +139,10 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "railCollapsed": set("railCollapsed", change.value); break;
     // 1.x keeps the project when developer mode goes off (`setDeveloperMode(_:project:)`).
     case "developerMode": set("developerMode", change.value); break;
+    case "worktrees": set("worktreesEnabled", change.value); break;
+    case "worktreeRoot": set("worktreeRootChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
+    case "worktrees": set("worktreesEnabled", change.value); break;
+    case "worktreeRoot": set("worktreeRootChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
     case "updateCheck": set("updateCheckEnabled", change.value); break;
     case "shortcuts": { const kept = normalizeOverrides(change.value); set("shortcutBindings", Object.keys(kept).length ? kept : null); break; }
     case "developerProject": if (change.value) set("developerProjectID", change.value.toUpperCase()); break;

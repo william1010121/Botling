@@ -700,6 +700,10 @@ export const SettingsView = z.strictObject({
   /** Developer mode (1.x's `developerMode`): the project that is Botling's own source gets what you flag as "not right". Phase 5a. */
   developerMode: z.boolean(),
   developerProject: BotId.nullable(),
+  /** App-managed git worktrees (2.2): the Worktrees control in a project's chat header, and agents starting in the worktree it makes. */
+  worktrees: z.boolean(),
+  /** Where worktrees are made (null: the work drive for the developer project, else under the data folder). */
+  worktreeRoot: z.string().max(4096).nullable(),
   /** Phase 5b (2.0 only): main looks at GitHub Releases for a newer Botling 2 (once a day; off by default). */
   updateCheck: z.boolean(),
   /** Keyboard shortcuts the user rebound (id to binding, see shortcuts.ts); an id left out has its default. */
@@ -737,6 +741,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("rightPanelCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("developerMode"), value: z.boolean() }),
   z.strictObject({ key: z.literal("developerProject"), value: BotId.nullable() }),
+  z.strictObject({ key: z.literal("worktrees"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("worktreeRoot"), value: z.string().max(4096).nullable() }),
   z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
@@ -803,6 +809,31 @@ export const UsageView = z.strictObject({
 });
 export type UsageView = z.infer<typeof UsageView>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
+/** One worktree as the Worktrees control lists it (core/worktrees.ts). */
+export const WorktreeItem = z.strictObject({
+  id: z.string().max(64), branch: z.string().max(300), path: z.string().max(4096), base: z.string().max(300),
+  task: z.string().max(200).nullable(), owner: z.string().max(200).nullable(),
+  status: z.enum(["active", "merged", "abandoned"]), createdAt: z.string().max(64),
+  changedFiles: z.number().int().nonnegative(), ahead: z.number().int().nonnegative(), missing: z.boolean(),
+});
+export const WorktreesView = z.strictObject({
+  /** The Worktrees setting. */
+  enabled: z.boolean(),
+  /** This project is the main checkout of a git repository with a commit, so worktrees can be made. */
+  available: z.boolean(),
+  /** The one its agent works in (null: the project folder). */
+  current: z.string().max(64).nullable(),
+  /** Where the next one is made. */
+  root: z.string().max(4096),
+  items: z.array(WorktreeItem).max(100),
+});
+export type WorktreesView = z.infer<typeof WorktreesView>;
+/** What an action did; a refusal carries a sentence to show as it is. `confirm`: asking again with `force` would lose work. */
+export const WorktreeAction = z.strictObject({
+  ok: z.boolean(), message: z.string().max(2_000), files: z.array(z.string().max(1_000)).max(50).optional(), confirm: z.boolean().optional(),
+});
+export type WorktreeAction = z.infer<typeof WorktreeAction>;
+
 export const BotSettingsView = z.strictObject({
   botId: id,
   engines: z.array(z.enum(["claude", "codex", "agy"])).min(1).max(3),
@@ -1023,6 +1054,13 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.reloadPage") }),
   /** A bot's own choices (bot.json). */
   z.strictObject({ type: z.literal("bot.settings"), botId }),
+  /** App-managed git worktrees of a project (core/worktrees.ts). */
+  z.strictObject({ type: z.literal("worktrees.list"), botId }),
+  z.strictObject({ type: z.literal("worktrees.create"), botId, name: z.string().trim().min(1).max(80), base: z.string().trim().min(1).max(200).optional() }),
+  z.strictObject({ type: z.literal("worktrees.use"), botId, worktreeId: z.string().max(64).nullable() }),
+  z.strictObject({ type: z.literal("worktrees.merge"), botId, worktreeId: z.string().max(64) }),
+  z.strictObject({ type: z.literal("worktrees.discard"), botId, worktreeId: z.string().max(64), force: z.boolean().optional() }),
+  z.strictObject({ type: z.literal("worktrees.terminal"), botId, worktreeId: z.string().max(64) }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
   z.strictObject({
     type: z.literal("bot.configure"), botId, model: ModelId.nullable().optional(), effort: Effort.nullable().optional(),
@@ -1073,7 +1111,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1212,6 +1250,12 @@ export interface Results {
   "chat.reloadPage": { reloaded: boolean };
   "boot.commit": Record<string, never>;
   "bot.settings": BotSettingsView;
+  "worktrees.list": WorktreesView;
+  "worktrees.create": WorktreeAction;
+  "worktrees.use": WorktreeAction;
+  "worktrees.merge": WorktreeAction;
+  "worktrees.discard": WorktreeAction;
+  "worktrees.terminal": WorktreeAction;
   "bot.configure": BotSettingsView;
   "engineDefaults.applyAll": { applied: number; failed: { botId: string; name: string; reason: string }[] };
   "plugins.loaded": Record<string, never>;

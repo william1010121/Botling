@@ -39,7 +39,7 @@ describe("worktree lifecycle", () => {
     expect(listed.items[0]).toMatchObject({ changedFiles: 0, ahead: 0, missing: false });
     writeFileSync(join(made.record.path, "new.txt"), "x");
     expect((await manager.list()).items[0]!.changedFiles).toBe(1);
-    expect((await manager.sessionFolder())?.path).toBe(made.record.path);
+    expect(manager.sessionFolder()?.path).toBe(made.record.path);
     // The main checkout is untouched.
     expect(git(repo, "status", "--porcelain")).toBe("");
   });
@@ -72,7 +72,7 @@ describe("worktree lifecycle", () => {
     const listed = await manager.list();
     expect(listed.items[0]).toMatchObject({ status: "merged" });
     expect(listed.current).toBeNull();
-    expect(await manager.sessionFolder()).toBeNull();
+    expect(manager.sessionFolder()).toBeNull();
   });
 
   it("merges after the base moved on by merging the base into the branch first", async () => {
@@ -148,7 +148,7 @@ describe("worktree lifecycle", () => {
     const made = await manager.create({ name: "gone" }); if (!made.ok) throw new Error("create");
     rmSync(made.record.path, { recursive: true, force: true });
     expect((await manager.list()).items[0]).toMatchObject({ missing: true });
-    expect(await manager.sessionFolder()).toBeNull();
+    expect(manager.sessionFolder()).toBeNull();
     expect(await manager.merge(made.record.id)).toMatchObject({ ok: false, code: "missing" });
     expect(await manager.discard(made.record.id)).toMatchObject({ ok: true });
     expect((await manager.list()).items[0]!.status).toBe("abandoned");
@@ -158,12 +158,12 @@ describe("worktree lifecycle", () => {
     const { repo, manager } = fixture();
     const one = await manager.create({ name: "one" }), two = await manager.create({ name: "two" });
     if (!one.ok || !two.ok) throw new Error("create");
-    expect((await manager.sessionFolder())?.path).toBe(one.record.path);
+    expect(manager.sessionFolder()?.path).toBe(one.record.path);
     expect(await manager.setCurrent(two.record.id)).toEqual({ ok: true });
-    expect((await manager.sessionFolder())?.record.id).toBe(two.record.id);
+    expect(manager.sessionFolder()?.record.id).toBe(two.record.id);
     expect(await manager.setCurrent("nope")).toMatchObject({ ok: false });
     await manager.setCurrent(null);
-    expect(await manager.sessionFolder()).toBeNull();
+    expect(manager.sessionFolder()).toBeNull();
     expect(repo).toBeTruthy();
   });
 

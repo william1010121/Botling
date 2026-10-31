@@ -319,14 +319,16 @@ export class DevBuilds {
   constructor(private deps: DevBuildDeps) {}
 
   /** What the developer project's manager is told on top of a manager's usual instructions (`developerBriefing`). */
-  briefing(bot: DeskBot): string {
+  briefing(bot: DeskBot, appWorktree = false): string {
     if (this.deps.developer()?.id !== bot.id) return "";
     // Development work goes on the work drive when it is there (`devWorkRoot`), else beside the project.
     const work = this.deps.devWork?.() ?? null;
     const worktrees = work ?? join(bot.profile.folder, ".bot", "worktrees");
     const dist = work ? join(work, "builds", "dist") : null;
     return `(App: Developer mode. This folder is Botling's own source, the app you are running in (Botling 2 is in desktop/), and you develop it.
-- One writer at a time. Do each task in a git worktree of its own: git worktree add ${worktrees}/<short-task> -b bot/<short-task>. Edit, build and test there; when the tests pass, merge it into the main branch and remove the worktree. If git status in the main folder shows changes you did not make, someone else is working: stop and ask the user.
+${appWorktree
+  ? "- One writer at a time. The app made the git worktree you work in (the Worktree note says where): edit, build and test there and commit there; do not run git worktree yourself. When the tests pass, say so; the user merges it into the main branch from the app, which removes the worktree. If git status in the main folder shows changes you did not make, someone else is working: stop and ask the user."
+  : `- One writer at a time. Do each task in a git worktree of its own: git worktree add ${worktrees}/<short-task> -b bot/<short-task>. Edit, build and test there; when the tests pass, merge it into the main branch and remove the worktree. If git status in the main folder shows changes you did not make, someone else is working: stop and ask the user.`}
 - Feedback from the user ("not right" on a reply) comes to you with the chat around it. First write a test that shows the problem, then fix it, then say in one sentence what was wrong.
 - To try your work: from the main folder, after merging, build the app with cd desktop && ${dist ? `BOTLING_DIST_DIR=${dist} ` : ""}npm run dist:dir; it is written to ${dist ?? "desktop/dist"}/mac-arm64/Botling 2.app (mac-x64 on Intel).
 - To install it: write where you are into your memory file first (you are restarted too), then end your reply with <install-build path="full path of that Botling 2.app">what changed, in a sentence or two</install-build>. The user confirms; the app restarts on the new build and tells you whether it came up. A build that does not come up is rolled back by itself.
