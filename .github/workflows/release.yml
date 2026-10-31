@@ -28,6 +28,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -51,6 +52,7 @@ jobs:
             node scripts/release-check.mjs --trust
           fi
       - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --prefix ../Web
       - run: npm run test:release
       - run: npm run typecheck
       - run: npm run test:unit
