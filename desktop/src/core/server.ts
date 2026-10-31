@@ -1409,6 +1409,7 @@ First write a test that shows this, then fix it.`;
     return mobileCommand({
       pending: botId => this.pending.views(botId),
       snapshot: botId => this.snapshot(botId),
+      history: command => this.bot(command.botId).history(command.before, command.bytes, command.until),
       handle: command => this.handle(command, new AbortController().signal),
     }, raw, allowedBots);
   }
@@ -1633,6 +1634,7 @@ First write a test that shows this, then fix it.`;
         try { return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files); } finally { for (const file of files) rmSync(file, { force: true }); }
       }
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
+      case "chat.history": return this.bot(cmd.botId).history(cmd.before, cmd.bytes, cmd.until);
       case "task.output": return this.bot(cmd.botId).taskOutput(cmd.messageId, cmd.taskId);
       case "subagent.view": return this.bot(cmd.botId).subagentView(cmd.subagentId);
       case "chat.read": {

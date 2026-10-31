@@ -11,7 +11,7 @@ if (!bridge) {
   root.render(<div className="banner">Botling's bridge is missing: open this page in the app.</div>);
 } else {
   const client = new Client(bridge);
-  const store = new WorkspaceStore((botId) => client.request({ type: "chat.snapshot", ...(botId ? { botId } : {}) }));
+  const store = new WorkspaceStore((botId) => client.request({ type: "chat.snapshot", ...(botId ? { botId } : {}) }), (botId, before, until) => client.request({ type: "chat.history", botId, before, ...(until ? { until } : {}) }));
   client.onEvent((event) => store.receive(event));
   // For end-to-end tests and diagnostics.
   (window as unknown as { __botlingStore: WorkspaceStore }).__botlingStore = store;

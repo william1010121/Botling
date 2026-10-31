@@ -819,6 +819,9 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
         case "resync":
           push();
           return;
+        case "loadHistory":
+          void store.loadOlder(typeof action.until === "string" ? action.until : undefined);
+          return;
         case "send": {
           // Words, or only the files waiting in the input box.
           if (!chat || typeof action.text !== "string") { composerReply(false, "Chat is not ready."); return; }

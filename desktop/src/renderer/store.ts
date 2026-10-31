@@ -12,6 +12,8 @@ export interface RunState { turnId: string; messageId: string; head?: "claude" |
 export interface ChatView {
   botId: string;
   messages: MessageView[];
+  /** Older lines wait in the core (`chat.history`); absent when `messages` is all of it. */
+  history?: { hasMore: boolean; older: number };
   /** The turn the typing bubble shows (the first of `runs`). */
   running: RunningView | null;
   /** The running turn's steps so far. */
@@ -83,7 +85,34 @@ export class WorkspaceStore {
   private buffer: EventEnvelope[] = [];
   private listeners = new Set<() => void>();
 
-  constructor(private fetchSnapshot: (botId?: string) => Promise<Snapshot>) {}
+  constructor(private fetchSnapshot: (botId?: string) => Promise<Snapshot>, private fetchHistory?: (botId: string, before: string, until?: string) => Promise<ResultOf<"chat.history">>) {}
+
+  private loadingOlder = false;
+
+  /**
+   * Older lines of the shown chat (the snapshot holds only its newest page): the page before the first line held,
+   * or, with `until`, back to at least that line. Does nothing when the chat has no more, or a page is on its way.
+   */
+  async loadOlder(until?: string): Promise<void> {
+    const chat = this.view.chat;
+    const before = chat?.messages[0]?.id;
+    if (!chat?.history?.hasMore || !before || this.loadingOlder || !this.fetchHistory) return;
+    const generation = this.selectionGeneration;
+    this.loadingOlder = true;
+    try {
+      const page = await this.fetchHistory(chat.botId, before, until);
+      const now = this.view.chat;
+      // A resync, another chat or a newer first line meanwhile: this page no longer fits, drop it.
+      if (generation !== this.selectionGeneration || !now || now.botId !== chat.botId || now.messages[0]?.id !== before) return;
+      const have = new Set(now.messages.map((message) => message.id));
+      const { history: _history, ...rest } = now;
+      this.set({ ...this.view, chat: { ...rest, messages: [...page.messages.filter((message) => !have.has(message.id)), ...now.messages], ...(page.hasMore ? { history: { hasMore: true, older: page.older } } : {}) } });
+    } catch {
+      // The reader asks again by scrolling; a resync sets everything right.
+    } finally {
+      this.loadingOlder = false;
+    }
+  }
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -257,7 +286,11 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       if (chat.messages.some((message) => message.id === event.message.id)) return view;
       return withChat({ ...chat, messages: [...chat.messages, event.message] });
     case "message.updated":
-      if (!chat.messages.some((message) => message.id === event.message.id)) return withChat({ ...chat, messages: [...chat.messages, event.message] });
+      if (!chat.messages.some((message) => message.id === event.message.id)) {
+        // A line from an older page that is not loaded: it shows when that page is loaded.
+        if (chat.history?.hasMore && chat.messages.length && event.message.time < chat.messages[0]!.time) return view;
+        return withChat({ ...chat, messages: [...chat.messages, event.message] });
+      }
       return withChat(update(event.message.id, () => event.message));
     case "turn.started": {
       const runs = [...(chat.runs ?? []).filter((run) => run.turnId !== event.turnId), { turnId: event.turnId, messageId: event.messageId, head: event.head, live: [] }];

@@ -425,6 +425,8 @@ export interface ChatState {
   botID: string;
   botName: string;
   messages: MessageView[];
+  /** Older lines wait in the app beyond `messages` (`older` of them): ask with a `loadHistory` action. Absent: this is all of the chat. */
+  history?: { hasMore: boolean; older: number };
   working: boolean;
   /** No coordinator turn is active; worker cards continue independently. */
   waitingForWorkers?: boolean;
@@ -539,6 +541,8 @@ export type Action =
   | { type: "ready" }
   /** A `patchState` could not be applied: send the whole state. */
   | { type: "resync" }
+  /** Older lines are wanted: the page before the first held, or (with `until`) back to at least that line. */
+  | { type: "loadHistory"; until?: string }
   | { type: "send"; text: string; to?: string }
   /** Saves the explicit composer choice for this bot; @mentions only affect a send. */
   | { type: "setAnswerWith"; botID: string; to: string; requestID: number }

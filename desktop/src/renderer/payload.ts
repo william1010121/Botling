@@ -273,6 +273,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     botID: bot.id,
     botName: bot.name,
     messages,
+    ...(chat.history?.hasMore ? { history: chat.history } : {}),
     working: runs.length > 0 || !!answering,
     // Codex waiting to try a refused request again: the typing bubble says so (`retry-note`).
     retrying: runs.length > 0 && bot.codexRetry ? { ...bot.codexRetry } : null,
