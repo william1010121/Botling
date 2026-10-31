@@ -21,7 +21,9 @@ function fixture() {
   return { repo, ownership, approve, checkout, create, root };
 }
 
-describe("isolated worker Git approval", () => {
+// The gate's allowed destinations are macOS paths (/private/tmp/...), so these only make sense there.
+const onMac = describe.skipIf(process.platform !== "darwin");
+onMac("isolated worker Git approval", () => {
   it("validates ownership and runs the approved creation, staging and commit in a real isolated repository", () => {
     const f = fixture(), w = f.ownership.worktree;
     expect(isolatedGitOwnership(f.ownership, f.repo)).toEqual(f.ownership);
@@ -121,7 +123,7 @@ function sessionFixture(ownershipEnabled = true, f = fixture(), bypassPermission
   };
   return { ...f, s, ask, call, receipt };
 }
-describe("Codex single-request app approval path", () => {
+onMac("Codex single-request app approval path", () => {
   it("model-supplied implementation authorization does not bypass auto/manual permission mode", () => {
     const f = sessionFixture(true, fixture(), false);
     expect(f.receipt.isolated_git_approval).toBe("manual");

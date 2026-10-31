@@ -50,6 +50,7 @@
 // FAKE_CLAUDE_FORGET=1: `--resume` fails like claude's for a session it does not have (exit 1, stderr only).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { safeWritePath } from "./safe-write.mjs";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
@@ -282,7 +283,7 @@ async function turn(job) {
     // The tidy: write the memory file it names, then OK.
     const file = /Update (\S+) with/.exec(prompt)?.[1];
     if (file) {
-      const path = join(process.cwd(), file);
+      const path = safeWritePath(join(process.cwd(), file));
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, `## Current status\nTidied by the fake CLI (session ${session}).\n## In progress\n## Waiting on you\n## Decided\n`);
     }
@@ -303,7 +304,7 @@ async function turn(job) {
   if (prompt.startsWith("(App: The model is about to change")) {
     const file = /section of (\S+?),/.exec(prompt)?.[1];
     if (file) {
-      const path = join(process.cwd(), file);
+      const path = safeWritePath(join(process.cwd(), file));
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, `## Current status\nHanded over by the fake CLI.\n## In progress\n${process.env.FAKE_HANDOFF_WORK ?? "Finish the parser."}\n## Waiting on you\n## Decided\n`);
     }

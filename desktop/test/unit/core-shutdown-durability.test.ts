@@ -4,13 +4,14 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
-import { desktop } from '../helpers';
+import { desktop, tempDir } from '../helpers';
 
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(r=>resolve=r);return {promise,resolve};}
 function fixture(syncFailure=false){
   const delayed=deferred(), plugins=deferred(), teams=deferred();
   const failure=new Error('checkpoint failed');
   const core=Object.create(Core.prototype) as any;
+  core.options={dataDir:tempDir('shutdown')};
   core.bots=new Map([['failed',{shutdown:()=>syncFailure?(()=>{throw failure;})():Promise.reject(failure)}],['pending',{shutdown:()=>delayed.promise}]]);
   core.options={dataDir:mkdtempSync(join(tmpdir(),'core-shutdown-'))};
   core.plugins={shutdown:vi.fn(()=>plugins.promise)};core.teams={shutdown:vi.fn(()=>teams.promise)};

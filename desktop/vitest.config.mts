@@ -7,6 +7,7 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     pool: "forks",
+    setupFiles: ["./test/setup-env.ts"],
     // Each file may launch several core/CLI children. Bound aggregate CPU/process pressure by default.
     maxWorkers: 2,
     reporters: ["default", "./test/failure-reporter.ts"],
