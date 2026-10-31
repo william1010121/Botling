@@ -1844,6 +1844,13 @@ First write a test that shows this, then fix it.`;
     this.restarting=true;
     for(const bot of this.bots.values())bot.holdForSwap(true);
   }
+  /** Quit-time variant: arms continuation only if a turn is in flight; never throws, never disturbs an update restart. */
+  prepareQuitContinuation(): boolean {
+    if(this.restarting||this.swapping)return false;
+    if(![...this.bots.values()].some(bot=>bot.restartEntries().length))return false;
+    try{this.prepareRestart();return true;}
+    catch(error){this.log(`quit continuation skipped: ${String((error as Error)?.message??error)}`);return false;}
+  }
   cancelRestart(){
     if(!this.restarting)return;
     new RestartJournal(this.options.dataDir).cancel();this.restarting=false;

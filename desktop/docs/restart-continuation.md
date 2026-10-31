@@ -1,7 +1,10 @@
 # Explicit restart continuation
 
 An approved restart update now prepares `restart-continuation.json` before the installer starts its helper.
-Ordinary quit, crash recovery, and hot swap do not grant restart continuation authorization.
+A plain quit also checkpoints, but only when at least one bot has a turn in flight (bounded to a few seconds; a failed or timed-out checkpoint is cancelled and quit proceeds).
+A quit with nothing in flight writes nothing, and a quit while an earlier restart is unreconciled skips the checkpoint.
+A ready journal older than 15 minutes (`RESTART_MAX_AGE_MS`) is never resumed; its entries get a notice instead.
+Crash recovery and hot swap do not grant restart continuation authorization.
 
 The core holds new turns. At shutdown it takes a fresh checkpoint, so completed and cancelled turns are excluded.
 It records original chat, engine, session, user-message and handoff identities, queued turns, and Codex worker task/run/thread identities.

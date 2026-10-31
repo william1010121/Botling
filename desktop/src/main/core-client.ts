@@ -223,13 +223,14 @@ export class CoreClient {
     this.options.audit(`dropped a malformed message from the core: ${describeIssues(event.error)}`);
   }
 
-  prepareRestart(): Promise<void> {
+  /** `onlyIfBusy` (quitting): arm only when a turn is in flight; resolves whether it did. */
+  prepareRestart(options:{onlyIfBusy?:boolean;timeoutMs?:number}={}): Promise<boolean> {
     return new Promise((resolve,reject)=>{
       if(!this.child){reject(Error("Core is not running; restart intent cannot be saved."));return;}
       const id=++this.drainCount;
-      const timer=setTimeout(()=>{this.drains.delete(id);this.cancelRestart();reject(Error("Restart checkpoint timed out."));},10_000);
-      this.drains.set(id,answer=>{clearTimeout(timer);this.drains.delete(id);answer.ok?resolve():reject(Error(String(answer.error??"Restart checkpoint failed.")));});
-      this.child.postMessage({botling:"prepareRestart",id});
+      const timer=setTimeout(()=>{this.drains.delete(id);this.cancelRestart();reject(Error("Restart checkpoint timed out."));},options.timeoutMs??10_000);
+      this.drains.set(id,answer=>{clearTimeout(timer);this.drains.delete(id);answer.ok?resolve((answer as {armed?:boolean}).armed!==false):reject(Error(String(answer.error??"Restart checkpoint failed.")));});
+      this.child.postMessage({botling:"prepareRestart",id,onlyIfBusy:options.onlyIfBusy===true});
     });
   }
   cancelRestart(){this.child?.postMessage({botling:"cancelRestart"});}

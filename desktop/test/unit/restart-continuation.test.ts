@@ -81,3 +81,21 @@ it('boot automatically asks the original Claude parent to resume an existing nat
  await until(()=>b.of('turn.finished').length,{what:'parent recovery response'});await b.kill('SIGTERM');const c=core(dir);await c.chat();
  expect(lines(dir,'input.log').filter(x=>x.text.includes('Native Claude child recovery'))).toHaveLength(1);
 });
+it('quit-time prepare with nothing in flight writes nothing',async()=>{
+ const dir=tempDir('quit-idle'),a=core(dir);await a.chat();
+ a.post({botling:'prepareRestart',id:910,onlyIfBusy:true});
+ expect(await until(()=>a.responses.get(910 as unknown as string),{what:'answer'})).toMatchObject({ok:true,armed:false});
+ await a.kill('SIGTERM');expect(existsSync(join(dir,'restart-continuation.json'))).toBe(false);
+});
+it('quit-time prepare with a turn in flight resumes on next launch; a second prepare is skipped',async()=>{
+ const dir=tempDir('quit-busy'),a=core(dir);
+ await a.call({type:'chat.send',botId:MAIN,text:'/slow'});
+ await until(()=>a.of('turn.delta').length,{what:'slow reply'});
+ a.post({botling:'prepareRestart',id:911,onlyIfBusy:true});
+ expect(await until(()=>a.responses.get(911 as unknown as string),{what:'answer'})).toMatchObject({ok:true,armed:true});
+ a.post({botling:'prepareRestart',id:912,onlyIfBusy:true});
+ expect(await until(()=>a.responses.get(912 as unknown as string),{what:'answer'})).toMatchObject({ok:true,armed:false});
+ await a.kill('SIGTERM');
+ core(dir);
+ await until(()=>lines(dir,'input.log').find(x=>x.text.includes('restarting')),{what:'automatic continuation'});
+});

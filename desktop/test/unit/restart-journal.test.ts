@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {RestartJournal,RESTART_FILE,type RestartEntry} from '../../src/core/restart-continuation';
+import {RestartJournal,RESTART_FILE,RESTART_MAX_AGE_MS,type RestartEntry} from '../../src/core/restart-continuation';
 import {tempDir} from '../helpers';
 const entry=(botId:string):RestartEntry=>({botId,engine:'claude',sessionId:'same-session',continue:true,queued:[]});
 it('persists multiple original owners and claims each exactly once across boots',()=>{
@@ -33,4 +33,14 @@ it('failed install cancels only its prepared intent',()=>{
 it('preserves corrupt checkpoint data and refuses execution',()=>{
  const dir=tempDir('restart-corrupt'),file=join(dir,RESTART_FILE),raw=JSON.stringify({v:1,id:'restart',phase:'ready',entries:[{botId:'one',engine:'claude'}]});writeFileSync(file,raw);
  const send=vi.fn();expect(()=>new RestartJournal(dir).recover(send,vi.fn())).toThrow('unreadable');expect(send).not.toHaveBeenCalled();expect(readFileSync(file,'utf8')).toBe(raw);
+});
+it('a ready journal older than the max age is never resumed',()=>{
+ const dir=tempDir('restart-stale'),j=new RestartJournal(dir);j.prepare([entry('one')]);j.ready();
+ const file=join(dir,RESTART_FILE),v=JSON.parse(readFileSync(file,'utf8'));v.at=Date.now()-RESTART_MAX_AGE_MS-1000;writeFileSync(file,JSON.stringify(v));
+ const send=vi.fn(),notice=vi.fn();new RestartJournal(dir).recover(send,notice);
+ expect(send).not.toHaveBeenCalled();expect(notice).toHaveBeenCalledOnce();expect(notice.mock.calls[0][1]).toContain('too old');
+});
+it('a fresh ready journal is resumed',()=>{
+ const dir=tempDir('restart-fresh'),j=new RestartJournal(dir);j.prepare([entry('one')]);j.ready();
+ const send=vi.fn();new RestartJournal(dir).recover(send,vi.fn());expect(send).toHaveBeenCalledOnce();
 });

@@ -861,7 +861,9 @@ app.on("before-quit", (event) => {
   // Cookies are written to disk lazily; make sure each account's are there before exiting.
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
   const terminalShutdown = terminals.closeAll();
-  void Promise.allSettled([terminalShutdown, core.stop(), ...flushes]).then(async () => {
+  // A plain quit keeps in-flight work: checkpoint it first (bounded), then stop. Failure only means no continuation.
+  const armed = core.prepareRestart({ onlyIfBusy: true, timeoutMs: 4_000 }).catch((error) => { note(`quit continuation not saved: ${String(error)}`); core.cancelRestart(); });
+  void Promise.allSettled([terminalShutdown, armed.then(() => core.stop()), ...flushes]).then(async () => {
     ipcMain.removeAllListeners(TEST_TRACE_CHANNEL);
     try{await traceWriter?.close();}catch(error){note('Synthetic trace flush failed: '+String(error));}
     app.exit(0);

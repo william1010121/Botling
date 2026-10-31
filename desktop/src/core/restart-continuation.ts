@@ -7,6 +7,8 @@ import type { SwapEntry, SwapQueued } from "./hot-swap";
 import type { WorkerRecord } from "./agent/codex";
 
 export const RESTART_FILE = "restart-continuation.json";
+/** A ready journal older than this is stale (an old quit the user may have meant to be final): not resumed. */
+export const RESTART_MAX_AGE_MS = 15 * 60_000;
 export const RESTART_NOTE = "(App: The user explicitly approved restarting Botling while work was in progress. Resume only the unfinished authorized work in this same conversation. Preserve the original task scope, research-only boundaries, permissions and cancellations. Do not repeat completed actions or retry any command whose outcome is uncertain. Reconcile existing results first; if evidence is insufficient, report the exact blocker.)";
 
 export interface RestartQueued extends SwapQueued {
@@ -30,7 +32,7 @@ export interface RestartEntry extends SwapEntry {
   workers?: WorkerRecord[];
   state?: "pending" | "claimed" | "dispatched" | "blocked";
 }
-interface RestartIntent { v: 1; id: string; phase: "preparing" | "ready"; entries: RestartEntry[] }
+interface RestartIntent { v: 1; id: string; phase: "preparing" | "ready"; entries: RestartEntry[]; at?: number }
 
 function validEntry(e: RestartEntry): boolean {
   return !!e && typeof e.botId === "string" && ["claude", "codex", "agy"].includes(e.engine)
@@ -68,7 +70,7 @@ export class RestartJournal {
     if (prior?.entries.some(e => e.state === "pending" || e.state === "claimed")) {
       throw Error("An earlier restart requires reconciliation.");
     }
-    this.save({ v: 1, id: randomUUID(), phase: "preparing", entries: entries.map(e => ({ ...e, state: "pending" })) });
+    this.save({ v: 1, id: randomUUID(), phase: "preparing", at: Date.now(), entries: entries.map(e => ({ ...e, state: "pending" })) });
   }
 
   cancel() { rmSync(this.file, { force: true }); }
@@ -84,15 +86,17 @@ export class RestartJournal {
     const value = this.read();
     if (!value) throw Error("Missing restart intent");
     value.phase = "ready";
+    value.at = Date.now();
     this.save(value);
   }
 
-  recover(deliver: (entry: RestartEntry) => void, notice: (entry: RestartEntry, reason: string) => void) {
+  recover(deliver: (entry: RestartEntry) => void, notice: (entry: RestartEntry, reason: string) => void, now = Date.now()) {
     const value = this.read();
     if (!value) return;
+    const stale = typeof value.at === "number" && now - value.at > RESTART_MAX_AGE_MS;
     for (const entry of value.entries) {
       if (entry.state === "dispatched" || entry.state === "blocked") continue;
-      const reason = entry.blocked || (value.phase !== "ready" ? "Shutdown did not confirm the restart checkpoint."
+      const reason = entry.blocked || (stale ? "The restart checkpoint is too old to resume safely; nothing was restarted." : value.phase !== "ready" ? "Shutdown did not confirm the restart checkpoint."
         : entry.state === "claimed" ? "Continuation delivery is uncertain after a crash." : null);
       if (reason) {
         entry.state = "blocked";

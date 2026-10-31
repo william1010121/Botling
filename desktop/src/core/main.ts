@@ -265,7 +265,13 @@ if (process.env.BOTLING_STARTUP_LOG) new StartupMarks({ file: process.env.BOTLIN
  */
 function swapControl(data: { botling?: unknown; id?: unknown; timeoutMs?: unknown; boundaryMs?: unknown }, reply: (message: unknown) => void): boolean {
   if(data.botling === "prepareRestart" || data.botling === "cancelRestart") {
-    try{if(data.botling === "prepareRestart")core.prepareRestart();else core.cancelRestart();reply({botling:"drained",id:data.id,ok:true});}
+    try{
+      if(data.botling === "prepareRestart"){
+        const quit=(data as {onlyIfBusy?:unknown}).onlyIfBusy===true;
+        const armed=quit?core.prepareQuitContinuation():(core.prepareRestart(),true);
+        reply({botling:"drained",id:data.id,ok:true,armed});
+      }else{core.cancelRestart();reply({botling:"drained",id:data.id,ok:true});}
+    }
     catch(error){reply({botling:"drained",id:data.id,ok:false,error:String(error)});}
     return true;
   }
