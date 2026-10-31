@@ -36,7 +36,7 @@ import { writeFileAtomic } from "./durable/atomic";
 import { componentEditorAgent, pluginGuide } from "./maintainer-text";
 import { checkPlugin, ENGINE_RANGE, PERMISSIONS, title, type PluginManifest } from "./plugins/manifest";
 import type { Plugins } from "./plugins";
-import { swiftPrettyJSON } from "./plugins/registry";
+import { swiftPrettyJSON } from "./swift-json";
 import type { BotRequest } from "./reply";
 import type { PinRecord } from "./components/pins";
 import { MAINTAINER_ID } from "./store/records";
