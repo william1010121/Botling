@@ -58,12 +58,20 @@ export function Review({ client, bot, target, lang, onClose }: { client: Client;
   const [sending, setSending] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [nonce, setNonce] = useState(0);
+  /** The Commit or Open PR form under the bar, its text, and the link of the pull request made or found. */
+  const [panel, setPanel] = useState<"commit" | "pr" | null>(null);
+  const [message, setMessage] = useState("");
+  const [prTitle, setPrTitle] = useState("");
+  const [prBody, setPrBody] = useState("");
+  const [prState, setPrState] = useState<"loading" | "ready" | "working">("ready");
+  const [prUrl, setPrUrl] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
   const loaded = useRef(0);
 
   // A different worktree starts over.
   useEffect(() => {
     setScope(target.worktreeId !== null ? "branch" : "uncommitted"); setTurn(null); setFiles(null); setSelected(null); setDiffs({}); setForced(new Set());
-    setComments([]); setEditing(null); setNote(null);
+    setComments([]); setEditing(null); setNote(null); setPanel(null); setPrUrl(null); setMessage("");
   }, [target.worktreeId, bot.id]);
 
   useEffect(() => {
@@ -115,6 +123,36 @@ export function Review({ client, bot, target, lang, onClose }: { client: Client;
       setNote({ ok: false, text: failure instanceof RequestFailed ? failure.error.message : words.sendFailed });
     } finally { setSending(false); }
   };
+
+  const failure = (error: unknown) => (error instanceof RequestFailed ? error.error.message : String((error as Error).message ?? error));
+  const commit = async () => {
+    if (target.worktreeId === null || !message.trim() || working) return;
+    setWorking(true);
+    try {
+      const result = await client.request({ type: "worktrees.commit", botId: bot.id, worktreeId: target.worktreeId, message });
+      setNote({ ok: result.ok, text: result.message });
+      if (result.ok) { setPanel(null); setMessage(""); setNonce((n) => n + 1); }
+    } catch (error) { setNote({ ok: false, text: failure(error) }); } finally { setWorking(false); }
+  };
+  const showPr = async () => {
+    if (target.worktreeId === null) return;
+    setPanel("pr"); setNote(null); setPrState("loading");
+    try {
+      const draft = await client.request({ type: "pr.draft", botId: bot.id, worktreeId: target.worktreeId });
+      if (!draft.ok) { setNote({ ok: false, text: draft.message }); setPanel(null); return; }
+      setPrTitle(draft.title); setPrBody(draft.body); setPrUrl(draft.url);
+    } catch (error) { setNote({ ok: false, text: failure(error) }); setPanel(null); } finally { setPrState("ready"); }
+  };
+  const createPr = async () => {
+    if (target.worktreeId === null || !prTitle.trim() || prState === "working") return;
+    setPrState("working");
+    try {
+      const result = await client.request({ type: "pr.create", botId: bot.id, worktreeId: target.worktreeId, title: prTitle, body: prBody });
+      setNote({ ok: result.ok, text: result.message });
+      if (result.ok) { setPrUrl(result.url); setPanel(null); }
+    } catch (error) { setNote({ ok: false, text: failure(error) }); } finally { setPrState("ready"); }
+  };
+  const openLink = (url: string) => void client.request({ type: "link.open", source: "user", botId: bot.id, url }).catch((error) => setNote({ ok: false, text: failure(error) }));
 
   const byKey = useMemo(() => {
     const map = new Map<string, ReviewComment[]>();
@@ -212,9 +250,28 @@ export function Review({ client, bot, target, lang, onClose }: { client: Client;
           <button type="button" aria-pressed={!split} onClick={() => chooseSplit(false)}>{words.unified}</button>
           <button type="button" aria-pressed={split} onClick={() => chooseSplit(true)}>{words.split}</button>
         </div>
+        {isWorktree && <button type="button" className="task-report" aria-pressed={panel === "commit"} onClick={() => { setPanel(panel === "commit" ? null : "commit"); setNote(null); }}>{words.commit}</button>}
+        {isWorktree && <button type="button" className="task-report" aria-pressed={panel === "pr"} onClick={() => (panel === "pr" ? setPanel(null) : void showPr())}>{words.openPr}</button>}
         <button type="button" className="task-report" onClick={() => setNonce((n) => n + 1)}>{words.refresh}</button>
         <button type="button" className="task-report" onClick={onClose}>{words.close}</button>
       </div>
+      {panel === "commit" && (
+        <form className="review-form" onSubmit={(event) => { event.preventDefault(); void commit(); }}>
+          <textarea className="worktree-input rv-textarea" autoFocus rows={3} value={message} placeholder={words.commitPlaceholder} aria-label={words.commitPlaceholder} maxLength={10000} onChange={(event) => setMessage(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Escape") setPanel(null); else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void commit(); } }} />
+          <span className="worktree-buttons"><button type="submit" className="task-report review-primary" disabled={working || !message.trim()}>{working ? words.committing : words.commitDo}</button><button type="button" className="task-report" onClick={() => setPanel(null)}>{words.cancel}</button></span>
+        </form>
+      )}
+      {panel === "pr" && (
+        <form className="review-form" onSubmit={(event) => { event.preventDefault(); void createPr(); }}>
+          {prState === "loading" ? <div className="task-none">{words.prLoading}</div> : <>
+            {prUrl && <div className="task-stale">{words.prAlready} <button type="button" className="rv-link" onClick={() => openLink(prUrl)}>{words.prOpen}</button></div>}
+            <input className="worktree-input" autoFocus value={prTitle} maxLength={500} placeholder={words.prTitle} aria-label={words.prTitle} onChange={(event) => setPrTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setPanel(null); }} />
+            <textarea className="worktree-input rv-textarea" rows={5} value={prBody} placeholder={words.prBody} aria-label={words.prBody} maxLength={20000} onChange={(event) => setPrBody(event.target.value)} />
+            <span className="worktree-buttons"><button type="submit" className="task-report review-primary" disabled={prState === "working" || !prTitle.trim()}>{prState === "working" ? words.prDoing : words.prDo}</button><button type="button" className="task-report" onClick={() => setPanel(null)}>{words.cancel}</button></span>
+          </>}
+        </form>
+      )}
       {problem && <div className="worktree-note bad rv-problem" role="status">{problem}</div>}
       <div className="review-body">
         <nav className="rv-files" aria-label={words.review}>
@@ -243,9 +300,10 @@ export function Review({ client, bot, target, lang, onClose }: { client: Client;
           {files?.ok && !file && <div className="task-none">{words.noChanges}</div>}
         </div>
       </div>
-      {(comments.length > 0 || note) && (
+      {(comments.length > 0 || note || prUrl) && (
         <div className="review-send">
           {note && <span className={`worktree-note${note.ok ? "" : " bad"}`} role="status">{note.text}</span>}
+          {prUrl && <button type="button" className="rv-link" title={prUrl} onClick={() => openLink(prUrl)}>{words.viewPr}: {prUrl.replace(/^https?:\/\/(www\.)?/, "")}</button>}
           <span className="review-gap" />
           {comments.length > 0 && <>
             <span className="task-line">{words.pending(comments.length)}</span>

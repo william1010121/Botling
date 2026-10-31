@@ -1600,6 +1600,9 @@ First write a test that shows this, then fix it.`;
       case "worktrees.merge": return this.worktrees.merge(this.worktreeProfile(cmd.botId), cmd.worktreeId);
       case "worktrees.discard": return this.worktrees.discard(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.force === true);
       case "worktrees.terminal": return this.worktrees.terminal(this.worktreeProfile(cmd.botId), cmd.worktreeId);
+      case "worktrees.commit": return this.worktrees.commit(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.message);
+      case "pr.draft": return this.worktrees.prDraft(this.worktreeProfile(cmd.botId), cmd.worktreeId);
+      case "pr.create": return this.worktrees.prCreate(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.title, cmd.body);
       case "review.files": return this.worktrees.reviewFiles(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.scope, cmd.turn);
       case "review.diff": return this.worktrees.reviewDiff(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.from, cmd.to, cmd.path, cmd.oldPath, cmd.force === true);
       case "bot.configure": {

@@ -10,6 +10,8 @@ export type ReviewWords = {
   status: Record<File["status"], string>;
   binary: string; tooLarge: (lines: number) => string; showAnyway: string; truncated: string; renamedFrom: (old: string) => string;
   addComment: string; commentPlaceholder: string; save: string; cancel: string; remove: string;
+  commit: string; commitPlaceholder: string; commitDo: string; committing: string;
+  openPr: string; prTitle: string; prBody: string; prDo: string; prDoing: string; prOpen: string; prAlready: string; prLoading: string; viewPr: string;
   pending: (n: number) => string; send: string; sending: string; discardComments: string; sentTo: (name: string) => string; sendFailed: string;
 };
 
@@ -21,6 +23,8 @@ const en: ReviewWords = {
   status: { A: "Added", M: "Modified", D: "Deleted", R: "Renamed" },
   binary: "Binary file; no text to show.", tooLarge: (lines) => `This file changed ${lines} lines; showing it can be slow.`, showAnyway: "Show anyway", truncated: "The diff is cut here; open the file to see the rest.", renamedFrom: (old) => `Renamed from ${old}`,
   addComment: "Comment on this line", commentPlaceholder: "What should change here?", save: "Add comment", cancel: "Cancel", remove: "Remove",
+  commit: "Commit", commitPlaceholder: "Commit message", commitDo: "Commit all changes", committing: "Committing…",
+  openPr: "Open PR", prTitle: "Pull request title", prBody: "Description", prDo: "Push and open PR", prDoing: "Opening…", prOpen: "Open the pull request", prAlready: "A pull request is already open for this branch; pushing updates it.", prLoading: "Reading the commits…", viewPr: "Pull request",
   pending: (n) => `${n} comment${n === 1 ? "" : "s"} ready`, send: "Send to agent", sending: "Sending…", discardComments: "Clear", sentTo: (name) => `Sent to ${name}.`, sendFailed: "Could not send the comments.",
 };
 const zh: ReviewWords = {
@@ -31,6 +35,8 @@ const zh: ReviewWords = {
   status: { A: "新增", M: "修改", D: "刪除", R: "更名" },
   binary: "二進位檔案，沒有文字可顯示。", tooLarge: (lines) => `這個檔案變更了 ${lines} 行，顯示可能很慢。`, showAnyway: "仍要顯示", truncated: "差異在此截斷，請開啟檔案查看其餘部分。", renamedFrom: (old) => `由 ${old} 更名`,
   addComment: "在這一行留言", commentPlaceholder: "這裡應該怎麼改？", save: "加入留言", cancel: "取消", remove: "移除",
+  commit: "提交", commitPlaceholder: "提交訊息", commitDo: "提交所有變更", committing: "提交中…",
+  openPr: "開啟 PR", prTitle: "拉取請求標題", prBody: "說明", prDo: "推送並開啟 PR", prDoing: "開啟中…", prOpen: "開啟拉取請求", prAlready: "這個分支已有開啟中的拉取請求；推送會更新它。", prLoading: "讀取提交中…", viewPr: "拉取請求",
   pending: (n) => `${n} 則留言待送出`, send: "送給代理人", sending: "傳送中…", discardComments: "清除", sentTo: (name) => `已送給 ${name}。`, sendFailed: "無法送出留言。",
 };
 

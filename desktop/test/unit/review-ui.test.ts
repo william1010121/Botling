@@ -226,3 +226,80 @@ it("the Worktrees control opens the review of a worktree or of the working tree"
   await act(async () => button("Review").click());
   expect(opened.at(-1)).toEqual({ worktreeId: "w1", branch: "bot/feat", base: "main", path: "/w/feat" });
 });
+
+const typeInto = async (el: HTMLInputElement | HTMLTextAreaElement, value: string) => act(async () => {
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value); el.dispatchEvent(new Event("input", { bubbles: true }));
+});
+
+it("commits all changes with a message and then reloads the files", async () => {
+  const calls: any[] = [];
+  const request = async (cmd: any) => {
+    calls.push(cmd);
+    if (cmd.type === "review.files") return filesView();
+    if (cmd.type === "review.diff") return diffView(cmd.path);
+    if (cmd.type === "worktrees.commit") return { ok: true, message: "Committed 2 files as abc1234." };
+    return {};
+  };
+  const { host, button } = await mount(request);
+  await act(async () => button("Commit")!.click());
+  expect(button("Commit all changes")!.disabled).toBe(true);
+  await typeInto(host.querySelector<HTMLTextAreaElement>(".review-form textarea")!, "Fix the login");
+  const filesBefore = calls.filter((c) => c.type === "review.files").length;
+  await act(async () => button("Commit all changes")!.click());
+  expect(calls.find((c) => c.type === "worktrees.commit")).toEqual({ type: "worktrees.commit", botId: "B1", worktreeId: "w1", message: "Fix the login" });
+  expect(host.textContent).toContain("Committed 2 files as abc1234.");
+  expect(host.querySelector(".review-form")).toBeNull();
+  expect(calls.filter((c) => c.type === "review.files").length).toBe(filesBefore + 1);
+});
+
+it("opens a PR from the commits' title and body, shows the link, and shows a refusal as it is", async () => {
+  const calls: any[] = [];
+  let create: any = { ok: false, message: "The GitHub CLI (gh) is not installed or not on the PATH.", url: null, existing: false };
+  const request = async (cmd: any) => {
+    calls.push(cmd);
+    if (cmd.type === "review.files") return filesView();
+    if (cmd.type === "review.diff") return diffView(cmd.path);
+    if (cmd.type === "pr.draft") return { ok: true, message: "", title: "Fix login", body: "- Add b\n- Add c", base: "main", branch: "bot/fix-login", commits: 2, url: null };
+    if (cmd.type === "pr.create") return create;
+    return {};
+  };
+  const { host, button } = await mount(request);
+  await act(async () => button("Open PR")!.click());
+  const title = host.querySelector<HTMLInputElement>(".review-form input")!;
+  expect(title.value).toBe("Fix login");
+  expect(host.querySelector<HTMLTextAreaElement>(".review-form textarea")!.value).toBe("- Add b\n- Add c");
+  await typeInto(title, "Fix the login flow");
+  await act(async () => button("Push and open PR")!.click());
+  expect(calls.find((c) => c.type === "pr.create")).toEqual({ type: "pr.create", botId: "B1", worktreeId: "w1", title: "Fix the login flow", body: "- Add b\n- Add c" });
+  expect(host.textContent).toContain("The GitHub CLI (gh) is not installed");
+  expect(host.querySelector(".review-form")).not.toBeNull();   // the form stays so it can be tried again
+
+  create = { ok: true, message: "Opened the pull request.", url: "https://github.com/o/r/pull/7", existing: false };
+  await act(async () => button("Push and open PR")!.click());
+  expect(host.textContent).toContain("Opened the pull request.");
+  expect(host.querySelector(".review-form")).toBeNull();
+  const link = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Pull request:"))!;
+  expect(link.textContent).toBe("Pull request: github.com/o/r/pull/7");
+  await act(async () => link.click());
+  expect(calls.at(-1)).toEqual({ type: "link.open", source: "user", botId: "B1", url: "https://github.com/o/r/pull/7" });
+});
+
+it("the main checkout can be reviewed but not committed or opened as a PR from here", async () => {
+  const { button } = await mount(async (cmd: any) => (cmd.type === "review.files" ? filesView() : diffView(cmd.path)), "en", { target: { worktreeId: null, branch: null, base: null, path: null } });
+  expect(button("Commit")).toBeUndefined();
+  expect(button("Open PR")).toBeUndefined();
+});
+
+it("a worktree's row links to its pull request", async () => {
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const host = document.createElement("div"); document.body.append(host); hosts.push(host);
+  const item = { id: "w1", branch: "bot/feat", path: "/w/feat", base: "main", task: null, owner: null, status: "active", createdAt: "2026-01-01T00:00:00Z", changedFiles: 0, ahead: 1, missing: false, pr: "https://github.com/o/r/pull/9" };
+  const calls: any[] = [];
+  const request = async (cmd: any) => { calls.push(cmd); return { enabled: true, available: true, current: null, root: "/r", items: [item] }; };
+  await act(async () => createRoot(host).render(createElement(Worktrees, { client: { request } as unknown as Client, bot, lang: "zh-Hant" })));
+  const link = host.querySelector<HTMLButtonElement>(".worktree-pr")!;
+  expect(link.textContent).toBe("拉取請求");
+  await act(async () => link.click());
+  expect(calls.at(-1)).toEqual({ type: "link.open", source: "user", botId: "B1", url: "https://github.com/o/r/pull/9" });
+});

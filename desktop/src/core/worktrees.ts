@@ -34,6 +34,8 @@ export interface WorktreeRecord {
   status: WorktreeStatus;
   createdAt: string;
   closedAt?: string;
+  /** The pull request opened for the branch from the app (its link). */
+  pr?: string;
 }
 
 /** A record with what git says about it now. */
@@ -233,6 +235,16 @@ export class WorktreeManager {
       stored.current ??= record.id;
       this.write(stored);
       return { ok: true, record };
+    });
+  }
+
+  /** Remember the pull request opened for a worktree's branch. */
+  setPr(id: string, url: string): Promise<void> {
+    return this.serial(async () => {
+      const found = this.active(id);
+      if (!found) return;
+      found.record.pr = url;
+      this.write(found.stored);
     });
   }
 

@@ -4,8 +4,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { ReviewDiffView, ReviewFilesView, ReviewScope, WorktreeAction, WorktreesView } from "../contract";
+import type { PrCreateView, PrDraftView, ReviewDiffView, ReviewFilesView, ReviewScope, WorktreeAction, WorktreesView } from "../contract";
 import type { BotProfile } from "./store/workspace";
+import { commitAll, existingPr, openPr, prefill } from "./publish";
 import { ReviewError, TurnLog, headCommit, mergeBase, reviewDiff, reviewFiles, snapshotTree } from "./review";
 import { WorktreeManager, type WorktreeRecord, type WorktreeResult } from "./worktrees";
 
@@ -20,9 +21,12 @@ export interface WorktreeDeskDeps {
   moved: (botId: string, reason: { told: string; shown: string }) => void;
   platform?: NodeJS.Platform;
   openTerminal?: (path: string) => Promise<void>;
+  /** The GitHub CLI's command (default `gh`); tests point it at a fake. */
+  gh?: string;
 }
 
 const failed = (message: string): WorktreeAction => ({ ok: false, message });
+const noDraft = (message: string): PrDraftView => ({ ok: false, message, title: "", body: "", base: "", branch: "", commits: 0, url: null });
 const noFiles = (message: string, scope: ReviewScope): ReviewFilesView => ({ ok: false, message, scope, from: "", to: "", base: "", files: [], additions: 0, deletions: 0, capped: false, turns: [], turn: null });
 const noDiff = (message: string, path: string): ReviewDiffView => ({ ok: false, message, path, binary: false, additions: 0, deletions: 0, tooLarge: false, truncated: false, hunks: [] });
 
@@ -89,7 +93,7 @@ export class WorktreeDesk {
     const available = await manager.available();
     if (!available) return { enabled, available, current: null, root, items: [] };
     const { current, items } = await manager.list();
-    return { enabled, available, current, root, items: items.map(({ id, branch, path, base, task, owner, status, createdAt, changedFiles, ahead, missing }) => ({ id, branch, path, base, task, owner, status, createdAt, changedFiles, ahead, missing })) };
+    return { enabled, available, current, root, items: items.map(({ id, branch, path, base, task, owner, status, createdAt, changedFiles, ahead, missing, pr }) => ({ id, branch, path, base, task, owner, status, createdAt, changedFiles, ahead, missing, pr: pr ?? null })) };
   }
 
   private done(profile: BotProfile, result: WorktreeResult<object>, ok: string, told: string): WorktreeAction {
@@ -188,6 +192,45 @@ export class WorktreeDesk {
     } catch (error) {
       return noDiff(error instanceof ReviewError ? error.message : `Could not read the diff: ${(error as Error).message}`, path);
     }
+  }
+
+  /** An app-made worktree that is there: commit and pull request are for these only, never the main checkout. */
+  private tree(profile: BotProfile, id: string): WorktreeRecord | string {
+    if (!this.deps.settings().enabled || !this.eligible(profile)) return "Worktrees are off for this project.";
+    const record = this.manager(profile).get(id);
+    return record && existsSync(join(record.path, ".git")) ? record : "That worktree is not there.";
+  }
+
+  /** Stage and commit everything in a worktree. */
+  async commit(profile: BotProfile, id: string, message: string): Promise<WorktreeAction> {
+    const record = this.tree(profile, id);
+    if (typeof record === "string") return failed(record);
+    const result = await commitAll(record.path, message);
+    if (!result.ok) return failed(result.message);
+    return { ok: true, message: `Committed ${result.files} file${result.files === 1 ? "" : "s"} as ${result.sha}.` };
+  }
+
+  /** What the pull request form starts with. */
+  async prDraft(profile: BotProfile, id: string): Promise<PrDraftView> {
+    const record = this.tree(profile, id);
+    if (typeof record === "string") return noDraft(record);
+    try {
+      const draft = await prefill(record.path, record.branch, record.base);
+      const url = record.pr ?? await existingPr(record.path, record.branch, this.deps.gh);
+      return { ok: true, message: "", ...draft, base: record.base, branch: record.branch, url };
+    } catch (error) {
+      return noDraft(`Could not read the commits: ${(error as Error).message}`);
+    }
+  }
+
+  /** Push the branch and open the pull request; its link is kept on the worktree. */
+  async prCreate(profile: BotProfile, id: string, title: string, body: string): Promise<PrCreateView> {
+    const record = this.tree(profile, id);
+    if (typeof record === "string") return { ok: false, message: record, url: null, existing: false };
+    const result = await openPr(record.path, { branch: record.branch, base: record.base, title, body, ...(this.deps.gh ? { gh: this.deps.gh } : {}) });
+    if (!result.ok) return { ok: false, message: result.message, url: null, existing: false };
+    await this.manager(profile).setPr(id, result.url);
+    return { ok: true, message: result.existing ? "A pull request is already open; the new commits were pushed to it." : "Opened the pull request.", url: result.url, existing: result.existing };
   }
 
   async terminal(profile: BotProfile, id: string): Promise<WorktreeAction> {

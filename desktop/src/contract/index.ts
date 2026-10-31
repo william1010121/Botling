@@ -815,6 +815,8 @@ export const WorktreeItem = z.strictObject({
   task: z.string().max(200).nullable(), owner: z.string().max(200).nullable(),
   status: z.enum(["active", "merged", "abandoned"]), createdAt: z.string().max(64),
   changedFiles: z.number().int().nonnegative(), ahead: z.number().int().nonnegative(), missing: z.boolean(),
+  /** The pull request opened from the app for this branch. */
+  pr: z.string().max(2_000).nullable().optional(),
 });
 export const WorktreesView = z.strictObject({
   /** The Worktrees setting. */
@@ -833,6 +835,17 @@ export const WorktreeAction = z.strictObject({
   ok: z.boolean(), message: z.string().max(2_000), files: z.array(z.string().max(1_000)).max(50).optional(), confirm: z.boolean().optional(),
 });
 export type WorktreeAction = z.infer<typeof WorktreeAction>;
+
+/** The pull request form's start (title and body from the commits) and what opening one did (core/publish.ts). */
+export const PrDraftView = z.strictObject({
+  ok: z.boolean(), message: z.string().max(2_000),
+  title: z.string().max(500), body: z.string().max(20_000), base: z.string().max(300), branch: z.string().max(300), commits: z.number().int().nonnegative(),
+  /** A pull request already open for the branch. */
+  url: z.string().max(2_000).nullable(),
+});
+export type PrDraftView = z.infer<typeof PrDraftView>;
+export const PrCreateView = z.strictObject({ ok: z.boolean(), message: z.string().max(2_000), url: z.string().max(2_000).nullable(), existing: z.boolean() });
+export type PrCreateView = z.infer<typeof PrCreateView>;
 
 /** Review of a checkout's changes (core/review.ts): the files, and one file's diff. */
 export const ReviewScope = z.enum(["branch", "uncommitted", "turn"]);
@@ -1098,6 +1111,9 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("worktrees.merge"), botId, worktreeId: z.string().max(64) }),
   z.strictObject({ type: z.literal("worktrees.discard"), botId, worktreeId: z.string().max(64), force: z.boolean().optional() }),
   z.strictObject({ type: z.literal("worktrees.terminal"), botId, worktreeId: z.string().max(64) }),
+  z.strictObject({ type: z.literal("worktrees.commit"), botId, worktreeId: z.string().max(64), message: z.string().max(10_000) }),
+  z.strictObject({ type: z.literal("pr.draft"), botId, worktreeId: z.string().max(64) }),
+  z.strictObject({ type: z.literal("pr.create"), botId, worktreeId: z.string().max(64), title: z.string().max(500), body: z.string().max(20_000) }),
   /** Review of a worktree's changes (`worktreeId` null: the project's main checkout, against HEAD). */
   z.strictObject({ type: z.literal("review.files"), botId, worktreeId: z.string().max(64).nullable(), scope: ReviewScope, turn: z.string().max(64).optional() }),
   z.strictObject({ type: z.literal("review.diff"), botId, worktreeId: z.string().max(64).nullable(), from: reviewRev, to: reviewRev.min(40), path: z.string().min(1).max(4096), oldPath: z.string().max(4096).optional(), force: z.boolean().optional() }),
@@ -1151,7 +1167,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1299,6 +1315,9 @@ export interface Results {
   "worktrees.merge": WorktreeAction;
   "worktrees.discard": WorktreeAction;
   "worktrees.terminal": WorktreeAction;
+  "worktrees.commit": WorktreeAction;
+  "pr.draft": PrDraftView;
+  "pr.create": PrCreateView;
   "review.files": ReviewFilesView;
   "review.diff": ReviewDiffView;
   "bot.configure": BotSettingsView;
