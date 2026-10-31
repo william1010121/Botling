@@ -192,7 +192,7 @@ describe("subagents", () => {
     // The durable journal is authoritative even before background checkpointing creates the file.
     const saved = readHistoryState(historyFile).rows as SubagentRecord[];
     expect(saved).toHaveLength(1);
-    expect(saved[0]).toMatchObject({ description: "Research the API", type: "general-purpose", prompt: "Look up the API and report", status: "completed", background: false, result: "Found 3 things.", agentID: "a1b2" });
+    expect(saved[0]).toMatchObject({ description: "Research the API", type: "general-purpose", prompt: "Look up the API and report", status: "completed", background: false, result: "Found 3 things.", agentID: "task-1" }); // task_started's task_id is the resume id (stream.ts), not the tool result's agentId
     expect(typeof saved[0].startedAt).toBe("number");
     expect(saved[0].steps.map((s: { kind: string; title: string }) => [s.kind, s.title])).toEqual([["tool", "Read notes.md"], ["text", "Found 3 things."]]);
     const reply = (await c.chat()).messages.find((m: { id: string }) => m.id === messageId);

@@ -13,7 +13,7 @@ it.each([false,true])('inactive-head coverage is unknown until journal checkpoin
   const rows=[{id:'saved',description:'Worker',startedAt:1,status:'completed',steps:[],prompt:'PRIVATE',result:'PRIVATE',outputTokenCounters:{message:10}}];
   if(warm)writeFileSync(file,JSON.stringify(rows));
   const store=new BotStore(folder);store.loadList('subagents.json');
-  const bot={id:'test',engine:'codex',profile:{storeDir:root},subagents:{list:[]},partner:null,tasks:{tasks:[]}} as unknown as Bot;
+  const bot={id:'test',engine:'codex',profile:{storeDir:root},subagents:{list:[]},peers:[],partner:null,tasks:{tasks:[]}} as unknown as Bot;
   try{
     if(warm)expect((await tokenFlowHistory(bot)).rows[0].outputTokens).toBe(10);
     rows[0].outputTokenCounters.message=20;store.commitWorkerHistory(rows);

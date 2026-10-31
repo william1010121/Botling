@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { Core } from '../../src/core/server';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { desktop } from '../helpers';
@@ -11,6 +12,7 @@ function fixture(syncFailure=false){
   const failure=new Error('checkpoint failed');
   const core=Object.create(Core.prototype) as any;
   core.bots=new Map([['failed',{shutdown:()=>syncFailure?(()=>{throw failure;})():Promise.reject(failure)}],['pending',{shutdown:()=>delayed.promise}]]);
+  core.options={dataDir:mkdtempSync(join(tmpdir(),'core-shutdown-'))};
   core.plugins={shutdown:vi.fn(()=>plugins.promise)};core.teams={shutdown:vi.fn(()=>teams.promise)};
   return {core,delayed,plugins,teams,failure};
 }
