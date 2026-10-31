@@ -1,30 +1,19 @@
 // Builds Botling 2.0 for distribution: `node scripts/package.mjs [--mac|--win|--linux] [--dir]`
 // (npm run dist:mac). Bundles out/ and mobile/dist/, then runs electron-builder with
-// electron-builder.config.cjs. It never publishes.
+// electron-builder.config.cjs. It never publishes. Signing and notarizing happen only when the
+// certificate variables name one (CSC_LINK, APPLE_API_KEY, ...); see the release workflow.
 //
 // Caches stay beside the checkout unless set: electron-builder's (ELECTRON_BUILDER_CACHE) and
 // Electron's downloads (electron_config_cache) default to desktop/.cache/, never ~/Library/Caches.
 // When the development work drive is mounted (BOTLING_DEV_WORK_DIR, else /Volumes/My-SSD/botling-work;
-// core/self-update.ts's devWorkRoot) they go to its cache/ instead; unmounted, beside the checkout as before.
+// core/app-swap.ts's devWorkRoot) they go to its cache/ instead; unmounted, beside the checkout as before.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktop = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
-// Explicit release path owns its frozen compilation and isolated assembly directories.
-if (args.some(arg => ["--release-variants", "--compile-only", "--reuse-built"].includes(arg))) {
-  const { releaseVariants } = await import("./release-variants.mjs");
-  await releaseVariants(desktop, args);
-  process.exit(0);
-}
-const { publicKey } = JSON.parse(readFileSync(join(desktop, "release-config.json"), "utf8"));
-if (!args.includes("--dir") && !publicKey && !args.includes("--unsigned-updates")) {
-  console.error("Distribution requires configured update trust; for a development artifact explicitly pass --unsigned-updates.");
-  process.exit(1);
-}
-process.env.BOTLING_UNSIGNED_UPDATES = publicKey ? "0" : "1";
 const workDrive = (() => {
   const dir = process.env.BOTLING_DEV_WORK_DIR?.trim() || "/Volumes/My-SSD/botling-work";
   const volume = /^\/Volumes\/[^/]+/.exec(dir)?.[0];
@@ -61,7 +50,7 @@ for (const platform of platforms) {
 }
 const files = await build({ targets, config, projectDir: desktop, publish: "never" });
 // electron-builder signs DMGs only with a certificate; keep the local container signed too.
-// No DMG blockmap is emitted (the custom updater uses the ZIP), so this cannot stale update metadata.
+// No DMG blockmap is emitted (electron-updater uses the ZIP), so this cannot stale update metadata.
 if (process.platform === "darwin" && !process.env.CSC_LINK && !process.env.CSC_NAME) {
   for (const file of files.filter((file) => file.endsWith(".dmg"))) {
     const signed = spawnSync("/usr/bin/codesign", ["--force", "--sign", "-", file], { stdio: "inherit" });

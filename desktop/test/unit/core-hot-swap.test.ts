@@ -1,4 +1,4 @@
-// A core hot swap through the built core with the fake CLI (docs/core-hot-swap.md): the old core drains
+// A core hot swap through the built core with the fake CLI (the restart continuation): the old core drains
 // (turns under way finish; late ones are stopped and told to carry on), hands its sessions over, and the
 // next core resumes them with --resume; what waited is delivered there. No Electron, no windows.
 import { afterEach, describe, expect, it } from "vitest";

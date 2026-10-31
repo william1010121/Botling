@@ -9,7 +9,6 @@ import { packageAgyHelper } from './scripts/package-agy-helper.mjs';
 // own build output (Sources/ClaudeCodeBot/Resources) is never touched.
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createPublicKey } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRenderer } from "./build-renderer.mjs";
@@ -19,7 +18,7 @@ import { NOTICES_FILE, thirdPartyNotices } from "./reports/licenses.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 // Keep dependency module identities under node_modules even when link-deps.sh points to a
 // lockfile-specific cache. Fix the working directory too, so emitted paths do not depend on cwd.
-export function buildMain({ root = here, outfile = join(root, "out/main/main.cjs"), updatePublicKey = null } = {}) {
+export function buildMain({ root = here, outfile = join(root, "out/main/main.cjs") } = {}) {
   root = resolve(root);
   outfile = resolve(outfile);
   stageTerminalRuntime(root, dirname(outfile));
@@ -27,25 +26,19 @@ export function buildMain({ root = here, outfile = join(root, "out/main/main.cjs
     absWorkingDir: root, preserveSymlinks: true,
     bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof",
     entryPoints: [join(root, "src/main/main.ts")], outfile, external: ["electron", "original-fs", "node-pty"],
-    define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) },
   });
 }
 
 async function buildAll() {
 const out = join(here, "out");
 if (process.argv.includes("--watch")) throw new Error("Use npm run renderer:watch; the full build is not a process watcher");
-// Trust is embedded at build time; runtime environment variables cannot replace it.
-const releaseConfig = JSON.parse(readFileSync(join(here, "release-config.json"), "utf8"));
-const updatePublicKey = releaseConfig.publicKey ?? null;
-if (updatePublicKey && createPublicKey(updatePublicKey).asymmetricKeyType !== "ed25519") throw new Error("Release public key must be Ed25519");
-if (process.env.BOTLING_RELEASE_BUILD === "1" && !updatePublicKey) throw new Error("Release build requires an explicit Ed25519 public key in release-config.json");
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "renderer"), { recursive: true });
 
 const web = join(here, "..", "Web");
 const node = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof" };
 await Promise.all([
-  buildMain({ updatePublicKey }),
+  buildMain(),
   // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
   buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
@@ -59,8 +52,6 @@ await Promise.all([
   buildRenderer({ root: here }),
 ]);
 packageAgyHelper(here);
-// Storage epoch must travel with the core, including staged development builds.
-writeFileSync(join(out, "core/storage-contract.json"), JSON.stringify(JSON.parse(readFileSync(join(here, "package.json"), "utf8")).botlingStorageContract));
 // The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.
 // Its bundled packages' licences go next to it (THIRD_PARTY_LICENSES.txt, from the build's metafile).
 const report = await build({ ...node, entryPoints: [join(here, "reports/cli-main.ts")], outfile: join(out, "report/report.cjs"), minify: true, metafile: true, jsx: "automatic", loader: { ".css": "text" }, define: { "process.env.NODE_ENV": '"production"' }, tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } });

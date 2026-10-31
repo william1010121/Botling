@@ -40,7 +40,7 @@ export function startConfiguredMobile(core: MobileCore & { shutdown(): Promise<v
       writeFileSync(temp, JSON.stringify({ pid: process.pid, generation: generation.id, assets }), { mode: 0o600 });
       renameSync(temp, receipt);
     },
-    updating: () => existsSync(join(dirname(dataDir), 'hot-install-pending.json')), tls: { cert: readFileSync(config.certFile), key: readFileSync(config.keyFile) },
+    tls: { cert: readFileSync(config.certFile), key: readFileSync(config.keyFile) },
     google: config.google ? new GoogleAuth(config.origin, () => GoogleCredentials.parse(privateJSON(config.google!.credentialsFile))) : undefined,
     clients: () => Clients.parse(privateJSON(config.clientsFile)), ledger: new MutationLedger(join(dataDir, 'mobile-mutations')), core }, failed);
   closeWithCore(core, mobile);

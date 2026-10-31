@@ -50,29 +50,22 @@ from `desktop/node_modules`), so `cd Web && npm run build` and its output are un
 
 See [First open / 首次開啟](../docs/first-open.md) for macOS 15 **System Settings → Privacy & Security → Open Anyway**, the app-scoped quarantine command, and Windows SmartScreen.
 
-Updates check GitHub Releases `v2.*` by default (an explicit Settings opt-out is kept).
-**Download and verify** authenticates an Ed25519 manifest, ZIP SHA-256 and exact size before extraction or app modification. **Restart to update** is a separate required click; ordinary quit never installs. A shell helper waits for the old process to flush and exit, snapshots its data, swaps sibling bundles, and retains `previous.app` until the new version has a loaded, ready renderer and responsive core. Exit/crash before the receipt restores both the old bundle and its flushed data. A slow healthy process or keychain prompt has no short rollback deadline. Plugins, routines and user work start only after commit; SIGTERM uses normal flush shutdown with a five-second helper grace. macOS only; read-only/translocated apps must be moved into Applications. Only the verified extracted app has quarantine removed.
+## Updates (2.1.0)
 
-Non-`--dir` packaging refuses missing trust unless `--unsigned-updates` is explicitly supplied. Development ZIP/DMG filenames and packaged metadata are marked `unsigned-updates`; this is separate from Apple ad-hoc signing.
+Releases are found, downloaded and installed by **electron-updater** against GitHub Releases, the same way on macOS, Windows and Linux
+(AppImage). `electron-builder` writes the update feed (`latest-mac.yml`, `latest.yml`, `latest-linux.yml`) next to the installers; the
+release workflow uploads it with them. Updates check on by default (a Settings opt-out is kept), at most every 6 hours, and Settings → Updates
+has **Check now**. **Download update** and **Restart to update** are separate clicks, and an ordinary quit never installs. Running work is saved
+and resumed after the restart (`core/restart-continuation.ts`).
 
-Release trust is deliberately **unconfigured** (`release-config.json`: `publicKey: null`): this checkout cannot self-install updates. No production key has been created. A maintainer must explicitly run the following once (not part of build):
-
-```sh
-cd desktop
-node scripts/release-sign.mjs keygen
-```
-
-It exclusively creates `~/.botling-release/ed25519.key` with mode **600** and `ed25519.pub` (refuses overwrite). Keep the private key outside the repo. Put the **public** PEM string in `desktop/release-config.json`'s `publicKey`, then build with `BOTLING_RELEASE_BUILD=1` (fails without configured Ed25519 trust). This public key is embedded in main; runtime variables cannot override it. In CI, supply the matching private PEM through **BOTLING_RELEASE_KEY**; signing locally otherwise reads the operator's key file.
-
-After building a release ZIP, sign it explicitly:
-
-```sh
-node scripts/release-sign.mjs sign 2.0.1 dist/Botling-2-2.0.1-mac-arm64.zip
-```
-
-Upload that ZIP and its adjacent `Botling-2-2.0.1-mac-arm64.zip.manifest.json` to the same `v2.0.1` GitHub release. The script refuses a key different from release-config.json. Manifest fields are `version`, lowercase hex `sha256`, byte `size`, and base64 `signature`. Ed25519 signs UTF-8 `JSON.stringify([version, sha256, size])` without newline. The ZIP must contain only `Botling 2.app/…`, with matching bundle ID/version. Signing this manifest does not replace Apple notarization or establish trust in the first download. Future key rotation requires a build already trusted by the old key.
-
-Focused updater tests use disposable keys, a loopback release server, and fake app bundles under `desktop/.cache/test-data`; they never update an installed app. The packaged transaction test also stages the real built ZIP using throwaway signed manifests in disposable locations; production trust remains unconfigured. The test driver supplies trust/transport only to the production `VerifiedInstaller` class; the real packaged app writes its receipt and LaunchServices reopens the restored older bundle. It does not exercise a live production feed or enable production trust.
+- macOS updates need a Developer ID signed and notarized build (the release workflow does that; see `.github/workflows/release.yml`). An ad-hoc
+  signed build (a development or trial build) cannot update itself: install the next one by hand.
+- Windows builds are unsigned for now: the first install shows SmartScreen's warning; updates work.
+- A Linux `.deb` cannot update itself: Settings shows that a newer version exists and opens its release page. The AppImage updates itself.
+- A developer build made by a bot (`<install-build>`) is installed by `core/app-swap.ts`: a small script waits for the app to quit, swaps the
+  bundle, opens the new one, and puts the old one back if it has not come up after 90 seconds. That path is macOS only.
+- `scripts/release-check.mjs` checks the version, the lockfile, the profile and the tag agree, and with `--artifacts <dir> --platform mac|win|linux`
+  that the installers and the feed are all there and the feed's checksums match.
 
 Startup migrations currently seed/upgrade the component/plugin library, move legacy team data, recover chat/approval/subagent state, and create archives/routines. Before candidate launch the helper snapshots the flushed app data, including persistent Electron stores. Only known regenerable Chromium profile caches and singleton files are excluded; core stores, cookies, Local Storage, IndexedDB and partition data are retained. Archive expansion is capped at 2 GiB, and staging, restart and copying check available space with a 64 MiB reserve. Rollback prepares a complete sibling copy after candidate shutdown, then renames it into place; it never deletes live data before copying. Project archives, routine files, locks, plugin activation, scans, schedules, and user work wait for commit. Only disposable update assets (downloads, new staging, logs) are reclaimed, with at most five bounded diagnostic records. User-data copies (`data-before`, `.update-after-*`, `.update-restore-*`, even partial copies) and `previous.app` are never automatically deleted. Snapshot failure (`failed:18`) retains original data and partial data copies, while clearing disposable assets/pending state. Restore preparation/rename failures (`failed:19/20/21`, legacy ambiguous `16`) preserve recovery copies, forbid automatic reopen, and block normal core/profile startup with the exact recovery paths. Recovery UI uses a disposable profile. Keep the app closed while restoring the complete snapshot, reopen it, then use the recovery page’s explicit **I restored my data — continue** action. Continue requires recognizable core settings/chat data whose persistent file inventory and content hashes match a completed snapshot or whole-directory previous-data copy; an empty directory or arbitrary files cannot satisfy it. It acknowledges only that failure and restarts against the same data destination, preserving all copies. The recovery page lists copy paths and byte sizes. **Delete recovery copies…** opens a native confirmation defaulting to **Keep copies**; deletion requires the same validation, and keeps a running or only-good previous app. A digest of the validated live data allows Continue after explicit deletion, but subsequent data changes require validation again. Unmatched/partial copies stay available for manual recovery/deletion in Finder; the app cannot certify an independently reconstructed data set. Candidate stdout/stderr are not redirected to a growing boot log.
 
@@ -105,8 +98,8 @@ npm install
 | `npm run test:live:codex` | One real Codex turn and one real two-head claim (three turns; Codex gets a throwaway `CODEX_HOME` with a copy of `auth.json` only). |
 | `npm run test:live:3a` | Phase 3a's real checks: claude hearing a message mid-turn, a monitored command through `codex app-server`'s `command/exec`, a Catch-up summary by `codex exec` (same throwaway `CODEX_HOME`). |
 | `npm run typecheck` | `tsc --noEmit`. |
-| `npm run dist:mac -- --unsigned-updates` | Build out/, then electron-builder: `dist/mac-arm64/Botling 2.app`, `dist/Botling-2-<version>-mac-arm64-unsigned-updates.zip` and `dist/Botling-2-<version>-mac-arm64-unsigned-updates.dmg` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
-| `npm run test:packaged` | Packaged smoke, delivery, and real swap/receipt/rollback tests (after `npm run dist:mac -- --unsigned-updates` and `npm run test:packaged:fixture`; `BOTLING_PACKAGED_APP=<…/Botling 2.app>` for another copy). |
+| `npm run dist:mac` | Build out/, then electron-builder: `dist/mac-arm64/Botling 2.app`, `dist/Botling-2-<version>-mac-arm64.zip`, `.dmg` and `latest-mac.yml` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
+| `npm run test:packaged` | Packaged smoke and delivery tests (after `npm run dist:mac`; `BOTLING_PACKAGED_APP=<…/Botling 2.app>` for another copy). |
 
 Since Phase 3b the build also writes `out/host/host.mjs` (Web/host/src/host.ts, bundled as Web/build.mjs
 bundles it for 1.x) and `out/host/check-plugin.cjs` (the plugin check, the command Maintainer runs).

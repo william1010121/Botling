@@ -1,10 +1,11 @@
-// Phase 5b: the update check (src/main/updates.ts) — which GitHub releases count, the order of versions,
-// and when main looks (on by default, at most every 6 hours, Check now always).
+// The update check (src/main/updates.ts) on top of electron-updater: what counts as newer, when main looks (on by
+// default, at most every 6 hours, Check now always), the download and the restart. electron-updater itself is
+// replaced by a stand-in; no network, no real install.
 import { describe, expect, it } from "vitest";
-import { CHECK_EVERY_MS, Updater, compareVersions, parseVersion, pickUpdate } from "../../src/main/updates";
+import { CHECK_EVERY_MS, Updater, compareVersions, parseVersion, releaseView, type UpdateInfoLike, type UpdaterLike } from "../../src/main/updates";
 
-const page = (tag: string) => `https://github.com/william1010121/Botling/releases/tag/${tag}`;
-const release = (tag: string, extra: Record<string, unknown> = {}) => ({ tag_name: tag, name: `Botling ${tag}`, html_url: page(tag), draft: false, prerelease: false, published_at: "2026-10-01T00:00:00Z", assets: [], ...extra });
+const page = (version: string) => `https://github.com/william1010121/Botling/releases/tag/v${version}`;
+const info = (version: string, extra: Partial<UpdateInfoLike> = {}): UpdateInfoLike => ({ version, releaseName: `Botling ${version}`, releaseDate: "2026-10-01T00:00:00Z", files: [{ url: `Botling-2-${version}-mac-arm64.zip` }], ...extra });
 
 describe("versions", () => {
   it("orders as semver does", () => {
@@ -18,74 +19,85 @@ describe("versions", () => {
   });
 });
 
-describe("pickUpdate", () => {
-  const feed = [
-    release("v1.19.0", { assets: [{ name: "botling-1.19.0-macOS.zip" }] }), // the Swift app's: never
-    release("v2.1.0", { draft: true }),
-    release("v2.0.2", { assets: [{ name: "Botling-2-2.0.2-win-x64.exe" }, { name: "Botling-2-2.0.2-mac-arm64.zip" }] }),
-    release("v2.0.1"),
-    release("v2.0.3-rc.1", { prerelease: true }),
-    release("v2.0.9", { html_url: "https://evil.example/releases/tag/v2.0.9" }),
-    { tag_name: 3, html_url: page("x") }, null, "junk",
-  ];
-  it("takes the newest published 2.x release with this platform's download", () => {
-    expect(pickUpdate(feed, "2.0.0", "darwin", "arm64")).toEqual({
-      version: "2.0.2", name: "Botling v2.0.2", url: page("v2.0.2"), publishedAt: "2026-10-01T00:00:00Z", asset: "Botling-2-2.0.2-mac-arm64.zip",
-    });
-    expect(pickUpdate(feed, "2.0.0", "linux", "x64")?.asset).toBeNull();
-  });
-  it("uses the ZIP for macOS self-updates when a release also contains the install DMG", () => {
-    const dmg = { name: "Botling-2-2.0.2-mac-arm64.dmg" };
-    const zip = { name: "Botling-2-2.0.2-mac-arm64.zip" };
-    for (const assets of [[dmg, zip], [zip, dmg]]) {
-      expect(pickUpdate([release("v2.0.2", { assets })], "2.0.0", "darwin", "arm64")?.asset).toBe(zip.name);
-    }
-    expect(pickUpdate([release("v2.0.2", { assets: [dmg] })], "2.0.0", "darwin", "arm64")?.asset).toBeNull();
-  });
-  it("offers prereleases only to a prerelease build", () => {
-    expect(pickUpdate(feed, "2.0.0-dev.0", "darwin", "arm64")?.version).toBe("2.0.3-rc.1");
-  });
-  it("nothing when this build is the newest, or the feed is not a list", () => {
-    expect(pickUpdate(feed, "2.0.2", "darwin", "arm64")).toBeNull();
-    expect(pickUpdate({ message: "API rate limit exceeded" }, "2.0.0", "darwin", "arm64")).toBeNull();
-    expect(pickUpdate(feed, "not a version", "darwin", "arm64")).toBeNull();
+describe("releaseView", () => {
+  it("is the release's page (always this repository's), name, date and download", () => {
+    expect(releaseView(info("2.1.0"))).toEqual({ version: "2.1.0", name: "Botling 2.1.0", url: page("2.1.0"), publishedAt: "2026-10-01T00:00:00Z", asset: "Botling-2-2.1.0-mac-arm64.zip" });
+    expect(releaseView(info("2.1.0", { releaseName: null, files: [], releaseDate: undefined }))).toMatchObject({ name: "Botling 2.1.0", asset: null, publishedAt: null });
   });
 });
 
 describe("Updater", () => {
-  function make(enabled: boolean, feed: unknown | (() => never) = [release("v2.0.2")]) {
+  function make(enabled: boolean, opts: { newest?: UpdateInfoLike | null; unavailable?: string | null; current?: string; fail?: Error } = {}) {
     let saved: { checkedAt: number; newer: any } | null = null;
     let now = 1_000_000;
-    let fetches = 0;
+    const calls = { check: 0, download: 0, install: [] as unknown[][] };
+    let downloaded: ((info: UpdateInfoLike) => void) | null = null;
+    const newest = opts.newest === undefined ? info("2.0.2") : opts.newest;
+    const fake: UpdaterLike = {
+      autoDownload: true, autoInstallOnAppQuit: true, allowPrerelease: true, allowDowngrade: true,
+      checkForUpdates: async () => { calls.check++; if (opts.fail) throw opts.fail; return newest ? { isUpdateAvailable: true, updateInfo: newest } : null; },
+      downloadUpdate: async () => { calls.download++; downloaded?.(newest!); return []; },
+      quitAndInstall: (...args) => { calls.install.push(args); },
+      on: (_event, listener) => { downloaded = listener; },
+    };
     const updater = new Updater({
-      current: "2.0.0", platform: "darwin", arch: "arm64",
-      enabled: async () => enabled,
-      fetchFeed: async () => { fetches++; return typeof feed === "function" ? (feed as () => never)() : feed; },
+      current: opts.current ?? "2.0.0", updater: fake, enabled: async () => enabled, unavailable: () => opts.unavailable ?? null,
       load: () => saved, save: (state) => { saved = state; }, now: () => now,
     });
-    return { updater, fetches: () => fetches, tick: (ms: number) => { now += ms; } };
+    return { updater, fake, calls, tick: (ms: number) => { now += ms; } };
   }
+
+  it("never downloads or installs by itself, and a stable build ignores prereleases", () => {
+    const { fake } = make(true);
+    expect(fake).toMatchObject({ autoDownload: false, autoInstallOnAppQuit: false, allowPrerelease: false, allowDowngrade: false });
+    expect(make(true, { current: "2.0.0-local-trial.1" }).fake.allowPrerelease).toBe(true);
+  });
   it("off: looks only when asked (Check now)", async () => {
-    const { updater, fetches } = make(false);
-    expect(await updater.check(false)).toEqual({ current: "2.0.0", enabled: false, newer: null, checkedAt: null, error: null });
-    expect(fetches()).toBe(0);
+    const { updater, calls } = make(false);
+    expect(await updater.check(false)).toEqual({ current: "2.0.0", enabled: false, newer: null, checkedAt: null, error: null, installError: null, readyVersion: null });
+    expect(calls.check).toBe(0);
     const view = await updater.check(true);
     expect(view.newer?.version).toBe("2.0.2");
-    expect(fetches()).toBe(1);
-    expect(updater.releasePage()).toBe(page("v2.0.2"));
+    expect(calls.check).toBe(1);
+    expect(updater.releasePage()).toBe(page("2.0.2"));
   });
   it("on: at most every 6 hours", async () => {
-    const { updater, fetches, tick } = make(true);
+    const { updater, calls, tick } = make(true);
     await updater.check(false);
     await updater.check(false);
-    expect(fetches()).toBe(1);
+    expect(calls.check).toBe(1);
     tick(CHECK_EVERY_MS);
     await updater.check(false);
-    expect(fetches()).toBe(2);
+    expect(calls.check).toBe(2);
+  });
+  it("nothing when this build is the newest, or the feed says there is no update", async () => {
+    expect((await make(true, { newest: info("2.0.0") }).updater.check(true)).newer).toBeNull();
+    expect((await make(true, { newest: null }).updater.check(true)).newer).toBeNull();
   });
   it("a failure is said, not thrown", async () => {
-    const { updater } = make(true, () => { throw new Error("offline"); });
-    expect((await updater.check(false)).error).toBe("Could not reach GitHub Releases: offline");
+    const { updater } = make(true, { fail: new Error("offline") });
+    expect((await updater.check(false)).error).toBe("Could not check for updates: offline");
     expect(updater.releasePage()).toBeNull();
+  });
+  it("download is an explicit step; restart installs only what was downloaded", async () => {
+    const { updater, calls } = make(true);
+    expect(() => updater.restart()).toThrow(/Nothing is downloaded/);
+    await expect(updater.download()).rejects.toThrow(/no newer release/);
+    await updater.check(true);
+    const view = await updater.download();
+    expect(calls.download).toBe(1);
+    expect(view.readyVersion).toBe("2.0.2");
+    await updater.download();
+    expect(calls.download).toBe(1);
+    expect(calls.install).toHaveLength(0);
+    updater.restart();
+    expect(calls.install).toEqual([[true, true]]);
+  });
+  it("where it cannot update itself (a development run, a Linux .deb) it says why and downloads nothing", async () => {
+    const { updater, calls } = make(true, { unavailable: "this Linux package (.deb) cannot update itself." });
+    const view = await updater.check(true);
+    expect(view).toMatchObject({ newer: { version: "2.0.2" }, installError: "this Linux package (.deb) cannot update itself." });
+    await expect(updater.download()).rejects.toThrow(/\.deb/);
+    expect(calls.download).toBe(0);
   });
 });

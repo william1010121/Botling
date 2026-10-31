@@ -1,8 +1,11 @@
-// GitHub Releases 2.x discovery. Verification and installation live in update-install.ts.
+// Released versions. electron-updater finds, downloads and installs them from the GitHub Releases feed that
+// electron-builder writes (latest.yml, latest-mac.yml, latest-linux.yml, signed by the platform's own
+// certificate), the same way on macOS, Windows and Linux (AppImage). A Linux .deb cannot update itself, so
+// there it only says a newer version exists and opens the release page. Developer builds are a different
+// path (core/app-swap.ts).
 import type { ReleaseView, UpdateView } from "../contract";
 
 export const REPOSITORY = "william1010121/Botling";
-export const FEED = `https://api.github.com/repos/${REPOSITORY}/releases?per_page=30`;
 export const RELEASE_PAGE = `https://github.com/${REPOSITORY}/releases/`;
 export const CHECK_EVERY_MS = 6 * 60 * 60_000;
 
@@ -34,75 +37,78 @@ export function compareVersions(a: Version, b: Version): number {
   return 0;
 }
 
-/** A release as GitHub's API gives it (only what is read). */
-interface RawRelease { tag_name?: unknown; name?: unknown; html_url?: unknown; draft?: unknown; prerelease?: unknown; published_at?: unknown; assets?: unknown }
-
-/** The artifact name electron-builder gives this platform's download (electron-builder.config.cjs). */
-export function assetPattern(platform: string, arch: string): RegExp {
-  const os = platform === "darwin" ? "mac" : platform === "win32" ? "win" : "linux";
-  return new RegExp(`^Botling-2-.+-${os}-${arch === "x64" ? "(?:x64|x86_64|amd64)" : arch === "arm64" ? "(?:arm64|aarch64)" : arch}\\.`);
+/** What electron-updater says about a release (the fields read). */
+export interface UpdateInfoLike {
+  version: string;
+  releaseName?: string | null;
+  releaseDate?: string;
+  files?: { url: string }[];
+  path?: string;
 }
-
-/**
- * The newest release newer than `current` that this build may take, or null. Anything that does not
- * look like one of the repository's release pages is skipped, so a page link is always one of its own.
- */
-export function pickUpdate(releases: unknown, current: string, platform: string, arch: string): ReleaseView | null {
-  const mine = parseVersion(current);
-  if (!mine || !Array.isArray(releases)) return null;
-  const pattern = assetPattern(platform, arch);
-  let best: { version: Version; view: ReleaseView } | null = null;
-  for (const raw of releases.slice(0, 100) as RawRelease[]) {
-    if (!raw || typeof raw !== "object" || raw.draft === true) continue;
-    if (typeof raw.tag_name !== "string" || typeof raw.html_url !== "string") continue;
-    const version = parseVersion(raw.tag_name);
-    if (!version || version.major !== 2) continue;
-    if ((raw.prerelease === true || version.pre.length) && !mine.pre.length) continue;
-    if (!raw.html_url.startsWith(RELEASE_PAGE) || raw.html_url.length > 2_000) continue;
-    if (compareVersions(version, mine) <= 0) continue;
-    if (best && compareVersions(version, best.version) <= 0) continue;
-    const assets = Array.isArray(raw.assets) ? raw.assets as { name?: unknown }[] : [];
-    const asset = assets.map((entry) => entry?.name).find((name): name is string => typeof name === "string" && pattern.test(name) && (platform !== "darwin" || name.endsWith(".zip"))) ?? null;
-    best = {
-      version,
-      view: {
-        version: raw.tag_name.replace(/^v/, "").slice(0, 100),
-        name: (typeof raw.name === "string" && raw.name.trim() ? raw.name : raw.tag_name).slice(0, 400),
-        url: raw.html_url,
-        publishedAt: typeof raw.published_at === "string" ? raw.published_at.slice(0, 100) : null,
-        asset: asset ? asset.slice(0, 400) : null,
-      },
-    };
-  }
-  return best?.view ?? null;
+/** The part of electron-updater's AppUpdater this file uses, so tests can stand in for it. */
+export interface UpdaterLike {
+  autoDownload: boolean;
+  autoInstallOnAppQuit: boolean;
+  allowPrerelease: boolean;
+  allowDowngrade: boolean;
+  checkForUpdates(): Promise<{ isUpdateAvailable?: boolean; updateInfo: UpdateInfoLike } | null>;
+  downloadUpdate(): Promise<unknown>;
+  quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void;
+  on(event: "update-downloaded", listener: (info: UpdateInfoLike) => void): unknown;
 }
 
 export interface UpdaterOptions {
   current: string;
-  platform: string;
-  arch: string;
+  updater: UpdaterLike;
   /** Whether Settings has the check on (asked each time: the core keeps settings.json). */
   enabled: () => Promise<boolean>;
-  /** Reads the feed (GitHub's JSON); throws on failure. */
-  fetchFeed: () => Promise<unknown>;
+  /** Null: this install can update itself; else why not (a development run, a Linux .deb). */
+  unavailable: () => string | null;
   /** The last result, kept across starts (`<data>/updates.json`). */
   load: () => { checkedAt: number; newer: ReleaseView | null } | null;
   save: (state: { checkedAt: number; newer: ReleaseView | null }) => void;
   now?: () => number;
-  installStatus?: () => { installError: string | null; readyVersion: string | null; recoveryError?: string | null; recoveryId?:string|null };
+}
+
+/** The release page for a version (always one of this repository's own). */
+export const releaseUrl = (version: string) => `${RELEASE_PAGE}tag/v${version}`;
+
+/** A release as the Settings page and the update notice show it. */
+export function releaseView(info: UpdateInfoLike): ReleaseView {
+  const asset = info.files?.[0]?.url ?? info.path ?? null;
+  return {
+    version: info.version.slice(0, 100),
+    name: (info.releaseName?.trim() || `Botling ${info.version}`).slice(0, 400),
+    url: releaseUrl(info.version),
+    publishedAt: info.releaseDate ? String(info.releaseDate).slice(0, 100) : null,
+    asset: asset ? asset.slice(0, 400) : null,
+  };
 }
 
 export class Updater {
   private running: Promise<UpdateView> | null = null;
   private error: string | null = null;
+  private downloading: Promise<UpdateView> | null = null;
+  private downloaded: string | null = null;
 
-  constructor(private readonly options: UpdaterOptions) {}
+  constructor(private readonly options: UpdaterOptions) {
+    const updater = options.updater;
+    updater.autoDownload = false;            // Downloading is the user's click.
+    updater.autoInstallOnAppQuit = false;    // A normal quit never installs.
+    updater.allowDowngrade = false;
+    // A prerelease build (a trial) follows prereleases; a stable one does not.
+    updater.allowPrerelease = (parseVersion(options.current)?.pre.length ?? 0) > 0;
+    updater.on("update-downloaded", (info) => { this.downloaded = info.version; });
+  }
 
   /** The state as last known, without fetching. */
   view(enabled: boolean): UpdateView {
     const saved = this.options.load();
     const newer = saved?.newer && this.stillNewer(saved.newer) ? saved.newer : null;
-    return { current: this.options.current, enabled, newer, checkedAt: saved?.checkedAt ?? null, error: this.error, ...this.options.installStatus?.() };
+    return {
+      current: this.options.current, enabled, newer, checkedAt: saved?.checkedAt ?? null, error: this.error,
+      installError: this.options.unavailable(), readyVersion: this.downloaded,
+    };
   }
 
   /** Checks when on and due (or always when `manual`); one check at a time. */
@@ -114,16 +120,42 @@ export class Updater {
     if (!manual && saved && now - saved.checkedAt < CHECK_EVERY_MS && now >= saved.checkedAt) return this.view(enabled);
     this.running ??= (async () => {
       try {
-        const feed = await this.options.fetchFeed();
-        const newer = pickUpdate(feed, this.options.current, this.options.platform, this.options.arch);
+        const result = await this.options.updater.checkForUpdates();
+        const available = !!result && result.isUpdateAvailable !== false;
+        const info = result?.updateInfo;
+        const newer = available && info && this.stillNewer({ version: info.version }) ? releaseView(info) : null;
         this.error = null;
         this.options.save({ checkedAt: (this.options.now ?? Date.now)(), newer });
       } catch (failure) {
-        this.error = `Could not reach GitHub Releases: ${String((failure as Error)?.message ?? failure).slice(0, 300)}`;
+        this.error = `Could not check for updates: ${String((failure as Error)?.message ?? failure).slice(0, 300)}`;
       }
       return this.view(enabled);
     })().finally(() => { this.running = null; });
     return this.running;
+  }
+
+  /** Downloads the newer release (electron-updater verifies it against the feed's checksum and the platform signature). */
+  async download(): Promise<UpdateView> {
+    const enabled = await this.options.enabled();
+    const why = this.options.unavailable();
+    if (why) throw new Error(why);
+    const newer = this.options.load()?.newer;
+    if (!newer || !this.stillNewer(newer)) throw new Error("There is no newer release.");
+    this.downloading ??= (async () => {
+      try { if (this.downloaded !== newer.version) await this.options.updater.downloadUpdate(); this.error = null; }
+      catch (failure) { this.error = `Download failed: ${String((failure as Error)?.message ?? failure).slice(0, 300)}`; throw failure; }
+      return this.view(enabled);
+    })().finally(() => { this.downloading = null; });
+    return this.downloading;
+  }
+
+  /** The version downloaded and ready to install, or null. */
+  get ready(): string | null { return this.downloaded; }
+
+  /** Quits and installs the downloaded release (the caller has saved running work first). */
+  restart() {
+    if (!this.downloaded) throw new Error("Nothing is downloaded yet.");
+    this.options.updater.quitAndInstall(true, true);
   }
 
   /** The page to open for the newer release, or null. */
@@ -132,7 +164,7 @@ export class Updater {
     return newer && this.stillNewer(newer) && newer.url.startsWith(RELEASE_PAGE) ? newer.url : null;
   }
 
-  private stillNewer(release: ReleaseView): boolean {
+  private stillNewer(release: { version: string }): boolean {
     const mine = parseVersion(this.options.current);
     const theirs = parseVersion(release.version);
     return !!mine && !!theirs && compareVersions(theirs, mine) > 0;

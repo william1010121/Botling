@@ -12,7 +12,6 @@ import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core, type AppAnswer, type AppOp } from "./server";
-import { parseReport } from "../hot-install-plan";
 import { Doctor } from "./doctor";
 import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
@@ -180,7 +179,7 @@ function hostNode(): HostCommand | null {
 const portSealer = parentPort ? new PortSealer((message) => parentPort.postMessage(message)) : null;
 
 /**
- * Developer mode's and updates' requests of main (self-update.ts): a picture of the window, quitting for
+ * Developer mode's and updates' requests of main (app-swap.ts): a picture of the window, quitting for
  * a build's install, or installing the newer release (main restarts on it).
  * `{botling: "app"}` out, `{botling: "appDone"}` back. Only under Electron, where main is there to answer.
  */
@@ -189,12 +188,11 @@ let appAsks = 0;
 const appBridge = parentPort ? {
   pid: Number(process.env.BOTLING_MAIN_PID) || null,
   dataDir: process.env.BOTLING_APP_DATA_DIR || null,
-  localDataDir: process.env.BOTLING_APP_LOCAL_DATA_DIR || null,
   bundle: process.env.BOTLING_APP_BUNDLE || null,
   request: (op: AppOp, args?: Record<string, string>) => new Promise<AppAnswer>((resolve) => {
     const id = ++appAsks;
-    // Installing a release downloads and verifies it first (main/update-install.ts), which can take minutes.
-    const timer = setTimeout(() => { appAnswers.delete(id); resolve({ ok: false, error: "Main did not answer." }); }, op === "installRelease" ? 20 * 60_000 : op === "planBuild" || op === "installBuild" ? 5 * 60_000 : 30_000);
+    // Installing a release downloads and verifies it first (main/updates.ts), which can take minutes.
+    const timer = setTimeout(() => { appAnswers.delete(id); resolve({ ok: false, error: "Main did not answer." }); }, op === "installRelease" ? 20 * 60_000 : 30_000);
     timer.unref?.();
     appAnswers.set(id, (answer) => { clearTimeout(timer); appAnswers.delete(id); resolve(answer); });
     parentPort.postMessage({ botling: "app", id, op, ...(args ? { args } : {}) });
@@ -222,7 +220,7 @@ function groupTiming(text: string | undefined) {
 
 const core = new Core({
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { quotaRetriever: retrieveQuota } : {}),
-  // A swap's self-check (BOTLING_CORE_PROBE, main/core-swap.ts) runs on a scratch folder and checks no CLI.
+  // A swap's self-check (BOTLING_CORE_PROBE) runs on a scratch folder and checks no CLI.
   ...(process.env.BOTLING_AGENT === "claude" && process.env.BOTLING_CORE_PROBE !== "1" ? { doctor: new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(dataDir)), dataDir) }) } : {}),
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
@@ -292,7 +290,7 @@ log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGE
 if (process.env.BOTLING_STARTUP_LOG) new StartupMarks({ file: process.env.BOTLING_STARTUP_LOG }).mark("core.loaded");
 
 /**
- * A core hot swap (main/core-swap.ts): `{botling: "drain", id, timeoutMs, boundaryMs}` stops beginning turns and
+ * A core hot swap : `{botling: "drain", id, timeoutMs, boundaryMs}` stops beginning turns and
  * waits for those under way, then answers `{botling: "drained", id, ok, …}`; `{botling: "undrain"}` calls it off.
  */
 function swapControl(data: { botling?: unknown; id?: unknown; timeoutMs?: unknown; boundaryMs?: unknown }, reply: (message: unknown) => void): boolean {
@@ -321,13 +319,8 @@ if (parentPort) {
       const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown; plan?: unknown };
       if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}), ...(answer.plan !== undefined ? { plan: answer.plan } : {}) });
     }
-    else if (data && typeof data === "object" && data.botling === "buildInstalled") {
-      // Main's report of a hot install of a developer build (main/hot-install.ts), to whichever core runs at its end.
-      const report = parseReport((data as { report?: unknown }).report);
-      if (report) { try { core.devBuilds.hotOutcome(report); } catch (error) { process.stderr.write(`hot install report: ${(error as Error).message}\n`); } }
-    }
     else if (data && typeof data === "object" && data.botling === "release") {
-      // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (self-update.ts).
+      // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (app-swap.ts).
       const release = data as { version?: unknown; name?: unknown; url?: unknown; current?: unknown; unavailable?: unknown };
       const text = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : "");
       if (typeof release.version === "string" && typeof release.url === "string" && release.url.startsWith("https://github.com/")) {
