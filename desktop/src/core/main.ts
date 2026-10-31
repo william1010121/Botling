@@ -12,7 +12,6 @@ import { Core, type AppAnswer, type AppOp } from "./server";
 import { Doctor } from "./doctor";
 import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
-import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
 import { Layout } from "./store/workspace";
 import { readSettings } from "./settings";
 import { claudeSessionPermissionConfig, type HeadConfig } from "./agent/head";
@@ -254,12 +253,7 @@ const core = new Core({
   // The app's copy of the web AIs' page readers (build.mjs copies 1.x's Resources/web-extractors).
   webExtractors: join(__dirname, "..", "web-extractors"),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
-  // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   app: appBridge,
-  oneX: {
-    folder: process.env.BOTLING_1X_DIR || null,
-    process: process.env.BOTLING_1X_PROCESS ? new RegExp(process.env.BOTLING_1X_PROCESS) : DEFAULT_ONE_X_PROCESS,
-  },
 });
 // Disabled by default. Configuration and bind failures never terminate the desktop core.
 try {

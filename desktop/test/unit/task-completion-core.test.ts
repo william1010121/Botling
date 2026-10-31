@@ -69,7 +69,7 @@ describe("task.complete over the core transport", () => {
     expect(await complete(c)).toEqual({ changed: true });
   });
 
-  it("allows manual closure under an advisory project lock without changing the holder's tasks or lock", async () => {
+  it("allows manual closure with two cores on one project without changing the other's tasks", async () => {
     const dir = tempDir("task-completion-lock");
     const project = "44444444-4444-4444-8444-444444444444";
     const folder = join(dir, "project"); mkdirSync(folder);
@@ -81,15 +81,11 @@ describe("task.complete over the core transport", () => {
     const first = core(join(dir, "a"));
     const firstTask = (await first.chat(project)).tasks.find((t: any) => t.id === "a-task");
     expect(firstTask).toMatchObject({ state: "pending" });
-    const lockFile = join(folder, ".bot", "botling.lock");
-    const lock = readFileSync(lockFile, "utf8");
-    expect(JSON.parse(lock)).toMatchObject({ app: "Botling 2.0", pid: first.child.pid, dataDir: join(dir, "a") });
     const firstFile = join(dir, "a", "projects", project, "tasks.json");
     const firstSaved = readFileSync(firstFile, "utf8");
     const second = core(join(dir, "b"));
     const snapshot = await second.call({ type: "chat.snapshot", botId: project });
     expect(snapshot.bots.find((b: any) => b.id === project).problem).toBeNull();
-    expect(snapshot.chat.messages.some((m: any) => m.text.includes(`Another Botling (Botling 2.0, pid ${first.child.pid}) has this project open. Both may write`))).toBe(true);
     expect(snapshot.chat.tasks.find((t: any) => t.id === "b-task")).toMatchObject({ state: "pending" });
     // Task IDs belong to the profile, even when both bots work in the same project folder.
     await expect(complete(second, "a-task", project)).rejects.toThrow(/not_found/);
@@ -103,10 +99,7 @@ describe("task.complete over the core transport", () => {
     expect((await first.chat(project)).tasks.find((t: any) => t.id === "a-task")).toEqual(firstTask);
     expect(first.of("tasks.updated")).toHaveLength(0);
     expect(readFileSync(firstFile, "utf8")).toBe(firstSaved);
-    expect(readFileSync(lockFile, "utf8")).toBe(lock);
     await second.kill();
-    // A nonholder must not remove the live holder's lock on shutdown either.
-    expect(readFileSync(lockFile, "utf8")).toBe(lock);
   });
 
   it("refuses manual closure when unreadable chat makes the bot genuinely read-only", async () => {

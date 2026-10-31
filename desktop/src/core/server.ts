@@ -47,7 +47,6 @@ import { maintainerEditorBinding } from "./agent/component-editor";
 import type { Engine, Heads } from "./heads";
 import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, type BotPrompts, type ReportTool } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
-import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
 import { briefConfig, writeBrief } from "./component-brief";
 import { Doctor, DoctorModel } from "./doctor";
@@ -111,8 +110,6 @@ export interface CoreOptions {
   quitTidyMs?: number;
   /** The system's preferred languages, best first (for bots' reply language when settings name none). */
   languages?: string[];
-  /** How to tell that Botling 1.x has a project open (its data folder; null: do not look). */
-  oneX?: OneXCheck;
   /** How often routines are checked (1.x: every 30 s); 0: never (tests drive `checkRoutines`). */
   routineTickMs?: number;
   /** How often quiet runs (and, in 1.x, the network) are looked at (1.x: 20 s; 0: never). */
@@ -281,7 +278,6 @@ export class Core {
     const appMaintainer = maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null));
     const profiles = [...loaded.profiles, appMaintainer];
     const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig);
-    const oneX: OneXCheck = options.oneX ?? { folder: null, process: DEFAULT_ONE_X_PROCESS };
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
     this.profiles = profiles;
@@ -304,7 +300,6 @@ export class Core {
         claimWaitMs: options.claimWaitMs,
         prompts: (engine, heads) => this.prompts(profile, engine, heads),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
-        lock: profile.role === "manager" && !profile.problem && !group ? new ProjectLock(profile.folder, options.dataDir, oneX) : null,
         tidyTimeoutMs: options.tidyTimeoutMs,
         quitTidyMs: options.quitTidyMs,
         ledger: this.ledger,

@@ -20,7 +20,7 @@ async function withQuestion(choices: unknown[], check: (core: Core, file: string
   const file = join(store, "chat.json");
   writeFileSync(file, JSON.stringify([{ id: QUESTION, role: "bot", text, date: 814897456.479, choices }]));
   const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true,
-    routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0, oneX: { folder: null, process: /never/ } });
+    routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
   try { check(core, file, dir); } finally { await core.shutdown(); }
 }
 

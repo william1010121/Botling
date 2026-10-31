@@ -10,7 +10,7 @@ afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 async function fixture() {
  const dir=tempDir('agy-doctor-core'), emitted: Outbound[]=[];
  writeFileSync(join(dir,'settings.json'),JSON.stringify({future:'preserve',agyAcpPath:'/previous'}));
- const core=new Core({dataDir:dir,headConfig:(_p,s)=>({command:process.execPath,cwd:dir,sessionId:s.sessionId,resume:false,allowedTools:[]}),emit:m=>emitted.push(m),deferStartup:true,routineTickMs:0,componentScanMs:0,waitingScanMs:0,watchMs:0,quitTidyMs:0,oneX:{folder:null,process:/never/}});
+ const core=new Core({dataDir:dir,headConfig:(_p,s)=>({command:process.execPath,cwd:dir,sessionId:s.sessionId,resume:false,allowedTools:[]}),emit:m=>emitted.push(m),deferStartup:true,routineTickMs:0,componentScanMs:0,waitingScanMs:0,watchMs:0,quitTidyMs:0});
  let count=0;
  const call=async(cmd:unknown)=>{const id=`agy-${++count}`;await core.receive({v:PROTOCOL_VERSION,id,cmd});return await until(()=>emitted.find(m=>'id' in m&&m.id===id)) as any;};
  await call({type:'boot.commit'});

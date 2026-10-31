@@ -16,8 +16,7 @@
 //
 // The file format is 1.x's (Swift JSONEncoder: dates as seconds since 2001-01-01, nil keys left
 // out), so either app can read the other's file. 2.0 locks with its own lock file
-// (`scheduled-routines.json.botling2.lock`, not 1.x's flock): the project lock (store/lock.ts)
-// keeps the two apps from working on one bot at once.
+// (`scheduled-routines.json.botling2.lock`, not 1.x's flock).
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";

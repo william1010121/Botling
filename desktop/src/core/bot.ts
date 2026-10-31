@@ -45,8 +45,7 @@ import { AGY_EXECUTION_BLOCKED, AgyHead, type AgyConfig } from "./agent/agy";
 //   user's answer, <task> lines move the task cards, <reaction> lines set the bot's reaction,
 //   <no-reply/> leaves a turn claude started itself (a background subagent reporting) unshown.
 //   Other requests (<team>, <component>, …) are taken out and a notice says 2.0 cannot do them yet.
-// - A project bot shares its project's .bot/ with 1.x. As in 1.x, nothing stops it working while
-//   another Botling has the project open too (store/lock.ts): the chat only gets a notice.
+// - A project bot shares its project's .bot/ with 1.x.
 // - A conversation has one storage owner and app-owned Claude/Codex/Antigravity peers.
 //   Each peer has its own process, turns, approvals and partner-<engine>/ files.
 //   A user message goes once to the selected primary; peer commentary never broadcasts work.
@@ -103,7 +102,6 @@ import { tokenFlowContexts } from "./token-flow-context";
 import { meteredTask } from "./token-flow-task";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
-import type { ProjectLock } from "./store/lock";
 import { alwaysAllows } from "./permission-rules";
 import {
   WARM_WINDOW_MS, connectionErrorLine, isConnectionError, lostText, mentionsConnectionError, restoredText, resumeMode, resumeNote,
@@ -188,8 +186,6 @@ export interface BotOptions {
   welcome?: boolean;
   /** Candidate startup must not modify external project notes until its update commits. */
   deferStartup?: boolean;
-  /** A project bot's hold on its project folder (null: it needs none). */
-  lock?: ProjectLock | null;
   /** The main bot's routines get the project list (`Workspace.projectBriefing`). */
   projectBriefing?: () => string;
   /** The component library, command runs and pictures every bot shares (null: none). */
@@ -331,7 +327,6 @@ export class Bot {
   private problem: string | null = null;
   private readOnly = false;
   /** Who else has this bot's project open, when someone does: shown once as a notice, never a block. */
-  private lockNotice: string | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
   // At most one pending write, retaining the book itself rather than queued snapshots.
   private subagentSaveTimer: NodeJS.Timeout | null = null;
@@ -526,7 +521,7 @@ export class Bot {
     if (this.startupActive) return;
     this.startupActive = true;
     if (!this.problem && !this.options.primary) archiveAll(this.paths.archive, this.records);
-    if (!this.options.primary) { this.checkLock(); this.setUpRoutines(); }
+    if (!this.options.primary) this.setUpRoutines();
     for (const peer of this.peers) peer.activateStartup();
   }
 
@@ -601,7 +596,7 @@ export class Bot {
     if (this.partners.has(other)) return this.partners.get(other)!;
     if (other === this.engine) return null;
     if (onDemand ? onDemand !== other : !this.headsSettings.engines.includes(other)) return null;
-    const partner = new Bot({ ...this.options, primary: this, engine: other, lock: null, welcome: false });
+    const partner = new Bot({ ...this.options, primary: this, engine: other, welcome: false });
     this.partners.set(other, partner);
     // The shared chat holds the partner's lines too: the same records, so a change shows in both.
     const mine = new Map(this.records.map((record, index) => [record.id, index]));
@@ -681,26 +676,6 @@ export class Bot {
     } catch (error) {
       this.log(`${name} cannot be read (${(error as Error).message}); it is left as it is`);
       return [];
-    }
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // The project lock
-
-  /**
-   * Takes the project when it can. 1.x has no lock, so another Botling having it open never stops
-   * this bot: the chat gets a notice (once per change) and the bot keeps working.
-   */
-  private checkLock(): void {
-    const lock = this.options.lock;
-    if (!lock) return;
-    const result = lock.acquire();
-    const notice = result.held ? null
-      : `${result.by[0]!.toUpperCase()}${result.by.slice(1)}. Both may write this project's notes (.bot/memory.md); this bot keeps working here.`;
-    if (notice !== this.lockNotice) {
-      this.lockNotice = notice;
-      this.log(notice ?? "has its project to itself again");
-      if (notice && !this.problem) this.notice(notice);
     }
   }
 
@@ -882,7 +857,6 @@ export class Bot {
     if (this.options.primary) return this.options.primary.appMessage(text);
     const words = text.trim();
     if (!words || this.problem || this.profile.problem || this.shuttingDown) return;
-    this.checkLock();
     this.deliverTo(this.engine, words, null, { origin: "app" });
   }
 
@@ -908,7 +882,6 @@ export class Bot {
     }
     if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
     const problem = this.problem ?? this.profile.problem;
-    this.checkLock();
     if (problem) return { kind: "failed", why: problem };
     this.guestTurn = true;
     const engine = this.engine;
@@ -1443,7 +1416,6 @@ export class Bot {
     if (this.problem) throw new ContractError("conflict", this.problem);
     if (this.profile.problem) throw new ContractError("conflict", this.profile.problem);
     if (this.shuttingDown) throw new ContractError("core_unavailable", "The core is shutting down.");
-    this.checkLock();
   }
 
   /**
@@ -3831,7 +3803,6 @@ export class Bot {
    */
   checkRoutines(now = Date.now()) {
     if (this.options.primary || this.shuttingDown || this.readOnly || this.problem || this.profile.problem || !this.routineFile) return;
-    if (this.options.lock) this.checkLock();
     const before = this.routineError;
     const { jobs, scheduled } = this.loadRoutines();
     let ran = false;
@@ -5044,16 +5015,12 @@ export class Bot {
       if (!ended) await last.terminate(1_000);
     }
     const partnerError = await partner;
-    try {
-      let historyError: unknown;
-      try { this.flushSubagents(); if (!this.readOnly) this.store.flushSubagents(); }
-      catch (error) { historyError = error; this.log(`subagents save failed during shutdown: ${String(error)}`); }
-      this.persist();
-      if (historyError) throw historyError;
-      if (partnerError) throw partnerError;
-    } finally {
-      this.options.lock?.release();
-    }
+    let historyError: unknown;
+    try { this.flushSubagents(); if (!this.readOnly) this.store.flushSubagents(); }
+    catch (error) { historyError = error; this.log(`subagents save failed during shutdown: ${String(error)}`); }
+    this.persist();
+    if (historyError) throw historyError;
+    if (partnerError) throw partnerError;
   }
 }
 

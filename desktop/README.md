@@ -6,7 +6,7 @@ Status: **Phase 0 spikes done on macOS; Phase 1b done: several bots with 1.x-com
 read-only 1.x import, a long-lived claude head per bot with approvals, and a React shell hosting the
 reused Web/src chat page. Phase 2a done: 1.x's generated instructions (checked string for string
 against the Swift code), sleep/wake/tidy as 1.x, steering a running reply, the reply tags (choices,
-no-reply, task cards, reactions), Agent-tool subagents, the chat archive and a project lock. Phase 2b
+no-reply, task cards, reactions), Agent-tool subagents, the chat archive. Phase 2b
 done: a Codex head (`codex app-server`, as a coordinator with app-managed workers), and Claude and
 Codex as two heads of one bot (claim, hand-offs with their budgets, shared decisions), with the
 Codex prompts checked string for string against the Swift code. Phase 3a done: two-head timing as
@@ -118,9 +118,7 @@ tests never read the real folder. Try it on a copy: `BOTLING_IMPORT_FROM=… BOT
 Other knobs (all optional): `BOTLING_APPROVAL_TIMEOUT_MS` (default 10 min, as 1.x),
 `BOTLING_IDLE_MS` (a head tidies and sleeps after 30 min idle), `BOTLING_TIDY_TIMEOUT_MS` (the tidy
 turn's limit, 5 min), `BOTLING_QUIT_TIDY_MS` (how long an awake bot may tidy when the app quits; unset: no limit, as
-in 1.x; 0: no tidy), `BOTLING_1X_DIR` (1.x's data folder, to see whether 1.x has a project open; packaged
-builds use `~/.claudecodebot`, development runs only what this names), `BOTLING_1X_PROCESS` (a regex
-for 1.x's command line, default `…/Contents/MacOS/botling`), `BOTLING_LANGUAGES` (system languages,
+in 1.x; 0: no tidy), `BOTLING_LANGUAGES` (system languages,
 set by main, for the reply language when settings.json names none), `BOTLING_INTERRUPT_GRACE_MS` (how long Stop
 waits for claude before ending the tree, 2 s), `BOTLING_HARMLESS=0` (real tools, CLAUDE.md, MCP and
 saved sessions in `npm run dev`), `BOTLING_HARMLESS_TOOLS=Bash` (tools that exist in harmless mode),
@@ -211,7 +209,7 @@ three messages; `FAKE_CODEX_EXEC_LOG`, `FAKE_CODEX_EXEC_FAIL=1`, `FAKE_CODEX_EXE
 │ Core: validates again, routes by bot · first start: read-only import of a 1.x folder            │
 │ Bot (bot.ts), one per bot: chat.json/bot.json/tasks.json/subagents.json in 1.x's format ·       │
 │   one turn at a time (steered) · approvals · reply tags (reply.ts) · tasks.ts · subagents.ts ·    │
-│   prompts.ts + briefing.ts (Prompts.swift, wake/tidy, archive) · store/lock.ts (project lock)     │
+│   prompts.ts + briefing.ts (Prompts.swift, wake/tidy, archive) ·                                 │
 │   ClaudeHead (agent/head.ts): one long-lived `claude -p --input-format stream-json` per bot,     │
 │   own process group, --session-id then --resume, --permission-prompt-tool stdio; stream.ts parses│
 │   or CodexHead (agent/codex.ts): one `codex app-server` per bot (CodexSession = the protocol),    │
@@ -503,7 +501,6 @@ nothing from it is committed.
 | Sleep/wake/tidy | After `idleMs` with nothing under way (no turn, approval, waiting message, running subagent) the tidy turn runs (hidden, approvals refused), then stdin is closed; the next message starts a **new session** whose first message is wake line + recent lines + reactions intro + the words (1.x's order). The app starting is a wake; quitting tidies awake idle bots (bounded) | `unit/head.test.ts` (tidy text sent, memory file written, new session, exact briefing), `e2e/phase2a.spec.ts` (header "Tidying its notes…", screenshot `tidying.png`) |
 | Steering | A message during a user's reply with no approval open and no subagent at work: the reply so far stays as a cut-off bubble, the two parts go as one (`(I sent this in parts…)`), then `interrupt` (message first, as 1.x); otherwise it waits and goes when the turn ends | `unit/lifecycle.test.ts`, `unit/core.test.ts`, `e2e/phase2a.spec.ts` (`steering.png`), **live**: real claude cut the counting turn and answered both parts in one reply |
 | Subagents (`core/subagents.ts`, `agent/stream.ts`) | TraceBook's rules: Agent/Task calls, `task_started`, lines with `parent_tool_use_id`, structured launch results, `task_notification` (hand-back report, "still waiting"); subagents.json in 1.x's format (40 ended kept); steps carry status and tool count; `subagent.view` + the page's own subagent view (back button); a background one keeps the bot awake; claude's own reporting turn is shown | `unit/stream.test.ts`, `unit/lifecycle.test.ts`, `e2e/phase2a.spec.ts`, screenshots `subagent-running.png`, `subagent-view.png` |
-| Project lock (`core/store/lock.ts`) | A manager takes `<project>/.bot/botling.lock` (pid, start time, host); a live holder elsewhere — or a running 1.x whose projects.json lists the folder — only puts a notice in the chat (1.x has no lock, so the bot keeps working); a dead holder's lock is taken over; tried again on each send | `unit/lifecycle.test.ts` (two cores, stale lock, a 1.x stand-in process), `e2e/phase2a.spec.ts` (`locked-project.png`) |
 | Contract v3 | `chat.answer`, `chat.react`, `subagent.view`, `chat.send.replyTo`, `chat.choose.text`; events `message.removed`, `tasks.updated`, `subagent.updated`; `tidying` phase; step status/count; message reactions/replyTo | `unit/contract.test.ts`, the rest |
 
 Tests: unit 109 (vitest), e2e 19 (Playwright/Electron), all green. Live (real `claude` 2.1.310,
@@ -540,7 +537,6 @@ CCB_DESKTOP_PROMPT_EXPORT=$PWD/desktop/test/fixtures/prompts-golden.json TZ=UTC 
   1.x's "lift tags written before a tool call" is not needed.
 - **Unsupported requests are visible**: rather than silently dropping `<team>`, `<new-bot>`, … a
   notice says nothing happened.
-- **Project lock**: 1.x code is not changed, so 1.x is detected (running app + its projects.json).
   A project bot's chat files stay in 2.0's folder; only `.bot/` (memory, archive) is shared. The
   archive of a project bot is the project's `.bot/archive/` as in 1.x, so both apps' lines can land
   in it (not at the same time).
@@ -614,7 +610,7 @@ only, deleted afterwards.
   shows the reply at the end too); your two messages' task cards join (1.x leaves the first as it was).
 - **Routines run only while the app runs** (decided earlier). 2.0 locks scheduled-routines.json with
   its own lock file (`…botling2.lock`), not 1.x's `flock`; as in 1.x, nothing keeps the two apps off one
-  bot (the project lock only adds a notice). The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
+  bot (there is no project lock). The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
   (2.0 has none of them yet).
 - **No auto mode yet**, so a monitored command always asks (Allow once), as 1.x does without it.
 - **Component commands**: 1.x's approvals model (per folder and command, remembered); 1.x's

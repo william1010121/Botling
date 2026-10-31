@@ -3,11 +3,9 @@
 // message added while a reply runs, tidying before sleep, and a project another Botling has open.
 // Saves screenshots to desktop/.tmp/screens/ for a person to look at.
 import { expect, test } from "@playwright/test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { desktop, tempDir, until } from "../helpers";
-import { CoreHarness } from "../core-harness";
 import { launch, say } from "./launch";
 
 const screens = join(desktop, ".tmp", "screens");
@@ -94,37 +92,5 @@ test("an idle bot tidies its notes before it sleeps, and says so in the header",
     expect(memory).toMatch(/Tidied by the fake CLI/);
   } finally {
     await app.close();
-  }
-});
-
-test("a project another Botling has open still works here (as 1.x), with a notice that says so", async () => {
-  const root = tempDir("e2e-lock");
-  const folder = join(root, "garden");
-  const id = "44444444-4444-4444-8444-444444444444";
-  const projects = JSON.stringify([{ id, name: "garden", folder: pathToFileURL(folder).href + "/", avatar: "hexagon" }]);
-  mkdirSync(folder, { recursive: true });
-  for (const data of [join(root, "other"), join(root, "app", "core")]) {
-    mkdirSync(data, { recursive: true });
-    writeFileSync(join(data, "projects.json"), projects);
-  }
-  // Another 2.0 core holds the project.
-  const other = new CoreHarness(join(root, "other"));
-  try {
-    await other.call({ type: "chat.snapshot", botId: id });
-    const { app, page, chat } = await launch({ dataDir: join(root, "app") });
-    try {
-      await page.setViewportSize({ width: 1120, height: 760 });
-      await page.locator(".bot-row", { hasText: "garden" }).click();
-      await expect(chat.getByText("has this project open").first()).toBeVisible();
-      await say(chat, "hello?");
-      // Nothing is refused: 1.x has no project lock, so the message goes in as usual.
-      await expect(chat.locator(".row.user", { hasText: "hello?" })).toHaveCount(1);
-      await expect(page.locator(".banner", { hasText: "has this project open" })).toHaveCount(0);
-      await shot(page, "locked-project");
-    } finally {
-      await app.close();
-    }
-  } finally {
-    await other.kill("SIGTERM");
   }
 });
