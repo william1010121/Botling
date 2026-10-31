@@ -1,6 +1,8 @@
 name: Electron 2 release candidate
 
-# Prepares assets only. Creating/publishing the GitHub release is an operator gate.
+# Builds the assets and, in the final `publish` job, attaches them to the GitHub release for the tag and publishes it
+# as Latest. To publish an existing tag from a previous successful run without rebuilding, dispatch this workflow
+# with `tag` and `run_id` (the build jobs are skipped and that run's artifacts are used).
 #
 # macOS is signed with a Developer ID certificate and notarized by electron-builder, from the repository secrets
 # CSC_LINK, CSC_KEY_PASSWORD, APPLE_API_KEY (the .p8 text), APPLE_API_KEY_ID and APPLE_API_ISSUER. A tag build
@@ -8,6 +10,15 @@ name: Electron 2 release candidate
 # Windows is unsigned (the first install shows SmartScreen's warning; updates work). Linux is not signed.
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (e.g. v2.1.0). Requires run_id.'
+        required: false
+        default: ''
+      run_id:
+        description: 'Successful run whose artifacts to publish instead of rebuilding.'
+        required: false
+        default: ''
   push:
     tags: ['v2.*']
 
@@ -20,6 +31,7 @@ concurrency:
 
 jobs:
   candidate:
+    if: ${{ inputs.run_id == '' }}
     runs-on: macos-26
     timeout-minutes: 75
     defaults:
@@ -130,6 +142,7 @@ jobs:
             desktop/dist/SOURCE_COMMIT.txt
 
   windows:
+    if: ${{ inputs.run_id == '' }}
     # Windows x64: NSIS installer (updates itself through electron-updater). Unsigned. Not run on real hardware.
     runs-on: windows-latest
     timeout-minutes: 40
@@ -174,6 +187,7 @@ jobs:
             desktop/dist/SOURCE_COMMIT-win.txt
 
   linux:
+    if: ${{ inputs.run_id == '' }}
     # Linux: AppImage (updates itself through electron-updater) and deb (cannot; it opens the release page).
     # Unsigned. Not run on real hardware.
     runs-on: ubuntu-24.04
@@ -216,3 +230,53 @@ jobs:
             desktop/dist/latest-linux.yml
             desktop/dist/SHA256SUMS-linux.txt
             desktop/dist/SOURCE_COMMIT-linux.txt
+
+  publish:
+    # Attaches the artifacts to the release for the tag and publishes it as Latest. Runs for a tag push, or for a
+    # dispatch with tag + run_id. A plain branch dispatch only builds.
+    needs: [candidate, windows, linux]
+    if: >-
+      ${{ !cancelled() && !failure() &&
+      (github.ref_type == 'tag' || (inputs.tag != '' && inputs.run_id != '')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+      SOURCE_RUN: ${{ inputs.run_id || github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          persist-credentials: false
+      - name: Download the build artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/dl" "$RUNNER_TEMP/assets"
+          gh run download "$SOURCE_RUN" --dir "$RUNNER_TEMP/dl" --pattern '*-candidate'
+          find "$RUNNER_TEMP/dl" -type f ! -name 'SOURCE_COMMIT*.txt' -exec mv {} "$RUNNER_TEMP/assets/" \;
+          ls -la "$RUNNER_TEMP/assets"
+      - name: Check the assets match the tag
+        run: |
+          VERSION="${TAG#v}"
+          for f in "Botling-2-$VERSION-mac-arm64.zip" "Botling-2-$VERSION-mac-arm64.dmg" latest-mac.yml latest-linux.yml latest.yml; do
+            [ -f "$RUNNER_TEMP/assets/$f" ] || { echo "::error::Missing asset $f for $TAG"; exit 1; }
+          done
+      - name: Create or update the release, upload the assets and publish it as Latest
+        run: |
+          SHA=$(git rev-parse HEAD)
+          {
+            awk -v v="${TAG#v}" '$0 ~ "^## " v "$" {f=1; next} /^## /{f=0} f' CHANGELOG.md
+            echo
+            echo "Built from commit ${SHA:0:7} by the release workflow. macOS (Apple silicon) builds are Developer ID signed and notarized. Linux and Windows builds are unsigned."
+          } > "$RUNNER_TEMP/notes.md"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "Botling $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" --verify-tag --draft --title "Botling $TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          gh release upload "$TAG" "$RUNNER_TEMP"/assets/* --clobber
+          gh release edit "$TAG" --draft=false --latest
