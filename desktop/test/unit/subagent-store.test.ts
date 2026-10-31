@@ -10,7 +10,7 @@ import { SubagentBook } from "../../src/core/subagents";
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const folder = (name = "subagent-store") => { const root = tempDir(name); roots.push(root); return root; };
-const step = (id: string, extra: object = {}) => ({ id, kind: "tool", tool: "Read", title: id, failed: false, done: true, ...extra });
+const step = (id: string, extra: object = {}) => ({ id, kind: "tool" as const, tool: "Read", title: id, failed: false, done: true, ...extra });
 
 function oldRows() {
   return [
