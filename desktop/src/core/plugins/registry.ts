@@ -13,6 +13,7 @@ import { dirname, extname, join, normalize, relative, resolve, sep } from "node:
 import { writeFileAtomic } from "../durable/atomic";
 import { checkPlugin, loadPlugin, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
 import type { SecretStore } from "./secrets";
+import { swiftPrettyJSON } from "../swift-json";
 
 /** A plugin's web part as the chat page loads it (`WebPluginSpec`). `styles` are paths in the plugin's folder. */
 export interface WebSpec {
@@ -71,26 +72,6 @@ function readState(file: string): State {
   } catch {
     return emptyState();
   }
-}
-
-/**
- * Swift's `JSONEncoder` with `.prettyPrinted, .sortedKeys`: `"key" : value`, two-space indent, an empty
- * list or object as `[\n\n]`; slashes escaped unless `.withoutEscapingSlashes` (`escapeSlashes: false`).
- */
-export function swiftPrettyJSON(value: unknown, { escapeSlashes = true } = {}, indent = ""): string {
-  const inner = indent + "  ";
-  const options = { escapeSlashes };
-  if (Array.isArray(value)) {
-    if (!value.length) return "[\n\n" + indent + "]";
-    return "[\n" + value.map((item) => inner + swiftPrettyJSON(item, options, inner)).join(",\n") + "\n" + indent + "]";
-  }
-  if (value && typeof value === "object") {
-    const keys = Object.keys(value).filter((key) => (value as Record<string, unknown>)[key] !== undefined).sort();
-    if (!keys.length) return "{\n\n" + indent + "}";
-    return "{\n" + keys.map((key) => `${inner}${swiftPrettyJSON(key, options)} : ${swiftPrettyJSON((value as Record<string, unknown>)[key], options, inner)}`).join(",\n") + "\n" + indent + "}";
-  }
-  const text = JSON.stringify(value);
-  return escapeSlashes ? text.replace(/\//g, "\\/") : text;
 }
 
 /** Every file in a folder (relative paths, sorted), for a Claude part's fingerprint. */

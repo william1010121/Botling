@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./durable/atomic";
-import { swiftPrettyJSON } from "./plugins/registry";
+import { swiftPrettyJSON } from "./swift-json";
 
 // ---------------------------------------------------------------------------------------------
 // The sites (data only: what reads a page is a script in the plugin library)

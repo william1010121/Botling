@@ -13,6 +13,7 @@
 // the turns.
 import { fileURLToPath } from "node:url";
 import { characterCount, characterPrefix } from "./briefing";
+import { swiftJSON } from "./swift-json";
 import { HISTORY_LIMIT, type ChatRecord } from "./store/records";
 
 /** A bot that can answer outside its own chat (`Workspace.Member`). */
@@ -158,14 +159,6 @@ export function transcriptLines(transcript: readonly ChatRecord[], newest: strin
     lines.push(`${who}: ${text}`);
   }
   return lines;
-}
-
-/** JSONSerialization with `.sortedKeys` (and "/" written "\/"). */
-function swiftJSON(value: unknown): string {
-  const sort = (v: unknown): unknown => Array.isArray(v) ? v.map(sort)
-    : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).sort().map((key) => [key, sort((v as Record<string, unknown>)[key])]))
-    : v;
-  return JSON.stringify(sort(value)).replaceAll("/", "\\/");
 }
 
 /** `ReactionContext.snapshot`: a group or call-in turn (one prompt, no session) gets every recent line's reactions. */

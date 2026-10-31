@@ -9,6 +9,7 @@ import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_LEAD } from "./prompts";
+import { swiftJSON } from "./swift-json";
 import { fromSwiftDate, HISTORY_LIMIT, type ChatRecord, type ReactionRecord, type Role } from "./store/records";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -155,14 +156,6 @@ export function archiveAll(folder: string, records: ChatRecord[]) {
 
 export const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "👀"];
 export type SeenReactions = Record<string, ReactionRecord[]>;
-
-/** JSONSerialization with `.sortedKeys`: keys in order, and "/" written "\/". */
-function swiftJSON(value: unknown): string {
-  const sort = (v: unknown): unknown => Array.isArray(v) ? v.map(sort)
-    : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as object).sort().map((key) => [key, sort((v as Record<string, unknown>)[key])]))
-    : v;
-  return JSON.stringify(sort(value)).replaceAll("/", "\\/");
-}
 
 const retained = (records: ChatRecord[]) => records.slice(-HISTORY_LIMIT).filter((record) => record.role !== "divider");
 const reactionsOf = (record: ChatRecord) => (Array.isArray(record.reactions) ? record.reactions : []);

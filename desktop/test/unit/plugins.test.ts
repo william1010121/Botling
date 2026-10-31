@@ -6,7 +6,8 @@ import { chmodSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "n
 import { join } from "node:path";
 import { tempDir, until } from "../helpers";
 import { checkPlugin, compatible } from "../../src/core/plugins/manifest";
-import { PluginRegistry, swiftPrettyJSON } from "../../src/core/plugins/registry";
+import { PluginRegistry } from "../../src/core/plugins/registry";
+import { swiftPrettyJSON } from "../../src/core/swift-json";
 import { MemorySecretStore, SealedSecretStore, PortSealer, testSealer } from "../../src/core/plugins/secrets";
 import { PluginHostClient } from "../../src/core/plugins/host-client";
 

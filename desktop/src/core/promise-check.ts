@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { characterCount, characterPrefix } from "./briefing";
+import { swiftJSON } from "./swift-json";
 import { validateCodexEvents } from "./catchup";
 
 export type Verdict = "CONTINUE" | "CONTINUE_ANALYSIS" | "COMPLETE" | "NEEDS_TERMINAL_SIGNAL" | "WAITING_USER" | "CANCELLED" | "WAITING_DEPENDENCY" | "WAITING_TIMER" | "UNKNOWN" | "UNAVAILABLE";
@@ -71,17 +72,6 @@ const suffix = characterSuffix;
 /** Routine ids hold their whole instruction: a small stable key (`wakeupID`). */
 export const wakeupId = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 
-/** JSON as Swift's `JSONEncoder` with `.sortedKeys` writes it: keys sorted at every level, slashes escaped. */
-export function swiftJSON(value: unknown): string {
-  const sorted = (item: unknown): unknown => {
-    if (Array.isArray(item)) return item.map(sorted);
-    if (item && typeof item === "object") {
-      return Object.fromEntries(Object.keys(item).filter((key) => (item as Record<string, unknown>)[key] !== undefined).sort().map((key) => [key, sorted((item as Record<string, unknown>)[key])]));
-    }
-    return item;
-  };
-  return JSON.stringify(sorted(value)).replaceAll("/", "\\/");
-}
 const bytes = (value: unknown) => Buffer.byteLength(swiftJSON(value), "utf8");
 
 /** The fields a record encodes, in Swift's model (nil fields left out). */
