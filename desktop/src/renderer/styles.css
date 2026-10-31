@@ -996,7 +996,7 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 .rv-diff > .task-none, .rv-diff > .rv-guard, .rv-diff > .task-stale, .rv-diff > .worktree-note { margin: 12px 14px; }
 .rv-guard { display: flex; align-items: center; gap: 10px; }
 .rv-table { width: 100%; border-collapse: collapse; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; table-layout: fixed; }
-.rv-hunk td { padding: 2px 14px; color: var(--faint); background: var(--code); }
+.rv-hunk td { padding: 2px 14px; color: var(--faint); background: var(--notice); }
 .rv-num { width: 52px; padding: 0; text-align: right; color: var(--faint); user-select: none; vertical-align: top; }
 .rv-num button, .rv-num { font: inherit; }
 .rv-add { display: block; width: 100%; padding: 0 8px; border: 0; background: transparent; color: var(--faint); text-align: right; cursor: pointer; }
@@ -1005,7 +1005,7 @@ button.wb-card-head:focus-visible { outline: 2px solid var(--blue); outline-offs
 .rv-code { padding: 0 10px 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
 .rv-code.add, .rv-row:has(.rv-code.add) > .rv-mark { background: color-mix(in srgb, var(--green) 14%, transparent); }
 .rv-code.del, .rv-row:has(.rv-code.del) > .rv-mark { background: color-mix(in srgb, var(--error) 14%, transparent); }
-.rv-code.empty { background: var(--code); }
+.rv-code.empty { background: var(--notice); }
 .rv-table.split .rv-num { width: 44px; }
 .rv-table.split .rv-code:nth-child(2) { border-right: 1px solid var(--line); }
 .tk-kw { color: var(--link); }
