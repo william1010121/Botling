@@ -9,6 +9,7 @@ app and publishes it on GitHub Releases.
 - Fixed: When the app attached a git worktree, every agent (Claude, Codex workers, Antigravity) is told its working folder is that worktree, to use relative paths, and not to make worktrees of its own; Antigravity can also reach the project's memory files.
 - Fixed: @ mention search stops at a space instead of previewing all following text.
 - Fixed: Bots asked to call another engine now hand off to it instead of emulating it with a subagent.
+- Fixed: Antigravity workers no longer marked Failed when a harmless command exits non-zero.
 
 
 ### New
