@@ -3,6 +3,7 @@ import { AntigravityQuota } from "./AntigravityQuota";
 import { ModelPicker, SummaryModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
+import { worktreeWords } from "./worktree-text";
 import { postToChat } from "./editor-surface";
 import { UpdateActions } from "./Updates";
 // The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
@@ -35,7 +36,7 @@ const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "doctor", title: "Doctor", terms: "command-line tools claude codex antigravity install version login sign in check health" },
   { id: "updates", title: "Updates", terms: "updates version release github check new" },
   { id: "shortcuts", title: "Shortcuts", terms: "keyboard shortcuts keys keybindings hotkeys rebind reset cmd ctrl terminal search reload 鍵盤 快速鍵 快捷鍵" },
-  { id: "developer", title: "Developer", terms: "developer mode source project feedback not right" },
+  { id: "developer", title: "Developer", terms: "developer mode source project feedback not right worktree worktrees git branch" },
 ];
 
 const LANGUAGES: { id: SettingsView["language"]; label: string }[] = [
@@ -109,6 +110,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
             {shown && current?.id === "shortcuts" && <Shortcuts settings={shown} change={change} />}
             {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
+            {shown && current?.id === "developer" && <WorktreeSettings settings={shown} change={change} />}
           </div>
         </section>
       </div>
@@ -299,6 +301,22 @@ function Developer({ settings, change, bots }: { settings: SettingsView; change:
           <option value="">Pick a project…</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
         </select>
+      </Row>
+    </Group>
+  );
+}
+
+/** App-managed worktrees (core/worktrees.ts): on or off, and where they are made. */
+function WorktreeSettings({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => void }) {
+  const words = worktreeWords(settings.effectiveLanguage).setting;
+  const [folder, setFolder] = useState(settings.worktreeRoot ?? "");
+  useEffect(() => { setFolder(settings.worktreeRoot ?? ""); }, [settings.worktreeRoot]);
+  return (
+    <Group title={words.title} note={words.note}>
+      <Toggle label={words.toggle} checked={settings.worktrees} onChange={(value) => change({ key: "worktrees", value })} />
+      <Row label={words.folder} hint={words.hint}>
+        <input aria-label={words.folder} type="text" value={folder} disabled={!settings.worktrees} placeholder="/absolute/path" onChange={(event) => setFolder(event.target.value)}
+          onBlur={() => { if ((folder.trim() || null) !== settings.worktreeRoot) change({ key: "worktreeRoot", value: folder.trim() || null }); }} />
       </Row>
     </Group>
   );

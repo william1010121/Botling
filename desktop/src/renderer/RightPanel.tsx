@@ -58,6 +58,8 @@ export interface RightPanelProps {
   /** The bot's settings shown in the overview's place, and their page (1.x's SettingsPage). */
   showingSettings?: boolean;
   settingsPage?: ReactNode;
+  /** The Worktrees control (a project's own git worktrees), under its tasks. */
+  worktrees?: ReactNode;
   onCloseSettings?: () => void;
   onExpand: () => void;
 }
@@ -141,7 +143,7 @@ function OpenPanel(props: RightPanelProps) {
   return <Overview {...props} />;
 }
 
-function Overview({ bot, bots, waiting, look, status, results, teams, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask, onSettings }: RightPanelProps) {
+function Overview({ worktrees, bot, bots, waiting, look, status, results, teams, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask, onSettings }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
@@ -176,6 +178,7 @@ function Overview({ bot, bots, waiting, look, status, results, teams, watching, 
         <TaskGroups key={bot.id} tasks={tasks} now={now} working={bot.working} messages={messages} summarized={summarized} selected={selectedTask}
           onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} onComplete={onCompleteTask} onOpenSubagent={onOpenSubagent} />
       </section>
+      {worktrees}
       {items.length > 0 && (
         <section className="detail-section">
           <h3>Waiting on you</h3>
