@@ -838,66 +838,6 @@ export const PluginsView = z.strictObject({
 });
 export type PluginsView = z.infer<typeof PluginsView>;
 
-// ---------------------------------------------------------------------------------------------
-// Web AIs (1.x's WebSites): sites in the app's own browser, their conversations, the saved text.
-
-const SiteId = z.string().regex(/^[a-z][a-z0-9-]{0,30}$/);
-const ConversationId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
-/** A page of a site (main's own ids). */
-const PageId = z.string().min(1).max(64).regex(/^[A-Za-z0-9-]+$/);
-const WebURL = z.string().max(8_000);
-
-export const WebStatusView = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("reading") }),
-  z.strictObject({ kind: z.literal("newQuestion") }),
-  z.strictObject({ kind: z.literal("waiting") }),
-  z.strictObject({ kind: z.literal("saved"), messages: z.number().int().nonnegative(), at: z.string().max(64) }),
-  z.strictObject({ kind: z.literal("unreadable"), reason: z.string().max(2_000) }),
-]);
-export type WebStatusView = z.infer<typeof WebStatusView>;
-
-export const WebConversationView = z.strictObject({
-  id: ConversationId, url: WebURL, title: z.string().max(2_000), messages: z.number().int().nonnegative(),
-  savedAt: z.string().max(64).nullable(), updatedAt: z.string().max(64),
-  /** The saved text's full path, once there is one. */
-  file: z.string().max(4_096).nullable(),
-  /** The question still waiting for its answer. */
-  question: z.string().max(4_000).nullable(),
-  awaiting: z.boolean(),
-  /** Left the left column (still under "Questions"). */
-  settled: z.boolean(),
-});
-export type WebConversationView = z.infer<typeof WebConversationView>;
-
-export const WebSiteView = z.strictObject({
-  id: SiteId, name: z.string().max(40), accent: z.string().max(16), host: z.string().max(253), startURL: WebURL,
-  insideDomains: z.array(z.string().max(253)).max(20),
-  status: WebStatusView,
-  /** The conversation the front page shows (null: a new question). */
-  open: ConversationId.nullable(),
-  /** What the front page was asked to load (a row clicked, "New question"), for main. */
-  requested: z.strictObject({ url: WebURL, row: ConversationId.nullable() }).nullable(),
-  /** The page in front, the row each open page follows, and waiting rows no page follows (main's to read again). */
-  front: PageId,
-  pages: z.array(z.strictObject({ page: PageId, row: ConversationId })).max(50),
-  toReadAgain: z.array(z.strictObject({ id: ConversationId, url: WebURL })).max(50),
-  conversations: z.array(WebConversationView).max(500),
-});
-export type WebSiteView = z.infer<typeof WebSiteView>;
-
-export const WebStateView = z.strictObject({
-  /** <data>/web: each site's saved text in its own folder. */
-  folder: z.string().max(4_096),
-  sites: z.array(WebSiteView).max(20),
-});
-export type WebStateView = z.infer<typeof WebStateView>;
-
-/** Where the app page shows a site (its placeholder's box, in the page's CSS pixels). */
-export const WebBounds = z.strictObject({
-  x: z.number().min(0).max(100_000), y: z.number().min(0).max(100_000),
-  width: z.number().min(0).max(100_000), height: z.number().min(0).max(100_000),
-});
-
 export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("project.files"), botId, query: z.string().max(200) }),
   z.strictObject({ type: z.literal("project.preview"), botId, path: z.string().min(1).max(4096) }),
@@ -1119,23 +1059,6 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("accounts.list") }),
   /** Main only: opens a website in that account's own persistent session, with no bridge. */
   z.strictObject({ type: z.literal("site.open"), accountId: id, url: z.url({ protocol: /^https?$/ }).max(2_000) }),
-  // Web AIs. The page: a site's own row (a fresh question unless it shows one), one of its conversations,
-  // "New question", a row's clock, "Ask Main bot about this", and that a bot is shown again.
-  z.strictObject({ type: z.literal("web.open"), site: SiteId, conversationId: ConversationId.optional() }),
-  z.strictObject({ type: z.literal("web.new"), site: SiteId }),
-  z.strictObject({ type: z.literal("web.settle"), site: SiteId, conversationId: ConversationId }),
-  z.strictObject({ type: z.literal("web.ask"), site: SiteId, conversationId: ConversationId }),
-  z.strictObject({ type: z.literal("web.leave") }),
-  /** Main: where the page shows the site (null: no site shown, or something covers it). */
-  z.strictObject({ type: z.literal("web.place"), site: SiteId.nullable(), bounds: WebBounds.nullable() }),
-  // Main only (never the page): what a site's pages show and what main did.
-  z.strictObject({ type: z.literal("web.page"), site: SiteId, page: PageId, url: WebURL, title: z.string().max(2_000).nullable() }),
-  z.strictObject({ type: z.literal("web.read"), site: SiteId, page: PageId, url: WebURL, title: z.string().max(2_000).nullable(), json: z.string().max(10_000_000).nullable(), settled: z.boolean() }),
-  z.strictObject({ type: z.literal("web.front"), site: SiteId, page: PageId }),
-  z.strictObject({ type: z.literal("web.closed"), page: PageId }),
-  z.strictObject({ type: z.literal("web.handled"), site: SiteId }),
-  z.strictObject({ type: z.literal("web.reader"), site: SiteId }),
-  z.strictObject({ type: z.literal("web.state") }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command["type"];
@@ -1149,12 +1072,11 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
-  "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1208,7 +1130,7 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; doctor?: DoctorView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[]; spec?: SpecStateView | null };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; doctor?: DoctorView; waiting?: WaitingView; teams?: TeamRunView[]; spec?: SpecStateView | null };
   "subagent.settle": { changed: boolean };
   "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
@@ -1305,20 +1227,6 @@ export interface Results {
   "catchup.interval": { started: boolean };
   "accounts.list": { accounts: AccountView[] };
   "site.open": { windowId: number };
-  "web.open": WebStateView;
-  "web.new": WebStateView;
-  "web.settle": WebStateView;
-  "web.ask": { botId: string; messageId: string };
-  "web.leave": WebStateView;
-  "web.place": { shown: boolean };
-  "web.page": Record<string, never>;
-  "web.read": { file: string | null };
-  "web.front": Record<string, never>;
-  "web.closed": Record<string, never>;
-  "web.handled": Record<string, never>;
-  /** The page reader wrapped to run in the reader's world (`extractorCall`), and its source's hash. */
-  "web.reader": { code: string | null; hash: string | null };
-  "web.state": WebStateView;
 }
 export type ResultOf<T extends CommandType> = Results[T];
 
@@ -1367,8 +1275,6 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("files.updated"), botId, files: z.array(PendingFileView).max(50) }),
   /** Its routines changed (one ran, the bot or the app edited them). */
   z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
-  /** The web AIs' sites, conversations and what their pages show. */
-  z.strictObject({ type: z.literal("web.updated"), web: WebStateView }),
   /** A bot of its own or a project was taken out of the left column. */
   z.strictObject({ type: z.literal("bot.removed"), botId }),
   /** The temporary teams at work changed (one started or finished). */
@@ -1452,3 +1358,4 @@ export const CardMessage = z.discriminatedUnion("ccb", [
   z.strictObject({ ccb: z.literal("size"), height: z.number().int().min(0).max(4_000) }),
 ]);
 export type CardMessage = z.infer<typeof CardMessage>;
+

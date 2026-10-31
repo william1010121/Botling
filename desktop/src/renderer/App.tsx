@@ -23,7 +23,6 @@ import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
 import { Icon } from "./icons";
-import { WebPane, WebPanel, WebRail } from "./Web";
 import { SpecFrame } from "./SpecFrame";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
 
@@ -39,9 +38,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
-  /** The web AI shown in the chat column instead of a chat, if one is. */
-  const [webSite, setWebSite] = useState<string | null>(null);
-  const site = webSite ? view.web?.sites.find((candidate) => candidate.id === webSite) ?? null : null;
   /** The New bot form, a row's menu, and the bot being asked about before it is removed. */
   const [makingBot, setMakingBot] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -108,30 +104,17 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
-  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching && !site;
+  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching;
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
   }, []);
 
-  /** A bot's chat again (and no site). */
+  /** A bot's chat again. */
   const selectBot = useCallback((botId: string) => {
     setError(null);
-    if (webSite) { setWebSite(null); void client.request({ type: "web.leave" }).catch(() => {}); }
     void store.select(botId);
-  }, [client, store, webSite]);
-
-  // Web AIs: a site's own row (a fresh question unless it shows one), a conversation, New question, a row's ✓, Ask Main bot.
-  const openWeb = useCallback((siteId: string, conversationId?: string) => {
-    setError(null);
-    setWebSite(siteId);
-    store.watch(null);
-    void client.request({ type: "web.open", site: siteId, ...(conversationId ? { conversationId } : {}) }).catch(fail);
-  }, [client, store, fail]);
-  const askMainBot = useCallback((siteId: string, conversationId: string) => {
-    setError(null);
-    void client.request({ type: "web.ask", site: siteId, conversationId }).then((result) => { setWebSite(null); void store.select(result.botId); }, fail);
-  }, [client, store, fail]);
+  }, [client, store]);
 
   // "Add project": main's folder picker; the new (or existing) project's chat is shown.
   const addProject = useCallback(() => {
@@ -144,10 +127,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     setError(null);
     const show = () => client.request({ type: "subagent.view", botId, subagentId: row.id })
       .then((result) => { if (store.getView().chat?.botId === botId) store.watch(result.subagent); }, fail);
-    if (webSite) { setWebSite(null); void client.request({ type: "web.leave" }).catch(() => {}); }
     if (store.getView().chat?.botId === botId) void show();
     else void store.select(botId).then(show);
-  }, [client, store, fail, webSite]);
+  }, [client, store, fail]);
   const settleSubagent = useCallback((botId: string, row: SubagentRowView, settled: boolean) => {
     void client.request({ type: "subagent.settle", botId, subagentId: row.id, settled }).catch(fail);
   }, [client, fail]);
@@ -203,7 +185,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   return (
     <div className="shell" data-ready={view.ready ? "1" : "0"}>
       {railCollapsed ? (
-        <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!site && !watching ? chat?.botId ?? null : null}
+        <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
           onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
           onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }} onNewGroup={() => setEditingGroup({ group: null })}
@@ -227,10 +209,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             return hits.map((candidate) => (
               <div key={candidate.id} className="bot-entry">
                 {candidate.role === "group" ? (
-                  <GroupRow group={candidate} bots={view.bots} selected={!site && candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
+                  <GroupRow group={candidate} bots={view.bots} selected={candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
                     onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} onMenu={(x, y) => setMenu({ bot: candidate, x, y })} />
                 ) : (
-                  <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={!site && candidate.id === chat?.botId && !watching}
+                  <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={candidate.id === chat?.botId && !watching}
                     waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
                     onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} />
                 )}
@@ -243,12 +225,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                   {section === "pinned" && <h4 className="rail-section">Pinned</h4>}
                   {section === "rest" && pinned.length > 0 && <div className="rail-rule" />}
                   {candidate.role === "group" ? (
-                    <GroupRow group={candidate} bots={view.bots} selected={!site && candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
+                    <GroupRow group={candidate} bots={view.bots} selected={candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
                       onSelect={() => selectBot(candidate.id)} onMenu={(x, y) => setMenu({ bot: candidate, x, y })} />
                   ) : <BotRow
                     bot={candidate}
                     look={view.settings?.botLook ?? "original"}
-                    selected={!site && candidate.id === chat?.botId && !watching}
+                    selected={candidate.id === chat?.botId && !watching}
                     waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
                     onSelect={() => selectBot(candidate.id)}
                     pinned={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? pinned.includes(candidate.id) : undefined}
@@ -259,10 +241,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                     onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
                 </div>
               ))}
-              {view.web && view.web.sites.length > 0 && (
-                <WebRail web={view.web} shown={site?.id ?? null} onOpen={openWeb}
-                  onSettle={(siteId, conversationId) => void client.request({ type: "web.settle", site: siteId, conversationId }).catch(fail)} />
-              )}
             </>
           )}
         </nav>
@@ -283,13 +261,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </aside>
       )}
       <section className="chat-pane">
-        {site && (
-          <>
-            <header className="chat-header drag"><span className="chat-title">{site.name}</span></header>
-            <WebPane client={client} site={site} onError={fail} />
-          </>
-        )}
-        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}`} hidden={!!site}>
+        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}`}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.name}</span>}
@@ -336,13 +308,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
-      {site && (
-        <WebPanel site={site} onOpen={(conversationId) => openWeb(site.id, conversationId)} onAsk={(conversationId) => askMainBot(site.id, conversationId)}
-          onNew={() => void client.request({ type: "web.new", site: site.id }).catch(fail)} />
-      )}
       {/* The open component spec takes the right panel's place, while its chat is shown (1.x's `openSpec(in:)`). */}
-      {bot && !site && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} />}
-      {bot && !site && !openSpec && (
+      {bot && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} />}
+      {bot && !openSpec && (
         <TaskDetails
           onDrawerSettings={() => setBotSettings(true)} groupDialogOpen={editingGroup !== null}
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
