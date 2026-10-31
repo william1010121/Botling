@@ -4,6 +4,10 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+- Removed the developer-mode Token Flow graph view and its `tokenFlow.view` command. Token usage is still recorded in each bot's `token-flow-turns.jsonl` ledger, and existing files stay readable.
+
 ## 2.0.8
 
 A rollup of everything since 2.0.1, and the first build for Linux. It keeps the "Botling 2 Dev

@@ -25,7 +25,6 @@ import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm,
 import { Icon } from "./icons";
 import { WebPane, WebPanel, WebRail } from "./Web";
 import { SpecFrame } from "./SpecFrame";
-import { TokenFlow } from "./TokenFlow";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -57,7 +56,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const now = useMinuteClock();
   /** The main bot's main view: its chat, or the whiteboard of every bot (kept for the next start). */
   const [whiteboardOn, setWhiteboardOn] = useWhiteboardChoice();
-  const [tokenFlowBot, setTokenFlowBot] = useState<string | null>(null);
   const collapsed = view.settings?.rightPanelCollapsed ?? false;
   const toggleRight = useCallback(() => {
     void client.request({ type: "settings.set", change: { key: "rightPanelCollapsed", value: !(store.getView().settings?.rightPanelCollapsed ?? false) } }).catch(() => {});
@@ -110,8 +108,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
-  const tokenFlow = !!view.settings?.developerMode && tokenFlowBot === bot?.id && !watching && !site;
-  const whiteboard = !tokenFlow && !web && whiteboardOn && bot?.role === "main" && !watching && !site;
+  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching && !site;
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -292,7 +289,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <WebPane client={client} site={site} onError={fail} />
           </>
         )}
-        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}${tokenFlow ? " token-flow-on" : ""}`} hidden={!!site}>
+        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}`} hidden={!!site}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.name}</span>}
@@ -311,10 +308,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
           <div className="board-switch-bar">
             <div className="board-switch" role="group" aria-label="Chat views">
-              <button type="button" aria-pressed={!view.board && !whiteboard && !tokenFlow} onClick={() => { setTokenFlowBot(null); setWhiteboardOn(false); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
-              <button type="button" aria-pressed={view.board && !whiteboard && !tokenFlow} onClick={() => { setTokenFlowBot(null); setWhiteboardOn(false); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
-              {bot.role === "main" && !web && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => { setTokenFlowBot(null); setWhiteboardOn(true); }}><Icon name="people" size={13} />Whiteboard</button>}
-              {view.settings?.developerMode && <button type="button" aria-pressed={tokenFlow} onClick={() => setTokenFlowBot(bot.id)}>Token Flow</button>}
+              <button type="button" aria-pressed={!view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
+              <button type="button" aria-pressed={view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
+              {bot.role === "main" && !web && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => { setWhiteboardOn(true); }}><Icon name="people" size={13} />Whiteboard</button>}
             </div>
           </div>
         )}
@@ -328,7 +324,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
           </div>
         )}
-        {tokenFlow && bot && <TokenFlow key={bot.id} client={client} bot={bot} bots={view.bots} tasks={chat?.botId === bot.id ? chat.tasks ?? [] : []} />}
         {whiteboard && bot && (
           <Whiteboard client={client} bots={view.bots} waiting={view.waiting} components={view.components} look={view.settings?.botLook ?? "original"} now={now}
             mainMessages={chat?.botId === bot.id ? chat.messages : []} mainBotId={bot.id} pinned={pinned} lang={view.settings?.effectiveLanguage ?? null}
