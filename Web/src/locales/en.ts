@@ -101,6 +101,7 @@ export const en = {
   "tasks.kind.monitor": "Watch (Monitor)",
   "tasks.kind.wakeup": "Scheduled wake-up (ScheduleWakeup)",
   "tasks.kind.cron": "Scheduled job (CronCreate)",
+  "tasks.by": "by {name}",
   "tasks.kindDetail": "{kind}: {detail}",
   "tasks.elapsedHours": "{h} h {m} min",
   "tasks.elapsedMinutes": "{m} min {s} sec",
