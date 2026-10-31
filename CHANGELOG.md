@@ -4,9 +4,30 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
-## Unreleased
+## 2.1.0
 
-- Removed the developer-mode Token Flow graph view and its `tokenFlow.view` command. Token usage is still recorded in each bot's `token-flow-turns.jsonl` ledger, and existing files stay readable.
+A cleanup and infrastructure release. It keeps the "Botling 2 Dev Trial" profile, so your chats and
+settings stay where they are. The updater changed, so **2.0.x users must download 2.1.0 by hand from
+the release page once**; after that, updates arrive in the app.
+
+### Changed
+
+- **Standard electron-updater replaces about 10k lines of custom update code.** Updates use the
+  normal `latest-*.yml` feeds on GitHub Releases.
+- **macOS builds are signed with a Developer ID certificate and notarized by Apple.**
+- **CI runs on macOS, Linux and the web build.**
+- **The Swift code is separated from the desktop app.** The web bundle is no longer committed.
+- **Per-subagent storage.** Each subagent keeps a small index plus append-only step files. Existing
+  data migrates automatically, and the old file is kept as a `.bak` backup.
+- A shared JSON writer helper replaces several copies.
+
+### Removed
+
+- The Japanese, Korean and Simplified Chinese UI. These languages fall back to English.
+- Google sign-in from the phone bridge. Paste a token into the token box instead.
+- The Token Flow graph view and its `tokenFlow.view` command. Token usage is still recorded in each
+  bot's `token-flow-turns.jsonl` ledger, and existing files stay readable.
+- Web-page bots, dead code, and dead Antigravity code.
 
 ## 2.0.8
 
