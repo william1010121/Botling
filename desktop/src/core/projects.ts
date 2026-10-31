@@ -3,8 +3,8 @@
 // helpers here; the core (server.ts) owns the bots they act on.
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { writeFileAtomic } from "./durable/atomic";
 import { readJSON } from "./store/bot-store";
 import { characterPrefix } from "./briefing";
@@ -23,12 +23,12 @@ export function nextAvatar(used: string[]): string {
 export function folderPath(path: string): string | null {
   let value = path.trim();
   if (value.startsWith("file://")) {
-    try { value = decodeURIComponent(new URL(value).pathname); } catch { return null; }
+    try { value = fileURLToPath(value); } catch { return null; }
   }
-  if (value === "~" || value.startsWith("~/")) value = homedir() + value.slice(1);
-  if (!value.startsWith("/")) return null;
-  const standard = resolve(value);
-  return standard.length > 1 && standard.endsWith("/") ? standard.slice(0, -1) : standard;
+  if (value === "~" || value.startsWith("~/") || value.startsWith("~\\")) value = homedir() + value.slice(1);
+  if (!isAbsolute(value)) return null;
+  // resolve() already drops a trailing separator, except on a root.
+  return resolve(value);
 }
 
 /** What marks a folder as a project's own (`projectMarkers`), and folders never looked into. */

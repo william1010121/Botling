@@ -165,7 +165,7 @@ describe("sealed secrets", () => {
     const text = readFileSync(file, "utf8");
     expect(text).not.toContain("hunter2");
     expect(Object.keys(JSON.parse(text).helper)).toEqual(["token"]);
-    expect((await import("node:fs")).statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect((await import("node:fs")).statSync(file).mode & 0o777).toBe(0o600); // Windows has no POSIX modes
     const again = new SealedSecretStore(file, testSealer("key-1"));
     await again.load();
     expect(again.get("helper", "token")).toBe("hunter2-plain");
