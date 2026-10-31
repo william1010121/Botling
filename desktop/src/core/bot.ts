@@ -106,6 +106,7 @@ import {
   type CutOff, type Outage,
 } from "./network-resume";
 import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
+import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import {
   backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
@@ -1344,9 +1345,12 @@ export class Bot {
     const turns = this.members.map(bot => bot.shownTurn).filter((turn): turn is Turn => !!turn);
     const shown = turns[0];
     const owner = (turn: Turn) => this.members.find(bot => bot.shownTurn === turn)!;
+    // Only the newest page of the chat: the renderer asks for older lines (`history`) when it needs them.
+    const page = pageBack(this.records, this.records.length, (record) => this.messageView(record));
     return {
       botId: this.id,
-      messages: this.records.map((record) => this.messageView(record)),
+      messages: page.views,
+      ...(page.start > 0 ? { history: { hasMore: true, older: page.start } } : {}),
       running: shown ? { turnId: shown.id, messageId: shown.messageId } : null,
       live: shown ? shown.steps.slice(-500).map((step) => stepView(step, owner(shown).subagents)) : [],
       tasks: this.taskViews(),
@@ -1356,6 +1360,21 @@ export class Bot {
       intervalSummaries: [],
       ...this.pinsView(),
     };
+  }
+
+  /** A page of lines older than `before` (`chat.history`); with `until`, back to at least that line. */
+  history(before: string, bytes?: number, until?: string): ResultOf<"chat.history"> {
+    const end = this.records.findIndex((record) => record.id === before);
+    if (end < 0) throw new ContractError("not_found", "That line is no longer in the chat.");
+    const view = (record: ChatRecord) => this.messageView(record);
+    let page = pageBack(this.records, end, view, Math.min(bytes ?? PAGE_BYTES, MAX_PAGE_BYTES));
+    let found = false;
+    if (until) {
+      const at = this.records.findIndex((record) => record.id === until);
+      found = at >= 0 && at < end;
+      if (found && at < page.start) page = sliceViews(this.records, at, end, view);
+    }
+    return { messages: page.views, hasMore: page.start > 0, older: page.start, found };
   }
 
   get messageCount() {

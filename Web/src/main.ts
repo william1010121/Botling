@@ -4,7 +4,7 @@ import { buildNear, detailReply, keepFrames, releaseFrames } from "./components"
 import { startTaskTicks, taskOutput } from "./tasks";
 import { jumpToTask } from "./task-cards";
 import { Composer, sendFile } from "./composer";
-import { extensions, feedback, makeComponents, messageElement, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
+import { extensions, feedback, jumpTo, makeComponents, messageElement, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
@@ -70,6 +70,11 @@ class Chat {
   private firstID: string | null = null;
   /** Navigation uses a moving window; ordinary recent-history pagination stays unchanged. */
   private navigatingHistory = false;
+  /** Older lines asked of the app: the first line held when asked (the page is in front of it when it arrives). */
+  private loadingOlder: string | null = null;
+  private loadingTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A line to jump to once the app has sent the page that holds it. */
+  private pendingJump: string | null = null;
   private readonly historyLatest = document.createElement("button");
   private readonly historyMore = document.createElement("button");
   private historyRequest: number | null = null;
@@ -172,6 +177,28 @@ class Chat {
       // The input box keeps each chat's draft itself (Composer.update).
     }
 
+    if (switched) { this.loadingOlder = null; this.pendingJump = null; }
+    // Older lines arrived in front of the first one held: mount a page of them, keeping the reading place.
+    if (this.loadingOlder !== null) {
+      const at = state.messages.findIndex((message) => message.id === this.loadingOlder);
+      if (at < 0) this.loadingOlder = null;
+      else if (at > 0) {
+        this.loadingOlder = null;
+        clearTimeout(this.loadingTimer);
+        if (this.pendingJump === null) this.firstID = state.messages[Math.max(0, at - historyPageSize)]!.id;
+      }
+    }
+    const jump = this.pendingJump !== null && state.messages.some((message) => message.id === this.pendingJump) ? this.pendingJump : null;
+    if (jump !== null) {
+      this.pendingJump = null;
+      this.stuck = false;
+      this.readingAnchor = null;
+      this.navigatingHistory = true;
+      const at = state.messages.findIndex((message) => message.id === jump);
+      this.firstID = state.messages[Math.max(0, at - historyPageSize)]!.id;
+      setTimeout(() => jumpTo(jump), 0);
+    }
+
     // Bot look Cute: the seen marks show the heads' tiny characters (a style rule, so lines drawn already follow).
     setSeenHeads(state.seenHeads);
     configureAnimatedHeads(state.animatedHeads);
@@ -211,8 +238,10 @@ class Chat {
     this.historyLatest.hidden = end === state.messages.length;
     this.historyLatest.textContent = t("catchup.latest", { line: newest?.text.replace(/\s+/g, " ").slice(0, 80) ?? "" });
     this.firstID = messages[0]?.id ?? null;
-    this.historyMore.hidden = start === 0;
-    this.historyMore.textContent = t("messages.loadEarlier", { n: Math.min(start, historyPageSize) });
+    // Older lines the app still holds count as more to load.
+    const olderInApp = state.history?.hasMore ? state.history.older : 0;
+    this.historyMore.hidden = start === 0 && !olderInApp;
+    this.historyMore.textContent = t("messages.loadEarlier", { n: Math.min(start + olderInApp, historyPageSize) });
     const keep = new Set(messages.map((message) => message.id));
     for (const [id, entry] of this.drawn) {
       if (!keep.has(id)) {
@@ -391,11 +420,28 @@ class Chat {
   private loadEarlier(): void {
     if (!this.last) return;
     const start = this.historyStart(this.last.messages);
-    if (start === 0) return;
+    if (start === 0) {
+      // Everything held is on screen: the rest is in the app.
+      if (this.last.history?.hasMore) this.askForHistory();
+      return;
+    }
     this.stuck = false;
     this.rememberReadingAnchor();
     this.firstID = this.last.messages[Math.max(0, start - historyPageSize)].id;
     this.setState(this.last, true);
+  }
+
+  /** Asks the app for the page of lines before the first one held (once at a time), or back to `until`. */
+  private askForHistory(until?: string): void {
+    const first = this.last?.messages[0]?.id;
+    if (!first || this.loadingOlder !== null) return;
+    this.stuck = false;
+    this.rememberReadingAnchor();
+    this.loadingOlder = first;
+    // The app may fail or have nothing: do not wait for ever.
+    clearTimeout(this.loadingTimer);
+    this.loadingTimer = setTimeout(() => { this.loadingOlder = null; this.pendingJump = null; }, 8000);
+    post(until ? { type: "loadHistory", until } : { type: "loadHistory" });
   }
 
   /** Coalesce wheel/key/scroll events; opening a chat never drains its history by itself. */
@@ -418,7 +464,11 @@ class Chat {
   private revealMessage(id: string): void {
     if (!this.last || this.drawn.has(id)) return;
     const index = this.last.messages.findIndex((message) => message.id === id);
-    if (index < 0) return;
+    if (index < 0) {
+      // Maybe an older page the app holds: ask for it, and jump when it has come.
+      if (this.last.history?.hasMore && this.pendingJump === null) { this.pendingJump = id; this.askForHistory(id); }
+      return;
+    }
     this.stuck = false;
     this.readingAnchor = null;
     this.navigatingHistory = true;

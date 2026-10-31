@@ -17,7 +17,7 @@ export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash
   botIds: z.array(z.string().min(1).refine(id => id !== ALL_BOTS, 'Bearer clients need explicit bot ids.')).min(1), expiresAt: z.number().int().positive() });
 export type Client = z.infer<typeof Client>;
 export const Clients = z.array(Client);
-export const mobileTypes = new Set(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer']);
+export const mobileTypes = new Set(['chat.snapshot', 'chat.history', 'chat.send', 'chat.choose', 'chat.answer']);
 export interface MobileCore { mobileCommand(raw: unknown, allowedBots: readonly string[]): Promise<ResponseEnvelope> }
 export interface BridgeOptions {
   origin: string; host: string; port: number; tls: ServerOptions; assets: string;
@@ -140,7 +140,7 @@ export function handler(options: BridgeOptions) {
         if (options.updating?.()) throw new Error('Generation activation in progress');
         return options.core.mobileCommand(request, client!.botIds);
       };
-      const response = cmd.type === 'chat.snapshot' ? await dispatch() : await options.ledger.run(client.id, request, dispatch);
+      const response = cmd.type === 'chat.snapshot' || cmd.type === 'chat.history' ? await dispatch() : await options.ledger.run(client.id, request, dispatch);
       json(res, 200, response);
     } catch { json(res, 503, errorResponse(request.id, { code: 'core_unavailable', message: 'Mobile bridge unavailable. Check chat before sending again.' })); }
   };

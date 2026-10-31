@@ -89,6 +89,20 @@ describe('core adapter', () => {
     expect((await mobileCommand(access, { v: 10, id: 'x', cmd: { type: 'chat.read', botId } }, [botId])).ok).toBe(false);
   });
 });
+describe('history paging', () => {
+  it('serves older pages of an authorized bot only, passes the paging marker on, and keeps the snapshot to the newest page', async () => {
+    const page = { messages: [{ id: 'old' }], hasMore: false, older: 0, found: true };
+    const asked: unknown[] = [];
+    const snapshot: any = { epoch: 'e', seq: 1, bots: [{ id: botId }], chat: { botId, messages: [{ id: 'new' }], tasks: [], history: { hasMore: true, older: 40 } } };
+    const access = { pending: () => [], snapshot: () => snapshot, history: (cmd: unknown) => { asked.push(cmd); return page; }, handle: async () => { throw Error('unused'); } };
+    const snap: any = await mobileCommand(access as any, { v: 10, id: 's', cmd: { type: 'chat.snapshot', botId } }, [botId]);
+    expect(snap.result.chat.history).toEqual({ hasMore: true, older: 40 });
+    const older: any = await mobileCommand(access as any, { v: 10, id: 'h', cmd: { type: 'chat.history', botId, before: 'new' } }, [botId]);
+    expect(older.ok).toBe(true); expect(older.result).toEqual(page); expect(asked).toHaveLength(1);
+    expect((await mobileCommand(access as any, { v: 10, id: 'h2', cmd: { type: 'chat.history', botId, before: 'new' } }, ['other'])).ok).toBe(false);
+    expect(asked).toHaveLength(1);
+  });
+});
 describe('HTTPS contract', () => {
   it('authenticates, scopes, revokes, serves only mobile assets, and replays after a lost socket response', async () => {
     const dir = temp(); const key = join(dir, 'key.pem'), cert = join(dir, 'cert.pem');

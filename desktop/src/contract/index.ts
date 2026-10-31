@@ -845,6 +845,11 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("boot.commit") }),
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
+  /**
+   * A page of older lines (the snapshot holds only the newest, `ChatSnapshot.history`): those before the line `before`,
+   * about `bytes` of them (default 1 MiB). With `until`, the page reaches back far enough to hold that line.
+   */
+  z.strictObject({ type: z.literal("chat.history"), botId, before: id, bytes: z.number().int().min(1024).max(8 * 1024 * 1024).optional(), until: id.optional() }),
   /** Read only the output of a stored background task (never a renderer-supplied path). */
   z.strictObject({ type: z.literal("task.output"), botId, messageId: id, taskId: z.string().min(1).max(200) }),
   /** A message; while a reply is being written it joins or follows that turn (as 1.x steers). `replyTo`: a line it answers. */
@@ -1066,7 +1071,7 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
@@ -1128,10 +1133,13 @@ export interface ChatSnapshot {
   pinChoices: PinChoiceView[];
   /** Files waiting in the input box for the next message. */
   pendingFiles?: PendingFileView[];
+  /** `messages` is the newest page of the chat; this says whether older lines wait (`chat.history`). Absent: all of it is here. */
+  history?: { hasMore: boolean; /** How many lines are older than the first of `messages`. */ older: number };
 }
 
 export interface Results {
   "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; doctor?: DoctorView; waiting?: WaitingView; teams?: TeamRunView[]; spec?: SpecStateView | null };
+  "chat.history": { messages: MessageView[]; hasMore: boolean; older: number; /** With `until`: the line is in `messages`. */ found: boolean };
   "subagent.settle": { changed: boolean };
   "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
