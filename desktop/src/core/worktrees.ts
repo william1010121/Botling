@@ -141,6 +141,17 @@ export class WorktreeManager {
   /** Whether worktrees can be made for this project at all. */
   async available(): Promise<boolean> { return (await this.main()).ok; }
 
+  /** The main checkout's top folder (null: the project is not one). */
+  async top(): Promise<string | null> {
+    const main = await this.main();
+    return main.ok ? main.top : null;
+  }
+
+  /** One active record by id. */
+  get(id: string): WorktreeRecord | null {
+    return this.active(id)?.record ?? null;
+  }
+
   /** Worktrees git knows of in this repository: path -> branch. */
   private async registered(top: string): Promise<Map<string, string | null>> {
     const out = await git(top, ["worktree", "list", "--porcelain"]);

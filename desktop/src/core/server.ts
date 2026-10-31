@@ -1393,6 +1393,11 @@ First write a test that shows this, then fix it.`;
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    // A turn began: remember what its worktree looked like, so the review can show what the turn changed.
+    if (event.type === "turn.started" && !this.removed.has(event.botId)) {
+      const bot = this.bots.get(event.botId);
+      if (bot) void this.worktrees.turnStarted(bot.profile, event.turnId);
+    }
     // A question copied into the main bot's chat was settled in its own: so is the copy.
     if (event.type === "message.updated" && (this.copies.size || event.message.ignoredAt)) this.closeCopiesOf(event.botId, event.message.id);
     // A question asked or answered, a bot added: what waits on you may have changed.
@@ -1595,6 +1600,8 @@ First write a test that shows this, then fix it.`;
       case "worktrees.merge": return this.worktrees.merge(this.worktreeProfile(cmd.botId), cmd.worktreeId);
       case "worktrees.discard": return this.worktrees.discard(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.force === true);
       case "worktrees.terminal": return this.worktrees.terminal(this.worktreeProfile(cmd.botId), cmd.worktreeId);
+      case "review.files": return this.worktrees.reviewFiles(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.scope, cmd.turn);
+      case "review.diff": return this.worktrees.reviewDiff(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.from, cmd.to, cmd.path, cmd.oldPath, cmd.force === true);
       case "bot.configure": {
         const { type: _type, botId, ...change } = cmd;
         return this.bot(botId).configure(change);
