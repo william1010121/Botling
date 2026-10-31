@@ -1,4 +1,4 @@
-// Botling Web: Google sign-in, then the desktop app's own renderer (src/renderer/App.tsx: the left
+// Botling Web: access-token sign-in, then the desktop app's own renderer (src/renderer/App.tsx: the left
 // column, the chat page, the right panel) over WebBridge instead of Electron IPC. Phone widths keep
 // the same chrome and show the left column as a drawer (web.css).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -7,17 +7,18 @@ import { Client } from '../src/renderer/client';
 import { WorkspaceStore } from '../src/renderer/store';
 import { Icon } from '../src/renderer/icons';
 import { MobileError, MobileTransport, endpointURL } from './transport';
-import { Session, clearDrafts, sessionRequest } from './session';
+import { clearDrafts } from './session';
 import { WebBridge, forgetLocal } from './web-bridge';
 
 const POLL_MS = 2_500;
 type Auth = 'checking' | 'signedOut' | 'denied' | 'unavailable';
-export interface Connected { csrf: string; bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void }; shown: { value: boolean } }
+const TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
+export interface Connected { bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void }; shown: { value: boolean } }
 
 function storage(): Storage | null { try { return window.localStorage; } catch { return null; } }
 
-export function connectWorkspace(csrf: string, onAuthLost: (error: MobileError) => void, fetcher: typeof fetch = fetch): Connected {
-  const transport = new MobileTransport(endpointURL('/api/mobile/browser/command', location.origin), { csrf }, fetcher);
+export function connectWorkspace(token: string, onAuthLost: (error: MobileError) => void, fetcher: typeof fetch = fetch): Connected {
+  const transport = new MobileTransport(endpointURL('/api/mobile/command', location.origin), token, fetcher);
   const wake = { poke: () => {} };
   const shown = { value: false };
   const bridge = new WebBridge({ transport, storage: storage(), onAuthLost,
@@ -30,7 +31,7 @@ export function connectWorkspace(csrf: string, onAuthLost: (error: MobileError) 
   const store = new WorkspaceStore(botId => client.request({ type: 'chat.snapshot', ...(botId ? { botId } : {}) })
     .catch(error => { if (shown.value && bridge.closed) return new Promise<never>(() => {}); throw error; }));
   client.onEvent(event => store.receive(event));
-  return { csrf, bridge, client, store, wake, shown };
+  return { bridge, client, store, wake, shown };
 }
 
 /** Re-reads the chat on screen every few seconds (and soon after a send); resyncs the store when it changed. */
@@ -60,11 +61,11 @@ export function startSync(connected: Connected, interval = POLL_MS): () => void 
 const narrowQuery = '(max-width: 700px)';
 
 export function WebApp() {
-  const [auth, setAuth] = useState<Auth>('checking');
+  const [auth, setAuth] = useState<Auth>('signedOut');
   const [message, setMessage] = useState('');
   const [connected, setConnected] = useState<Connected | null>(null);
   const [navOpen, setNavOpen] = useState(() => window.matchMedia?.(narrowQuery).matches ?? false);
-  const [busy, setBusy] = useState(false);
+  const [tokenText, setTokenText] = useState('');
   const connecting = useRef(false);
 
   const lost = useCallback((error: MobileError) => {
@@ -72,17 +73,17 @@ export function WebApp() {
     setAuth('signedOut'); setMessage(error.message);
   }, []);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (token: string) => {
     if (connecting.current) return;
     connecting.current = true; setAuth('checking'); setMessage('');
     try {
-      const session = Session.parse(await sessionRequest('session'));
-      if (session.expiresAt <= Date.now()) throw new MobileError('Session expired. Sign in again.', true);
+      if (!TOKEN.test(token.trim())) throw new MobileError('Enter the server’s access token.', true);
       // A fresh bridge each time: an ended one stays closed. Its first read settles either way.
       let ended: MobileError | undefined;
-      const next = connectWorkspace(session.csrf, error => { ended = error; lost(error); });
+      const next = connectWorkspace(token, error => { ended = error; lost(error); });
       try { await next.store.resync(); } catch (cause) { next.bridge.close(); throw ended ?? cause; }
       next.shown.value = true;
+      setTokenText('');
       setConnected(next);
     } catch (cause) {
       setAuth(cause instanceof MobileError ? cause.auth ? 'signedOut' : cause.denied ? 'denied' : 'unavailable' : 'unavailable');
@@ -90,47 +91,33 @@ export function WebApp() {
     } finally { connecting.current = false; }
   }, [lost]);
 
-  useEffect(() => {
-    const url = new URL(window.location.href), code = url.searchParams.get('auth_error');
-    if (code) {
-      url.searchParams.delete('auth_error'); window.history.replaceState(null, '', url.pathname + url.search + url.hash);
-      setMessage(code === 'access_denied' ? 'This Google account is not authorized.' : code === 'auth_unavailable'
-        ? 'Google sign-in is temporarily unavailable. Try again.' : 'Google sign-in was cancelled or expired. Try again.');
-      setAuth(code === 'access_denied' ? 'denied' : 'signedOut');
-    } else void connect();
-  }, [connect]);
-
   useEffect(() => connected ? startSync(connected) : undefined, [connected]);
   useEffect(() => () => connected?.bridge.close(), [connected]);
 
-  const signOut = useCallback(async () => {
-    if (!connected || busy) return;
-    setBusy(true);
-    try {
-      await sessionRequest('logout', connected.csrf);
-      connected.bridge.close(); clearDrafts(); forgetLocal(storage()); setConnected(null); setAuth('signedOut'); setMessage('');
-    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Could not sign out. Try again.'); }
-    finally { setBusy(false); }
-  }, [connected, busy]);
+  const signOut = useCallback(() => {
+    if (!connected) return;
+    connected.bridge.close(); clearDrafts(); forgetLocal(storage()); setConnected(null); setAuth('signedOut'); setMessage('');
+  }, [connected]);
 
   const chrome = useMemo(() => ({
     headerLead: <button type="button" className="web-nav-button" aria-label="Bots" aria-expanded={navOpen} onClick={() => setNavOpen(open => !open)}>
       <Icon name="sidebarLeft" size={15} /></button>,
-    railFooter: <button type="button" className="rail-button web-sign-out" disabled={busy} onClick={() => void signOut()}>{busy ? 'Signing out…' : 'Sign out'}</button>,
-  }), [navOpen, busy, signOut]);
+    railFooter: <button type="button" className="rail-button web-sign-out" onClick={signOut}>Sign out</button>,
+  }), [navOpen, signOut]);
 
   if (!connected) return <main className="web-signin" aria-busy={auth === 'checking'}>
-    <div className="web-signin-card">
+    <form className="web-signin-card" onSubmit={event => { event.preventDefault(); void connect(tokenText); }}>
       <img className="web-signin-icon" src="./icon.svg" alt="" />
       <h1>Botling</h1>
-      <p className="web-signin-lead">Your bots, from any browser. Sign in with the Google account your Botling allows.</p>
+      <p className="web-signin-lead">Your bots, from any browser. Enter the access token your Botling gave you.</p>
       {message && <p className="web-signin-message" role="alert">{message}</p>}
-      {auth === 'checking' ? <p role="status" className="web-signin-muted">Checking your session…</p> : <div className="web-signin-actions">
-        <button type="button" className="web-primary" onClick={() => window.location.assign('/api/mobile/login')}>Sign in with Google</button>
-        <button type="button" className="web-secondary" onClick={() => void connect()}>Check again</button>
-      </div>}
-      <p className="web-signin-muted">Keep Botling running on your computer. Sign-in lasts at most an hour.</p>
-    </div>
+      <div className="web-signin-actions">
+        <input className="web-token" type="password" autoComplete="off" spellCheck={false} aria-label="Access token" placeholder="Access token"
+          value={tokenText} onChange={event => setTokenText(event.target.value)} disabled={auth === 'checking'} />
+        <button type="submit" className="web-primary" disabled={auth === 'checking'}>{auth === 'checking' ? 'Connecting…' : 'Connect'}</button>
+      </div>
+      <p className="web-signin-muted">Keep Botling running on your computer. The token is kept only in this tab's memory.</p>
+    </form>
   </main>;
 
   return <div className="web-root" data-nav={navOpen ? 'open' : 'closed'}

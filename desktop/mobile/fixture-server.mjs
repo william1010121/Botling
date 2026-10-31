@@ -1,5 +1,5 @@
 // SYNTHETIC UI TEST FIXTURE ONLY. Never connects to a real Core or user data.
-// Binds loopback; simulated browser sessions never represent Google validation.
+// Binds loopback; the access token below is a synthetic fixture value.
 // Serves the built Botling Web (dist/) and answers the bridge routes with the all-bots browser
 // scope and the snapshot shape the bridge sends it (src/mobile-bridge/adapter.ts webSnapshot).
 import { createServer } from 'node:http';
@@ -67,7 +67,7 @@ chats.get('proj-botling').messages.push(
 const settings = { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: ['proj-jenytsian', 'proj-csit'] };
 const waiting = { items: [{ botId: 'proj-rl', text: 'Approve the training run budget', messageId: null }], doing: { 'proj-botling': 'Task 與報告重新設計' } };
 let seq = 0, authenticated = true, denied = false;
-const csrf = 'f'.repeat(43);
+const TOKEN = 'f'.repeat(43);
 const snapshot = botId => ({ epoch: 'fixture', seq, bots, imported: null, chat: chats.get(botId ?? MAIN) ?? null, components, settings, waiting, teams: [] });
 const types = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=utf-8', css: 'text/css; charset=utf-8', svg: 'image/svg+xml', webmanifest: 'application/manifest+json', woff2: 'font/woff2' };
 // The bridge's policies (src/mobile-bridge/bridge.ts webChatCSP, frameHostCSP) for this origin.
@@ -86,17 +86,8 @@ const server = createServer(async (req, res) => {
       if (typeof control.denied === 'boolean') denied = control.denied;
       res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}'); return;
     }
-    if (req.method === 'GET' && req.url === '/api/mobile/login') { authenticated = true; denied = false; res.writeHead(303, { Location: '/mobile/' }).end(); return; }
-    if (req.method === 'POST' && ['/api/mobile/session', '/api/mobile/logout', '/api/mobile/browser/command'].includes(req.url)) {
-      if (!authenticated) { res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":{"code":"auth_required"}}'); return; }
-      if (req.url === '/api/mobile/session') {
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': 'fixture-session=1; Path=/; HttpOnly; SameSite=Strict' })
-          .end(JSON.stringify({ principal: 'f'.repeat(64), csrf, expiresAt: Date.now() + 3600000, botIds: ['*'] })); return;
-      }
-      if (req.headers['x-botling-csrf'] !== csrf || !req.headers.cookie?.includes('fixture-session=1')) { res.writeHead(403).end(); return; }
-      if (req.url === '/api/mobile/logout') { authenticated = false; res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': 'fixture-session=; Path=/; Max-Age=0' }).end('{"loggedOut":true}'); return; }
-    }
-    if (req.method === 'POST' && req.url === '/api/mobile/browser/command') {
+    if (req.method === 'POST' && req.url === '/api/mobile/command') {
+      if (!authenticated || req.headers.authorization !== `Bearer ${TOKEN}`) { res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"error":{"code":"auth_required"}}'); return; }
       let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 200000) { res.writeHead(413).end(); return; } }
       const { v, id, cmd } = JSON.parse(body);
       const target = chats.get(cmd.botId ?? MAIN);

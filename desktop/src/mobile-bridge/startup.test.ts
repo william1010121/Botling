@@ -3,7 +3,11 @@ import { chmodSync, readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, sy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConfiguredMobile } from './start';
-import { startBridge } from './bridge';
+import { Readable } from 'node:stream';
+import { handler, startBridge, tokenHash } from './bridge';
+import { MutationLedger } from './ledger';
+import { okResponse } from '../contract';
+import { MAIN_BOT_ID } from '../core/store/records';
 vi.mock('./bridge', async original => ({ ...await original<typeof import('./bridge')>(), startBridge: vi.fn(() => ({ close: vi.fn() })) }));
 const dirs: string[] = [];
 const temp = () => { const d = mkdtempSync(join(tmpdir(), 'mobile-startup-')); dirs.push(d); return d; };
@@ -61,16 +65,23 @@ describe('profile-local mobile opt-in', () => {
     expect(startConfiguredMobile(core(), root, vi.fn())).toBeNull(); expect(startBridge).not.toHaveBeenCalled();
   });
 });
-it('loads owner-only OAuth credentials; refuses public credentials and wrong callback before listener creation', () => {
-  const root = temp(), file = config(root), credentialFile = join(root, 'oauth.json');
+it('an older config with removed Google fields still loads, and bearer auth still passes', async () => {
+  const root = temp(), file = config(root);
   const cfg = JSON.parse(readFileSync(file, 'utf8'));
-  writeFileSync(file, JSON.stringify({ ...cfg, google: { credentialsFile: credentialFile } }));
-  const credential = { client_id: 'fixture', client_secret: 'fixture-secret', project_id: 'fixture',
-    redirect_uri: cfg.origin + '/api/mobile/auth/google/callback', javascript_origin: cfg.origin, allowed_emails: ['owner@example.invalid'] };
-  writeFileSync(credentialFile, JSON.stringify(credential), { mode: 0o600 });
-  startConfiguredMobile(core(), root, vi.fn()); expect(vi.mocked(startBridge).mock.calls[0][0].google).toBeDefined();
-  vi.mocked(startBridge).mockClear(); chmodSync(credentialFile, 0o644);
-  expect(() => startConfiguredMobile(core(), root, vi.fn())).toThrow('auth_unavailable'); expect(startBridge).not.toHaveBeenCalled();
-  chmodSync(credentialFile, 0o600); writeFileSync(credentialFile, JSON.stringify({ ...credential, redirect_uri: 'https://other.invalid/' }));
-  expect(() => startConfiguredMobile(core(), root, vi.fn())).toThrow('auth_unavailable'); expect(startBridge).not.toHaveBeenCalled();
+  writeFileSync(file, JSON.stringify({ ...cfg, google: { credentialsFile: join(root, 'missing-oauth.json'), allowedEmails: ['a@example.invalid'] } }));
+  const dispatched = vi.fn(async (raw: any) => okResponse(raw.id, { epoch: 'e' }));
+  startConfiguredMobile({ ...core(), mobileCommand: dispatched }, root, vi.fn());
+  const options = vi.mocked(startBridge).mock.calls[0][0];
+  expect(options).not.toHaveProperty('google');
+  const token = 'a'.repeat(43), clients = [{ id: 'phone', tokenHash: tokenHash(token), botIds: [MAIN_BOT_ID], expiresAt: Date.now() + 60_000 }];
+  const handle = handler({ ...options, clients: () => clients, ledger: new MutationLedger(join(root, 'ledger')), generation: undefined });
+  const call = async (authorization?: string) => {
+    const body = JSON.stringify({ v: 10, id: 'x1', cmd: { type: 'chat.snapshot' } });
+    const req: any = Readable.from([Buffer.from(body)]);
+    Object.assign(req, { method: 'POST', url: '/api/mobile/command', headers: { host: new URL(cfg.origin).host, 'content-type': 'application/json', ...(authorization ? { authorization } : {}) } });
+    const res: any = { headers: {}, setHeader(k: string, v: string) { this.headers[k] = v; }, writeHead(status: number) { this.status = status; }, end() { this.done = true; } };
+    await handle(req, res); return res.status as number;
+  };
+  expect(await call(`Bearer ${token}`)).toBe(200);
+  expect(await call()).toBe(401);
 });

@@ -32,15 +32,13 @@ export function mobileGeneration(): Record<string, string> {
 }
 export class MobileTransport {
   private token: string;
-  private csrf: string;
   private requests = new Set<AbortController>();
   private closed = false;
-  constructor(private endpoint: URL, token: string | { csrf: string }, private fetcher: typeof fetch = fetch) {
-    if (typeof token === 'string' && (!token.trim() || /[\r\n]/.test(token))) throw new MobileError('Enter the server’s access token.');
-    this.token = typeof token === 'string' ? token.trim() : '';
-    this.csrf = typeof token === 'string' ? '' : token.csrf;
+  constructor(private endpoint: URL, token: string, private fetcher: typeof fetch = fetch) {
+    if (!token.trim() || /[\r\n]/.test(token)) throw new MobileError('Enter the server’s access token.');
+    this.token = token.trim();
   }
-  close() { this.closed = true; this.token = ''; this.csrf = ''; for (const request of this.requests) request.abort(); this.requests.clear(); }
+  close() { this.closed = true; this.token = ''; for (const request of this.requests) request.abort(); this.requests.clear(); }
   async request(cmd: MobileCommand): Promise<unknown> {
     if (this.closed) throw new MobileError('Disconnected. Connect again.');
     const command = Command.parse(cmd);
@@ -52,9 +50,9 @@ export class MobileTransport {
     try {
       const fetcher = this.fetcher; // Native browser fetch must not receive the transport as `this`.
       const response = await fetcher(this.endpoint, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', ...mobileGeneration(), ...(this.csrf ? { 'X-Botling-CSRF': this.csrf } : { Authorization: `Bearer ${this.token}` }) },
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...mobileGeneration(), Authorization: `Bearer ${this.token}` },
         body: JSON.stringify({ v: PROTOCOL_VERSION, id, cmd: command }), signal: controller.signal,
-        cache: 'no-store', credentials: this.csrf ? 'same-origin' : 'omit', redirect: this.csrf ? 'manual' : 'error', referrerPolicy: 'no-referrer',
+        cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer',
       });
       if (response.status === 409) throw new MobileError('Botling was updated. Open /mobile/ again to load the current version; keep your draft before reloading.', false, false, true);
       if (response.status === 503 && (await response.clone().json().catch(() => null))?.error?.code === 'generation_updating') throw new MobileError('Botling is updating. Try again shortly; this request was not dispatched.');

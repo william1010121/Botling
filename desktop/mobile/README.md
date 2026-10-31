@@ -1,13 +1,9 @@
 # Botling web client — desktop and phone
 
-Google sign-in candidate: see [OAuth deployment contract](../src/mobile-bridge/OAUTH-CONTRACT.md). The browser now uses
-App-owned Google OAuth sessions; the bearer setup below applies only to automation. This candidate
-requires the private Google credentials opt-in before deployment; Cloudflare Access is not used.
-
 Botling Web runs the desktop app's own renderer (`src/renderer`: left column, the Web/src chat page,
 composer, right panel, `styles.css`/`chat.css`) unchanged. `web-bridge.ts` stands in for the Electron
-preload: it carries the renderer's envelopes over `/api/mobile/browser/command`, and `WebApp.tsx`
-adds Google sign-in, Sign out and polling (the bridge has no event stream). The chat page runs in a
+preload: it carries the renderer's envelopes over `/api/mobile/command`, and `WebApp.tsx`
+adds access-token sign-in, Sign out and polling (the bridge has no event stream). The chat page runs in a
 sandboxed, opaque-origin frame (`allow-scripts` only) served with the desktop's chat CSP.
 At 700px and below the left column is a drawer over the chat (`web.css`); the right panel already
 hides below 860px as on the desktop.
@@ -56,21 +52,17 @@ Packaging does not set `BOTLING_MOBILE_CONFIG`, create credentials, or start a l
 
 ## Browser authentication
 
-The login button navigates only to `/api/mobile/login`; Google authentication belongs to
-the app server. Session bootstrap and command requests use same-origin cookies without
-following API redirects. No bearer/token field is rendered. Automation still has its separate
-`/api/mobile/command` endpoint and its existing bearer/bot policy.
-
-Session/CSRF/identity checks and deployment inputs are in the
-[OAuth contract](../src/mobile-bridge/OAUTH-CONTRACT.md). The owner's Google session sees every bot the desktop lists (still only snapshot/send/choose/answer);
-bearer clients keep their explicit bot lists.
+The sign-in page asks for the access token the owner issued (the same bearer token the bridge's
+client file holds a hash of). It is kept only in the page's memory and sent as
+`Authorization: Bearer` on `/api/mobile/command`; there are no cookies, no session endpoints and
+no Google or OAuth flow. Sign out forgets the token. Each token keeps its explicit bot list.
 Credentials and chat snapshots never go into storage; only the layout toggles above use localStorage.
 
 ## Isolated responsive acceptance
 
 After the coordinator allocates validation, build only the mobile fixture bundle and run
 `node desktop/mobile/fixture-server.mjs`. It binds an ephemeral loopback port, uses synthetic
-conversations and sessions, and never contacts Google, Cloudflare or a real Core. The fixture
+conversations and a synthetic token, and never contacts Cloudflare or a real Core. The fixture
 also supports POST `/fixture/control` with `authenticated` and `denied` booleans to simulate expiry
 and bot denial; these routes are absent from production. The fixture is not JWT validation proof.
 
@@ -84,7 +76,7 @@ Viewport interaction does not establish physical-phone or Add-to-Home-Screen acc
 The same `/mobile/` entry serves desktop and phone browsers; no second login or web-only
 route is needed. The configured hosted entry is `https://botling-bridge.driseam.com/mobile/`.
 The desktop layout candidate must be integrated and deployed before that URL serves these changes.
-OAuth callback and Main-only grants are unchanged.
+
 
 At 900 CSS pixels and wider, Chats stays visible while selecting a conversation. Below 900px,
 Chats opens a full-width drawer; selection or Escape closes it. The conversation is inert while
@@ -98,6 +90,6 @@ this does not introduce server-side history pagination.
 
 Drafts, reconnect, refresh, sign-in and sign-out use the existing session flow on both sizes.
 The synthetic fixture includes extra bots only to exercise navigation; production browser
-sessions remain Main-only. Task status rendering and rich-report placeholders are unchanged;
+tokens keep their explicit bot lists. Task status rendering and rich-report placeholders are unchanged;
 future approved design work can target `.conversation`, `.messages`, `.message`, `.composer`
 and `.answer` without changing the session/transport contract.

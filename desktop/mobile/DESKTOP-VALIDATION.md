@@ -9,9 +9,6 @@ Branch: `bot/desktop-web-20261028`. Only browser client, tests and docs changed.
 - Existing mobile Vitest config: 3 files, 30 tests passed. Includes new responsive drawer,
   resize, inert conversation and Ctrl/Command+Enter/IME regressions, plus existing draft,
   offline, expired-session, logout, CSRF and transport behavior.
-- Unchanged `google.test.ts` and `google-bridge.test.ts`: 2 files, 34 tests passed, selected
-  through a temporary Vitest config. Includes OAuth validation, origin/session/CSRF checks,
-  Main-only grants, independent bearer ACL and mutation replay. No real Google login performed.
 - Only standalone browser fixture assets were compiled with `mobile/build.mjs`; no desktop
   build, package, integration, installation, restart or deployment was performed.
 - Dependencies reused the reviewed integration worktree's dependency target; both checkouts
@@ -40,7 +37,7 @@ The fixture includes Research and Staged files solely for navigation testing, no
 
 ## Limits and next integration seam
 
-No physical phone, iOS/Safari, actual software keyboard, installed PWA, live OAuth or hosted
+No physical phone, iOS/Safari, actual software keyboard, installed PWA, hosted
 asset rollout verified. Short viewport and touch emulation are browser acceptance only.
 The existing hosted entry is `https://botling-bridge.driseam.com/mobile/`; it will not serve this
 candidate until separately authorized integration/deployment. The callback, allowed account,

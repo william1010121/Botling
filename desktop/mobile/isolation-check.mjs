@@ -32,8 +32,10 @@ try {
   });
   page.on('response', async response => { if (response.url().endsWith('/frame-host.html')) result.hostHeaders ??= { csp: (await response.allHeaders())['content-security-policy'] }; });
   await page.goto(base);
+  await page.fill('input.web-token', 'f'.repeat(43));
+  await page.click('button.web-primary');
   await page.waitForSelector('.shell[data-ready="1"]');
-  // Things a card must not see: a readable shell cookie and shell storage (the session cookie is HttpOnly).
+  // Things a card must not see: a readable shell cookie and shell storage (the access token lives only in the shell's memory).
   await page.evaluate(() => { document.cookie = 'probe=shell-visible; path=/'; localStorage.setItem('probe', 'shell-visible'); });
   await page.click('.bot-row[data-bot="proj-botling"]');
   await page.waitForTimeout(2500);
@@ -54,27 +56,27 @@ try {
         localStorage: await attempt(() => localStorage.getItem('probe')),
         sessionStorage: await attempt(() => sessionStorage.length),
         indexedDB: await attempt(() => new Promise((resolve, reject) => { const r = indexedDB.open('probe'); r.onsuccess = () => resolve('opened'); r.onerror = () => reject(r.error); })),
-        fetchBridgeAPI: await attempt(() => fetch(`${shellOrigin}/api/mobile/browser/command`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{"v":10,"id":"probe","cmd":{"type":"chat.snapshot"}}' }).then(r => r.status)),
-        fetchRelative: await attempt(() => fetch('/api/mobile/session', { method: 'POST' }).then(r => r.status)),
+        fetchBridgeAPI: await attempt(() => fetch(`${shellOrigin}/api/mobile/command`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: '{"v":10,"id":"probe","cmd":{"type":"chat.snapshot"}}' }).then(r => r.status)),
+        fetchRelative: await attempt(() => fetch('/api/mobile/command', { method: 'POST' }).then(r => r.status)),
         fetchExternal: await attempt(() => fetch('https://example.com/').then(r => r.status)),
         xhr: await attempt(() => new Promise((resolve, reject) => { const x = new XMLHttpRequest(); x.open('GET', `${shellOrigin}/mobile/index.html`); x.onload = () => resolve(x.status); x.onerror = () => reject(new Error('xhr error')); x.send(); })),
         webSocket: await attempt(() => new Promise((resolve, reject) => { const w = new WebSocket(shellOrigin.replace('http', 'ws')); w.onopen = () => resolve('open'); w.onerror = () => reject(new Error('ws error')); })),
         // sendBeacon only says whether it queued; whether anything arrived is checked at the server (serverHits).
-        beacon: { ok: false, queued: (() => { try { return navigator.sendBeacon(`${shellOrigin}/api/mobile/logout`, 'x'); } catch (e) { return e.name; } })() },
+        beacon: { ok: false, queued: (() => { try { return navigator.sendBeacon(`${shellOrigin}/api/mobile/command`, 'x'); } catch (e) { return e.name; } })() },
         image: await attempt(() => new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve('loaded'); i.onerror = () => reject(new Error('image blocked')); i.src = 'https://example.com/favicon.ico'; })),
         nestedFrame: await attempt(async () => { const f = document.createElement('iframe'); f.src = `${shellOrigin}/mobile/`; document.body.append(f); await settle(); f.remove(); return violations.includes('frame-src') ? Promise.reject(new Error('blocked by frame-src')) : 'not blocked'; }),
         // about:srcdoc is not a fetch, so frame-src cannot stop it; it inherits this sandbox and CSP. Prove that from inside it.
         nestedSrcdoc: await new Promise(resolve => {
           const f = document.createElement('iframe');
           f.srcdoc = `<script>(async () => { const r = { origin: self.origin }; try { r.cookie = document.cookie; } catch (e) { r.cookie = e.name; }
-            try { await fetch(${JSON.stringify(shellOrigin)} + '/api/mobile/session', { method: 'POST' }); r.fetch = 'reached'; } catch (e) { r.fetch = e.name; }
+            try { await fetch(${JSON.stringify(shellOrigin)} + '/api/mobile/command', { method: 'POST' }); r.fetch = 'reached'; } catch (e) { r.fetch = e.name; }
             try { r.top = top.document.title; } catch (e) { r.top = e.name; } try { r.storage = localStorage.length; } catch (e) { r.storage = e.name; }
             parent.postMessage({ srcdocProbe: r }, '*'); })()<\/script>`;
           const done = (value) => { removeEventListener('message', on); f.remove(); resolve(value); };
           const on = (e) => { if (e.data?.srcdocProbe) done({ ok: false, inherited: e.data.srcdocProbe }); };
           addEventListener('message', on); document.body.append(f); setTimeout(() => done({ ok: false, error: 'no script ran' }), 1500);
         }),
-        form: await attempt(async () => { const form = document.createElement('form'); form.method = 'POST'; form.action = `${shellOrigin}/api/mobile/logout`; document.body.append(form); const before = location.href; form.submit(); await settle(); return location.href !== before ? 'navigated' : Promise.reject(new Error('not submitted')); }),
+        form: await attempt(async () => { const form = document.createElement('form'); form.method = 'POST'; form.action = `${shellOrigin}/api/mobile/command`; document.body.append(form); const before = location.href; form.submit(); await settle(); return location.href !== before ? 'navigated' : Promise.reject(new Error('not submitted')); }),
         worker: await attempt(() => new Promise((resolve, reject) => { const w = new Worker(URL.createObjectURL(new Blob(['postMessage(1)'], { type: 'text/javascript' }))); w.onmessage = () => resolve('ran'); w.onerror = () => reject(new Error('worker error')); setTimeout(() => reject(new Error('worker silent')), 400); })),
         sharedWorker: await attempt(() => new SharedWorker(URL.createObjectURL(new Blob([''], { type: 'text/javascript' }))) && 'created'),
         popup: await attempt(() => { const w = window.open(`${shellOrigin}/mobile/`); return w ? 'opened' : Promise.reject(new Error('blocked')); }),
@@ -94,7 +96,7 @@ try {
   await page.waitForTimeout(800);
   // What reached the server while the cards probed, apart from the shell's own polling (its exact Origin).
   result.serverHits = (await (await fetch(`${shellOrigin}/fixture/hits`)).json()).slice(hitsBefore)
-    .filter(hit => !(hit.url === '/api/mobile/browser/command' && hit.origin === shellOrigin) && hit.url !== '/fixture/hits');
+    .filter(hit => !(hit.url === '/api/mobile/command' && hit.origin === shellOrigin) && hit.url !== '/fixture/hits');
   const shell = await page.evaluate(() => ({ url: location.href, shellAlive: !!document.querySelector('.shell'), cookie: document.cookie }));
   result.shellAfter = shell;
   // The CPU card in view, for the record.

@@ -1,4 +1,4 @@
-// Botling Web's scope: the owner's Google session sees every bot, through the same four commands;
+// Botling Web's scope: the all-bots scope (no sign-in grants it any more) keeps the same four commands;
 // bearer clients keep their explicit lists and minimal snapshot; the web assets are served safely.
 import { afterEach, expect, it } from 'vitest';
 import { Readable } from 'node:stream';
@@ -131,8 +131,6 @@ it('an opaque origin never reaches the API', async () => {
   const body = { v: 10, id: 'n', cmd: { type: 'chat.snapshot' } };
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
   expect((await call('POST', '/api/mobile/command', { ...headers, origin: 'null' }, body)).status).toBe(403);
-  expect((await call('POST', '/api/mobile/browser/command', { 'content-type': 'application/json', origin: 'null' }, body)).status).toBe(403);
-  expect((await call('POST', '/api/mobile/session', { origin: 'null', 'x-botling-session': '1' })).status).toBe(403);
   expect(dispatched()).toBe(0);
   expect((await call('POST', '/api/mobile/command', headers, body)).status).toBe(200);
   expect(dispatched()).toBe(1);
