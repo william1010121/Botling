@@ -121,6 +121,14 @@ it('denial remains failed even if a worker incorrectly emits successful completi
  w.h.onItem({kind:'result',ok:true,text:'done',error:'',subtype:'end_turn'});await settle();expect(h.reports[0].text).toContain('status="failed"');
 });
 
+it('a failed tool call that was not an approval denial does not fail a worker that completes',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'toolUse',id:'t1',tool:'Bash',title:'git status',detail:'git status',input:{}} as any);
+ w.h.onItem({kind:'toolResult',id:'t1',output:'fatal: not a git repository',failed:true} as any);
+ w.h.onItem({kind:'result',ok:true,text:'report written',error:'',subtype:'end_turn'});await settle();
+ expect(h.reports[0].text).toContain('status="completed"');expect(h.reports[0].text).not.toContain('blocked by denied');expect(a.task_id).toBeTruthy();
+});
+
 it('cleans real owned process groups and verifies reconstructed-manager recovery before resume',async()=>{
  const {processTreeAdapter}=await import('../../src/core/process/tree');
  const home=mkdtempSync(join(tmpdir(),'agy-worker-process-')),reports:any[]=[],groups:any[]=[];
