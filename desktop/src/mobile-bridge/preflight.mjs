@@ -19,7 +19,7 @@ try {
   ownerFile(file);
   const c = JSON.parse(readFileSync(file, 'utf8'));
   const keys = ['origin', 'host', 'port', 'certFile', 'keyFile', 'clientsFile', 'assets'];
-  requireValue(c && Object.keys(c).every(k => keys.includes(k) || k === 'google') && keys.every(k => Object.hasOwn(c, k)));
+  requireValue(c && Object.keys(c).every(k => keys.includes(k) || k === 'google') /* removed field of older configs: ignored */ && keys.every(k => Object.hasOwn(c, k)));
   requireValue(['certFile', 'keyFile', 'clientsFile', 'assets'].every(k => typeof c[k] === 'string' && isAbsolute(c[k])));
   stage = 'private bind and HTTPS origin';
   requireValue(typeof c.host === 'string' && isIP(c.host) === 4);
@@ -43,17 +43,6 @@ try {
   requireValue(clients.every(v => v && Object.keys(v).length === 4 && clientKeys.every(k => Object.hasOwn(v, k)) && typeof v.id === 'string' && v.id.length > 0 && v.id.length <= 100 && typeof v.tokenHash === 'string' && /^[a-f0-9]{64}$/.test(v.tokenHash) && Array.isArray(v.botIds) && v.botIds.length > 0 && v.botIds.every(b => typeof b === 'string' && b.length > 0) && Number.isInteger(v.expiresAt) && v.expiresAt > 0));
   requireValue(new Set(clients.map(v => v.id)).size === clients.length);
   requireValue(clients.some(v => v.expiresAt > Date.now() && v.botIds.includes('6A0B0000-0000-4000-8000-000000000002')));
-  if (c.google !== undefined) {
-    stage = 'private Google credentials and single-email server allowlist';
-    requireValue(c.google && Object.keys(c.google).length === 1 && typeof c.google.credentialsFile === 'string' && isAbsolute(c.google.credentialsFile));
-    ownerFile(c.google.credentialsFile);
-    const g = JSON.parse(readFileSync(c.google.credentialsFile, 'utf8'));
-    requireValue(g && typeof g.client_id === 'string' && g.client_id.length > 0 && typeof g.client_secret === 'string' && g.client_secret.length > 0);
-    requireValue(typeof g.project_id === 'string' && g.project_id.length > 0);
-    requireValue(g.javascript_origin === c.origin && g.redirect_uri === c.origin + '/api/mobile/auth/google/callback');
-    requireValue(Array.isArray(g.allowed_emails) && g.allowed_emails.length === 1 && typeof g.allowed_emails[0] === 'string'
-      && g.allowed_emails[0] === g.allowed_emails[0].toLowerCase() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(g.allowed_emails[0]));
-  }
   stage = 'packaged web assets';
   for (const name of ['index.html', 'web.js', 'styles.css', 'web.css', 'chat.html', 'chat.js', 'chat.css', 'frame.css', 'frame-host.html', 'frame-host.js', 'manifest.webmanifest', 'icon.svg']) {
     requireValue(statSync(join(c.assets, name)).isFile() && readFileSync(join(c.assets, name)).length > 0);

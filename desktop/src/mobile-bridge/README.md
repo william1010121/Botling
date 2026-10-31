@@ -1,15 +1,12 @@
 # Private mobile bridge (review required)
 
-Google sign-in candidate: see [OAuth deployment contract](./OAUTH-CONTRACT.md). The browser now uses
-App-owned Google OAuth sessions; the bearer setup below applies only to automation. This candidate
-requires the private Google credentials opt-in before deployment; Cloudflare Access is not used.
-
 Protocol v10, `POST /api/mobile/command`, same-origin bearer authentication. Mobile assets are
 served at `/mobile/`; only the public application shell is unauthenticated. Every data/command
 request needs a current token and an explicit bot grant. There is no default HTTP listener, public bind,
-CORS, reverse-proxy trust or file endpoint. Optional Google browser sessions are isolated from bearer authentication.
+CORS, reverse-proxy trust or file endpoint.
 No listener starts unless the local owner supplies `BOTLING_MOBILE_CONFIG`, or creates the
 owner-only `<selected core data>/mobile/config.json` opt-in before core startup.
+Bearer tokens are the only sign-in. A `google` field left in an older config file is ignored.
 
 The core adapter allows snapshot/send/choose/answer only. Existing boot-activation checks,
 plugin before-send hooks and question/approval semantics run through core `handle` unchanged.

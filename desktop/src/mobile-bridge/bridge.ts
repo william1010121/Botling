@@ -10,7 +10,6 @@ import { RequestEnvelope, errorResponse, type ResponseEnvelope } from '../contra
 import { MAIN_BOT_ID } from '../core/store/records';
 import { MutationLedger } from './ledger';
 import { listenWithHandover } from './lifecycle';
-import { GoogleAuth, GoogleAuthError, CALLBACK } from './google';
 import { ALL_BOTS, botAllowed } from './scope';
 export { ALL_BOTS, botAllowed };
 
@@ -23,7 +22,7 @@ export interface MobileCore { mobileCommand(raw: unknown, allowedBots: readonly 
 export interface BridgeOptions {
   origin: string; host: string; port: number; tls: ServerOptions; assets: string;
   generation?: MobileGeneration; ready?: () => void; updating?: () => boolean;
-  google?: GoogleAuth; clients: () => Client[]; ledger: MutationLedger; core: MobileCore;
+  clients: () => Client[]; ledger: MutationLedger; core: MobileCore;
 }
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 /** OS account is the setup authority. Never accept group/world-readable credential policy. */
@@ -68,16 +67,13 @@ export function handler(options: BridgeOptions) {
     const refuse = (status: number) => { res.writeHead(status); res.end(); };
     let url: URL;
     try { url = new URL(req.url ?? '/', origin); } catch { return refuse(400); }
-    const login = req.method === 'GET' && url.pathname === '/api/mobile/login';
-    const callback = req.method === 'GET' && url.pathname === CALLBACK;
     const api = url.pathname.startsWith('/api/mobile/');
     const publicAsset = req.method === 'GET' && url.pathname.startsWith('/mobile/');
     const forbidden = () => api ? json(res, 403, { error: { code: 'access_denied' } }) : refuse(403);
-    // Public shell and OAuth top-level GETs may cross sites (including the Google redirect chain).
-    // Data/session operations still require same-origin requests; never trust forwarded headers.
+    // The public shell may cross sites; data operations still require same-origin requests; never trust forwarded headers.
     // The sandboxed chat frame's CORS loads (KaTeX fonts) say `Origin: null`; only public assets accept it.
     if (req.headers.host !== origin.host || (req.headers.origin && req.headers.origin !== origin.origin && !(publicAsset && req.headers.origin === 'null'))
-      || (req.headers['sec-fetch-site'] === 'cross-site' && !login && !callback && !publicAsset)) return forbidden();
+      || (req.headers['sec-fetch-site'] === 'cross-site' && !publicAsset)) return forbidden();
     if (options.updating?.()) return json(res, 503, { error: { code: 'generation_updating' } });
     const generation = options.generation;
     if (publicAsset) {
@@ -104,56 +100,16 @@ export function handler(options: BridgeOptions) {
       catch { refuse(404); }
       return;
     }
-    const authFailure = (error: unknown) => {
-      const failure = error instanceof GoogleAuthError ? error : new GoogleAuthError(503, 'auth_unavailable');
-      json(res, failure.status, { error: { code: failure.code } });
-    };
-    const browser = req.url === '/api/mobile/browser/command';
-    const authRoute = ['/api/mobile/session', '/api/mobile/logout', '/api/mobile/login', CALLBACK].includes(url.pathname);
-    if (browser || authRoute) {
-      if (!options.google) return json(res, 503, { error: { code: 'auth_unavailable' } });
-      if (authRoute) {
-        if (['/api/mobile/login', CALLBACK].includes(url.pathname) ? req.method !== 'GET' : req.method !== 'POST') return refuse(405);
-        if (!login && !callback && (req.headers.origin !== origin.origin || req.headers['x-botling-session'] !== '1')) return forbidden();
-        try {
-          if (login) {
-            const flow = options.google.begin(req);
-            res.writeHead(303, { Location: flow.location, 'Set-Cookie': flow.cookie }); res.end(); return;
-          }
-          if (callback) {
-            const session = await options.google.callback(req, url.searchParams);
-            res.writeHead(303, { Location: '/mobile/', 'Set-Cookie': [session, options.google.clearFlowCookie()] }); res.end(); return;
-          }
-          if (url.pathname === '/api/mobile/logout') {
-            res.setHeader('Set-Cookie', [options.google.logout(req), options.google.clearFlowCookie()]);
-            return json(res, 200, { loggedOut: true });
-          }
-          return json(res, 200, options.google.bootstrap(req));
-        } catch (error) {
-          if (callback) {
-            const failure = error instanceof GoogleAuthError ? error.code : 'auth_unavailable';
-            res.writeHead(303, { Location: `/mobile/?auth_error=${failure}`, 'Set-Cookie': options.google.clearFlowCookie() }); res.end(); return;
-          }
-          return authFailure(error);
-        }
-      }
-    }
     // Browser clients must match the page generation. Bearer automation without a browser
     // Origin keeps its existing versioned protocol contract; browser bearer clients are fenced too.
-    const stale = () => generation && (browser || !!req.headers.origin) && req.headers['x-botling-generation'] !== generation.id;
+    const stale = () => generation && !!req.headers.origin && req.headers['x-botling-generation'] !== generation.id;
     if (stale()) return json(res, 409, { error: { code: 'generation_changed' } });
-    if (!browser && req.url !== '/api/mobile/command') return refuse(404);
+    if (req.url !== '/api/mobile/command') return refuse(404);
     if (req.method !== 'POST') return refuse(405);
     let client: Pick<Client, 'id' | 'botIds' | 'expiresAt'> | undefined;
-    const resolveClient = async () => {
-      if (browser) {
-        if (req.headers.origin !== origin.origin) throw new GoogleAuthError(403, 'access_denied');
-        return options.google!.authorize(req);
-      }
-      // Existing automation remains independently bearer-authenticated with its own bot ACL.
-      return authenticate(req, Clients.parse(options.clients()));
-    };
-    try { client = await resolveClient(); } catch (error) { return authFailure(error); }
+    // Bearer-authenticated with its own bot ACL, re-resolved after the body upload to honor revocation.
+    const resolveClient = () => authenticate(req, Clients.parse(options.clients()));
+    try { client = resolveClient(); } catch { return json(res, 503, { error: { code: 'auth_unavailable' } }); }
     if (!client) return json(res, 401, { error: { code: 'auth_required' } });
     if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] ?? '')) return refuse(415);
     let raw: unknown;
@@ -170,7 +126,7 @@ export function handler(options: BridgeOptions) {
     const request = parsed.data;
     const cmd = request.cmd;
     // Recheck revocation after a potentially slow body upload, before lookup/replay/dispatch.
-    try { client = await resolveClient(); } catch (error) { return authFailure(error); }
+    try { client = resolveClient(); } catch { return json(res, 503, { error: { code: 'auth_unavailable' } }); }
     if (!client) return json(res, 401, { error: { code: 'auth_required' } });
     if (!mobileTypes.has(cmd.type) || !('botId' in cmd) && cmd.type !== 'chat.snapshot'
       || !botAllowed(client.botIds, ('botId' in cmd ? cmd.botId : undefined) ?? MAIN_BOT_ID)
