@@ -1,8 +1,8 @@
-// Bundles the chat surface into the app's resources (chat.html, chat.js, chat.css; viewer.html and
-// viewer.js, the file window for .md files, share chat.css), and each
-// built-in plugin in plugins/ into Resources/plugins/<name>/ (package.json, its bundles, and what
-// its own build.json says to copy), and the Node plugin host into Resources/host/host.mjs. Output
-// is committed so `swift build` needs no npm.
+// Bundles the chat surface (chat.html, chat.js, chat.css; viewer.html and viewer.js, the file window
+// for .md files, share chat.css), and each built-in plugin in plugins/ into dist/plugins/<name>/
+// (package.json, its bundles, and what its own build.json says to copy), and the Node plugin host
+// into dist/host/host.mjs. Output goes to Web/dist (git-ignored); the Electron app (desktop/) builds
+// what it needs from Web/src itself, so this build is a check that the shared sources still bundle.
 import { build } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { buildKit, inlineTokens } from "./kit/build.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const resources = join(here, "../Sources/ClaudeCodeBot/Resources");
+const resources = join(here, "dist");
 const out = join(resources, "web");
 const pluginsOut = join(resources, "plugins");
 

@@ -25,7 +25,7 @@ const messageFace = (id: string) => document.querySelector<HTMLImageElement>(`#m
 
 beforeAll(async () => {
   // Real bundled art makes Claude/Codex/Antigravity and their moods observably distinct in the rendered DOM.
-  const art = join(__dirname, "../../..", "Sources/ClaudeCodeBotCore/Resources/CharacterArt/avatars-static");
+  const art = join(__dirname, "../../assets/avatars-static");
   vi.stubGlobal("__CHARACTERS__", Object.fromEntries(["claude", "gpt", "gemini"].map((engine) => [engine, Object.fromEntries(["idle", "working", "thinking", "sleepy"].map((mood) => [mood, readFileSync(join(art, engine, `${mood}.png`)).toString("base64")]))])));
   document.body.innerHTML = '<main id="scroller"><div id="messages"></div></main><div id="composer-slot"></div>';
   await import("../../../Web/src/main");
@@ -100,7 +100,7 @@ describe("Antigravity illustrated look", () => {
     ["think", "thinking", { working: true, waiting: true }],
     ["sleep", "sleepy", { asleep: true, working: true, waiting: true }],
   ] as const)("uses the supplied Gemini %s illustration and preserves the bot shape", (mood, asset, state) => {
-    const art = readFileSync(join(__dirname, "../../../Sources/ClaudeCodeBotCore/Resources/CharacterArt/avatars-static/gemini", `${asset}.png`)).toString("base64");
+    const art = readFileSync(join(__dirname, "../../assets/avatars-static/gemini", `${asset}.png`)).toString("base64");
     const illustrated = characterURL("agy", mood, "octagon");
     expect(atob(illustrated.split(",")[1])).toContain(`href="data:image/png;base64,${art}"`);
     expect(illustrated).toBe(characterURL("gemini", mood, "octagon"));

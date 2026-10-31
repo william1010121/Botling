@@ -41,9 +41,10 @@ Linux targets are configured only.**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 
 **2026-10-26: user-authorized development trial, 2.0.0-dev.20261026.1.** Ship the existing input route with known launch/focus input loss; the dormant native editor host is not activated and later input adapters are deferred. This is not formal 2.0 acceptance. See [dev trial / 安全隔離試用](docs/dev-trial.md) for the manual external-volume shortcut, separate profile, disabled automatic 1.x import and exact limitations. Production update trust remains null; no live self-update. Full GUI/native focus/packaged-update checks remain deferred under the no-interruption restriction; current delivery evidence distinguishes artifact validation from runtime checks. Older D-pass artifacts are not this trial. Current [trial validation evidence](docs/dev-trial-validation.md) records the fresh artifacts and exact deferred checks.
-It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
-anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
-from `desktop/node_modules`), so `cd Web && npm run build` and its output are untouched;
+It lives beside the archived Swift 1.x app (`Sources/`, `Tests/`, `Package.swift`), which it does
+not need: `desktop/` builds, tests and packages with the Swift tree absent (the shared character
+art is in `desktop/assets/avatars-static`, the web AIs' page readers in `desktop/resources/`). Web/src is *bundled from source* into the desktop's chat frame (its packages come
+from `desktop/node_modules`), so `cd Web && npm run build` (output in git-ignored `Web/dist`) is not needed;
 `Web/src/contract.json` is read (for the shared `ccb.save` limit), never written.
 
 ## Verified updates and first open

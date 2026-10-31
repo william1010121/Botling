@@ -29,7 +29,7 @@ function fixture() {
   put("desktop/out/core/main.cjs", 'core must stay running');
   put("desktop/out/preload/preload.cjs", 'preload must stay unchanged');
   mkdirSync(join(repo, "Web/kit/generated"), { recursive: true });
-  mkdirSync(join(repo, "Sources/ClaudeCodeBotCore/Resources/CharacterArt/avatars-static"), { recursive: true });
+  mkdirSync(join(repo, "desktop/assets/avatars-static"), { recursive: true });
   symlinkSync(resolve("node_modules"), join(root, "node_modules"), "dir");
   return { repo, root, outdir, put, read: (file: string) => readFileSync(join(outdir, file), "utf8") };
 }

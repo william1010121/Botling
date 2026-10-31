@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 // web-capture/net-tap.js), run against a made-up window: fetch, XHR, EventSource and WebSocket
 // here are fakes, not a browser's or a real site's.
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, "../../Sources/ClaudeCodeBot/Resources/web-capture/net-tap.js"), "utf8");
+const source = readFileSync(join(here, "../../desktop/resources/web-capture/net-tap.js"), "utf8");
 
 type Event = { id: string; kind: string; phase: string; url?: string; method?: string; status?: number; body?: string; note?: string; headers?: Record<string, string> };
 

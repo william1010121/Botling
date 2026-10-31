@@ -14,7 +14,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   const latex = await build({ entryPoints: [join(web, "plugins/ccb-latex/src/web.ts")], bundle: true,
     format: "esm", target: "chrome130", minify: true, legalComments: "eof", write: false, nodePaths });
   const characters = {};
-  const art = join(root, "../Sources/ClaudeCodeBotCore/Resources/CharacterArt/avatars-static");
+  const art = join(root, "assets/avatars-static");
   for (const character of ["claude", "gpt", "gemini"]) {
     characters[character] = {};
     for (const expression of ["idle", "working", "thinking", "sleepy"]) {
@@ -74,7 +74,7 @@ export function rendererStamp(root = desktopRoot) {
     }
   };
   for (const directory of ["src", "../Web/src", "../Web/plugins/ccb-latex/src", "../Web/kit/generated",
-    "../Sources/ClaudeCodeBotCore/Resources/CharacterArt/avatars-static"]) visit(join(root, directory));
+    "assets/avatars-static"]) visit(join(root, directory));
   return rows.sort().join("\n");
 }
 export async function watchRenderer({ root = desktopRoot, outdir = join(root, "out/renderer"), interval = 300,

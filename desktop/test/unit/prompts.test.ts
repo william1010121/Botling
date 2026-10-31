@@ -1,9 +1,6 @@
-// The generated instructions preserve Swift parity, with explicit approved desktop report additions. Two checks:
-// - prompts-golden.json holds the strings the Swift code itself wrote for a set of inputs
-//   (Tests/ClaudeCodeBotCoreTests/DesktopPromptGoldenExport.swift; re-export after changing
+// The generated instructions preserve Swift parity, with explicit approved desktop report additions. prompts-golden.json holds the strings the Swift code itself wrote for a set of inputs
+//   (archived 1.x: Tests/ClaudeCodeBotCoreTests/DesktopPromptGoldenExport.swift; re-export after changing
 //   Prompts.swift, see desktop/README.md);
-// - the SHA-256 digests ClaudePromptCompatibilityTests.swift freezes, read from that file as it is
-//   in this checkout, so a change on the Swift side that the port has not followed fails here.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -107,30 +104,6 @@ describe("prompts: the Swift app's strings", () => {
       expect(rule).toContain("9 hand-offs, 4 of them reviews and 1 discussion rounds");
       expect(rule).not.toContain("Each user message reaches both");
       expect(headsRule({handoffs:false,limits:DEFAULT_HEADS.limits},engine)).not.toContain('<handoff to=');
-    }
-  });
-
-  it("matches the digests ClaudePromptCompatibilityTests freezes", () => {
-    const swift = readFileSync(join(desktop, "..", "Tests", "ClaudeCodeBotCoreTests", "ClaudePromptCompatibilityTests.swift"), "utf8");
-    const json = /baseline = #"""\n([\s\S]*?)\n\s*"""#/.exec(swift)?.[1];
-    expect(json).toBeTruthy();
-    const baseline = JSON.parse(json!) as Record<string, Record<string, string>>;
-    expect(Object.keys(baseline)).toHaveLength(8);
-    const root = "/tmp/claude-dispatch-compatibility";
-    for (const [key, digests] of Object.entries(baseline)) {
-      const [index, ...rest] = key.split("-");
-      const dual = rest.pop() === "true";
-      const language = rest.join("-") as AppLanguage;
-      const profile = index === "0"
-        ? { role: "main" as const, name: "Main bot", folder: root }
-        : { role: "manager" as const, name: "Probe", folder: root, instructions: "Keep the project's billing API stable." };
-      const ours = promptsFor({ profile, language, results: "artifactUnlessSensitive", dual });
-      for (const [name, digest] of Object.entries(digests)) {
-        if (dual && name === "headsRule") continue; // Behavior checked above; Swift still broadcasts.
-        const legacyRule = (golden.prompts as GoldenPrompt[]).find(entry => entry.input.dual)!.output.headsRule;
-        const value = dual ? ours[name as keyof typeof ours].replace(ours.headsRule, legacyRule) : ours[name as keyof typeof ours];
-        expect(createHash("sha256").update(value, "utf8").digest("hex"), `${key}.${name}`).toBe(digest);
-      }
     }
   });
 
