@@ -339,6 +339,14 @@ async function turn(job) {
     result(text);
     return;
   }
+  // A called-in bot's answer handed back to the bot that asked ("silent" in what it asked: <no-reply/>;
+  // "loop": it @s again at once).
+  const answered = /^\(App: "[^"]*", whom you called in with @, answered you[\s\S]*?You asked: <<<\n([\s\S]*?)\n>>>\nIt answered: <<<\n([\s\S]*?)\n>>>/.exec(prompt);
+  if (answered) {
+    const text = answered[1].includes("silent") ? "<no-reply/>" : `Heard: ${answered[2]}${answered[1].includes("loop") ? "\n@Maintainer again" : ""}`;
+    result(await stream(text));
+    return;
+  }
   // A turn in another chat (a call-in by @, a bot's @, a group chat; Phase 4c): "<name> here: <what it was
   // asked>"; "/guestsay <text>" in what it was asked: exactly <text>; a group turn not addressed to it: PASS.
   const guestAt = prompt.search(/\(App: (?:The user called you into |A bot called you in with @\. |Group chat )/);

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Bot, GuestAnswer } from "./bot";
 import { writeFileAtomic } from "./durable/atomic";
 import {
-  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botCallInPrompt, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
+  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botCallInPrompt, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
   isPass, mentionBody, mentioned, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
@@ -70,7 +70,10 @@ export interface ConversationsDeps {
 }
 
 /** A bot @ (`BotMention`): the reply that did it, whom it named, the words for it. */
-interface BotMention { message: string; recipient: string; body: string }
+interface BotMention { message: string; recipient: string; body: string; depth?: number }
+
+/** How many bot-to-bot hops one user line may start: the asker's follow-up reply may still @ once more, no further. */
+const MAX_FOLLOW_DEPTH = 2;
 
 export class Conversations {
   readonly mentionLog: BotMentionLog;
@@ -139,7 +142,13 @@ export class Conversations {
    * calls that bot in with it — one bot per reply, once (bot-mentions.json), at most 3 per message of yours.
    */
   receiveBotMention(record: ChatRecord, chat: Bot) {
-    if (record.role !== "bot" || typeof record.sourceID === "string" || !record.text.includes("@")) return;
+    if (record.role !== "bot" || typeof record.sourceID === "string") return;
+    // The reply to a woken follow-up (the callee's answer handed back): its @ wakes others only below MAX_FOLLOW_DEPTH.
+    const wake = this.followUps.get(chat.id);
+    if (wake) this.followUps.delete(chat.id);
+    const depth = wake && wake.until > Date.now() ? wake.depth : 0;
+    if (!record.text.includes("@")) return;
+    if (depth >= MAX_FOLLOW_DEPTH) return;
     const members = this.deps.members();
     if (!members.some((member) => member.id === chat.id)) return;
     const callable = this.callable(chat.id);
@@ -179,8 +188,11 @@ export class Conversations {
       chat.appNotice(`Not sent to ${recipient.name} with @: could not keep a record of it (${(error as Error).message}).`);
       return;
     }
-    this.startCallIn(chat, [recipient], record.id, null, { message: record.id, recipient: recipient.id, body });
+    this.startCallIn(chat, [recipient], record.id, null, { message: record.id, recipient: recipient.id, body, depth: depth + 1 });
   }
+
+  /** Chats whose bot was just handed a callee's answer: the next reply there is that follow-up (depth, expiry). */
+  private followUps = new Map<string, { depth: number; until: number }>();
 
   /** Queues the called bots' turns after any still running for this chat, so they never talk over each other (`startCallIn`). */
   startCallIn(chat: Bot, members: Member[], newest: string | null, ask: string | null, caller?: BotMention) {
@@ -220,9 +232,16 @@ export class Conversations {
       else {
         // You named it, so its tags act as they would in its own chat. Called in by a bot, its answer
         // is only a line: no tags act, nothing in it is dispatched.
-        await this.postGuestReply(answer, member, bot, chat, { passes: false, tagsAct: !caller }, (line) => {
+        let said = "";
+        const posted = await this.postGuestReply(answer, member, bot, chat, { passes: false, tagsAct: !caller }, (line) => {
+          said = line.text;
           bot.keepCallIn(`Called into ${host}'s chat with @: ${asked}`, askedAt, line);
         });
+        // A bot asked: wake it with the answer, once, so it is not left unaware of it.
+        if (caller && posted && said.trim() && (caller.depth ?? 1) < MAX_FOLLOW_DEPTH) {
+          this.followUps.set(chat.id, { depth: caller.depth ?? 1, until: Date.now() + 30 * 60_000 });
+          chat.appMessage(botAnswerNote({ callee: member.name, question: caller.body, answer: said }));
+        }
       }
       this.deps.refreshWaiting();
     }
