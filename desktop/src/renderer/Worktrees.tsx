@@ -52,8 +52,8 @@ export function Worktrees({ client, bot, lang, onReview }: { client: Client; bot
 
   return (
     <section className="detail-section worktrees-section" aria-label={words.title}>
-      <div className="worktrees-head">
-        <h3>{words.title}</h3>
+      <h3>{words.title}</h3>
+      <div className="worktrees-toolbar">
         <span className="worktree-buttons">
           {onReview && <button type="button" className="task-report" onClick={() => onReview({ worktreeId: null, branch: null, base: null, path: null })}>{look.reviewMain}</button>}
           {naming === null && <button type="button" className="task-report" disabled={busy} onClick={() => { setNaming(""); setNote(null); }}>{words.add}</button>}
