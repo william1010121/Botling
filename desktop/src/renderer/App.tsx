@@ -589,8 +589,6 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, bots: current.bots,
       // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
-      // /share is offered in the input box of the developer project's chat (`offersShare`).
-      share: !!current.settings?.developerMode && bot.id === current.settings?.developerProject && bot.role === "manager",
     });
     const traceId = inputTrace()?.mark("shell.state.send", () => ({ chat: state.botID, ...inputTrace()!.snapshot() }));
     return { state, extras, libraryVersion: current.libraryVersion, resyncs: current.resyncs,

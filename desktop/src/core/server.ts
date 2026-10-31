@@ -53,7 +53,7 @@ import { briefConfig, writeBrief } from "./component-brief";
 import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
-import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID, newId, toSwiftDate } from "./store/records";
+import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botDescription, latestAction } from "./whiteboard-data";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
@@ -65,10 +65,6 @@ import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { FolderWatch, type WatchTarget } from "./folder-watch";
 import { probeNetwork } from "./network-resume";
-import {
-  checklist, checklistCard, features as shareFeatures, labelCreation, listCard, LABEL, owner as forkOwner, pullRequest, runShare, shareBase,
-  type Feature, type ShareRunner,
-} from "./community-share";
 import { Plugins, type BotInfo } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
@@ -125,8 +121,6 @@ export interface CoreOptions {
   stallMinuteMs?: number;
   /** Whether Claude's API answers again (1.x's `networkProbe`; tests replace it). */
   networkProbe?: () => Promise<boolean>;
-  /** Runs git and gh for /share's push and pull request (1.x's `shareRunner`; tests replace it). */
-  shareRunner?: ShareRunner;
   /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
   summarizer?: Summarizer | null;
   /** The models the local Codex offers (`model/list`); null: none known. */
@@ -697,96 +691,6 @@ export class Core {
     }
     const date = now ?? Date.now();
     for (const bot of waiting) bot.networkRestored(date);
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // /share (1.x's Workspace+Share.swift)
-
-  /** `text` is /share (alone, or with a branch): the app answers it instead of the bot; its line's id. Null for anything else. */
-  private share(text: string, bot: Bot): string | null {
-    const words = text.trim().split(/\s+/);
-    if (words[0] !== "/share" || words.length > 2) return null;
-    const line: ChatRecord = { id: newId(), role: "user", text, date: toSwiftDate() };
-    bot.post(line, { unread: false });
-    const developer = this.developerProject();
-    if (!developer || developer.id !== bot.id) {
-      bot.appNotice("/share needs developer mode, in the chat of the project that is Botling's source: it shares a feature you built there as a pull request. Turn it on in Settings › Developer mode.");
-      return line.id;
-    }
-    const asked = words[1] ?? null;
-    const repo = developer.profile.folder;
-    const project = developer.id;
-    const tell = (words: string, choices?: { label: string; detail?: string; recommended?: boolean }[], onPick?: (index: number) => void) =>
-      bot.appNotice(words, choices, onPick, { sourceID: project });
-    setTimeout(() => {
-      const base = shareBase(repo);
-      const all = shareFeatures(repo, base);
-      if (asked) {
-        const found = all.find((candidate) => candidate.branch === asked);
-        if (!found) {
-          tell(`No feature called ${asked} to share: it is not a branch with commits ${base} does not have.${all.length ? ` Yours: ${all.map((candidate) => candidate.branch).join(", ")}.` : ""}`);
-          return;
-        }
-        this.checkShare(found, repo, base, tell, bot);
-        return;
-      }
-      if (!all.length) {
-        tell(`No features to share yet. A feature is a branch with commits ${base} does not have: ask your Manager to build one on a branch of its own (bot/<name>), then /share again.`);
-        return;
-      }
-      const card = listCard(all, base);
-      tell(card.text, card.choices, (index) => {
-        const picked = card.offered[index];
-        if (picked) this.checkShare(picked, repo, base, tell, bot);
-      });
-    }, 0);
-    return line.id;
-  }
-
-  /** The checklist for `feature`; a card to open its pull request when nothing failed (`check`). */
-  private checkShare(feature: Feature, repo: string, base: string, tell: (words: string, choices?: { label: string; recommended?: boolean }[], onPick?: (index: number) => void) => string, bot: Bot) {
-    const checks = checklist(repo, feature, base);
-    const fork = forkOwner(repo);
-    const card = checklistCard(feature, checks, fork);
-    if (!card.ready || !fork) { tell(card.text); return; }
-    tell(card.text, [{ label: "Open pull request", recommended: true }, { label: "Not now" }], (index) => {
-      if (index === 0) void this.openShare(feature, fork, repo, tell, bot);
-    });
-  }
-
-  /**
-   * Pushes `feature` to your fork and opens its pull request with the label, making the label on Botling
-   * first when it is missing there; one you may not add is left for the owner to add, and the result says why.
-   */
-  private async openShare(feature: Feature, fork: string, folder: string, tell: (words: string) => string, bot: Bot) {
-    const run = this.options.shareRunner ?? runShare;
-    const push = await run(["git", "push", "-u", "origin", feature.branch], folder);
-    if (!push.ok) {
-      tell(`Couldn't push ${feature.branch} to your fork, so no pull request was opened:\n\n\`\`\`\n${push.output}\n\`\`\``);
-      return;
-    }
-    const lastLine = (text: string) => text.split("\n").filter(Boolean).at(-1) ?? text;
-    const labelled = pullRequest(feature, fork, true);
-    let made = await run(labelled, folder);
-    let refused: string | null = null;
-    if (!made.ok && made.output.toLowerCase().includes("label")) {
-      // gh refused the label: most often it is missing on Botling. Make it, then try again.
-      const creation = await run(labelCreation(), folder);
-      const there = creation.ok || creation.output.toLowerCase().includes("already exists");
-      if (there) made = await run(labelled, folder);
-      if (!there || (!made.ok && made.output.toLowerCase().includes("label"))) {
-        refused = there ? made.output : creation.output;
-        made = await run(pullRequest(feature, fork, false), folder);
-      }
-    }
-    if (!made.ok) {
-      tell(`Couldn't open the pull request for ${feature.branch}:\n\n\`\`\`\n${made.output}\n\`\`\``);
-      return;
-    }
-    const link = made.output.split("\n").findLast((line) => line.startsWith("https://")) ?? made.output;
-    const label = refused !== null ? ` It went without the ${LABEL} label, so the Release planner does not list it until the owner adds it: GitHub refused it (\`${lastLine(refused)}\`).` : "";
-    tell(`Opened a pull request for "${feature.title}": ${link}${label} Others vote on it with 👍.`);
-    bot.queueNote(`(App: The user shared ${feature.branch} with /share: ${link}. Commits pushed to that branch later update the pull request.)`);
   }
 
   /** The project that is Botling's own source, while developer mode is on (`developerProject`). */
@@ -1440,9 +1344,6 @@ First write a test that shows this, then fix it.`;
       return { messageId, turnId: null, stoppedBy: outcome.stoppedBy };
     }
     const words = outcome.send.slice(0, 100_000) || text;
-    // /share is the app's: it lists your features and opens a pull request for one (`Workspace.share`).
-    const shared = this.share(words, bot);
-    if (shared) return { messageId: shared, turnId: null };
     // Bots you named with @ are called in: they answer here too, after reading the chat (`Workspace.send`).
     const called = this.conversations.calledIn(words, bot.id);
     const appNote = this.conversations.notes(bot, called, words);

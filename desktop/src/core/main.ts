@@ -5,7 +5,6 @@ import { startConfiguredMobile } from '../mobile-bridge/start';
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
 import { retrieveQuota } from "./quota";
-import { appendFileSync } from "node:fs";
 import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -240,11 +239,6 @@ const core = new Core({
   stallMinuteMs: number(process.env.BOTLING_STALL_MINUTE_MS, 60_000),
   // Whether Claude's API answers again, while a bot waits for the network (BOTLING_NETWORK_PROBE_URL: another address, for tests).
   networkProbe: () => probeNetwork(process.env.BOTLING_NETWORK_PROBE_URL || probeEndpoint()),
-  // /share's git push and gh: for real, or (tests: BOTLING_FAKE_SHARE_LOG) written to a file and answered with a link.
-  ...(process.env.BOTLING_FAKE_SHARE_LOG ? { shareRunner: async (args: string[]) => {
-    appendFileSync(process.env.BOTLING_FAKE_SHARE_LOG!, JSON.stringify(args) + "\n");
-    return { ok: true, output: args[0] === "gh" && args[2] === "create" ? "https://github.com/william1010121/Botling/pull/1" : "" };
-  } } : {}),
   summarizer: summarizer(),
   codexModels: codexModels(),
   engineModels: (engine, profile) => queryModels(engine, profile.folder),
