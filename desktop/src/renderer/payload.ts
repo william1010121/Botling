@@ -267,7 +267,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
         component: chip.component, display: chip.display ? displayView(chip.display) : null, filling: chip.filling })) : null,
       component: message.component ?? null,
       feedback: message.feedback ?? null,
-      completionVerification: message.completionVerification ? { ...message.completionVerification, verdict: message.completionVerification.verdict as never } : null,
     };
   });
   // Another bot answering here (called in with @) while the chat's own bot is not at work: its typing bubble.

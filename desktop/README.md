@@ -31,7 +31,7 @@ app's engine defaults, `<need-folder>`, @ call-ins and bots' @, group chats (the
 string for string against the Swift code), the right panel's Tasks list, pinned bots, the left
 column's search (⌘K) and fold, and the root causes of two e2e flakes. Phase 5a done: Maintainer's rest
 (component specs and `<suggest-component>`, a card's reports, Revert from the library's git, component
-shots, the `/` component menu and its mention note), the Phase 4c leftovers, completion verification,
+shots, the `/` component menu and its mention note), the Phase 4c leftovers,
 the "not right" feedback relay, and Codex's worker return routes, model list and model switching. Phase 5b
 done (macOS): electron-builder makes a runnable arm64 `.app`, zip and DMG with Electron's fuses hardened, ad-hoc
 signed (ready for a Developer ID and notarization from the environment), test-only variables ignored, the
@@ -755,7 +755,7 @@ Tests after item 5: unit 283, e2e 38, typecheck, all green (the full e2e suite f
   own; the Phase 3b decision (panels only) is superseded. The chat origin serves a plugin's files only
   when its manifest names them.
 - **Settings keep 1.x's keys** in settings.json and bot.json; settings 2.0 cannot act on yet
-  (completion verification, reminders) are kept and shown, not used. The contract stayed at v7 for them.
+  (reminders; the removed completion-verification keys stay in the file untouched) are kept and shown, not used. The contract stayed at v7 for them.
 - **A project is added only by you**: the page cannot name a folder (`projects.add` is not a renderer
   command); "Add project" goes through main's picker, `<new-project>` through a card you answer.
 - **An inbox is emptied only after its bot took the text** (1.x empties it first): a bot that cannot
@@ -863,7 +863,6 @@ CCB_DESKTOP_GROUPS_EXPORT=$PWD/desktop/test/fixtures/groups-golden.json TZ=UTC \
 | Reports and Revert (`maintainer.ts`, `main.ts`) | A card's ⋯ "Report a problem…" and change requests go to Maintainer as 1.x words them (where the card is, how it refreshes, when its data is from), with the card's screenshot (main captures it) and pasted pictures as the relay's attachments; the component shows as being worked on until Maintainer's turn ends; Revert puts back the version before its last change from the plugin library's git (changes not committed are committed first) | `unit/phase5.test.ts` (**6 problem reports equal to Swift's**), `unit/maintainer.test.ts` (**4 relays equal to Swift's**, git log after Revert) |
 | Component specs (`specs.ts`, `spec-desk.ts`, `SpecFrame.tsx`) | 1.x's ComponentSpec + Workspace+Specs: "Make into component" hands Maintainer the first build (`build-first`); its `<component-spec>` fills the spec; the component landing goes on the bots' lists and the bot that wrote the reply draws it under its reply in a quiet turn (`fillRequest`); a bot's `<suggest-component>` is a chip until pressed; "Edit spec" opens the spec panel (Web/src's spec page in the right panel): edits, answers, words (`shape`), Build it, a change built as the next version (`change`), queued words, Test run through the command allow flow, Cancel; specs.json in 1.x's format | `unit/phase5.test.ts` (**drafts of 4 replies, 11 edit/update steps, every request (draft, first build ×2, say ×2, change ×3, build ×2, Board, fill ×2) and fills equal to Swift's**), `unit/specs.test.ts`, `e2e/phase5.spec.ts`, screenshots `phase5a-built.png`, `phase5a-spec-panel.png`, `phase5a-verified-suggested.png` |
 | Component shots (`core/component-shot.ts`, `main/shot.ts`) | `electron <desktop> --component-shot <folder> [--out --data --folder --surfaces --sizes]`: no core, a throwaway profile; the real chat page draws the component in a reply, as Board tiles, opened above the input box and floating (hidden offscreen windows), a probe in each component page measures it; each frame is pictured and judged, a contact sheet and report.json are written, 1.x's summary printed; exit 0/1/2/3. Maintainer's instructions now name this build's command | `unit/shots.test.ts` (**usage, parsing, data, judging and summaries equal to Swift's**), `e2e/shot.spec.ts` (a good and a broken component, a bad folder), screenshot `phase5a-shot-sheet.png` |
-| Completion verification (`promise-check.ts`, `bot.ts`) | 1.x's PromiseCheck: with Settings' toggle on, each finished reply is judged by an isolated, read-only `codex exec` (1.x's arguments and prompt) from a bounded evidence record (authorization, conversation, steps, memory, live Codex workers and monitors, running subagents, routines, end/block signals); the verdict shows under the reply; CONTINUE delivers 1.x's follow-up (twice without progress: paused), NEEDS_TERMINAL_SIGNAL asks for evidence, WAITING_USER says "Blocked: …", UNKNOWN/UNAVAILABLE say so; Stop suspends it | `unit/phase5.test.ts` (**strings, arguments, 4 evidence records byte for byte, 28 reviews, parses equal to Swift's**), `unit/completion.test.ts`, `e2e/phase5.spec.ts` |
 | "Not right" feedback (`feedback.ts`, `server.ts`, Settings → Developer) | Developer mode with Botling's source project: replies get the flag; the report goes to that project as 1.x writes it, with the chat as you saw it (main captures the frame) and your pictures; feedback.md keeps every report; the relay shows short | `unit/feedback.test.ts` (**the report equal to Swift's**) |
 | Codex parity | Worker return routes: work handed to Codex that it gives a worker goes back with the worker's report (`managedTaskHandoffs`); the Codex model menu from `codex app-server`'s `model/list` (once per run); switching Claude's model, effort, subagents' model or Codex's model: awake heads go on in the same session before their next message ("Restarted → Opus", told so), asleep "Switched to …" | `unit/two-heads.test.ts`, `unit/switching.test.ts` |
 
@@ -887,9 +886,6 @@ CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
 - **The spec panel takes the right panel's place** while its chat is shown (340 pt, wide 560).
 - **The column follows 1.x**: the main bot, Maintainer, the pinned rows, then groups, projects and bots with
   the newest line first (Phase 4c had Maintainer last and no sorting).
-- **Completion verification**: the hand-back of handed work is not held until the judgment (1.x holds it);
-  paused handed work and the judge's state are not merged (1.x's `pausedCompletionContext`); a background
-  command chip is not a dependency (2.0 has none); otherwise 1.x's rules and strings.
 - **Developer mode is only the feedback relay**: the developer briefing, build installs and app screenshots
   are not ported; the setting keeps 1.x's keys (`developerMode`, `developerProjectID`).
 - **A model switch while awake restarts in the same session before the next message** and tells the head

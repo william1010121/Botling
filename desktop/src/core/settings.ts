@@ -68,8 +68,6 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     catchUpModel: text(raw.catchUpModelChoice) ?? JUDGE_MODEL,
     summaryPrompt: text(raw.summaryPromptChoice),
     defaultSummaryPrompt: DEFAULT_WRITING_PROMPT,
-    completionVerification: bool(raw.completionVerificationOn, false),
-    completionVerificationModel: text(raw.completionVerificationModelChoice) ?? JUDGE_MODEL,
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false),
@@ -112,8 +110,6 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "intervalSummaryThreshold": set("intervalSummaryThresholdChoice", clampThreshold(change.value)); set("summaryThresholdsCustomizedChoice", true); break;
     case "catchUpModel": set("catchUpModelChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
     case "summaryPrompt": set("summaryPromptChoice", change.value && change.value.trim() ? change.value : null); break;
-    case "completionVerification": set("completionVerificationOn", change.value); break;
-    case "completionVerificationModel": set("completionVerificationModelChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
     case "claudeBypassPermissions": set("claudeBypassPermissions", change.value); break;
     case "agyBypassPermissions": set("agyBypassPermissions", change.value); break;

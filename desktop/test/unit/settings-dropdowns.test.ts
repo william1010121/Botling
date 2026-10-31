@@ -78,7 +78,7 @@ describe("Settings' model and effort choices are dropdowns", () => {
 
   it("Engines: subagents, Codex workers, verification and component editor", async () => {
     const sent: any[] = [];
-    const raw = { codexWorkersFollow: false, codexWorkerChoice: { model: "gpt-5-old", effort: null, fast: null }, completionVerificationEnabledChoice: false };
+    const raw = { codexWorkersFollow: false, codexWorkerChoice: { model: "gpt-5-old", effort: null, fast: null } };
     const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient(raw, sent), settings: null, bot: null, plugins: null, initialSection: "engines", onClose() {} }));
     try {
       expect(host.querySelectorAll(".segmented")).toHaveLength(0);
@@ -96,9 +96,6 @@ describe("Settings' model and effort choices are dropdowns", () => {
       expect(options(effort)).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
       await choose(effort, "xhigh");
       expect(sent.at(-1)).toMatchObject({ change: { key: "codexWorkers", value: { model: "gpt-6-sol", effort: "xhigh" } } });
-      const verification = select(host, "Verification model");
-      expect(verification.disabled).toBe(true);
-      expect(verification.value).toBe("gpt-6-luna");
       expect(options(select(host, "Component editor's model"))).toEqual(["haiku", "sonnet", "opus"]);
       await choose(select(host, "Component editor's model"), "opus");
       expect(sent.at(-1)).toMatchObject({ change: { key: "componentEditorModel", value: "opus" } });

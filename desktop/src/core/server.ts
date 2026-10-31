@@ -24,7 +24,6 @@ import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
 import { SpecDesk } from "./spec-desk";
-import { check, type Classifier } from "./promise-check";
 import type { CodexModel } from "./agent/codex-models";
 import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
@@ -130,8 +129,6 @@ export interface CoreOptions {
   shareRunner?: ShareRunner;
   /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
   summarizer?: Summarizer | null;
-  /** The completion judge on Codex for a model (`completionClassifier`); null: none (the check stays off). */
-  classifier?: ((model: string) => Classifier) | null;
   /** The models the local Codex offers (`model/list`); null: none known. */
   engineModels?: (engine: ModelEngine, profile: BotProfile) => Promise<ModelDiscovery>;
   codexModels?: (() => Promise<CodexModel[]>) | null;
@@ -337,16 +334,6 @@ export class Core {
         // What each turn used, by bot, and the subscriptions' limits (1.x's `record`, `note`).
         usage: (name, spent, tokens) => this.usage.record(spent, tokens, name),
         rateLimits: (engine, limits) => this.usage.note(engine, limits),
-        // The completion judge, while Settings has it on (`configureCompletionVerification`).
-        promiseCheck: () => {
-          const classify = this.options.classifier;
-          if (!classify) return null;
-          const view = settingsView(readSettings(Layout.settings(this.options.dataDir)));
-          if (!view.completionVerification) return null;
-          const model = view.completionVerificationModel;
-          const classifier = classify(model);
-          return { model, check: (end) => check(end, classifier) };
-        },
         // A reply's spec chips and its own component (Phase 5a).
         lineExtras: (bot, record) => this.specs?.lineExtras(bot, record) ?? {},
         specsChanged: (bot) => this.specs?.specsChanged(bot),

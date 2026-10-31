@@ -356,9 +356,6 @@ export const MessageView = z.strictObject({
   specs: z.array(SpecChipView).max(20).optional(),
   /** The library component this reply already is ("Add to another bot…"). */
   component: z.string().max(200).optional(),
-  /** The app's completion check of this reply (1.x's `CompletionVerification`). */
-  completionVerification: z.strictObject({ model: z.string().max(200), state: z.enum(["checking", "judged", "interrupted"]), verdict: z.string().max(40).nullable(),
-    reason: z.string().max(2_000).nullable(), continuationPaused: z.boolean().nullable() }).optional(),
   /** A "not right" report to the developer project: shown short (1.x's `FeedbackNote`). */
   feedback: z.strictObject({ about: z.string().max(400), words: z.string().max(20_000) }).optional(),
 });
@@ -673,8 +670,6 @@ export const SettingsView = z.strictObject({
   catchUpModel: z.string().max(200),
   summaryPrompt: z.string().max(20_000).nullable(),
   defaultSummaryPrompt: z.string().max(2_000),
-  completionVerification: z.boolean(),
-  completionVerificationModel: z.string().max(200),
   subagentModel: BotModel.nullable(),
   subagentHourCache: z.boolean(),
   claudeBypassPermissions: z.boolean().default(false),
@@ -720,8 +715,6 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("intervalSummaryThreshold"), value: z.number().int().min(1).max(50) }),
   z.strictObject({ key: z.literal("catchUpModel"), value: ModelId.nullable() }),
   z.strictObject({ key: z.literal("summaryPrompt"), value: z.string().max(20_000).nullable() }),
-  z.strictObject({ key: z.literal("completionVerification"), value: z.boolean() }),
-  z.strictObject({ key: z.literal("completionVerificationModel"), value: ModelId.nullable() }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
   z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),
   z.strictObject({ key: z.literal("claudeBypassPermissions"), value: z.boolean() }),

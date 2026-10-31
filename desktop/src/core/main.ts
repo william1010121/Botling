@@ -6,8 +6,6 @@ import { startConfiguredMobile } from '../mobile-bridge/start';
 // like the existing plugin host.
 import { retrieveQuota } from "./quota";
 import { appendFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { CLASSIFIER_TIMEOUT_MS, codexClassifier } from "./promise-check";
 import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -150,16 +148,6 @@ const queryModels = modelDiscoveryService(async (engine, folder) => {
   return discoverModels(engine, { file: engine === "claude" ? process.env.BOTLING_CLAUDE_PATH ?? "claude" : process.env.BOTLING_CODEX_PATH ?? "codex", cwd: folder });
 });
 
-/** The completion judge (`PromiseCheck.codexClassifier`): the real Codex CLI, or the fake one's `exec`. */
-function classifier() {
-  const kind = process.env.BOTLING_AGENT ?? "fake";
-  const timeout = number(process.env.BOTLING_JUDGE_TIMEOUT_MS, CLASSIFIER_TIMEOUT_MS);
-  const tmp = process.env.TMPDIR ?? tmpdir();
-  if (kind === "claude") return (model: string) => codexClassifier({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }, model, tmp, timeout);
-  const script = process.env.BOTLING_FAKE_CODEX;
-  return script ? (model: string) => codexClassifier({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, model, tmp, timeout) : null;
-}
-
 /**
  * Node for the plugin host: BOTLING_NODE_PATH, else the Node this core runs on — under Electron that is
  * Electron itself run as Node (development; packaged builds turn that fuse off, see the README's gaps).
@@ -258,7 +246,6 @@ const core = new Core({
     return { ok: true, output: args[0] === "gh" && args[2] === "create" ? "https://github.com/william1010121/Botling/pull/1" : "" };
   } } : {}),
   summarizer: summarizer(),
-  classifier: classifier(),
   codexModels: codexModels(),
   engineModels: (engine, profile) => queryModels(engine, profile.folder),
   // The library and memory files are watched; these are the slow looks that catch what a watcher missed.
