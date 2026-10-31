@@ -52,7 +52,7 @@ components you can pin, and change the app itself with plugins. All local, on th
   Botling's own source.
 - **Nothing leaves your Mac but the models.** It drives the `claude` and `codex` CLIs you
   already have; chats and memory are plain markdown files.
-- **In your language.** The app speaks English, 繁體中文, 简体中文, 日本語 and 한국어, and bots
+- **In your language.** The app speaks English and 繁體中文, and bots
   reply in the language you pick.
 
 ## Features
@@ -236,7 +236,7 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   in its own chat too.
 - **Drafts that stay.** What you typed but did not send stays in each bot's input box across
   switches and restarts.
-- **Five languages.** Settings → General → Language: English, 繁體中文, 简体中文, 日本語 or 한국어
+- **Two languages.** Settings → General → Language: English or 繁體中文
   (or follow the Mac), switched at once without a restart. Bots reply in it too; what bots write
   and your own data are never translated.
 - **Routines**: one-time or daily jobs in the Routines panel, and the crontab-style

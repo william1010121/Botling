@@ -16,7 +16,7 @@ import type { BotProfile } from "./store/workspace";
 import { displayName, otherHead, type Engine } from "./heads";
 
 /** `AppLanguage` raw values (Settings → General → Language). */
-export type AppLanguage = "en" | "zh-Hant" | "zh-Hans" | "ja" | "ko";
+export type AppLanguage = "en" | "zh-Hant";
 /** `ResultPublishing` raw values (Settings → General → Results). */
 export type ResultPublishing = "artifactUnlessSensitive" | "localOnly" | "artifactAlways";
 
@@ -24,12 +24,16 @@ export type ResultPublishing = "artifactUnlessSensitive" | "localOnly" | "artifa
 export const LANGUAGE_PROMPT_NAMES: Record<AppLanguage, string> = {
   en: "English",
   "zh-Hant": "Traditional Chinese (as used in Taiwan)",
-  "zh-Hans": "Simplified Chinese",
-  ja: "Japanese",
-  ko: "Korean",
 };
 
 export const isAppLanguage = (value: unknown): value is AppLanguage => typeof value === "string" && value in LANGUAGE_PROMPT_NAMES;
+/** Languages 2.0 shipped and 2.1.0 dropped: a settings.json that still names one reads as English. */
+export const REMOVED_LANGUAGES = ["zh-Hans", "ja", "ko"] as const;
+
+/** The language settings.json's `languageChoice` names: itself, English for a removed one, else undefined. */
+export const savedLanguage = (value: unknown): AppLanguage | undefined =>
+  isAppLanguage(value) ? value : (REMOVED_LANGUAGES as readonly unknown[]).includes(value) ? "en" : undefined;
+
 export const isResultPublishing = (value: unknown): value is ResultPublishing =>
   value === "artifactUnlessSensitive" || value === "localOnly" || value === "artifactAlways";
 
@@ -39,11 +43,10 @@ export function preferredLanguage(languages: string[]): AppLanguage {
     const parts = code.replaceAll("_", "-").toLowerCase().split("-");
     switch (parts[0]) {
       case "en": return "en";
-      case "ja": return "ja";
-      case "ko": return "ko";
       case "zh": {
         const rest = new Set(parts.slice(1));
-        return rest.has("hant") || (!rest.has("hans") && ["tw", "hk", "mo"].some((region) => rest.has(region))) ? "zh-Hant" : "zh-Hans";
+        if (rest.has("hant") || (!rest.has("hans") && ["tw", "hk", "mo"].some((region) => rest.has(region)))) return "zh-Hant";
+        continue;
       }
       default: continue;
     }

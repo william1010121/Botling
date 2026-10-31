@@ -232,7 +232,8 @@ describe("plugins' web parts in the chat page", () => {
 
 describe("settings (AppSettings.swift's keys)", () => {
   it("reads 1.x's keys with their defaults, keeps keys it does not know, and writes changes as 1.x's setters", async () => {
-    const { settingsView, applySetting, appliedCodexWorkers, seedEngineDefaults } = await import("../../src/core/settings");
+    const { settingsView, applySetting, appliedCodexWorkers, seedEngineDefaults, LANGUAGES } = await import("../../src/core/settings");
+    const { preferredLanguage } = await import("../../src/core/prompts");
     const empty = settingsView({});
     expect(empty).toMatchObject({
       language: null, effectiveLanguage: "en", botLook: "cute", chatAvatarSize: null, catchUpEnabled: true, intervalSummaryEnabled: false,
@@ -242,8 +243,13 @@ describe("settings (AppSettings.swift's keys)", () => {
       resultPublishing: "artifactUnlessSensitive", stallReminderMinutes: 15,
     });
     // A bad value falls back to its own default only; a threshold not 3 counts as customized.
-    expect(settingsView({ languageChoice: "xx", botLookChoice: "original", catchUpThresholdChoice: 99, codexWorkerChoice: { model: "m", effort: "turbo", fast: true } }, "ja"))
-      .toMatchObject({ language: null, effectiveLanguage: "ja", botLook: "original", catchUpThreshold: 50, thresholdsCustomized: true, codexWorkers: { model: "m", effort: null, fast: true } });
+    expect(settingsView({ languageChoice: "xx", botLookChoice: "original", catchUpThresholdChoice: 99, codexWorkerChoice: { model: "m", effort: "turbo", fast: true } }, "en"))
+      .toMatchObject({ language: null, effectiveLanguage: "en", botLook: "original", catchUpThreshold: 50, thresholdsCustomized: true, codexWorkers: { model: "m", effort: null, fast: true } });
+    // A language 2.1.0 removed reads as English, even on a Japanese or Korean system.
+    for (const old of ["ja", "ko", "zh-Hans"]) expect(settingsView({ languageChoice: old }, "zh-Hant")).toMatchObject({ language: "en", effectiveLanguage: "en" });
+    expect(LANGUAGES).toEqual(["en", "zh-Hant"]);
+    expect(["ja-JP", "ko-KR", "zh-Hans-CN", "zh-CN"].map((code) => preferredLanguage([code]))).toEqual(["en", "en", "en", "en"]);
+    expect(preferredLanguage(["zh-TW"])).toBe("zh-Hant");
     let raw: Record<string, unknown> = { dailyBudget: 3, languageChoice: "en" };
     raw = applySetting(raw, { key: "catchUpThreshold", value: 7 });
     expect(raw).toEqual({ dailyBudget: 3, languageChoice: "en", catchUpThresholdChoice: 7, summaryThresholdsCustomizedChoice: true });
@@ -270,7 +276,7 @@ describe("settings (AppSettings.swift's keys)", () => {
     writeFileSync(join(dir, "settings.json"), JSON.stringify({ languageChoice: "ja", someFutureKey: { kept: true } }));
     const args = join(dir, "claude-args.log");
     const c = core(dir, { FAKE_CLAUDE_ARGS: args, BOTLING_LANGUAGES: "en-US" });
-    expect((await c.call({ type: "chat.snapshot", botId: MAIN })).settings).toMatchObject({ language: "ja", effectiveLanguage: "ja" });
+    expect((await c.call({ type: "chat.snapshot", botId: MAIN })).settings).toMatchObject({ language: "en", effectiveLanguage: "en" });
     const view = await c.call({ type: "settings.set", change: { key: "subagentModel", value: "haiku" } });
     expect(view.subagentModel).toBe("haiku");
     await c.call({ type: "settings.set", change: { key: "subagentHourCache", value: true } });

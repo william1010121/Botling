@@ -281,7 +281,7 @@ describe("background task chips", () => {
   });
 });
 
-describe("background task chips in English and Japanese", () => {
+describe("background task chips in English and Traditional Chinese", () => {
   afterEach(() => setLanguage("en"));
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -298,8 +298,8 @@ describe("background task chips in English and Japanese", () => {
     expect(describeCron("30 18 * * 1,4")).toBe("Every Mon, Thu 18:30");
     const row = messageElement(reply([task({ id: "a", kind: "agent", title: "Review" }), task({ id: "c", status: "completed", ended: now })]), {});
     expect(summary(row).getAttribute("aria-label")).toBe("Background work: 1 subagent running, 1 done");
-    setLanguage("ja");
-    expect(describeCron("30 18 * * 1,4")).toBe("毎週月、木 18:30");
+    setLanguage("zh-Hant");
+    expect(describeCron("30 18 * * 1,4")).toBe("每週一、四 18:30");
     expect(until(20 * 60_000)).toBe("20 分後");
   });
 });
