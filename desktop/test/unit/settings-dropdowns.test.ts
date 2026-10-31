@@ -110,14 +110,33 @@ describe("Settings' model and effort choices are dropdowns", () => {
     } finally { await done(); }
   });
 
-  it("General: the summary model is a Codex model", async () => {
+  it("General: the summary model is picked from every engine's models, grouped by engine", async () => {
     const sent: any[] = [];
     const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot: null, plugins: null, initialSection: "general", onClose() {} }));
     try {
       const summary = select(host, "Summary model");
-      expect(options(summary)).toEqual(["gpt-6-luna", "gpt-6-sol"]);
-      await choose(summary, "gpt-6-sol");
-      expect(sent.at(-1)).toMatchObject({ change: { key: "catchUpModel", value: "gpt-6-sol" } });
+      expect(options(summary)).toEqual(["claude:haiku", "claude:sonnet", "claude:opus", "codex:gpt-6-luna", "codex:gpt-6-sol"]);
+      expect(summary.value).toBe("codex:gpt-6-luna");
+      expect([...summary.querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Claude", "Codex"]);
+      await choose(summary, "codex:gpt-6-sol");
+      expect(sent.at(-1)).toMatchObject({ change: { key: "catchUpModel", value: { engine: "codex", model: "gpt-6-sol" } } });
+      await choose(select(host, "Summary model"), "claude:sonnet");
+      expect(sent.at(-1)).toMatchObject({ change: { key: "catchUpModel", value: { engine: "claude", model: "sonnet" } } });
+      expect(select(host, "Summary model").value).toBe("claude:sonnet");
+    } finally { await done(); }
+  });
+
+  it("General: with a bot to ask, Antigravity's models are listed but disabled, with the reason", async () => {
+    const sent: any[] = [];
+    const bot = { id: "11111111-1111-4111-8111-111111111111", heads: ["claude", "codex", "agy"] } as unknown as BotView;
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot, plugins: null, initialSection: "general", onClose() {} }));
+    try {
+      const summary = select(host, "Summary model");
+      const agy = [...summary.options].filter((option) => option.value.startsWith("agy:"));
+      expect(agy.length).toBeGreaterThan(0);
+      expect(agy.every((option) => option.disabled)).toBe(true);
+      expect([...summary.querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Claude", "Codex", "Antigravity (not available for summaries)"]);
+      expect(host.textContent).toContain("Antigravity models can't write summaries");
     } finally { await done(); }
   });
 

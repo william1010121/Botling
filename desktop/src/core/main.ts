@@ -17,7 +17,7 @@ import { claudeSessionPermissionConfig, type HeadConfig } from "./agent/head";
 import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
-import { codexSummarizer } from "./catchup";
+import { claudeSummarizer, codexSummarizer, engineSummarizer } from "./catchup";
 import { probeEndpoint, probeNetwork } from "./network-resume";
 import { PortSealer, testSealer, type Sealer } from "./plugins/secrets";
 import type { HostCommand } from "./plugins/host-client";
@@ -117,13 +117,13 @@ const emit: (message: Outbound) => void = parentPort
   : (message) => process.stdout.write(JSON.stringify(message) + "\n");
 const log = (line: string) => process.stderr.write(`[core] ${line}\n`);
 
-/** Catch-up summaries: the real Codex CLI (`codex exec`), or the fake one's `exec`. */
+/** Catch-up summaries: the real Claude (`claude -p`) or Codex (`codex exec`) CLI by the chosen engine, or the fake Codex's `exec`. */
 function summarizer() {
   const kind = process.env.BOTLING_AGENT ?? "fake";
   const timeout = number(process.env.BOTLING_SUMMARY_TIMEOUT_MS, 60_000);
-  if (kind === "claude") return codexSummarizer({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }, timeout);
+  if (kind === "claude") return engineSummarizer({ codex: codexSummarizer({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }, timeout), claude: claudeSummarizer({ file: process.env.BOTLING_CLAUDE_PATH ?? "claude" }, timeout) });
   const script = process.env.BOTLING_FAKE_CODEX;
-  return script ? codexSummarizer({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, timeout) : null;
+  return script ? engineSummarizer({ codex: codexSummarizer({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, timeout) }) : null;
 }
 
 /** The models the local Codex offers (`model/list`): the real CLI, or the fake app-server. */

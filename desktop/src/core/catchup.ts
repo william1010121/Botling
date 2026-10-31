@@ -150,7 +150,22 @@ export function validateCodexEvents(output: string) {
 
 export class SummaryFailure extends Error {}
 
-export type Summarizer = (prompt: string, model: string, language: AppLanguage) => Promise<string[]>;
+/** The engines the summary model can come from. Antigravity has no safe one-shot path, so it is listed but never run. */
+export type SummaryEngine = "claude" | "codex" | "agy";
+export const SUMMARY_ENGINE_NAMES: Record<SummaryEngine, string> = { claude: "Claude", codex: "Codex", agy: "Antigravity" };
+export const AGY_SUMMARY_UNAVAILABLE = "Antigravity can't write summaries: it has no read-only one-shot mode. Pick a Claude or Codex model.";
+export const summaryLoginFailure = (engine: SummaryEngine) => `The model call failed; check your ${SUMMARY_ENGINE_NAMES[engine]} login and model access.`;
+
+export type Summarizer = (prompt: string, model: string, language: AppLanguage, engine?: SummaryEngine) => Promise<string[]>;
+
+/** Sends each summary to the summarizer of its engine (Codex when the engine is not named). */
+export function engineSummarizer(by: { claude?: Summarizer | null; codex?: Summarizer | null }): Summarizer {
+  return (prompt, model, language, engine = "codex") => {
+    if (engine === "agy") return Promise.reject(new SummaryFailure(AGY_SUMMARY_UNAVAILABLE));
+    const one = by[engine];
+    return one ? one(prompt, model, language, engine) : Promise.reject(new SummaryFailure(`${SUMMARY_ENGINE_NAMES[engine]} is not available for summaries.`));
+  };
+}
 
 /** Summaries by the local Codex CLI (`codexSummarizer`); its folder is a fresh temp one, removed after. */
 export function codexSummarizer(command: { file: string; prefixArgs?: string[]; env?: Record<string, string | undefined> }, timeoutMs = SUMMARY_TIMEOUT_MS): Summarizer {
@@ -196,6 +211,65 @@ export function codexSummarizer(command: { file: string; prefixArgs?: string[]; 
   });
 }
 
+/** The isolated `claude -p` for a summary: no tools, no MCP, no session kept, the prompt on stdin. */
+export function claudeSummaryArguments(model: string, language: AppLanguage): string[] {
+  return ["-p", "--output-format", "json", "--model", model, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+    "--disable-slash-commands", "--setting-sources", "", "--system-prompt", instructions(language), "--json-schema", SUMMARY_SCHEMA];
+}
+
+/** Bullets from claude's `--output-format json` result: its structured output, else the result text (maybe fenced). */
+export function parseClaudeResult(output: string): string[] {
+  const value = JSON.parse(output) as { is_error?: unknown; structured_output?: unknown; result?: unknown };
+  if (!value || typeof value !== "object" || value.is_error === true) throw new Error("failed");
+  if (value.structured_output && typeof value.structured_output === "object") return parseBullets(JSON.stringify(value.structured_output));
+  if (typeof value.result !== "string") throw new Error("no result");
+  return parseBullets(value.result.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+}
+
+/** Summaries by the local Claude CLI, run in a fresh temp folder (removed after) with the same timeout and errors as Codex's. */
+export function claudeSummarizer(command: { file: string; prefixArgs?: string[]; env?: Record<string, string | undefined> }, timeoutMs = SUMMARY_TIMEOUT_MS): Summarizer {
+  return (prompt, model, language) => new Promise((resolve, reject) => {
+    const folder = mkdtempSync(join(tmpdir(), "botling-catchup-"));
+    const done = (error: Error | null, bullets?: string[]) => {
+      rmSync(folder, { recursive: true, force: true });
+      if (error) reject(error); else resolve(bullets!);
+    };
+    const env = childEnvironment(command.env);
+    const child = spawn(resolveExecutable(command.file, env), [...(command.prefixArgs ?? []), ...claudeSummaryArguments(model, language)], {
+      cwd: folder, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32",
+    });
+    let output = "";
+    let settled = false;
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { if (output.length < 4_000_000) output += chunk; });
+    child.stderr.resume();
+    child.stdin.on("error", () => { /* it exited first; close reports */ });
+    child.stdin.end(`Summarize these messages. Do not use any tools.\n${prompt}`);
+    const kill = () => { if (!(child.pid && killTree(child.pid, "SIGKILL"))) { try { child.kill("SIGKILL"); } catch { /* gone */ } } };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      kill();
+      done(new SummaryFailure(`The model timed out after ${Math.round(timeoutMs / 1000)} s.`));
+    }, timeoutMs);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      done(new SummaryFailure((error as NodeJS.ErrnoException).code === "ENOENT" ? "Claude was not found." : summaryLoginFailure("claude")));
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (code !== 0) return done(new SummaryFailure(summaryLoginFailure("claude")));
+      let bullets: string[];
+      try { bullets = parseClaudeResult(output); } catch { return done(new SummaryFailure("The model did not return a summary.")); }
+      done(null, bullets);
+    });
+  });
+}
+
 // ------------------------------------------------------------------------------------------------
 // State, cache and views
 
@@ -206,6 +280,7 @@ export interface CatchUpState {
   bullets: string[];
   error: string | null;
   model: string;
+  engine: SummaryEngine;
   manual: boolean;
   automatic: boolean;
   requestedBy: string | null;
@@ -240,7 +315,19 @@ export interface CatchUpSettings {
   intervalSummaryEnabled: boolean;
   intervalSummaryThreshold: number;
   model: string;
+  engine: SummaryEngine;
   writingPrompt: string | null;
+}
+
+/**
+ * The saved summary model as engine + model. 1.x (and 2.1.0) saved only a Codex model id in `catchUpModelChoice`, so
+ * with no `catchUpModelEngine` beside it the engine is Codex; nothing saved: Codex's default.
+ */
+export function savedSummaryModel(value: Record<string, unknown> | undefined): { engine: SummaryEngine; model: string } {
+  const model = typeof value?.catchUpModelChoice === "string" && value.catchUpModelChoice.trim() ? value.catchUpModelChoice.trim() : null;
+  if (!model) return { engine: "codex", model: JUDGE_MODEL };
+  const engine = value?.catchUpModelEngine;
+  return { engine: engine === "claude" || engine === "agy" ? engine : "codex", model };
 }
 
 /** settings.json's keys as 1.x's AppSettings writes them. */
@@ -251,7 +338,7 @@ export function catchUpSettings(value: Record<string, unknown> | undefined): Cat
     catchUpThreshold: clampedThreshold(number("catchUpThresholdChoice") ?? DEFAULT_THRESHOLD),
     intervalSummaryEnabled: value?.intervalSummaryEnabledChoice === true,
     intervalSummaryThreshold: clampedThreshold(number("intervalSummaryThresholdChoice") ?? DEFAULT_THRESHOLD),
-    model: typeof value?.catchUpModelChoice === "string" && value.catchUpModelChoice ? value.catchUpModelChoice : JUDGE_MODEL,
+    ...savedSummaryModel(value),
     writingPrompt: typeof value?.summaryPromptChoice === "string" ? value.summaryPromptChoice : null,
   };
 }
@@ -362,7 +449,7 @@ export class CatchUps {
     const ids = new Set(state.messageIds);
     const source = chat.records.filter((m) => ids.has(m.id));
     if (!source.length) return false;
-    Object.assign(state, { phase: "loading", error: null, requestedBy: "user", model: this.options.settings().model });
+    Object.assign(state, { phase: "loading", error: null, requestedBy: "user", model: this.options.settings().model, engine: this.options.settings().engine });
     this.run(chat, source, state, key ? "interval" : "group");
     return true;
   }
@@ -396,7 +483,7 @@ export class CatchUps {
 
   private fresh(key: string, messages: ChatRecord[], manual: boolean, automatic: boolean, requestedBy: string | null): CatchUpState {
     const settings = this.options.settings();
-    const state: CatchUpState = { key, messageIds: messages.map((m) => m.id), phase: "loading", bullets: [], error: null, model: settings.model, manual, automatic, requestedBy };
+    const state: CatchUpState = { key, messageIds: messages.map((m) => m.id), phase: "loading", bullets: [], error: null, model: settings.model, engine: settings.engine, manual, automatic, requestedBy };
     const cached = this.options.cache.get(key);
     if (cached) Object.assign(state, { phase: "ready", bullets: cached.bullets, model: cached.model, requestedBy: cached.requestedBy ?? null });
     return state;
@@ -415,7 +502,7 @@ export class CatchUps {
     const ticket = ++this.generation;
     const slot = `${chat.id}/${kind}/${state.key}`;
     this.running.set(slot, ticket);
-    summarizer(prompt, state.model, this.options.language()).then(
+    summarizer(prompt, state.model, this.options.language(), state.engine).then(
       (bullets) => {
         if (this.running.get(slot) !== ticket) return;
         this.running.delete(slot);
@@ -426,7 +513,7 @@ export class CatchUps {
       (error) => {
         if (this.running.get(slot) !== ticket) return;
         this.running.delete(slot);
-        Object.assign(state, { phase: "failed", error: error instanceof SummaryFailure ? error.message : "The model call failed; check your Codex login and model access." });
+        Object.assign(state, { phase: "failed", error: error instanceof SummaryFailure ? error.message : summaryLoginFailure(state.engine) });
         this.options.changed(chat.id);
       },
     );
