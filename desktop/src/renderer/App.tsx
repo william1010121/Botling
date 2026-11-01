@@ -50,6 +50,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   /** A subagent row's "⋯" menu: the bot whose row it is, the row, and where it opens. */
   const [agentMenu, setAgentMenu] = useState<{ botId: string; row: SubagentRowView; x: number; y: number } | null>(null);
   const [removing, setRemoving] = useState<BotView | null>(null);
+  /** The worker rows picked for one new sub bot. */
+  const [picking, setPicking] = useState<{ botId: string; ids: string[] } | null>(null);
   /** The task card pressed open in the right panel (`selectedTask`); pressed again, it closes. */
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const selectTask = useCallback((id: string) => setSelectedTask((current) => (current === id ? null : id)), []);
@@ -164,6 +166,18 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     setError(null);
     void client.request({ type: "agent.stop", botId, subagentId: row.id }).catch(fail);
   }, [client, fail]);
+  const togglePick = useCallback((botId: string, row: SubagentRowView) => setPicking((current) => {
+    if (!current || current.botId !== botId) return { botId, ids: [row.id] };
+    return { botId, ids: current.ids.includes(row.id) ? current.ids.filter((id) => id !== row.id) : [...current.ids, row.id].slice(0, 20) };
+  }), []);
+  const groupSubagents = useCallback((botId: string, name: string) => {
+    const ids = picking?.botId === botId ? picking.ids : [];
+    if (!ids.length) return;
+    setPicking(null);
+    setError(null);
+    void client.request({ type: "agent.group", botId, subagentIds: ids, name: name.slice(0, 400) })
+      .then((result) => { void store.select(result.ownerBotId); }, fail);
+  }, [client, store, fail, picking]);
 
   // "New bot": made, set up (it writes its routines and says hello), and shown.
   const createBot = useCallback((made: { name: string; job: string } | null) => {
@@ -247,7 +261,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                   />
                   <SubagentRows bot={candidate} bots={view.bots} chat={{ botId: chat?.botId ?? null, watching }} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null} shownBot={!watching ? chat?.botId ?? null : null}
                     onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)}
-                    onOpenIn={openSubagent} onSettleIn={(botId, row) => settleSubagent(botId, row, true)} onAgentMenu={openAgentMenu} />
+                    onOpenIn={openSubagent} onSettleIn={(botId, row) => settleSubagent(botId, row, true)} onAgentMenu={openAgentMenu}
+                    selection={picking} onToggleSelect={togglePick} onGroup={groupSubagents} onCancelSelect={() => setPicking(null)} />
                 </div>
               ))}
             </>
@@ -361,7 +376,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         load={() => client.request({ type: "agent.targets", botId: agentMenu.botId, subagentId: agentMenu.row.id }) as Promise<AgentTargets>}
         onMove={(to) => moveSubagent(agentMenu.botId, agentMenu.row, to)}
         onMessage={(text) => messageSubagent(agentMenu.botId, agentMenu.row, text)}
-        onStop={() => stopSubagent(agentMenu.botId, agentMenu.row)} />}
+        onStop={() => stopSubagent(agentMenu.botId, agentMenu.row)}
+        onSelectSeveral={() => { setPicking({ botId: agentMenu.botId, ids: [agentMenu.row.id] }); setAgentMenu(null); }} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>

@@ -27,7 +27,7 @@ export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" 
   </span>;
 }
 
-export function SubagentRows({ bot, bots, nested = false, chat = null, look = "original", now, watching, shownBot = null, onOpen, onSettle, onOpenIn, onSettleIn, onAgentMenu }: {
+export function SubagentRows({ bot, bots, nested = false, chat = null, look = "original", now, watching, shownBot = null, onOpen, onSettle, onOpenIn, onSettleIn, onAgentMenu, selection = null, onToggleSelect, onGroup, onCancelSelect }: {
   bot: BotView;
   /** Every bot: a sub bot's row has that sub bot's own subagents listed under it (project bot > sub bot > subagent). */
   bots?: BotView[];
@@ -47,9 +47,17 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
   onSettle: (row: SubagentRowView) => void;
   /** A row's "⋯" (agentMoves: the row says whether it can move): opens its menu at the button, for the bot whose row it is. */
   onAgentMenu?: (botId: string, row: SubagentRowView, at: { x: number; y: number }) => void;
+  /** "Select several…": the bot whose worker rows are being picked, and the picked ones; rows of that bot show a tick box. */
+  selection?: { botId: string; ids: string[] } | null;
+  onToggleSelect?: (botId: string, row: SubagentRowView) => void;
+  /** "New sub bot with these…" for the picked rows, under a name. */
+  onGroup?: (botId: string, name: string) => void;
+  onCancelSelect?: () => void;
 }) {
   // "Show more" lists every row; per bot, forgotten on restart.
   const [all, setAll] = useState(false);
+  const [groupName, setGroupName] = useState("");
+  const picking = selection?.botId === bot.id ? selection : null;
   const every = listedRows(bot.subagentRows, now, null);
   const more = Math.max(0, every.length - LISTED_AT_MOST);
   const rows = all && more > 0 ? every : every.slice(0, LISTED_AT_MOST);
@@ -70,8 +78,10 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
             {row.host && <span className="subagent-kind subagent-host" title={`It runs on ${row.host.name}; its reports come here`}>on {row.host.name}</span>}
             {row.waitingForNetwork && <span className="subagent-network">網路中斷</span>}
           </button>
-          {!row.subBot && row.movable && onAgentMenu && <AgentMenuButton row={row} onMenu={(at) => onAgentMenu(bot.id, row, at)} />}
-          {!row.subBot && <button type="button" className="subagent-settle" onClick={() => onSettle(row)}
+          {!row.subBot && picking && row.agentId && <input type="checkbox" className="subagent-pick" checked={picking.ids.includes(row.id)} aria-label={`Pick ${row.title || "Subagent"}`}
+            onChange={() => onToggleSelect?.(bot.id, row)} />}
+          {!row.subBot && !picking && row.movable && onAgentMenu && <AgentMenuButton row={row} onMenu={(at) => onAgentMenu(bot.id, row, at)} />}
+          {!row.subBot && !picking && <button type="button" className="subagent-settle" onClick={() => onSettle(row)}
             title={row.status === "running" ? "Settle: move to Settled in the right column (it keeps working)" : "Settle: move to Settled in the right column"}
             aria-label={`Settle subagent ${row.title}`}>
             <span className="settle-mark"><SubagentMark status={row.status} /></span>
@@ -80,10 +90,18 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
         </div>
         {sub && <SubagentRows bot={sub} bots={bots} nested chat={chat} look={look} now={now} watching={chat?.botId === sub.id ? chat.watching : null} shownBot={shownBot}
           onOpen={(child) => (onOpenIn ?? ((_id, r) => onOpen(r)))(sub.id, child)} onSettle={(child) => (onSettleIn ?? ((_id, r) => onSettle(r)))(sub.id, child)}
-          onOpenIn={onOpenIn} onSettleIn={onSettleIn} onAgentMenu={onAgentMenu} />}
+          onOpenIn={onOpenIn} onSettleIn={onSettleIn} onAgentMenu={onAgentMenu} selection={selection} onToggleSelect={onToggleSelect} onGroup={onGroup} onCancelSelect={onCancelSelect} />}
         </Fragment>
         );
       })}
+      {picking && (
+        <form className="subagent-group" aria-label="New sub bot with these" onSubmit={(event) => { event.preventDefault(); if (groupName.trim() && picking.ids.length) onGroup?.(bot.id, groupName.trim()); }}
+          onKeyDown={(event) => { if (event.key === "Escape") onCancelSelect?.(); }}>
+          <input autoFocus value={groupName} placeholder="Sub bot name" aria-label="Sub bot name" onChange={(event) => setGroupName(event.target.value)} />
+          <button type="submit" disabled={!groupName.trim() || !picking.ids.length} title="A new sub bot owns the picked agents; they keep running where they are">New sub bot with these ({picking.ids.length})</button>
+          <button type="button" onClick={() => onCancelSelect?.()}>Cancel</button>
+        </form>
+      )}
       {more > 0 && (
         <button type="button" className="subagent-more" onClick={() => setAll(!all)}
           aria-label={all ? `Show fewer subagents of ${bot.name}` : `Show ${more} more subagents of ${bot.name}`}>
@@ -170,9 +188,9 @@ export type AgentMoveTo = { kind: "bot"; botId: string } | { kind: "newSubBot"; 
  * ones it cannot go to, and a name field for a new sub bot. The agent keeps running where it is; only its owner changes
  * (a Claude subagent's work is handed to a new sub bot instead).
  */
-export function AgentMenu({ row, at, load, onMove, onClose, onMessage, onStop }: { row: SubagentRowView; at: { x: number; y: number }; load: () => Promise<AgentTargets>; onMove: (to: AgentMoveTo) => void; onClose: () => void;
-  /** "Send a message…" / "Stop": its owner's follow-up and stop. */
-  onMessage?: (text: string) => void; onStop?: () => void }) {
+export function AgentMenu({ row, at, load, onMove, onClose, onMessage, onStop, onSelectSeveral }: { row: SubagentRowView; at: { x: number; y: number }; load: () => Promise<AgentTargets>; onMove: (to: AgentMoveTo) => void; onClose: () => void;
+  /** "Send a message…" / "Stop" (its owner's follow-up and stop) and "Select several…" (then "New sub bot with these…"). */
+  onMessage?: (text: string) => void; onStop?: () => void; onSelectSeveral?: () => void }) {
   const [targets, setTargets] = useState<AgentTargets | null>(null);
   const [listing, setListing] = useState(false);
   const [writing, setWriting] = useState(false);
@@ -205,6 +223,7 @@ export function AgentMenu({ row, at, load, onMove, onClose, onMessage, onStop }:
       {!listing && !writing && row.agentId && onStop && row.status === "running" && <button type="button" role="menuitem" className="bot-menu-item destructive" title="Stops it (its work so far stays; no report is made)" onClick={onStop}>Stop</button>}
       {!listing && !writing && (row.agentId && (onMessage || onStop)) && <div className="bot-menu-rule" />}
       {!listing && !writing && <button type="button" role="menuitem" className="bot-menu-item" disabled={!!cannot} title={cannot ?? "Give it to another bot: it keeps running where it is, and its reports go there"} onClick={open}>Move to…</button>}
+      {!listing && !writing && row.agentId && onSelectSeveral && <button type="button" role="menuitem" className="bot-menu-item" disabled={!!cannot} title="Pick several of these rows, then make one new sub bot that owns them all" onClick={onSelectSeveral}>Select several…</button>}
       {!listing && !writing && cannot && <div className="agent-menu-reason">{cannot}</div>}
       {listing && !targets && !failed && <div className="agent-menu-reason">Loading…</div>}
       {listing && failed && <div className="agent-menu-reason">{failed}</div>}

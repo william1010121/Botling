@@ -529,7 +529,7 @@ describe("prompts", () => {
       const system = desktop(manager, engine);
       expect(system, engine).toContain("<sub-bot name=");
       expect(system, engine).toContain("task_id");
-      expect(system, engine).toContain("Do not message or cancel the worker yourself");
+      expect(system, engine).toContain("Do not message or cancel them yourself");
       expect(system, engine).toContain("handoff.md and progress.md files under .bot/subagents/<id>/");
       expect(system, engine).not.toContain("SendMessage");
     }

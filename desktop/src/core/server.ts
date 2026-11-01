@@ -817,7 +817,7 @@ First write a test that shows this, then fix it.`;
    * folder, on the worker's engine when the project bot has it, and handed the file. A request that cannot be done says
    * why in the chat, never silently.
    */
-  private async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string; engine?: string }): Promise<void> {
+  private async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string; engine?: string; subagents?: string[] }): Promise<void> {
     const profile = bot.profile;
     const refuse = (why: string) => {
       bot.appNotice(`No sub bot was made: ${why}`);
@@ -827,7 +827,19 @@ First write a test that shows this, then fix it.`;
     if (profile.parent) return refuse("a sub bot cannot make another sub bot; it starts subagents of its own instead.");
     const name = botName(request.name);
     if (!name) return refuse("it needs a name.");
-    const key = request.subagent;
+    // App-managed workers (any engine) are pulled in: the new sub bot owns them, they keep running where they are.
+    const keys = [...new Set([request.subagent, ...(request.subagents ?? [])].filter(Boolean))];
+    if (keys.length && this.agentFlags().agentMoves) {
+      const records = keys.map((key) => this.tagAgent(bot, key));
+      const missing = keys.filter((_, i) => !records[i]);
+      if (records.every((record) => record && record.host.kind !== "claude-sidechain")) {
+        try { await this.moveOwners(records as AgentRecord[], { kind: "newSubBot", name, ...(request.note.trim() ? { note: request.note } : {}) }, { task: request.note.trim() || undefined }); }
+        catch (error) { refuse((error as Error).message); }
+        return;
+      }
+      if (keys.length > 1) return refuse(missing.length ? `there is no worker ${missing.map((key) => `"${key}"`).join(", ")} of yours here.` : "only app-managed workers can be pulled into one sub bot together.");
+    } else if (keys.length > 1) return refuse("moving several workers at once needs agentMoves on.");
+    const key = keys[0] ?? "";
     if (!key) return this.subBotMade(bot, name, request);
     const found = bot.findSubagent(key);
     if (!found) return refuse(`there is no subagent "${key}" here.`);
@@ -869,6 +881,12 @@ First write a test that shows this, then fix it.`;
     } finally {
       this.movingSubagents.delete(`${profile.id}:${token}`);
     }
+  }
+
+  /** An agent a bot names in a tag (its agent id, its task id, or the id it reaches it by), if that bot owns it. */
+  private tagAgent(bot: Bot, key: string): AgentRecord | undefined {
+    const record = this.agents.get(key) ?? this.agents.byHostBot(bot.id, key) ?? this.agents.movedIn(bot.id).find((candidate) => candidate.nativeId === key);
+    return record && record.owner.botId === bot.id ? record : undefined;
   }
 
   /** A <sub-bot> with no subagent: a new empty sub bot under the project bot, sent the words inside the tag as its first task. */
@@ -1126,6 +1144,17 @@ First write a test that shows this, then fix it.`;
     }
     const owner = await this.moveOwners([record], to, { notifyAgent: options.notifyAgent === true, note: to.kind === "newSubBot" ? to.note : undefined });
     return { agentId: record.id, ownerBotId: owner, mode: "owner" };
+  }
+
+  /**
+   * "New sub bot with these…" and `<sub-bot subagents="…">`: several agents shown in one bot's rows move to one new sub bot (or
+   * one bot) together. Every one is planned first; one that cannot go refuses them all.
+   */
+  async groupAgents(botId: string, subagentIds: string[], to: MoveTarget, options: { task?: string } = {}): Promise<ResultOf<"agent.group">> {
+    this.requireAgentMoves();
+    const records = [...new Map(subagentIds.map((id) => { const record = this.resolveAgent(botId, id); return [record.id, record] as const; })).values()];
+    const owner = await this.moveOwners(records, to, { note: to.kind === "newSubBot" ? to.note : undefined, task: options.task });
+    return { ownerBotId: owner, agentIds: records.map((record) => record.id) };
   }
 
   /** The owner of each of these (an app-managed worker) is told to its host: null when the new owner is the host itself. */
@@ -2255,6 +2284,7 @@ First write a test that shows this, then fix it.`;
       case "agent.move": return this.moveAgent(cmd.botId, cmd.subagentId, cmd.to, { notifyAgent: cmd.notifyAgent === true });
       case "agent.message": return this.agentMessageCommand(cmd.botId, cmd.subagentId, cmd.text);
       case "agent.stop": return this.agentStopCommand(cmd.botId, cmd.subagentId);
+      case "agent.group": return this.groupAgents(cmd.botId, cmd.subagentIds, { kind: "newSubBot", name: cmd.name, ...(cmd.note ? { note: cmd.note } : {}) });
       case "chat.read": {
         // You came back to it: many unread replies fold into a summary first (`arrive(at:)`).
         const bot = this.bot(cmd.botId);

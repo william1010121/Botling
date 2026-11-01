@@ -24,7 +24,7 @@ export type BotRequest =
    * A sub bot (`<sub-bot name="…" subagent="agent id"/>`): with `subagent`, a running subagent moved out (`note` is any words
    * inside the tag); without it (`subagent` is ""), a new empty sub bot whose first task is `note`, on `engine` if one was named.
    */
-  | { kind: "subBot"; name: string; subagent: string; note: string; engine?: string }
+  | { kind: "subBot"; name: string; subagent: string; note: string; engine?: string; subagents?: string[] }
   /** The owner's follow-up for an agent it owns (`<agent-message to="agent id">words</agent-message>`). */
   | { kind: "agentMessage"; to: string; text: string }
   /** The owner stops an agent it owns (`<agent-stop to="agent id"/>`). */
@@ -259,7 +259,10 @@ export function parseReply(reply: string): Parsed {
     const found = attributes(attrs!);
     // A name is needed, and either a subagent to move or a task (the words inside the tag) for a new sub bot; neither is never guessed.
     const name = trimWS(found.name ?? ""), subagent = trimWS(found.subagent ?? ""), engine = trimWS(found.engine ?? "").toLowerCase();
-    if (name && (subagent || trimWS(note ?? ""))) subBots.unshift({ kind: "subBot", name, subagent, note: note ?? "", ...(!subagent && engine ? { engine } : {}) });
+    // subagents="a,b": several of its workers pulled into one new sub bot.
+    const subagents = [...new Set((found.subagents ?? "").split(/[\s,]+/).map(trimWS).filter(Boolean))];
+    const moving = subagent || subagents.length > 0;
+    if (name && (moving || trimWS(note ?? ""))) subBots.unshift({ kind: "subBot", name, subagent, note: note ?? "", ...(!moving && engine ? { engine } : {}), ...(subagents.length ? { subagents } : {}) });
   });
   requests.push(...subBots);
   const agentCommands: BotRequest[] = [];

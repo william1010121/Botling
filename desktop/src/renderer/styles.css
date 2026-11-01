@@ -448,6 +448,10 @@ button { font: inherit; color: inherit; }
 .agent-menu-name input { flex: 1; min-width: 0; font-size: 12px; }
 .agent-menu-message { flex-direction: column; align-items: stretch; }
 .agent-menu-message textarea { min-width: 220px; font-size: 12px; resize: vertical; }
+.subagent-pick { width: 14px; height: 14px; margin: 0 6px; flex-shrink: 0; cursor: pointer; }
+.subagent-group { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 8px 6px 26px; }
+.subagent-group input { flex: 1 1 120px; min-width: 0; font-size: 12px; }
+.subagent-group button { font-size: 12px; }
 
 .rail-strip {
   width: 56px; flex-shrink: 0; background: var(--side); border-right: 1px solid var(--line); padding: 0 0 12px;
