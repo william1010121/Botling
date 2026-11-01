@@ -186,12 +186,12 @@ describe("handoff.md written by the app", () => {
   });
 });
 
-function fixture(extra: { sub?: boolean } = {}) {
+function fixture(extra: { sub?: boolean; subName?: string } = {}) {
   const dir = tempDir("sub-bot");
   const folder = tempDir("sub-bot-project");
   mkdirSync(join(folder, ".bot"), { recursive: true });
   saveProjectRow(dir, { id: PROJECT, name: "botling", folder, avatar: "triangle" });
-  if (extra.sub !== false) saveProjectRow(dir, { id: SUB, name: "Settings page", folder, avatar: "triangle", job: "Continue the settings page", parent: PROJECT, createdAt: 1_700_000_000_000, handoff: "a1b2c3" });
+  if (extra.sub !== false) saveProjectRow(dir, { id: SUB, name: extra.subName ?? "Settings page", folder, avatar: "triangle", job: "Continue the settings page", parent: PROJECT, createdAt: 1_700_000_000_000, handoff: "a1b2c3" });
   const events: any[] = [];
   const open = (more: Record<string, unknown> = {}) => new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit(event) { events.push(event); }, deferStartup: true,
     routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0, ...more });
@@ -222,7 +222,7 @@ describe("a sub bot in the core", () => {
     expect(profile.role).toBe("bot");
   });
 
-  it("is skipped by every walk over the bots: briefing, inboxes, waiting, whiteboard, @ members", async () => {
+  it("is skipped by every walk over the bots: briefing, inboxes, waiting, whiteboard", async () => {
     const h = fixture(), core = h.open();
     try {
       expect(core.projectBriefing()).not.toContain("Settings page");
@@ -276,6 +276,32 @@ describe("a sub bot in the core", () => {
       expect(notice).toHaveBeenCalledTimes(1);
       expect(note.mock.calls[0]![0]).toContain("Settings page");
     } finally { await core.shutdown(); }
+  });
+
+  it("is called into its project bot's chat by a line of the project bot's reply that starts with @ and its name, and by yours", async () => {
+    const h = fixture({ subName: "bench-correction" }), core = h.open();
+    try {
+      const parent = bots(core).get(PROJECT)!;
+      const sub = bots(core).get(SUB)!;
+      const asked: string[] = [];
+      vi.spyOn(sub, "groupTurn").mockImplementation(async (text: string) => { asked.push(text); return { kind: "busy" }; });
+      vi.spyOn(parent, "appNotice").mockImplementation(() => "n");
+      // The eeg reply of 2026-11-02 01:36 (Claude, 7 steps and a subagent card above it): the @ line is its third paragraph.
+      const text = [
+        "都確認過了。2080 Ti 的實驗沒有因為 Botling 重啟而中斷：2a 主實驗和靜息基線對齊在 01:30 已經跑完，OpenBMI 正在跑。我已經叫回那個 worker，讓它接著等結果、寫報告，每 30 分鐘的自動檢查也重新設好了，下一次在 01:53。",
+        "",
+        "4090-2 有一個問題：gctnet 的 EMG 舊切分昨天 17:57 就因為 GPU 記憶體不足掛掉了，狀態檔卻一直顯示「執行中、0 epoch」，sub bot 從 16:40 起也沒再更新進度，所以我請它接手。",
+        "",
+        "@bench-correction Botling 剛重啟過，請照 4090-2 上的狀態接續工作，不要重跑已完成的部分。另外 `gctnet_EMG_old_s0` 在 17:57 OOM 掛掉了（log 在 ~/eeg-bench-baselines/logs/gctnet_EMG_old_s0.log），dispatcher 卻還把它算成 running 0ep，請在 GPU 記憶體有空時重新排進佇列。之後每 30 分鐘更新一次 progress.md。",
+      ].join("\n");
+      (core as any).conversations.receiveBotMention({ id: "R1", role: "bot", text, date: 0 }, parent);
+      await vi.waitFor(() => expect(asked).toHaveLength(1));
+      expect(asked[0]).toContain("Botling 剛重啟過，請照 4090-2 上的狀態接續工作");
+      expect(JSON.parse(readFileSync(join(h.dir, "bot-mentions.json"), "utf8"))).toMatchObject([{ sender: PROJECT, recipient: SUB }]);
+      // Yours in its project bot's chat calls it in too; from any other chat it is not there to call.
+      expect((core as any).conversations.calledIn("@bench-correction 你有收到嗎", PROJECT).map((m: any) => m.id)).toEqual([SUB]);
+      expect((core as any).conversations.calledIn("@bench-correction 你有收到嗎", MAIN_BOT_ID)).toEqual([]);
+    } finally { vi.restoreAllMocks(); await core.shutdown(); }
   });
 });
 

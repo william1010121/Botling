@@ -361,7 +361,9 @@ export class Core {
         const profile = this.profiles.find((candidate) => candidate.id === id);
         return profile && !profile.parent && !this.removed.has(id) ? [{ id, name: profile.role === "main" ? "Main bot" : profile.name }] : [];
       }),
-      bot: (id) => (this.removed.has(id) || this.isSubBot(id) ? null : this.bots.get(id) ?? null),
+      // A project bot's own sub bots answer @ in its chat (its reply's or yours), nowhere else.
+      subBots: () => this.profiles.flatMap((profile) => (profile.parent && !this.removed.has(profile.id) ? [{ id: profile.id, name: profile.name, parent: profile.parent }] : [])),
+      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
       mainBotId: MAIN_BOT_ID,
       mentionNote: (text) => this.components.library.mentionNote(text),
       replied: (bot, line) => this.replied(bot, line),

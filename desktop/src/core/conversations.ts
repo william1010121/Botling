@@ -50,6 +50,8 @@ export interface ConversationsDeps {
   dataDir: string;
   /** Everyone who can answer outside their own chat, in turn order: the main bot, projects and bots, Maintainer (`everyMember`). */
   members: () => Member[];
+  /** Sub bots, each under its project bot: callable with @ in that bot's chat only (null: none). */
+  subBots?: () => (Member & { parent: string })[];
   bot: (id: string) => Bot | null;
   mainBotId: string;
   /** A guest's line was posted: plugins' bots.onReply hear it as that bot's reply. */
@@ -96,12 +98,17 @@ export class Conversations {
   mentionNote = (text: string): string | null => this.deps.mentionNote?.(text) ?? null;
 
   /** Who a member id is (`speakerName(for:)`). */
-  speakerName = (id: string): string | null => this.deps.members().find((member) => member.id === id)?.name ?? null;
+  speakerName = (id: string): string | null => [...this.deps.members(), ...(this.deps.subBots?.() ?? [])].find((member) => member.id === id)?.name ?? null;
 
-  /** The bots that can be called into `chat` with @: everyone but its own bot (`callable(into:)`). */
+  /** `chatId`'s own sub bots. */
+  private subBotsOf(chatId: string): Member[] {
+    return (this.deps.subBots?.() ?? []).filter((sub) => sub.parent === chatId).map(({ id, name }) => ({ id, name }));
+  }
+
+  /** The bots that can be called into `chat` with @: everyone but its own bot, and its own sub bots (`callable(into:)`). */
   callable(chatId: string): Member[] {
     const members = this.deps.members();
-    return members.some((member) => member.id === chatId) ? members.filter((member) => member.id !== chatId) : [];
+    return members.some((member) => member.id === chatId) ? [...members.filter((member) => member.id !== chatId), ...this.subBotsOf(chatId)] : [];
   }
 
   /** The names the @ menu offers (the main bot and Maintainer), then every other bot (`callInView`). */
@@ -149,8 +156,8 @@ export class Conversations {
     const depth = wake && wake.until > Date.now() ? wake.depth : 0;
     if (!record.text.includes("@")) return;
     if (depth >= MAX_FOLLOW_DEPTH) return;
-    const members = this.deps.members();
-    if (!members.some((member) => member.id === chat.id)) return;
+    if (!this.deps.members().some((member) => member.id === chat.id)) return;
+    const members = [...this.deps.members(), ...this.subBotsOf(chat.id)];
     const callable = this.callable(chat.id);
     const addressed: { member: Member; body: string }[] = [];
     let ambiguous = false;
