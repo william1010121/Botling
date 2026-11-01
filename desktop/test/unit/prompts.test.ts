@@ -97,6 +97,15 @@ describe("prompts: the Swift app's strings", () => {
     expect(single.headsRule).toBe("");
   });
 
+  it("tells an agy main bot about <new-bot> and <new-project> (the app does them), and no head about tags the app refuses it", () => {
+    for (const role of ["main", "manager", "bot"] as const) {
+      const { system } = botPrompts({ profile: { name: "Probe", role, folder: "/fixture", memoryPath: ".bot/memory.md", job: role === "bot" ? "Read news" : null }, engine: "agy" });
+      expect(system.includes("<new-project folder="), role).toBe(role === "main");
+      expect(system.includes("<new-bot name="), role).toBe(role === "main");
+      expect(system, role).not.toMatch(/<(component|plugin)[ >]/);
+    }
+  });
+
   it("tells every engine to respect the primary, peer scope, decisions and handoff budget", () => {
     for (const engine of ["claude", "codex", "agy"] as const) {
       const rule = headsRule({engines:["claude","codex","agy"],handoffs:true,limits:{discussion:1,review:4,handoffs:9}},engine);

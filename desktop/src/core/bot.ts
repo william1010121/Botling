@@ -2356,9 +2356,13 @@ export class Bot {
     if (left.length) this.notice(`Botling 2.0 cannot do this yet, so nothing happened: ${[...new Set(left.map(unsupportedRequest))].join("; ")}.`);
   }
 
-  /** No silent fallback to a Claude worker/plugin from an Antigravity reply. */
+  /**
+   * No silent fallback to a Claude worker/plugin from an Antigravity reply: <component> and <plugin> set Maintainer to work.
+   * What the app does itself stays: new bots and projects (asked on a card), a <suggest-component> chip (Maintainer only
+   * when the user presses it, as "Make into component"), and Maintainer's own <component-spec>.
+   */
   private handleRequests(requests: BotRequest[]): BotRequest[] {
-    const unavailable = new Set(["component", "plugin", "newBot", "newProject", "suggestComponent", "componentSpec"]);
+    const unavailable = new Set(["component", "plugin"]);
     const blocked = this.engine === "agy" ? requests.filter(request => unavailable.has(request.kind)) : [];
     const supported = requests.filter(request => !blocked.includes(request));
     return [...blocked, ...(supported.length && this.options.onRequests ? this.options.onRequests(this.owner, supported) : supported)];
