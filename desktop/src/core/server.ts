@@ -1680,6 +1680,7 @@ First write a test that shows this, then fix it.`;
         const { type: _type, botId, ...change } = cmd;
         return this.bot(botId).configure(change);
       }
+      case "bot.restart": return this.bot(cmd.botId).restartNow();
       case "files.add": this.bot(cmd.botId); return { files: this.pending.addPaths(cmd.botId, cmd.paths) };
       case "files.data": this.bot(cmd.botId); return { files: await this.pending.addData(cmd.botId, cmd.name, cmd.base64) };
       case "files.remove": return { files: this.pending.remove(cmd.botId, cmd.id) };

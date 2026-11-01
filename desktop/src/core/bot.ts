@@ -2382,6 +2382,32 @@ export class Bot {
     if (reason) this.restartReason = reason;
   }
 
+  /**
+   * "Restart bot": every head of this conversation starts again in the same session before its next message
+   * (the way a model change does, so a running turn, subagents or workers are never cut off), and is told the
+   * app's current instructions with that message (claude keeps a session's first system prompt on --resume).
+   * Asleep, nothing runs now; the next wake is told them.
+   */
+  restartNow(): { restart: "next-message" | "asleep" } {
+    const owner = this.owner;
+    if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
+    let awake = false;
+    for (const bot of owner.members) {
+      bot.refreshInstructions = true;
+      bot.restartFor({ told: "restarted at your user's request", shown: "manual restart" });
+      awake ||= bot.restartPending;
+    }
+    return { restart: awake ? "next-message" : "asleep" };
+  }
+
+  /** The next message is also told the app's current instructions (after "Restart bot"). */
+  private refreshInstructions = false;
+
+  /** The note that tells a resumed session the instructions as they are now. */
+  private instructionsNote(): string {
+    return `(App: These are Botling's current instructions. Follow them from now on; where they differ from the ones you started with, these are the current ones.)\n${this.prompts().system}`;
+  }
+
   /** Its process has the plugins' Claude parts as they are now. */
   private hasCurrentPlugins(): boolean {
     const stamp = this.options.pluginStamp?.();
@@ -2437,6 +2463,10 @@ export class Bot {
       if (this.turn !== turn || !turn.open) return;
     }
     const waking = !given && !this.head?.running;
+    // After "Restart bot": a resumed session (restarted now, or woken) is told the current instructions.
+    // A restart still waiting for work to finish keeps the flag for the message that does restart it.
+    const refresh = !given && this.refreshInstructions && (!!restarted || waking);
+    if (refresh) this.refreshInstructions = false;
     let head: AgentHead;
     try {
       head = given ?? this.ensureHead();
@@ -2455,8 +2485,9 @@ export class Bot {
       // briefing) goes with the note, and a Codex head gets its saved memory too, as in 1.x.
       const briefing = [this.wakeNote(), this.componentNote()].filter(Boolean).join("\n\n");
       const note = `(App: Botling restarted you in this same conversation (${restarted.told}); carry on as before.` + (briefing ? ` What the app tells you at a wake, as it is now:)\n${briefing}` : ")");
-      turn.words = `${this.withSavedMemory(note)}\n\n${turn.words}`;
+      turn.words = `${this.withSavedMemory(note)}${refresh ? `\n\n${this.instructionsNote()}` : ""}\n\n${turn.words}`;
     }
+    if (refresh && !restarted && waking && this.session.started && !this.briefing) turn.words = `${this.instructionsNote()}\n\n${turn.words}`;
     const brief = waking && this.briefing;
     if (brief) this.briefing = false;
     try { head.send(this.compose(turn, brief), turn.userId ?? turn.messageId, this.turnImages(turn)); }

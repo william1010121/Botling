@@ -1134,6 +1134,8 @@ export const Command = z.discriminatedUnion("type", [
   /** Review of a worktree's changes (`worktreeId` null: the project's main checkout, against HEAD). */
   z.strictObject({ type: z.literal("review.files"), botId, worktreeId: z.string().max(64).nullable(), scope: ReviewScope, turn: z.string().max(64).optional() }),
   z.strictObject({ type: z.literal("review.diff"), botId, worktreeId: z.string().max(64).nullable(), from: reviewRev, to: reviewRev.min(40), path: z.string().min(1).max(4096), oldPath: z.string().max(4096).optional(), force: z.boolean().optional() }),
+  /** "Restart bot": each head starts again in the same session before the bot's next message, told the app's current instructions (asleep: the next wake). */
+  z.strictObject({ type: z.literal("bot.restart"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
   z.strictObject({
     type: z.literal("bot.configure"), botId, model: ModelId.nullable().optional(), effort: Effort.nullable().optional(),
@@ -1184,7 +1186,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1334,6 +1336,7 @@ export interface Results {
   "review.files": ReviewFilesView;
   "review.diff": ReviewDiffView;
   "bot.configure": BotSettingsView;
+  "bot.restart": { restart: "next-message" | "asleep" };
   "engineDefaults.applyAll": { applied: number; failed: { botId: string; name: string; reason: string }[] };
   "plugins.loaded": Record<string, never>;
   "plugins.failed": Record<string, never>;
