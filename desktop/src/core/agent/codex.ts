@@ -226,7 +226,13 @@ const json = (value: unknown): string => {
 /** The words a restarted worker's run shows when it adopts the answer its original turn completed with before the restart. */
 const ADOPTED_RUN = "(App: this worker's turn completed before the app restarted; its answer is reported as it was. Nothing was sent to it again.)";
 
-/** A worker core result its sync adapters already have (a promise would mean an adapter that is not: `pending` instead). */
+/**
+ * A worker core result its sync adapters already have (a promise would mean an adapter that is not: `pending` instead).
+ * The core's app tools may be async (handoff, message, cancel), but CodexSession answers each JSON-RPC line with the
+ * outputs it causes, in order: its two adapters start, steer and recover synchronously, so a follow-up's result (and the
+ * writes it queued) are there when the call returns. A tool call's receipt is written first and the core's work follows
+ * in the same outputs; `handoff` is not awaited for the receipt (its task id is chosen up front, `nextTask`).
+ */
 const syncResult = <T>(value: T | Promise<T>, pending: T): T => (value instanceof Promise ? pending : value);
 
 /** What it ran, without the shell wrapping it when Codex parsed it (`CodexSession.command`). */

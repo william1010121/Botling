@@ -77,7 +77,7 @@ describe("the card for a safety check", () => {
     const worker = vi.fn();
     (h.bot as any).claudeWorkerHost = { answer: worker, close: async () => {} };
     const requestId = `worker:${"a".repeat(8)}-aaaa-aaaa-aaaa-${"a".repeat(12)}:1:${REQUEST.request_id}`;
-    (h.bot as any).onWorkerItem({ ...asked(), requestId, workerId: "a".repeat(8) + "-aaaa-aaaa-aaaa-" + "a".repeat(12) });
+    (h.bot as any).onWorkerOutput({ ...asked(), requestId, workerId: "a".repeat(8) + "-aaaa-aaaa-aaaa-" + "a".repeat(12) });
     const card = h.cards()[0];
     expect(card.text).toContain(`Claude Code's own safety check asks about this even when permissions are bypassed: ${REASON}`);
     expect(card.choices.map((choice: any) => choice.action)).toEqual(["allowOnce", "deny"]);
