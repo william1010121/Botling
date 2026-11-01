@@ -364,6 +364,16 @@ describe("agent definitions", () => {
     expect(loadAgentDefinition("hooked", h.cwd, { home: join(h.dir, "home") })).toMatchObject({ error: expect.stringContaining("cannot reproduce") });
     expect(h.heads).toHaveLength(1);
   });
+  it("refuses a handoff whose process cannot be started: nothing is recorded, nothing is shown", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "botling-claude-workers-"));
+    const items: unknown[] = [];
+    const workers = new ClaudeWorkers({ file: join(dir, "claude-workers.json"), ownerSessionId: () => "coordinator", base: () => ({ command: "claude", cwd: dir, sessionId: "c", resume: false, allowedTools: [] }), cwd: () => dir, subagentModel: () => null },
+      (item) => items.push(item), () => true, () => { throw new Error("spawn EACCES"); });
+    made.push(workers);
+    await expect(workers.tool("app_handoff", { instructions: "x" })).rejects.toThrow("spawn EACCES");
+    expect(workers.listWorkers()).toEqual([]);
+    expect(items).toEqual([]);
+  });
   it("cannot start without the coordinator's config", async () => {
     const h = harness(undefined, { base: null });
     await expect(h.workers.tool("app_handoff", { instructions: "x" })).rejects.toThrow("unavailable");

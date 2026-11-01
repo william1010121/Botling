@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { groupAlive, processStartTime } from "../process/kill-tree";
+import { processStartTime } from "../process/kill-tree";
 import type { TerminateResult } from "../process/tree";
 import {
   ClaudeLegacyStore, costDelta, WorkerCore,
@@ -155,18 +155,21 @@ interface Proc {
   opening?: { run: number; base: HeadConfig | null };
 }
 
+/** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home">;
+
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
  * stream items translated into WorkerEvents on the run's handle.
  */
-class ClaudeProcesses implements WorkerAdapter {
+export class ClaudeWorkerAdapter implements WorkerAdapter {
   readonly kind = "claude-process" as const;
   readonly engine = "claude" as const;
   readonly steersRunning = true;
   private procs = new Map<string, Proc>();
   private closed = false;
 
-  constructor(private options: ClaudeWorkersOptions, private factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead) {}
+  constructor(private options: ClaudeAdapterOptions, private factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead) {}
 
   private procOf(id: string): Proc {
     let proc = this.procs.get(id);
@@ -370,10 +373,13 @@ class ClaudeProcesses implements WorkerAdapter {
     this.procs.get(r.id)?.head?.answer(nativeId, allow, input, message);
   }
 
-  /** An interrupted worker may continue only once its old processes are gone (never two processes on one session). */
+  /**
+   * An interrupted worker may continue only once its old processes are gone (never two processes on one session). A
+   * pid with the recorded start time is that process, still alive.
+   */
   recover(r: Readonly<WorkerLedgerRecord>): RecoverResult {
     if (this.procs.get(r.id)?.head) return { state: "clean" };
-    const alive = r.processes.some(({ pid, started }) => processStartTime(pid) === started && groupAlive(pid));
+    const alive = r.processes.some(({ pid, started }) => processStartTime(pid) === started);
     return alive ? { state: "blocked", reason: "This worker's earlier process is still running; it cannot be resumed until it has ended." } : { state: "clean" };
   }
 
@@ -422,7 +428,7 @@ export class ClaudeWorkers implements WorkerHost {
       // A Claude coordinator is done with a report once it has it (decision D4: no checkpoint).
       port: { ack: "none", deliver: (r, text) => (report(r.id, text, r.run) ? "taken" : "busy") },
       sink: { item: emit },
-      adapters: [new ClaudeProcesses(options, factory)],
+      adapters: [new ClaudeWorkerAdapter(options, factory)],
       ownerSessionId: () => options.ownerSessionId(),
       maxRunning: () => workerLimit(options.maxRunning?.()),
       log: (line) => options.log?.(line),
