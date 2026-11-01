@@ -17,9 +17,13 @@
 // calls on it (`movedTaskError`). `setWorkerOwner(id, null)` gives it back.
 import type { Engine } from "../heads";
 import type { CodexItem } from "./codex";
+import type { WorkerAdapterKind } from "../worker-core/events";
 
-/** Where the worker physically runs (the registry's `AgentHostKind` for workers). */
-export type WorkerHostKind = "codex-thread" | "agy-acp" | "claude-process";
+// The report format lives in the shared worker core (worker-core/report.ts); these names stay importable from here.
+export { ownedWorkerReport, workerReportText } from "../worker-core/report";
+
+/** Where the worker physically runs (the registry's `AgentHostKind` for workers): the shared core's adapter kind. */
+export type WorkerHostKind = WorkerAdapterKind;
 
 /** A worker's state as every host reports it. */
 export type WorkerState =
@@ -88,6 +92,13 @@ export interface WorkerHost {
    * while a report of it is being handed to the coordinator at this moment.
    */
   setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult;
+  /**
+   * An approval card's answer (request id `worker:<task id>:<run>:<engine's id>`); false when no such approval is
+   * open. Optional until every host is a WorkerCore (S4b makes it required).
+   */
+  answer?(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): boolean;
+  /** Ends every worker's process (the app quitting): one at work is interrupted, never replayed. Optional until S4b. */
+  close?(): Promise<void>;
 }
 
 export const isWorkerHost = (value: unknown): value is WorkerHost =>
@@ -120,14 +131,4 @@ export function workerRunStarted(w: { id: string; engine: Engine; name: string; 
     { kind: "subagentStarted", id: w.id, description: w.name, type, prompt: text, background: true, execution: { run: w.run, ownerSessionId: w.ownerSessionId, threadId: w.conversationId, turnId: null } },
     { kind: "subagentRuntime", id: w.id, runtime: { engine: w.engine, reasoningEffort: runtime.reasoningEffort }, ...(runtime.model ? { model: runtime.model } : {}) },
   ];
-}
-
-/** The report a coordinator reads when a worker's run ends (the tags every engine's report uses). */
-export function workerReportText(w: { id: string; run: number; engine: Engine; status: string; report: string }, tail: string): string {
-  return `<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${w.report.replaceAll("<", "&lt;")}\n</app_task_result>\n${tail}`;
-}
-
-/** A run report of a worker another bot owns: the host's `workerReport` item, for the app to route. */
-export function ownedWorkerReport(w: { id: string; run: number; engine: Engine; status: string; report: string }): Extract<CodexItem, { kind: "workerReport" }> {
-  return { kind: "workerReport", id: w.id, run: w.run, engine: w.engine, status: w.status, report: w.report };
 }

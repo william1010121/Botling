@@ -6,6 +6,7 @@ import { estimateContentTokens, type RequestEvent } from "../token-speed";
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
 import type { MeteredTurn } from "../token-flow-ledger";
+import type { RunEnd } from "../worker-core/events";
 import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../subagents";
 import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
@@ -59,8 +60,11 @@ export type StreamItem =
   | { kind: "controlResponse"; requestId: string }
   /** A message sent with a `uuid` (`command_lifecycle`): read into claude's queue, or its own turn starts. */
   | { kind: "command"; id: string; state: "queued" | "started" }
-  /** The turn ended. */
-  | { kind: "result"; ok: boolean; text: string; error: string; subtype: string }
+  /**
+   * The turn ended. `how`: how the engine says it ended (worker-core classifyRun reads it); `failedTools`: failed tool
+   * results in the turn, for engines that count them. `ok` stays for callers not on classifyRun yet.
+   */
+  | { kind: "result"; ok: boolean; text: string; error: string; subtype: string; how?: RunEnd["how"]; failedTools?: number }
   /** The session's cost so far (dollars; Codex: 0) and this turn's tokens (Phase 5c, 1.x's `.usage`). */
   | { kind: "usage"; totalCost: number; tokens: TokenUsage; measurement?: Omit<MeteredTurn, "botId" | "head" | "taskId"> }
   /** One finished model request (the shared token-speed definition): scope null is the head turn, a string a subagent. */
@@ -311,7 +315,7 @@ export function parseLine(line: string): StreamItem[] {
       const failed = message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success");
       const text = typeof message.result === "string" ? message.result : "";
       return [...(usage ? [{ kind: "usage" as const, ...usage }] : []), {
-        kind: "result" as const, ok: !failed, text, subtype: String(message.subtype ?? ""),
+        kind: "result" as const, ok: !failed, how: failed ? "error" as const : "normal" as const, text, subtype: String(message.subtype ?? ""),
         error: failed ? String(message.result ?? message.subtype ?? "The agent reported an error.").slice(0, 2_000) : "",
       }];
     }
@@ -320,40 +324,5 @@ export function parseLine(line: string): StreamItem[] {
   }
 }
 
-/**
- * One turn's reply text from its items: deltas when claude sends them, else whole assistant
- * messages; a later text block (after a tool call) starts a new paragraph.
- */
-export class ReplyText {
-  text = "";
-  private sawDelta = false;
-  private pendingBreak = false;
-
-  /** Feeds an item; returns the new text it added (to stream), or "". */
-  add(item: StreamItem): string {
-    if (item.kind === "textBlock") {
-      if (this.text) this.pendingBreak = true;
-      return "";
-    }
-    if (item.kind === "delta") {
-      this.sawDelta = true;
-      let piece = item.text;
-      if (this.pendingBreak) {
-        this.pendingBreak = false;
-        piece = `\n\n${piece}`;
-      }
-      this.text += piece;
-      return piece;
-    }
-    if (item.kind === "assistantText" && !this.sawDelta) {
-      const piece = this.text ? `\n\n${item.text}` : item.text;
-      this.text += piece;
-      return piece;
-    }
-    if (item.kind === "result" && item.ok && !this.text && item.text) {
-      this.text = item.text;
-      return item.text;
-    }
-    return "";
-  }
-}
+// The head's reply text moved to the shared worker core with the workers' own text blocks (worker-core/text.ts).
+export { ReplyText } from "../worker-core/text";
