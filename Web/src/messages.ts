@@ -15,6 +15,7 @@ import { taskChips } from "./tasks";
 import { taskCardChips } from "./task-cards";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
 import { openPasteDialog, pasteChip, splitPasted } from "./paste-collapse";
+import { isLongUserText, settleUserFold, userFold } from "./long-message";
 import { escapeHTML } from "./util";
 import { characterAvatar } from "./animated-avatar";
 
@@ -531,7 +532,14 @@ function userBody(message: MessageView): HTMLElement {
     const bubble = document.createElement("div");
     bubble.className = "bubble user-bubble";
     bubble.innerHTML = escapeHTML(text).replace(/\n/g, "<br>");
-    body.append(bubble);
+    if (isLongUserText(text)) {
+      // A long one shows its first lines; the control under it, centered, opens and folds it.
+      const fold = userFold(message.id, bubble);
+      body.append(fold);
+      requestAnimationFrame(() => { if (fold.isConnected) settleUserFold(fold); });
+    } else {
+      body.append(bubble);
+    }
   }
   // A long paste folded away when it was sent: the chip under the bubble opens it in a dialog.
   if (pasted !== null) {

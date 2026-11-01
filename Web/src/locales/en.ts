@@ -244,6 +244,8 @@ export const en = {
   "messages.reply": "Reply",
   "messages.interrupted": "Interrupted",
   "messages.fold": "Fold",
+  "messages.showMore": "Show more",
+  "messages.showLess": "Show less",
   "messages.answered": "Answered",
   "messages.answeredLabel": "Answered: {label}. Show the options",
   "messages.working": "Working",

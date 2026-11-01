@@ -137,6 +137,16 @@ body.seen-heads .typing > .avatar.animated-avatar { animation: none; transform: 
 .user-body { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 460px; min-width: 0; }
 .user-body > .speaker { padding: 0 4px 0 0; margin-bottom: -2px; }
 .user-bubble { background: var(--user-bubble); padding: 10px 16px; }
+/* A long message of yours, folded to its first ten lines with a fade; the fold control centered under it. */
+.user-fold { display: flex; flex-direction: column; align-items: center; max-width: 100%; min-width: 0; }
+.user-fold > .user-bubble { align-self: stretch; }
+.user-bubble.collapsed { position: relative; max-height: calc(1.65em * 10 + 20px); overflow: hidden; }
+.user-bubble.collapsed::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: calc(1.65em * 2);
+  background: linear-gradient(to bottom, transparent, var(--user-bubble)); pointer-events: none;
+}
+.user-fold > .fold { align-self: center; margin-top: 2px; }
+.user-fold-toggle[aria-expanded="false"] svg { transform: none; }
 
 .quote {
   display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
