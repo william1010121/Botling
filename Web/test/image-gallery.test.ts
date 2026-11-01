@@ -1,5 +1,8 @@
+/// <reference types="node" />
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { groupImages } from "../src/image-gallery";
+import { groupImages, stageReserve } from "../src/image-gallery";
 import { renderMarkdown, setMediaSource } from "../src/markdown";
 import { messageElement } from "../src/messages";
 import { closeLightbox, handleMediaClicks } from "../src/lightbox";
@@ -89,4 +92,51 @@ it('touch swipes navigate once and suppress their synthetic preview click', () =
   touch('touchstart', 100, 100); touch('touchend', 110, 220);
   expect(visible(row)[0].alt).toBe('Second');
   visible(row)[0].click(); expect(document.querySelector('.lightbox')).not.toBeNull();
+});
+
+// A wide diagram once sat in a fixed 320px grey frame: big bands above and below, and the pager
+// centred on the frame instead of on the image's edge.
+const css = readFileSync(join(__dirname, "../src/chat.css"), "utf8");
+const rule = (selector: string) => {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return css.match(new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`))?.[1] ?? "";
+};
+const loaded = (image: HTMLImageElement, width: number, height: number) => {
+  Object.defineProperty(image, "naturalWidth", { value: width, configurable: true });
+  Object.defineProperty(image, "naturalHeight", { value: height, configurable: true });
+  image.dispatchEvent(new Event("load"));
+};
+it('reserves the tallest loaded image at the stage width, never past its own size or the cap', () => {
+  expect(stageReserve([])).toBe("");
+  expect(stageReserve([{ width: 0, height: 0 }])).toBe("");
+  expect(stageReserve([{ width: 2400, height: 600 }])).toBe("max(min(600px, var(--gallery-cap), 25cqw))");
+  expect(stageReserve([{ width: 2400, height: 600 }, { width: 600, height: 900 }, { width: 2400, height: 600 }]))
+    .toBe("max(min(600px, var(--gallery-cap), 25cqw), min(900px, var(--gallery-cap), 150cqw))");
+});
+it('sizes the stage from loaded images, keeps the caption under the image, and loads the rest once one shows', () => {
+  const row = draw(`${a}\n\n${b}`);
+  const stage = row.querySelector<HTMLElement>('.image-gallery-stage')!;
+  const [first, second] = row.querySelectorAll<HTMLImageElement>('img.media');
+  expect(stage.style.getPropertyValue('--image-reserve')).toBe('');
+  expect(second.getAttribute('loading')).toBe('lazy');
+  loaded(first, 2400, 600);
+  expect(stage.style.getPropertyValue('--image-reserve')).toBe('max(min(600px, var(--gallery-cap), 25cqw))');
+  expect(second.loading).toBe('eager');
+  loaded(second, 1200, 600);
+  expect(stage.style.getPropertyValue('--image-reserve')).toContain('min(600px, var(--gallery-cap), 50cqw)');
+  expect(stage.querySelector('.image-gallery-caption')?.textContent).toBe('First');
+  expect(row.querySelector('.image-gallery')?.classList.contains('captioned')).toBe(true);
+  expect(draw('![](file:///tmp/a.png)\n\n![](file:///tmp/b.png)').querySelector('.image-gallery')?.classList.contains('captioned')).toBe(false);
+});
+it('lets the frame follow the image: no fixed height, no grey letterbox, pager on the left edge', () => {
+  const stage = rule('.image-gallery-stage');
+  expect(stage).not.toMatch(/(^|[ ;])height:/);
+  expect(stage).not.toMatch(/background/);
+  expect(stage).toMatch(/min-height: var\(--image-reserve/);
+  expect(rule('.image-gallery')).toMatch(/container-type: inline-size/);
+  expect(rule('.image-gallery.captioned .image-gallery-stage')).toMatch(/min-height: calc\(var\(--image-reserve, 0px\) \+ 26px\)/);
+  expect(rule('.image-gallery-stage img.media')).not.toMatch(/object-fit/);
+  expect(rule('.image-gallery-controls')).toMatch(/justify-content: flex-start/);
+  // A focused image (focus returns to it when the lightbox closes) keeps its own rounded edge.
+  expect(rule('img.media[role="button"]:focus-visible')).toMatch(/outline-offset: -2px/);
 });

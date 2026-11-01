@@ -1220,7 +1220,9 @@ body.spec-mode { background: #141417; }
 /* A picture seen large over the chat: dimmed behind, fit to the window, caption below. */
 img.media { cursor: zoom-in; }
 a.chip img.media:not([role="button"]) { cursor: pointer; }
-img.media[role="button"]:focus-visible, img.thumb[role="button"]:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+img.thumb[role="button"]:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+/* Inset and rounded with the image: focus comes back here when the lightbox closes. */
+img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .lightbox {
   position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column;
   background: rgba(0, 0, 0, 0.82); animation: lightbox-in 120ms ease-out;
@@ -1502,16 +1504,18 @@ body.spec-mode .float-layer { display: none; }
 @media (max-width: 480px) { .mention-list.with-files { grid-template-columns: minmax(110px, 1fr) minmax(130px, 1fr); } .file-preview { padding: 6px; font-size: 11px; } }
 
 /* Consecutive images keep their original preview targets inside one bounded gallery. */
-.image-gallery { display: grid; width: 480px; max-width: 100%; min-width: 0; gap: 8px; margin: 8px 0; }
-.image-gallery-stage { display: grid; place-items: center; min-width: 0; height: 320px; border-radius: 12px; background: rgba(127, 127, 127, .07); overflow: hidden; touch-action: pan-y; }
-.image-gallery-stage img.media { max-width: 100%; max-height: 320px; object-fit: contain; margin: 0; }
+.image-gallery { display: grid; width: 480px; max-width: 100%; min-width: 0; gap: 8px; margin: 8px 0; container-type: inline-size; --gallery-cap: 320px; }
+/* The frame is the image itself, left-aligned like a lone inline image; the reserve keeps the pager still. */
+.image-gallery-stage { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; min-height: var(--image-reserve, 0px); touch-action: pan-y; }
+.image-gallery.captioned .image-gallery-stage { min-height: calc(var(--image-reserve, 0px) + 26px); }
+.image-gallery-stage img.media { max-width: 100%; max-height: var(--gallery-cap); margin: 0; }
 .image-gallery-stage img[hidden] { display: none; }
-.image-gallery-caption { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-.image-gallery-controls { display: flex; align-items: center; justify-content: center; gap: 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.image-gallery-caption { font-size: 12px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; max-width: 100%; }
+.image-gallery-controls { display: flex; align-items: center; justify-content: flex-start; gap: 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .image-gallery-controls button { width: 36px; height: 32px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; }
 .image-gallery-controls button[aria-disabled="true"] { opacity: .35; cursor: default; }
 .image-gallery:focus-visible, .image-gallery-controls button:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
-@media (max-width: 480px) { .image-gallery-stage { height: 240px; } .image-gallery-stage img.media { max-height: 240px; } }
+@media (max-width: 480px) { .image-gallery { --gallery-cap: 240px; } }
 /* The menu uses the chip's existing 20px horizontal padding budget. */
 .answer-segment { position: relative; display: inline-flex; height: calc(var(--control-h) - 6px); border-radius: 8px; }
 .answer-segment.picked { background: var(--raised); box-shadow: 0 1px 2px rgba(0,0,0,.25); }

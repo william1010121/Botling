@@ -36,6 +36,16 @@ export function groupImages(root: HTMLElement): void {
   }
 }
 
+/**
+ * CSS height of the tallest loaded image as shown at the stage width (`cqw`), never upscaled and
+ * capped like the image itself, so the pager does not jump between a wide and a tall image.
+ */
+export function stageReserve(sizes: readonly { width: number; height: number }[]): string {
+  const heights = new Set(sizes.filter(size => size.width > 0 && size.height > 0)
+    .map(size => `min(${size.height}px, var(--gallery-cap), ${+(size.height / size.width * 100).toFixed(2)}cqw)`));
+  return heights.size ? `max(${[...heights].join(", ")})` : "";
+}
+
 function makeGallery(images: HTMLImageElement[]): void {
   const gallery = document.createElement("span");
   gallery.className = "image-gallery";
@@ -69,9 +79,24 @@ function makeGallery(images: HTMLImageElement[]): void {
     }
   }
   images[0].before(gallery);
-  stage.append(...images);
+  // The caption sits in the stage so it stays under a short image instead of below the reserve.
+  stage.append(...images, caption);
   controls.append(previous, count, next);
-  gallery.append(stage, caption, controls);
+  gallery.append(stage, controls);
+  // Reserve a caption line for every image when any has one, or the pager moves by that line.
+  gallery.classList.toggle("captioned", images.some(image => image.alt));
+  const sizes: { width: number; height: number }[] = [];
+  const measure = (image: HTMLImageElement) => {
+    if (!image.naturalWidth) return;
+    sizes.push({ width: image.naturalWidth, height: image.naturalHeight });
+    stage.style.setProperty("--image-reserve", stageReserve(sizes));
+    // One image has shown, so the gallery is near the viewport: load the rest to settle the reserve.
+    for (const other of images) other.loading = "eager";
+  };
+  for (const image of images) {
+    if (image.complete) measure(image);
+    image.addEventListener("load", () => measure(image));
+  }
   let index = 0;
   const show = (target: number) => {
     index = Math.max(0, Math.min(images.length - 1, target));
