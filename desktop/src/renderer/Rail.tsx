@@ -27,7 +27,7 @@ export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" 
   </span>;
 }
 
-export function SubagentRows({ bot, bots, nested = false, chat = null, look = "original", now, watching, shownBot = null, onOpen, onSettle, onOpenIn, onSettleIn, onAgentMenu, selection = null, onToggleSelect, onGroup, onCancelSelect }: {
+export function SubagentRows({ bot, bots, nested = false, chat = null, look = "original", now, watching, shownBot = null, onOpen, onSettle, onOpenIn, onSettleIn, onAgentMenu, onSubBotMenu, selection = null, onToggleSelect, onGroup, onCancelSelect }: {
   bot: BotView;
   /** Every bot: a sub bot's row has that sub bot's own subagents listed under it (project bot > sub bot > subagent). */
   bots?: BotView[];
@@ -47,6 +47,8 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
   onSettle: (row: SubagentRowView) => void;
   /** A row's "⋯" (agentMoves: the row says whether it can move): opens its menu at the button, for the bot whose row it is. */
   onAgentMenu?: (botId: string, row: SubagentRowView, at: { x: number; y: number }) => void;
+  /** A sub bot row's "⋯" ("Close sub bot…"), for that sub bot. */
+  onSubBotMenu?: (subBotId: string, at: { x: number; y: number }) => void;
   /** "Select several…": the bot whose worker rows are being picked, and the picked ones; rows of that bot show a tick box. */
   selection?: { botId: string; ids: string[] } | null;
   onToggleSelect?: (botId: string, row: SubagentRowView) => void;
@@ -78,6 +80,8 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
             {row.host && <span className="subagent-kind subagent-host" title={`It runs on ${row.host.name}; its reports come here`}>on {row.host.name}</span>}
             {row.waitingForNetwork && <span className="subagent-network">網路中斷</span>}
           </button>
+          {row.subBot && onSubBotMenu && <button type="button" className="subagent-more-menu" aria-haspopup="menu" aria-label={`More for the sub bot ${row.title}`} title="More"
+            onClick={(event) => { const box = event.currentTarget.getBoundingClientRect(); onSubBotMenu(row.subBot!, { x: box.left, y: box.bottom + 2 }); }}>⋯</button>}
           {!row.subBot && picking && row.agentId && <input type="checkbox" className="subagent-pick" checked={picking.ids.includes(row.id)} aria-label={`Pick ${row.title || "Subagent"}`}
             onChange={() => onToggleSelect?.(bot.id, row)} />}
           {!row.subBot && !picking && row.movable && onAgentMenu && <AgentMenuButton row={row} onMenu={(at) => onAgentMenu(bot.id, row, at)} />}
@@ -90,7 +94,7 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
         </div>
         {sub && <SubagentRows bot={sub} bots={bots} nested chat={chat} look={look} now={now} watching={chat?.botId === sub.id ? chat.watching : null} shownBot={shownBot}
           onOpen={(child) => (onOpenIn ?? ((_id, r) => onOpen(r)))(sub.id, child)} onSettle={(child) => (onSettleIn ?? ((_id, r) => onSettle(r)))(sub.id, child)}
-          onOpenIn={onOpenIn} onSettleIn={onSettleIn} onAgentMenu={onAgentMenu} selection={selection} onToggleSelect={onToggleSelect} onGroup={onGroup} onCancelSelect={onCancelSelect} />}
+          onOpenIn={onOpenIn} onSettleIn={onSettleIn} onAgentMenu={onAgentMenu} onSubBotMenu={onSubBotMenu} selection={selection} onToggleSelect={onToggleSelect} onGroup={onGroup} onCancelSelect={onCancelSelect} />}
         </Fragment>
         );
       })}
@@ -182,6 +186,44 @@ export function AgentMenuButton({ row, onMenu }: { row: SubagentRowView; onMenu:
 
 export type AgentTargets = { engine: "claude" | "codex" | "agy"; targets: AgentTargetView[] };
 export type AgentMoveTo = { kind: "bot"; botId: string } | { kind: "newSubBot"; name: string } | { kind: "back" };
+
+/** A sub bot row's menu: "Close sub bot…" (confirmed first). */
+export function SubBotMenu({ name, at, onCloseSubBot, onClose }: { name: string; at: { x: number; y: number }; onCloseSubBot: () => void; onClose: () => void }) {
+  useEffect(() => {
+    const close = (event: Event) => { if (!(event.target instanceof Element && event.target.closest(".sub-bot-menu"))) onClose(); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("pointerdown", close, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("blur", onClose);
+    return () => { window.removeEventListener("pointerdown", close, true); window.removeEventListener("keydown", key); window.removeEventListener("blur", onClose); };
+  }, [onClose]);
+  return (
+    <ShellOverlay><div className="bot-menu sub-bot-menu" role="menu" style={{ left: at.x, top: at.y }} aria-label={`${name} menu`}>
+      <button type="button" role="menuitem" className="bot-menu-item destructive" onClick={onCloseSubBot}>Close sub bot…</button>
+    </div></ShellOverlay>
+  );
+}
+
+/** "Close "X"?": the agents it owns go back to the bot that runs them (or are stopped when that bot is gone). */
+export function CloseSubBotDialog({ name, onConfirm, onCancel }: { name: string; onConfirm: () => void; onCancel: () => void }) {
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onCancel]);
+  return (
+    <ShellOverlay><div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+      <div className="dialog" role="alertdialog" aria-labelledby="close-sub-bot-title" aria-describedby="close-sub-bot-message">
+        <h2 id="close-sub-bot-title">Close the sub bot "{name}"?</h2>
+        <p id="close-sub-bot-message">Its agents go back to the bot that runs them; any that bot cannot take back, and any running on the sub bot itself, are stopped. Its chat stays in the project folder.</p>
+        <div className="dialog-buttons">
+          <button type="button" className="dialog-cancel" onClick={onCancel} autoFocus>Cancel</button>
+          <button type="button" className="dialog-destructive" onClick={onConfirm}>Close sub bot</button>
+        </div>
+      </div>
+    </div></ShellOverlay>
+  );
+}
 
 /**
  * A subagent row's menu (modeled on BotMenu): "Move to…" lists where it can go (`agent.targets`), with why not for the

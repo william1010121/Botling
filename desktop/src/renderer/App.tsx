@@ -26,7 +26,7 @@ import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { Worktrees } from "./Worktrees";
 import { Review, type ReviewTarget } from "./Review";
-import { AgentMenu, BotMenu, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
+import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, SubagentRows, SubBotMenu, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon } from "./icons";
 import { SpecFrame } from "./SpecFrame";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
@@ -50,7 +50,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   /** A subagent row's "⋯" menu: the bot whose row it is, the row, and where it opens. */
   const [agentMenu, setAgentMenu] = useState<{ botId: string; row: SubagentRowView; x: number; y: number } | null>(null);
   const [removing, setRemoving] = useState<BotView | null>(null);
-  /** The worker rows picked for one new sub bot. */
+  /** A sub bot row's "⋯" menu, the sub bot being asked about before it is closed, and the worker rows picked for one new sub bot. */
+  const [subBotMenu, setSubBotMenu] = useState<{ botId: string; x: number; y: number } | null>(null);
+  const [closingSubBot, setClosingSubBot] = useState<BotView | null>(null);
   const [picking, setPicking] = useState<{ botId: string; ids: string[] } | null>(null);
   /** The task card pressed open in the right panel (`selectedTask`); pressed again, it closes. */
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
@@ -178,6 +180,14 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "agent.group", botId, subagentIds: ids, name: name.slice(0, 400) })
       .then((result) => { void store.select(result.ownerBotId); }, fail);
   }, [client, store, fail, picking]);
+  // "Close sub bot": its agents go back to their host; then its project bot's chat is shown again.
+  const closeSubBot = useCallback((target: BotView) => {
+    setClosingSubBot(null);
+    setError(null);
+    const shown = store.getView().chat?.botId === target.id;
+    void client.request({ type: "subbot.close", botId: target.id })
+      .then((result) => { if (shown || store.getView().chat?.botId === target.id) void store.select(result.parentBotId); }, fail);
+  }, [client, store, fail]);
 
   // "New bot": made, set up (it writes its routines and says hello), and shown.
   const createBot = useCallback((made: { name: string; job: string } | null) => {
@@ -262,6 +272,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                   <SubagentRows bot={candidate} bots={view.bots} chat={{ botId: chat?.botId ?? null, watching }} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null} shownBot={!watching ? chat?.botId ?? null : null}
                     onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)}
                     onOpenIn={openSubagent} onSettleIn={(botId, row) => settleSubagent(botId, row, true)} onAgentMenu={openAgentMenu}
+                    onSubBotMenu={(subBotId, at) => setSubBotMenu({ botId: subBotId, ...at })}
                     selection={picking} onToggleSelect={togglePick} onGroup={groupSubagents} onCancelSelect={() => setPicking(null)} />
                 </div>
               ))}
@@ -378,6 +389,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         onMessage={(text) => messageSubagent(agentMenu.botId, agentMenu.row, text)}
         onStop={() => stopSubagent(agentMenu.botId, agentMenu.row)}
         onSelectSeveral={() => { setPicking({ botId: agentMenu.botId, ids: [agentMenu.row.id] }); setAgentMenu(null); }} />}
+      {subBotMenu && (() => { const target = view.bots.find((candidate) => candidate.id === subBotMenu.botId); return target ? <SubBotMenu name={target.name} at={{ x: subBotMenu.x, y: subBotMenu.y }} onClose={() => setSubBotMenu(null)}
+        onCloseSubBot={() => { setClosingSubBot(target); setSubBotMenu(null); }} /> : null; })()}
+      {closingSubBot && <CloseSubBotDialog name={closingSubBot.name} onCancel={() => setClosingSubBot(null)} onConfirm={() => closeSubBot(closingSubBot)} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>

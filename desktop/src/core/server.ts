@@ -41,7 +41,7 @@ import {
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { AgentStore, migrationRecords } from "./store/agent-store";
 import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } from "./agent-moves";
-import { agentMessageNotice, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotGroupFirstMessage } from "./agent-relay";
+import { agentMessageNotice, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotClosedNotice, subBotGroupFirstMessage } from "./agent-relay";
 import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./specs";
@@ -1390,6 +1390,41 @@ First write a test that shows this, then fix it.`;
     }
   }
 
+  /**
+   * "Close sub bot": the agents it owns go back to the bot that runs them (or, when that bot is gone, are only listed as stopped),
+   * the ones it runs itself are stopped, then it is removed. Its project bot's chat says which went where.
+   */
+  async closeSubBot(id: string): Promise<ResultOf<"subbot.close">> {
+    const profile = this.profiles.find((candidate) => candidate.id === id);
+    if (!profile || this.removed.has(id)) throw new ContractError("not_found", "No such bot.");
+    if (!profile.parent) throw new ContractError("bad_request", "Only a sub bot can be closed.");
+    const parentId = profile.parent;
+    const returned: { title: string; to: string }[] = [];
+    const stopped: { title: string; why: string }[] = [];
+    for (const record of this.agents.movedIn(id)) {
+      const title = record.summary.description || "Agent";
+      const host = this.removed.has(record.host.botId) ? undefined : this.bots.get(record.host.botId);
+      if (!host || record.state === "lost") { stopped.push({ title, why: "the bot that ran it is gone" }); continue; }
+      try { await this.moveOwners([record], { kind: "back" }, {}); returned.push({ title, to: this.agentBotName(record.host.botId) }); }
+      catch (error) {
+        // It cannot go back now (its report is being handed over this very moment): stopped instead, never left without an owner.
+        await host.commandWorker(record.nativeId, { kind: "stop" }).catch(() => undefined);
+        stopped.push({ title, why: `it could not go back: ${(error as Error).message}` });
+      }
+    }
+    const sub = this.bots.get(id);
+    for (const record of this.agents.all.filter((candidate) => candidate.host.botId === id && candidate.state === "running")) {
+      const stoppedNow = await sub?.commandWorker(record.nativeId, { kind: "stop" }).catch(() => null);
+      if (stoppedNow?.ok) stopped.push({ title: record.summary.description || "Agent", why: "it ran on this sub bot" });
+    }
+    await this.removeBot(id, { quiet: true });
+    const parent = this.removed.has(parentId) ? undefined : this.bots.get(parentId);
+    const words = subBotClosedNotice({ name: profile.name, returned, stopped });
+    parent?.appNotice(words, undefined, undefined, { sourceID: id });
+    parent?.queueNote(`(App: ${words})`);
+    parent?.refresh();
+    return { closed: true, parentBotId: parentId, returned: returned.length, stopped: stopped.length };
+  }
 
   private movingSubagents = new Set<string>();
   /** Sub bots that already told their project bot they were done. */
@@ -2285,6 +2320,7 @@ First write a test that shows this, then fix it.`;
       case "agent.message": return this.agentMessageCommand(cmd.botId, cmd.subagentId, cmd.text);
       case "agent.stop": return this.agentStopCommand(cmd.botId, cmd.subagentId);
       case "agent.group": return this.groupAgents(cmd.botId, cmd.subagentIds, { kind: "newSubBot", name: cmd.name, ...(cmd.note ? { note: cmd.note } : {}) });
+      case "subbot.close": return this.closeSubBot(cmd.botId);
       case "chat.read": {
         // You came back to it: many unread replies fold into a summary first (`arrive(at:)`).
         const bot = this.bot(cmd.botId);

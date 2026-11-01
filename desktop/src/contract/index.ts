@@ -1016,6 +1016,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("agent.stop"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   /** "New sub bot with these…": several agents shown in `botId`'s rows move to one new sub bot together (all or none). */
   z.strictObject({ type: z.literal("agent.group"), botId, subagentIds: z.array(z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/)).min(1).max(20), name: z.string().min(1).max(400), note: z.string().max(4_000).optional() }),
+  /** Closes a sub bot: the agents it owns go back to their host (or are stopped when that is gone), then it is removed. */
+  z.strictObject({ type: z.literal("subbot.close"), botId }),
   /** "New bot": a bot of its own with a name and a job; it sets up its own routines (`createBot`, setUp). */
   z.strictObject({ type: z.literal("bots.create"), name: z.string().min(1).max(400), job: z.string().min(1).max(4_000) }),
   /** Removes a bot of its own or a project from the left column and stops it. Its folders stay on disk. */
@@ -1222,7 +1224,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
-  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
+  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
@@ -1286,6 +1288,7 @@ export interface Results {
   "agent.message": { agentId: string; how: "steered" | "newRun" | "queued"; run: number | null };
   "agent.stop": { agentId: string; stopped: boolean };
   "agent.group": { ownerBotId: string; agentIds: string[] };
+  "subbot.close": { closed: boolean; parentBotId: string; returned: number; stopped: number };
   "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
   "bots.remove": { removed: boolean };

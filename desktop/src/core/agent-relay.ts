@@ -116,3 +116,12 @@ export function subBotGroupFirstMessage(input: { parentName: string; name: strin
     "Then say in one sentence what you now own. The user may talk to you directly in this chat.",
   ].filter(Boolean).join("\n");
 }
+
+/** Closing a sub bot: what became of each agent it owned (said in its project bot's chat). */
+export function subBotClosedNotice(input: { name: string; returned: { title: string; to: string }[]; stopped: { title: string; why: string }[] }): string {
+  const parts = [`Closed the sub bot "${input.name}".`];
+  if (input.returned.length) parts.push(`Back with their host: ${input.returned.map((agent) => `"${agent.title}" (${agent.to})`).join(", ")}.`);
+  if (input.stopped.length) parts.push(`Stopped: ${input.stopped.map((agent) => `"${agent.title}" (${agent.why})`).join(", ")}.`);
+  if (!input.returned.length && !input.stopped.length) parts.push("It owned no agents.");
+  return parts.join(" ");
+}
