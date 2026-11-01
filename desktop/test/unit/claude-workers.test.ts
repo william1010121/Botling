@@ -395,3 +395,20 @@ describe("review round 2", () => {
     expect(head.terminated).toBe(true);
   });
 });
+
+describe("review round 3", () => {
+  it("#3 a terminate that resolves with the process tree still alive is not clean: blocked, head kept, ended by recovery first", async () => {
+    const h = claudeHarness();
+    const started: any = await h.workers.tool("app_handoff", { instructions: "Go." });
+    const head = h.heads[0]!;
+    let alive = true;
+    head.terminate = async function () { if (alive) return { killed: [1], forced: true, alive: true }; this.terminated = true; this.exit(null, true); return { killed: [1], forced: false }; };
+    expect(await h.workers.stopWorker(started.task_id)).toBe(true);
+    expect(h.workers.core.get(started.task_id)).toMatchObject({ status: "stopped", cleanup: "failed", recovery: "required" });
+    expect(await h.workers.sendToWorker(started.task_id, "Again.")).toMatchObject({ ok: false });
+    expect(h.heads).toHaveLength(1);
+    alive = false;
+    expect(await h.workers.sendToWorker(started.task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
+    expect(head.terminated).toBe(true);
+  });
+});

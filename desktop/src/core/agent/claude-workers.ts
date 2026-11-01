@@ -343,10 +343,17 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const head = proc.head;
     if (!head) return { cleaned: true };
-    // Clean only once its process has ended; a failed terminate keeps the head, for recovery to end it again.
-    const ended = await head.terminate(1_500).then(() => true, () => false);
+    // Clean only once its process is confirmed gone; otherwise the head is kept, for recovery to end it again.
+    const ended = await this.ended(r, head);
     if (ended && proc.head === head) proc.head = undefined;
     return { cleaned: ended };
+  }
+
+  /** Ends `head` and confirms it is gone: the process layer says its tree ended, and no recorded process of it lives on. */
+  private async ended(r: Readonly<WorkerLedgerRecord>, head: ClaudeWorkerHead): Promise<boolean> {
+    const result = await head.terminate(1_500).catch(() => null);
+    if (!result || result.alive) return false;
+    return !r.processes.some(({ pid, started }) => pid === head.pid && processStartTime(pid) === started);
   }
 
   answer(r: Readonly<WorkerLedgerRecord>, nativeId: string, allow: boolean, input: Record<string, unknown>, message?: string) {
@@ -363,10 +370,11 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     // A process this app still holds: one at work in a kept-alive head is fine; one a stop could not end is ended now.
     if (head && !(r.cleanup === "failed")) return { state: "clean" };
     if (head) {
-      return head.terminate(1_500).then(
-        () => { if (proc!.head === head) proc!.head = undefined; return { state: "clean" } as RecoverResult; },
-        () => ({ state: "blocked", reason: "This worker's earlier process could not be ended; it cannot be resumed until it has." }),
-      );
+      return this.ended(r, head).then((ended): RecoverResult => {
+        if (!ended) return { state: "blocked", reason: "This worker's earlier process could not be ended; it cannot be resumed until it has." };
+        if (proc!.head === head) proc!.head = undefined;
+        return { state: "clean" };
+      });
     }
     const alive = r.processes.some(({ pid, started }) => processStartTime(pid) === started);
     return alive ? { state: "blocked", reason: "This worker's earlier process is still running; it cannot be resumed until it has ended." } : { state: "clean" };

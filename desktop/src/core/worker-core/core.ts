@@ -326,11 +326,16 @@ export class WorkerCore implements WorkerHost {
   }
 
   /** Stops its run (after the operation under way, if any): false when it is not at work by then. */
+  /**
+   * Stops the run under way now (after the operation under way, if any). False when it is not at work by then, or the
+   * run it was asked for has been followed by another meanwhile (that one is not this stop's).
+   */
   stopWorker(id: string): Promise<boolean> {
     const r = this.find(id);
     if (!r || this.closed) return Promise.resolve(false);
+    const run = r.run;
     return Promise.resolve(this.exclusive(r.id, () => {
-      if (this.closed || this.records.get(r.id) !== r || r.status !== "running") return false;
+      if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status !== "running") return false;
       return then(this.stop(r), () => true);
     }, "wait"));
   }
@@ -413,7 +418,7 @@ export class WorkerCore implements WorkerHost {
     // Room is made among the others: the worker being made is never the one forgotten (with none forgettable it is
     // kept as one more; the ledger keeps it too, as a running record).
     this.trim(r.id);
-    const error = await this.launch(r, instructions, true);
+    const error = await this.exclusive(r.id, () => this.launch(r, instructions, true), "wait");
     if (error) throw new Error(error);
     return { accepted: true, task_id: r.id, run: r.run };
   }
@@ -491,8 +496,14 @@ export class WorkerCore implements WorkerHost {
   async cancel(id: string, run?: number): Promise<{ status: WorkerStatus }> {
     if (this.closed) throw new Error("Workers are closed: the app is stopping.");
     const r = this.owned(id, run);
-    // One operation at a time: taken before anything yields, so no follow-up starts a run this cancel could touch.
-    return this.exclusive(r.id, () => this.cancelOp(r), "wait");
+    // The run it is for is fixed now. It waits for the operation under way, then checks again: a cancel that run has
+    // been followed by another meanwhile is stale and refused, never applied to the newer run.
+    const target = r.run;
+    return this.exclusive(r.id, () => {
+      if (this.closed) throw new Error("Workers are closed: the app is stopping.");
+      this.owned(id, target);
+      return this.cancelOp(r);
+    }, "wait");
   }
 
   private cancelOp(r: WorkerLedgerRecord): Maybe<{ status: WorkerStatus }> {
@@ -833,7 +844,9 @@ export class WorkerCore implements WorkerHost {
       live.waiting = undefined;
       const adapter = this.adapterOf(r);
       if (!adapter) { live.pipeline.feed({ type: "end", end: { how: "error", finalText: null, error: "This worker's engine is not available here.", detail: "start" } }); continue; }
-      void this.begin(r, live, adapter, words, false, null);
+      // Through the worker's one operation (a start may be asynchronous): still this run's when it begins, or nothing.
+      void this.exclusive(r.id, () => (this.records.get(r.id) === r && this.lives.get(r.id) === live && !live.done && r.status === "running"
+        ? this.begin(r, live, adapter, words, false, null) : null), "wait");
     }
   }
 

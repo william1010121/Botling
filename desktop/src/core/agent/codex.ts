@@ -157,6 +157,8 @@ export interface CodexConfig {
   restoredMonitors?: CommandMonitor[];
   /** Auto mode (default on): Codex's own reviewer (`auto_review`) answers escalations; only its refusals become a card. */
   autoMode?: boolean;
+  /** How long a worker's stop waits for its unanswered start requests before it gives up as not clean (default 15 s). */
+  workerStopDeadlineMs?: number;
   /** Explicit opt-in: no approval prompts and no Codex sandbox. */
   bypassPermissions?: boolean;
   /** More folders it may write besides `cwd` (1.x's `writableRoots`: the bot's `--add-dir` folders). */
@@ -368,6 +370,11 @@ interface ThreadWorker {
   calls: number;
   /** A stop waiting for the start requests of the run it stopped to be answered (their turn, if any, interrupted). */
   stopping?: (result: { cleaned: boolean }) => void;
+  /**
+   * A stopped run's start request is still unanswered and no turn of it is known: it may yet begin a turn. Until it is
+   * answered (or that turn is seen and interrupted, or the app-server goes away) no next run may start.
+   */
+  unconfirmed?: boolean;
   /** Tool calls without a result yet. */
   tools: Set<string>;
   /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
@@ -441,19 +448,26 @@ export class CodexThreadAdapter implements WorkerAdapter {
     });
   }
 
-  /** A turn of a run that was stopped: no later run takes its events, and it is interrupted. */
+  /** A turn of a run that was stopped: no later run takes its events, and it is interrupted. Its isolation is confirmed. */
   private isolate(w: ThreadWorker, turn: string) {
-    if (w.completedTurns.has(turn)) return;
-    w.completedTurns.add(turn);
-    if (w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
+    if (!w.completedTurns.has(turn)) {
+      w.completedTurns.add(turn);
+      if (w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
+    }
+    this.confirmed(w);
   }
 
-  /** No call of the stopped run is left unanswered: its stop is done (nothing of it can start any more). */
+  /** No call of the stopped run is left unanswered: nothing of it can start any more. */
   private drained(w: ThreadWorker) {
-    if (!w.stopping || w.calls > 0) return;
+    if (w.calls <= 0) this.confirmed(w);
+  }
+
+  /** The stopped run is isolated: its stop (if it still waits) is done, and a next run may start. */
+  private confirmed(w: ThreadWorker) {
+    w.unconfirmed = false;
     const done = w.stopping;
     w.stopping = undefined;
-    done({ cleaned: true });
+    done?.({ cleaned: true });
   }
 
   private fail(w: ThreadWorker, run: RunHandle, error: string) {
@@ -607,7 +621,14 @@ export class CodexThreadAdapter implements WorkerAdapter {
     const unsettled = !w.turnId && w.calls > 0;
     this.interrupt(w);
     if (!unsettled) return { cleaned: true };
-    return new Promise((resolve) => { w.stopping = resolve; });
+    w.unconfirmed = true;
+    // Not forever: an app-server that never answers leaves it not clean (blocked until the answer comes, or a restart).
+    return new Promise((resolve) => {
+      const settle = (result: { cleaned: boolean }) => { clearTimeout(timer); resolve(result); };
+      const timer = setTimeout(() => { if (w.stopping === settle) { w.stopping = undefined; resolve({ cleaned: false }); } }, this.o.config.workerStopDeadlineMs ?? 15_000);
+      timer.unref?.();
+      w.stopping = settle;
+    });
   }
 
   private interrupt(w: ThreadWorker) {
@@ -639,6 +660,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
   }
 
   recover(record: Readonly<WorkerLedgerRecord>): RecoverResult {
+    if (this.workers.get(record.id)?.unconfirmed) return { state: "blocked", reason: "Its stopped run's start request has not been answered yet, so its old turn may still begin; it cannot start again until that is known (or the app-server restarts)." };
     // Its turns lived in an app-server that is gone; only a restart's own check of the thread can hold it back.
     const waiting = this.o.recovering?.(record.id);
     return waiting ? { state: "blocked", reason: waiting } : { state: "clean" };

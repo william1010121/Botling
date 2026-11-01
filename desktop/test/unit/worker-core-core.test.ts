@@ -693,6 +693,58 @@ describe("S4b: the member core's rules", () => {
   });
 });
 
+describe("review round 3", () => {
+  it("1 a cancel queued behind a recovery that starts the next run is stale: rejected, never applied to the new run", async () => {
+    const adapter = new FakeAdapter();
+    let recovered!: (result: RecoverResult) => void;
+    const { core, store } = setup({ adapter });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    adapter.stop = async () => ({ cleaned: false });
+    await core.stopWorker(task_id);
+    expect(store.get(task_id)).toMatchObject({ cleanup: "failed", run: 1 });
+    adapter.recover = () => new Promise((resolve) => { recovered = resolve; }) as never;
+    const followUp = core.sendToWorker(task_id, "Again.");
+    const cancel = core.cancel(task_id, 1);
+    recovered({ state: "clean" });
+    expect(await followUp).toMatchObject({ ok: true, run: 2 });
+    await expect(cancel).rejects.toThrow(/Stale run/);
+    expect(store.get(task_id)).toMatchObject({ run: 2, status: "running" });
+  });
+
+  it("1 a stop queued behind an operation that started the next run leaves that run alone", async () => {
+    const adapter = new FakeAdapter();
+    let recovered!: (result: RecoverResult) => void;
+    const { core, store } = setup({ adapter });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    adapter.emit(task_id, { type: "textWhole", text: "Done.", phase: null }, normal());
+    Object.assign(store.get(task_id), {});
+    (core as any).records.get(task_id).recovery = "required";
+    adapter.recover = () => new Promise((resolve) => { recovered = resolve; }) as never;
+    const followUp = core.sendToWorker(task_id, "Again.");
+    const stop = core.stopWorker(task_id);
+    recovered({ state: "clean" });
+    expect(await followUp).toMatchObject({ ok: true, run: 2 });
+    expect(await stop).toBe(false);
+    expect(core.get(task_id)).toMatchObject({ run: 2, status: "running" });
+  });
+
+  it("an asynchronous start holds the worker: a stop meanwhile waits for it and then stops that run", async () => {
+    const adapter = new FakeAdapter();
+    let begun!: () => void;
+    adapter.onStart = () => new Promise<void>((resolve) => { begun = resolve; });
+    const { core } = setup({ adapter });
+    const handing = core.handoff("claude-process", { instructions: "Go." });
+    await new Promise((resolve) => setImmediate(resolve));
+    const id = core.listWorkers()[0]!.id;
+    const stop = core.stopWorker(id);
+    expect(core.get(id)!.status).toBe("running");
+    begun();
+    await handing;
+    expect(await stop).toBe(true);
+    expect(core.get(id)!.status).toBe("stopped");
+  });
+});
+
 describe("review round 2: one operation at a time per worker", () => {
   it("B a second cancel while a stop's cleanup is pending waits for it (never cleans it up early): no next run meanwhile", async () => {
     const adapter = new FakeAdapter();

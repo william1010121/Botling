@@ -119,7 +119,10 @@ export class AgyAcpAdapter implements WorkerAdapter {
   /** Ends the head (kept when that fails, to try again) and checks its recorded processes are gone. */
   private async terminate(record:Readonly<WorkerLedgerRecord>):Promise<boolean> {
     const live=this.runs.get(record.id);
-    try{await live?.head?.terminate();}catch{return false;}
+    // Gone only when the process layer confirms its tree ended and no recorded process lives on.
+    let ended:TerminateResult|undefined;
+    try{ended=await live?.head?.terminate();}catch{return false;}
+    if(ended?.alive)return false;
     if(record.processes.length&&!this.gone(record.processes))return false;
     if(live)live.head=undefined;
     return true;

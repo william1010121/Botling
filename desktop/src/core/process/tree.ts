@@ -11,6 +11,8 @@ export interface TerminateResult {
   killed: number[];
   /** The tree did not end within the grace period and was force-killed. */
   forced: boolean;
+  /** Still alive after the force-kill (not confirmed gone): a caller must not take this as the process's exit. */
+  alive?: boolean;
 }
 
 export interface ManagedProcess {
@@ -70,7 +72,7 @@ export class PosixGroupAdapter implements ProcessTreeAdapter {
           }
           signalGroup(pid, "SIGKILL");
           for (let i = 0; i < 80 && groupAlive(pid); i++) await sleep(25);
-          return { killed, forced: true };
+          return groupAlive(pid) ? { killed, forced: true, alive: true } : { killed, forced: true };
         })();
         return ending;
       },
@@ -108,7 +110,8 @@ export class WindowsTreeAdapter implements ProcessTreeAdapter {
           killTree(pid, "SIGKILL"); // taskkill /T /F: there is no polite form console programs honour.
           const timedOut = await Promise.race([exited.then(() => false), sleep(graceMs).then(() => true)]);
           if (timedOut) killTree(pid, "SIGKILL");
-          return { killed: [pid], forced: timedOut };
+          const gone = !timedOut || await Promise.race([exited.then(() => true), sleep(graceMs).then(() => child.exitCode !== null)]);
+          return { killed: [pid], forced: timedOut, ...(gone ? {} : { alive: true }) };
         })();
         return ending;
       },
