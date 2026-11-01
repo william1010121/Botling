@@ -8,6 +8,8 @@
 import { holdsScheduleAwake, isScheduled } from "./session-schedules";
 import type { ChatRecord } from "./store/records";
 import { fromSwiftDate, toSwiftDate } from "./store/records";
+import { chipStatus } from "./worker-core/status";
+import type { WorkerLedgerRecord } from "./worker-core/ledger";
 
 export type BackgroundKind = "command" | "agent" | "monitor" | "wakeup" | "cron";
 export type BackgroundStatus = "running" | "completed" | "failed" | "killed" | "stopped" | "interrupted";
@@ -79,6 +81,26 @@ export function endBackgroundTask(records: ChatRecord[], id: string, status: str
     if (!task) continue;
     if (task.status !== "running") return null;
     endTask(task, status, summary, now);
+    return records[i]!;
+  }
+  return null;
+}
+
+/**
+ * A worker's chip as its ledger record says (worker-core status.ts `chipStatus`), whatever it said before: unlike
+ * `endBackgroundTask`, no first-writer-wins. `summary` null keeps the one it has. The record changed, or null.
+ */
+export function projectBackgroundTask(records: ChatRecord[], id: string, worker: Pick<WorkerLedgerRecord, "status" | "report" | "cleanup" | "adapter">, summary: string | null, now = toSwiftDate()): ChatRecord | null {
+  for (let i = records.length - 1; i >= 0; i--) {
+    const task = tasksOf(records[i]!)?.find((candidate) => candidate.id === id);
+    if (!task) continue;
+    const status = chipStatus(worker);
+    const shorter = summary ? shorten(summary) : task.summary;
+    if (task.status === status && task.summary === shorter) return null;
+    task.status = status;
+    if (status === "running") delete task.endedAt;
+    else task.endedAt ??= now;
+    if (shorter) task.summary = shorter;
     return records[i]!;
   }
   return null;

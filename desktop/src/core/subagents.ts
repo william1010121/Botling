@@ -12,6 +12,7 @@
 import { addSample, readTotals, type RequestEvent, type SpeedTotals } from "./token-speed";
 import type { Launch } from "./agent/stream";
 import { characterPrefix } from "./briefing";
+import { isWorkerType } from "./agent/workers";
 import { fromSwiftDate, toSwiftDate, type StepRecord } from "./store/records";
 import type { SubagentLine } from "./store/subagent-store";
 
@@ -157,6 +158,11 @@ export class SubagentBook {
   /** The current run's last steps of a subagent loaded without them (set by the bot). */
   loadSteps: ((id: string) => StepRecord[]) | null = null;
   private readonly hydrated = new WeakSet<SubagentRecord>();
+  /**
+   * An app-managed worker's status/endedAt/result are the worker ledger's projection (`project`), not its end notices
+   * (shared-core spec 3.5). Off until the bot projects the ledger (S4b).
+   */
+  workerProjection = false;
 
   constructor(public list: SubagentRecord[] = [], private retained: () => ReadonlySet<string> = () => new Set()) {}
 
@@ -330,7 +336,27 @@ export class SubagentBook {
   ended(item: { id: string; status: string; summary: string | null }, now = toSwiftDate()): SubagentRecord | null {
     const subagent = this.resolve(item.id);
     if (!subagent || subagent.status !== "running") return null;
+    if (this.workerProjection && isWorkerType(subagent.type)) return null;
     this.end(subagent, ended(item.status), item.summary ?? subagent.result, now);
+    return subagent;
+  }
+
+  /**
+   * A worker's status, end and result as its ledger record says (worker-core status.ts `subagentStatus`), whatever it
+   * said before: no first-writer-wins. `endedAt` null on an end: the end it has, else now; `result` null keeps its last
+   * report. Returns the record when it changed.
+   */
+  project(id: string, view: { status: SubagentStatus; endedAt: number | null; result: string | null }, now = toSwiftDate()): SubagentRecord | null {
+    const subagent = this.resolve(id);
+    if (!subagent || !isWorkerType(subagent.type)) return null;
+    const endedAt = view.status === "running" ? undefined : view.endedAt ?? subagent.endedAt ?? now;
+    const result = view.result ?? subagent.result;
+    if (subagent.status === view.status && subagent.endedAt === endedAt && subagent.result === result) return null;
+    subagent.status = view.status;
+    if (endedAt === undefined) delete subagent.endedAt;
+    else subagent.endedAt = endedAt;
+    if (result !== undefined) subagent.result = result;
+    if (view.status !== "running") this.trim();
     return subagent;
   }
 

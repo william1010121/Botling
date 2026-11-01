@@ -10,6 +10,8 @@ import { createHash, randomBytes } from "node:crypto";
 import type { Engine } from "./heads";
 import type { SubagentRecord } from "./subagents";
 import { isWorkerType, workerHostKindFor } from "./agent/workers";
+import { agentState, subagentStatus } from "./worker-core/status";
+import type { WorkerLedgerRecord } from "./worker-core/ledger";
 import type { AgentStore } from "./store/agent-store";
 
 export type AgentEngine = Engine; // "claude" | "codex" | "agy"
@@ -157,19 +159,40 @@ export function recordHostKind(host: Pick<HostFacts, "kind">, record: Pick<Subag
   return workerHostKindFor(record.type, "claude") === "claude-process" ? "claude-process" : host.kind;
 }
 
-/** The registry state for a host book's status. An app-managed worker that ended a run is idle: it can take a follow-up. */
+type LedgerView = Pick<WorkerLedgerRecord, "status" | "report" | "adapter">;
+/** A ledger state to project (the adapter matters only for the component editor). */
+const ledgerView = (status: WorkerLedgerRecord["status"], report: WorkerLedgerRecord["report"]["state"], adapter: WorkerLedgerRecord["adapter"] = "codex-thread"): LedgerView =>
+  ({ status, report: { state: report, text: null, status: null, attempts: 0 }, adapter });
+
+/** The worker ledger state a host book's status stands for (its report taken: the book does not know). */
+const BOOK_LEDGER: Record<SubagentRecord["status"], WorkerLedgerRecord["status"]> = { running: "running", completed: "done", failed: "failed", stopped: "stopped" };
+
+/**
+ * The registry state for a host book's status. An app-managed worker's is status.ts's `agentState` (one that ended a
+ * run is idle: it can take a follow-up); Claude's own sidechains and other subagents keep the book's word.
+ */
 export function stateFor(record: Pick<SubagentRecord, "status" | "type">, kind: AgentHostKind): AgentState {
-  if (record.status === "running") return "running";
-  if (record.status === "completed") return kind !== "claude-sidechain" && isWorkerType(record.type) && record.type !== "ccb-core:component-editor" ? "idle" : "completed";
+  if (kind !== "claude-sidechain" && isWorkerType(record.type)) {
+    const adapter = record.type === "ccb-core:component-editor" ? "component-editor" : kind;
+    return agentState(ledgerView(BOOK_LEDGER[record.status], record.status === "running" ? "none" : "acknowledged", adapter));
+  }
   return record.status;
 }
 
-/** The row status (the contract's four) for a registry state. */
+/** The worker ledger state each registry state stands for ("lost" has none: its row is stopped). */
+const STATE_LEDGER: Record<Exclude<AgentState, "lost">, LedgerView> = {
+  running: ledgerView("running", "none"),
+  idle: ledgerView("done", "acknowledged"),
+  reportPending: ledgerView("done", "pending"),
+  completed: ledgerView("done", "acknowledged", "component-editor"),
+  failed: ledgerView("failed", "none"),
+  stopped: ledgerView("stopped", "none"),
+  interrupted: ledgerView("interrupted", "none"),
+};
+
+/** The row status (the contract's four) for a registry state: status.ts's `subagentStatus`. */
 export function rowStatus(state: AgentState): "running" | "completed" | "failed" | "stopped" {
-  if (state === "running") return "running";
-  if (state === "failed") return "failed";
-  if (state === "idle" || state === "completed" || state === "reportPending") return "completed";
-  return "stopped";
+  return state === "lost" ? "stopped" : subagentStatus(STATE_LEDGER[state]);
 }
 
 function handleFor(host: HostFacts, record: SubagentRecord): AgentHandle {
