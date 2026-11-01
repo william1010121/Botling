@@ -47,7 +47,8 @@ describe("the plugin host", () => {
     expect(stopped).toMatchObject({ turnId: null, stoppedBy: "tidy" });
     const chat = await c.chat();
     expect(chat.messages.some((m: any) => m.role === "user" && m.text.includes("1234"))).toBe(false);
-    expect(chat.messages.at(-1)).toMatchObject({ role: "notice", text: 'Plugin "tidy" stopped this message: My password is 1234' });
+    // Not "the last message": the first message's reply may still be arriving after the notice.
+    expect(chat.messages.filter((m: any) => m.role === "notice").at(-1)).toMatchObject({ text: 'Plugin "tidy" stopped this message: My password is 1234' });
     expect(chat.pendingFiles).toEqual([expect.objectContaining({ name: "retained.txt" })]);
     await c.call({ type: "chat.send", botId: MAIN, text: "Retry without the secret" });
     expect((await c.chat()).pendingFiles).toEqual([]);

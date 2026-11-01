@@ -6,8 +6,8 @@ import {spawnSync} from 'node:child_process';
 
 it('trial launch imports 1.x from the launch HOME by default, as the normal app',()=>{
  const env:Record<string,string>={};directoryDefaults(env,'/synthetic-home',true,true);
- expect(env.BOTLING_IMPORT_FROM).toBe('/synthetic-home/.claudecodebot');expect(env.BOTLING_1X_DIR).toBe('/synthetic-home/.claudecodebot');
- const empty={BOTLING_IMPORT_FROM:''};directoryDefaults(empty,'/synthetic-home',true,true);expect(empty.BOTLING_IMPORT_FROM).toBe('/synthetic-home/.claudecodebot');
+ expect(env.BOTLING_IMPORT_FROM).toBe(join('/synthetic-home','.claudecodebot'));expect(env.BOTLING_1X_DIR).toBe(join('/synthetic-home','.claudecodebot'));
+ const empty={BOTLING_IMPORT_FROM:''};directoryDefaults(empty,'/synthetic-home',true,true);expect(empty.BOTLING_IMPORT_FROM).toBe(join('/synthetic-home','.claudecodebot'));
 });
 it('explicit later import from a chosen copy and 1.x lock location are preserved',()=>{
  const env={BOTLING_IMPORT_FROM:'/chosen-copy',BOTLING_1X_DIR:'/lock-data'};directoryDefaults(env,'/synthetic-home',true,true);
@@ -17,7 +17,7 @@ it('trial default profile is separate from normal Botling 2',()=>{
  expect(packagedDataName(true)).toBe('Botling 2 Dev Trial');expect(packagedDataName(false)).toBe('Botling 2');
 });
 it('regular packaged imports and development behavior remain unchanged',()=>{
- const env:Record<string,string>={};directoryDefaults(env,'/synthetic-home',true);expect(env.BOTLING_IMPORT_FROM).toBe('/synthetic-home/.claudecodebot');
+ const env:Record<string,string>={};directoryDefaults(env,'/synthetic-home',true);expect(env.BOTLING_IMPORT_FROM).toBe(join('/synthetic-home','.claudecodebot'));
  const dev:Record<string,string>={};directoryDefaults(dev,'/synthetic-home',false,true);expect(dev).toEqual({});
 });
 it('manual trial shortcut isolates data and temp only: CLI state and 1.x import are the user\'s own',()=>{
