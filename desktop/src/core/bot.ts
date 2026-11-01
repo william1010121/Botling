@@ -4464,8 +4464,13 @@ export class Bot {
       }
     }
     // A snapshot from now on carries these, so the clock's first look tells only a change. A deferred
-    // startup may have served one before they were read: then that first look tells them.
-    if (!this.options.deferStartup) this.routinesShown = routinesKey(this.routinesView());
+    // startup may have served one before they were read: then that first look tells them. Reading them
+    // here must not take the clock's notice of a broken schedule file away.
+    if (!this.options.deferStartup) {
+      const error = this.routineError;
+      this.routinesShown = routinesKey(this.routinesView());
+      this.routineError = error;
+    }
   }
 
   /** The store Codex's `app_routines` uses (null for a partner: its primary's). */
