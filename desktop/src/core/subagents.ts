@@ -336,7 +336,7 @@ export class SubagentBook {
   ended(item: { id: string; status: string; summary: string | null }, now = toSwiftDate()): SubagentRecord | null {
     const subagent = this.resolve(item.id);
     if (!subagent || subagent.status !== "running") return null;
-    if (this.workerProjection && isWorkerType(subagent.type)) return null;
+    if (this.projected(subagent)) return null;
     this.end(subagent, ended(item.status), item.summary ?? subagent.result, now);
     return subagent;
   }
@@ -416,19 +416,22 @@ export class SubagentBook {
   /** A subagent by its call's id, or by the agentId/name claude reaches it by. */
   find(id: string) { return this.resolve(id); }
 
+  /** Whether its status is the worker ledger's projection (`project`), which nothing else here changes. */
+  private projected(subagent: SubagentRecord) { return this.workerProjection && isWorkerType(subagent.type); }
+
   /** Marks one subagent still at work as stopped (the sub-bot hand-off's forced end). True when it changed. */
   stopOne(id: string, now = toSwiftDate()): boolean {
     const subagent = this.resolve(id);
-    if (!subagent || subagent.status !== "running") return false;
+    if (!subagent || subagent.status !== "running" || this.projected(subagent)) return false;
     this.end(subagent, "stopped", undefined, now);
     return true;
   }
 
-  /** Its process went away: every one still at work stopped with it (`TraceBook.stopRunning`). */
+  /** Its process went away: every one still at work stopped with it (`TraceBook.stopRunning`); a projected worker is its ledger's. */
   stopRunning(now = toSwiftDate()): boolean {
     let changed = false;
     for (const subagent of this.list) {
-      if (subagent.status !== "running") continue;
+      if (subagent.status !== "running" || this.projected(subagent)) continue;
       subagent.status = "stopped";
       subagent.endedAt = now;
       changed = true;

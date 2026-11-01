@@ -57,7 +57,7 @@ import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
 import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import { parseFeedback } from "./feedback";
-import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type WorkerApproval } from "./agent-registry";
+import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import {
   ContractError, type RoutineView, type BotView, type SubagentRowView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView, type WhiteboardPictureView,
@@ -93,7 +93,10 @@ import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SH
 import { detailValues } from "./components/commands";
 import type { Display } from "./reply";
 import { headTurnContent, headTurnEnd } from "./head-turn";
-import { costDelta, hasVisibleContent } from "./worker-core";
+import {
+  costDelta, hasVisibleContent, stepFailed, subagentStatus, WorkerCore, WorkerLedger,
+  type WorkerCoreFactory, type WorkerLedgerRecord,
+} from "./worker-core";
 import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
@@ -113,7 +116,7 @@ import {
 import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
 import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import {
-  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
+  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, projectBackgroundTask, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
 } from "./background-tasks";
 import {
@@ -503,6 +506,8 @@ export class Bot {
       ...(this.options.agents?.retained(this.engine) ?? []),
     ]));
     this.subagents.sink = (id, line) => { if (!this.readOnly) this.store.stageSubagentLine(id, line); };
+    // Its app-managed workers' rows are the worker ledger's projection (`projectWorker`), never their end notices.
+    this.subagents.workerProjection = true;
     this.subagents.loadSteps = (id) => this.store.readSubagentSteps(id).steps.slice(-500);
     if (!primary) {
       // The done log, brought up to the cards now: a new task trims old ones before the next save.
@@ -530,11 +535,13 @@ export class Bot {
     }
     this.conductor = new Conductor(this.headsSettings);
     this.load();
-    // Subagents that were running when the app went away went with their process.
+    // Subagents that were running when the app went away went with their process. App-managed workers are their
+    // ledger's: shown as it says (one it still lists at work was cut off), until their core is up.
+    this.projectLedgerAtStart();
     if (this.subagents.stopRunning()) this.saveSubagents();
-    // Claude workers kept in claude-workers.json: restored (one at work when the app went away is interrupted), and a
-    // report that never reached this head is handed over again once the bot is up.
-    if (this.engine === "claude" && existsSync(claudeWorkersFile(this.store.directory))) {
+    // Claude workers in the ledger (or still only in claude-workers.json): restored (one at work when the app went away
+    // is interrupted), and a report that never reached this head is handed over again once the bot is up.
+    if (this.engine === "claude" && (existsSync(this.workerLedgerFile) || existsSync(claudeWorkersFile(this.store.directory)))) {
       const workers = this.ensureClaudeWorkers();
       setTimeout(() => { if (!this.shuttingDown) workers.redeliver(); }, 0).unref?.();
     }
@@ -1092,8 +1099,8 @@ export class Bot {
   }
 
   /** Its heads' subagent lists as they are now, for the registry's reconcile at start. */
-  hostBooks(): (HostFacts & { running: boolean; list: readonly SubagentRecord[] })[] {
-    return this.members.map((bot) => ({ ...bot.hostFacts(), running: bot.head?.running ?? false, list: bot.subagents.list }));
+  hostBooks(): StartupHost[] {
+    return this.members.map((bot) => ({ ...bot.hostFacts(), running: bot.head?.running ?? false, list: bot.subagents.list, workers: bot.workerViews }));
   }
 
   /** One of its own rows by native id (for the owner's list when another bot owns it), with the head that holds it. */
@@ -1173,8 +1180,30 @@ export class Bot {
 
   /** Claude's app-managed workers (claude-workers.ts), made when first needed; they belong to this bot, not to its head process. */
   private claudeWorkerHost: ClaudeWorkers | null = null;
-  /** Answers worker approval cards (the bot's approvals keep the head that asked; a worker's is its manager). */
-  private readonly workerApprovals = { running: true, answer: (requestId: string, allow: boolean, input: Record<string, unknown>, message?: string) => { this.claudeWorkerHost?.answer(requestId, allow, input, message); } } as unknown as AgentHead;
+  /** Answers worker approval cards through this member's worker host (the bot's approvals keep the head that asked; a worker's is its manager). */
+  private readonly workerApprovals = { running: true, answer: (requestId: string, allow: boolean, input: Record<string, unknown>, message?: string) => { this.workerHost?.answer(requestId, allow, input, message); } } as unknown as AgentHead;
+
+  /** <member store>/worker-ledger.json: the one record of this member's app-managed workers (shared-core spec 3.2). */
+  private get workerLedgerFile() { return join(this.store.directory, "worker-ledger.json"); }
+  /** What each of its workers' ledger records last said (the registry's and the rows' state come from it). */
+  private workerViews = new Map<string, WorkerLedgerRecord>();
+
+  /**
+   * This member's worker core, as its facade makes it (ClaudeWorkers, its Codex or Antigravity head): the member's
+   * ledger (the old journals imported once, then never written), every transition projected, and a restart told from
+   * a quit. One live core per member: a head's core goes with its head.
+   */
+  private readonly workerCore: WorkerCoreFactory = (options, legacy) => {
+    const core = new WorkerCore({
+      ...options, store: new WorkerLedger(this.workerLedgerFile, legacy),
+      projected: (record) => this.projectWorker(record),
+      closeReason: () => (this.swapHold ? "restart" : "quit"),
+      log: (line) => this.log(line),
+    });
+    // Once the facade that asked for it is made (it may be made while this bot is).
+    queueMicrotask(() => core.projectAll());
+    return core;
+  };
 
   /** Whether this bot's Claude subagents are app-managed workers (the default) or native Agent calls (settings.json `claudeWorkers: "native"`). */
   private claudeWorkersOn(): boolean {
@@ -1185,6 +1214,7 @@ export class Bot {
     if (this.claudeWorkerHost) return this.claudeWorkerHost;
     this.claudeWorkerHost = new ClaudeWorkers({
       file: claudeWorkersFile(this.store.directory),
+      core: this.workerCore,
       ownerSessionId: () => this.session.sessionId,
       base: () => {
         try {
@@ -1198,7 +1228,7 @@ export class Bot {
       pluginDirs: () => this.options.plugins?.().dirs ?? [],
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
-    }, (item) => this.onWorkerItem(item), (_id, text) => this.workerReport(text), (config, handlers) => new ClaudeHead(config, handlers));
+    }, (item) => this.onWorkerOutput(item), (_id, text) => this.workerReport(text), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
     return this.claudeWorkerHost;
   }
@@ -1211,26 +1241,36 @@ export class Bot {
   }
 
   /**
-   * A Claude worker's item. Workers are not the head's: they arrive whether or not the head is awake, and only their
-   * own bookkeeping happens here (the book, the step that started one, approvals, usage), never the coordinator's turn.
+   * The one entry for every app-managed worker's items, whatever engine runs it (shared-core spec S4b). Workers are
+   * not the head's: their items come whether or not the head is awake (never dropped as an old head's), and only
+   * their own bookkeeping happens here (the book, the step that started one, approvals, usage, speed, measurements),
+   * never the coordinator's turn. Their state is the ledger's (`projectWorker`).
    */
-  private onWorkerItem(item: CodexItem) {
-    if (this.shuttingDown && item.kind !== "subagentEnded") return;
-    if (item.kind === "usage") {
-      if (item.totalCost > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, item.totalCost, item.tokens);
-      return;
-    }
-    if (item.kind === "workerReport") { this.workerReported(item); return; }
-    if (item.kind === "permission" && item.workerId) { if (this.routeWorkerApproval(this.workerApprovals, item)) return; return this.ask(this.workerApprovals, item, null); }
-    if (item.kind === "permissionCancelled") {
-      for (const [id, approval] of this.approvals) if (approval.head === this.workerApprovals && approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
-      this.options.agents?.approvalCancelled?.(this.hostFacts(), item.requestId);
-      return;
+  private onWorkerOutput(item: CodexItem) {
+    if (this.shuttingDown && item.kind !== "subagentEnded" && item.kind !== "permissionCancelled") return;
+    switch (item.kind) {
+      // Each usage's own spend (the core's), never a running total.
+      case "usage": if (item.totalCost > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, item.totalCost, item.tokens); return;
+      case "request": this.noteRequest(item.request); return;
+      case "measurementDispatch": this.recordMeasurementDispatch(item); return;
+      case "measurement": this.recordMeasurement(item.measurement, item.provider); return;
+      case "rateLimits": this.options.rateLimits?.(item.engine, item.limits); return;
+      case "connectionLost": if (item.parent) this.cutOffByNetwork.add(item.parent); return;
+      case "permissionDenied": this.showDenial(item); return;
+      case "workerReport": this.workerReported(item); return;
+      case "managedPending": this.onItemPending(item.pending); return;
+      case "permission":
+        if (this.routeWorkerApproval(this.workerApprovals, item)) return;
+        return this.ask(this.workerApprovals, item, null);
+      case "permissionCancelled":
+        for (const [id, approval] of this.approvals) if (approval.head === this.workerApprovals && approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
+        this.options.agents?.approvalCancelled?.(this.hostFacts(), item.requestId);
+        return;
     }
     this.noteProgressOf(item);
     if (item.kind === "toolUse") this.noteToolCall(item);
     if (this.onSubagentItem(item)) return;
-    // The step in the coordinator's turn that started it (as a Codex or Antigravity worker's).
+    // The step in the coordinator's turn that started it.
     const turn = this.turn;
     if (item.kind === "toolUse" && item.parent === null && turn?.open && turn.origin !== "tidy") {
       turn.steps.push({ id: item.id, kind: "subagent", tool: item.tool, title: item.title, detail: item.detail, failed: false, done: false });
@@ -1240,10 +1280,74 @@ export class Bot {
     }
   }
 
+  /** Whether a Codex or Antigravity head keeps work it must stay awake for (its workers, a report turn to come). */
+  private onItemPending(pending: boolean) {
+    this.managedPending = pending;
+    if (!pending && !this.turn && !this.queue.length) this.scheduleIdle();
+    if (!pending) this.checkSettingsHold();
+  }
+
+  /**
+   * One of its workers' ledger records changed (WorkerCore `projected`): its row (subagents.json), its chip, its
+   * registry entry and the step that started it follow, through status.ts and nothing else. The end of a run is told
+   * once, here (`subagentEnded`): the step is done, a silent turn reports it, its cards stop being at work.
+   */
+  private projectWorker(record: WorkerLedgerRecord, atStart = false) {
+    this.workerViews.set(record.id, record);
+    const subagent = this.subagents.get(record.id);
+    const status = subagentStatus(record);
+    const endedAt = record.endedAt ? toSwiftDate(record.endedAt) : null;
+    const wasRunning = subagent?.status === "running";
+    // A run's start is the opening items' (`subagentStarted` keeps its history); everything after it is the ledger's.
+    const changed = status !== "running" && !!this.subagents.project(record.id, { status, endedAt, result: record.report.text });
+    if (record.status !== "running") {
+      const pending = this.turn?.tasks?.some((task) => task.id === record.id) ? [{ backgroundTasks: this.turn!.tasks } as unknown as ChatRecord] : null;
+      if (pending) projectBackgroundTask(pending, record.id, record, record.report.text);
+      else {
+        const chat = projectBackgroundTask(this.records, record.id, record, record.report.text);
+        if (chat) this.changed(chat);
+      }
+    }
+    if (!subagent || atStart || (!changed && !this.options.agents)) return;
+    if (wasRunning && status !== "running") this.subagentEnded(record.id);
+    else if (changed) this.markWorkerStep(record.id, stepFailed(record));
+    this.subagentChanged(subagent);
+  }
+
+  /** The step that started a worker shows how its latest run ended (a report left unresolved later fails it too). */
+  private markWorkerStep(id: string, failed: boolean) {
+    const mark = (steps: StepRecord[] | undefined) => {
+      const step = steps?.findLast((candidate) => candidate.id === id);
+      if (!step || step.failed === failed) return !!step;
+      step.failed = failed;
+      return true;
+    };
+    if (mark(this.turn?.steps)) { if (this.turn) this.emitSteps(this.turn); return; }
+    for (let i = this.records.length - 1; i >= Math.max(0, this.records.length - 80); i--) {
+      if (mark(this.records[i]!.steps)) { this.persist(true); return; }
+    }
+  }
+
+  /**
+   * At start: what its ledger says of its workers, before any core is up (a Codex or Antigravity core comes with its
+   * head). One it still lists at work was cut off when the app went away: it shows as interrupted.
+   */
+  private projectLedgerAtStart() {
+    let records: WorkerLedgerRecord[];
+    try { records = existsSync(this.workerLedgerFile) ? new WorkerLedger(this.workerLedgerFile).load() : []; }
+    catch (error) { this.log(`worker ledger: ${(error as Error).message}`); return; }
+    for (const record of records) {
+      this.projectWorker(record.status === "running" ? { ...record, status: "interrupted", interruptedBy: "crash", report: { ...record.report, status: "interrupted", state: "none" } } : record, true);
+    }
+    if (records.length) { this.saveSubagents(); this.persist(true); }
+  }
+
   /** This head's app-managed workers, whatever the engine (workers.ts): its Codex or Antigravity head, or its Claude workers. */
   get workerHost(): WorkerHost | null {
     if (this.engine === "claude") return this.claudeWorkerHost;
-    return isWorkerHost(this.head) ? this.head : null;
+    const head = this.head as (AgentHead & { workerHost?: unknown }) | null;
+    if (isWorkerHost(head?.workerHost)) return head.workerHost;
+    return isWorkerHost(head) ? head : null;
   }
 
   /** The worker host holding this subagent of its own, when it is an app-managed worker (`load`: Claude's workers are read from their journal if they are not yet). */
@@ -2945,7 +3049,8 @@ export class Bot {
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
         bypassPermissions: launch.agyBypassPermissions === true, model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
-      head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) });
+      head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
+        { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
     } else if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
       const base = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
@@ -2956,9 +3061,12 @@ export class Bot {
       }
       const restartWorkers=this.restartWorkerRecords;
       const restartTurn=this.restartProviderTurn;
+      const restartRecovery=this.restartWorkersSince;
       this.restartProviderTurn=undefined;
       this.restartWorkerRecords=undefined;
-      head = new CodexHead({...config, restartWorkers, restartTurn, strictResume:this.restartRecovery && config.resume}, { onItem: item => {
+      this.restartWorkersSince=undefined;
+      head = new CodexHead({...config, restartWorkers, restartRecovery, restartTurn, strictResume:this.restartRecovery && config.resume,
+        workerCore: this.workerCore, workerSink: (item) => this.onWorkerOutput(item)}, { onItem: item => {
         this.onItem(head, item);
       }, onExit: exit => this.onExit(head, exit) });
     } else {
@@ -3090,8 +3198,9 @@ export class Bot {
 
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
+    // Workers' own items come through `onWorkerOutput` only.
+    if (item.kind === "workerReport" || item.kind === "measurementDispatch") return;
     if (item.kind === "request") { this.noteRequest(item.request); return; }
-    if (item.kind === "measurementDispatch") { this.recordMeasurementDispatch(item); return; }
     if (item.kind === "measurement") { this.recordMeasurement(item.measurement, item.provider); return; }
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
@@ -3107,15 +3216,8 @@ export class Bot {
       else if (this.turn?.open && this.turn.head === head) this.turn.lostConnection = true;
       return;
     }
-    // A worker another bot owns ended a run: its report is that bot's (the app routes it); nothing of this head's turn.
-    if (item.kind === "workerReport") { this.workerReported(item); return; }
     if (item.kind !== "rateLimits") this.noteProgressOf(item);
-    if (item.kind === "managedPending") {
-      this.managedPending = item.pending;
-      if (!item.pending && !this.turn && !this.queue.length) this.scheduleIdle();
-      if (!item.pending) this.checkSettingsHold();
-      return;
-    }
+    if (item.kind === "managedPending") return this.onItemPending(item.pending);
     if (item.kind === "monitorState") return this.monitorState(item.record);
     if (item.kind === "monitorEnded") return this.monitorEnded(item.id, item.output, item.failed);
     if (item.kind === "routinesChanged") return this.routinesEdited();
@@ -3460,7 +3562,8 @@ export class Bot {
         return true;
       case "subagentEnded": {
         const known = this.subagents.get(item.id)?.id ?? this.subagents.list.find(child=>child.agentID===item.id)?.id;
-        this.endBackground(known ?? item.id, item.status, item.summary);
+        // A worker's chip is its ledger's (`projectWorker`); other background work ends here.
+        if (!isWorkerType((known ? this.subagents.get(known) : undefined)?.type)) this.endBackground(known ?? item.id, item.status, item.summary);
         const ended = this.subagents.ended(item);
         // A notification says more than the error, so a failed one counts if any line is it.
         if (known && (item.status.toLowerCase() === "failed" || item.status.toLowerCase() === "error" || this.cutOffByNetwork.has(known) || isConnectionError(item.summary ?? ""))) {
@@ -3483,7 +3586,7 @@ export class Bot {
   private subagentChanged(subagent: SubagentRecord | undefined, progress = false) {
     if (!subagent) return;
     this.saveSubagents(progress && subagent.status === "running", subagent);
-    if (!subagent.parentID) this.options.agents?.observed(this.hostFacts(), subagent);
+    if (!subagent.parentID) this.options.agents?.observed(this.hostFacts(), subagent, this.workerViews.get(subagent.id));
     this.rowsChanged();
     // The current run's tail is in memory; earlier runs (rare) come from its file so an open view keeps them.
     const live = subagent.runs ? { runs: this.subagentHistory(subagent).runs, steps: subagent.steps } : undefined;
@@ -3505,7 +3608,7 @@ export class Bot {
   private subagentEnded(id: string) {
     const subagent = this.subagents.get(id);
     if (!subagent) return;
-    if (!subagent.parentID) this.options.agents?.ended(this.hostFacts(), subagent);
+    if (!subagent.parentID) this.options.agents?.ended(this.hostFacts(), subagent, this.workerViews.get(subagent.id));
     // One another bot owns: its news is that bot's (its report is routed there), so no turn of this head reports it.
     const moved = !subagent.parentID && (this.options.agents?.movedOut(this.engine).has(subagent.id) ?? false);
     this.endSubagentTasks(subagent.id);
@@ -5597,7 +5700,7 @@ export class Bot {
       const nativeChildren=bot.engine==="claude"?bot.subagents.running.filter(child=>!ownProcessWorker(child.type)).map(child=>({id:child.id,agentId:child.agentID,parentId:child.parentID?(bot.subagents.get(child.parentID)?.id??child.parentID):undefined,
         checkpoint:child.steps.findLast(step=>step.kind==="tool"&&step.done&&!step.failed)?.id,
         prompt:child.prompt,description:child.description,type:child.type})):undefined;
-      // Own-process Claude workers end as interrupted on quit (ClaudeWorkers.close); the coordinator is told their ids.
+      // Own-process Claude workers end as interrupted by the restart (their ledger says so); the coordinator is told their ids then.
       const claudeWorkers=bot.engine==="claude"?bot.subagents.running.filter(child=>ownProcessWorker(child.type)).map(child=>child.id):undefined;
       const nativeConfig=bot.head instanceof ClaudeHead?bot.head.config:undefined;
       const active = !!turn?.open && turn.origin !== "tidy";
@@ -5616,9 +5719,10 @@ export class Bot {
         : bot.subagents.running.some(child=>!ownProcessWorker(child.type)) && !workers?.length && !nativeChildren?.length ? "This child transport has no safe restart contract."
         : workers?.some(w => w.wasActive && (!w.restartSafe || !w.thread)) ? "A worker has pending approval, tool execution, or unconfirmed delivery. Reconcile the original task."
         : active && !bot.session.started ? "Provider session creation was not confirmed." : undefined;
+      // Its workers are not written here: the member's ledger keeps what each needs to go on (`restartedAt` finds them).
       return [{botId:this.owner.id,engine:bot.engine,sessionId:bot.session.sessionId,sessionStarted:bot.session.started,
-        continue:active||!!nativeChildren?.length||!!claudeWorkers?.length,queued,nativeChildren,claudeWorkers:claudeWorkers?.length?claudeWorkers:undefined,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
-        blocked,workers,providerTurnId:bot.head instanceof CodexHead ? bot.head.restartTurn : undefined}];
+        continue:active||!!nativeChildren?.length||!!claudeWorkers?.length,queued,nativeChildren,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
+        blocked,restartedAt:Date.now(),providerTurnId:bot.head instanceof CodexHead ? bot.head.restartTurn : undefined}];
     });
   }
 
@@ -5626,20 +5730,31 @@ export class Bot {
     const bot=this.botFor(entry.engine);
     if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
     bot.session={sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)};bot.briefing=entry.sessionStarted===false;
-    bot.adoptedSession=!!entry.continue||!!entry.workers?.length;
+    bot.adoptedSession=!!entry.continue||!!entry.workers?.length||bot.restartedWorkers(entry).length>0;
     bot.store.saveHead(bot.session);
     bot.restartRecovery=true;
     return bot;
   }
 
+  /** Its workers this restart interrupted, as its ledger says (an entry from before the ledger names them itself). */
+  private restartedWorkers(entry: RestartEntry): WorkerLedgerRecord[] {
+    if (entry.restartedAt === undefined) return [];
+    return [...this.workerViews.values()].filter((r) => r.status === "interrupted" && r.interruptedBy === "restart" && (r.endedAt ?? 0) >= entry.restartedAt!);
+  }
+
   adoptRestart(entry: RestartEntry) {
     const bot=this.retainRestartIdentity(entry);
+    const restarted=bot.restartedWorkers(entry);
     bot.restartWorkerRecords=entry.workers;
+    bot.restartWorkersSince=entry.restartedAt;
     bot.restartProviderTurn=entry.providerTurnId;
+    // The coordinator's own app workers (own processes) are told; a Codex head's workers the app reconciles itself.
+    const ownWorkers=[...(entry.claudeWorkers ?? []), ...restarted.filter(r=>r.adapter==="claude-process").map(r=>r.id)];
+    const reconciled=[...(entry.workers ?? []).map(w=>w.id), ...restarted.filter(r=>r.adapter!=="claude-process").map(r=>r.id)];
     const nativeContext=entry.nativeChildren?.length?nativeRestartContext(entry.nativeChildren,{cwd:entry.nativeCwd??bot.commandFolder,configDir:entry.nativeConfigDir,sessionId:entry.sessionId!}):"";
     if(entry.continue){
-      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+nativeContext+(entry.workers?.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+entry.workers.map(w=>w.id).join(", ") : "")
-        +(entry.claudeWorkers?.length ? "\nApp worker task IDs interrupted by the restart (nothing was replayed; continue any that are still needed with app_send_message to the same task_id, do not create replacements): "+entry.claudeWorkers.join(", ") : ""),entry.userId??null);
+      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+nativeContext+(reconciled.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+reconciled.join(", ") : "")
+        +(ownWorkers.length ? "\nApp worker task IDs interrupted by the restart (nothing was replayed; continue any that are still needed with app_send_message to the same task_id, do not create replacements): "+ownWorkers.join(", ") : ""),entry.userId??null);
       turn.handoffId=entry.handoffId??null;
       // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
       turn.retried=true; // A failed resume must never fall back to a fresh session/replay.
@@ -5652,12 +5767,15 @@ export class Bot {
       bot.queue.push(turn);
     }
     if(bot.queue.length)bot.next();
-    else if(entry.workers?.some(w=>w.wasActive||w.reportPending))bot.ensureHead();
+    // A Codex head's workers live in it: it starts to check and resume them (and hand over reports they still owe).
+    else if(entry.workers?.some(w=>w.wasActive||w.reportPending)||(bot.engine!=="claude"&&restarted.length))bot.ensureHead();
   }
 
   private restartRecovery = false;
   private restartProviderTurn?: string;
   private restartWorkerRecords?: import('./agent/codex').WorkerRecord[];
+  /** The restart's time: its next Codex head checks and resumes the workers its ledger says that restart interrupted. */
+  private restartWorkersSince?: number;
 
   /** At the new core's start: go on in the sessions the old core handed over (`--resume`), then what waited. */
   adoptSwap(entries: SwapEntry[]) {

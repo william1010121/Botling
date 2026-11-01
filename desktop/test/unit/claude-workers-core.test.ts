@@ -68,8 +68,10 @@ describe("Claude's app-managed workers", () => {
     expect(report.text).toContain("You said: Look up the API");
     const row = await until(() => subagentUpdates(c).filter((s) => s.id === taskId).at(-1)?.status === "completed" ? subagentUpdates(c).filter((s) => s.id === taskId).at(-1) : null, { what: "the worker's row completed" });
     expect(row).toMatchObject({ id: taskId, status: "completed" });
-    const journal = JSON.parse(readFileSync(join(dir, "main", "claude-workers.json"), "utf8"));
-    expect(journal.workers[0]).toMatchObject({ id: taskId, run: 1, status: "completed", reportDelivered: true });
+    // The member's worker ledger is its record (claude-workers.json is no longer written).
+    const ledger = JSON.parse(readFileSync(join(dir, "main", "worker-ledger.json"), "utf8"));
+    expect(ledger.records[0]).toMatchObject({ id: taskId, run: 1, status: "done", report: { state: "acknowledged", status: "done" } });
+    expect(existsSync(join(dir, "main", "claude-workers.json"))).toBe(false);
   });
 
   it("the bot's Stop leaves a running worker alone; quitting the app ends it and marks it interrupted", async () => {
@@ -88,8 +90,8 @@ describe("Claude's app-managed workers", () => {
     expect(subagentUpdates(c).filter((s) => s.id === taskId).at(-1)?.status).toBe("running");
     await c.kill("SIGTERM");
     await until(() => !alive(worker.pid), { what: "the worker ended with the app" });
-    const journal = JSON.parse(readFileSync(join(dir, "main", "claude-workers.json"), "utf8"));
-    expect(journal.workers[0]).toMatchObject({ id: taskId, interrupted: true, status: "interrupted", active: false });
+    const ledger = JSON.parse(readFileSync(join(dir, "main", "worker-ledger.json"), "utf8"));
+    expect(ledger.records[0]).toMatchObject({ id: taskId, status: "interrupted", interruptedBy: "quit", recovery: "required" });
   });
 
   it("the hidden settings.json claudeWorkers: native gives the head its Agent tool back and no app tools", async () => {

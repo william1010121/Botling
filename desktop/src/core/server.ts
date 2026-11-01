@@ -943,9 +943,9 @@ First write a test that shows this, then fix it.`;
   private agentPort(profile: BotProfile): AgentPort {
     const id = profile.id;
     return {
-      observed: (host, rec) => { this.agents.observe(host, rec); },
+      observed: (host, rec, worker) => { this.agents.observe(host, rec, worker); },
       // Its report (if any) comes as the host's `workerReport` and goes to the owner (`report`).
-      ended: (host, rec) => { this.agents.observe(host, rec); },
+      ended: (host, rec, worker) => { this.agents.observe(host, rec, worker); },
       report: (host, r) => this.agentReported(host, r),
       approval: (host, nativeId, item, head) => this.agentApproval(host, nativeId, item, head),
       approvalCancelled: (_host, requestId) => { for (const bot of this.bots.values()) bot.settleWorkerApproval(requestId); },

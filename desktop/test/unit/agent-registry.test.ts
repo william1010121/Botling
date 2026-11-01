@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AgentRegistry, AGENTS_CAP, agentId, isDetached, newMoveId, SETTLED_KEEP_MS, type AgentRecord, type HostFacts, type MoveIntent, type StartupHost } from "../../src/core/agent-registry";
+import { AgentRegistry, AGENTS_CAP, agentId, isDetached, newMoveId, SETTLED_KEEP_MS, type AgentRecord, type HostFacts, type LedgerView, type MoveIntent, type StartupHost } from "../../src/core/agent-registry";
 import { AgentStore, migrationRecords } from "../../src/core/store/agent-store";
 import { INDEX_FORMAT } from "../../src/core/store/subagent-store";
 import { safeToken } from "../../src/core/sub-bots";
@@ -33,6 +33,8 @@ function moveTo(registry: AgentRegistry, record: AgentRecord, botId: string, eng
 
 const startup = (hosts: StartupHost[], bots: string[], now?: number) => ({ hosts, bots: new Set(bots), ...(now ? { now } : {}) });
 const host = (facts: HostFacts, list: SubagentRecord[], running = false): StartupHost => ({ ...facts, running, list });
+const ledger = (status: LedgerView["status"], report: LedgerView["report"]["state"] = "none"): LedgerView =>
+  ({ status, report: { state: report, text: null, status: null, attempts: 0 }, adapter: "codex-thread" });
 
 describe("observe", () => {
   it("upserts: the same native record twice is one record, unchanged the second time", () => {
@@ -147,7 +149,8 @@ describe("retention", () => {
 });
 
 describe("reconcile at start", () => {
-  type Case = { rule: string; arrange: (r: AgentRegistry) => { id?: string; move?: MoveIntent }; hosts: StartupHost[]; bots: string[]; expect: (r: AgentRegistry, out: ReturnType<AgentRegistry["reconcile"]>, ctx: { id?: string; move?: MoveIntent }) => void };
+  type Ctx = { id?: string; other?: string; move?: MoveIntent };
+  type Case = { rule: string; arrange: (r: AgentRegistry) => Ctx; hosts: StartupHost[]; bots: string[]; expect: (r: AgentRegistry, out: ReturnType<AgentRegistry["reconcile"]>, ctx: Ctx) => void };
   const worker = (id: string, more: Partial<SubagentRecord> = {}) => sub(id, { type: "codex-worker", ...more });
   const cases: Case[] = [
     {
@@ -204,10 +207,17 @@ describe("reconcile at start", () => {
       expect: (r, out, ctx) => { expect(r.get(ctx.id!)!.state).toBe("interrupted"); expect(out.interrupted).toEqual([ctx.id]); },
     },
     {
-      rule: "6. except Antigravity, whose workers restore themselves",
+      rule: "6. an app-managed worker (any engine, Antigravity too) takes its ledger's state: one cut off is interrupted",
       arrange: (r) => ({ id: r.observe({ ...codexHost, engine: "agy", kind: "agy-acp" }, sub("agy-1", { type: "agy-worker" })).id }),
-      hosts: [host({ ...codexHost, engine: "agy", kind: "agy-acp" }, [sub("agy-1", { type: "agy-worker", status: "stopped" })], false)], bots: [A],
-      expect: (r, _out, ctx) => { expect(r.get(ctx.id!)!.state).toBe("running"); },
+      hosts: [{ ...host({ ...codexHost, engine: "agy", kind: "agy-acp" }, [sub("agy-1", { type: "agy-worker", status: "stopped" })], false), workers: new Map([["agy-1", ledger("interrupted")]]) }], bots: [A],
+      expect: (r, out, ctx) => { expect(r.get(ctx.id!)!.state).toBe("interrupted"); expect(out.interrupted).toEqual([ctx.id]); },
+    },
+    {
+      rule: "6. a report its owner has not taken yet shows (reportPending); one left unresolved is failed",
+      arrange: (r) => ({ id: r.observe(codexHost, sub("task-1", { type: "codex-worker" })).id, other: r.observe(codexHost, sub("task-2", { type: "codex-worker" })).id }),
+      hosts: [{ ...host(codexHost, [sub("task-1", { type: "codex-worker", status: "completed" }), sub("task-2", { type: "codex-worker", status: "completed" })], true),
+        workers: new Map([["task-1", ledger("done", "pending")], ["task-2", ledger("done", "unresolved")]]) }], bots: [A],
+      expect: (r, _out, ctx) => { expect(r.get(ctx.id!)!.state).toBe("reportPending"); expect(r.get(ctx.other!)!.state).toBe("failed"); },
     },
   ];
   for (const c of cases) {

@@ -72,12 +72,15 @@ it('running Claude app workers (own processes) do not block the coordinator; the
  const turn={id:'turn',messageId:'message',userId:null,origin:'app',open:true,reply:{text:'Handed off.'},steps:[{id:'t1',kind:'tool',done:true,failed:false}]};
  const owner={owner:{id:'chat'},engine:'claude',partner:null,peers:[],readOnly:false,head:null,turn,queue:[],approvals:new Map(),subagents:{running:children},session:{sessionId:'parent',started:true}};
  const [entry]=Bot.prototype.restartEntries.call(owner as unknown as Bot);
- expect(entry.blocked).toBeUndefined();expect(entry.continue).toBe(true);expect(entry.nativeChildren).toEqual([]);expect(entry.claudeWorkers).toEqual(['worker-task']);
+ // Its workers are not written into the entry: the member's ledger names those the restart interrupted (`restartedAt`).
+ expect(entry.blocked).toBeUndefined();expect(entry.continue).toBe(true);expect(entry.nativeChildren).toEqual([]);expect(entry.claudeWorkers).toBeUndefined();expect(entry.workers).toBeUndefined();
+ expect(typeof entry.restartedAt).toBe('number');
  // Idle coordinator, only an app worker at work: it is still told, so it can decide to continue the worker.
  const [idle]=Bot.prototype.restartEntries.call({...owner,turn:null} as unknown as Bot);
- expect(idle.blocked).toBeUndefined();expect(idle.continue).toBe(true);expect(idle.claudeWorkers).toEqual(['worker-task']);
+ expect(idle.blocked).toBeUndefined();expect(idle.continue).toBe(true);
  const words:string[]=[];
- const bot={queue:[] as unknown[],commandFolder:'/work',newTurn:(_origin:string,text:string)=>{words.push(text);return {};},next:vi.fn()};
+ const bot={queue:[] as unknown[],commandFolder:'/work',engine:'claude',newTurn:(_origin:string,text:string)=>{words.push(text);return {};},next:vi.fn(),
+   restartedWorkers:()=>[{id:'worker-task',adapter:'claude-process',status:'interrupted',interruptedBy:'restart'}]};
  Bot.prototype.adoptRestart.call({retainRestartIdentity:()=>bot} as unknown as Bot,{...entry,sessionId:'parent'});
  expect(words).toHaveLength(1);expect(words[0]).toContain('worker-task');expect(words[0]).toContain('app_send_message');
 });

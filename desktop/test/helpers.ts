@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export const desktop = resolve(__dirname, "..");
@@ -13,6 +13,19 @@ export function tempDir(name: string): string {
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Every app-managed worker's record in the members' worker-ledger.json files under `dir` (any bot, any member). */
+export function ledgerRecords(dir: string): any[] {
+  const found: any[] = [];
+  const walk = (folder: string) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(join(folder, entry.name));
+      else if (entry.name === "worker-ledger.json") found.push(...JSON.parse(readFileSync(join(folder, entry.name), "utf8")).records);
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return found;
+}
 
 export function alive(pid: number): boolean {
   try {

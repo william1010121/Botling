@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CoreHarness, MAIN } from "../core-harness";
-import { alive, tempDir, until } from "../helpers";
+import { alive, ledgerRecords, tempDir, until } from "../helpers";
 import { MAINTAINER_ID } from "../../src/core/store/records";
 import { deniedNote } from "../../src/core/worker-core";
 
@@ -40,8 +40,8 @@ describe("Maintainer component editor through the built core", () => {
     expect(first.args).toEqual(expect.arrayContaining(["--model", "sonnet", "--tools", "Read,Write,Edit,Bash"]));
     expect(first.args.join(" ")).toContain("AskUserQuestion,Agent,Task,SendMessage");
     expect(first.args).not.toContain("--plugin-dir");
-    const registryFile = join(dir, "codex-threads", `${detail.execution.ownerSessionId.toLowerCase()}.workers.json`);
-    expect(JSON.parse(readFileSync(registryFile, "utf8"))).toContainEqual(expect.objectContaining({ id, role: "component-editor", thread: first.session }));
+    // The Maintainer's worker ledger keeps it (the Codex journal is no longer written).
+    expect(ledgerRecords(dir)).toContainEqual(expect.objectContaining({ id, adapter: "component-editor", type: null, conversationId: first.session, engineData: expect.objectContaining({ role: "component-editor" }) }));
     await turn(c, MAINTAINER_ID, `/editor-message ${id} /say correction checked`);
     await report(c, "correction checked");
     const starts = lines(join(dir, "claude.log"));

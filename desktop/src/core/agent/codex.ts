@@ -142,8 +142,8 @@ export interface CodexConfig {
   restoredWorkers: WorkerRecord[];
   /** The restart journal's workers (written by a core before the worker ledger; read for one version). */
   restartWorkers?: WorkerRecord[];
-  /** After an explicit restart: workers the ledger says were interrupted by it are checked and resumed. */
-  restartRecovery?: boolean;
+  /** After an explicit restart (its time): workers the ledger says it interrupted are checked and resumed. */
+  restartRecovery?: number;
   /** The member's core (Bot: its worker ledger and projections); absent: a core over `restoredWorkers`. */
   workerCore?: (options: WorkerCoreOptions) => WorkerCore;
   strictResume?: boolean;
@@ -911,7 +911,7 @@ export class CodexSession implements CoordinatorPort {
       allowedRetry: (key) => this.allowedCommands.delete(key),
       followUp: (id, text) => { void this.core.sendToWorker(id, text); },
     });
-    this.threads.strictResume = !!config.restartWorkers || !!config.restartRecovery;
+    this.threads.strictResume = !!config.restartWorkers || config.restartRecovery !== undefined;
     this.editor = new ComponentEditorAdapter({
       route: () => this.config.componentEditor, recovering,
       act: (action) => this.out.push({ kind: "componentEditor", action }),
@@ -928,7 +928,8 @@ export class CodexSession implements CoordinatorPort {
     this.core = config.workerCore?.({ ...options, sessionScoped: true }) ?? new WorkerCore(options);
     // After an explicit restart: the workers it interrupted (the ledger's), or the old restart journal's.
     const restarted = config.restartWorkers
-      ?? (config.restartRecovery ? this.core.all().filter((r) => r.status === "interrupted" && r.interruptedBy === "restart").map(toLegacyCodex) : []);
+      ?? (config.restartRecovery !== undefined
+        ? this.core.all().filter((r) => r.status === "interrupted" && r.interruptedBy === "restart" && (r.endedAt ?? 0) >= config.restartRecovery!).map(toLegacyCodex) : []);
     for (const record of restarted) {
       if (record.wasActive && record.restartSafe && record.thread && ((!record.role && record.restartTurn) || (record.role === "component-editor" && record.editorCheckpoint)))
         this.restartPending.set(record.id, record);
@@ -2052,8 +2053,8 @@ export class CodexThreads {
 
 export interface CodexHeadConfig {
   restartWorkers?: WorkerRecord[];
-  /** After an explicit restart: the workers the ledger says it interrupted are checked and resumed. */
-  restartRecovery?: boolean;
+  /** After an explicit restart (its time): the workers the ledger says it interrupted are checked and resumed. */
+  restartRecovery?: number;
   /** The member's core (Bot: its worker ledger and projections); absent: codex-threads/<session>.workers.json. */
   workerCore?: WorkerCoreFactory;
   /** Where its workers' items go (Bot: its one worker entry); absent: `onItem` with the coordinator's. */

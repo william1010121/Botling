@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDir, until } from "../helpers";
+import { ledgerRecords, tempDir, until } from "../helpers";
 import { readSubagentRows } from "../subagent-disk";
 import { CoreHarness, MAIN } from "../core-harness";
 
@@ -111,11 +111,7 @@ describe("a Codex head", () => {
     // The report reached the coordinator correlated by task_id; the worker's record is kept in durable history.
     const payload = JSON.parse(codexInputs(dir, "report")[0]!);
     expect(payload).toMatchObject({ task_id: step.id, name: "Build the parser", status: "completed", report: "Worker did: Build the parser", completion_scope: "worker_turn" });
-    const workers = readFileSync(join(dir, "codex-threads", (await until(() => {
-      const files = existsSync(join(dir, "codex-threads")) ? require("node:fs").readdirSync(join(dir, "codex-threads")) as string[] : [];
-      return files.find((file) => file.endsWith(".workers.json"));
-    }))), "utf8");
-    expect(JSON.parse(workers)).toMatchObject([{ id: step.id, name: "Build the parser", run: 1, wasActive: false, reportPending: false }]);
+    expect(ledgerRecords(dir)).toMatchObject([{ id: step.id, name: "Build the parser", run: 1, status: "done", report: { state: "acknowledged" } }]);
     const historyFile = join(dir, "main", "subagents.json");
     const saved = readSubagentRows(historyFile);
     expect(saved).toMatchObject([{ id: step.id, status: "completed", type: "codex-worker", result: "Worker did: Build the parser" }]);

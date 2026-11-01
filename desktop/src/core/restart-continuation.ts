@@ -29,9 +29,12 @@ export interface RestartEntry extends SwapEntry {
   userId?: string | null;
   handoffId?: string | null;
   blocked?: string;
+  /** Read for one version: written by cores before the worker ledger (its workers now say what they need there). */
   workers?: WorkerRecord[];
-  /** Claude app workers (own processes) that were at work: interrupted by the restart, named in the continuation note. */
+  /** Read for one version: Claude app workers that were at work (the ledger now names them: interruptedBy "restart"). */
   claudeWorkers?: string[];
+  /** When the restart was prepared: the workers it interrupted are the ledger's records interrupted by a restart since. */
+  restartedAt?: number;
   state?: "pending" | "claimed" | "dispatched" | "blocked";
 }
 interface RestartIntent { v: 1; id: string; phase: "preparing" | "ready"; entries: RestartEntry[]; at?: number }
@@ -45,6 +48,7 @@ function validEntry(e: RestartEntry): boolean {
       && ["user", "app", "background"].includes(q.origin) && typeof q.turnId === "string"
       && typeof q.messageId === "string" && (q.userId === null || typeof q.userId === "string"))
     && (e.claudeWorkers === undefined || Array.isArray(e.claudeWorkers) && e.claudeWorkers.every(id => typeof id === "string"))
+    && (e.restartedAt === undefined || Number.isFinite(e.restartedAt))
     && (e.workers === undefined || Array.isArray(e.workers) && e.workers.every(w => w
       && typeof w.id === "string" && typeof w.name === "string" && typeof w.instructions === "string"
       && Number.isSafeInteger(w.run) && w.run >= 1 && typeof w.wasActive === "boolean" && typeof w.reportPending === "boolean"));

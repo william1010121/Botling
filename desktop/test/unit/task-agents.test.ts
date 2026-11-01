@@ -9,7 +9,7 @@ import { relatedTaskAgents, taskAgentIds } from "../../src/core/task-agents";
 import { subagentView } from "../../src/core/bot";
 import { CodexSession, type CodexOutput } from "../../src/core/agent/codex";
 import { CoreHarness, MAIN } from "../core-harness";
-import { tempDir, until } from "../helpers";
+import { ledgerRecords, tempDir, until } from "../helpers";
 
 const card = (extra: Partial<TaskCard> = {}): TaskCard => ({ id: "task-card", name: "Parser", state: "running", createdAt: 0, updatedAt: 0, messageIDs: [], kept: true, ...extra });
 const child = (id: string, extra: Partial<SubagentRecord> = {}): SubagentRecord => ({ id, description: "Same title", prompt: "Same prompt", status: "completed", background: true, startedAt: 0, steps: [], ...extra });
@@ -161,8 +161,7 @@ it("persists multiple Codex workers on the correct task; real detail requests, u
     const detail = SubagentView.parse((await c.call({ type: "subagent.view", botId: MAIN, subagentId: agent.id })).subagent);
     expect(detail).toMatchObject({ id: agent.id, engine: "codex", status: "running", execution: { run: 1, threadId: expect.any(String), turnId: expect.any(String), ownerSessionId: expect.any(String) } });
     expect(detail.prompt).toBe(agent.title);
-    const registry = JSON.parse(readFileSync(join(dir, "codex-threads", `${detail.execution!.ownerSessionId!.toLowerCase()}.workers.json`), "utf8"));
-    expect(registry.find((record: any) => record.id === agent.id)).toMatchObject({ id: agent.id, thread: detail.execution!.threadId, run: detail.execution!.run, wasActive: true });
+    expect(ledgerRecords(dir).find((record: any) => record.id === agent.id)).toMatchObject({ id: agent.id, conversationId: detail.execution!.threadId, run: detail.execution!.run, status: "running", ownerSessionId: detail.execution!.ownerSessionId });
   }
   writeFileSync(gate, "go");
   await until(() => c.of("tasks.updated").findLast((e) => (e.event as any).tasks.some((candidate: any) => candidate.id === task.id && candidate.relatedAgents.length === 2 && candidate.relatedAgents.every((agent: any) => agent.status === "completed"))));

@@ -30,7 +30,8 @@ function fixture(primary?: Bot) {
   const folder=primary?join(primary.profile.storeDir,'partner-codex'):profile.storeDir;
   const file=join(folder,'subagents.json');
   const send=(item:CodexItem)=>(bot as any).onSubagentItem(item);
-  const start=(id='worker')=>send({kind:'subagentStarted',id,description:'Worker',type:'codex-worker',prompt:'Work',background:false});
+  // A plain subagent: its end notice ends it (an app-managed worker's row is its ledger's projection, tested below).
+  const start=(id='worker',type='general-purpose')=>send({kind:'subagentStarted',id,description:'Worker',type,prompt:'Work',background:false});
   const text=(value:string,id='worker')=>send({kind:'subagentText',parent:id,text:value});
   return {bot,folder,file,steps:join(folder,'subagents'),disk:()=>readSubagentRows(file),send,start,text,events,log};
 }
@@ -150,4 +151,14 @@ it('a restarted bot loads the index without steps; opening one subagent reads ju
   const view=bot.subagentView('worker').subagent;
   expect(view.steps.map(s=>s.title)).toEqual(['first','second']);
   expect(bot.subagentView('other').subagent.steps).toEqual([]);
+});
+
+it('an app-managed worker ends by its ledger projection, durable before it is published; its end notice changes nothing',async()=>{
+  const f=fixture();f.start('worker','codex-worker');f.text('final evidence');
+  f.send({kind:'subagentEnded',id:'worker',status:'completed',summary:'from the engine'});
+  expect(f.disk()[0]).toMatchObject({status:'running'});
+  (f.bot as any).projectWorker({v:3,id:'worker',engine:'codex',adapter:'codex-thread',name:'Worker',instructions:'Work',type:null,ownerSessionId:'s',run:1,status:'done',
+    report:{state:'pending',text:'final report',status:'done',attempts:0},conversationId:null,processes:[],createdAt:0,runStartedAt:0,endedAt:Date.now(),engineData:{}});
+  expect(f.disk()[0]).toMatchObject({status:'completed',result:'final report',steps:[{title:'final evidence'}]});
+  expect(f.events.findLast(e=>e.type==='subagent.updated').subagent.status).toBe('completed');
 });

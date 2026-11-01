@@ -2,9 +2,9 @@
 // or Antigravity app-managed worker), with who OWNS it (sees its row, gets its reports) apart from who HOSTS it
 // (the head whose process holds it). Changing the owner never touches the agent: only the app's routing changes.
 //
-// The host's own files stay its execution journal (subagents.json, codex-threads/*.workers.json, agy workers.json);
-// this registry is authoritative for owner, host, handle, summary and state, and is reconciled against the host
-// books at every start (`reconcile`). Every move writes its intent first (`beginMove`), and the owner change and
+// The host's own files stay its execution journal (subagents.json, and for app-managed workers the member's
+// worker-ledger.json, whose state an app-managed worker's entry projects: `agentState`); this registry is
+// authoritative for owner, host, handle and summary, and is reconciled against the host books at every start (`reconcile`). Every move writes its intent first (`beginMove`), and the owner change and
 // the "committed" phase are one write (`commitMove`), so a crash in between leaves the owner as it was.
 import { createHash, randomBytes } from "node:crypto";
 import type { Engine } from "./heads";
@@ -98,6 +98,8 @@ export interface StartupHost extends HostFacts {
   /** Its head process is running now. */
   running: boolean;
   list: readonly SubagentRecord[];
+  /** Its app-managed workers' ledger records by task id: their state is the ledger's, not the book's. */
+  workers?: ReadonlyMap<string, LedgerView>;
 }
 export interface StartupFacts {
   hosts: StartupHost[];
@@ -159,7 +161,8 @@ export function recordHostKind(host: Pick<HostFacts, "kind">, record: Pick<Subag
   return workerHostKindFor(record.type, "claude") === "claude-process" ? "claude-process" : host.kind;
 }
 
-type LedgerView = Pick<WorkerLedgerRecord, "status" | "report" | "adapter">;
+/** What the registry reads of a worker's ledger record. */
+export type LedgerView = Pick<WorkerLedgerRecord, "status" | "report" | "adapter" | "cleanup">;
 /** A ledger state to project (the adapter matters only for the component editor). */
 const ledgerView = (status: WorkerLedgerRecord["status"], report: WorkerLedgerRecord["report"]["state"], adapter: WorkerLedgerRecord["adapter"] = "codex-thread"): LedgerView =>
   ({ status, report: { state: report, text: null, status: null, attempts: 0 }, adapter });
@@ -252,13 +255,16 @@ export class AgentRegistry {
   get all(): AgentRecord[] { return [...this.records.values()]; }
   get pendingMoves(): readonly MoveIntent[] { return this.moves; }
 
-  /** Upserts from the host book; returns the record. A state change is saved at once, progress within 250 ms. */
-  observe(host: HostFacts, rec: SubagentRecord): AgentRecord {
+  /**
+   * Upserts from the host book; returns the record. A state change is saved at once, progress within 250 ms. `worker`:
+   * an app-managed worker's ledger record, whose state it takes (reportPending, unresolved as failed, …).
+   */
+  observe(host: HostFacts, rec: SubagentRecord, worker?: LedgerView): AgentRecord {
     const now = this.clock();
     const id = this.index.get(keyOf(host.botId, host.engine, rec.id));
     const previous = id ? this.records.get(id) ?? null : null;
     if (!previous) {
-      const made = this.make(host, rec, now);
+      const made = this.make(host, rec, now, worker);
       this.put(made);
       this.save(true);
       this.changed(made, null);
@@ -266,7 +272,7 @@ export class AgentRegistry {
     }
     const before = structuredClone(previous);
     this.fixHostKind(previous, rec);
-    const state = stateFor(rec, previous.host.kind);
+    const state = worker ? agentState(worker) : stateFor(rec, previous.host.kind);
     const stateChanged = state !== previous.state;
     previous.state = state;
     previous.summary = summaryFor(rec, previous.summary, now);
@@ -300,7 +306,7 @@ export class AgentRegistry {
     return true;
   }
 
-  private make(host: HostFacts, rec: SubagentRecord, now: number): AgentRecord {
+  private make(host: HostFacts, rec: SubagentRecord, now: number, worker?: LedgerView): AgentRecord {
     host = { ...host, kind: recordHostKind(host, rec) };
     const id = agentId(host.botId, host.engine, rec.id);
     if (!ID_PATTERN.test(id)) throw new Error(`agent id ${id} does not fit the contract`);
@@ -312,7 +318,7 @@ export class AgentRegistry {
       handle: handleFor(host, rec),
       promptHash: null,
       model: typeof rec.model === "string" ? rec.model : null, effort: typeof effort === "string" ? effort : null,
-      state: stateFor(rec, host.kind),
+      state: worker ? agentState(worker) : stateFor(rec, host.kind),
       summary: summaryFor(rec, null, now),
       relay: { muted: false, pendingMessages: [], report: null },
       ownerView: { settledAt: null, unsettledAt: null },
@@ -543,7 +549,7 @@ export class AgentRegistry {
     for (const host of f.hosts) {
       for (const rec of host.list) {
         if (rec.parentID || this.byNative(host.botId, host.engine, rec.id)) continue;
-        const made = this.make(host, rec, now);
+        const made = this.make(host, rec, now, host.workers?.get(rec.id));
         this.put(made);
         report.added.push(made.id);
       }
@@ -566,16 +572,25 @@ export class AgentRegistry {
       }
       const host = hosts.get(`${record.host.botId}|${record.host.engine}`);
       const native = host?.list.find((candidate) => candidate.id === record.nativeId);
+      const worker = host?.workers?.get(record.nativeId);
       if (native) this.fixHostKind(record, native);
       // 3. The host book no longer has it.
       if (!native) {
         if (!isDetached(record)) { this.remove(record.id); report.dropped.push(record.id); continue; }
         if (!TERMINAL_STATES.has(record.state) && record.state !== "lost") { record.state = "lost"; record.updatedAt = now; record.rev++; }
-      } else if (record.state === "running" && !host!.running && record.host.kind !== "agy-acp") {
-        // 6. It was at work when its host process went away (Antigravity's workers restore themselves).
+      } else if (worker) {
+        // An app-managed worker: its state is its ledger's (which knows a run cut off by the app going away).
+        record.summary = summaryFor(native, record.summary, now);
+        const state = agentState(worker);
+        if (state !== record.state) {
+          if (state === "interrupted" && record.state === "running") report.interrupted.push(record.id);
+          record.state = state; record.updatedAt = now; record.rev++;
+        }
+      } else if (record.state === "running" && !host!.running) {
+        // 6. It was at work when its host process went away.
         record.state = "interrupted"; record.updatedAt = now; record.rev++;
         report.interrupted.push(record.id);
-      } else if (record.state !== "interrupted" && record.state !== "lost" && !(record.state === "running" && record.host.kind === "agy-acp")) {
+      } else if (record.state !== "interrupted" && record.state !== "lost") {
         // Its summary as the book has it now (the state too, unless it was set apart above).
         record.summary = summaryFor(native, record.summary, now);
         const state = stateFor(native, record.host.kind);
@@ -639,8 +654,9 @@ export class AgentRegistry {
 
 /** What a host or owner `Bot` asks of the registry (implemented by the Server, one per profile; a partner head shares its primary's). */
 export interface AgentPort {
-  observed(host: HostFacts, rec: SubagentRecord): void;
-  ended(host: HostFacts, rec: SubagentRecord): void;
+  /** `worker`: an app-managed worker's ledger record (its state is the ledger's). */
+  observed(host: HostFacts, rec: SubagentRecord, worker?: LedgerView): void;
+  ended(host: HostFacts, rec: SubagentRecord, worker?: LedgerView): void;
   retained(engine: AgentEngine): ReadonlySet<string>;
   movedOut(engine: AgentEngine): ReadonlyMap<string, { agentId: string; owner: BotRef; ownerName: string; muted: boolean }>;
   movedInRows(): import("../contract").SubagentRowView[];
