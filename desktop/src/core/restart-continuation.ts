@@ -89,9 +89,14 @@ export class RestartJournal {
     this.save(value);
   }
 
-  ready() {
+  /** Shutdown is over. `failed`: bots whose own shutdown failed (by id, with why); their entries are held back, the rest resume. */
+  ready(failed: ReadonlyMap<string, string> = new Map()) {
     const value = this.read();
     if (!value) throw Error("Missing restart intent");
+    for (const entry of value.entries) {
+      const reason = failed.get(entry.botId);
+      if (reason !== undefined && !entry.blocked) entry.blocked = `This bot's shutdown did not finish (${reason}); nothing was restarted.`;
+    }
     value.phase = "ready";
     value.at = Date.now();
     this.save(value);

@@ -2547,11 +2547,20 @@ First write a test that shows this, then fix it.`;
     const tidy = !this.swapping && !this.restarting;
     // Invoke every participant even if one throws synchronously, and never let an early
     // rejection reach the process exit boundary while another durable flush is pending.
-    const participants = [...this.bots.values()].map(bot => () => bot.shutdown({ tidy }));
+    const bots = [...this.bots.entries()];
+    const participants = bots.map(([, bot]) => () => bot.shutdown({ tidy }));
     participants.push(() => this.plugins.shutdown());
     const results = await Promise.allSettled(participants.map(stop => Promise.resolve().then(stop)));
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    // Each bot's continuation rests on its own shutdown: one that failed is held back (with why), the others resume.
+    // Another participant's failure (a plugin host, a different bot) is no reason to drop their work.
+    if (this.restarting) {
+      const failed = new Map(bots.flatMap(([id], i) => {
+        const result = results[i]!;
+        return result.status === "rejected" ? [[id, String((result.reason as Error)?.message ?? result.reason).slice(0, 300)] as const] : [];
+      }));
+      try { journal.ready(failed); } catch (error) { failures.push(error); }
+    }
     if (failures.length) throw new AggregateError(failures, "Core shutdown failed", { cause: failures[0] });
-    if(this.restarting)journal.ready();
   }
 }
