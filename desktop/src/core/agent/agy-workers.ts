@@ -175,8 +175,8 @@ export class AgyWorkers {
         if(w.sessionId&&w.sessionId!==item.sessionId){finish('failed','Worker changed its saved conversation identity.');return;}
         w.sessionId=item.sessionId;this.save();return;
       }
-      // tool_failed: the turn ended normally after a failed tool (a non-zero exit such as `git status` outside a repo); its report decides, as with Codex.
-      if(item.kind==='result'){finish((item.ok||item.subtype==='tool_failed')&&item.text.trim()?'completed':'failed',item.text||item.error||'Worker ended without an evidence report.');return;}
+      // A failed tool on the way (a non-zero exit such as `git status` outside a repo) does not make the head's result fail (agy-acp.ts).
+      if(item.kind==='result'){finish(item.ok&&item.text.trim()?'completed':'failed',item.text||item.error||'Worker ended without an evidence report.');return;}
       if(item.kind==='permission'){
         if(w.approvals.has(item.requestId)){finish('failed','Duplicate worker permission identity.');return;}
         w.approvals.set(item.requestId,JSON.parse(JSON.stringify(item.input)));

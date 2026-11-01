@@ -200,13 +200,15 @@ export class AgyAcpProtocol {
       const count = (key: string) => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] as number : 0;
       if (result.usage) this.emit({kind:"usage",totalCost:0,tokens:{input:Math.max(0,count("inputTokens")-count("cachedReadTokens")),output:count("outputTokens")+count("thoughtTokens"),cacheRead:count("cachedReadTokens"),cacheWrite:count("cachedWriteTokens")}});
       const stop = epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason);
-      // tool_failed means "ended its turn normally after a failed tool" (agy-workers.ts reads it so); it never hides another stop.
+      // tool_failed means "ended its turn normally after a failed tool"; it never hides another stop.
       const reason = this.turnFailure && (this.turnFailure !== "tool_failed" || stop === "end_turn") ? this.turnFailure : stop;
+      // A non-zero exit on the way is ordinary work: a turn that ended normally with a reply succeeds.
+      const ok = reason === "end_turn" || (reason === "tool_failed" && !!this.text.trim());
       // ACP gives one usage block per prompt and no per-request timing: the whole prompt turn, an estimate.
-      const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, reason === "end_turn");
+      const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, ok);
       if (request) this.emit({ kind: "request", request });
-      this.emit({ kind: "result", ok: reason === "end_turn", text: this.text, error: reason === "end_turn" ? "" : `Antigravity stopped: ${reason || "unknown reason"}`, subtype: reason });
-      return reason === "end_turn";
+      this.emit({ kind: "result", ok, text: this.text, error: ok ? "" : `Antigravity stopped: ${reason || "unknown reason"}`, subtype: reason });
+      return ok;
     } catch (error) {
       this.fail(error as Error);
     } finally { this.submitting = false; this.transport.revoke?.(); this.busy = false; if (!this.closed) this.transport.onPolicy?.("ready", this.confirmed ? `${this.mode === "yolo" ? "Full permission" : "Approval mode"} confirmed; no active turn.` : "Tools revoked. The next turn must confirm its permission mode again."); }

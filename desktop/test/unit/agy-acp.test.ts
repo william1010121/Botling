@@ -88,16 +88,30 @@ it('cancel survives end_turn and a subsequent turn starts clean',async()=>{
  sent=h.client.send('next','two');await tick();h.policy();await tick();id=h.frames.at(-1).id;
  h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(true);
 });
-it('failed tool alone cannot become a successful terminal result',async()=>{
+// A non-zero exit on the way (`which ... tectonic`, `git status` outside a repo) is ordinary work: a turn that
+// ended with end_turn and a reply succeeds, for the main chat ("Antigravity stopped: tool_failed") as for workers.
+it('a turn that ended normally with a reply succeeds although a tool failed on the way',async()=>{
+ const h=harness(),sent=h.client.send('test','one');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
+ const update=(u:any)=>h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:u}});
+ update({sessionUpdate:'tool_call',toolCallId:'which',status:'failed',rawOutput:{exitCode:1,output:'/opt/homebrew/bin/pdflatex'}});
+ update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'The PDF is ready.'}});
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(true);
+ expect(h.items.at(-1)).toMatchObject({kind:'result',ok:true,text:'The PDF is ready.',error:'',subtype:'tool_failed'});
+});
+it('failed tool with no reply cannot become a successful terminal result',async()=>{
  const h=harness(),sent=h.client.send('test','one');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
  h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call',toolCallId:'failed',status:'failed'}}});
+ h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'  '}}}});
  h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);expect(h.items.at(-1)).toMatchObject({ok:false,subtype:'tool_failed'});
 });
 
-// tool_failed means "ended its turn after a failed tool" (agy-workers.ts counts that as completed), so it must
+// tool_failed means "ended its turn after a failed tool" (a success when it has a reply), so it must
 // never stand in for a cancelled turn, an unresolved approval or another stop reason.
 it('a failed tool never hides a cancel, an unresolved approval or a non-end_turn stop reason',async()=>{
- const failTool=(h:any)=>h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call',toolCallId:'failed',status:'failed'}}});
+ const failTool=(h:any)=>{
+  h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call',toolCallId:'failed',status:'failed'}}});
+  h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'partial reply'}}}});
+ };
  const turn=async()=>{const h=harness(),sent=h.client.send('test','one');await h.init();h.policy();await tick();return {h,sent,id:h.frames.at(-1).id};};
  let t=await turn();failTool(t.h);t.h.client.receive({jsonrpc:'2.0',id:t.id,result:{stopReason:'max_tokens'}});await t.sent;
  expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'max_tokens'});
