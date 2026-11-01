@@ -618,6 +618,8 @@ export const RoutineView = z.strictObject({
   title: z.string().max(400),
   /** "Every day 08:15", the cron fields, or (once) its time as ISO-8601. */
   schedule: z.string().max(400),
+  /** A recurring job's five cron fields ("0,30 * * * *"); null for a one-time job. */
+  cron: z.string().max(400).nullable().optional(),
   timezone: z.string().max(100),
   /** pending, due, paused, fired, cancelled, delivery_uncertain; enabled/paused for routines.cron. */
   status: z.string().max(40),
@@ -1275,6 +1277,8 @@ export interface ChatSnapshot {
   pinChoices: PinChoiceView[];
   /** Files waiting in the input box for the next message. */
   pendingFiles?: PendingFileView[];
+  /** Its routines (its own routines.cron and app-owned schedules), shown with its scheduled work. */
+  routines?: RoutineView[];
   /** `messages` is the newest page of the chat; this says whether older lines wait (`chat.history`). Absent: all of it is here. */
   history?: { hasMore: boolean; /** How many lines are older than the first of `messages`. */ older: number };
 }

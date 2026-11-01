@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { DoctorView, SpecStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { DoctorView, SpecStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RoutineView, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex" | "agy"; live: StepView[] }
@@ -31,6 +31,8 @@ export interface ChatView {
   pinChoices?: PinChoiceView[];
   /** Files waiting in the input box. */
   pendingFiles?: PendingFileView[];
+  /** Its routines, shown with its scheduled work. */
+  routines?: RoutineView[];
 }
 
 export interface WorkspaceView {
@@ -277,6 +279,8 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       return withChat({ ...chat, messages: chat.messages.filter((message) => message.id !== event.messageId) });
     case "tasks.updated":
       return withChat({ ...chat, tasks: event.tasks });
+    case "routines.updated":
+      return withChat({ ...chat, routines: event.routines });
     case "subagent.updated":
       return view.subagent?.id === event.subagent.id ? { ...view, subagent: event.subagent } : view;
     case "message.added":

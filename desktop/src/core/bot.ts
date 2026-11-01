@@ -470,6 +470,8 @@ export class Bot {
   private scheduledStore: ScheduledRoutineStore | null = null;
   private routineRuns: Record<string, number> = {};
   private routineError: string | null = null;
+  /** What the app last showed of its routines (`routinesKey`), so a change to the files is shown once. */
+  private routinesShown = "";
   /** Its pinned components (pins.json, 1.x's format; the primary's). */
   private pins: PinRecord[] = [];
   /** Its own picture on the main bot's whiteboard (whiteboard.json; the primary's). */
@@ -1677,12 +1679,18 @@ export class Bot {
       running: shown ? { turnId: shown.id, messageId: shown.messageId } : null,
       live: shown ? shown.steps.slice(-500).map((step) => stepView(step, owner(shown).subagents)) : [],
       tasks: this.taskViews(),
+      routines: this.chatRoutines(),
       runs: turns.map((turn) => ({ turnId: turn.id, messageId: turn.messageId, head: owner(turn).engine, live: turn.steps.slice(-500).map((step) => stepView(step, owner(turn).subagents)) })),
       heads: this.headsView(),
       catchUp: null,
       intervalSummaries: [],
       ...this.pinsView(),
     };
+  }
+
+  /** Its routines for the chat's scheduled work (a partner's are its primary's); none while they cannot be read. */
+  private chatRoutines(): RoutineView[] {
+    try { return this.owner.routinesView().routines; } catch { return []; }
   }
 
   /** A page of lines older than `before` (`chat.history`); with `until`, back to at least that line. */
@@ -1710,6 +1718,14 @@ export class Bot {
   }
 
   async taskOutput(messageId: string, taskId: string): Promise<ResultOf<"task.output">> {
+    // One of its routines in the background-work row (`routineChips`): what it does, when, and where it is kept.
+    if (taskId.startsWith("routine:")) {
+      const routine = this.chatRoutines().find((candidate) => `routine:${candidate.id}` === taskId);
+      if (!routine) return { text: "" };
+      const where = routine.kind === "legacy" ? join(this.owner.profile.folder, this.owner.paths.routines) : this.routineStorePath;
+      const zone = routine.timezone === "system_local" ? "" : ` (${routine.timezone})`;
+      return { text: [`Botling routine · ${routine.schedule}${zone}`, routine.task, where ? `Kept in ${where}` : ""].filter(Boolean).join("\n") };
+    }
     const record = this.records.find((message) => message.id === messageId);
     const task = Array.isArray(record?.backgroundTasks) ? (record.backgroundTasks as (BackgroundTask | null)[]).find((task) => task?.id === taskId) : undefined;
     if (!task) return { text: "" };
@@ -4382,20 +4398,21 @@ export class Bot {
         if (job.kind === "once") next = fromSwiftDateMs(job.at ?? 0);
         else next = dueTime(job, now) ?? CronSchedule.parse(job.cron ?? "")?.nextTime(now, job.timezone) ?? null;
       }
-      return { id: job.id, kind: job.kind, task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "", schedule: clip(schedule, 400) ?? "", timezone: job.timezone.slice(0, 100), status, next: iso(next) };
+      return { id: job.id, kind: job.kind, task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "", schedule: clip(schedule, 400) ?? "", cron: job.kind === "once" ? null : clip(job.cron ?? "", 400) ?? null, timezone: job.timezone.slice(0, 100), status, next: iso(next) };
     });
     for (const job of jobs.slice(0, 50)) {
       views.push({
         id: `cron:${job.id}`.slice(0, 2_200), kind: "legacy", task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "",
-        schedule: clip(job.schedule.description, 400) ?? "", timezone: "system_local", status: job.enabled ? "enabled" : "paused",
+        schedule: clip(job.schedule.description, 400) ?? "", cron: clip(job.schedule.text, 400) ?? null, timezone: "system_local", status: job.enabled ? "enabled" : "paused",
         next: job.enabled ? iso(job.schedule.nextTime(now, null)) : null,
       });
     }
     return { routines: views, error: this.routineError?.slice(0, 2_000) ?? null };
   }
 
-  private routinesChanged() {
-    this.options.emit({ type: "routines.updated", botId: this.id, ...this.routinesView() });
+  private routinesChanged(view = this.routinesView()) {
+    this.routinesShown = routinesKey(view);
+    this.options.emit({ type: "routines.updated", botId: this.id, ...view });
   }
 
   /** The app's own change to a routine (`app_routines`' operations); errors are the store's, as Codex sees them. */
@@ -4464,7 +4481,9 @@ export class Bot {
       ran = true;
     }
     if (this.routineError && this.routineError !== before) this.notice(`Routines: ${this.routineError}`);
-    if (ran || this.routineError !== before) this.routinesChanged();
+    // A job the bot wrote into routines.cron (or Codex's app_routines) shows in its chat without waiting for it to run.
+    const view = this.routinesView(now);
+    if (ran || this.routineError !== before || routinesKey(view) !== this.routinesShown) this.routinesChanged(view);
   }
 
   /** A divider with its time, then its prompt as a message nobody typed, to this bot's (first) head (`Bot.run`). */
@@ -5832,6 +5851,11 @@ export function stepView(step: StepRecord, subagents?: Pick<SubagentBook, "get">
 
 function cardView(card: { id: string; html: string; data: string | null }): CardView {
   return { id: card.id, html: card.html, data: card.data };
+}
+
+/** A routines view without its next times (they move with the clock alone). */
+function routinesKey(view: ResultOf<"routines.list">): string {
+  return JSON.stringify([view.error, view.routines.map((routine) => [routine.id, routine.status, routine.schedule, routine.timezone])]);
 }
 
 function choiceView(choice: ChoiceRecord): ChoiceView {

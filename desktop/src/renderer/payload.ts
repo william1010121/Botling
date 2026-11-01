@@ -1,8 +1,8 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SpecStateView, SubagentView, TaskView } from "../contract";
-import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
+import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
+import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
@@ -65,6 +65,26 @@ export function taskChips(tasks: TaskView[], messages: MessageView[], working: b
     }
   }
   return chips;
+}
+
+/** Statuses of a routine that will still run. */
+const WAITING_ROUTINE = new Set(["pending", "due", "enabled"]);
+
+/** The bot's own routines that will still run, as scheduled work in the background-work row (drawn under `messageID`). */
+export function routineChips(routines: RoutineView[], messageID: string, now: Date): TaskChipView[] {
+  return routines.filter((routine) => WAITING_ROUTINE.has(routine.status)).map((routine) => ({
+    id: `routine:${routine.id}`,
+    kind: "cron" as const,
+    title: routine.title || routine.task,
+    status: "running" as const,
+    started: now.getTime(),
+    ended: null,
+    detail: routine.task,
+    message: messageID,
+    fires: routine.next ? Date.parse(routine.next) : null,
+    schedule: routine.kind === "once" ? null : routine.cron ?? null,
+    recurring: routine.kind !== "once",
+  }));
 }
 
 /** Reactions as the page draws them: one per emoji, who put it there, and whether one is yours (`ChatPayload`). */
@@ -201,10 +221,11 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
   // ChatPayload.shownBackgroundTasks/backgroundRowIndex: one row at the latest bot reply/notice, with
   // source ids. Finished work clears with your next line; an older task finishing after it still appears.
   const lastUser = chat.messages.findLastIndex((message) => message.role === "user");
-  const background = chat.messages.flatMap((message, index) => (message.backgroundTasks ?? []).filter((task) =>
+  const background: TaskChipView[] = chat.messages.flatMap((message, index) => (message.backgroundTasks ?? []).filter((task) =>
     task.status === "running" || (task.monitor && ["pending", "dispatching", "uncertain"].includes(task.monitor.callback)) || lastUser < 0 || index >= lastUser || (task.ended ?? -Infinity) > new Date(chat.messages[lastUser]!.time).getTime()
   ).map((task) => ({ ...task, message: message.id })));
   const backgroundRow = shown.findLast((message) => message.role === "bot" || message.role === "notice")?.id;
+  if (backgroundRow) background.push(...routineChips(chat.routines ?? [], backgroundRow, now));
   const lastYours = shown.findLastIndex((message) => message.role === "user");
   const messages: WebMessage[] = shown.map((message, index) => {
     if (message.cards?.length) extras.cards[message.id] = message.cards;

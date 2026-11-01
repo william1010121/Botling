@@ -1,6 +1,7 @@
 // The ChatState the reused Web/src chat page draws, built from the contract (as ChatPayload.swift builds it).
 import { describe, expect, it } from "vitest";
 import { chatState, stamp } from "../../src/renderer/payload";
+import { apply, type WorkspaceView } from "../../src/renderer/store";
 import type { BotView, MessageView } from "../../src/contract";
 
 const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 1, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
@@ -94,5 +95,36 @@ describe("attachments in the chat state", () => {
       attachments: [{ name: "x-agent-activity.png", kind: "image", url: "file:///synthetic/attachments/x-agent-activity.png" }] }];
     const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] });
     expect(state.messages[0]!.attachments![0]!.url).toMatch(/^botling-chat:\/\/chat\/attachment\/B\/[A-Za-z0-9_-]+\/x-agent-activity\.png$/);
+  });
+});
+
+describe("the bot's routines in its chat", () => {
+  it("show in the background-work row as scheduled work, beside the bot's other schedules", () => {
+    const messages: MessageView[] = [
+      { id: "u1", role: "user", text: "你現在的 monitor 還有嗎", time: at(0) },
+      { id: "r1", role: "bot", text: "我剛剛加了一個每小時 00 分和 30 分的定時任務", time: at(1) },
+    ];
+    const routines = [
+      { id: "cron:0,30 * * * * Baseline progress: report", kind: "legacy" as const, task: "Baseline progress: report", title: "Baseline progress", schedule: "Every 30 minutes", cron: "0,30 * * * *", timezone: "system_local", status: "enabled", next: at(30) },
+      { id: "R2", kind: "once" as const, task: "Check: build", title: "Check", schedule: at(45), cron: null, timezone: "Asia/Taipei", status: "pending", next: at(45) },
+      { id: "cron:#0 4 * * * Old: gone", kind: "legacy" as const, task: "Old: gone", title: "Old", schedule: "Every day 04:00", cron: "0 4 * * *", timezone: "system_local", status: "paused", next: null },
+      { id: "R3", kind: "once" as const, task: "Done: x", title: "Done", schedule: at(0), cron: null, timezone: "Asia/Taipei", status: "fired", next: null },
+    ];
+    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [], routines }, new Date(Date.UTC(2026, 9, 25, 8, 5)));
+    expect(state.messages[1]!.tasks).toEqual([
+      expect.objectContaining({ id: "routine:cron:0,30 * * * * Baseline progress: report", kind: "cron", title: "Baseline progress", status: "running", detail: "Baseline progress: report", schedule: "0,30 * * * *", recurring: true, fires: Date.parse(at(30)), message: "r1" }),
+      expect.objectContaining({ id: "routine:R2", kind: "cron", title: "Check", status: "running", schedule: null, recurring: false, fires: Date.parse(at(45)), message: "r1" }),
+    ]);
+    // No routines: no row.
+    expect(chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] }).state.messages[1]!.tasks).toBeNull();
+  });
+});
+
+describe("routines.updated", () => {
+  it("updates the routines of the chat on screen, and only that chat's", () => {
+    const routine = { id: "cron:0,30 * * * * Baseline progress: report", kind: "legacy" as const, task: "Baseline progress: report", title: "Baseline progress", schedule: "Every 30 minutes", cron: "0,30 * * * *", timezone: "system_local", status: "enabled", next: null };
+    const view = { ready: true, bots: [bot], imported: null, chat: { botId: "B", messages: [], running: null, live: [], tasks: [] } } as unknown as WorkspaceView;
+    expect(apply(view, { type: "routines.updated", botId: "B", routines: [routine], error: null }).chat!.routines).toEqual([routine]);
+    expect(apply(view, { type: "routines.updated", botId: "OTHER", routines: [routine], error: null }).chat!.routines).toBeUndefined();
   });
 });
