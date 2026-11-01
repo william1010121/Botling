@@ -46,7 +46,7 @@ describe("a bot's head", () => {
     expect(log[0]!.args.join(" ")).toMatch(/--allowedTools Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Agent,Task,SendMessage,Artifact(?!,Bash)/);
     expect(log[0]!.cwd).toBe(join(dir, "main"));
     const head = JSON.parse(readFileSync(join(dir, "main", "head.json"), "utf8"));
-    expect(head).toEqual({ sessionId: log[0]!.session, started: true });
+    expect(head).toEqual({ sessionId: log[0]!.session, started: true, promptHash: expect.stringMatching(/^[0-9a-f]{16}$/) });
     expect(alive(log[0]!.pid)).toBe(true);
   });
 

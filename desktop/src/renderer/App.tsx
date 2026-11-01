@@ -334,7 +334,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       )}
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
         onRemove={() => { setRemoving(menu.bot); setMenu(null); }}
-        pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }} />}
+        pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }}
+        lang={view.settings?.effectiveLanguage ?? null} onRestart={() => { const target = menu.bot; setMenu(null); setError(null); void client.request({ type: "bot.restart", botId: target.id }).catch(fail); }} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>

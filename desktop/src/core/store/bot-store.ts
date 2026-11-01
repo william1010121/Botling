@@ -26,6 +26,8 @@ export interface HeadState {
   sessionId: string;
   /** claude has written that session (it answered once), so it can be resumed. */
   started: boolean;
+  /** A hash of the system prompt the session was created with (claude keeps it on --resume); absent in older files. */
+  promptHash?: string;
 }
 
 /** Reads a JSON file: undefined when missing, StoreError when present but unreadable. */
@@ -159,7 +161,7 @@ export class BotStore {
   loadHead(): HeadState | null {
     try {
       const value = readJSON(this.path("head.json")) as Partial<HeadState> | undefined;
-      if (value && typeof value.sessionId === "string" && typeof value.started === "boolean") return { sessionId: value.sessionId, started: value.started };
+      if (value && typeof value.sessionId === "string" && typeof value.started === "boolean") return { sessionId: value.sessionId, started: value.started, ...(typeof value.promptHash === "string" ? { promptHash: value.promptHash } : {}) };
     } catch { /* a new session then */ }
     return null;
   }

@@ -49,7 +49,7 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 //   A user message goes once to the selected primary; peer commentary never broadcasts work.
 //   Explicit handoff tags use the conductor's budgets and correlated return routes. A shared
 //   decision retains one owner, and a pick on any copy is applied exactly once.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { backgroundTaskOutput, backgroundTaskView, backgroundOutputFile } from "./background-work";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
@@ -308,6 +308,7 @@ const NO_ANSWER = "No answer in time";
 const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command", "Permissions"]);
 /** 1.x's `RestartReason.plugins`. */
 const PLUGINS_RESTART = { told: "loading new plugins", shown: "loading new plugins" };
+const PROMPT_SESSION_DIVIDER = "New session (instructions updated)";
 const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
 
 export class Bot {
@@ -2401,6 +2402,43 @@ export class Bot {
     if (reason) this.restartReason = reason;
   }
 
+  /**
+   * "Restart bot": every head of this conversation starts again before its next message (the way a model
+   * change does, so a running turn, subagents or workers are never cut off). A claude head starts a NEW
+   * session with the wake briefing (memory.md and the recent chat): claude keeps a session's first system
+   * prompt on --resume, so only a new session has the app's current instructions. Asleep, nothing runs now;
+   * the next wake starts the new session.
+   */
+  restartNow(): { restart: "next-message" | "asleep" } {
+    const owner = this.owner;
+    if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
+    let awake = false;
+    for (const bot of owner.members) {
+      if (bot.engine === "claude") bot.freshSessionPending = true;
+      bot.restartFor({ told: "restarted at your user's request", shown: "manual restart" });
+      awake ||= bot.restartPending;
+    }
+    return { restart: awake ? "next-message" : "asleep" };
+  }
+
+  /** "Restart bot" on a claude head: its next start is a new session, whatever its prompt hash says. */
+  private freshSessionPending = false;
+  /** ensureHead began a new session for the message being sent (its briefing says it all; no restart note). */
+  private startedFresh = false;
+
+  /** A session handed over by the old core is resumed as it is once (a cut-off turn goes on exactly where it stopped). */
+  private adoptedSession = false;
+  /** The prompt hash head.json kept for this session (the old core wrote it): none for an older file or another session. */
+  private savedPromptHash(sessionId: string): { promptHash?: string } {
+    const saved = this.store.loadHead();
+    return saved?.sessionId === sessionId && saved.promptHash ? { promptHash: saved.promptHash } : {};
+  }
+
+  /** A hash of the system prompt this head's session would be created with now (engine differences included). */
+  private promptHash(): string {
+    return createHash("sha256").update(this.prompts().system).digest("hex").slice(0, 16);
+  }
+
   /** Its process has the plugins' Claude parts as they are now. */
   private hasCurrentPlugins(): boolean {
     const stamp = this.options.pluginStamp?.();
@@ -2479,7 +2517,10 @@ export class Bot {
     turn.head = head;
     turn.sent = true;
     turn.started = toSwiftDate();
-    if (restarted) {
+    // A new session (a changed prompt, or "Restart bot") says so with its own divider and carries the briefing.
+    const fresh = this.startedFresh;
+    this.startedFresh = false;
+    if (restarted && !fresh) {
       // Said in the chat, and told with this message (1.x's `resume(_:reason:)`).
       this.owner.add({ id: newId(), role: "divider", text: `Restarted → ${restarted.shown}`, date: toSwiftDate() });
       // claude keeps the session's first system prompt on --resume, so what may have changed since (the
@@ -2624,8 +2665,21 @@ export class Bot {
     this.modelSettingsPending = false;
     this.restartForPluginsOnly = false;
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
-    const resume = this.session.started && !this.briefing;
     const prompts = this.prompts();
+    // claude keeps the system prompt a session was created with (--resume ignores a new one): when the app's
+    // has changed since (or "Restart bot" asks, or head.json has no hash yet), this is a new session, and its
+    // first message carries the wake briefing. Codex refreshes its instructions on resume, and agy is given
+    // them again on session/load, so only claude is told apart.
+    const adopted = this.adoptedSession;
+    this.adoptedSession = false;
+    if (this.engine === "claude" && this.session.started && !this.briefing && (this.freshSessionPending || (!adopted && this.session.promptHash !== this.promptHash()))) {
+      this.newSession();
+      this.startedFresh = true;
+      this.owner.add({ id: newId(), role: "divider", text: PROMPT_SESSION_DIVIDER, date: toSwiftDate() });
+    }
+    this.freshSessionPending = false;
+    const resume = this.session.started && !this.briefing;
+    if (!resume) this.session.promptHash = this.promptHash();
     const launch = this.options.launch?.() ?? { subagentHourCache: false };
     const start = this.sessionStart(resume, prompts);
     // An app-made worktree: the session starts there; the project's .bot (memory, inbox) stays reachable.
@@ -2738,6 +2792,7 @@ export class Bot {
       this.store.saveSetting("agyRecovery", undefined);
     }
     this.queuedNote = null;
+    this.freshSessionPending = false;
     this.session = { sessionId: randomUUID(), started: false };
     this.briefing = true;
     this.reactionsSeen = null;
@@ -5291,7 +5346,8 @@ export class Bot {
   retainRestartIdentity(entry: RestartEntry): Bot {
     const bot=this.botFor(entry.engine);
     if(!bot || !entry.sessionId)throw Error("Original engine/session unavailable; no replacement was created.");
-    bot.session={sessionId:entry.sessionId,started:entry.sessionStarted!==false};bot.briefing=entry.sessionStarted===false;
+    bot.session={sessionId:entry.sessionId,started:entry.sessionStarted!==false,...bot.savedPromptHash(entry.sessionId)};bot.briefing=entry.sessionStarted===false;
+    bot.adoptedSession=!!entry.continue||!!entry.workers?.length;
     bot.store.saveHead(bot.session);
     bot.restartRecovery=true;
     return bot;
@@ -5329,7 +5385,8 @@ export class Bot {
       const bot = this.botFor(entry.engine);
       if (!bot) continue;
       if (entry.sessionId) {
-        bot.session = { sessionId: entry.sessionId, started: true };
+        bot.session = { sessionId: entry.sessionId, started: true, ...bot.savedPromptHash(entry.sessionId) };
+        bot.adoptedSession = !!entry.continue;
         // The same conversation: no wake briefing (what was cut off in the background is said with its next message).
         bot.briefing = false;
         bot.store.saveHead(bot.session);
