@@ -141,6 +141,14 @@ describe("Maintainer editor task lifecycle", () => {
     expect(session.workerRecords[0]).toMatchObject({ id: task, reportPending: true, wasActive: false });
   });
 
+  it("shows the Claude editor's message as one step, not one step per streamed chunk", () => {
+    const { session, task } = setup();
+    const said = (item: Parameters<typeof session.componentEditorItem>[2]) => new Out(session.componentEditorItem(task, 1, item)).items.filter(i => i.kind === "subagentText");
+    const chunks = ["Edited `05B44", "DD6-73BB.md` (1) (", "1).\n\n**Integrity check", " (SHA-256)**: ok"];
+    expect(chunks.flatMap(text => said({ kind: "delta", text }))).toEqual([]);
+    expect(said({ kind: "assistantText", text: chunks.join("") })).toEqual([{ kind: "subagentText", parent: task, text: chunks.join("") }]);
+  });
+
   it("refuses ordinary coordinators, unknown roles, and calls from foreign/child threads without launching anything", () => {
     const plain = ready();
     const rejected = call(plain, "app_handoff", { role: "component-editor", instructions: "edit" });

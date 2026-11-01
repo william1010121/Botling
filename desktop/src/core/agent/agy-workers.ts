@@ -21,6 +21,8 @@ interface Worker {
   cleaning:boolean;denied:boolean;recoveryRequired?:boolean;reportDispatching?:boolean;report?:string;status:string;reportPending:boolean;
   reportDelivered?:boolean; reviewAttempts?:number; checkpoint?:{outcome:string;evidence:string;dependency_task_id?:string};
   head?:AgyWorkerHead;cleanup?:Promise<void>;discardReport?:boolean;
+  /** The message being streamed: ACP's chunks cut words and code spans, so they show as one step when a tool runs or the run ends. */
+  text?:string;
   /** Given to another bot (workers.ts `setWorkerOwner`): its reports are emitted as `workerReport`, never the coordinator's. */
   owner?:WorkerOwner;
   approvals:Map<string,Record<string,unknown>>;processes:{pid:number;started:string}[];
@@ -101,7 +103,7 @@ export class AgyWorkers {
     if(w.cleaning)throw new Error('Worker cleanup incomplete; task remains blocked.');
     return true;
   }
-  private save(){mkdirSync(this.config.acpHome!,{recursive:true});writeFileAtomic(join(this.config.acpHome!,'workers.json'),JSON.stringify({version:2,ownerSessionId:this.config.sessionId,workers:[...this.workers.values()].map(({head,cleanup,approvals,discardReport,...w})=>w)}));}
+  private save(){mkdirSync(this.config.acpHome!,{recursive:true});writeFileAtomic(join(this.config.acpHome!,'workers.json'),JSON.stringify({version:2,ownerSessionId:this.config.sessionId,workers:[...this.workers.values()].map(({head,cleanup,approvals,discardReport,text,...w})=>w)}));}
   async tool(name:string,args:Record<string,unknown>){
     if(this.closed)throw new Error('Worker manager closed.');
     if(name==='app_handoff'){
@@ -147,13 +149,14 @@ export class AgyWorkers {
   }
   private launch(w:Worker,text:string){
     this.activeReports.delete(w.id);w.reportDelivered=false;w.reviewAttempts=0;delete w.checkpoint;
-    w.processes=[];w.active=true;w.run++;const run=w.run;w.status='running';w.denied=false;w.discardReport=false;w.reportPending=false;w.reportDispatching=false;delete w.report;this.save();
+    w.processes=[];w.active=true;w.run++;const run=w.run;w.status='running';w.denied=false;w.discardReport=false;w.reportPending=false;w.reportDispatching=false;delete w.report;delete w.text;this.save();
     this.emit({kind:'managedPending',pending:true});
     this.emit({kind:'toolUse',id:w.id,tool:'Agent',title:`Delegate ${w.name}`,detail:text,parent:null,input:{description:w.name,prompt:text,subagent_type:`${w.engine}-worker`,run_in_background:true}});
     this.emit({kind:'subagentStarted',id:w.id,description:w.name,type:`${w.engine}-worker`,prompt:text,background:true,execution:{run,ownerSessionId:this.config.sessionId,threadId:w.sessionId||null,turnId:null}});
     this.emit({kind:'subagentRuntime',id:w.id,runtime:{engine:w.engine,reasoningEffort:this.config.effort}});
     const finish=(status:string,result:string)=>{
       if(!w.active||w.run!==run)return;
+      this.flushText(w);
       if(w.denied||w.approvals.size){status='failed';result='Worker execution blocked by denied or unresolved approval.\n'+result;}
       w.active=false;w.reportPending=true;w.status=status;w.report=result.slice(0,200_000);this.cancelApprovals(w);
       void this.clean(w).then(()=>{
@@ -180,9 +183,10 @@ export class AgyWorkers {
         this.emit({...item,requestId:`worker:${w.id}:${run}:${item.requestId}`,workerId:w.id});return;
       }
       if(item.kind==='permissionCancelled'){w.denied=true;if(w.approvals.delete(item.requestId))this.emit({...item,requestId:`worker:${w.id}:${run}:${item.requestId}`});return;}
-      if(item.kind==='delta'){this.emit({kind:'subagentText',parent:w.id,text:item.text});return;}
+      if(item.kind==='delta'){w.text=(w.text??'')+item.text;return;}
+      if(item.kind==='textBlock'){this.flushText(w);return;}
       // A failed tool result (non-zero exit, e.g. git outside a repo) is normal work, not a denial; only approval denial/cancel sets w.denied.
-      if(item.kind==='toolUse'||item.kind==='toolResult'){this.emit({...item,parent:w.id,id:`${w.id}:${run}:${item.id}`});}
+      if(item.kind==='toolUse'||item.kind==='toolResult'){this.flushText(w);this.emit({...item,parent:w.id,id:`${w.id}:${run}:${item.id}`});}
     };
     try{
       w.head=this.factory({...this.config,worker:true,workerEngine:w.engine,processStarted:pid=>{
@@ -208,6 +212,7 @@ export class AgyWorkers {
     w.cleanup=Promise.resolve().then(()=>head?.terminate()).then(()=>{if(w.processes.length&&!this.processesGone(w))throw Error('Worker process group still exists.');w.cleaning=false;w.head=undefined;}).catch(()=>{w.status='cleanup-failed';w.report='Worker process cleanup failed. Explicit recovery is required; no continuation permitted.';}).finally(()=>{w.cleanup=undefined;this.save();});
     return w.cleanup;
   }
+  private flushText(w:Worker){const text=w.text;delete w.text;if(text?.trim())this.emit({kind:'subagentText',parent:w.id,text});}
   private cancelApprovals(w:Worker){for(const id of w.approvals.keys())this.emit({kind:'permissionCancelled',requestId:`worker:${w.id}:${w.run}:${id}`});w.approvals.clear();}
   private deliverReport(w:Worker){
     this.report(w.id,`<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${(w.report??'').replaceAll('<','&lt;')}\n</app_task_result>\nWorker completion is execution evidence, not acceptance of the user's full objective. Resolve this exact task_id and run with app_task_checkpoint (outcome and concrete evidence) or same-task app_send_message before ending this report turn. Research-only scope and existing permissions remain unchanged.`,w.run);
@@ -245,7 +250,7 @@ export class AgyWorkers {
     w.discardReport=discard;
     this.activeReports.delete(w.id);
     if(!w.active&&!w.cleaning){if(discard){w.reportPending=false;this.save();}return;}
-    w.active=false;this.cancelApprovals(w);w.status='stopped';w.report='Stopped by the app; work was not completed.';
+    w.active=false;this.flushText(w);this.cancelApprovals(w);w.status='stopped';w.report='Stopped by the app; work was not completed.';
     await this.clean(w);
     w.reportPending=!discard;this.save();this.emit({kind:'subagentEnded',id:w.id,status:w.status,summary:w.report??''});
   }

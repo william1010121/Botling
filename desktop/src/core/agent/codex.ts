@@ -1376,7 +1376,9 @@ export class CodexSession {
         worker.editorCheckpoint=item.failed?undefined:item.id;
         return [this.item({...item,parent:task,id:`${task}:${item.id}`})];
       case "permissionDenied": return [this.item({ ...item, toolUseId: `${task}:${item.toolUseId}` })];
-      case "delta": case "assistantText": return [this.item({ kind: "subagentText", parent: task, text: item.text })];
+      // claude streams a message in chunks that cut words, then sends it whole: one step per message, as in claude-workers.ts.
+      case "delta": return [];
+      case "assistantText": return [this.item({ kind: "subagentText", parent: task, text: item.text })];
       case "connectionLost": return [this.item({ ...item, parent: task })];
       case "rateLimits": return [this.item(item)];
       case "result": {

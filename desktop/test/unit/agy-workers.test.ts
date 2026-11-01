@@ -177,6 +177,30 @@ it('a worker that stopped early, was cancelled or wrote no report after a failed
  }
 });
 
+// Replay the split transcript: ACP streams a message in chunks that cut words and code spans
+// ("05B44" | "DD6-73BB", "(1) (" | "1).pdf"); each chunk became its own paragraph and broke the markdown.
+it('streamed chunks of one message become one step, split only where a tool runs and flushed at the end',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ const texts=()=>h.events.filter(e=>e.kind==='subagentText').map(e=>e.text);
+ for(const text of ['Compiling `05B44','DD6-73BB (1) (','1).tex`.'])w.h.onItem({kind:'delta',text});
+ expect(texts()).toEqual([]);
+ w.h.onItem({kind:'textBlock'});w.h.onItem({kind:'toolUse',id:'t1',tool:'other',title:'botling_run_command',detail:'pdflatex',input:{}} as any);
+ expect(texts()).toEqual(['Compiling `05B44DD6-73BB (1) (1).tex`.']);
+ expect(h.events.findIndex(e=>e.kind==='subagentText')).toBeLessThan(h.events.findIndex(e=>e.kind==='toolUse'&&e.parent===a.task_id));
+ w.h.onItem({kind:'toolResult',id:'t1',output:'ok',failed:false} as any);
+ for(const text of ['- **Integrity check',' (SHA-256)**: ok\n','- Size: 147,889 bytes'])w.h.onItem({kind:'delta',text});
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ expect(texts()).toEqual(['Compiling `05B44DD6-73BB (1) (1).tex`.','- **Integrity check (SHA-256)**: ok\n- Size: 147,889 bytes']);
+ expect(h.events.findLastIndex(e=>e.kind==='subagentText')).toBeLessThan(h.events.findIndex(e=>e.kind==='subagentEnded'));
+});
+
+it('a worker that crashes mid-message still shows the words it streamed',async()=>{
+ const h=harness();await h.m.tool('app_handoff',{instructions:'task'});const w=h.starts[0]!;
+ w.h.onItem({kind:'delta',text:'half a '});w.h.onItem({kind:'delta',text:'sentence'});
+ w.h.onExit({code:1,signal:null,stderr:'fixture crashed',expected:false,silent:false});await settle();
+ expect(h.events.filter(e=>e.kind==='subagentText').map(e=>e.text)).toEqual(['half a sentence']);
+});
+
 it('worker crash produces one failed report only after cleanup',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;let clean!:()=>void;w.cleanup=new Promise<void>(r=>clean=r);
  w.h.onExit({code:1,signal:null,stderr:'fixture crashed',expected:false,silent:false});await settle();expect(h.reports).toEqual([]);
