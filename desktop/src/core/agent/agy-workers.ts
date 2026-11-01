@@ -55,6 +55,14 @@ export class AgyWorkers {
   }
   get running(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired).map(w=>w.id);}
   get completionDependencies(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired||w.reportPending).map(w=>({id:w.id,run:w.run,task:w.instructions,state:w.active||w.cleaning||w.cleanup||w.recoveryRequired?'running' as const:'reportQueued' as const,callback:'app_task_result' as const,taskTruncated:false}));}
+  /** Stops one worker and its tools (the sub-bot hand-off: a busy ACP worker cannot be messaged). False: no such worker, or not at work. */
+  async cancelTask(id:string):Promise<boolean>{
+    const w=this.workers.get(id);
+    if(!w||this.closed||!(w.active||w.cleaning||w.cleanup))return false;
+    await this.stop(w,true);
+    if(w.cleaning)throw new Error('Worker cleanup incomplete; task remains blocked.');
+    return true;
+  }
   private save(){mkdirSync(this.config.acpHome!,{recursive:true});writeFileAtomic(join(this.config.acpHome!,'workers.json'),JSON.stringify({version:2,ownerSessionId:this.config.sessionId,workers:[...this.workers.values()].map(({head,cleanup,approvals,discardReport,...w})=>w)}));}
   async tool(name:string,args:Record<string,unknown>){
     if(this.closed)throw new Error('Worker manager closed.');

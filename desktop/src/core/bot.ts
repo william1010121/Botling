@@ -1039,27 +1039,62 @@ export class Bot {
   }
 
   /**
-   * A subagent by the id or name claude reaches it by (`SendMessage`'s `to`), or its call's id, for the sub-bot
-   * hand-off: where it is, which head sent it, what it was asked and the steps it has taken (read from its file).
+   * A subagent by the id or name its engine reaches it by (Claude's `SendMessage` `to`, a Codex or Antigravity
+   * worker's task id), or its call's id, for the sub-bot hand-off: where it is, which head holds it, which engine
+   * it runs on, what it was asked and the steps it has taken (read from its file).
    */
-  findSubagent(key: string): { id: string; status: SubagentRecord["status"]; head: Engine; description: string; prompt: string; result: string; steps: StepRecord[] } | null {
+  findSubagent(key: string): { id: string; status: SubagentRecord["status"]; head: Engine; engine: Engine; description: string; prompt: string; result: string; steps: StepRecord[]; threadId: string | null; run: number | null } | null {
     for (const bot of this.members) {
       const found = bot.subagents.find(key);
       if (!found) continue;
       const steps = found.steps.length ? found.steps : bot.subagentHistory(found).steps;
-      return { id: found.id, status: found.status, head: bot.engine, description: found.description, prompt: found.prompt, result: found.result ?? "", steps: [...steps] };
+      const runtime = (found as { runtime?: { engine?: unknown } }).runtime?.engine;
+      const engine: Engine = runtime === "codex" || runtime === "agy" || runtime === "claude" ? runtime : bot.engine;
+      return {
+        id: found.id, status: found.status, head: bot.engine, engine, description: found.description, prompt: found.prompt, result: found.result ?? "", steps: [...steps],
+        threadId: found.execution?.threadId ?? null, run: found.execution?.run ?? null,
+      };
     }
     return null;
   }
 
+  /** The engines this bot may run a sub bot on (its heads). */
+  get headEngines(): Engine[] { return [...this.headsSettings.engines]; }
+
   /**
-   * The hand-off's last resort: the turn running now is stopped whole (claude has no stop for one subagent),
-   * and the subagent, if it still shows as running, is marked stopped. It then goes on in a sub bot from its handoff file.
+   * How the hand-off reaches a subagent: `ask` (claude: the project bot's own SendMessage, so the app only waits),
+   * `steer` (a Codex worker: the app joins a wrap-up request into its turn), or `stop` (an Antigravity worker
+   * takes no message while it works: it is stopped at once).
+   */
+  handoffMode(subagentId: string): "ask" | "steer" | "stop" {
+    const holder = this.members.find((bot) => bot.subagents.find(subagentId));
+    if (holder?.head instanceof CodexHead) return "steer";
+    if (holder?.head instanceof AgyAcpHead) return "stop";
+    return "ask";
+  }
+
+  /** Sends a Codex worker at work the wrap-up request (false: not sent, it is not at work or its head is not Codex). */
+  askForHandoff(subagentId: string, text: string): boolean {
+    const holder = this.members.find((bot) => bot.subagents.find(subagentId));
+    const found = holder?.subagents.find(subagentId);
+    return holder?.head instanceof CodexHead && found ? holder.head.messageRunningWorker(found.id, text) : false;
+  }
+
+  /**
+   * The hand-off's last resort. Claude: the turn running now is stopped whole (claude has no stop for one subagent).
+   * A Codex or Antigravity worker is stopped alone (its turn is interrupted, no report is made). Either way the
+   * subagent, if it still shows as running, is marked stopped. It then goes on in a sub bot from its handoff file.
    */
   async stopForHandoff(subagentId: string): Promise<void> {
-    const owner = this.owner;
-    const turn = owner.turn;
-    if (turn && turn.origin !== "tidy") await owner.stop(turn.id);
+    const holder = this.members.find((bot) => bot.subagents.find(subagentId));
+    const found = holder?.subagents.find(subagentId);
+    if (holder && found && holder.head instanceof CodexHead) holder.head.cancelWorkers(new Set([found.id]));
+    else if (holder && found && holder.head instanceof AgyAcpHead) await holder.head.cancelWorker(found.id).catch((error) => this.log(`sub-bot hand-off: stopping worker ${found.id}: ${(error as Error).message}`));
+    else {
+      const owner = this.owner;
+      const turn = owner.turn;
+      if (turn && turn.origin !== "tidy") await owner.stop(turn.id);
+    }
     for (const bot of this.members) {
       if (bot.subagents.stopOne(subagentId)) { bot.saveSubagents(false, bot.subagents.get(subagentId)); this.rowsChanged(true); }
     }
@@ -2061,8 +2096,7 @@ export class Bot {
   /** No silent fallback to a Claude worker/plugin from an Antigravity reply. */
   private handleRequests(requests: BotRequest[]): BotRequest[] {
     const unavailable = new Set(["component", "plugin", "newBot", "newProject", "suggestComponent", "componentSpec"]);
-    // A sub bot is made from a Claude subagent only: from Codex or Antigravity the request is refused out loud (the chat says so), never dropped.
-    const blocked = requests.filter(request => request.kind === "subBot" ? this.engine !== "claude" : this.engine === "agy" && unavailable.has(request.kind));
+    const blocked = this.engine === "agy" ? requests.filter(request => unavailable.has(request.kind)) : [];
     const supported = requests.filter(request => !blocked.includes(request));
     return [...blocked, ...(supported.length && this.options.onRequests ? this.options.onRequests(this.owner, supported) : supported)];
   }

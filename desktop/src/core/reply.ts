@@ -343,7 +343,7 @@ export function unsupportedRequest(request: BotRequest): string {
     case "folder": return "access to another folder";
     case "install": return "installing a plugin";
     case "newBot": return `a new bot ("${request.name}")`;
-    case "subBot": return `a sub bot ("${request.name}"): only a Claude project bot can move a Claude subagent into one, so nothing was moved`;
+    case "subBot": return `a sub bot ("${request.name}"): this bot cannot make one here, so nothing was moved`;
     case "newProject": return `a new project (${request.folder})`;
     case "installBuild": return "installing a build";
     case "appScreenshot": return "a screenshot of the app";

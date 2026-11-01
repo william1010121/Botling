@@ -1369,6 +1369,16 @@ export class CodexSession {
     return this.request("turn/steer", { threadId: worker.thread ?? "", expectedTurnId: turnId, input: [{ type: "text", text }] }, { kind: "workerSteer", task: worker.id, run: worker.run, text });
   }
 
+  /**
+   * Words for a worker that is at work now (the sub-bot hand-off's wrap-up request): joined into its turn
+   * (`turn/steer`) like any follow-up. A worker not at work gets nothing: this never starts a new run.
+   */
+  wrapUpWorker(task: string, text: string): CodexOutput[] {
+    const worker = this.workers.get(task);
+    if (!worker?.active || worker.cancelled || this.stopped) return [];
+    return this.messageWorker(task, text);
+  }
+
   private messageWorker(task: string, text: string): CodexOutput[] {
     const worker = this.workers.get(task);
     if (!worker || this.stopped) return [];
@@ -2040,6 +2050,13 @@ export class CodexHead {
 
   cancelWorkers(ids?: Set<string>) {
     this.perform(this.session.cancelWorkers(ids));
+  }
+
+  /** The sub-bot hand-off's wrap-up request to one worker at work (false: it is not at work, nothing was sent). */
+  messageRunningWorker(id: string, text: string): boolean {
+    if (!this.session.runningWorkers.includes(id)) return false;
+    this.perform(this.session.wrapUpWorker(id, text));
+    return true;
   }
 
   /** Stdin closes once the turn under way and its workers' reports are done (going to sleep). */

@@ -44,7 +44,7 @@ import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
-import type { Engine, Heads } from "./heads";
+import { headsJSON, singleHead, type Engine, type Heads } from "./heads";
 import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, type BotPrompts, type ReportTool } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
@@ -55,7 +55,7 @@ import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botDescription, latestAction } from "./whiteboard-data";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
-import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, SUB_BOT_WAIT_MS, safeToken } from "./sub-bots";
+import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
 import { Conversations } from "./conversations";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
@@ -786,9 +786,12 @@ First write a test that shows this, then fix it.`;
   }
 
   /**
-   * A project bot's <sub-bot name="…" subagent="id"/> (Claude only): the subagent it asked to write handoff.md and end
-   * is waited for (and stopped, with the file written here, only if it does not end in time); then a hidden sub bot is
-   * made in the same folder and handed the file. A request that cannot be done says why in the chat, never silently.
+   * A project bot's <sub-bot name="…" subagent="id"/>: the subagent (a Claude subagent, a Codex worker or an Antigravity
+   * worker) is asked to write handoff.md and end (Claude: by the project bot's own SendMessage; a Codex worker: by the app,
+   * joined into its turn; an Antigravity worker takes no message while it works, so it is stopped at once) and waited for
+   * (and stopped, with the file written here, only if it does not end in time); then a hidden sub bot is made in the same
+   * folder, on the worker's engine when the project bot has it, and handed the file. A request that cannot be done says
+   * why in the chat, never silently.
    */
   private async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string }): Promise<void> {
     const profile = bot.profile;
@@ -803,19 +806,23 @@ First write a test that shows this, then fix it.`;
     const key = request.subagent;
     const found = bot.findSubagent(key);
     if (!found) return refuse(`there is no subagent "${key}" here.`);
-    if (found.head !== "claude") return refuse(`the subagent "${key}" belongs to ${found.head === "codex" ? "Codex" : "Antigravity"}, which cannot be asked to hand off and end; only Claude subagents can become sub bots.`);
+    // One that already ended can still move if the app has a record of what it did; with none there is nothing to hand over.
+    if (found.status !== "running" && !found.steps.length && !found.result.trim()) return refuse(`the subagent "${key}" has already ended and left no record of its work, so there is nothing to hand over.`);
     const token = safeToken(key);
     if (this.profiles.some((sub) => sub.parent === profile.id && sub.handoff === token) || this.movingSubagents.has(`${profile.id}:${token}`)) return refuse(`"${key}" was already moved to a sub bot.`);
     this.movingSubagents.add(`${profile.id}:${token}`);
     try {
       const file = handoffFile(profile.folder, token);
       mkdirSync(join(file, ".."), { recursive: true });
+      const mode = bot.handoffMode(found.id);
       const result = await runHandoff({
         status: () => bot.findSubagent(key)?.status ?? "missing",
+        ...(mode === "steer" ? { ask: () => { bot.askForHandoff(found.id, wrapUpMessage(file)); } } : {}),
+        ...(mode === "stop" ? { stopAtOnce: true } : {}),
         forceStop: () => bot.stopForHandoff(found.id),
         fallbackText: (reason) => {
           const now = bot.findSubagent(key) ?? found;
-          return fallbackHandoff({ name, description: now.description, prompt: now.prompt, steps: now.steps, status: now.status, result: now.result, reason });
+          return fallbackHandoff({ name, description: now.description, prompt: now.prompt, steps: now.steps, status: now.status, result: now.result, reason, engine: now.engine, id: now.id, threadId: now.threadId, run: now.run });
         },
         written: () => { try { return readFileSync(file, "utf8").trim().length > 0; } catch { return false; } },
         write: (text) => writeFileAtomic(file, text),
@@ -824,10 +831,11 @@ First write a test that shows this, then fix it.`;
         waitMs: this.options.subBotWaitMs ?? SUB_BOT_WAIT_MS,
         pollMs: Math.min(500, Math.max(5, Math.floor((this.options.subBotWaitMs ?? SUB_BOT_WAIT_MS) / 10))),
       });
-      const subId = this.makeSubBot(profile, name, `Continue the work moved out of a subagent: ${found.description || found.prompt.slice(0, 200)}`, token);
+      const chosen = subBotEngine(found.engine, { engine: bot.engine, heads: bot.headEngines });
+      const subId = this.makeSubBot(profile, name, `Continue the work moved out of a subagent: ${found.description || found.prompt.slice(0, 200)}`, token, chosen.engine);
       const progress = progressFile(profile.folder, token);
       if (!existsSync(progress)) writeFileAtomic(progress, "Status: working\n");
-      bot.appNotice(`Moved "${found.description || key}" to the sub bot "${name}".${result.outcome === "forced" ? " The subagent did not end in time, so its turn was stopped and the handoff was written from its recorded steps." : ""}`, undefined, undefined, { sourceID: subId });
+      bot.appNotice(`Moved "${found.description || key}" to the sub bot "${name}".${result.outcome === "forced" ? (mode === "stop" ? " The worker cannot take a message while it works, so it was stopped at once and the handoff was written from its recorded steps." : " The subagent did not end in time, so it was stopped and the handoff was written from its recorded steps.") : ""}${chosen.note ? ` ${chosen.note}` : ""}`, undefined, undefined, { sourceID: subId });
       this.bots.get(subId)?.relay(subBotFirstMessage({ parentName: profile.name, name, handoff: file, progress, note: request.note }));
       this.log(`sub bot ${name} made under ${profile.name} (${result.outcome}${result.wroteFallback ? ", handoff written by the app" : ""})`);
     } catch (error) {
@@ -842,13 +850,19 @@ First write a test that shows this, then fix it.`;
   private subBotsReported = new Set<string>();
 
   /** Makes the hidden sub bot: a Bot of its own (head, chat.json, subagents.json) under `parent`, in the same folder, no worktree. */
-  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string): string {
+  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string, engine?: Engine): string {
     const taken = new Set(this.profiles.filter((profile) => profile.parent === parent.id).map((profile) => profile.name.toLowerCase()));
     let name = botName(rawName) || "Sub bot";
     for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${botName(rawName) || "Sub bot"} ${n}`;
     const id = randomUUID().toUpperCase();
     mkdirSync(join(parent.folder, ".bot", "sub-bots", id), { recursive: true });
     this.seedEngineDefaults(id);
+    // It runs on the engine of the worker it took over (`subBotEngine`), as a single head: the app's defaults would otherwise decide.
+    if (engine) {
+      const store = new BotStore(Layout.bot(this.options.dataDir, id));
+      store.saveSetting("heads", headsJSON(singleHead(engine)));
+      store.saveSetting("engine", engine);
+    }
     const row = { id, name, folder: parent.folder, avatar: parent.avatar, job, parent: parent.id, createdAt: Date.now(), handoff };
     saveProjectRow(this.options.dataDir, row);
     this.attach(projectProfile(this.options.dataDir, { ...row, folder: folderURLText(parent.folder) }));

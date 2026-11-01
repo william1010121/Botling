@@ -93,6 +93,16 @@ export const subBotRule = [
   "  Use it only on a subagent that is still running and was started by you, only when the user asks for it or the work clearly deserves its own conversation. Never write the tag inside code or examples.",
   "- When the app's wake note lists sub bots, each has a progress file: to answer how a sub bot is going, read its progress file; do not wake it. It reports to you when it finishes.",
 ].join("\n");
+/**
+ * The same for a Codex or Antigravity project bot, whose workers are app-managed (`app_handoff` task ids). It does not message
+ * the worker: the app does (a Codex worker is asked to write handoff.md and end; an Antigravity worker takes no message while it
+ * works, so the app stops it and writes handoff.md from the worker's recorded steps).
+ */
+export const workerSubBotRule = [
+  "- To move a running app-managed worker out into a sub bot of its own (a bot the user can open and talk to directly, which can start workers too): end your reply with <sub-bot name=\"short name, no quotes\" subagent=\"its task_id\"/>, where its task_id is the one app_handoff returned. Do not message or cancel the worker yourself: the app asks it to write .bot/subagents/<task_id>/handoff.md and end (an Antigravity worker cannot take messages while it works, so the app stops it at once and writes the handoff from what it recorded), makes the sub bot in this same folder on the worker's engine, and hands it the work. Reply with one sentence, \"Moved to X\".",
+  "  Use it only on a worker that is still running and was started by you, only when the user asks for it or the work clearly deserves its own conversation. Never write the tag inside code or examples.",
+  "- When the app's wake note lists sub bots, each has a progress file: to answer how a sub bot is going, read its progress file; do not wake it. It reports to you when it finishes.",
+].join("\n");
 /** How a message from the app itself (not the user) starts. */
 export const APP_LEAD = "(App: ";
 /** The start of the note that wakes a bot, and of the one before it falls asleep. */
@@ -444,9 +454,15 @@ const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, reports: ReportTool | null = null, engine: Engine = "claude"): BotPrompts {
   let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
   // Sub bots (desktop only; the Swift goldens stay as they are): a project's or bot's own bot may write handoff.md and
-  // progress.md in .bot/subagents/<id>/, and a Claude one is told how to move a running subagent out into a sub bot.
+  // progress.md in .bot/subagents/<id>/, and it is told how to move a running subagent or worker out into a sub bot (Claude, Codex
+  // and Antigravity alike; Antigravity's own prompt has no such line to extend, so its text is appended whole).
   if (profile.role !== "main" && !profile.parent && profile.id !== MAINTAINER_PROMPT_ID) {
-    system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.${engine === "claude" ? `\n${subBotRule}` : ""}`);
+    system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.\n${engine === "claude" ? subBotRule : workerSubBotRule}`);
+    if (engine === "agy" && !system.includes(workerSubBotRule)) system = `${system}\nIn .bot/ the handoff.md and progress.md files under .bot/subagents/<id>/ are also yours to write.\n${workerSubBotRule}`;
+  }
+  // An Antigravity sub bot: its prompt is a short one of its own, so what a sub bot is told is appended whole.
+  if (engine === "agy" && profile.parent && profile.role !== "main") {
+    system = `${system}\nYou are a sub bot of your project bot: your first message, starting with "${SUB_BOT_RELAY_PREFIX}", names a handoff.md file; read it and take over exactly where it stops. Keep the progress.md file named there current (what is done, what you are doing, what is next, anything waiting on the user) and set its first line to "Status: done" when your job is finished; your project bot reads it. In .bot/ only the handoff.md and progress.md files named in your first message are yours to write besides memory and artifacts.`;
   }
   if (profile.role !== "main") {
     system = system.includes(SHOW_LINE)

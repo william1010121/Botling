@@ -10,8 +10,8 @@ import { Bot } from "../../src/core/bot";
 import { parseReply, unsupportedRequest } from "../../src/core/reply";
 import { botPrompts, desktopPrompts, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX } from "../../src/core/prompts";
 import { saveProjectRow } from "../../src/core/projects";
-import { fallbackHandoff, handoffFile, progressFile, progressStatus, runHandoff, safeToken, subBotBriefing, type HandoffPorts } from "../../src/core/sub-bots";
-import { projectProfile } from "../../src/core/store/workspace";
+import { fallbackHandoff, handoffFile, progressFile, progressStatus, runHandoff, safeToken, subBotBriefing, subBotEngine, wrapUpMessage, type HandoffPorts } from "../../src/core/sub-bots";
+import { Layout, projectProfile } from "../../src/core/store/workspace";
 import { MAIN_BOT_ID } from "../../src/core/store/records";
 import { tempDir } from "../helpers";
 
@@ -32,7 +32,7 @@ describe("the <sub-bot> tag", () => {
     expect(parseReply('<sub-bot name="A"/>').body).toBe("");
   });
   it("says out loud, never silently, what an engine that cannot do it was refused", () => {
-    expect(unsupportedRequest({ kind: "subBot", name: "A", subagent: "b", note: "" })).toMatch(/Claude/);
+    expect(unsupportedRequest({ kind: "subBot", name: "A", subagent: "b", note: "" })).toMatch(/sub bot/);
   });
 });
 
@@ -86,6 +86,63 @@ describe("the hand-off wait", () => {
     let t = 0; h.p.now = () => (t += 0) + slept;
     await runHandoff(h.p);
     expect(slept).toBe(90_000);
+  });
+});
+
+describe("the hand-off for Codex and Antigravity workers", () => {
+  it("asks a running Codex worker to wrap up once, then waits for it like a Claude subagent", async () => {
+    let asked = 0;
+    const h = ports({ statuses: ["running", "running", "completed"], ask: () => { asked++; } });
+    h.setText("# handoff");
+    expect(await runHandoff(h.p)).toEqual({ outcome: "ended", wroteFallback: false });
+    expect(asked).toBe(1);
+    expect(h.calls).toEqual([]);
+  });
+  it("does not ask a worker that already ended", async () => {
+    let asked = 0;
+    const h = ports({ statuses: ["completed"], ask: () => { asked++; } });
+    expect(await runHandoff(h.p)).toEqual({ outcome: "ended", wroteFallback: true });
+    expect(asked).toBe(0);
+  });
+  it("cancels a Codex worker that ignores the request at the deadline and writes handoff.md from its record", async () => {
+    let asked = 0;
+    const h = ports({ statuses: ["running"], ask: () => { asked++; } });
+    expect(await runHandoff(h.p)).toEqual({ outcome: "forced", wroteFallback: true });
+    expect(asked).toBe(1);
+    expect(h.calls).toEqual(["force", "fallback", "write"]);
+    expect(h.text()).toContain("did not end in time");
+  });
+  it("stops a worker that takes no message (Antigravity, busy) at once, without waiting", async () => {
+    let slept = 0;
+    const h = ports({ statuses: ["running"], stopAtOnce: true, sleep: async () => { slept++; } });
+    expect(await runHandoff(h.p)).toEqual({ outcome: "forced", wroteFallback: true });
+    expect(slept).toBe(0);
+    expect(h.calls).toEqual(["force", "fallback", "write"]);
+    expect(h.text()).toContain("cannot take a message");
+  });
+  it("keeps a handoff.md an Antigravity worker wrote before it was stopped", async () => {
+    const h = ports({ statuses: ["running"], stopAtOnce: true });
+    h.setText("real");
+    expect(await runHandoff(h.p)).toEqual({ outcome: "forced", wroteFallback: false });
+    expect(h.text()).toBe("real");
+  });
+  it("the wrap-up request names the file and says to end", () => {
+    const text = wrapUpMessage("/p/.bot/subagents/t1/handoff.md");
+    expect(text).toContain("/p/.bot/subagents/t1/handoff.md");
+    expect(text).toMatch(/end your turn/);
+  });
+  it("a sub bot runs on the worker's engine when its project bot has it, else on the project bot's own, with a note", () => {
+    expect(subBotEngine("codex", { engine: "claude", heads: ["claude", "codex"] })).toEqual({ engine: "codex", note: "" });
+    expect(subBotEngine("agy", { engine: "agy", heads: ["agy"] })).toEqual({ engine: "agy", note: "" });
+    const fallback = subBotEngine("codex", { engine: "agy", heads: ["agy"] });
+    expect(fallback.engine).toBe("agy");
+    expect(fallback.note).toMatch(/Codex/);
+    expect(fallback.note).toMatch(/Antigravity/);
+  });
+  it("handoff.md names where a Codex worker's own record is", () => {
+    const text = fallbackHandoff({ name: "X", description: "d", prompt: "p", steps: [], status: "stopped", result: "", reason: "r", engine: "codex", id: "task-1", threadId: "thr-9", run: 2 });
+    expect(text).toContain("Codex worker (task task-1, run 2, thread thr-9)");
+    expect(fallbackHandoff({ name: "X", description: "d", prompt: "p", steps: [], status: "stopped", result: "", reason: "r", engine: "claude" })).not.toContain("worker");
   });
 });
 
@@ -217,14 +274,18 @@ describe("a sub bot in the core", () => {
 });
 
 describe("making a sub bot from a subagent", () => {
-  const found = (over: Record<string, unknown> = {}) => ({ id: "toolu_1", status: "running" as const, head: "claude" as const, description: "build settings", prompt: "Build the settings page", result: "", steps: [], ...over });
+  const found = (over: Record<string, unknown> = {}) => ({ id: "toolu_1", status: "running" as const, head: "claude" as const, engine: "claude" as const, description: "build settings", prompt: "Build the settings page", result: "", steps: [], threadId: null, run: null, ...over });
 
-  async function run(opts: { statuses: string[]; head?: string; subagent?: unknown; handoffBefore?: boolean; parentId?: string }) {
+  async function run(opts: { statuses: string[]; head?: string; engine?: string; subagent?: unknown; handoffBefore?: boolean; parentId?: string; mode?: "ask" | "steer" | "stop"; heads?: string[]; over?: Record<string, unknown>; wrapUp?: (text: string, statuses: string[]) => void }) {
     const h = fixture({ sub: false }), core = h.open({ subBotWaitMs: 100 });
     const parent = bots(core).get(opts.parentId ?? PROJECT)!;
     const statuses = [...opts.statuses];
-    const lookup = opts.subagent === null ? () => null : () => found({ status: statuses.length > 1 ? statuses.shift() : statuses[0], ...(opts.head ? { head: opts.head } : {}) });
+    const lookup = opts.subagent === null ? () => null : () => found({ status: statuses.length > 1 ? statuses.shift() : statuses[0], ...(opts.head ? { head: opts.head } : {}), ...(opts.engine ? { engine: opts.engine } : {}), ...(opts.over ?? {}) });
     vi.spyOn(parent, "findSubagent").mockImplementation(lookup as any);
+    vi.spyOn(parent, "handoffMode").mockImplementation(() => opts.mode ?? "ask");
+    if (opts.heads) vi.spyOn(parent, "headEngines", "get").mockReturnValue(opts.heads as any);
+    const asks: string[] = [];
+    vi.spyOn(parent, "askForHandoff").mockImplementation(((_id: string, text: string) => { asks.push(text); opts.wrapUp?.(text, statuses); return true; }) as any);
     const stop = vi.spyOn(parent, "stopForHandoff").mockImplementation(async () => { statuses.splice(0, statuses.length, "stopped"); });
     const notices: string[] = [];
     vi.spyOn(parent, "appNotice").mockImplementation(((text: string) => { notices.push(text); return "n"; }) as any);
@@ -234,7 +295,7 @@ describe("making a sub bot from a subagent", () => {
     const file = handoffFile(h.folder, "agent-1");
     if (opts.handoffBefore) { mkdirSync(join(file, ".."), { recursive: true }); writeFileSync(file, "# written by the subagent\nnext: finish tabs"); }
     await (core as any).subBotRequested(parent, { name: "Settings page", subagent: "agent-1", note: "" });
-    return { h, core, notices, relays, stop, file, subs: [...bots(core).values()].filter((bot) => bot.profile.parent) };
+    return { h, core, notices, relays, stop, asks, file, subs: [...bots(core).values()].filter((bot) => bot.profile.parent) };
   }
 
   it("a subagent that wrote its handoff and ended becomes a hidden sub bot that is told to read it", async () => {
@@ -270,11 +331,75 @@ describe("making a sub bot from a subagent", () => {
     } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
   });
 
-  it("refuses a Codex subagent, an unknown one, and a sub bot or the main bot as the asker, saying why", async () => {
+  it("a Codex worker is asked by the app to write handoff.md and end; no stop, and the sub bot runs on Codex", async () => {
+    const r = await run({ statuses: ["running"], head: "codex", engine: "codex", mode: "steer", heads: ["claude", "codex"], handoffBefore: true,
+      wrapUp: (_text, statuses) => { statuses.splice(0, statuses.length, "completed"); } });
+    try {
+      expect(r.asks).toHaveLength(1);
+      expect(r.asks[0]).toContain(r.file);
+      expect(r.stop).not.toHaveBeenCalled();
+      expect(r.subs).toHaveLength(1);
+      expect(readFileSync(r.file, "utf8")).toContain("written by the subagent");
+      expect(r.subs[0]!.engine).toBe("codex");
+      expect(r.relays[0]!.text).toContain(r.file);
+      const settings = JSON.parse(readFileSync(join(Layout.bot(r.h.dir, r.subs[0]!.id), "bot.json"), "utf8"));
+      expect(settings.engine).toBe("codex");
+      expect(settings.heads.engines).toEqual(["codex"]);
+    } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
+  });
+
+  it("a Codex worker that ignores the request is cancelled at the deadline and handoff.md is written from its record", async () => {
+    const r = await run({ statuses: ["running"], head: "codex", engine: "codex", mode: "steer", heads: ["claude", "codex"], over: { steps: [{ id: "1", kind: "tool", tool: "Bash", title: "npm test", done: true, failed: false }], threadId: "thr-1", run: 3 } });
+    try {
+      expect(r.asks).toHaveLength(1);
+      expect(r.stop).toHaveBeenCalledWith("toolu_1");
+      const text = readFileSync(r.file, "utf8");
+      expect(text).toContain("did not end in time");
+      expect(text).toContain("Bash: npm test");
+      expect(text).toContain("thread thr-1");
+      expect(r.subs).toHaveLength(1);
+    } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
+  });
+
+  it("a busy Antigravity worker takes no message: it is stopped at once and handoff.md is written from its record", async () => {
+    const started = Date.now();
+    const r = await run({ statuses: ["running"], head: "agy", engine: "agy", mode: "stop", heads: ["agy"], over: { result: "half done" } });
+    try {
+      expect(Date.now() - started).toBeLessThan(90);
+      expect(r.asks).toEqual([]);
+      expect(r.stop).toHaveBeenCalledWith("toolu_1");
+      const text = readFileSync(r.file, "utf8");
+      expect(text).toContain("cannot take a message");
+      expect(text).toContain("half done");
+      expect(r.subs).toHaveLength(1);
+      expect(r.subs[0]!.engine).toBe("agy");
+      expect(r.notices.join("\n")).toContain("stopped at once");
+    } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
+  });
+
+  it("an Antigravity worker that already finished moves from its record, without a stop", async () => {
+    const r = await run({ statuses: ["completed"], head: "agy", engine: "agy", mode: "stop", heads: ["agy"], over: { result: "all done" } });
+    try {
+      expect(r.stop).not.toHaveBeenCalled();
+      expect(readFileSync(r.file, "utf8")).toContain("all done");
+      expect(r.subs).toHaveLength(1);
+    } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
+  });
+
+  it("a worker whose engine the project bot does not have becomes a sub bot on the project bot's engine, and says so", async () => {
+    const r = await run({ statuses: ["completed"], head: "claude", engine: "codex", mode: "ask", heads: ["claude"], over: { result: "done" } });
+    try {
+      expect(r.subs).toHaveLength(1);
+      expect(r.subs[0]!.engine).toBe("claude");
+      expect(r.notices.join("\n")).toMatch(/Codex is not one of this project bot's engines/);
+    } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
+  });
+
+  it("refuses an unknown subagent, one that ended without any record, and a sub bot or the main bot as the asker, saying why", async () => {
     for (const [what, opts, why] of [
-      ["codex", { statuses: ["running"], head: "codex" }, /Codex/],
-      ["agy", { statuses: ["running"], head: "agy" }, /Antigravity/],
       ["unknown", { statuses: ["running"], subagent: null }, /no subagent/],
+      ["codex ended, no record", { statuses: ["completed"], head: "codex", engine: "codex", mode: "steer" }, /no record/],
+      ["agy ended, no record", { statuses: ["failed"], head: "agy", engine: "agy", mode: "stop" }, /no record/],
       ["main", { statuses: ["running"], parentId: MAIN_BOT_ID }, /only a project/],
     ] as const) {
       const r = await run(opts as any);
@@ -283,6 +408,7 @@ describe("making a sub bot from a subagent", () => {
         expect(r.notices.join("\n"), what).toMatch(/No sub bot was made/);
         expect(r.notices.join("\n"), what).toMatch(why);
         expect(r.stop, what).not.toHaveBeenCalled();
+        expect(r.asks, what).toEqual([]);
         expect(existsSync(r.file), what).toBe(false);
       } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
     }
@@ -291,7 +417,7 @@ describe("making a sub bot from a subagent", () => {
   it("will not move the same subagent twice", async () => {
     const h = fixture({ sub: false }), core = h.open({ subBotWaitMs: 50 });
     const parent = bots(core).get(PROJECT)!;
-    vi.spyOn(parent, "findSubagent").mockImplementation((() => found({ status: "completed" })) as any);
+    vi.spyOn(parent, "findSubagent").mockImplementation((() => found({ status: "completed", result: "done" })) as any);
     const notices: string[] = [];
     vi.spyOn(parent, "appNotice").mockImplementation(((text: string) => { notices.push(text); return "n"; }) as any);
     vi.spyOn(Bot.prototype, "relay").mockImplementation((() => ({ messageId: "m", turnId: "t" })) as any);
@@ -318,9 +444,25 @@ describe("prompts", () => {
     expect(system).toContain("handoff.md and progress.md files under .bot/subagents/<id>/ are yours");
     expect(system).toContain("inbox.md, artifacts/");
   });
-  it("Codex and Antigravity project bots are not offered the tag", () => {
-    expect(desktop(manager, "codex")).not.toContain("<sub-bot");
-    expect(desktop(manager, "agy")).not.toContain("<sub-bot");
+  it("Codex and Antigravity project bots are offered the tag for their app-managed workers, and may write handoff.md and progress.md", () => {
+    for (const engine of ["codex", "agy"] as const) {
+      const system = desktop(manager, engine);
+      expect(system, engine).toContain("<sub-bot name=");
+      expect(system, engine).toContain("task_id");
+      expect(system, engine).toContain("Do not message or cancel the worker yourself");
+      expect(system, engine).toContain("handoff.md and progress.md files under .bot/subagents/<id>/");
+      expect(system, engine).not.toContain("SendMessage");
+    }
+  });
+  it("a Codex or Antigravity sub bot reads the handoff and keeps progress.md too", () => {
+    const profile = { ...manager, name: "Settings page", role: "bot" as "main" | "manager" | "bot", job: "Continue it", id: SUB, parent: PROJECT, memoryPath: `.bot/sub-bots/${SUB}/memory.md` };
+    for (const engine of ["codex", "agy"] as const) {
+      const system = desktopPrompts(botPrompts({ profile, parentName: "botling", engine }), profile, null, engine).system;
+      expect(system, engine).toContain("sub bot");
+      expect(system, engine).toContain("progress.md");
+      expect(system, engine).toContain(SUB_BOT_RELAY_PREFIX);
+      expect(system, engine).not.toContain("<sub-bot name=");
+    }
   });
   it("the main bot and Maintainer are not offered it", () => {
     expect(desktop({ ...manager, role: "main", id: MAIN_BOT_ID })).not.toContain("<sub-bot");
