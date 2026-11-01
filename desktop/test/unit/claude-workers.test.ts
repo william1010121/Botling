@@ -109,6 +109,32 @@ describe("a Claude worker's run", () => {
     expect(h.reports[0]!.text).toContain("Second part.");
   });
 
+  it("reports when a steered message was read into the turn under way (its turn start came before the one result)", async () => {
+    // Real claude 2.1.x: a line read in at the turn's next step still gets command_lifecycle "started" (with no init)
+    // before that turn's only result; one of its own gets "started" + init after the result.
+    const h = harness(undefined, { settleMs: 1_000 });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Job" }) as any;
+    const head = h.heads[0]!;
+    h.say(head, { kind: "init", sessionId: head.config.sessionId });
+    expect(h.workers.sendToWorker(task_id, "Also this")).toEqual({ ok: true, how: "steered", run: 1 });
+    h.say(head, { kind: "command", id: head.sent[1]!.uuid, state: "queued" });
+    h.say(head, { kind: "command", id: head.sent[1]!.uuid, state: "started" });
+    h.result(head, "Both done.");
+    expect(h.reports.map((r) => r.run)).toEqual([1]);
+    expect(h.reports[0]!.text).toContain("Both done.");
+    expect(h.workers.listWorkers()[0]).toMatchObject({ state: "idle", run: 1 });
+    // The next message is a new run in the kept-alive process, not steering into a run that ended.
+    expect(h.workers.sendToWorker(task_id, "Status?")).toEqual({ ok: true, how: "newRun", run: 2 });
+    expect(h.heads).toHaveLength(1);
+    h.say(head, { kind: "command", id: head.sent[2]!.uuid, state: "started" });
+    h.say(head, { kind: "init", sessionId: head.config.sessionId });
+    h.result(head, "Status: done.");
+    expect(h.reports.map((r) => r.run)).toEqual([1, 2]);
+    expect(h.reports[1]!.text).toContain("Status: done.");
+    await wait();
+    expect(h.reports).toHaveLength(2);
+  });
+
   it("continues in the kept-alive process, then with --resume of its own session once that process is gone", async () => {
     const h = harness();
     const { task_id } = await h.workers.tool("app_handoff", { instructions: "One" }) as any;

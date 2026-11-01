@@ -104,7 +104,7 @@ interface Record_ {
   owner?: WorkerOwner;
 }
 interface Live {
-  head?: ClaudeWorkerHead; queued: Set<string>; extraTurns: number; outputTokens: number; cost: number;
+  head?: ClaudeWorkerHead; queued: Set<string>; outputTokens: number; cost: number;
   approvals: Map<string, Record<string, unknown>>; settle?: ReturnType<typeof setTimeout>; pendingResult?: Extract<StreamItem, { kind: "result" }>;
   keepAlive?: ReturnType<typeof setTimeout>; stopping?: boolean;
   /** The text block being streamed: its chunks, shown as one step when the whole message (or the run's end) comes. */
@@ -196,7 +196,7 @@ export class ClaudeWorkers implements WorkerHost {
 
   private liveOf(w: Record_): Live {
     let live = this.live.get(w.id);
-    if (!live) { live = { queued: new Set(), extraTurns: 0, outputTokens: 0, cost: 0, approvals: new Map(), text: "" }; this.live.set(w.id, live); }
+    if (!live) { live = { queued: new Set(), outputTokens: 0, cost: 0, approvals: new Map(), text: "" }; this.live.set(w.id, live); }
     return live;
   }
 
@@ -329,7 +329,7 @@ export class ClaudeWorkers implements WorkerHost {
     w.run += 1;
     const run = w.run;
     w.active = true; w.status = "running"; w.reportPending = false; w.reportDelivered = false; w.interrupted = false; delete w.report;
-    live.queued.clear(); live.extraTurns = 0; live.outputTokens = 0; live.stopping = false; live.pendingResult = undefined;
+    live.queued.clear(); live.outputTokens = 0; live.stopping = false; live.pendingResult = undefined;
     this.save();
     const model = w.model ?? this.options.subagentModel() ?? base?.model ?? null;
     for (const item of workerRunStarted({ id: w.id, engine: "claude", name: w.name, run, conversationId: w.sessionId, ownerSessionId: this.options.ownerSessionId() }, words, { reasoningEffort: base?.effort ?? null, model }))
@@ -432,12 +432,11 @@ export class ClaudeWorkers implements WorkerHost {
       }
       case "command":
         if (item.state !== "started" || !live.queued.delete(item.id)) return;
-        // A follow-up that got a turn of its own: the run goes on until that turn's result.
+        // "started" after the turn's result: a turn of its own (init follows), the run goes on until its result.
+        // Before the result it was read into the turn under way (no init, no result of its own): nothing more to wait for.
         if (live.pendingResult) { clearTimeout(live.settle); live.settle = undefined; live.pendingResult = undefined; }
-        else live.extraTurns += 1;
         return;
       case "result": {
-        if (live.extraTurns > 0) { live.extraTurns -= 1; return; }
         if (live.queued.size) {
           // A follow-up sent during this turn was either read into it or gets a turn of its own right after.
           live.pendingResult = item;
