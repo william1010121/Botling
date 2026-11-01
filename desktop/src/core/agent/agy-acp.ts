@@ -12,6 +12,7 @@ import type { HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
 import { imageMediaType } from "../attachments";
 import { agyWorkerRuntimeEnabled } from "./agy-capabilities";
+import { agyHotSettingsEnabled, settingsChange, type HotSettings } from "./hot-settings";
 import { createAgyWorkerHead } from "./agy-worker-router";
 import { AgyWorkers } from "./agy-workers";
 import type { CodexItem } from "./codex";
@@ -54,6 +55,10 @@ export class AgyAcpProtocol {
   get fullPermissionActive() { return this.mode === "yolo" && this.confirmed && this.ready && this.submitting && !this.closed && !this.turnCancelled && (!this.turnFailure || this.turnFailure === "tool_failed") && this.approvals.size === 0; }
   private text = "";
   private sessionId = "";
+  /** The models the conversation advertised when it started (`session.models.availableModels`). */
+  private models: string[] = [];
+  /** A model/effort change being applied between turns: a prompt waits for it. */
+  private settingsPending?: Promise<boolean>;
   private initialization: Promise<void> | null = null;
   constructor(private config: AgyConfig, private write: (message: Obj) => void, private emit: (item: StreamItem) => void, private fatal: (error: Error) => void, private transport: { localToolEvents?: boolean; mcpServers?: Promise<Obj[]>; onAllow?: (title: string, args: Obj) => void; onPolicy?: (state: "negotiating" | "ready" | "active" | "stopped" | "error", message: string) => void; revoke?: () => void } = {}) { this.mode = config.bypassPermissions === true ? "yolo" : "default"; }
   private call(method: string, params: Obj, timeout = 30_000): Promise<Obj> {
@@ -79,6 +84,8 @@ export class AgyAcpProtocol {
     this.sessionId = this.config.resume ? this.config.sessionId : str(session.sessionId);
     if (!this.sessionId || (session.sessionId && session.sessionId !== this.sessionId)) throw new Error("ACP returned an invalid conversation identity.");
     await this.verifyMode();
+    const advertised = session.models?.availableModels;
+    this.models = Array.isArray(advertised) ? advertised.map((o: Obj) => str(o?.modelId)).filter(Boolean) : [];
     if (this.config.model) {
       const options = session.models?.availableModels;
       if (!Array.isArray(options) || !options.some((o: Obj) => o.modelId === this.config.model)) throw new Error(`ACP model unavailable: ${this.config.model}. Choose a model advertised by this account.`);
@@ -126,7 +133,37 @@ export class AgyAcpProtocol {
       }).finally(() => { this.quotaCapture = undefined; this.quotaPending = undefined; });
     return this.quotaPending;
   }
+  /**
+   * Its model and effort from its next turn on, in this same conversation (`session/set_model`, the
+   * `thinking_level` option, as at startup). Only between turns of an initialized conversation; false (and
+   * the bot restarts it instead): busy, a value it cannot set (an unadvertised model, going back to the
+   * default), a refused request, or an effort it did not confirm.
+   */
+  canApplySettings(target: HotSettings): boolean {
+    const change = settingsChange(target, this.config);
+    if (!this.ready || this.closed || this.busy || this.quotaPending || this.settingsPending) return false;
+    return !("model" in change && (!change.model || !this.models.includes(change.model))) && !("effort" in change && (!change.effort || !["low", "medium", "high"].includes(change.effort)));
+  }
+  applySettings(target: HotSettings): Promise<boolean> {
+    if (!this.canApplySettings(target)) return Promise.resolve(false);
+    const change = settingsChange(target, this.config);
+    const apply = async () => {
+      if (change.model) {
+        await this.call("session/set_model", { sessionId: this.sessionId, modelId: change.model });
+        this.config.model = change.model;
+      }
+      if (change.effort) {
+        const result = await this.call("session/set_config_option", { sessionId: this.sessionId, configId: "thinking_level", value: change.effort });
+        if (!result.configOptions?.some((o: Obj) => o.id === "thinking_level" && o.currentValue === change.effort)) return false;
+        this.config.effort = change.effort;
+      }
+      return !this.closed;
+    };
+    const pending = this.settingsPending = apply().catch(() => false).finally(() => { if (this.settingsPending === pending) this.settingsPending = undefined; });
+    return pending;
+  }
   async send(text: string, uuid: string, images: string[] = []) {
+    if (this.settingsPending) await this.settingsPending;
     if (this.quotaPending) {
       const queuedEpoch = this.cancelEpoch;
       await this.quotaPending;
@@ -416,6 +453,14 @@ export class AgyAcpHead {
   }
   allow(_rules: string[]): never { throw new Error("ACP accepts single-action approval only; persistent allow rules are unavailable."); }
   interrupt(): string { clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.interrupt(); void this.bridge?.cancel(); void this.workers?.cancel(); if (!this.protocol?.initialized) void this.terminate(500); return randomUUID(); }
+  /** Its model and effort in place (`AgyAcpProtocol.applySettings`), where that is on; false: restart it instead. */
+  canApplySettings(target: HotSettings): boolean {
+    return agyHotSettingsEnabled() && !this.stopped && !this.sending && !!this.protocol?.canApplySettings(target);
+  }
+  async applySettings(target: HotSettings): Promise<boolean> {
+    if (!this.canApplySettings(target)) return false;
+    return this.protocol!.applySettings(target);
+  }
   /** Stops one app-managed worker (not the head's turn); false when it is not at work. */
   async cancelWorker(id: string): Promise<boolean> { return (await this.workers?.cancelTask(id)) ?? false; }
   finish() { void this.terminate(500); }

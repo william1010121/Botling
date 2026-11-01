@@ -1,6 +1,7 @@
 import { ClaudeRequestTracker } from "../token-speed";
 import { claudeMonitorDecision, MONITOR_HOOK } from "./monitor-policy";
 import { claudeAutoRiskSettings } from "./auto-risk-policy";
+import { claudeHotEffortEnabled, settingsChange, type HotSettings } from "./hot-settings";
 // A bot's head: one long-lived `claude -p --input-format stream-json` process (as the Swift app's
 // `ClaudeAgentProcess`). Messages go in as JSON lines on stdin; replies, tool calls and permission
 // requests come out as stream-json lines. It runs in its own process group (see process/tree.ts)
@@ -144,6 +145,8 @@ export class ClaudeHead {
   private monitorPolicyFailed = false;
   private monitorInitTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedMessages: unknown[] = [];
+  /** Control requests the app waits on (`set_model`, …): resolved with whether claude answered success. */
+  private controls = new Map<string, { resolve(ok: boolean): void; timer: ReturnType<typeof setTimeout> }>();
 
   constructor(readonly config: HeadConfig, private handlers: HeadHandlers, private adapter: ProcessTreeAdapter = processTreeAdapter()) {}
 
@@ -171,6 +174,7 @@ export class ClaudeHead {
       this.queuedMessages = [];
       this.running = false;
       this.closed = true;
+      this.settleControls();
       if (this.buffer.trim()) this.line(this.buffer.trim());
       this.buffer = "";
       this.exitedResolve();
@@ -221,6 +225,13 @@ export class ClaudeHead {
       if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
       this.monitorInit = null;
       for (const queued of this.queuedMessages.splice(0)) this.write(queued);
+      return;
+    }
+    const control = message?.type === "control_response" ? this.controls.get(message.response?.request_id) : undefined;
+    if (control) {
+      this.controls.delete(message.response.request_id);
+      clearTimeout(control.timer);
+      control.resolve(message.response.subtype === "success");
       return;
     }
     if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === MONITOR_HOOK) {
@@ -276,6 +287,49 @@ export class ClaudeHead {
   /** Lets these permission rules through from now on in the running session (`apply_flag_settings`, 1.x's `allow(rules:)`). */
   allow(rules: string[]) {
     this.write({ type: "control_request", request_id: `allow-${randomUUID()}`, request: { subtype: "apply_flag_settings", settings: { permissions: { allow: rules }, ...(!this.config.harmless ? claudeAutoRiskSettings(this.config.autoMode, this.config.bypassPermissions) : {}) } } });
+  }
+
+  /** A control request whose answer the app waits for: true when claude answers success (false: error, no answer in time, or it exited). */
+  private control(request: Record<string, unknown>, prefix: string, timeoutMs: number): Promise<boolean> {
+    if (this.closed || !this.process || this.monitorPolicyFailed) return Promise.resolve(false);
+    const requestId = `${prefix}-${randomUUID()}`;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.controls.delete(requestId); resolve(false); }, timeoutMs);
+      timer.unref?.();
+      this.controls.set(requestId, { resolve, timer });
+      const message = { type: "control_request", request_id: requestId, request };
+      // Before the monitor hook is registered nothing else goes in: it waits with the queued messages.
+      if (this.monitorInit) this.queuedMessages.push(message); else this.write(message);
+    });
+  }
+
+  private settleControls() {
+    for (const { resolve, timer } of this.controls.values()) { clearTimeout(timer); resolve(false); }
+    this.controls.clear();
+  }
+
+  /**
+   * Its model (and effort, where that is on) from the next turn on, in this same process: `set_model`
+   * (null: claude's default), `apply_flag_settings` `{effortLevel}`. False: not applied (refused, failed, no
+   * answer in time, or the change is one it does not take in place); the bot restarts it instead.
+   */
+  async applySettings(target: HotSettings, timeoutMs = 10_000): Promise<boolean> {
+    if (!this.canApplySettings(target)) return false;
+    const change = settingsChange(target, this.config);
+    if ("model" in change) {
+      if (!await this.control(change.model ? { subtype: "set_model", model: change.model } : { subtype: "set_model" }, "set-model", timeoutMs)) return false;
+      this.config.model = change.model;
+    }
+    if ("effort" in change) {
+      if (!await this.control({ subtype: "apply_flag_settings", settings: { effortLevel: change.effort } }, "set-effort", timeoutMs)) return false;
+      this.config.effort = change.effort;
+    }
+    return !this.closed;
+  }
+
+  /** Whether `applySettings` would try `target` (its model always; its effort only where that is on). */
+  canApplySettings(target: HotSettings): boolean {
+    return !this.closed && !!this.process && !this.monitorPolicyFailed && !("effort" in settingsChange(target, this.config) && !claudeHotEffortEnabled());
   }
 
   /** Stops the turn under way; claude ends it with an error result and the session goes on. */

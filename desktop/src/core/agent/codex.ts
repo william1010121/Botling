@@ -1,4 +1,5 @@
 import { CodexRequestTracker } from "../token-speed";
+import { settingsChange, type HotSettings } from "./hot-settings";
 import {claudeConfigFolder} from '../claude-files';
 import {inspectClaudeRestart, type ClaudeRestartOutcome} from '../claude-restart';
 import { RESTART_NOTE } from '../restart-continuation';
@@ -270,6 +271,8 @@ export class CodexSession {
   private activeMonitor: string | null = null;
   private editorApprovals = new Map<string, { task: string; run: number; requestId: string; input: Record<string, unknown> }>();
   private editorCost = 0;
+  /** A model switched to in place: every coordinator turn/start carries it (it holds for later turns too). */
+  private turnModel: string | null = null;
 
   constructor(readonly config: CodexConfig) {
     for (const record of config.restoredMonitors ?? []) {
@@ -310,6 +313,30 @@ export class CodexSession {
       return [];
     }
     return this.startTurn(input);
+  }
+
+  /**
+   * Its model and effort from its next turn on, without a new thread: `turn/start` overrides them for that
+   * turn and the ones after it; new workers start on them too. False (nothing changed): going back to the
+   * default, which an override cannot say, or it is stopping.
+   */
+  applySettings(target: HotSettings): boolean {
+    if (!this.canApplySettings(target)) return false;
+    const change = settingsChange(target, this.config);
+    if (change.model) { this.config.model = change.model; this.turnModel = change.model; }
+    if (change.effort) this.config.effort = change.effort;
+    return true;
+  }
+
+  canApplySettings(target: HotSettings): boolean {
+    const change = settingsChange(target, this.config);
+    return !this.stopped && !this.finishing && !("model" in change && !change.model) && !("effort" in change && !change.effort);
+  }
+
+  /** The coordinator's settings on a turn/start: its effort, and a model it was switched to in place. */
+  private turnSettings(params: Record<string, unknown>) {
+    if (this.turnModel) params.model = this.turnModel;
+    if (this.config.effort) params.effort = this.config.effort;
   }
 
   /** Words that join the turn under way (`turn/steer`); false when no turn runs. */
@@ -789,7 +816,7 @@ export class CodexSession {
     // Pictures go along as `localImage` items (CodexSession.items), after the words.
     const params: Record<string, unknown> = { threadId: this.threadId, input: [{ type: "text", text: input.text }, ...(input.images ?? []).map((path) => ({ type: "localImage", path }))] };
     if (this.managed) params.environments = [];
-    if (this.config.effort) params.effort = this.config.effort;
+    this.turnSettings(params);
     this.nextReviewer(params);
     return [this.request("turn/start", params, { kind: "turn" })];
   }
@@ -878,7 +905,7 @@ export class CodexSession {
       const params: Record<string, unknown> = {
         threadId: this.threadId, input: [], toolOutput: { name: "app_monitor_result", namespace: null, output: JSON.stringify(monitorPayload(waking), null, 2) }, environments: [],
       };
-      if (this.config.effort) params.effort = this.config.effort;
+      this.turnSettings(params);
       this.nextReviewer(params);
       return [this.item({ kind: "backgroundTurn", taskId: null }), this.request("turn/start", params, { kind: "turn" }), ...this.pendingChanged()];
     }
@@ -891,7 +918,7 @@ export class CodexSession {
         toolOutput: { name: "app_task_result", namespace: null, output: JSON.stringify(resultPayload(result), null, 2) },
         environments: [],
       };
-      if (this.config.effort) params.effort = this.config.effort;
+      this.turnSettings(params);
       this.nextReviewer(params);
       return [this.item({ kind: "backgroundTurn", taskId: result.task }), this.request("turn/start", params, { kind: "turn" }), ...this.pendingChanged()];
     }
@@ -2009,6 +2036,18 @@ export class CodexHead {
 
   send(text: string, _uuid?: string, images: string[] = []) {
     this.perform(this.session.send(text, images));
+  }
+
+  canApplySettings(target: HotSettings): boolean {
+    return !this.closed && this.running && this.session.canApplySettings(target);
+  }
+
+  /** Its model and effort from its next turn on, in this same thread (`CodexSession.applySettings`). */
+  async applySettings(target: HotSettings): Promise<boolean> {
+    if (this.closed || !this.running || !this.session.applySettings(target)) return false;
+    if ("model" in target) this.config.model = this.session.config.model;
+    if ("effort" in target) this.config.effort = this.session.config.effort;
+    return true;
   }
 
   /** Words for the turn under way (`turn/steer`); false when it has none. */

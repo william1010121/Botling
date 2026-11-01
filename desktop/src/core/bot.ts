@@ -63,6 +63,7 @@ import {
 } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
+import type { HotSettings } from "./agent/hot-settings";
 import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
 import {
   Conductor, displayName, fitted, hasTwo, headsJSON, isActive, otherHead, parseHeadTags, readHeads, resolvePrimary, roundsText,
@@ -402,6 +403,8 @@ export class Bot {
   private modelSettingsPending = false;
   /** The restart waiting is also for something other than its model or effort (plugins, folders, subagents' model): a hot switch cannot stand in for it. */
   private restartNonModel = false;
+  /** Counts model/effort changes, so a hot switch that finishes after a newer one leaves that one waiting. */
+  private settingsGeneration = 0;
   /**
    * Your message waits for this head's own work (its subagents, workers, background tasks) to finish, so a
    * model or effort change that needs a restart can be applied first; it is sent then, never on the old
@@ -2225,7 +2228,7 @@ export class Bot {
     if (!current && this.switchReady) { this.queue.push(turn); void this.handOver(); return turn; }
     // A message already waits for this head's work before a model/effort restart: this one goes after it.
     if (this.settingsHold) { this.queue.push(turn); this.checkSettingsHold(); return turn; }
-    if (!current && !this.tidying && !this.switching && turn.origin === "user" && this.modelSettingsPending && this.head?.running && this.ownWorkRunning) {
+    if (!current && !this.tidying && !this.switching && turn.origin === "user" && this.modelSettingsPending && this.head?.running && this.ownWorkRunning && !this.canSwitchInPlace(this.head)) {
       this.holdForSettings(turn);
       return turn;
     }
@@ -2393,7 +2396,8 @@ export class Bot {
     if (!this.head?.running) { this.restartPending = false; this.restartNonModel = false; return; }
     this.restartPending = true;
     this.modelSettingsPending ||= modelSettings;
-    if (!modelSettings) this.restartNonModel = true;
+    if (modelSettings) this.settingsGeneration += 1;
+    else this.restartNonModel = true;
     if (reason) this.restartReason = reason;
   }
 
@@ -2433,6 +2437,11 @@ export class Bot {
       this.restartNonModel = false;
       this.restartForPluginsOnly = false;
       this.restartReason = null;
+    }
+    // A head that takes the new model/effort in place needs no restart, so nothing has to wait for its work.
+    if (!given && this.modelSettingsPending && old?.running) {
+      await this.switchInPlace(old);
+      if (this.turn !== turn || !turn.open) return;
     }
     // Keep workers alive, but never send a user turn under a known stale model/effort: it waits for this
     // head's own work to finish (a partner head's work does not count), then the restart, then it goes.
@@ -2617,19 +2626,8 @@ export class Bot {
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
     const resume = this.session.started && !this.briefing;
     const prompts = this.prompts();
-    const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };
-    const choices = this.owner.choices();
     const launch = this.options.launch?.() ?? { subagentHourCache: false };
-    const start: SessionStart = {
-      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env, pluginTools: plugins.tools ?? [],
-      model: choices.model, effort: choices.efforts[this.engine], subagentModel: choices.subagentModel,
-      subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
-      addDirs: this.owner.options.addDirs?.() ?? [],
-      // 1.x's "Auto-approve safe actions": on unless turned off.
-      autoMode: launch.autoMode !== false, allowRules: this.allowRules,
-      claudeBypassPermissions: launch.claudeBypassPermissions === true,
-      codexBypassPermissions: launch.codexBypassPermissions === true,
-    };
+    const start = this.sessionStart(resume, prompts);
     // An app-made worktree: the session starts there; the project's .bot (memory, inbox) stays reachable.
     const tree = this.owner.options.worktree?.() ?? null;
     let head: AgentHead;
@@ -2667,6 +2665,70 @@ export class Bot {
     this.store.saveHead(this.session);
     this.updated();
     return head;
+  }
+
+  /** What a head of this bot starts with now (its settings, plugins, instructions). */
+  private sessionStart(resume: boolean, prompts: BotPrompts): SessionStart {
+    const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };
+    const choices = this.owner.choices();
+    const launch = this.options.launch?.() ?? { subagentHourCache: false };
+    return {
+      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env, pluginTools: plugins.tools ?? [],
+      model: choices.model, effort: choices.efforts[this.engine], subagentModel: choices.subagentModel,
+      subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
+      addDirs: this.owner.options.addDirs?.() ?? [],
+      // 1.x's "Auto-approve safe actions": on unless turned off.
+      autoMode: launch.autoMode !== false, allowRules: this.allowRules,
+      claudeBypassPermissions: launch.claudeBypassPermissions === true,
+      codexBypassPermissions: launch.codexBypassPermissions === true,
+    };
+  }
+
+  /** The model and effort a head of this engine would start with now (what a hot switch moves a running one to). */
+  private settingsTarget(): HotSettings {
+    if (this.engine === "agy") return { model: this.settingsView().agyModel, effort: this.owner.choices().efforts.agy ?? null };
+    const prompts = this.prompts();
+    const start = this.sessionStart(this.session.started, prompts);
+    if (this.engine === "codex") {
+      if (!this.options.codexConfig) return {};
+      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
+      return { model: config.model ?? null, effort: config.effort ?? null };
+    }
+    const config = this.options.headConfig(this.profile, start);
+    return { model: config.model ?? null, effort: config.effort ?? null };
+  }
+
+  /** Whether the running head would take the pending model/effort change in place (no restart needed). */
+  private canSwitchInPlace(head: AgentHead): boolean {
+    const can = (head as { canApplySettings?: (target: HotSettings) => boolean }).canApplySettings;
+    try { return typeof can === "function" && can.call(head, this.settingsTarget()); }
+    catch { return false; }
+  }
+
+  /**
+   * The running head takes its new model/effort in place, without a restart (Claude: `set_model`; Codex: the
+   * next turn/start's override; Antigravity: `session/set_model`, where on). True: done, a divider says so,
+   * and no restart is needed for it. False: not supported, refused or failed; the restart path applies.
+   */
+  private async switchInPlace(head: AgentHead): Promise<boolean> {
+    const apply = (head as { applySettings?: (target: HotSettings) => Promise<boolean> }).applySettings;
+    if (typeof apply !== "function") return false;
+    const generation = this.settingsGeneration;
+    let switched = false;
+    try { switched = await apply.call(head, this.settingsTarget()); }
+    catch (error) { this.log(`switching its model/effort in place failed: ${(error as Error).message}`); }
+    if (!switched || this.head !== head || !head.running) {
+      this.log("its model/effort could not be switched in place: it restarts for it instead");
+      return false;
+    }
+    // Changed again meanwhile: the newer change still waits (a later message applies it).
+    if (generation !== this.settingsGeneration) return true;
+    this.modelSettingsPending = false;
+    const shown = this.restartReason?.shown ?? "new settings";
+    if (!this.restartNonModel) { this.restartPending = false; this.restartReason = null; this.restartForPluginsOnly = false; }
+    this.owner.add({ id: newId(), role: "divider", text: `Switched → ${shown}`, date: toSwiftDate() });
+    this.log(`switched to ${shown} in place, without a restart`);
+    return true;
   }
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
