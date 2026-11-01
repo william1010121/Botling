@@ -276,8 +276,8 @@ describe("a sub bot in the core", () => {
 describe("making a sub bot from a subagent", () => {
   const found = (over: Record<string, unknown> = {}) => ({ id: "toolu_1", status: "running" as const, head: "claude" as const, engine: "claude" as const, description: "build settings", prompt: "Build the settings page", result: "", steps: [], threadId: null, run: null, ...over });
 
-  async function run(opts: { statuses: string[]; head?: string; engine?: string; subagent?: unknown; handoffBefore?: boolean; parentId?: string; mode?: "ask" | "steer" | "stop"; heads?: string[]; over?: Record<string, unknown>; wrapUp?: (text: string, statuses: string[]) => void }) {
-    const h = fixture({ sub: false }), core = h.open({ subBotWaitMs: 100 });
+  async function run(opts: { statuses: string[]; head?: string; engine?: string; subagent?: unknown; handoffBefore?: boolean; parentId?: string; mode?: "ask" | "steer" | "stop"; heads?: string[]; over?: Record<string, unknown>; wrapUp?: (text: string, statuses: string[]) => void; waitMs?: number }) {
+    const h = fixture({ sub: false }), core = h.open({ subBotWaitMs: opts.waitMs ?? 100 });
     const parent = bots(core).get(opts.parentId ?? PROJECT)!;
     const statuses = [...opts.statuses];
     const lookup = opts.subagent === null ? () => null : () => found({ status: statuses.length > 1 ? statuses.shift() : statuses[0], ...(opts.head ? { head: opts.head } : {}), ...(opts.engine ? { engine: opts.engine } : {}), ...(opts.over ?? {}) });
@@ -362,10 +362,12 @@ describe("making a sub bot from a subagent", () => {
   });
 
   it("a busy Antigravity worker takes no message: it is stopped at once and handoff.md is written from its record", async () => {
+    // A long wait budget: stopping "at once" must not spend any of it. (A tight bound on the
+    // wall clock also counted fixture setup and was flaky on slow CI runners.)
     const started = Date.now();
-    const r = await run({ statuses: ["running"], head: "agy", engine: "agy", mode: "stop", heads: ["agy"], over: { result: "half done" } });
+    const r = await run({ statuses: ["running"], head: "agy", engine: "agy", mode: "stop", heads: ["agy"], over: { result: "half done" }, waitMs: 5000 });
     try {
-      expect(Date.now() - started).toBeLessThan(90);
+      expect(Date.now() - started).toBeLessThan(2500);
       expect(r.asks).toEqual([]);
       expect(r.stop).toHaveBeenCalledWith("toolu_1");
       const text = readFileSync(r.file, "utf8");
