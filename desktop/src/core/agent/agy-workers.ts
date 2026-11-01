@@ -1,7 +1,11 @@
+// Antigravity's app-managed workers (shared-core spec 4.2). Each worker is its own ACP process (an AgyAcpHead with
+// `worker: true`). What is the engine's lives here, in `AgyAcpAdapter`: the head's config and process identities,
+// ACP's items translated into WorkerEvents, process-group cleanup and crash recovery, and approvals answered only with
+// the exact input they asked. Everything else (state, text, the end and its report, the approvals table, report
+// checkpoints) is the shared WorkerCore's. `AgyWorkers` keeps the constructor and methods agy-acp.ts uses, over a
+// WorkerCore that keeps <acpHome>/workers.json (AgyLegacyStore) until the bot moves every member to its ledger (S4b).
 import {AGY_WORKER_POLICY} from '../prompts-agy';
 import {randomUUID} from 'node:crypto';
-import {readFileSync,mkdirSync} from 'node:fs';
-import {writeFileAtomic} from '../durable/atomic';
 import {join} from 'node:path';
 import type {HeadHandlers} from './head';
 import type {StreamItem} from './stream';
@@ -9,253 +13,221 @@ import type {CodexItem} from './codex';
 import type {AgyConfig} from './agy';
 import {groupAlive,processStartTime} from '../process/kill-tree';
 import type {TerminateResult} from '../process/tree';
-import {movedTaskError,ownedWorkerReport,readWorkerOwner,type WorkerHost,type WorkerInfo,type WorkerOwner,type WorkerOwnerResult,type WorkerSendResult,type WorkerState} from './workers';
+import {movedTaskError,type ProcessIdentity,type WorkerHost,type WorkerInfo,type WorkerOwner,type WorkerOwnerResult,type WorkerSendResult} from './workers';
+import {AgyLegacyStore,WorkerCore,wireStatus,type HandoffRequest,type RecoverResult,type RunEnd,type RunHandle,type WorkerAdapter,type WorkerEvent,type WorkerLedgerRecord,type WorkerStore} from '../worker-core';
 
 export interface AgyWorkerHead {
   start():void;send(text:string,uuid:string):void;
   answer(id:string,allow:boolean,input:Record<string,unknown>,message?:string):void;
   terminate(graceMs?:number):Promise<TerminateResult>;
 }
-interface Worker {
-  id:string;engine:"agy"|"codex";name:string;instructions:string;sessionId:string;run:number;active:boolean;
-  cleaning:boolean;denied:boolean;recoveryRequired?:boolean;reportDispatching?:boolean;report?:string;status:string;reportPending:boolean;
-  reportDelivered?:boolean; reviewAttempts?:number; checkpoint?:{outcome:string;evidence:string;dependency_task_id?:string};
-  head?:AgyWorkerHead;cleanup?:Promise<void>;discardReport?:boolean;
-  /** The message being streamed: ACP's chunks cut words and code spans, so they show as one step when a tool runs or the run ends. */
-  text?:string;
-  /** Given to another bot (workers.ts `setWorkerOwner`): its reports are emitted as `workerReport`, never the coordinator's. */
-  owner?:WorkerOwner;
-  approvals:Map<string,Record<string,unknown>>;processes:{pid:number;started:string}[];
-}
+
 const canonical=(v:any):string=>v&&typeof v==='object'?Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
-const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
-/** Dormant until live validation. No production gate is lifted by this state machine. */
-export class AgyWorkers {
-  private workers=new Map<string,Worker>();
-  private closed=false;
-  private activeReports=new Map<string,number>();
-  constructor(private config:AgyConfig,private emit:(i:CodexItem)=>void,private report:(id:string,text:string,run:number)=>void,private factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead){
+const CLEANUP_INCOMPLETE='Worker cleanup incomplete; task remains blocked.';
+const CRASH_UNVERIFIED='Worker crash cleanup has not been verified; process registration is missing or an owned group may survive. Cancellation and continuation remain blocked.';
+const BUSY='This ACP worker is busy or cleaning up; in-turn steering is unsupported.';
+
+/** One run's head, and the approvals it asked (by ACP's request id, without its `acp:` prefix). */
+interface AgyRun {handle:RunHandle;head?:AgyWorkerHead;approvals:Map<string,Record<string,unknown>>;sawText:boolean;ended:boolean}
+
+/** Antigravity's WorkerAdapter: one ACP process per run, ended (and its process group checked) when the run ends. */
+export class AgyAcpAdapter implements WorkerAdapter {
+  readonly kind='agy-acp' as const;
+  readonly engine='agy' as const;
+  readonly steersRunning=false;
+  private runs=new Map<string,AgyRun>();
+  private startTime:(pid:number)=>string|null;
+  /** `processStartTime`: a process's start time (identity); a replay maps its recorded processes. */
+  constructor(private config:AgyConfig,private factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead,options:{processStartTime?(pid:number):string|null}={}){
     if(!config.acpHome)throw new Error('Worker profile required.');
-    if(!config.resume)return;
+    this.startTime=options.processStartTime??processStartTime;
+  }
+  /** An Antigravity coordinator's workers run over ACP; agy-worker-router.ts decides which engines may. */
+  prepare(request:HandoffRequest){
+    const engine=request.args.engine??'agy';
+    if(engine!=='agy'&&engine!=='codex')throw new Error('Unsupported worker engine; Claude is forbidden.');
+    return {engine:engine as 'agy'|'codex'};
+  }
+  start(record:Readonly<WorkerLedgerRecord>,words:string,handle:RunHandle){
+    const live:AgyRun={handle,approvals:new Map(),sawText:false,ended:false};
+    this.runs.set(record.id,live);
+    const current=()=>this.runs.get(record.id)===live&&!live.ended;
+    const end=(end:RunEnd)=>{if(!current())return;live.ended=true;live.approvals.clear();handle.emit({type:'end',end});};
+    const config:AgyConfig={...this.config,worker:true,workerEngine:record.engine==='codex'?'codex':'agy',processStarted:pid=>{
+      // A process the app cannot identify could outlive it unseen: refused (the head then stops it).
+      if(!current())throw Error('Stale worker process registration.');
+      const started=this.startTime(pid);if(!started)throw Error('Cannot record worker process identity.');
+      this.config.processStarted?.(pid);handle.emit({type:'process',pid,started});
+    },acpHome:join(this.config.acpHome!,'workers',record.id),sessionId:record.conversationId||randomUUID(),resume:!!record.conversationId,systemPrompt:`${this.config.workerInstructions??''}\n${AGY_WORKER_POLICY}`};
     try{
-      const saved=JSON.parse(readFileSync(join(config.acpHome,'workers.json'),'utf8'));
-      if(saved.version!==2||saved.ownerSessionId!==config.sessionId||!Array.isArray(saved.workers)||saved.workers.length>128)throw Error('Invalid worker owner');
-      // Validate the complete state before any callback. Legacy/foreign state is preserved, never adopted.
-      const restored:Worker[]=saved.workers.map((r:any)=>{
-        if(!r||typeof r.id!=='string'||!uuid.test(r.id)||(r.engine!==undefined&&r.engine!=='agy'&&r.engine!=='codex')||typeof r.sessionId!=='string'||!Number.isSafeInteger(r.run)||r.run<1||typeof r.name!=='string'||typeof r.instructions!=='string'||typeof r.status!=='string'||typeof r.active!=='boolean'||typeof r.cleaning!=='boolean'||typeof r.reportPending!=='boolean'||(r.report!==undefined&&typeof r.report!=='string'))throw Error('Invalid worker state');
-        if((r.reviewAttempts!==undefined&&(!Number.isSafeInteger(r.reviewAttempts)||r.reviewAttempts<0||r.reviewAttempts>2))||(r.reportDelivered!==undefined&&typeof r.reportDelivered!=='boolean'))throw Error('Invalid report review state');
-        if(!Array.isArray(r.processes)||r.processes.some((p:any)=>!Number.isSafeInteger(p.pid)||p.pid<=0||typeof p.started!=='string'||!p.started))throw Error('Invalid process identity');
-        if(r.owner!==undefined&&!readWorkerOwner(r.owner))throw Error('Invalid worker owner');
-        return {id:r.id,engine:r.engine??"agy",name:r.name,instructions:r.instructions,sessionId:r.sessionId,run:r.run,active:false,cleaning:false,denied:false,approvals:new Map(),processes:r.processes,status:r.status,report:r.report,reportPending:r.reportPending,recoveryRequired:r.recoveryRequired===true||r.active||r.cleaning,reportDispatching:r.reportDispatching===true,reportDelivered:r.reportDelivered===true,reviewAttempts:r.reviewAttempts??0,checkpoint:r.checkpoint,...(r.owner?{owner:readWorkerOwner(r.owner)}:{}),
-          ...(r.active||r.cleaning?{status:'stopped',report:'Worker interrupted before confirmed cleanup/result. Process-ledger recovery is required before any explicit continuation; no task was replayed.',reportPending:true}:{})};
-      });
-      if(new Set(restored.map(w=>w.id)).size!==restored.length)throw Error('Duplicate worker identity');
-      for(const w of restored)this.workers.set(w.id,w);
-      this.save();
-      for(const w of restored)if(w.reportPending){
-        if(w.owner&&!w.reportDispatching)this.handOver(w);
-        else if(w.reportDispatching)this.emit({kind:'subagentEnded',id:w.id,status:'failed',summary:'Worker report delivery is uncertain after restart. No report prompt was replayed; explicit reconciliation is required.'});
-        else if((w.reviewAttempts??0)<2)this.deliverReport(w);
-        else this.unresolved(w);
+      live.head=this.factory(config,{onItem:item=>{if(current())this.item(record,live,item,end);},
+        onExit:e=>end({how:e.expected?'cancelled':'exited',finalText:null,error:e.stderr||'ACP worker exited before a result.',detail:'exit'})});
+      live.head.start();live.head.send(words,randomUUID());
+    }catch(error){
+      live.ended=true;void live.head?.terminate().catch(()=>undefined);
+      throw error;
+    }
+  }
+  /** ACP's items as WorkerEvents (`current` checked). */
+  private item(record:Readonly<WorkerLedgerRecord>,live:AgyRun,item:StreamItem,end:(end:RunEnd)=>void){
+    const emit=(event:WorkerEvent)=>live.handle.emit(event);
+    switch(item.kind){
+      case 'init':
+        // A resumed worker must come back in its own conversation.
+        if(record.conversationId&&record.conversationId!==item.sessionId)return end({how:'error',finalText:null,error:'Worker changed its saved conversation identity.',detail:'init'});
+        return emit({type:'session',conversationId:item.sessionId});
+      case 'delta':live.sawText=true;return emit({type:'textDelta',text:item.text});
+      case 'textBlock':return emit({type:'textBreak'});
+      case 'toolUse':return emit({type:'toolUse',id:item.id,tool:item.tool,title:item.title,detail:item.detail,input:item.input});
+      case 'toolResult':return emit({type:'toolResult',id:item.id,output:item.output,failed:item.failed});
+      case 'usage':return emit({type:'usage',tokens:item.tokens,cost:item.totalCost});
+      case 'request':{const {scope:_scope,...request}=item.request;return emit({type:'request',request});}
+      case 'permission':{
+        const nativeId=item.requestId.replace(/^acp:/,'');
+        live.approvals.set(nativeId,structuredClone(item.input));
+        return emit({type:'permission',nativeId,tool:item.tool,summary:item.summary,input:item.input});
       }
-    }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new Error('ACP worker state is unreadable or belongs to another conversation; preserved for recovery.');}
+      case 'permissionCancelled':{const nativeId=item.requestId.replace(/^acp:/,'');live.approvals.delete(nativeId);return emit({type:'permissionCancelled',nativeId});}
+      case 'result':{
+        // The report is the run's last text block (decision D1); a head that gave its words only here gets them as one block.
+        if(!live.sawText&&item.text.trim())emit({type:'textWhole',text:item.text,phase:null});
+        const how=item.how??(item.ok?'normal':'error');
+        return end({how,finalText:null,error:how==='normal'?null:item.error||null,detail:item.subtype});
+      }
+    }
   }
-  /** A run's report of a worker another bot owns: out to the app (`workerReport`), done here. */
-  private handOver(w:Worker){
-    w.reportPending=false;w.reportDispatching=false;w.reportDelivered=true;w.checkpoint={outcome:'moved',evidence:`Delivered to its owner ${w.owner?.agentId??''}`};this.activeReports.delete(w.id);this.save();
-    this.emit(ownedWorkerReport({id:w.id,run:w.run,engine:w.engine,status:w.status,report:w.report??''}));
-    this.emit({kind:'managedPending',pending:this.hostedLive.length>0});
+  /** Whether `input` is exactly what this run's approval `nativeId` asked: an answer for other input is not its answer. */
+  asks(id:string,run:number,nativeId:string,input:Record<string,unknown>):boolean {
+    const live=this.runs.get(id),original=live?.approvals.get(nativeId);
+    return !!live&&!!original&&!live.ended&&live.handle.run===run&&canonical(original)===canonical(input);
   }
-  /** workers.ts `setWorkerOwner`: a report waiting for the coordinator goes to the owner instead; refused while one is being handed over. */
-  setOwner(id:string,owner:WorkerOwner|null):WorkerOwnerResult{
-    const w=this.workers.get(id);
-    if(!w||this.closed)return {ok:false,reason:'No such worker.'};
-    if(owner&&(w.reportDispatching||this.activeReports.has(w.id)))return {ok:false,reason:'Its report is being handed to its coordinator right now; try again in a moment.'};
-    if(owner)w.owner={...owner};else delete w.owner;
-    this.save();
-    if(owner&&w.reportPending&&!w.active&&!w.cleaning&&!w.cleanup)this.handOver(w);
-    else this.emit({kind:'managedPending',pending:this.hostedLive.length>0});
-    return {ok:true};
+  answer(record:Readonly<WorkerLedgerRecord>,nativeId:string,allow:boolean,input:Record<string,unknown>,message?:string){
+    const live=this.runs.get(record.id),original=live?.approvals.get(nativeId);
+    if(!live||!original||live.ended)return;
+    live.approvals.delete(nativeId);
+    // Always with the input it asked; an answer that came with other input refuses it.
+    live.head?.answer(`acp:${nativeId}`,allow&&canonical(original)===canonical(input),original,message);
   }
-  /** Every worker this head runs or still owes a report to the coordinator, whoever owns it: the head stays awake for these. */
-  get hostedLive(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired||(w.reportPending&&!w.owner)).map(w=>w.id);}
-  get running(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired).map(w=>w.id);}
-  get completionDependencies(){return [...this.workers.values()].filter(w=>!w.owner&&(w.active||w.cleaning||w.cleanup||w.recoveryRequired||w.reportPending)).map(w=>({id:w.id,run:w.run,task:w.instructions,state:w.active||w.cleaning||w.cleanup||w.recoveryRequired?'running' as const:'reportQueued' as const,callback:'app_task_result' as const,taskTruncated:false}));}
-  /** Its workers, provider-neutral (workers.ts). */
-  list():WorkerInfo[]{
-    return [...this.workers.values()].map(w=>({id:w.id,engine:w.engine,name:w.name,run:w.run,conversationId:w.sessionId||null,processes:[...w.processes],
-      state:(w.active||w.cleaning||w.cleanup?'running':w.recoveryRequired?'interrupted':w.reportPending?'reportPending':w.status==='stopped'||w.status==='killed'?'stopped':w.status==='failed'||w.status==='cleanup-failed'?'failed':'idle') as WorkerState,owner:w.owner?{...w.owner}:null}));
+  async stop(record:Readonly<WorkerLedgerRecord>){
+    const live=this.runs.get(record.id);
+    if(live){live.ended=true;live.approvals.clear();}
+    return {cleaned:await this.terminate(record)};
   }
-  /** A follow-up from the app (workers.ts `sendToWorker`): an idle worker's next run; a busy ACP worker takes no steering. */
-  continueTask(id:string,text:string):WorkerSendResult{
-    const w=this.workers.get(id);
-    if(!w||this.closed)return {ok:false,reason:'No such worker.'};
-    if(w.active||w.cleaning||w.cleanup)return {ok:false,busy:true,reason:'This Antigravity worker is at work and takes no messages until it reports.'};
-    try{this.verifyRecovery(w);}catch(error){return {ok:false,reason:(error as Error).message};}
-    if(!text.trim()||text.length>64_000)return {ok:false,reason:'Message required (maximum 64000 characters).'};
-    this.launch(w,text);return {ok:true,how:'newRun',run:w.run};
-  }
-  /** Stops one worker and its tools (the sub-bot hand-off: a busy ACP worker cannot be messaged). False: no such worker, or not at work. */
-  async cancelTask(id:string):Promise<boolean>{
-    const w=this.workers.get(id);
-    if(!w||this.closed||!(w.active||w.cleaning||w.cleanup))return false;
-    await this.stop(w,true);
-    if(w.cleaning)throw new Error('Worker cleanup incomplete; task remains blocked.');
+  /** Its run ended: its process group is ended and checked before the report goes out. */
+  async cleanup(record:Readonly<WorkerLedgerRecord>){return {cleaned:await this.terminate(record)};}
+  /** Ends the head (kept when that fails, to try again) and checks its recorded processes are gone. */
+  private async terminate(record:Readonly<WorkerLedgerRecord>):Promise<boolean> {
+    const live=this.runs.get(record.id);
+    try{await live?.head?.terminate();}catch{return false;}
+    if(record.processes.length&&!this.gone(record.processes))return false;
+    if(live)live.head=undefined;
     return true;
   }
-  private save(){mkdirSync(this.config.acpHome!,{recursive:true});writeFileAtomic(join(this.config.acpHome!,'workers.json'),JSON.stringify({version:2,ownerSessionId:this.config.sessionId,workers:[...this.workers.values()].map(({head,cleanup,approvals,discardReport,text,...w})=>w)}));}
-  async tool(name:string,args:Record<string,unknown>){
-    if(this.closed)throw new Error('Worker manager closed.');
-    if(name==='app_handoff'){
-      const engine=args.engine??'agy';if(engine!=='agy'&&engine!=='codex')throw new Error('Unsupported worker engine; Claude is forbidden.');
-      if(typeof args.instructions!=='string'||!args.instructions.trim()||args.instructions.length>64_000)throw new Error('Instructions required (maximum 64000 characters).');
-      if(this.workers.size>=128)throw new Error('Worker history limit reached.');
-      const id=randomUUID(),w:Worker={id,engine,name:typeof args.name==='string'?args.name.slice(0,200):args.instructions.slice(0,80),instructions:args.instructions,sessionId:'',run:0,active:false,cleaning:false,denied:false,approvals:new Map(),processes:[],status:'new',reportPending:false};this.workers.set(id,w);
-      this.launch(w,args.instructions);return {accepted:true,task_id:id,run:w.run};
-    }
-    const w=this.workers.get(String(args.task_id));if(!w)throw new Error('Unknown task_id.');
-    if(w.owner)throw new Error(movedTaskError(w.owner.name));
-    if(args.engine!==undefined&&args.engine!==w.engine)throw new Error('Worker engine identity cannot change on continuation.');
-    if(args.run!==w.run)throw new Error('Stale or missing worker run identity.');
-    if(name==='app_reconcile_report'){
-      if(w.active||w.cleaning||!w.reportPending||!w.reportDispatching)throw new Error('No uncertain report available for reconciliation.');
-      if(args.action!=='acknowledge'&&args.action!=='retry')throw new Error('Explicit report reconciliation action required.');
-      if((this.activeReports.get(w.id)===w.run))throw new Error('Report turn is still active.');
-      w.reportDispatching=false;w.reportDelivered=args.action==='acknowledge';w.reviewAttempts=args.action==='acknowledge'?2:0;this.save();
-      if(args.action==='retry')this.deliverReport(w);
-      return {task_id:w.id,run:w.run,action:args.action,taskReplayed:false};
-    }
-    if(name==='app_task_checkpoint'){
-      if(w.active||w.cleaning||w.cleanup||!w.reportPending||(!(this.activeReports.get(w.id)===w.run)&&(!w.reportDelivered||w.reportDispatching)))throw new Error('No delivered report available for a checkpoint.');
-      if(!['complete','waiting_user','waiting_dependency','blocked'].includes(String(args.outcome))||typeof args.evidence!=='string'||!args.evidence.trim()||args.evidence.length>16000)throw new Error('Checkpoint outcome and concrete evidence required.');
-      if(args.outcome==='waiting_dependency'){
-        const dependency=this.workers.get(String(args.dependency_task_id));
-        if(!dependency||dependency===w||!dependency.active)throw new Error('Checkpoint needs another actively running dependency_task_id.');
-      }else if(args.dependency_task_id!==undefined&&args.dependency_task_id!==null&&!(typeof args.dependency_task_id==='string'&&!args.dependency_task_id.trim()))throw new Error('dependency_task_id requires waiting_dependency.');
-      // Models routinely fill an optional field with "" or null; that means "no dependency", not a failed checkpoint.
-      w.checkpoint={outcome:String(args.outcome),evidence:args.evidence,...(args.outcome==='waiting_dependency'?{dependency_task_id:String(args.dependency_task_id)}:{})};
-      w.reportPending=false;w.reportDispatching=false;this.activeReports.delete(w.id);this.save();
-      return {task_id:w.id,run:w.run,...w.checkpoint};
-    }
-    if(name==='app_cancel_task'){await this.stop(w,true);if(w.cleaning)throw new Error('Worker cleanup incomplete; task remains blocked.');return {task_id:w.id,run:w.run,status:w.status};}
-    if(name==='app_send_message'){
-      this.verifyRecovery(w);
-      if(w.active||w.cleaning||w.cleanup)throw new Error('This ACP worker is busy or cleaning up; in-turn steering is unsupported.');
-      if(w.reportPending&&!(this.activeReports.get(w.id)===w.run)&&(!w.reportDelivered||w.reportDispatching))throw new Error('The prior worker report must be acknowledged before continuation.');
-      if(typeof args.message!=='string'||!args.message.trim()||args.message.length>64_000)throw new Error('Message required (maximum 64000 characters).');
-      this.launch(w,args.message);return {accepted:true,task_id:w.id,run:w.run};
-    }
-    throw new Error('Unsupported worker tool.');
+  /**
+   * After an interruption or a failed cleanup. A head this app still holds is ended again; otherwise only proof that
+   * every recorded process is gone releases it (none recorded is never assumed clean).
+   */
+  recover(record:Readonly<WorkerLedgerRecord>):RecoverResult|Promise<RecoverResult>{
+    const blocked=():RecoverResult=>({state:'blocked',reason:record.cleanup==='failed'?CLEANUP_INCOMPLETE:CRASH_UNVERIFIED});
+    if(this.runs.get(record.id)?.head)return this.terminate(record).then(cleaned=>cleaned?{state:'clean'}:blocked());
+    return this.gone(record.processes)?{state:'clean'}:blocked();
   }
-  private launch(w:Worker,text:string){
-    this.activeReports.delete(w.id);w.reportDelivered=false;w.reviewAttempts=0;delete w.checkpoint;
-    w.processes=[];w.active=true;w.run++;const run=w.run;w.status='running';w.denied=false;w.discardReport=false;w.reportPending=false;w.reportDispatching=false;delete w.report;delete w.text;this.save();
-    this.emit({kind:'managedPending',pending:true});
-    this.emit({kind:'toolUse',id:w.id,tool:'Agent',title:`Delegate ${w.name}`,detail:text,parent:null,input:{description:w.name,prompt:text,subagent_type:`${w.engine}-worker`,run_in_background:true}});
-    this.emit({kind:'subagentStarted',id:w.id,description:w.name,type:`${w.engine}-worker`,prompt:text,background:true,execution:{run,ownerSessionId:this.config.sessionId,threadId:w.sessionId||null,turnId:null}});
-    this.emit({kind:'subagentRuntime',id:w.id,runtime:{engine:w.engine,reasoningEffort:this.config.effort}});
-    const finish=(status:string,result:string)=>{
-      if(!w.active||w.run!==run)return;
-      this.flushText(w);
-      if(w.denied||w.approvals.size){status='failed';result='Worker execution blocked by denied or unresolved approval.\n'+result;}
-      w.active=false;w.reportPending=true;w.status=status;w.report=result.slice(0,200_000);this.cancelApprovals(w);
-      void this.clean(w).then(()=>{
-        if(w.run!==run)return;
-        if(w.discardReport){w.status='stopped';w.reportPending=false;}else w.reportPending=true;
-        this.save();this.emit({kind:'subagentEnded',id:w.id,status:w.status,summary:w.report??''});
-        if(!this.closed&&w.reportPending&&w.owner)this.handOver(w);
-        else if(!this.closed&&w.reportPending)this.deliverReport(w);
-      });
-    };
-    const onItem=(item:StreamItem)=>{
-      if(this.closed||!w.active||w.run!==run)return;
-      if(item.kind==='usage'){this.emit(item);if(Number.isSafeInteger(item.tokens.output)&&item.tokens.output>0)this.emit({kind:'subagentOutput',id:w.id,counter:`thread:${w.sessionId||w.id}:run${run}`,tokens:item.tokens.output});return;}
-      if(item.kind==='request'){this.emit({kind:'request',request:{...item.request,scope:w.id}});return;}
-      if(item.kind==='init'){
-        if(w.sessionId&&w.sessionId!==item.sessionId){finish('failed','Worker changed its saved conversation identity.');return;}
-        w.sessionId=item.sessionId;this.save();return;
-      }
-      // A failed tool on the way (a non-zero exit such as `git status` outside a repo) does not make the head's result fail (agy-acp.ts).
-      if(item.kind==='result'){finish(item.ok&&item.text.trim()?'completed':'failed',item.text||item.error||'Worker ended without an evidence report.');return;}
-      if(item.kind==='permission'){
-        if(w.approvals.has(item.requestId)){finish('failed','Duplicate worker permission identity.');return;}
-        w.approvals.set(item.requestId,JSON.parse(JSON.stringify(item.input)));
-        this.emit({...item,requestId:`worker:${w.id}:${run}:${item.requestId}`,workerId:w.id});return;
-      }
-      if(item.kind==='permissionCancelled'){w.denied=true;if(w.approvals.delete(item.requestId))this.emit({...item,requestId:`worker:${w.id}:${run}:${item.requestId}`});return;}
-      if(item.kind==='delta'){w.text=(w.text??'')+item.text;return;}
-      if(item.kind==='textBlock'){this.flushText(w);return;}
-      // A failed tool result (non-zero exit, e.g. git outside a repo) is normal work, not a denial; only approval denial/cancel sets w.denied.
-      if(item.kind==='toolUse'||item.kind==='toolResult'){this.flushText(w);this.emit({...item,parent:w.id,id:`${w.id}:${run}:${item.id}`});}
-    };
-    try{
-      w.head=this.factory({...this.config,worker:true,workerEngine:w.engine,processStarted:pid=>{
-        if(w.run!==run||!w.active)throw Error('Stale worker process registration.');
-        const started=processStartTime(pid);if(!started)throw Error('Cannot record worker process identity.');
-        this.config.processStarted?.(pid);w.processes.push({pid,started});this.save();
-      },acpHome:join(this.config.acpHome!,'workers',w.id),sessionId:w.sessionId||randomUUID(),resume:!!w.sessionId,systemPrompt:`${this.config.workerInstructions??''}\n${AGY_WORKER_POLICY}`},{onItem,onExit:e=>{if(w.run===run&&w.active)finish(e.expected?'stopped':'failed',e.stderr||'ACP worker exited before a result.');}});
-      w.head.start();w.head.send(text,randomUUID());
-    }catch(error){finish('failed',(error as Error).message);}
-  }
-  private processesGone(w:Worker):boolean {
-    if(!w.processes.length)return false; // crash before registration is ambiguous, never assumed clean.
-    return w.processes.every(({pid,started})=>{
-      const current=processStartTime(pid);
-      if(current&&current!==started)return true; // old group cannot coexist with a reused leader PID.
+  private gone(processes:readonly ProcessIdentity[]):boolean {
+    if(!processes.length)return false;
+    return processes.every(({pid,started})=>{
+      const current=this.startTime(pid);
+      // The same process still runs, or another took its pid (the old group cannot coexist with a reused leader pid).
+      if(current)return current!==started;
       return !groupAlive(pid);
     });
   }
-  /** Cleanup is a completion dependency and keeps the worker in running until it finishes; never release it on failure. */
-  private clean(w:Worker):Promise<void>{
-    if(w.cleanup)return w.cleanup;
-    const head=w.head;w.cleaning=true;this.save();
-    w.cleanup=Promise.resolve().then(()=>head?.terminate()).then(()=>{if(w.processes.length&&!this.processesGone(w))throw Error('Worker process group still exists.');w.cleaning=false;w.head=undefined;}).catch(()=>{w.status='cleanup-failed';w.report='Worker process cleanup failed. Explicit recovery is required; no continuation permitted.';}).finally(()=>{w.cleanup=undefined;this.save();});
-    return w.cleanup;
+  /** Whether it still holds a head of this worker that it could not end. */
+  holds(id:string):boolean {return !!this.runs.get(id)?.head&&!!this.runs.get(id)?.ended;}
+  runtime(){return {reasoningEffort:this.config.effort??null};}
+  async close(){
+    const results=await Promise.allSettled([...this.runs.values()].map(async live=>{live.ended=true;await live.head?.terminate();live.head=undefined;}));
+    if(results.some(r=>r.status==='rejected'))throw new Error(CLEANUP_INCOMPLETE);
   }
-  private flushText(w:Worker){const text=w.text;delete w.text;if(text?.trim())this.emit({kind:'subagentText',parent:w.id,text});}
-  private cancelApprovals(w:Worker){for(const id of w.approvals.keys())this.emit({kind:'permissionCancelled',requestId:`worker:${w.id}:${w.run}:${id}`});w.approvals.clear();}
-  private deliverReport(w:Worker){
-    this.report(w.id,`<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${(w.report??'').replaceAll('<','&lt;')}\n</app_task_result>\nWorker completion is execution evidence, not acceptance of the user's full objective. Resolve this exact task_id and run with app_task_checkpoint (outcome and concrete evidence) or same-task app_send_message before ending this report turn. Research-only scope and existing permissions remain unchanged.`,w.run);
+}
+
+/**
+ * The Antigravity coordinator's workers: a WorkerCore with the ACP adapter, reports handed to the head's queue
+ * (`report`, checkpoint policy: the head calls beginReport / finishReport around the turn that shows one).
+ * Dormant until live validation (agy-capabilities.ts). No production gate is lifted by it.
+ */
+export class AgyWorkers {
+  private core:WorkerCore;
+  private adapter:AgyAcpAdapter;
+  constructor(config:AgyConfig,emit:(i:CodexItem)=>void,report:(id:string,text:string,run:number)=>void,factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead){
+    this.adapter=new AgyAcpAdapter(config,factory);
+    const acpHome=config.acpHome!;
+    // ACP names a new conversation at its start (config.sessionId changes once): the journal always carries the current one.
+    const store:WorkerStore={
+      load:()=>new AgyLegacyStore(acpHome,config.sessionId,{resume:!!config.resume}).load(),
+      save:records=>new AgyLegacyStore(acpHome,config.sessionId).save(records),
+    };
+    this.core=new WorkerCore({store,sink:{item:emit},adapters:[this.adapter],ownerSessionId:()=>config.sessionId,pendingSignal:true,log:()=>undefined,
+      port:{ack:'checkpoint',deliver:(r,text)=>{report(r.id,text,r.run);return 'queued';}}});
+    this.core.redeliver();
   }
-  beginReport(id:string,run:number):boolean {
-    const w=this.workers.get(id);if(this.closed||!w||w.owner||w.run!==run||!w.reportPending||w.reportDispatching||w.active||w.cleaning||w.cleanup||(w.reviewAttempts??0)>=2)return false;
-    w.reportDispatching=true;this.activeReports.set(id,run);this.save();return true;
+  get hostedLive(){return this.core.hostedLive;}
+  get completionDependencies(){return this.core.completionDependencies;}
+  /** Workers whose processes are at work, being cleaned up, or failed to be. */
+  get running(){return this.core.all().filter(r=>r.status==='running'||r.cleanup).map(r=>r.id);}
+  /** Its workers, provider-neutral (workers.ts). */
+  list():WorkerInfo[]{return this.core.listWorkers();}
+  /** A follow-up from the app (workers.ts `sendToWorker`): an idle worker's next run; a busy ACP worker takes no steering. */
+  continueTask(id:string,text:string){return this.core.sendToWorker(id,text);}
+  /** Stops one worker and its tools (the sub-bot hand-off: a busy ACP worker cannot be messaged). False: no such worker, or not at work. */
+  async cancelTask(id:string):Promise<boolean>{
+    if(!await this.core.stopWorker(id))return false;
+    if(this.core.get(id)?.cleanup==='failed')throw new Error(CLEANUP_INCOMPLETE);
+    return true;
   }
-  /** Delivery is not acceptance. A successful report turn must make a decision. */
-  finishReport(id:string,run:number,completed:boolean){
-    if(this.activeReports.get(id)!==run)return;
-    this.activeReports.delete(id);
-    const w=this.workers.get(id);if(this.closed||!w||w.run!==run||!w.reportPending)return;
-    if(!completed)return; // uncertain delivery remains durable; never replay automatically
-    w.reportDelivered=true;w.reportDispatching=false;w.reviewAttempts=(w.reviewAttempts??0)+1;this.save();
-    if(w.reviewAttempts===1)this.deliverReport(w);
-    else this.unresolved(w);
+  /** workers.ts `setWorkerOwner`. */
+  setOwner(id:string,owner:WorkerOwner|null):WorkerOwnerResult{return this.core.setWorkerOwner(id,owner);}
+  /** The coordinator's app tools (agy-mcp.ts). A call on an existing task names its engine (if at all) and current run. */
+  async tool(name:string,args:Record<string,unknown>):Promise<any>{
+    if(name==='app_handoff')return this.core.handoff('agy-acp',args);
+    const r=this.core.get(String(args.task_id));if(!r)throw new Error('Unknown task_id.');
+    if(r.owner)throw new Error(movedTaskError(r.owner.name));
+    if(args.engine!==undefined&&args.engine!==r.engine)throw new Error('Worker engine identity cannot change on continuation.');
+    if(args.run!==r.run)throw new Error('Stale or missing worker run identity.');
+    switch(name){
+      case 'app_reconcile_report':return this.core.reconcile(args);
+      case 'app_task_checkpoint':return this.core.checkpoint(args);
+      case 'app_cancel_task':{const {status}=await this.core.cancel(r.id,r.run);return {task_id:r.id,run:r.run,status:status==='done'?wireStatus(status):status};}
+      case 'app_send_message':{
+        if(r.status==='running'||r.cleanup==='pending')throw new Error(BUSY);
+        const sent=await this.core.message(args);return {accepted:true,task_id:sent.task_id,run:sent.run};
+      }
+    }
+    throw new Error('Unsupported worker tool.');
   }
-  private unresolved(w:Worker){this.emit({kind:'subagentEnded',id:w.id,status:'failed',summary:'Worker report unresolved: no task/run checkpoint or same-task continuation after one reconciliation turn. Evidence retained; explicit decision required.'});}
+  beginReport(id:string,run:number):boolean{return this.core.beginReport(id,run);}
+  /** Delivery is not acceptance: a report turn that made no decision shows the report once more, then leaves it unresolved. */
+  finishReport(id:string,run:number,completed:boolean){this.core.finishReport(id,run,completed);}
+  /** An approval card's answer. One whose input is not exactly what was asked is not this approval's: its card stays. */
   answer(id:string,allow:boolean,input:Record<string,unknown>,message?:string){
-    const match=/^worker:([a-f0-9-]{36}):(\d+):(.+)$/.exec(id);if(!match||this.closed)return;
-    const w=this.workers.get(match[1]!);if(!w?.active||w.run!==Number(match[2]))return;
-    const original=w.approvals.get(match[3]!);if(!original||canonical(original)!==canonical(input))return;
-    w.approvals.delete(match[3]!);if(!allow)w.denied=true;w.head?.answer(match[3]!,allow,original,message);
+    const match=/^worker:([0-9a-f-]{36}):(\d+):(.+)$/i.exec(id);
+    if(match&&this.adapter.asks(match[1]!,Number(match[2]),match[3]!,input))this.core.answer(id,allow,input,message);
   }
-  private verifyRecovery(w:Worker){
-    if(!w.recoveryRequired)return;
-    if(!this.processesGone(w))throw new Error('Worker crash cleanup has not been verified; process registration is missing or an owned group may survive. Cancellation and continuation remain blocked.');
-    w.recoveryRequired=false;this.save();
+  /** Stops every worker at work and ends failed cleanups again; throws while one's processes may still be alive. */
+  async cancel(){
+    await Promise.allSettled(this.core.all().map(r=>r.status==='running'?this.core.stopWorker(r.id):r.cleanup==='failed'?this.core.cancel(r.id):undefined));
+    if(this.running.length)throw new Error('Worker cleanup incomplete; live or recovery dependencies retained.');
   }
-  private async stop(w:Worker,discard:boolean){
-    // A checkpoint records assessment, never cleanup. Reconstructed workers
-    // have no live head to terminate; require evidence before releasing them.
-    this.verifyRecovery(w);
-    w.discardReport=discard;
-    this.activeReports.delete(w.id);
-    if(!w.active&&!w.cleaning){if(discard){w.reportPending=false;this.save();}return;}
-    w.active=false;this.flushText(w);this.cancelApprovals(w);w.status='stopped';w.report='Stopped by the app; work was not completed.';
-    await this.clean(w);
-    w.reportPending=!discard;this.save();this.emit({kind:'subagentEnded',id:w.id,status:w.status,summary:w.report??''});
+  /**
+   * The app is quitting: runs under way are interrupted (never replayed). Throws when a worker's processes may outlive
+   * it (a crash this app could not verify, a cleanup that failed): the head reports its cleanup incomplete.
+   */
+  async close(){
+    const unverified=new Set(this.core.all().filter(r=>r.recovery==='required'||r.cleanup==='failed').map(r=>r.id));
+    await this.core.close();
+    // Runs it ended just now are checked at the next start; here, whatever was unverified already or could not be ended.
+    const checks=await Promise.all(this.core.all().filter(r=>unverified.has(r.id)||this.adapter.holds(r.id)).map(r=>this.adapter.recover(r)));
+    if(checks.some(c=>c.state==='blocked'))throw new Error('Worker cleanup incomplete; live or recovery dependencies retained.');
   }
-  async cancel(discardReports=true){const stopped=await Promise.allSettled([...this.workers.values()].map(w=>this.stop(w,discardReports)));this.emit({kind:'managedPending',pending:this.hostedLive.length>0});if(stopped.some(r=>r.status==='rejected')||this.running.length)throw new Error('Worker cleanup incomplete; live or recovery dependencies retained.');}
-  async close(){this.closed=true;await this.cancel(false);}
 }
 
 /** Antigravity's workers as a WorkerHost (workers.ts). A busy ACP worker takes no words until it reports. */
@@ -263,7 +235,7 @@ export function agyWorkerHost(workers:()=>AgyWorkers|undefined):WorkerHost{
   return {
     workerHostKind:'agy-acp',steersRunning:false,
     listWorkers:()=>workers()?.list()??[],
-    sendToWorker:(id,text)=>workers()?.continueTask(id,text)??{ok:false,reason:'This Antigravity head has no workers.'},
+    sendToWorker:(id,text):WorkerSendResult|Promise<WorkerSendResult>=>workers()?.continueTask(id,text)??{ok:false,reason:'This Antigravity head has no workers.'},
     stopWorker:async id=>(await workers()?.cancelTask(id))??false,
     setWorkerOwner:(id,owner)=>workers()?.setOwner(id,owner)??{ok:false,reason:'This Antigravity head has no workers.'},
   };

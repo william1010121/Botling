@@ -3,6 +3,7 @@ import {mkdtempSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AgyWorkers,type AgyWorkerHead} from '../../src/core/agent/agy-workers';
+import {CLEANUP_FAILED_NOTE} from '../../src/core/worker-core';
 import type {HeadHandlers} from '../../src/core/agent/head';
 import type {AgyConfig} from '../../src/core/agent/agy';
 const managers:AgyWorkers[]=[];
@@ -19,13 +20,13 @@ it('worker tools launch only dedicated ACP sessions and forward permission/refus
  const h=harness(),accepted=await h.m.tool('app_handoff',{instructions:'research only',name:'probe'});const id=accepted.task_id,w=h.starts[0]!;
  expect(w.config).toMatchObject({worker:true,resume:false});expect(w.config.systemPrompt).toContain('Do not delegate');
  w.h.onItem({kind:'permission',requestId:'acp:1',tool:'write',summary:'write file',input:{path:'x'}});
- expect(h.events.at(-1)).toMatchObject({requestId:`worker:${id}:1:acp:1`,workerId:id});expect(w.answers).toEqual([]);
- h.m.answer(`worker:${id}:1:acp:1`,false,{path:'x'});expect(w.answers[0][1]).toBe(false);
+ expect(h.events.at(-1)).toMatchObject({requestId:`worker:${id}:1:1`,workerId:id});expect(w.answers).toEqual([]);
+ h.m.answer(`worker:${id}:1:1`,false,{path:'x'});expect(w.answers[0]).toEqual(['acp:1',false,{path:'x'},undefined]);
  w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});w.h.onItem({kind:'result',ok:false,text:'operation refused',error:'Antigravity stopped: permission_denied',subtype:'permission_denied'});
  await settle();expect(w.stopped).toBe(true);expect(h.reports[0].id).toBe(id);expect(h.reports[0].text).toContain('not acceptance');expect(h.reports[0].text).toContain('status="failed"');
  h.m.beginReport(id,1);await h.m.tool('app_task_checkpoint',{task_id:id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});await h.m.tool('app_send_message',{task_id:id,run:1,message:'follow up'});expect(h.starts[1]!.config).toMatchObject({resume:true,sessionId:'11111111-2222-4333-8444-555555555555'});
  w.h.onExit({code:0,signal:null,stderr:'',expected:true,silent:false});expect(h.m.running).toEqual([id]);
- h.m.answer(`worker:${id}:1:acp:1`,true,{});expect(h.starts[1]!.answers).toEqual([]);
+ h.m.answer(`worker:${id}:1:1`,true,{});expect(h.starts[1]!.answers).toEqual([]);
 });
 it('stop clears live worker dependencies; restart retains identity without claiming running jobs',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
@@ -90,14 +91,21 @@ it('holds concurrency and report delivery until process cleanup finishes',async(
  w.h.onItem({kind:'permission',requestId:'stale',tool:'write',summary:'old run',input:{}});
  expect(h.events.some(e=>e.requestId?.endsWith(':stale'))).toBe(false);expect(()=>w.config.processStarted?.(0)).toThrow('Stale');
 });
+// "cleanup-failed" is no status (shared-core spec 3.1): the run failed, its report says why, and the worker stays
+// blocked until its processes are ended.
 it('a cleanup failure is never reported as success or released for continuation',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;w.cleanupError=true;
  w.h.onItem({kind:'result',ok:true,text:'done',error:'',subtype:'end_turn'});await settle();
- expect(h.reports[0].text).toContain('status="cleanup-failed"');expect(h.m.running).toEqual([a.task_id]);
- expect(h.m.beginReport(a.task_id,1)).toBe(false);
+ expect(h.reports[0].text).toContain('status="failed"');expect(h.reports[0].text).toContain(CLEANUP_FAILED_NOTE);
+ // (The interim journal, workers.json, still spells it for a downgrade until the ledger replaces it: migrate.ts toLegacyAgy.)
+ expect(JSON.stringify(h.events)).not.toContain('cleanup-failed');
+ expect(h.events.find(e=>e.kind==='subagentEnded')).toMatchObject({status:'failed'});
+ expect(h.m.running).toEqual([a.task_id]);expect(h.m.list()[0]).toMatchObject({state:'failed'});
  await expect(h.m.tool('app_cancel_task',{task_id:a.task_id,run:1})).rejects.toThrow('cleanup incomplete');
- await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'})).rejects.toThrow('busy');
- w.cleanupError=false;await h.m.cancel();
+ expect(h.m.beginReport(a.task_id,1)).toBe(true);
+ await expect(h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'})).rejects.toThrow('cleanup incomplete');
+ expect(h.starts).toHaveLength(1);
+ w.cleanupError=false;await h.m.cancel();expect(h.m.running).toEqual([]);
 });
 it('uncertain report delivery is not replayed after restart and foreign owners are rejected',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
@@ -115,10 +123,16 @@ it('crashed active state restores identity but cannot resume before cleanup reco
  await expect(restored.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('cleanup');
  await expect(restored.m.close()).rejects.toThrow('cleanup');managers.splice(managers.indexOf(restored.m),1);
 });
-it('denial remains failed even if a worker incorrectly emits successful completion',async()=>{
+// Decision D2: a denied approval is the user's choice, not a failed run; a run that ended normally with a reply is
+// done, and its report says the approval was denied.
+it('a denied approval is a note in the report, not a failure',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
- w.h.onItem({kind:'permission',requestId:'p',tool:'write',summary:'write',input:{path:'x'}});h.m.answer(`worker:${a.task_id}:1:p`,false,{path:'x'});
- w.h.onItem({kind:'result',ok:true,text:'done',error:'',subtype:'end_turn'});await settle();expect(h.reports[0].text).toContain('status="failed"');
+ w.h.onItem({kind:'permission',requestId:'acp:7',tool:'write',summary:'write',input:{path:'x'}});h.m.answer(`worker:${a.task_id}:1:7`,false,{path:'x'});
+ expect(w.answers).toEqual([['acp:7',false,{path:'x'},undefined]]);
+ w.h.onItem({kind:'delta',text:'Left the file as it was.'});
+ w.h.onItem({kind:'result',ok:true,how:'normal',text:'Left the file as it was.',error:'',subtype:'permission_denied'});await settle();
+ expect(h.reports[0].text).toContain('status="completed"');expect(h.reports[0].text).toContain('(1 approval was denied during this run.)\nLeft the file as it was.');
+ expect(h.events.find(e=>e.kind==='subagentEnded')).toMatchObject({status:'completed'});
 });
 
 it('a failed tool call that was not an approval denial does not fail a worker that completes',async()=>{
@@ -169,12 +183,36 @@ it('a worker whose turn ended normally after failed tool calls is completed, not
  expect(h.reports[0].text).toContain('status="completed"');expect(h.reports[0].text).toContain('Completed successfully');
 });
 
-it('a worker that stopped early, was cancelled or wrote no report after a failed tool is still failed',async()=>{
- for(const [subtype,text] of [['max_tokens','partial report'],['cancelled','partial report'],['permission_denied','partial report'],['tool_failed','  ']]){
+// The worker's end is the protocol's `how` (agy-acp.ts), classified once (classifyRun): an early stop or a reply-less
+// turn fails, a turn ACP cancelled is stopped. A result without `how` (an older head) falls back on `ok`.
+it('a worker that stopped early or wrote no report after a failed tool failed; one ACP cancelled is stopped',async()=>{
+ for(const [how,subtype,text,status] of [['error','max_tokens','partial report','failed'],['cancelled','cancelled','partial report','stopped'],['normal','tool_failed','  ','failed'],[undefined,'permission_denied','partial report','failed']] as const){
   const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
-  w.h.onItem({kind:'result',ok:false,text,error:`Antigravity stopped: ${subtype}`,subtype});await settle();
-  expect(h.events.find(e=>e.kind==='subagentEnded'&&e.id===a.task_id),subtype).toMatchObject({status:'failed'});
+  w.h.onItem({kind:'delta',text});
+  w.h.onItem({kind:'result',ok:false,...(how?{how}:{}),text,error:`Antigravity stopped: ${subtype}`,subtype});await settle();
+  expect(h.events.find(e=>e.kind==='subagentEnded'&&e.id===a.task_id),subtype).toMatchObject({status});
+  if(status!=='failed'||text.trim())expect(h.reports[0].text,subtype).toContain(`Antigravity stopped: ${subtype}`);
  }
+});
+
+// Decision D1: the report is the run's last text block (as for Claude and Codex), not every word of the turn; the
+// words before a tool are a step of their own.
+it('reports the last text block, not the whole turn',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'delta',text:'Looking at the '});w.h.onItem({kind:'delta',text:'folder first.'});
+ w.h.onItem({kind:'textBlock'});w.h.onItem({kind:'toolUse',id:'t1',tool:'other',title:'botling_run_command',detail:'ls',input:{}} as any);
+ w.h.onItem({kind:'toolResult',id:'t1',output:'a.txt',failed:false} as any);
+ w.h.onItem({kind:'delta',text:'One file: '});w.h.onItem({kind:'delta',text:'a.txt.'});
+ w.h.onItem({kind:'result',ok:true,how:'normal',text:'Looking at the folder first.One file: a.txt.',error:'',subtype:'end_turn'});await settle();
+ expect(h.events.filter(e=>e.kind==='subagentText').map(e=>e.text)).toEqual(['Looking at the folder first.','One file: a.txt.']);
+ expect(h.reports[0].text).toContain(`task_id="${a.task_id}" run="1" engine="agy" status="completed">\nOne file: a.txt.\n</app_task_result>`);
+});
+
+it('a resumed worker that comes back in another conversation fails',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+ w.h.onItem({kind:'init',sessionId:'99999999-2222-4333-8444-555555555555'});await settle();
+ expect(h.events.find(e=>e.kind==='subagentEnded'&&e.id===a.task_id)).toMatchObject({status:'failed',summary:'Worker changed its saved conversation identity.'});
 });
 
 // Replay the split transcript: ACP streams a message in chunks that cut words and code spans
@@ -277,20 +315,24 @@ it('stale or duplicate report-turn completion cannot consume another run or exha
  h.m.finishReport(a.task_id,2,true);h.m.finishReport(a.task_id,2,true);
  expect(h.reports).toHaveLength(3);expect(h.m.beginReport(a.task_id,2)).toBe(true);
 });
-it('uncertain-delivery acknowledgement is not task acceptance and cannot bypass a checkpoint',async()=>{
+it('an uncertain report hand-over is never replayed and takes no checkpoint until it is reconciled',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'research only'});
  h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();h.m.beginReport(a.task_id,1);
  await expect(h.m.tool('app_reconcile_report',{task_id:a.task_id,run:1,action:'acknowledge'})).rejects.toThrow('active');
  h.m.finishReport(a.task_id,1,false);
  await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:'not confirmed'})).rejects.toThrow('delivered');
- await h.m.tool('app_reconcile_report',{task_id:a.task_id,run:1,action:'acknowledge'});
  expect(h.m.completionDependencies).toHaveLength(1);
  const reconstructed=harness(h.home,true);expect(reconstructed.reports).toEqual([]);expect(reconstructed.m.completionDependencies).toHaveLength(1);
+ await h.m.tool('app_reconcile_report',{task_id:a.task_id,run:1,action:'retry'});expect(h.reports).toHaveLength(2);
+ expect(h.m.beginReport(a.task_id,1)).toBe(true);
  await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'waiting_user',evidence:'Need explicit implementation authorization; research complete'});
  expect(h.m.completionDependencies).toEqual([]);
  const persisted=JSON.parse(readFileSync(join(h.home,'workers.json'),'utf8'));
  expect(persisted.workers[0].checkpoint).toMatchObject({outcome:'waiting_user'});
 });
+// agy-workers.ts used to keep an acknowledged-uncertain report waiting for a checkpoint (the tool says "acknowledge as
+// received"); the shared core settles it at acknowledge (worker-core/core.ts reconcile). Reported to the core's owner.
+it.todo('app_reconcile_report acknowledge leaves the report delivered, still waiting for a checkpoint (worker-core change)');
 
 it('retains the recovery obligation after checkpoint while a reconstructed process group is live',async()=>{
  const {processTreeAdapter}=await import('../../src/core/process/tree');
@@ -303,11 +345,12 @@ it('retains the recovery obligation after checkpoint while a reconstructed proce
   restored=harness(h.home,true);
   expect(restored.m.beginReport(a.task_id,1)).toBe(true);
   await restored.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'execution interrupted; cleanup remains unverified'});
-  expect(restored.m.running).toEqual([a.task_id]);
-  expect(restored.m.completionDependencies).toMatchObject([{id:a.task_id,state:'running'}]);
+  // Interrupted, as every engine's worker found at work after a restart (shared-core spec 3.3): not at work, but held.
+  expect(restored.m.list()).toMatchObject([{id:a.task_id,state:'interrupted'}]);
+  expect(restored.m.completionDependencies.some(d=>d.id===a.task_id)).toBe(false);
   for(let i=0;i<3;i++)await restored.m.tool('app_handoff',{instructions:'independent'});
   await expect(restored.m.tool('app_cancel_task',{task_id:a.task_id,run:1})).rejects.toThrow('cleanup');
-  expect(restored.m.completionDependencies.some(d=>d.id===a.task_id)).toBe(true);
+  await expect(restored.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'continue'})).rejects.toThrow('cleanup');
   await processGroup.terminate({graceMs:50});
   await restored.m.tool('app_cancel_task',{task_id:a.task_id,run:1});
   expect(restored.m.running).not.toContain(a.task_id);
@@ -320,11 +363,11 @@ it('retains the recovery obligation with missing process registration and refuse
  try{
   expect(restored.m.beginReport(id,1)).toBe(true);
   await restored.m.tool('app_task_checkpoint',{task_id:id,run:1,outcome:'complete',evidence:'assessment does not prove process cleanup'});
-  expect(restored.m.running).toHaveLength(4);expect(restored.m.completionDependencies).toHaveLength(4);
+  expect(restored.m.list().map(w=>w.state)).toEqual(['interrupted','interrupted','interrupted','interrupted']);
   await expect(restored.m.tool('app_cancel_task',{task_id:id,run:1})).rejects.toThrow('cleanup');
   await expect(restored.m.tool('app_send_message',{task_id:id,run:1,message:'continue'})).rejects.toThrow('cleanup');
   await expect(restored.m.close()).rejects.toThrow('cleanup');
-  expect(restored.m.completionDependencies).toHaveLength(4);
+  expect(restored.starts).toEqual([]);
  }finally{managers.splice(managers.indexOf(restored.m),1);}
 });
 

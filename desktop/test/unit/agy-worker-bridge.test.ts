@@ -34,9 +34,10 @@ it('connects the agy worker through exact grants and owner-specific cards, then 
  h.bridge.grant('botling_app_handoff',args);const task=await h.bridge.invoke('app_handoff',args);expect(fixture.workers[0].config.workerEngine).toBe('agy');
  const child=fixture.workers[0];child.handlers.onItem({kind:'permission',requestId:'p',tool:'write',summary:'fixture',input:{path:'x'}});
  const card=h.events.findLast(e=>e.kind==='permission');expect(card.workerId).toBe(task.task_id);h.head.answer(card.requestId,false,{path:'x'});expect(child.answers[0][1]).toBe(false);
- child.handlers.onItem({kind:'result',ok:true,text:'must stay failed',error:'',subtype:'end_turn'});await settle();expect(h.prompts).toEqual([]);expect(h.head.completionDependencies).toHaveLength(1);
+ // Decision D2: the denial is noted in the report; a turn that ended normally with a reply is done.
+ child.handlers.onItem({kind:'result',ok:true,how:'normal',text:'Did the rest without writing.',error:'',subtype:'permission_denied'});await settle();expect(h.prompts).toEqual([]);expect(h.head.completionDependencies).toHaveLength(1);
  h.acknowledged.available=true;await (h.head as any).drain();await settle();
- expect(h.prompts[0]).toContain(`task_id="${task.task_id}" run="1" engine="agy" status="failed"`);expect(h.head.completionDependencies).toEqual([]);expect(child.stopped).toBe(true);
+ expect(h.prompts[0]).toContain(`task_id="${task.task_id}" run="1" engine="agy" status="completed">\n(1 approval was denied during this run.)\nDid the rest without writing.`);expect(h.head.completionDependencies).toEqual([]);expect(child.stopped).toBe(true);
 });
 it('uncertain report reconciliation needs no approval card and never replays the worker task',async()=>{
  const h=await setup(),args={instructions:'offline'},task=await(async()=>{h.bridge.grant('botling_app_handoff',args);return h.bridge.invoke('app_handoff',args);})();
