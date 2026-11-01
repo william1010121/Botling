@@ -46,6 +46,7 @@
 // App notes ("(App: …" paragraphs: the wake briefing, recent lines, reactions) are not the user's
 // words: the reply echoes the rest, and the directive is read from the last paragraph. The tidy
 // note ("(App: You have been idle …") is answered "OK" after writing the memory file it names.
+// FAKE_CLAUDE_REPORT_REPLY: what it answers a Claude app worker's report (<app_task_result …>) with, exactly.
 // FAKE_CLAUDE_INPUT: a file it appends {session, text} to for every message it reads.
 // FAKE_CLAUDE_PIDS: a file this process appends "<pid>\n" to, for itself and each helper it starts.
 // FAKE_CLAUDE_CONTROLS: a file it appends {session, request} to for every set_model request.
@@ -286,6 +287,11 @@ async function turn(job) {
   init();
   if (job.background) return backgroundTurn(job);
   const prompt = job.text;
+  // A worker's report (Claude app workers) answered with exactly FAKE_CLAUDE_REPORT_REPLY ("" ends the turn with nothing).
+  if (process.env.FAKE_CLAUDE_REPORT_REPLY !== undefined && prompt.startsWith("<app_task_result ")) {
+    result(await stream(process.env.FAKE_CLAUDE_REPORT_REPLY));
+    return;
+  }
   if (prompt.startsWith("(App: You have been idle")) {
     // The tidy: write the memory file it names, then OK.
     const file = /Update (\S+) with/.exec(prompt)?.[1];

@@ -3532,12 +3532,14 @@ export class Bot {
     if (status === "done" && parsed.whiteboard) this.owner.setWhiteboard(parsed.whiteboard);
     // Nothing for the user (`Bot.show`'s silent cases): a reply that only reacts; a turn claude
     // started itself that says <no-reply/> or nothing; the app's own note answered with <no-reply/>;
-    // with two heads, the head with nothing to add to your message says only <no-reply/>.
+    // with two heads, the head with nothing to add to your message says only <no-reply/>; the app's
+    // note (a worker's report, say) answered with nothing, no decision and no steps.
     const nothing = saysNothing(raw);
     const silent = status === "done" && !tags.handoff && (
       (nothing && (parsed.reactions.length > 0 || !!parsed.whiteboard))
       || (turn.origin === "background" && (saysNoReply(raw) || nothing))
-      || ((turn.origin === "app" || this.sharesChat) && nothing && saysNoReply(raw)));
+      || ((turn.origin === "app" || this.sharesChat) && nothing && saysNoReply(raw))
+      || (turn.origin === "app" && nothing && !parsed.decisionReference && !turn.steps.length));
     if (silent) {
       if (turn.record) this.remove(turn.record);
       this.keepTasks(turn, null);

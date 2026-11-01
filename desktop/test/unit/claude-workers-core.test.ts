@@ -29,6 +29,20 @@ async function turn(c: CoreHarness, text: string) {
 const subagentUpdates = (c: CoreHarness) => c.of("subagent.updated").map((e) => (e.event as { subagent: any }).subagent);
 
 describe("Claude's app-managed workers", () => {
+  it("a report turn that ends with nothing leaves no blank bubble in the chat", async () => {
+    const dir = tempDir("claude-workers");
+    const c = core(dir, { FAKE_CLAUDE_REPORT_REPLY: "" });
+    const { turnId: handOff, event } = await turn(c, "/worker Look up the API");
+    const taskId = /^Handed off: ([0-9a-f-]{36})$/.exec(event.text)?.[1];
+    expect(taskId, event.text).toBeTruthy();
+    const ended = await until(() => c.of("turn.finished").map((e) => e.event as { turnId: string; text: string; status: string }).find((e) => e.turnId !== handOff), { what: "the report turn" });
+    expect(ended).toMatchObject({ status: "done", text: "" });
+    const bots = (await c.chat()).messages.filter((m: { role: string }) => m.role === "bot");
+    expect(bots.map((m: { text: string }) => m.text)).toEqual([event.text]);
+    const saved = JSON.parse(readFileSync(join(dir, "main", "chat.json"), "utf8"));
+    expect(saved.filter((m: { role: string; text: string }) => m.role === "bot" && !m.text.trim())).toEqual([]);
+  });
+
   it("app_handoff starts a worker process of its own whose report comes back to the bot as the app's message", async () => {
     const dir = tempDir("claude-workers");
     const c = core(dir);
