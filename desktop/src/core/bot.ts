@@ -80,7 +80,7 @@ import {
 import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
-import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest, type WhiteboardTag } from "./reply";
+import { masked, parseReply, unsupportedRequest, type BotRequest, type WhiteboardTag } from "./reply";
 import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
@@ -92,6 +92,8 @@ import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, 
 import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SHOWN_COOLDOWN_MS, spelledTone, MAX_FLOATING, type PinRecord } from "./components/pins";
 import { detailValues } from "./components/commands";
 import type { Display } from "./reply";
+import { headTurnContent, headTurnEnd } from "./head-turn";
+import { costDelta, hasVisibleContent } from "./worker-core";
 import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
@@ -426,7 +428,7 @@ export class Bot {
   /** A head ended for such a restart: its session carries on. */
   private restarting: AgentHead | null = null;
   /** What its process has cost so far (claude's `total_cost_usd`, a running total; 1.x's `sessionCost`). */
-  private sessionCost = 0;
+  private sessionCost = { last: 0 };
   /** Its head runs on another CLI from its next message on (1.x's `switchEngine`): a handoff through memory.md first. */
   private switchTo: Engine | null = null;
   /** Writing that handoff (1.x's `.switching(.writing)`). */
@@ -2970,7 +2972,7 @@ export class Bot {
     this.head = head;
     // Workers it hosts for another bot: their host learns who owns them before any report goes out (a move made while it slept).
     if (this.engine !== "claude") this.syncWorkerOwners();
-    this.sessionCost = 0;
+    this.sessionCost = { last: 0 };
     if (head.pid > 0) this.options.ledger.record(head.pid);
     this.log(`head started pid ${head.pid} session ${this.session.sessionId}${resume ? " (resumed)" : " (new)"}`);
     this.store.saveHead(this.session);
@@ -3140,8 +3142,7 @@ export class Bot {
     if (item.kind === "usage") {
       if (item.measurement) this.recordMeasurement(item.measurement);
       // Claude's cost is a running total for its process: this turn's is the difference.
-      const spent = Math.max(0, item.totalCost - this.sessionCost);
-      this.sessionCost = Math.max(this.sessionCost, item.totalCost);
+      const spent = costDelta(this.sessionCost, item.totalCost);
       if (spent > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, spent, item.tokens);
       return;
     }
@@ -3275,18 +3276,20 @@ export class Bot {
         this.emitSteps(turn);
         return;
       }
-      case "result":
+      case "result": {
+        if (item.ok) turn.reply.add(item);
+        const end = headTurnEnd(item, turn.reply.text, this.engine);
         // Its turn ended with claude's connection error: say so, and wait for the network instead of going to sleep (`showNetworkLoss`).
-        if (!item.ok && turn.lostConnection && turn.origin !== "tidy") {
+        if (end.status === "failed" && turn.lostConnection && turn.origin !== "tidy") {
           turn.reply = new ReplyText();
           this.recordOutage({ turnFailed: true });
           this.finishTurn(turn, "failed", lostText(item.error || item.text));
           this.bumpUnread();
           return;
         }
-        if (item.ok) turn.reply.add(item);
-        this.finishTurn(turn, item.ok ? "done" : "failed", item.ok ? undefined : item.error);
+        this.finishTurn(turn, end.status, end.error);
         return;
+      }
       default: {
         const piece = turn.reply.add(item);
         if (!piece) return;
@@ -3546,17 +3549,9 @@ export class Bot {
     const ended = turn.origin === "background" ? [...this.pendingEnded.splice(0), ...turn.ended] : turn.ended;
     if (status === "done") this.applyReactions(parsed.reactions);
     if (status === "done" && parsed.whiteboard) this.owner.setWhiteboard(parsed.whiteboard);
-    // Nothing for the user (`Bot.show`'s silent cases): a reply that only reacts; a turn claude
-    // started itself that says <no-reply/> or nothing; the app's own note answered with <no-reply/>;
-    // with two heads, the head with nothing to add to your message says only <no-reply/>; the app's
-    // note (a worker's report, say) answered with nothing, no decision and no steps.
-    const nothing = saysNothing(raw);
-    const silent = status === "done" && !tags.handoff && (
-      (nothing && (parsed.reactions.length > 0 || !!parsed.whiteboard))
-      || (turn.origin === "background" && (saysNoReply(raw) || nothing))
-      || ((turn.origin === "app" || this.sharesChat) && nothing && saysNoReply(raw))
-      || (turn.origin === "app" && nothing && !parsed.decisionReference && !turn.steps.length));
-    if (silent) {
+    // Nothing for the user, whoever started the turn: no bubble (`headTurnContent` says what the head keeps out).
+    const content = headTurnContent({ status, origin: turn.origin, sharesChat: this.sharesChat, raw, parsed, body: tags.body, handoff: !!tags.handoff, steps: turn.steps.length, error: error ?? null });
+    if (!hasVisibleContent(content)) {
       if (turn.record) this.remove(turn.record);
       this.keepTasks(turn, null);
       this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
