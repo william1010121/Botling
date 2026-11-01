@@ -93,10 +93,8 @@ import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SH
 import { detailValues } from "./components/commands";
 import type { Display } from "./reply";
 import { headTurnContent, headTurnEnd } from "./head-turn";
-import {
-  costDelta, hasVisibleContent, stepFailed, subagentStatus, WorkerCore, WorkerLedger,
-  type WorkerCoreFactory, type WorkerLedgerRecord,
-} from "./worker-core";
+import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, type WorkerCoreFactory, type WorkerLedgerRecord } from "./worker-core";
+import { projectWorker } from "./worker-projection";
 import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
@@ -116,7 +114,7 @@ import {
 import { CONTINUE_NOTE, type SwapEntry } from "./hot-swap";
 import { MAX_PAGE_BYTES, PAGE_BYTES, pageBack, sliceViews } from "./history-page";
 import {
-  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, projectBackgroundTask, stopBackgroundTasks,
+  backgroundTask, endBackgroundTask, endTask, hasBackgroundWorkRunning, interruptedNote, markCutOffTasksTold, stopBackgroundTasks,
   type BackgroundKind, type BackgroundTask,
 } from "./background-tasks";
 import {
@@ -538,7 +536,8 @@ export class Bot {
     // Subagents that were running when the app went away went with their process. App-managed workers are their
     // ledger's: shown as it says (one it still lists at work was cut off), until their core is up.
     this.projectLedgerAtStart();
-    if (this.subagents.stopRunning()) this.saveSubagents();
+    // A worker its ledger does not have yet (an old journal not imported until its core is up) stopped, as before.
+    if (this.subagents.stopRunning(undefined, (subagent) => this.workerViews.has(subagent.id))) this.saveSubagents();
     // Claude workers in the ledger (or still only in claude-workers.json): restored (one at work when the app went away
     // is interrupted), and a report that never reached this head is handed over again once the bot is up.
     if (this.engine === "claude" && (existsSync(this.workerLedgerFile) || existsSync(claudeWorkersFile(this.store.directory)))) {
@@ -1294,24 +1293,15 @@ export class Bot {
    */
   private projectWorker(record: WorkerLedgerRecord, atStart = false) {
     this.workerViews.set(record.id, record);
-    const subagent = this.subagents.get(record.id);
-    const status = subagentStatus(record);
-    const endedAt = record.endedAt ? toSwiftDate(record.endedAt) : null;
-    const wasRunning = subagent?.status === "running";
-    // A run's start is the opening items' (`subagentStarted` keeps its history); everything after it is the ledger's.
-    const changed = status !== "running" && !!this.subagents.project(record.id, { status, endedAt, result: record.report.text });
-    if (record.status !== "running") {
-      const pending = this.turn?.tasks?.some((task) => task.id === record.id) ? [{ backgroundTasks: this.turn!.tasks } as unknown as ChatRecord] : null;
-      if (pending) projectBackgroundTask(pending, record.id, record, record.report.text);
-      else {
-        const chat = projectBackgroundTask(this.records, record.id, record, record.report.text);
-        if (chat) this.changed(chat);
-      }
-    }
-    if (!subagent || atStart || (!changed && !this.options.agents)) return;
-    if (wasRunning && status !== "running") this.subagentEnded(record.id);
-    else if (changed) this.markWorkerStep(record.id, stepFailed(record));
-    this.subagentChanged(subagent);
+    // A chip still in the turn under way (not yet in a reply) is the newest.
+    const pending = this.turn?.tasks?.some((task) => task.id === record.id) ? { backgroundTasks: this.turn.tasks } as unknown as ChatRecord : null;
+    const projected = projectWorker(this.subagents, pending ? [...this.records, pending] : this.records, record);
+    if (projected.chip && projected.chip !== pending) this.changed(projected.chip);
+    const row = projected.row;
+    if (!row || atStart || (!projected.rowChanged && !this.options.agents)) return;
+    if (projected.ended) this.subagentEnded(record.id);
+    else if (projected.rowChanged) this.markWorkerStep(record.id, projected.stepFailed);
+    this.subagentChanged(row);
   }
 
   /** The step that started a worker shows how its latest run ended (a report left unresolved later fails it too). */

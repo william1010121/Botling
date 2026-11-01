@@ -82,6 +82,15 @@ const re = (pattern: string) => new RegExp(pattern, "s");
 /** The worker's text steps. */
 const texts = (r: ReplayResult, id: string) => kinds(own(r.items, id), "subagentText").map((item) => item.text as string).filter((text) => !text.startsWith("Waiting for a free worker slot"));
 
+/** What the bot shows of it — its row, its chip, its registry entry — is its ledger record's, through the real projection. */
+function expectShown(r: ReplayResult, id: string) {
+  const rec = record(r, id);
+  const { book, chats, registry, host } = r.projection;
+  const chip = chats.flatMap((chat) => (chat.backgroundTasks ?? []) as { id: string; status: string }[]).find((task) => task.id === id);
+  expect({ row: book.get(id)?.status, chip: chip?.status, registry: registry.byNative(host.botId, host.engine, id)?.state })
+    .toEqual({ row: subagentStatus(rec), chip: chipStatus(rec), registry: agentState(rec) });
+}
+
 function expectReport(r: ReplayResult, id: string, expect_: Expectation, i = 0) {
   const pattern = per(expect_.reports, i) ?? expect_.report;
   const text = record(r, id).report.text ?? "";
@@ -248,6 +257,7 @@ describe.each(registrations.map((registration) => [registration.label ?? registr
     expect(await restarted.core.sendToWorker(id!, "Continue where you were.")).toEqual({ ok: true, how: "newRun", run: saved.run + 1 });
     await restarted.playMore();
     expect(record(restarted, id!)).toMatchObject({ status: "done", conversationId: saved.conversationId });
+    expectShown(restarted, id!);
     const written = restarted.source.processes.flatMap((p) => p.written).join("\n");
     expect(written).toContain("Continue where you were.");
     expect(written).not.toContain(saved.instructions);
@@ -287,6 +297,8 @@ describe.each(registrations.map((registration) => [registration.label ?? registr
     const r = await run(fixtures, { answer: "taken", before: (c) => expect(c.core.setWorkerOwner(c.workers[0]!, { botId: "other-bot", name: "Other", agentId: "agent-1" })).toEqual({ ok: true }) });
     const [id] = r.workers;
     expect(record(r, id!).report.state).toBe("routed");
+    expectShown(r, id!);
+    expect(r.projection.registry.byNative(r.projection.host.botId, r.projection.host.engine, id!)?.state).toBe("idle");
     expect(r.delivered).toEqual([]);
     expect(kinds(r.items, "workerReport")).toEqual([expect.objectContaining({ id, run: 1, status: "completed" })]);
   });
@@ -295,11 +307,13 @@ describe.each(registrations.map((registration) => [registration.label ?? registr
     const r = await run(fixtures);
     const [id] = r.workers;
     expect(record(r, id!).report.state).toBe("pending");
+    expectShown(r, id!);
     r.port.answer = "taken";
     r.core.redeliver();
     r.core.redeliver();
     expect(r.delivered.filter((d) => d.id === id)).toHaveLength(2); // the busy attempt, then the one that was taken
     expect(record(r, id!).report.state).toBe(registration.ack === "none" ? "acknowledged" : "delivered");
+    expectShown(r, id!);
 
     // Checkpoint policy: the port queues it, shows it in two turns, and no decision comes.
     const c = await replay({ ...registration, ack: "checkpoint" }, fixtures, { answer: "queued", events: dropRequests });
@@ -311,6 +325,9 @@ describe.each(registrations.map((registration) => [registration.label ?? registr
     const rec = record(c, cid!);
     expect(rec.report.state).toBe("unresolved");
     expect([stepFailed(rec), chipStatus(rec), agentState(rec), subagentStatus(rec)]).toEqual([true, "failed", "failed", "failed"]);
+    // Shown failed everywhere: the row (not first-writer-wins: it had completed), the chip, the registry.
+    expectShown(c, cid!);
+    expect(c.projection.book.get(cid!)?.status).toBe("failed");
     expect(kinds(c.items, "subagentEnded").filter((item) => item.id === cid).at(-1)).toMatchObject({ status: "failed", summary: UNRESOLVED_REPORT });
   });
 });

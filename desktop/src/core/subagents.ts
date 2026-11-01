@@ -427,11 +427,14 @@ export class SubagentBook {
     return true;
   }
 
-  /** Its process went away: every one still at work stopped with it (`TraceBook.stopRunning`); a projected worker is its ledger's. */
-  stopRunning(now = toSwiftDate()): boolean {
+  /**
+   * Its process went away: every one still at work stopped with it (`TraceBook.stopRunning`). A projected worker is its
+   * ledger's (`keep`: the ones to leave, by default every projected worker).
+   */
+  stopRunning(now = toSwiftDate(), keep: (subagent: SubagentRecord) => boolean = (subagent) => this.projected(subagent)): boolean {
     let changed = false;
     for (const subagent of this.list) {
-      if (subagent.status !== "running" || this.projected(subagent)) continue;
+      if (subagent.status !== "running" || keep(subagent)) continue;
       subagent.status = "stopped";
       subagent.endedAt = now;
       changed = true;

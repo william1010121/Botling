@@ -34,6 +34,11 @@ import { parseLine, type StreamItem } from "../../src/core/agent/stream";
 import { processStartTime } from "../../src/core/process/kill-tree";
 import { ClaudeRequestTracker } from "../../src/core/token-speed";
 import { ClaudeTokenFlowMeter } from "../../src/core/token-flow-claude";
+import { AgentRegistry, type AgentHostKind, type HostFacts } from "../../src/core/agent-registry";
+import { backgroundTask } from "../../src/core/background-tasks";
+import type { ChatRecord } from "../../src/core/store/records";
+import { SubagentBook } from "../../src/core/subagents";
+import { projectWorker } from "../../src/core/worker-projection";
 import {
   costDelta, WorkerCore,
   type AckPolicy, type CoordinatorPort, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerAdapterKind, type WorkerEvent,
@@ -289,8 +294,51 @@ export class RecordingPort implements CoordinatorPort {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+/**
+ * What a bot shows of the workers, kept the bot's way: the core's items into a SubagentBook (worker projection on) and
+ * a chip per worker; every ledger transition through the real projection (worker-projection.ts) and the registry.
+ */
+export interface ReplayProjection {
+  book: SubagentBook;
+  chats: ChatRecord[];
+  registry: AgentRegistry;
+  host: HostFacts;
+}
+
+const HOST_KINDS: Record<WorkerAdapterKind, AgentHostKind> = { "claude-process": "claude-process", "codex-thread": "codex-thread", "agy-acp": "agy-acp", "component-editor": "codex-thread" };
+
+function projection(kind: WorkerAdapterKind, engine: string): ReplayProjection & { item(item: CodexItem): void; projected(record: WorkerLedgerRecord): void } {
+  const book = new SubagentBook();
+  book.workerProjection = true;
+  const chats: ChatRecord[] = [];
+  const registry = new AgentRegistry(null, () => 1_000);
+  const host: HostFacts = { botId: "replay-bot", engine: engine === "editor" ? "codex" : engine as HostFacts["engine"], sessionId: null, folder: "/replay", kind: HOST_KINDS[kind] };
+  return {
+    book, chats, registry, host,
+    item(item) {
+      switch (item.kind) {
+        case "subagentStarted":
+          book.started(item);
+          if (!chats.some((chat) => (chat.backgroundTasks as { id: string }[] | undefined)?.some((task) => task.id === item.id)))
+            chats.push({ id: `reply-${chats.length}`, role: "bot", text: "", date: 0, backgroundTasks: [backgroundTask(item.id, "agent", item.description, undefined)] } as ChatRecord);
+          return;
+        case "toolUse": book.toolUse(item); return;
+        case "toolResult": book.toolResult(item); return;
+        case "subagentText": book.text(item.parent, item.text); return;
+        case "subagentEnded": book.ended(item); return;
+      }
+    },
+    projected(record) {
+      const { row } = projectWorker(book, chats, record);
+      if (row) registry.observe(host, row, record);
+    },
+  };
+}
+
 export interface ReplayContext {
   core: WorkerCore;
+  /** The bot's projections of the core's ledger (rows, chips, registry). */
+  projection: ReplayProjection;
   workers: string[];
   source: ReplaySource;
   items: CodexItem[];
@@ -347,8 +395,9 @@ export async function replay(registration: ReplayRegistration, fixtures: Fixture
   const items: CodexItem[] = [];
   let n = 0;
   const adapter = options.events ? filtered(registration.create(source), options.events) : registration.create(source);
+  const shown = projection(registration.kind, registration.engine);
   const core = new WorkerCore({
-    store, port, sink: { item: (item) => items.push(item) }, adapters: [adapter], ownerSessionId: () => "00000000-0000-4000-8000-0000000000c0",
+    store, port, sink: { item: (item) => { items.push(item); shown.item(item); } }, adapters: [adapter], projected: (record) => shown.projected(record), ownerSessionId: () => "00000000-0000-4000-8000-0000000000c0",
     log: () => undefined, newId: () => `00000000-0000-4000-8000-${String(0xa00 + ++n).padStart(12, "0")}`, now: () => 1_000,
     processStartTime: (pid) => (pid >= FAKE_PID ? "replayed" : processStartTime(pid)), parentThreadId: () => "coordinator-thread",
     ...(options.maxRunning ? { maxRunning: () => options.maxRunning! } : {}), ...(options.restarted ? { restarted: () => options.restarted! } : {}),
@@ -359,7 +408,7 @@ export async function replay(registration: ReplayRegistration, fixtures: Fixture
     if (!process) throw new Error(`Process ${index} was not started.`);
     for (const listener of process.lines) listener(line, t);
   };
-  const ctx: ReplayContext = { core, workers, source, items, port, store, inject };
+  const ctx: ReplayContext = { core, projection: shown, workers, source, items, port, store, inject };
   const count = options.workers ?? fixtures[0]?.expect.workers ?? 1;
   if (!options.noHandoff) for (let i = 0; i < count; i++) workers.push((await core.handoff(registration.kind, { instructions: `Replayed task ${i + 1}.`, name: `replay-${i + 1}` })).task_id);
   await options.before?.(ctx);
