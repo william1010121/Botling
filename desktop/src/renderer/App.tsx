@@ -26,7 +26,7 @@ import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { Worktrees } from "./Worktrees";
 import { Review, type ReviewTarget } from "./Review";
-import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, SubagentRows, SubBotMenu, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
+import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubagentRows, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon } from "./icons";
 import { SpecFrame } from "./SpecFrame";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
@@ -525,16 +525,32 @@ function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   );
 }
 
-/** The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover for name and status. */
-function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, settingsControl }: {
+/** How long a face's tip or peek stays after the pointer or focus leaves it, so the pointer can cross into the peek. */
+const PEEK_GRACE_MS = 200;
+
+/**
+ * The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover (or focus) for name and status,
+ * and for a bot with sub bots a peek listing them (StripPeek), each opening its chat.
+ */
+export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, settingsControl }: {
   bots: BotView[]; pinned: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
   onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; settingsControl: ReactNode;
 }) {
-  const [tip, setTip] = useState<{ bot: BotView; y: number } | null>(null);
+  const [tip, setTip] = useState<{ botId: string; top: number } | null>(null);
   const [adding, setAdding] = useState(false);
+  const closing = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Focus put back on a face by Escape does not open its peek again.
+  const quiet = useRef(false);
+  const keep = useCallback(() => { if (closing.current) { clearTimeout(closing.current); closing.current = null; } }, []);
+  const hide = useCallback((soon: boolean) => {
+    keep();
+    if (soon) closing.current = setTimeout(() => { closing.current = null; setTip(null); }, PEEK_GRACE_MS);
+    else setTip(null);
+  }, [keep]);
+  useEffect(() => keep, [keep]);
   const order = railOrder(bots, pinned);
   const pinnedCount = pinned.length;
-  const tipBot = tip ? bots.find((bot) => bot.id === tip.bot.id) : null;
+  const faces = useRef(new Map<string, HTMLButtonElement>());
   return (
     <aside className="rail-strip" aria-label="Bots (folded)">
       <div className="rail-top drag"><RailToggle collapsed onToggle={onExpand} /></div>
@@ -543,28 +559,44 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
           const asleep = bot.phase === "asleep" && !bot.working;
           const unread = bot.unread > 0 && bot.id !== shown;
           const parts = [statusText(bot), waiting(bot.id) ? "waiting on you" : null, unread ? `${bot.unread > 99 ? "99+" : bot.unread} unread` : null].filter(Boolean);
+          const subs = subBotsOf(bot, bots);
+          const open = tip?.botId === bot.id;
+          const show = (face: HTMLElement) => { keep(); setTip({ botId: bot.id, top: face.getBoundingClientRect().top }); };
           return (
             <div key={bot.id} className="strip-entry">
               {index === 1 && <div className="strip-rule" />}
               {pinnedCount > 0 && index === 1 + pinnedCount && <div className="strip-rule short" />}
-              <button type="button" className={`strip-bot${bot.id === shown ? " selected" : ""}${asleep ? " asleep" : ""}${bot.working ? " working" : ""}${bot.connection ? " disconnected" : ""}`} data-bot={bot.id}
-                aria-label={[bot.name, ...parts].join(", ")} onClick={() => onSelect(bot.id)}
-                onMouseEnter={(event) => setTip({ bot, y: event.currentTarget.getBoundingClientRect().top + 20 })} onMouseLeave={() => setTip(null)}
+              <button type="button" ref={(face) => { if (face) faces.current.set(bot.id, face); else faces.current.delete(bot.id); }} className={`strip-bot${bot.id === shown ? " selected" : ""}${asleep ? " asleep" : ""}${bot.working ? " working" : ""}${bot.connection ? " disconnected" : ""}`} data-bot={bot.id}
+                aria-label={[bot.name, ...parts, subs.length ? `${subs.length} sub bot${subs.length === 1 ? "" : "s"}` : null].filter(Boolean).join(", ")}
+                aria-expanded={subs.length ? open : undefined} onClick={() => onSelect(bot.id)}
+                onMouseEnter={(event) => show(event.currentTarget)} onMouseLeave={() => hide(subs.length > 0)}
+                onFocus={(event) => { if (!quiet.current) show(event.currentTarget); }}
+                onBlur={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.parentElement?.contains(event.relatedTarget))) hide(subs.length > 0); }}
+                onKeyDown={(event) => { if (event.key === "Escape" && open) { event.preventDefault(); hide(false); } }}
                 onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
                 <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
                 {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
                 {unread && <span className="strip-unread" aria-hidden="true" />}
               </button>
+              {open && tip && (subs.length ? (
+                <StripPeek bot={bot} subs={subs} detail={parts.join(" · ")} look={look} top={tip.top} shown={shown}
+                  onOpen={(id) => { hide(false); onSelect(id); }} onEnter={keep} onLeave={() => hide(true)}
+                  onDismiss={() => {
+                    quiet.current = true;
+                    faces.current.get(bot.id)?.focus();
+                    quiet.current = false;
+                    hide(false);
+                  }} />
+              ) : (
+                <div className="rail-tip" role="tooltip" style={{ top: tip.top + 20 }}>
+                  <div className="rail-tip-title">{bot.name}</div>
+                  <div className="rail-tip-detail">{parts.join(" · ")}</div>
+                </div>
+              ))}
             </div>
           );
         })}
       </nav>
-      {tip && tipBot && (
-        <div className="rail-tip" role="tooltip" style={{ top: tip.y }}>
-          <div className="rail-tip-title">{tipBot.name}</div>
-          <div className="rail-tip-detail">{[statusText(tipBot), waiting(tipBot.id) ? "waiting on you" : null, tipBot.unread > 0 && tipBot.id !== shown ? `${tipBot.unread > 99 ? "99+" : tipBot.unread} unread` : null].filter(Boolean).join(" · ")}</div>
-        </div>
-      )}
       <div className="strip-add">
         <button type="button" className="strip-plus" title="Add a project or a bot" aria-label="Add a project or a bot" aria-expanded={adding} onClick={() => setAdding(!adding)}><Icon name="plus" size={13} /></button>
         {adding && (

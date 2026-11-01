@@ -3,7 +3,7 @@ import { ShellOverlay } from "./ShellOverlay";
 // (SubagentRows / SubagentRow: running ones and ones that ended in the last 10 minutes, at most 4
 // with "Show N more", each with its settle button), the New bot form (NewBotForm), and a row's menu
 // with "Remove bot…" (and, in 2.0, "Remove project…") behind a confirmation (1.x's confirmationDialog).
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FocusEvent } from "react";
 import { LISTED_AT_MOST, listedRows, type AgentTargetView, type BotView, type SubagentRowView } from "../contract";
 import { Icon, SubagentMark } from "./icons";
 import { faceURL, type Look } from "./avatars";
@@ -113,6 +113,67 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
         </button>
       )}
     </div>
+  );
+}
+
+/** A bot's sub bots, each one's own sub bots right under it (deeper by one), in the order the bots list has them; never its subagents. */
+export function subBotsOf(bot: BotView, bots: BotView[], depth = 0): { bot: BotView; depth: number; owner: BotView }[] {
+  if (depth > 8) return [];
+  return bots.filter((candidate) => candidate.parent === bot.id && candidate.id !== bot.id)
+    .flatMap((sub) => [{ bot: sub, depth, owner: bot }, ...subBotsOf(sub, bots, depth + 1)]);
+}
+
+/**
+ * The folded column's peek at a face that has sub bots: the bot's name (opens it) and its sub bots as the open
+ * column lists them (each opens its chat). It sits beside the face, rendered right after it so Tab reaches it.
+ */
+export function StripPeek({ bot, subs, detail, look = "original", top, shown, onOpen, onEnter, onLeave, onDismiss }: {
+  bot: BotView; subs: ReturnType<typeof subBotsOf>; detail: string; look?: Look;
+  /** The face's top edge, in the window. */
+  top: number;
+  /** The bot whose chat is on screen (its row is selected). */
+  shown: string | null;
+  onOpen: (botId: string) => void;
+  /** The pointer or the focus came in (keep it open) / went elsewhere (close soon). */
+  onEnter: () => void;
+  onLeave: () => void;
+  /** Escape: close now, focus back on the face. */
+  onDismiss: () => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const [y, setY] = useState(top);
+  // Kept inside the window: a face near the bottom has its peek moved up.
+  useLayoutEffect(() => {
+    const height = box.current?.getBoundingClientRect().height ?? 0;
+    setY(Math.max(8, Math.min(top, window.innerHeight - 8 - height)));
+  }, [top, subs.length]);
+  const blur = (event: FocusEvent<HTMLDivElement>) => {
+    const next = event.relatedTarget;
+    if (next instanceof Node && (event.currentTarget.contains(next) || event.currentTarget.parentElement?.contains(next))) return;
+    onLeave();
+  };
+  return (
+    <ShellOverlay><div ref={box} className="strip-peek" role="group" aria-label={`${bot.name} and its sub bots`} style={{ top: y }}
+      onMouseEnter={onEnter} onMouseLeave={onLeave} onFocus={onEnter} onBlur={blur}
+      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onDismiss(); } }}>
+      <button type="button" className="strip-peek-name" onClick={() => onOpen(bot.id)} title={`Open ${bot.name}`}>
+        <span className="rail-tip-title">{bot.name}</span>
+        {detail && <span className="rail-tip-detail">{detail}</span>}
+      </button>
+      <div className="subagent-rows">
+        {subs.map(({ bot: sub, depth, owner }) => (
+          <div key={sub.id} className={`subagent-row running sub-bot${sub.id === shown ? " selected" : ""}`} style={depth ? { marginLeft: depth * 14 } : undefined}>
+            <button type="button" className="subagent-open" data-sub-bot={sub.id} title={sub.job ?? undefined} onClick={() => onOpen(sub.id)}
+              aria-label={`Sub bot of ${owner.name}: ${sub.name}`}>
+              <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
+              <OwnerMark head={sub.heads[0] ?? "claude"} avatar={owner.avatar} look={look} />
+              <span className="subagent-title">{sub.name}</span>
+              <span className="subagent-kind">sub bot</span>
+            </button>
+          </div>
+        ))}
+      </div>
+    </div></ShellOverlay>
   );
 }
 

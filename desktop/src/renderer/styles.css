@@ -480,6 +480,22 @@ button { font: inherit; color: inherit; }
 }
 .rail-tip-title { font-size: 12px; font-weight: 500; }
 .rail-tip-detail { font-size: 11px; color: var(--muted); }
+/* A folded face's peek (StripPeek): the bot's name, then its sub bots as the open column's rows; a strip on its
+   left bridges the gap to the face so the pointer can cross. */
+.strip-peek {
+  position: fixed; left: 60px; z-index: 40; min-width: 180px; max-width: 280px; max-height: calc(100vh - 16px); padding: 4px;
+  background: var(--bubble); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  display: flex; flex-direction: column; gap: 2px; -webkit-app-region: no-drag;
+}
+.strip-peek::before { content: ""; position: absolute; left: -14px; top: 0; width: 14px; height: 48px; }
+.strip-peek-name {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 5px 8px; border: 0; border-radius: 6px; background: none;
+  color: var(--text); text-align: left; cursor: pointer;
+}
+.strip-peek-name:hover, .strip-peek-name:focus-visible { background: var(--hover); }
+.strip-peek .subagent-rows { min-height: 0; overflow-y: auto; scrollbar-width: none; }
+.strip-peek .subagent-row { border-radius: 6px; }
+.strip-peek .subagent-open { padding-left: 6px; }
 .strip-add { position: relative; }
 .strip-plus, .strip-gear { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--faint); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .strip-plus:hover, .strip-gear:hover { color: var(--text); background: var(--hover); }
