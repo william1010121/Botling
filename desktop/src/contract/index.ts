@@ -441,6 +441,8 @@ export const SubagentRowView = z.strictObject({
   waitingForNetwork: z.boolean().optional(),
   /** What it was asked (the row's tooltip). */
   prompt: z.string().max(1_000),
+  /** A sub bot (a hidden bot of its own under this one): the row opens its chat, with an input box, and this is its bot id. */
+  subBot: BotId.optional(),
 });
 export type SubagentRowView = z.infer<typeof SubagentRowView>;
 
@@ -528,6 +530,8 @@ export const BotView = z.strictObject({
   heads: z.array(Engine).min(1).max(3),
   /** A bot of its own's job (null for the main bot and managers). */
   job: z.string().max(4_000).nullable(),
+  /** A sub bot: the project bot it belongs to. The left column does not list it; its project bot's Tasks list does. */
+  parent: BotId.nullable().optional(),
   /** Its subagents sent off by the bot itself (not ones a subagent sent), newest kept. */
   subagentRows: z.array(SubagentRowView).max(100),
   /** Another bot answering in its chat right now (called in with @), for the typing bubble. */

@@ -36,7 +36,7 @@ import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView, type WhiteboardView,
-  type SettingsChange, type SettingsView, type SpecAction,
+  type SettingsChange, type SettingsView, type SpecAction, type SubagentRowView,
 } from "../contract";
 import { filePath, pageInCard } from "./specs";
 import { PAGE_COMPONENT } from "./preview-url";
@@ -55,6 +55,7 @@ import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botDescription, latestAction } from "./whiteboard-data";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
+import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, SUB_BOT_WAIT_MS, safeToken } from "./sub-bots";
 import { Conversations } from "./conversations";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
@@ -124,6 +125,8 @@ export interface CoreOptions {
   componentScanMs?: number;
   /** Bots' memory files are watched for what waits on you; this is how often they are looked at anyway (0: never; chat changes always look; default 60 s). */
   waitingScanMs?: number;
+  /** How long the sub-bot hand-off waits for the subagent to end before it stops the turn (tests shorten it). */
+  subBotWaitMs?: number;
   /** The plugin host (null: plugins' program parts do not run) and how secrets are sealed. */
   plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming } | null;
   /** Maintainer's `ccb plugin check` command (null: none this time). */
@@ -299,15 +302,16 @@ export class Core {
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
           : profile.id !== MAINTAINER_ID
-            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.worktrees.current(profile) !== null) : "", this.worktrees.note(profile)].filter(Boolean).join("\n\n")
+            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.worktrees.current(profile) !== null) : "", this.worktrees.note(profile), this.subBotNote(profile)].filter(Boolean).join("\n\n")
             : undefined,
         worktree: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => {
           const cwd = this.worktrees.sessionFolder(profile);
           return cwd === profile.folder ? null : { cwd, addDirs: this.worktrees.extraDirs(profile) };
         },
-        addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.problem).map((other) => join(other.folder, ".bot"))
+        addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.parent && !other.problem).map((other) => join(other.folder, ".bot"))
           // Maintainer: the folders you let it read (<need-folder>).
           : profile.id === MAINTAINER_ID ? () => this.maintainer.approvedFolders() : undefined,
+        subBotRows: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => this.subBotRows(profile.id),
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
         // What each turn used, by bot, and the subscriptions' limits (1.x's `record`, `note`).
@@ -335,9 +339,9 @@ export class Core {
       // Everyone who can answer outside their own chat, in turn order (`everyMember`).
       members: () => this.order.flatMap((id) => {
         const profile = this.profiles.find((candidate) => candidate.id === id);
-        return profile && !this.removed.has(id) ? [{ id, name: profile.role === "main" ? "Main bot" : profile.name }] : [];
+        return profile && !profile.parent && !this.removed.has(id) ? [{ id, name: profile.role === "main" ? "Main bot" : profile.name }] : [];
       }),
-      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
+      bot: (id) => (this.removed.has(id) || this.isSubBot(id) ? null : this.bots.get(id) ?? null),
       mainBotId: MAIN_BOT_ID,
       mentionNote: (text) => this.components.library.mentionNote(text),
       replied: (bot, line) => this.replied(bot, line),
@@ -370,7 +374,7 @@ export class Core {
       maintainer: this.maintainer,
       maintainerBot: () => this.bots.get(MAINTAINER_ID) ?? null,
       member: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
-      bots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id)).map((id) => this.bots.get(id)!),
+      bots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
       emit: (spec) => this.event({ type: "spec.updated", spec }),
       componentsChanged: () => this.componentsTick(),
       clock: () => ({}),
@@ -385,7 +389,7 @@ export class Core {
       timing: host?.timing,
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
       world: {
-        bots: () => this.order.map((id) => this.botInfo(this.bots.get(id)!)),
+        bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
         send: (botId, text) => {
           const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
           try { bot?.send(text); } catch (error) { this.log(`plugin message to ${botId}: ${(error as Error).message}`); }
@@ -531,7 +535,7 @@ export class Core {
 
   /** What the memory watch looks at: each bot's memory.md (not the main bot's: its memory is not on the list). */
   private memoryTargets(): WatchTarget[] {
-    return this.profiles.filter((profile) => profile.role !== "main" && !profile.problem).map((profile) => ({ path: join(profile.folder, profile.memoryPath), file: true }));
+    return this.profiles.filter((profile) => profile.role !== "main" && !profile.parent && !profile.problem).map((profile) => ({ path: join(profile.folder, profile.memoryPath), file: true }));
   }
 
   /** The library's state changed in the app (being worked on, reverted): the page hears it now. */
@@ -710,7 +714,7 @@ First write a test that shows this, then fix it.`;
     const maintainer = this.profiles.find((profile) => profile.id === MAINTAINER_ID) ?? maintainerProfile(this.options.dataDir, "");
     return projectBriefingText({
       projects: this.profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID).map((profile) => row(profile, `folder ${profile.folder}`)),
-      bots: this.profiles.filter((profile) => profile.role === "bot").map((profile) => row(profile, firstLine(profile.job ?? ""))),
+      bots: this.profiles.filter((profile) => profile.role === "bot" && !profile.parent).map((profile) => row(profile, firstLine(profile.job ?? ""))),
       maintainer: row(maintainer, "plugin-library extensions and in-chat components only"),
     });
   }
@@ -731,7 +735,7 @@ First write a test that shows this, then fix it.`;
     const job = rawJob.trim();
     if (!name || !job) return { kind: "empty" };
     const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
-    const existing = this.profiles.find((profile) => profile.role === "bot" && same(profile.name, name));
+    const existing = this.profiles.find((profile) => profile.role === "bot" && !profile.parent && same(profile.name, name));
     if (existing) return !options.plugin || existing.plugin === options.plugin ? { kind: "existing", botId: existing.id } : { kind: "taken" };
     // A name that would pass for someone else in a group chat or in an @.
     const others = ["Main bot", "Maintainer", "User", "App", "Notice", ...this.profiles.filter((profile) => profile.role === "manager").map((profile) => profile.name)];
@@ -756,6 +760,117 @@ First write a test that shows this, then fix it.`;
     }
     this.log(`made the bot ${name} (${folder})`);
     return { kind: "made", botId: id };
+  }
+
+  /** A sub bot (a hidden bot under a project bot) as opposed to a bot in the left column. */
+  private isSubBot(id: string): boolean {
+    return Boolean(this.profiles.find((profile) => profile.id === id)?.parent);
+  }
+
+  /** The rows a project bot's subagent list shows for its sub bots: each opens as a chat with an input box. */
+  private subBotRows(parentId: string): SubagentRowView[] {
+    return this.profiles.filter((profile) => profile.parent === parentId && !this.removed.has(profile.id)).map((profile) => ({
+      id: profile.id, title: profile.name.slice(0, 400), status: "running" as const, head: "claude" as const, outputTokens: null,
+      startedAt: profile.createdAt ?? 0, endedAt: null, unsettledAt: null, settled: false, prompt: (profile.job ?? "").slice(0, 1_000), subBot: profile.id,
+    }));
+  }
+
+  /** The note a project bot wakes with when it has sub bots: who, and the progress file to read instead of waking them. */
+  private subBotNote(profile: BotProfile): string {
+    return subBotBriefing(this.profiles.filter((sub) => sub.parent === profile.id && !this.removed.has(sub.id)).map((sub) => {
+      const file = progressFile(profile.folder, sub.handoff ?? sub.id);
+      let status: string | null = null;
+      try { status = progressStatus(readFileSync(file, "utf8")); } catch { /* not written yet */ }
+      return { name: sub.name, progress: file, working: Boolean(this.bots.get(sub.id)?.view().working), status };
+    }));
+  }
+
+  /**
+   * A project bot's <sub-bot name="…" subagent="id"/> (Claude only): the subagent it asked to write handoff.md and end
+   * is waited for (and stopped, with the file written here, only if it does not end in time); then a hidden sub bot is
+   * made in the same folder and handed the file. A request that cannot be done says why in the chat, never silently.
+   */
+  private async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string }): Promise<void> {
+    const profile = bot.profile;
+    const refuse = (why: string) => {
+      bot.appNotice(`No sub bot was made: ${why}`);
+      bot.queueNote(`(App: No sub bot was made: ${why})`);
+    };
+    if (profile.role === "main" || profile.id === MAINTAINER_ID) return refuse("only a project's or a bot's own subagents can become sub bots.");
+    if (profile.parent) return refuse("a sub bot cannot make another sub bot; it starts subagents of its own instead.");
+    const name = botName(request.name);
+    if (!name) return refuse("it needs a name.");
+    const key = request.subagent;
+    const found = bot.findSubagent(key);
+    if (!found) return refuse(`there is no subagent "${key}" here.`);
+    if (found.head !== "claude") return refuse(`the subagent "${key}" belongs to ${found.head === "codex" ? "Codex" : "Antigravity"}, which cannot be asked to hand off and end; only Claude subagents can become sub bots.`);
+    const token = safeToken(key);
+    if (this.profiles.some((sub) => sub.parent === profile.id && sub.handoff === token) || this.movingSubagents.has(`${profile.id}:${token}`)) return refuse(`"${key}" was already moved to a sub bot.`);
+    this.movingSubagents.add(`${profile.id}:${token}`);
+    try {
+      const file = handoffFile(profile.folder, token);
+      mkdirSync(join(file, ".."), { recursive: true });
+      const result = await runHandoff({
+        status: () => bot.findSubagent(key)?.status ?? "missing",
+        forceStop: () => bot.stopForHandoff(found.id),
+        fallbackText: (reason) => {
+          const now = bot.findSubagent(key) ?? found;
+          return fallbackHandoff({ name, description: now.description, prompt: now.prompt, steps: now.steps, status: now.status, result: now.result, reason });
+        },
+        written: () => { try { return readFileSync(file, "utf8").trim().length > 0; } catch { return false; } },
+        write: (text) => writeFileAtomic(file, text),
+        sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+        now: () => Date.now(),
+        waitMs: this.options.subBotWaitMs ?? SUB_BOT_WAIT_MS,
+        pollMs: Math.min(500, Math.max(5, Math.floor((this.options.subBotWaitMs ?? SUB_BOT_WAIT_MS) / 10))),
+      });
+      const subId = this.makeSubBot(profile, name, `Continue the work moved out of a subagent: ${found.description || found.prompt.slice(0, 200)}`, token);
+      const progress = progressFile(profile.folder, token);
+      if (!existsSync(progress)) writeFileAtomic(progress, "Status: working\n");
+      bot.appNotice(`Moved "${found.description || key}" to the sub bot "${name}".${result.outcome === "forced" ? " The subagent did not end in time, so its turn was stopped and the handoff was written from its recorded steps." : ""}`, undefined, undefined, { sourceID: subId });
+      this.bots.get(subId)?.relay(subBotFirstMessage({ parentName: profile.name, name, handoff: file, progress, note: request.note }));
+      this.log(`sub bot ${name} made under ${profile.name} (${result.outcome}${result.wroteFallback ? ", handoff written by the app" : ""})`);
+    } catch (error) {
+      refuse(`${(error as Error).message}`);
+    } finally {
+      this.movingSubagents.delete(`${profile.id}:${token}`);
+    }
+  }
+
+  private movingSubagents = new Set<string>();
+  /** Sub bots that already told their project bot they were done. */
+  private subBotsReported = new Set<string>();
+
+  /** Makes the hidden sub bot: a Bot of its own (head, chat.json, subagents.json) under `parent`, in the same folder, no worktree. */
+  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string): string {
+    const taken = new Set(this.profiles.filter((profile) => profile.parent === parent.id).map((profile) => profile.name.toLowerCase()));
+    let name = botName(rawName) || "Sub bot";
+    for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${botName(rawName) || "Sub bot"} ${n}`;
+    const id = randomUUID().toUpperCase();
+    mkdirSync(join(parent.folder, ".bot", "sub-bots", id), { recursive: true });
+    this.seedEngineDefaults(id);
+    const row = { id, name, folder: parent.folder, avatar: parent.avatar, job, parent: parent.id, createdAt: Date.now(), handoff };
+    saveProjectRow(this.options.dataDir, row);
+    this.attach(projectProfile(this.options.dataDir, { ...row, folder: folderURLText(parent.folder) }));
+    // The project bot's subagent list gains the row.
+    this.bots.get(parent.id)?.refresh();
+    return id;
+  }
+
+  /** A sub bot's reply showed: when its progress file says it is done, its project bot hears of it once. */
+  private subBotReplied(bot: Bot) {
+    const sub = bot.profile;
+    if (!sub.parent || this.subBotsReported.has(sub.id)) return;
+    let status: string | null = null;
+    try { status = progressStatus(readFileSync(progressFile(sub.folder, sub.handoff ?? sub.id), "utf8")); } catch { return; }
+    if (!status?.startsWith("done")) return;
+    this.subBotsReported.add(sub.id);
+    const parent = this.bots.get(sub.parent);
+    if (!parent) return;
+    const words = `The sub bot "${sub.name}" finished its job. Progress file: ${progressFile(sub.folder, sub.handoff ?? sub.id)}`;
+    parent.appNotice(words, undefined, undefined, { sourceID: sub.id });
+    parent.queueNote(`(App: ${words})`);
+    parent.refresh();
   }
 
   /** The app's engine defaults saved into a new bot's bot.json before it is made (`seedEngineDefaults`). */
@@ -796,6 +911,8 @@ First write a test that shows this, then fix it.`;
     const profile = this.profiles.find((candidate) => candidate.id === id);
     if (!profile) throw new ContractError("not_found", "No such bot.");
     if (profile.role === "main" || id === MAINTAINER_ID) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
+    // Its sub bots go with it (they hang under it, in its folder).
+    for (const sub of this.profiles.filter((candidate) => candidate.parent === id)) await this.removeBot(sub.id);
     const bot = this.bots.get(id);
     this.removed.add(id);
     this.profiles = this.profiles.filter((candidate) => candidate.id !== id);
@@ -833,7 +950,7 @@ First write a test that shows this, then fix it.`;
   private showOpenQuestion(name: string) {
     const main = this.bots.get(MAIN_BOT_ID)!;
     const wanted = name.replace(/^[\t ]+|[\t ]+$/g, "").toLowerCase();
-    const profile = this.profiles.find((candidate) => candidate.role !== "main" && candidate.name.toLowerCase() === wanted);
+    const profile = this.profiles.find((candidate) => candidate.role !== "main" && !candidate.parent && candidate.name.toLowerCase() === wanted);
     if (!profile) { main.queueNote(`(App: There is no project or bot called "${name}"; no card was shown.)`); return; }
     const question = this.bots.get(profile.id)?.openQuestion();
     if (!question) {
@@ -910,7 +1027,8 @@ First write a test that shows this, then fix it.`;
   /** Hands what the main bot wrote into an inbox.md to that bot, emptying the file (`deliverInboxes`). */
   deliverInboxes() {
     for (const profile of this.profiles) {
-      if (profile.role === "main" || profile.problem) continue;
+      // A sub bot shares its project bot's folder, so that folder's inbox is the project bot's alone.
+      if (profile.role === "main" || profile.parent || profile.problem) continue;
       const file = join(profile.folder, ".bot", "inbox.md");
       let text: string;
       try { text = readFileSync(file, "utf8"); } catch { continue; }
@@ -952,7 +1070,7 @@ First write a test that shows this, then fix it.`;
       out.push({ botId, text, messageId: question.id, ...asked(chat, question.id) });
     };
     for (const profile of this.profiles) {
-      if (profile.role === "main") continue;
+      if (profile.role === "main" || profile.parent) continue;
       // A manager's Now card: the first thing under "In progress" in its memory.md.
       if (profile.role === "manager" && !profile.problem) {
         const first = this.memoryFiles.items(join(profile.folder, profile.memoryPath), "inProgress")[0];
@@ -974,7 +1092,7 @@ First write a test that shows this, then fix it.`;
   whiteboard(): WhiteboardView {
     const out: WhiteboardView["bots"] = [];
     for (const profile of this.profiles) {
-      if (profile.role === "main") continue;
+      if (profile.role === "main" || profile.parent) continue;
       const bot = this.bots.get(profile.id);
       if (!bot) continue;
       // Read and parsed once per change of the file (MemoryFiles), not on every ask.
@@ -1045,7 +1163,7 @@ First write a test that shows this, then fix it.`;
   addProject(path: string): { botId: string; added: boolean } {
     const folder = folderPath(path);
     if (!folder || !existsSync(folder) || !statSync(folder).isDirectory()) throw new ContractError("not_found", `There is no folder at ${path}.`);
-    const existing = this.profiles.find((profile) => profile.role !== "main" && profile.folder === folder);
+    const existing = this.profiles.find((profile) => profile.role !== "main" && !profile.parent && profile.folder === folder);
     if (existing) return { botId: existing.id, added: false };
     const id = randomUUID().toUpperCase();
     const row = { id, name: defaultName(folder), folder, avatar: nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar)) };
@@ -1071,6 +1189,7 @@ First write a test that shows this, then fix it.`;
     for (const request of requests) {
       if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
+      else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
       // A bot's <suggest-component>: a chip under its reply; Maintainer's <component-spec>: into that spec (`Workspace.handle`).
       else if (request.kind === "suggestComponent") later.push(() => this.specs.suggest(request.name, request.draft, this.bots.get(bot.id) ?? bot));
       else if (request.kind === "componentSpec") { if (bot.id === MAINTAINER_ID) later.push(() => this.specs.applyUpdate(request.id, request.json, bot.lines().findLast((line) => line.role === "bot")?.text ?? "")); }
@@ -1120,7 +1239,7 @@ First write a test that shows this, then fix it.`;
       const folder = folderPath(path);
       if (!folder || !existsSync(folder) || !statSync(folder).isDirectory()) { missing.push(path); continue; }
       if (folder === "/" || folder === home || folder === own || folder.startsWith(own + "/")) { tooBroad.push(folder); continue; }
-      const existing = this.profiles.find((profile) => profile.role !== "main" && profile.folder === folder);
+      const existing = this.profiles.find((profile) => profile.role !== "main" && !profile.parent && profile.folder === folder);
       if (existing) {
         if (task) { try { this.bots.get(existing.id)?.relay(task); } catch { /* read-only */ } }
         handed.push(existing.name);
@@ -1224,6 +1343,7 @@ First write a test that shows this, then fix it.`;
   /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
   private replied(bot: Bot, record: ChatRecord) {
     if (record.text) this.plugins.replied(this.botInfo(bot), record.text);
+    if (bot.profile.parent) this.subBotReplied(bot);
     // A line of its reply that starts with @ and another bot's name calls that bot in (`receiveBotMention`).
     this.conversations.receiveBotMention(record, bot);
     // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
@@ -1322,13 +1442,16 @@ First write a test that shows this, then fix it.`;
       engine,
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
       workingFolder: workingFolder !== profile.folder ? workingFolder : null,
-    }), profile, this.options.reports ?? null);
+      parentName: profile.parent ? this.profiles.find((candidate) => candidate.id === profile.parent)?.name ?? null : null,
+    }), profile, this.options.reports ?? null, engine);
   }
 
   private event(event: Event) {
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    // A sub bot's row under its project bot follows it (working or not, unread).
+    if (event.type === "bot.updated" && event.bot.parent) this.bots.get(event.bot.parent)?.refresh();
     if (this.changeListeners.size) {
       const botId = event.type === "bot.updated" ? event.bot.id : "botId" in event ? event.botId : undefined;
       for (const listener of [...this.changeListeners]) { try { listener(botId === undefined ? {} : { botId }); } catch { /* a listener never stops the core */ } }

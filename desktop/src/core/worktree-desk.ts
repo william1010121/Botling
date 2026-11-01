@@ -59,7 +59,7 @@ export class WorktreeDesk {
   }
 
   /** The main bot has no worktrees of its own. */
-  private eligible(profile: BotProfile) { return profile.role !== "main" && !profile.problem; }
+  private eligible(profile: BotProfile) { return profile.role !== "main" && !profile.parent && !profile.problem; }
 
   /** The folder this bot's session starts in: its current worktree, or its project folder. */
   sessionFolder(profile: BotProfile): string {

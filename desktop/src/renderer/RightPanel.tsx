@@ -47,7 +47,7 @@ export interface RightPanelProps {
   onSelect: (botId: string) => void;
   onIgnore: (item: WaitingItemView) => void;
   onOpenResult: (result: ResultView) => void;
-  onOpenSubagent: (row: Pick<SubagentRowView, "id">) => void;
+  onOpenSubagent: (row: Pick<SubagentRowView, "id" | "subBot">) => void;
   onUnsettle: (row: SubagentRowView) => void;
   /** Open the bot's settings in the panel (the strip's button also opens the panel). */
   onSettings: () => void;

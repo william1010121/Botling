@@ -51,6 +51,11 @@ export interface BotProfile {
   instructions?: string | null;
   /** The plugin that made this bot of its own (`Project.plugin`), if one did. */
   plugin?: string | null;
+  /** A sub bot's project bot: it shares that bot's folder and is not in the left column. */
+  parent?: string | null;
+  /** A sub bot: when it was made (ms since 1970), and the id of the subagent it took over (its folder under .bot/subagents/). */
+  createdAt?: number;
+  handoff?: string;
   /** Tools it does not get at all, not even by asking (1.x's `BotProfile.disallowedTools`). */
   disallowedTools?: string[];
 }
@@ -72,19 +77,24 @@ export function projectProfile(root: string, project: ProjectRecord): BotProfile
   }
   if (!problem && !(existsSync(folder) && statSync(folder).isDirectory())) problem = `Its folder ${folder} is not there.`;
   const job = typeof project.job === "string" ? project.job : null;
+  const parent = typeof project.parent === "string" && project.parent ? project.parent : null;
   return {
     id: project.id,
     name: project.name,
     role: job === null ? "manager" : "bot",
     avatar: project.avatar,
     folder,
-    memoryPath: ".bot/memory.md",
+    // A sub bot has its own notes under the shared folder's .bot/sub-bots/, so it never overwrites its project bot's.
+    memoryPath: parent ? `.bot/sub-bots/${project.id}/memory.md` : ".bot/memory.md",
     storeDir: Layout.bot(root, project.id),
-    // A manager runs commands in its project freely; a bot of its own asks before each command.
-    tools: job === null ? [...TOOLBOX, "Bash"] : TOOLBOX,
+    // A manager runs commands in its project freely, and so does a sub bot (it works in the same folder); a bot of its own asks before each command.
+    tools: job === null || parent ? [...TOOLBOX, "Bash"] : TOOLBOX,
     job,
     problem,
     ...(typeof project.plugin === "string" ? { plugin: project.plugin } : {}),
+    ...(parent ? { parent } : {}),
+    ...(parent && typeof project.createdAt === "number" ? { createdAt: project.createdAt } : {}),
+    ...(parent && typeof project.handoff === "string" ? { handoff: project.handoff } : {}),
   };
 }
 

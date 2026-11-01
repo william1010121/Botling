@@ -106,9 +106,9 @@ export function folderURLText(folder: string): string {
  * Adds a row to projects.json (1.x's format: {id, name, folder as a file URL, avatar}; a bot of its own
  * also its `job`, and the `plugin` that made it), keeping the rows and keys there.
  */
-export function saveProjectRow(root: string, row: { id: string; name: string; folder: string; avatar: string; job?: string; plugin?: string }) {
+export function saveProjectRow(root: string, row: { id: string; name: string; folder: string; avatar: string; job?: string; plugin?: string; parent?: string; createdAt?: number; handoff?: string }) {
   const rows = projectRows(root);
-  rows.push({ id: row.id, name: row.name, folder: folderURLText(row.folder), avatar: row.avatar, ...(row.job !== undefined ? { job: row.job } : {}), ...(row.plugin ? { plugin: row.plugin } : {}) });
+  rows.push({ id: row.id, name: row.name, folder: folderURLText(row.folder), avatar: row.avatar, ...(row.job !== undefined ? { job: row.job } : {}), ...(row.plugin ? { plugin: row.plugin } : {}), ...(row.parent ? { parent: row.parent, ...(row.createdAt !== undefined ? { createdAt: row.createdAt } : {}), ...(row.handoff ? { handoff: row.handoff } : {}) } : {}) });
   mkdirSync(root, { recursive: true });
   writeFileAtomic(Layout.projectsFile(root), JSON.stringify(rows));
 }

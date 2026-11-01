@@ -20,6 +20,8 @@ export type BotRequest =
   | { kind: "folder"; path: string }
   | { kind: "install"; source: string }
   | { kind: "newBot"; name: string; job: string }
+  /** A running subagent moved out into a sub bot (`<sub-bot name="…" subagent="agent id"/>`); `note` is any words inside the tag. */
+  | { kind: "subBot"; name: string; subagent: string; note: string }
   | { kind: "newProject"; folder: string; task: string }
   | { kind: "installBuild"; path: string; note: string }
   | { kind: "appScreenshot" }
@@ -61,6 +63,7 @@ const decisionReferenceTag = () => /^ {0,3}<decision-ref\s+id="([0-9A-Fa-f-]{36}
 const quotedHTMLRegion = () => /<(pre|code|blockquote)\b[^>]*>[\s\S]*?<\/\1\s*>|<!--[\s\S]*?-->/gi;
 const choicesBlock = () => /<choices>\s*([\s\S]*?)\s*<\/choices>/g;
 const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*([\s\S]*?)\s*<\/\1>/g;
+const subBotTag = () => /<sub-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/sub-bot>)/g;
 const pluginTag = () => /<plugin>\s*([\s\S]*?)\s*<\/plugin>/g;
 const folderTag = () => /<need-folder>\s*([\s\S]*?)\s*<\/need-folder>/g;
 const installTag = () => /<install>\s*([\s\S]*?)\s*<\/install>/g;
@@ -242,6 +245,14 @@ export function parseReply(reply: string): Parsed {
     tagged.unshift(kind === "new-bot" ? { kind: "newBot", name: n, job: content! } : { kind: "component", name: n, request: content! });
   });
   requests.push(...tagged);
+  const subBots: BotRequest[] = [];
+  take(subBotTag, ([attrs, note]) => {
+    const found = attributes(attrs!);
+    // Both the name and the subagent are needed; one without the other is left out, never guessed.
+    const name = trimWS(found.name ?? ""), subagent = trimWS(found.subagent ?? "");
+    if (name && subagent) subBots.unshift({ kind: "subBot", name, subagent, note: note ?? "" });
+  });
+  requests.push(...subBots);
   take(pluginTag, ([request]) => requests.push({ kind: "plugin", request: request! }));
   take(installTag, ([source]) => requests.push({ kind: "install", source: source! }));
   const projects: BotRequest[] = [];
@@ -332,6 +343,7 @@ export function unsupportedRequest(request: BotRequest): string {
     case "folder": return "access to another folder";
     case "install": return "installing a plugin";
     case "newBot": return `a new bot ("${request.name}")`;
+    case "subBot": return `a sub bot ("${request.name}"): only a Claude project bot can move a Claude subagent into one, so nothing was moved`;
     case "newProject": return `a new project (${request.folder})`;
     case "installBuild": return "installing a build";
     case "appScreenshot": return "a screenshot of the app";
