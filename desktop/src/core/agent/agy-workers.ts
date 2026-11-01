@@ -9,7 +9,7 @@ import type {CodexItem} from './codex';
 import type {AgyConfig} from './agy';
 import {groupAlive,processStartTime} from '../process/kill-tree';
 import type {TerminateResult} from '../process/tree';
-import type {WorkerInfo,WorkerSendResult,WorkerState} from './workers';
+import type {WorkerHost,WorkerInfo,WorkerSendResult,WorkerState} from './workers';
 
 export interface AgyWorkerHead {
   start():void;send(text:string,uuid:string):void;
@@ -225,4 +225,14 @@ export class AgyWorkers {
   }
   async cancel(discardReports=true){const stopped=await Promise.allSettled([...this.workers.values()].map(w=>this.stop(w,discardReports)));this.emit({kind:'managedPending',pending:this.completionDependencies.length>0});if(stopped.some(r=>r.status==='rejected')||this.running.length)throw new Error('Worker cleanup incomplete; live or recovery dependencies retained.');}
   async close(){this.closed=true;await this.cancel(false);}
+}
+
+/** Antigravity's workers as a WorkerHost (workers.ts). A busy ACP worker takes no words until it reports. */
+export function agyWorkerHost(workers:()=>AgyWorkers|undefined):WorkerHost{
+  return {
+    workerHostKind:'agy-acp',steersRunning:false,
+    listWorkers:()=>workers()?.list()??[],
+    sendToWorker:(id,text)=>workers()?.continueTask(id,text)??{ok:false,reason:'This Antigravity head has no workers.'},
+    stopWorker:async id=>(await workers()?.cancelTask(id))??false,
+  };
 }

@@ -250,7 +250,7 @@ export class ClaudeWorkers implements WorkerHost {
       this.workers.set(w.id, w);
       this.trim();
       const failed = this.launch(w, instructions, definition);
-      if (failed) throw new Error(failed);
+      if (failed) { this.workers.delete(w.id); this.live.delete(w.id); throw new Error(failed); }
       return { accepted: true, task_id: w.id, run: w.run, message: "The worker runs on its own in this folder. Its report arrives later as an app message (<app_task_result>). Start any other independent workers you need, say in one sentence what you handed off, then finish your turn: do not wait or poll." };
     }
     const id = typeof args.task_id === "string" ? args.task_id : "";
@@ -301,8 +301,9 @@ export class ClaudeWorkers implements WorkerHost {
     let head: ClaudeWorkerHead;
     try {
       head = this.factory(config, {
-        onItem: (item) => this.onItem(w, head, run, item),
-        onExit: (exit) => this.onExit(w, head, run, exit),
+        // A kept-alive process carries later runs too: its items belong to whichever run is under way.
+        onItem: (item) => this.onItem(w, head, w.run, item),
+        onExit: (exit) => this.onExit(w, head, w.run, exit),
       });
       live.head = head;
       head.start();

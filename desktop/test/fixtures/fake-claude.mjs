@@ -21,6 +21,8 @@
 //   agent    — (long-lived) sends a subagent (Agent tool) that reads a file and reports back, then says so
 //   bgagent  — (long-lived) sends one to the background; it reports a moment later, and claude starts
 //              a turn of its own to say so ("/bgagent:silent": that turn says only <no-reply/>)
+//   worker   — (long-lived) "/worker <instructions>": calls the app's app_handoff tool (its in-process MCP server, an
+//              mcp_message control request) and replies "Handed off: <task_id>" (or "Handoff failed: <error>")
 //   say      — "/say <text>": replies exactly <text> (a hand-off tag, say)
 //   mention  — "/mention <name> <words>[|…]": "Let me ask." and a line "@<name> <words>" each (a bot's @)
 //   solo     — "/solo <words>": with two heads, the head that hears the other's words first says only
@@ -108,7 +110,7 @@ function helper(ignoreTerm) {
 }
 
 function directive(prompt) {
-  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|react|agent|bgagent)(?::([A-Za-z]+))?\s*/.exec(prompt);
+  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|react|agent|bgagent|worker)(?::([A-Za-z]+))?\s*/.exec(prompt);
   return match ? { mode: match[1], tool: match[2] ?? "Bash", rest: prompt.slice(match[0].length) } : { mode: envMode, tool: "Bash", rest: prompt };
 }
 
@@ -493,6 +495,20 @@ async function turn(job) {
     out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
     const text = await stream(allowed ? `Allowed: ran ${answer.updatedInput?.command}` : `Denied: ${answer.message}`);
     result(`${intro}\n\n${text}`);
+    return;
+  }
+  if (mode === "worker") {
+    // As claude calls an MCP tool of an "sdk" server: the host answers on the control channel.
+    const requestId = `mcp-${Math.random().toString(36).slice(2, 10)}`;
+    const answer = new Promise((resolve) => pending.set(requestId, resolve));
+    out({ type: "control_request", request_id: requestId, request: { subtype: "mcp_message", server_name: "botling", message: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "app_handoff", arguments: { name: "Research", instructions: rest } } } } });
+    const response = await answer;
+    pending.delete(requestId);
+    const content = response?.mcp_response?.result?.content?.[0]?.text ?? "";
+    let text;
+    try { text = response.mcp_response.result.isError ? `Handoff failed: ${content}` : `Handed off: ${JSON.parse(content).task_id}`; }
+    catch { text = `Handoff failed: ${JSON.stringify(response)}`; }
+    result(await stream(text));
     return;
   }
   if (mode === "agent" || mode === "bgagent") {
