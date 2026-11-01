@@ -212,6 +212,94 @@ describe("a Claude worker's run", () => {
   });
 });
 
+describe("through the shared worker core", () => {
+  const request = { id: "r1", sample: { outputTokens: 120, startMs: 0, endMs: 2_000, complete: true } };
+  const measurement = { threadId: "t", turnId: "u", workerId: null, parentThreadId: null, run: null, output: 120 };
+
+  it("forwards its tok/s samples with the worker as scope and its measurements with the worker's id", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Measure" }) as any;
+    const head = h.heads[0]!;
+    h.say(head, { kind: "request", request: { ...request, scope: null } });
+    h.say(head, { kind: "measurement", provider: "claude", measurement });
+    expect(h.items).toContainEqual({ kind: "request", request: expect.objectContaining({ id: "r1", scope: task_id }) });
+    expect(h.items).toContainEqual({ kind: "measurement", provider: "claude", measurement: expect.objectContaining({ threadId: "t", workerId: task_id, run: 1, output: 120 }) });
+  });
+
+  it("counts a run's output as thread:<session>:run<n> and turns the process's running cost into each run's spend", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Count" }) as any;
+    const head = h.heads[0]!;
+    const session = head.config.sessionId;
+    h.say(head, { kind: "init", sessionId: session });
+    const usage = (totalCost: number, output: number) => h.say(head, { kind: "usage", totalCost, tokens: { input: 1, output, cacheCreation: 0, cacheRead: 0 } });
+    usage(0.25, 30);
+    usage(0.5, 20);
+    h.result(head, "One.");
+    expect(h.workers.sendToWorker(task_id, "Two")).toEqual({ ok: true, how: "newRun", run: 2 });
+    usage(0.8, 5);
+    h.result(head, "Two.");
+    expect(h.items.filter((i) => i.kind === "subagentOutput")).toEqual([
+      { kind: "subagentOutput", id: task_id, counter: `thread:${session}:run1`, tokens: 30 },
+      { kind: "subagentOutput", id: task_id, counter: `thread:${session}:run1`, tokens: 50 },
+      { kind: "subagentOutput", id: task_id, counter: `thread:${session}:run2`, tokens: 5 },
+    ]);
+    const costs = h.items.filter((i) => i.kind === "usage").map((i) => Math.round(i.totalCost * 100) / 100);
+    expect(costs).toEqual([0.25, 0.25, 0.3]);
+  });
+
+  it("shows a message's words once when one assistant line carries both text and a tool call", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Mixed" }) as any;
+    const head = h.heads[0]!;
+    const line = (message: unknown) => { for (const item of parseLine(JSON.stringify(message))) h.say(head, item); };
+    line({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    for (const text of ["Let me ", "look."]) line({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
+    line({ type: "assistant", parent_tool_use_id: null, message: { id: "m", role: "assistant", content: [{ type: "text", text: "Let me look." }, { type: "tool_use", id: "tu1", name: "Bash", input: { command: "ls" } }] } });
+    line({ type: "assistant", parent_tool_use_id: null, message: { id: "m2", role: "assistant", content: [{ type: "text", text: "Plain whole message." }, { type: "tool_use", id: "tu2", name: "Bash", input: { command: "pwd" } }] } });
+    h.result(head, "Done.");
+    expect(h.items.filter((i) => i.kind === "subagentText" && i.parent === task_id).map((i) => i.text)).toEqual(["Let me look.", "Plain whole message."]);
+  });
+
+  it("fails a run that ended normally without any words, and reports the last text block when the result itself is empty", async () => {
+    const h = harness();
+    const a = await h.workers.tool("app_handoff", { instructions: "Silent" }) as any;
+    h.result(h.heads[0]!, "");
+    expect(h.items.at(-1)).toMatchObject({ kind: "subagentEnded", id: a.task_id, status: "failed", summary: expect.stringContaining("ended without a report") });
+    const b = await h.workers.tool("app_handoff", { instructions: "Wrote first" }) as any;
+    h.say(h.heads[1]!, { kind: "assistantText", text: "The answer is 42." });
+    h.result(h.heads[1]!, "");
+    expect(h.items.at(-1)).toEqual({ kind: "subagentEnded", id: b.task_id, status: "completed", summary: "The answer is 42." });
+  });
+
+  it("reports the engine's error for a failed result", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Err" }) as any;
+    h.result(h.heads[0]!, "API Error: overloaded", false);
+    expect(h.items.at(-1)).toMatchObject({ kind: "subagentEnded", id: task_id, status: "failed", summary: "API Error: overloaded" });
+    expect(h.reports[0]!.text).toContain('status="failed"');
+  });
+
+  it("keeps a kept-alive process's approvals between runs from reaching anyone", async () => {
+    const h = harness();
+    await h.workers.tool("app_handoff", { instructions: "x" });
+    const head = h.heads[0]!;
+    h.result(head, "done");
+    const before = h.items.length;
+    h.say(head, { kind: "permission", requestId: "late", tool: "Bash", summary: "rm", input: {} });
+    expect(head.answers).toEqual([["late", false, {}, "Not now: this worker's run has ended."]]);
+    expect(h.items.length).toBe(before);
+  });
+
+  it("writes every state change to claude-workers.json through the core's ledger record", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Ledger" }) as any;
+    expect(h.workers.core.get(task_id)).toMatchObject({ status: "running", run: 1, adapter: "claude-process", engine: "claude" });
+    h.result(h.heads[0]!, "Done.");
+    expect(h.workers.core.get(task_id)).toMatchObject({ status: "done", report: { state: "acknowledged", text: "Done.", status: "done" } });
+  });
+});
+
 describe("quitting and restoring", () => {
   it("marks a running worker interrupted when the app quits, and restores it from claude-workers.json to resume its session", async () => {
     const h = claudeHarness();
@@ -220,8 +308,10 @@ describe("quitting and restoring", () => {
     h.say(h.heads[0]!, { kind: "init", sessionId: session });
     await h.workers.close();
     expect(h.heads[0]!.terminated).toBe(true);
-    expect(h.items.at(-1)).toMatchObject({ kind: "subagentEnded", id: task_id, status: "stopped" });
+    // The event says what the journal says: interrupted (it used to say "stopped").
+    expect(h.items.at(-1)).toMatchObject({ kind: "subagentEnded", id: task_id, status: "interrupted" });
     expect(h.reports).toEqual([]);
+    expect(JSON.parse(readFileSync(join(h.dir, "claude-workers.json"), "utf8")).workers[0]).toMatchObject({ id: task_id, status: "interrupted", interrupted: true, active: false });
     const again = harness(h.dir);
     expect(again.workers.listWorkers()).toEqual([expect.objectContaining({ id: task_id, state: "interrupted", run: 1, conversationId: session })]);
     expect(again.heads).toEqual([]);

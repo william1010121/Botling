@@ -4,23 +4,28 @@
 // native Agent/Task tool is removed (head.ts `agentGuard`). Because a worker is its own process, the coordinator's
 // Stop, sleep, model switch or restart never touch it; only `app_cancel_task`, the row's Stop or the app quitting do.
 //
-// The state machine mirrors agy-workers.ts (runs, report pending/delivered, process identities), the process
-// handling mirrors Codex's component editor (one ClaudeHead per worker, kept alive a while after a result, then
-// `--resume` for the next run). The journal is <bot store>/claude-workers.json. Events are the shared worker
-// items (workers.ts), so the bot's book, the registry, the Rail and moves treat these like any other worker.
+// `ClaudeWorkers` is a facade over the shared worker core (worker-core/, shared-core spec S1): the core holds the
+// workers' state machine, text, end, report and approvals; this file keeps only what is Claude's (spec 4.2): the
+// process (one ClaudeHead per worker, kept alive a while after a result, then `--resume` of its own session), agent
+// definitions and model names, the settle wait for words steered into a run (command_lifecycle), and the process's
+// running cost turned into spend. Until the bot owns one core per member (S4b), the journal stays
+// <bot store>/claude-workers.json (ClaudeLegacyStore) and the core's items go to the bot's `emit` unchanged.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { writeFileAtomic } from "../durable/atomic";
+import { join } from "node:path";
 import { groupAlive, processStartTime } from "../process/kill-tree";
 import type { TerminateResult } from "../process/tree";
+import {
+  ClaudeLegacyStore, costDelta, WorkerCore,
+  type HandoffRequest, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerEvent, type WorkerLedgerRecord,
+} from "../worker-core";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
-import { movedTaskError, ownedWorkerReport, readWorkerOwner, workerReportText, workerRunStarted, type ProcessIdentity, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult, type WorkerState } from "./workers";
+import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 
-/** What the manager needs of a worker's process (ClaudeHead; a fake in tests). */
+/** What the adapter needs of a worker's process (ClaudeHead; a fake in tests). */
 export interface ClaudeWorkerHead {
   readonly pid: number;
   readonly running: boolean;
@@ -96,23 +101,6 @@ export function loadAgentDefinition(type: string | null | undefined, cwd: string
   return { error: `No agent definition named "${wanted}" in ${join(cwd, ".claude", "agents")}, ~/.claude/agents or the plugins. Nothing was started; use a type that exists or leave subagent_type out.` };
 }
 
-interface Record_ {
-  id: string; name: string; type: string | null; instructions: string; sessionId: string; sessionStarted: boolean;
-  run: number; status: string; active: boolean; reportPending: boolean; reportDelivered: boolean; report?: string;
-  model: string | null; processes: ProcessIdentity[]; interrupted: boolean; createdAt: number;
-  /** Given to another bot (workers.ts `setWorkerOwner`): its reports are emitted as `workerReport`, never the coordinator's. */
-  owner?: WorkerOwner;
-}
-interface Live {
-  head?: ClaudeWorkerHead; queued: Set<string>; outputTokens: number; cost: number;
-  approvals: Map<string, Record<string, unknown>>; settle?: ReturnType<typeof setTimeout>; pendingResult?: Extract<StreamItem, { kind: "result" }>;
-  keepAlive?: ReturnType<typeof setTimeout>; stopping?: boolean;
-  /** The text block being streamed: its chunks, shown as one step when the whole message (or the run's end) comes. */
-  text: string;
-  /** A run waiting for a free slot (`maxRunning`): its words and definition; it starts when another worker's run ends. */
-  waiting?: { words: string; definition: AgentDefinition | null | undefined };
-}
-
 export interface ClaudeWorkersOptions {
   /** claude-workers.json. */
   file: string;
@@ -134,465 +122,346 @@ export interface ClaudeWorkersOptions {
   /** How many workers may be at work in their own processes at once (settings.json `claudeWorkerLimit`); more wait for a slot. */
   maxRunning?(): number;
   home?: string;
+  /** The core's log lines (a run's verdict, a failed delivery). */
+  log?(line: string): void;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MAX_WORKERS = 200;
 /** Workers at work at once in their own `claude` processes, unless settings.json says otherwise (each process is a few hundred MB). */
 export const DEFAULT_CLAUDE_WORKER_LIMIT = 4;
 export const CLAUDE_WORKER_LIMIT_MAX = 16;
 
-export class ClaudeWorkers implements WorkerHost {
-  readonly workerHostKind = "claude-process" as const;
+const workerLimit = (wanted = DEFAULT_CLAUDE_WORKER_LIMIT) =>
+  (Number.isSafeInteger(wanted) && wanted >= 1 ? Math.min(wanted, CLAUDE_WORKER_LIMIT_MAX) : DEFAULT_CLAUDE_WORKER_LIMIT);
+const nonEmpty = (value: unknown): string | null => (typeof value === "string" && value ? value : null);
+
+/** A worker's process and the run under way in it; everything else about the worker is the core's. */
+interface Proc {
+  head?: ClaudeWorkerHead;
+  /** The run under way (undefined: between runs, or stopped). */
+  run?: RunHandle;
+  /** The worker's record as the core keeps it (read only here). */
+  record?: Readonly<WorkerLedgerRecord>;
+  /** Words steered into the run whose turn has not started yet (command_lifecycle). */
+  queued: Set<string>;
+  /** claude reports the process's cost so far: each usage becomes the spend since the last. */
+  cost: { last: number };
+  settle?: ReturnType<typeof setTimeout>;
+  pendingResult?: Extract<StreamItem, { kind: "result" }>;
+  keepAlive?: ReturnType<typeof setTimeout>;
+  /** The streamed text block: "open" while its chunks come; "closed" once a tool call on its own line closed it. */
+  chunks: "none" | "open" | "closed";
+  /** The config a run started with, for its opening items (null: it went into the kept-alive process). */
+  opening?: { run: number; base: HeadConfig | null };
+}
+
+/**
+ * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
+ * stream items translated into WorkerEvents on the run's handle.
+ */
+class ClaudeProcesses implements WorkerAdapter {
+  readonly kind = "claude-process" as const;
+  readonly engine = "claude" as const;
   readonly steersRunning = true;
-  private workers = new Map<string, Record_>();
-  private live = new Map<string, Live>();
+  private procs = new Map<string, Proc>();
   private closed = false;
 
-  constructor(
-    private options: ClaudeWorkersOptions,
-    private emit: (item: CodexItem) => void,
-    /** Hands a run's report to the coordinator; false: it could not take it now (it stays pending for `redeliver`). */
-    private report: (id: string, text: string, run: number) => boolean,
-    private factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead,
-  ) {
-    this.restore();
+  constructor(private options: ClaudeWorkersOptions, private factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead) {}
+
+  private procOf(id: string): Proc {
+    let proc = this.procs.get(id);
+    if (!proc) { proc = { queued: new Set(), cost: { last: 0 }, chunks: "none" }; this.procs.set(id, proc); }
+    return proc;
   }
 
-  // ------------------------------------------------------------------------------------------
-  // Journal
+  private definition(type: string | null) {
+    return loadAgentDefinition(type, this.options.cwd(), { home: this.options.home, pluginDirs: this.options.pluginDirs?.() ?? [] });
+  }
 
-  private restore() {
-    let saved: any;
-    try { saved = JSON.parse(readFileSync(this.options.file, "utf8")); } catch { return; }
-    if (saved?.version !== 1 || !Array.isArray(saved.workers)) return;
-    let changed = false;
-    for (const r of saved.workers.slice(-MAX_WORKERS)) {
-      if (!r || typeof r.id !== "string" || !UUID.test(r.id) || typeof r.sessionId !== "string" || !UUID.test(r.sessionId) || !Number.isSafeInteger(r.run) || r.run < 0 || typeof r.instructions !== "string") continue;
-      const w: Record_ = {
-        id: r.id, name: typeof r.name === "string" ? r.name : r.instructions.slice(0, 80), type: typeof r.type === "string" ? r.type : null, instructions: r.instructions,
-        sessionId: r.sessionId, sessionStarted: r.sessionStarted === true, run: r.run, status: typeof r.status === "string" ? r.status : "completed",
-        active: false, reportPending: r.reportPending === true, reportDelivered: r.reportDelivered === true, report: typeof r.report === "string" ? r.report : undefined,
-        model: typeof r.model === "string" ? r.model : null, interrupted: r.interrupted === true, createdAt: Number.isFinite(r.createdAt) ? r.createdAt : Date.now(),
-        processes: Array.isArray(r.processes) ? r.processes.filter((p: any) => Number.isSafeInteger(p?.pid) && p.pid > 0 && typeof p.started === "string" && p.started) : [],
-        ...(readWorkerOwner(r.owner) ? { owner: readWorkerOwner(r.owner) } : {}),
-      };
-      // It was at work when the app went away without closing it (a crash): interrupted, never replayed.
-      if (r.active === true) {
-        w.interrupted = true; w.status = "interrupted"; w.reportPending = false;
-        w.report = "Interrupted: the app stopped while this worker was at work. Nothing was replayed; continue it with app_send_message (it resumes its session).";
-        changed = true;
-      }
-      this.workers.set(w.id, w);
+  private model(r: Readonly<WorkerLedgerRecord>, base: HeadConfig | null) {
+    return nonEmpty(r.engineData.model) ?? this.options.subagentModel() ?? base?.model ?? null;
+  }
+
+  /** Its definition and model are checked before anything is recorded; its session id is chosen now (`--session-id`). */
+  prepare(request: HandoffRequest) {
+    const definition = this.definition(request.type);
+    if (definition && "error" in definition) throw new Error(definition.error);
+    if (request.model && !MODEL_ALIASES.has(request.model) && !/^claude-[a-z0-9.-]+$/.test(request.model)) throw new Error(`Unknown model "${request.model}": use haiku, sonnet or opus.`);
+    return { engineData: { sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null } };
+  }
+
+  /** A run into its kept-alive process takes no slot. */
+  needsSlot(r: Readonly<WorkerLedgerRecord>) { return !this.procs.get(r.id)?.head?.running; }
+
+  runtime(r: Readonly<WorkerLedgerRecord>) {
+    const proc = this.procs.get(r.id);
+    const base = proc?.opening?.run === r.run ? proc.opening.base : proc?.head?.running ? null : this.options.base();
+    return { reasoningEffort: base?.effort ?? null, model: this.model(r, base) };
+  }
+
+  /** Sends a run's first words: into its kept-alive process, or a new one (`--resume` once its session exists). */
+  start(r: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle) {
+    const proc = this.procOf(r.id);
+    if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
+    const sessionId = nonEmpty(r.engineData.sessionId) ?? r.conversationId ?? r.id;
+    if (proc.head?.running) {
+      Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, chunks: "none", pendingResult: undefined });
+      proc.queued.clear();
+      run.emit({ type: "session", conversationId: sessionId });
+      proc.head.send(words, randomUUID());
+      return;
     }
-    if (changed) this.save();
-  }
-
-  private save() {
-    const workers = [...this.workers.values()].slice(-MAX_WORKERS);
-    mkdirSync(dirname(this.options.file), { recursive: true });
-    writeFileAtomic(this.options.file, JSON.stringify({ version: 1, workers }));
-  }
-
-  private liveOf(w: Record_): Live {
-    let live = this.live.get(w.id);
-    if (!live) { live = { queued: new Set(), outputTokens: 0, cost: 0, approvals: new Map(), text: "" }; this.live.set(w.id, live); }
-    return live;
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // WorkerHost
-
-  listWorkers(): WorkerInfo[] {
-    return [...this.workers.values()].map((w) => ({ id: w.id, engine: "claude" as const, name: w.name, run: w.run, state: this.stateOf(w), conversationId: w.sessionStarted ? w.sessionId : null, processes: [...w.processes], owner: w.owner ? { ...w.owner } : null }));
-  }
-
-  private stateOf(w: Record_): WorkerState {
-    if (w.active) return "running";
-    if (w.interrupted) return "interrupted";
-    if (w.reportPending) return "reportPending";
-    if (w.status === "stopped") return "stopped";
-    if (w.status === "failed") return "failed";
-    return "idle";
-  }
-
-  sendToWorker(id: string, words: string): WorkerSendResult {
-    const w = this.workers.get(id);
-    if (!w || this.closed) return { ok: false, reason: "No such worker." };
-    if (!words.trim() || words.length > 64_000) return { ok: false, reason: "Message required (maximum 64000 characters)." };
-    const live = this.liveOf(w);
-    if (w.active && live.waiting) {
-      // Still waiting for a slot: the words join the run it will start with.
-      live.waiting.words = `${live.waiting.words}\n\n${words}`;
-      return { ok: true, how: "steered", run: w.run };
+    const base = this.options.base();
+    if (!base) throw new Error("Workers cannot start now: this bot's Claude head is unavailable.");
+    const def = r.type ? this.definition(r.type) : null;
+    if (def && "error" in def) throw new Error(def.error);
+    const config: HeadConfig = {
+      ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
+      model: this.model(r, base), monitorWorker: true, appMcp: null, agentGuard: CLAUDE_WORKER_GUARD,
+      systemPrompt: [CLAUDE_WORKER_POLICY, def?.prompt ?? ""].filter(Boolean).join("\n\n"),
+      disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
+      ...(def?.tools ? { tools: def.tools } : {}),
+    };
+    // A kept-alive process carries later runs too: its items belong to whichever run is under way.
+    const head: ClaudeWorkerHead = this.factory(config, { onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit) });
+    head.start();
+    Object.assign(proc, { head, run, record: r, cost: { last: 0 }, opening: { run: run.run, base }, chunks: "none", pendingResult: undefined });
+    proc.queued.clear();
+    run.emit({ type: "session", conversationId: sessionId });
+    if (head.pid > 0) {
+      try { this.options.processStarted?.(head.pid); } catch { /* the ledger is best effort here; the core records its identity */ }
+      run.emit({ type: "process", pid: head.pid });
     }
-    if (w.active) {
-      if (!live.head?.running) return { ok: false, reason: "This worker is starting or stopping; try again in a moment." };
-      const uuid = randomUUID();
-      live.queued.add(uuid);
-      live.head.send(words, uuid);
-      return { ok: true, how: "steered", run: w.run };
-    }
-    const blocker = this.recoveryBlocker(w);
-    if (blocker) return { ok: false, reason: blocker };
-    const started = this.launch(w, words);
-    return started ? { ok: false, reason: started } : { ok: true, how: "newRun", run: w.run };
+    head.send(words, randomUUID());
   }
 
-  async stopWorker(id: string): Promise<boolean> {
-    const w = this.workers.get(id);
-    if (!w || !w.active) return false;
-    await this.stop(w);
+  steer(r: Readonly<WorkerLedgerRecord>, words: string): boolean {
+    const proc = this.procs.get(r.id);
+    if (!proc?.run || !proc.head?.running) return false;
+    const uuid = randomUUID();
+    proc.queued.add(uuid);
+    proc.head.send(words, uuid);
     return true;
   }
 
-  /** workers.ts `setWorkerOwner`: a report still waiting for the coordinator goes to the owner instead. */
-  setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult {
-    const w = this.workers.get(id);
-    if (!w || this.closed) return { ok: false, reason: "No such worker." };
-    if (owner) w.owner = { ...owner };
-    else delete w.owner;
-    this.save();
-    if (owner && !w.active && w.reportPending && !w.reportDelivered) this.deliver(w);
-    return { ok: true };
-  }
-
-  /** How many may be at work at once now. */
-  private get limit(): number {
-    const wanted = this.options.maxRunning?.() ?? DEFAULT_CLAUDE_WORKER_LIMIT;
-    return Number.isSafeInteger(wanted) && wanted >= 1 ? Math.min(wanted, CLAUDE_WORKER_LIMIT_MAX) : DEFAULT_CLAUDE_WORKER_LIMIT;
-  }
-
-  /** Workers at work in a process of their own now (one waiting for a slot is not). */
-  private get busy(): number {
-    return [...this.workers.values()].filter((w) => w.active && !this.live.get(w.id)?.waiting).length;
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // App tools (the coordinator's in-process MCP server)
-
-  async tool(name: string, args: Record<string, unknown>): Promise<unknown> {
-    if (this.closed) throw new Error("Workers are closed: the app is stopping.");
-    if (name === "app_handoff") {
-      // The Agent tool's own names (prompt, description) and "task" are taken too: models carry them over (live check).
-      const given = [args.instructions, args.prompt, args.task].find((value) => typeof value === "string" && value.trim());
-      const instructions = typeof given === "string" ? given : "";
-      if (!instructions.trim() || instructions.length > 64_000) throw new Error("instructions required (maximum 64000 characters).");
-      const type = typeof args.subagent_type === "string" && args.subagent_type.trim() ? args.subagent_type.trim() : null;
-      const definition = loadAgentDefinition(type, this.options.cwd(), { home: this.options.home, pluginDirs: this.options.pluginDirs?.() ?? [] });
-      if (definition && "error" in definition) throw new Error(definition.error);
-      const model = typeof args.model === "string" && args.model.trim() ? args.model.trim() : null;
-      if (model && !MODEL_ALIASES.has(model) && !/^claude-[a-z0-9.-]+$/.test(model)) throw new Error(`Unknown model "${model}": use haiku, sonnet or opus.`);
-      const named = [args.name, args.description].find((value) => typeof value === "string" && value.trim());
-      const name = typeof named === "string" ? named.trim().slice(0, 200) : instructions.split("\n")[0]!.slice(0, 80);
-      const w: Record_ = {
-        id: randomUUID(), name, type, instructions, sessionId: randomUUID(), sessionStarted: false, run: 0, status: "new", active: false,
-        reportPending: false, reportDelivered: false, model: model ?? definition?.model ?? null, processes: [], interrupted: false, createdAt: Date.now(),
-      };
-      this.workers.set(w.id, w);
-      this.trim();
-      const failed = this.launch(w, instructions, definition);
-      if (failed) { this.workers.delete(w.id); this.live.delete(w.id); throw new Error(failed); }
-      return { accepted: true, task_id: w.id, run: w.run, message: "The worker runs on its own in this folder. Its report arrives later as an app message (<app_task_result>). Start any other independent workers you need, say in one sentence what you handed off, then finish your turn: do not wait or poll." };
-    }
-    const id = typeof args.task_id === "string" ? args.task_id : "";
-    const w = this.workers.get(id);
-    if (!w) throw new Error("Unknown task_id. Use the task_id app_handoff returned.");
-    if (w.owner) throw new Error(movedTaskError(w.owner.name));
-    if (args.run !== undefined && args.run !== w.run) throw new Error(`Stale run: this worker is on run ${w.run}.`);
-    if (name === "app_send_message") {
-      const sent = this.sendToWorker(id, typeof args.message === "string" ? args.message : "");
-      if (!sent.ok) throw new Error(sent.reason);
-      return { task_id: w.id, run: sent.run, status: sent.how === "steered" ? "steered" : "accepted", message: sent.how === "steered" ? "Joined into its run under way." : "Its next run started; its report comes as an app message." };
-    }
-    if (name === "app_cancel_task") {
-      if (w.active) await this.stop(w);
-      else await this.release(w);
-      return { task_id: w.id, run: w.run, status: w.status };
-    }
-    throw new Error(`Unknown app tool ${name}.`);
-  }
-
-  // ------------------------------------------------------------------------------------------
-  // Runs
-
-  /** Starts its next run (a new process with `--resume`, or the kept-alive one). An error text: nothing started. */
-  private launch(w: Record_, words: string, definition?: AgentDefinition | null): string | null {
-    const live = this.liveOf(w);
-    if (live.keepAlive) { clearTimeout(live.keepAlive); live.keepAlive = undefined; }
-    const base = live.head?.running ? null : this.options.base();
-    if (!live.head?.running && !base) return "Workers cannot start now: this bot's Claude head is unavailable.";
-    const def = definition === undefined ? (w.type ? loadAgentDefinition(w.type, this.options.cwd(), { home: this.options.home, pluginDirs: this.options.pluginDirs?.() ?? [] }) : null) : definition;
-    if (def && "error" in def) return def.error;
-    // At the limit, the run waits for a slot (it is listed at work, with a line saying so); a kept-alive process needs none.
-    const wait = !live.head?.running && this.busy >= this.limit;
-    w.run += 1;
-    const run = w.run;
-    w.active = true; w.status = "running"; w.reportPending = false; w.reportDelivered = false; w.interrupted = false; delete w.report;
-    live.queued.clear(); live.outputTokens = 0; live.stopping = false; live.pendingResult = undefined;
-    this.save();
-    const model = w.model ?? this.options.subagentModel() ?? base?.model ?? null;
-    for (const item of workerRunStarted({ id: w.id, engine: "claude", name: w.name, run, conversationId: w.sessionId, ownerSessionId: this.options.ownerSessionId() }, words, { reasoningEffort: base?.effort ?? null, model }))
-      this.emit(item);
-    if (wait) {
-      live.waiting = { words, definition: def };
-      this.emit({ kind: "subagentText", parent: w.id, text: `Waiting for a free worker slot (${this.limit} at work at once); it starts when another worker finishes.` });
-      return null;
-    }
-    this.spawn(w, run, words, def ?? null, base);
-    return null;
-  }
-
-  /** Workers waiting for a slot start, oldest first, while there is room. */
-  private startWaiting() {
-    if (this.closed) return;
-    for (const w of this.workers.values()) {
-      if (this.busy >= this.limit) return;
-      const live = this.live.get(w.id);
-      if (!live?.waiting || !w.active) continue;
-      const { words, definition } = live.waiting;
-      live.waiting = undefined;
-      const base = live.head?.running ? null : this.options.base();
-      if (!live.head?.running && !base) { this.finish(w, w.run, "failed", "Workers cannot start now: this bot's Claude head is unavailable."); continue; }
-      this.spawn(w, w.run, words, definition && !("error" in definition) ? definition : null, base);
-    }
-  }
-
-  /** Sends a run's first words: into its kept-alive process, or a new one. */
-  private spawn(w: Record_, run: number, words: string, def: AgentDefinition | null, base: HeadConfig | null) {
-    const live = this.liveOf(w);
-    const model = w.model ?? this.options.subagentModel() ?? base?.model ?? null;
-    const uuid = randomUUID();
-    if (live.head?.running) { live.head.send(words, uuid); return; }
-    const config: HeadConfig = {
-      ...base!, cwd: this.options.cwd(), sessionId: w.sessionId, resume: w.sessionStarted, forkSession: false, persistSession: true,
-      model, monitorWorker: true, appMcp: null, agentGuard: CLAUDE_WORKER_GUARD,
-      systemPrompt: [CLAUDE_WORKER_POLICY, def?.prompt ?? ""].filter(Boolean).join("\n\n"),
-      disallowedTools: [...new Set([...(base!.disallowedTools ?? []), "SendMessage", "TaskStop"])],
-      ...(def?.tools ? { tools: def.tools } : {}),
-    };
-    let head: ClaudeWorkerHead;
-    try {
-      head = this.factory(config, {
-        // A kept-alive process carries later runs too: its items belong to whichever run is under way.
-        onItem: (item) => this.onItem(w, head, w.run, item),
-        onExit: (exit) => this.onExit(w, head, w.run, exit),
-      });
-      live.head = head;
-      head.start();
-    } catch (error) {
-      live.head = undefined;
-      this.finish(w, run, "failed", `The worker could not start: ${(error as Error).message}`);
-      return;
-    }
-    if (head.pid > 0) {
-      try { this.options.processStarted?.(head.pid); } catch { /* the ledger is best effort here; identity below */ }
-      const started = processStartTime(head.pid);
-      if (started) { w.processes = [...w.processes, { pid: head.pid, started }].slice(-8); this.save(); }
-    }
-    head.send(words, uuid);
-  }
-
-  private onItem(w: Record_, head: ClaudeWorkerHead, run: number, item: StreamItem) {
-    const live = this.liveOf(w);
-    if (live.head !== head || this.closed) return;
+  private onItem(id: string, head: ClaudeWorkerHead, item: StreamItem) {
+    const proc = this.procs.get(id);
+    if (!proc || proc.head !== head || this.closed) return;
+    const run = proc.run;
     if (item.kind === "init") {
-      let save = !w.sessionStarted;
-      w.sessionStarted = true;
-      if (item.sessionId && item.sessionId !== w.sessionId && UUID.test(item.sessionId)) { w.sessionId = item.sessionId; save = true; }
-      if (save) this.save();
+      // Its session exists now (later runs resume it); claude may name it differently.
+      const data = proc.record?.engineData;
+      if (!run || !item.sessionId || !UUID.test(item.sessionId)) return;
+      if (data?.sessionStarted !== true || data.sessionId !== item.sessionId) run.setEngineData({ sessionStarted: true, sessionId: item.sessionId });
+      run.emit({ type: "session", conversationId: item.sessionId });
       return;
     }
-    if (!w.active || w.run !== run) {
+    if (!run) {
       // A kept-alive process between runs: an approval it asks has nobody to answer it.
       if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: this worker's run has ended.");
       return;
     }
+    const emit = (event: WorkerEvent) => run.emit(event);
     switch (item.kind) {
-      case "textBlock": this.flushText(w, live); return;
-      case "delta": live.text += item.text; return;
-      case "assistantText": live.text = ""; this.emit({ kind: "subagentText", parent: w.id, text: item.text }); return;
-      case "toolUse": case "toolResult": this.emit({ ...item, parent: w.id, id: `${w.id}:${run}:${item.id}` }); return;
-      case "permission":
-        live.approvals.set(item.requestId, item.input);
-        this.emit({ ...item, requestId: `worker:${w.id}:${run}:${item.requestId}`, workerId: w.id, input: { ...item.input } });
-        return;
-      case "permissionCancelled":
-        if (live.approvals.delete(item.requestId)) this.emit({ kind: "permissionCancelled", requestId: `worker:${w.id}:${run}:${item.requestId}` });
-        return;
-      case "usage": {
-        const spent = Math.max(0, item.totalCost - live.cost);
-        live.cost = Math.max(live.cost, item.totalCost);
-        if (Number.isSafeInteger(item.tokens.output) && item.tokens.output > 0) {
-          live.outputTokens += item.tokens.output;
-          this.emit({ kind: "subagentOutput", id: w.id, counter: `claude:${w.sessionId}:run${run}`, tokens: live.outputTokens });
-        }
-        this.emit({ kind: "usage", totalCost: spent, tokens: item.tokens });
+      case "textBlock": proc.chunks = "none"; emit({ type: "textBreak" }); return;
+      case "delta": proc.chunks = "open"; emit({ type: "textDelta", text: item.text }); return;
+      case "assistantText": {
+        // claude streams a block's chunks, then sends its whole message. A line that also carries a tool call gives
+        // the call first, which closed the block: its words are shown already.
+        const shown = proc.chunks === "closed";
+        proc.chunks = "none";
+        if (!shown) emit({ type: "textWhole", text: item.text, phase: null });
         return;
       }
+      case "toolUse":
+        if (proc.chunks === "open") proc.chunks = "closed";
+        emit({ type: "toolUse", id: item.id, tool: item.tool, title: item.title, detail: item.detail, input: item.input });
+        return;
+      case "toolResult": proc.chunks = "none"; emit({ type: "toolResult", id: item.id, output: item.output, failed: item.failed }); return;
+      case "permission":
+        emit({ type: "permission", nativeId: item.requestId, tool: item.tool, summary: item.summary, input: item.input,
+          ...(item.safetyCheck ? { safetyCheck: item.safetyCheck } : {}), ...(item.noAlways ? { noAlways: true } : {}) });
+        return;
+      case "permissionCancelled": emit({ type: "permissionCancelled", nativeId: item.requestId }); return;
+      case "permissionDenied": emit({ type: "permissionDenied", toolUseId: item.toolUseId, tool: item.tool, reason: item.reason, confirmed: item.confirmed }); return;
+      case "connectionLost": emit({ type: "connectionLost" }); return;
+      case "rateLimits": emit({ type: "rateLimits", engine: item.engine, limits: item.limits }); return;
+      case "usage": emit({ type: "usage", tokens: item.tokens, cost: costDelta(proc.cost, item.totalCost) }); return;
+      case "request": { const { scope: _scope, ...request } = item.request; emit({ type: "request", request }); return; }
+      case "measurement": { const { run: _run, ...measurement } = item.measurement; emit({ type: "measurement", provider: item.provider ?? "claude", measurement }); return; }
       case "command":
-        if (item.state !== "started" || !live.queued.delete(item.id)) return;
+        if (item.state !== "started" || !proc.queued.delete(item.id)) return;
         // "started" after the turn's result: a turn of its own (init follows), the run goes on until its result.
         // Before the result it was read into the turn under way (no init, no result of its own): nothing more to wait for.
-        if (live.pendingResult) { clearTimeout(live.settle); live.settle = undefined; live.pendingResult = undefined; }
+        if (proc.pendingResult) { clearTimeout(proc.settle); proc.settle = undefined; proc.pendingResult = undefined; }
         return;
-      case "result": {
-        if (live.queued.size) {
+      case "result":
+        if (proc.queued.size) {
           // A follow-up sent during this turn was either read into it or gets a turn of its own right after.
-          live.pendingResult = item;
-          live.settle = setTimeout(() => {
-            live.settle = undefined;
-            const result = live.pendingResult;
-            live.pendingResult = undefined;
-            live.queued.clear();
-            if (result) this.finishResult(w, run, result);
+          proc.pendingResult = item;
+          proc.settle = setTimeout(() => {
+            proc.settle = undefined;
+            const result = proc.pendingResult;
+            proc.pendingResult = undefined;
+            proc.queued.clear();
+            if (result) this.end(proc, run, result);
           }, this.options.settleMs ?? 1_500);
-          live.settle.unref?.();
+          proc.settle.unref?.();
           return;
         }
-        this.finishResult(w, run, item);
+        this.end(proc, run, item);
         return;
-      }
       default: return;
     }
   }
 
-  private finishResult(w: Record_, run: number, item: Extract<StreamItem, { kind: "result" }>) {
-    const words = item.text.trim();
-    this.finish(w, run, item.ok && words ? "completed" : "failed", item.ok ? (words || "The worker ended without a report.") : (item.error || item.text || "The worker's run failed."));
-  }
-
-  private onExit(w: Record_, head: ClaudeWorkerHead, run: number, exit: { expected: boolean; stderr: string; code: number | null }) {
-    const live = this.liveOf(w);
-    if (live.head !== head) return;
-    live.head = undefined;
-    if (live.keepAlive) { clearTimeout(live.keepAlive); live.keepAlive = undefined; }
-    if (live.settle) { clearTimeout(live.settle); live.settle = undefined; const result = live.pendingResult; live.pendingResult = undefined; if (result) { this.finishResult(w, run, result); return; } }
-    if (!w.active || w.run !== run || live.stopping || this.closed) return;
-    this.finish(w, run, "failed", `The worker's process ended before its report${exit.code !== null ? ` (exit ${exit.code})` : ""}.${exit.stderr ? `\n${exit.stderr.slice(-2_000)}` : ""}`);
-  }
-
-  /** Chunks no whole message came for (the run ended mid-block, or claude sent none). */
-  private flushText(w: Record_, live: Live) {
-    const text = live.text;
-    live.text = "";
-    if (text.trim()) this.emit({ kind: "subagentText", parent: w.id, text });
-  }
-
-  private finish(w: Record_, run: number, status: "completed" | "failed", report: string) {
-    if (!w.active || w.run !== run) return;
-    const live = this.liveOf(w);
-    this.flushText(w, live);
-    this.cancelApprovals(w, live);
-    w.active = false; w.status = status; w.report = report.slice(0, 200_000); w.reportPending = true; w.reportDelivered = false;
-    this.save();
-    this.emit({ kind: "subagentEnded", id: w.id, status, summary: w.report });
-    // Kept a while for a quick follow-up (no new process, no resume); then it goes to sleep.
-    if (live.head?.running) {
-      const head = live.head;
-      live.keepAlive = setTimeout(() => { live.keepAlive = undefined; if (live.head === head && !w.active) head.finish(); }, this.options.keepAliveMs ?? 10 * 60_000);
-      live.keepAlive.unref?.();
+  /** The run's turn is over: the core classifies it. The process stays a while for a quick follow-up, then sleeps. */
+  private end(proc: Proc, run: RunHandle, result: Extract<StreamItem, { kind: "result" }>) {
+    if (proc.run !== run) return;
+    proc.run = undefined;
+    proc.queued.clear();
+    const head = proc.head;
+    if (head?.running) {
+      proc.keepAlive = setTimeout(() => { proc.keepAlive = undefined; if (proc.head === head && !proc.run) head.finish(); }, this.options.keepAliveMs ?? 10 * 60_000);
+      proc.keepAlive.unref?.();
     }
-    this.deliver(w);
-    this.startWaiting();
+    run.emit({ type: "end", end: {
+      how: result.how ?? (result.ok ? "normal" : "error"), finalText: result.ok ? result.text : null,
+      error: result.ok ? null : result.error || result.text || null, detail: result.subtype,
+    } });
   }
 
-  private deliver(w: Record_) {
-    if (!w.reportPending || w.reportDelivered || this.closed) return;
-    if (w.owner) {
-      // Another bot owns it: the app routes the report there (the coordinator never sees it).
-      w.reportDelivered = true; w.reportPending = false;
-      this.save();
-      this.emit(ownedWorkerReport({ id: w.id, run: w.run, engine: "claude", status: w.status, report: w.report ?? "" }));
-      return;
+  private onExit(id: string, head: ClaudeWorkerHead, exit: Parameters<HeadHandlers["onExit"]>[0]) {
+    const proc = this.procs.get(id);
+    if (!proc || proc.head !== head) return;
+    proc.head = undefined;
+    if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
+    const run = proc.run;
+    if (proc.settle) {
+      clearTimeout(proc.settle);
+      proc.settle = undefined;
+      const result = proc.pendingResult;
+      proc.pendingResult = undefined;
+      if (result && run) { this.end(proc, run, result); return; }
     }
-    const tail = "This is the worker's own account, not proof the user's goal is met: check what matters, then tell the user in a sentence or two what came of it. To continue this worker, use app_send_message with its task_id; to stop it, app_cancel_task.";
-    let taken = false;
-    try { taken = this.report(w.id, workerReportText({ id: w.id, run: w.run, engine: "claude", status: w.status, report: w.report ?? "" }, tail), w.run); } catch { taken = false; }
-    if (!taken) return;
-    w.reportDelivered = true; w.reportPending = false;
-    this.save();
+    if (!run || this.closed) return;
+    proc.run = undefined;
+    run.emit({ type: "end", end: {
+      how: "exited", finalText: null, detail: exit.signal ?? `exit ${exit.code}`,
+      error: `The worker's process ended before its report${exit.code !== null ? ` (exit ${exit.code})` : ""}.${exit.stderr ? `\n${exit.stderr.slice(-2_000)}` : ""}`,
+    } });
   }
 
-  /** Reports that did not reach the coordinator (it could not take them, or the app stopped first): handed over again, once each. */
-  redeliver() { for (const w of this.workers.values()) if (!w.active && w.reportPending && !w.reportDelivered) this.deliver(w); }
-
-  private cancelApprovals(w: Record_, live: Live) {
-    for (const id of live.approvals.keys()) this.emit({ kind: "permissionCancelled", requestId: `worker:${w.id}:${w.run}:${id}` });
-    live.approvals.clear();
-  }
-
-  /** Stops its run: the process ends (its work so far stays in its session), no report is made. */
-  private async stop(w: Record_) {
-    const live = this.liveOf(w);
-    this.cancelApprovals(w, live);
-    live.stopping = true;
-    live.waiting = undefined;
-    if (live.settle) { clearTimeout(live.settle); live.settle = undefined; live.pendingResult = undefined; }
-    w.active = false; w.status = "stopped"; w.reportPending = false; w.report = "Stopped by the app; its work was not finished.";
-    this.save();
-    this.emit({ kind: "subagentEnded", id: w.id, status: "stopped", summary: w.report });
-    await this.release(w);
-    this.startWaiting();
-  }
-
-  /** Ends its kept-alive process, if any. */
-  private async release(w: Record_) {
-    const live = this.liveOf(w);
-    if (live.keepAlive) { clearTimeout(live.keepAlive); live.keepAlive = undefined; }
-    const head = live.head;
-    live.head = undefined;
+  /** Ends its process (its work so far stays in its session); also a worker not at work: its kept-alive process. */
+  async stop(r: Readonly<WorkerLedgerRecord>) {
+    const proc = this.procs.get(r.id);
+    if (!proc) return { cleaned: true };
+    proc.run = undefined;
+    proc.queued.clear();
+    if (proc.settle) { clearTimeout(proc.settle); proc.settle = undefined; proc.pendingResult = undefined; }
+    if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
+    const head = proc.head;
+    proc.head = undefined;
     if (head) await head.terminate(1_500).catch(() => undefined);
+    return { cleaned: true };
+  }
+
+  answer(r: Readonly<WorkerLedgerRecord>, nativeId: string, allow: boolean, input: Record<string, unknown>, message?: string) {
+    this.procs.get(r.id)?.head?.answer(nativeId, allow, input, message);
   }
 
   /** An interrupted worker may continue only once its old processes are gone (never two processes on one session). */
-  private recoveryBlocker(w: Record_): string | null {
-    if (!w.interrupted || this.liveOf(w).head) return null;
-    const alive = w.processes.some(({ pid, started }) => processStartTime(pid) === started && groupAlive(pid));
-    return alive ? "This worker's earlier process is still running; it cannot be resumed until it has ended." : null;
+  recover(r: Readonly<WorkerLedgerRecord>): RecoverResult {
+    if (this.procs.get(r.id)?.head) return { state: "clean" };
+    const alive = r.processes.some(({ pid, started }) => processStartTime(pid) === started && groupAlive(pid));
+    return alive ? { state: "blocked", reason: "This worker's earlier process is still running; it cannot be resumed until it has ended." } : { state: "clean" };
   }
 
-  private trim() {
-    if (this.workers.size <= MAX_WORKERS) return;
-    for (const w of this.workers.values()) {
-      if (this.workers.size <= MAX_WORKERS) break;
-      if (!w.active && !w.reportPending && !this.live.get(w.id)?.head) { this.workers.delete(w.id); this.live.delete(w.id); }
-    }
+  async close(): Promise<void> {
+    this.closed = true;
+    await Promise.allSettled([...this.procs.values()].map((proc) => {
+      if (proc.settle) clearTimeout(proc.settle);
+      if (proc.keepAlive) clearTimeout(proc.keepAlive);
+      Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined });
+      const head = proc.head;
+      proc.head = undefined;
+      return head?.terminate(1_500);
+    }));
+  }
+}
+
+/**
+ * claude-workers.json for the core (interim, until the member's ledger: S4b). A worker the journal still lists at
+ * work was cut off by a crash: it goes to the core as running, so the core marks it interrupted and writes that down.
+ */
+class ClaudeJournal extends ClaudeLegacyStore {
+  load(): WorkerLedgerRecord[] {
+    return super.load().map((r) => (r.interruptedBy === "crash" ? { ...r, status: "running" as const } : r));
+  }
+}
+
+/** The status words app_cancel_task answers with (the journal's). */
+const statusWord = (status: WorkerLedgerRecord["status"]) => (status === "done" ? "completed" : status);
+
+/** A bot's Claude workers: the shared worker core with the Claude adapter, behind the interface the bot has always used. */
+export class ClaudeWorkers implements WorkerHost {
+  readonly workerHostKind = "claude-process" as const;
+  readonly steersRunning = true;
+  /** The shared core that holds these workers (state, runs, reports, approvals). */
+  readonly core: WorkerCore;
+
+  constructor(
+    options: ClaudeWorkersOptions,
+    emit: (item: CodexItem) => void,
+    /** Hands a run's report to the coordinator; false: it could not take it now (it stays pending for `redeliver`). */
+    report: (id: string, text: string, run: number) => boolean,
+    factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead,
+  ) {
+    this.core = new WorkerCore({
+      store: new ClaudeJournal(options.file),
+      // A Claude coordinator is done with a report once it has it (decision D4: no checkpoint).
+      port: { ack: "none", deliver: (r, text) => (report(r.id, text, r.run) ? "taken" : "busy") },
+      sink: { item: emit },
+      adapters: [new ClaudeProcesses(options, factory)],
+      ownerSessionId: () => options.ownerSessionId(),
+      maxRunning: () => workerLimit(options.maxRunning?.()),
+      log: (line) => options.log?.(line),
+    });
   }
 
+  listWorkers(): WorkerInfo[] { return this.core.listWorkers(); }
+  sendToWorker(id: string, words: string): WorkerSendResult | Promise<WorkerSendResult> { return this.core.sendToWorker(id, words); }
+  stopWorker(id: string): Promise<boolean> { return this.core.stopWorker(id); }
+  /** workers.ts `setWorkerOwner`: a report still waiting for the coordinator goes to the owner instead. */
+  setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult { return this.core.setWorkerOwner(id, owner); }
   /** An approval card's answer (`worker:<task>:<run>:<claude's request id>`). */
-  answer(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): boolean {
-    const match = /^worker:([0-9a-f-]{36}):(\d+):(.+)$/i.exec(requestId);
-    if (!match || this.closed) return false;
-    const w = this.workers.get(match[1]!);
-    const live = w ? this.live.get(w.id) : undefined;
-    if (!w?.active || w.run !== Number(match[2]) || !live?.head || !live.approvals.delete(match[3]!)) return false;
-    live.head.answer(match[3]!, allow, input, message);
-    return true;
-  }
-
-  get running(): string[] { return [...this.workers.values()].filter((w) => w.active).map((w) => w.id); }
-
+  answer(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): boolean { return this.core.answer(requestId, allow, input, message); }
+  /** Reports that did not reach the coordinator (it could not take them, or the app stopped first): handed over again, once each. */
+  redeliver() { this.core.redeliver(); }
+  get running(): string[] { return this.core.running; }
   /**
    * The app is quitting (or the bot is removed): every worker's process ends. One at work is `interrupted`; it is not
    * replayed, and a later app_send_message resumes its session (`--resume`).
    */
-  async close(): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-    for (const w of this.workers.values()) {
-      const live = this.live.get(w.id);
-      if (live?.settle) { clearTimeout(live.settle); live.settle = undefined; live.pendingResult = undefined; }
-      if (live?.keepAlive) { clearTimeout(live.keepAlive); live.keepAlive = undefined; }
-      if (live) live.waiting = undefined;
-      if (!w.active) continue;
-      if (live) this.cancelApprovals(w, live);
-      w.active = false; w.interrupted = true; w.status = "interrupted"; w.reportPending = false;
-      w.report = "Interrupted when the app quit. Nothing was replayed; continue it with app_send_message (it resumes its session).";
-      this.emit({ kind: "subagentEnded", id: w.id, status: "stopped", summary: w.report });
+  close(): Promise<void> { return this.core.close(); }
+
+  /** The app tools (the coordinator's in-process MCP server). */
+  async tool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    if (name === "app_handoff") {
+      // The Agent tool's own names (prompt, description) and "task" are taken too: models carry them over (live check).
+      const started = await this.core.handoff("claude-process", args);
+      return { ...started, message: "The worker runs on its own in this folder. Its report arrives later as an app message (<app_task_result>). Start any other independent workers you need, say in one sentence what you handed off, then finish your turn: do not wait or poll." };
     }
-    this.save();
-    await Promise.allSettled([...this.live.values()].map((live) => { const head = live.head; live.head = undefined; return head?.terminate(1_500); }));
+    if (name === "app_send_message") {
+      const sent = await this.core.message(args);
+      return { ...sent, message: sent.status === "steered" ? "Joined into its run under way." : "Its next run started; its report comes as an app message." };
+    }
+    if (name === "app_cancel_task") {
+      const id = typeof args.task_id === "string" ? args.task_id : "";
+      const { status } = await this.core.cancel(id, args.run as number | undefined);
+      return { task_id: id, run: this.core.get(id)?.run, status: statusWord(status) };
+    }
+    throw new Error(`Unknown app tool ${name}.`);
   }
 }
 
