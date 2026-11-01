@@ -62,8 +62,9 @@ import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT,
 import { toSwiftDate } from "../store/records";
 import { codexRateLimits, codexTokens, isEmptyLimits, minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
 import {
-  CodexLegacyStore, INTERRUPTED_REPORT, reportPayload, STOPPED_REPORT, wireStatus, WorkerCore,
-  type CodexJournal, type CoordinatorPort, type HandoffRequest, type RecoverResult, type RunEnd, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord, type WorkerReport,
+  CodexLegacyStore, INTERRUPTED_REPORT, reportPayload, STOPPED_REPORT, toLegacyCodex, wireStatus, WorkerCore,
+  type CodexJournal, type CoordinatorPort, type HandoffRequest, type RecoverResult, type RunEnd, type RunHandle, type WorkerAdapter, type WorkerCoreFactory,
+  type WorkerCoreOptions, type WorkerLedgerRecord, type WorkerReport,
 } from "../worker-core";
 
 /** What a Codex head gives the bot besides claude's items. */
@@ -91,7 +92,8 @@ export type CodexItem =
 
 export type CodexOutput =
   | { kind: "write"; value: Record<string, unknown> }
-  | { kind: "item"; item: CodexItem }
+  /** `worker`: one of its app-managed workers' items (the bot's worker entry), not the coordinator's. */
+  | { kind: "item"; item: CodexItem; worker?: true }
   | { kind: "thread"; id: string }
   | { kind: "close" }
   | { kind: "componentEditor"; action: ComponentEditorAction }
@@ -138,7 +140,12 @@ export interface CodexConfig {
   workerEffort?: string | null;
   workerFast?: boolean | null;
   restoredWorkers: WorkerRecord[];
+  /** The restart journal's workers (written by a core before the worker ledger; read for one version). */
   restartWorkers?: WorkerRecord[];
+  /** After an explicit restart: workers the ledger says were interrupted by it are checked and resumed. */
+  restartRecovery?: boolean;
+  /** The member's core (Bot: its worker ledger and projections); absent: a core over `restoredWorkers`. */
+  workerCore?: (options: WorkerCoreOptions) => WorkerCore;
   strictResume?: boolean;
   restartTurn?: string;
   /** Core binds this only for its own Maintainer; tool arguments cannot supply it. */
@@ -191,7 +198,6 @@ export const MANAGED_TOOL_SIGNATURE = JSON.stringify(MANAGED_TOOLS);
 // another worker's grant just because its branch/worktree names happen to match.
 const isolatedGitOwners = new Map<string, string>();
 /** The subagent type of the Maintainer's component editor. */
-const EDITOR_TYPE = "ccb-core:component-editor";
 
 /** The shell a monitored command runs in (1.x: zsh on macOS). */
 const shell = (command: string): string[] => (process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c", command] : process.platform === "darwin" ? ["/bin/zsh", "-c", command] : ["/bin/sh", "-c", command]);
@@ -641,6 +647,9 @@ export class CodexThreadAdapter implements WorkerAdapter {
   /** Its turn under way (a restart snapshot). */
   turnOf(id: string): string | null { return this.workers.get(id)?.turnId ?? null; }
 
+  /** Kept for an explicit restart: whether its turn can be resumed, and which turn. */
+  restartData(record: Readonly<WorkerLedgerRecord>) { return { restartSafe: this.restartSafe(record.id), restartTurn: this.turnOf(record.id) ?? undefined }; }
+
   /** Whether an app restart now could resume it: a known turn and nothing unanswered or half-done. */
   restartSafe(id: string): boolean {
     const w = this.workers.get(id);
@@ -881,8 +890,6 @@ export class CodexSession implements CoordinatorPort {
   private settling = false;
   /** The task id the next hand-off gets (its receipt is written before the core has made it). */
   private nextTask: string | null = null;
-  /** The workers' dollars so far: the bot reads a usage item's cost as a running total of its head. */
-  private workerCost = 0;
 
   constructor(readonly config: CodexConfig) {
     for (const record of config.restoredMonitors ?? []) {
@@ -898,26 +905,31 @@ export class CodexSession implements CoordinatorPort {
       wire: {
         request: (method, params, reply) => this.out.push(this.request(method, params, { kind: "adapter", reply })),
         write: (value) => this.out.push({ kind: "write", value }),
-        item: (item) => this.out.push(this.item(item)),
+        item: (item) => this.out.push(this.workerItem(item)),
       },
       reviewed: (params, worker) => this.out.push(...this.reviewed(params, worker)),
       allowedRetry: (key) => this.allowedCommands.delete(key),
       followUp: (id, text) => { void this.core.sendToWorker(id, text); },
     });
-    this.threads.strictResume = !!config.restartWorkers;
+    this.threads.strictResume = !!config.restartWorkers || !!config.restartRecovery;
     this.editor = new ComponentEditorAdapter({
       route: () => this.config.componentEditor, recovering,
       act: (action) => this.out.push({ kind: "componentEditor", action }),
-      item: (item) => this.out.push(this.item(item)),
+      item: (item) => this.out.push(this.workerItem(item)),
       ownerSessionId: () => this.config.ownerSession ?? null,
     });
-    this.core = new WorkerCore({
-      store: new CodexLegacyStore(journal, config.ownerSession ?? ""), port: this, sink: { item: (item) => this.sink(item) },
+    const options: WorkerCoreOptions = {
+      store: new CodexLegacyStore(journal, config.ownerSession ?? ""), port: this, sink: { item: (item) => this.out.push(this.workerItem(item)) },
       adapters: [this.threads, this.editor], ownerSessionId: () => this.config.ownerSession ?? "", log: () => undefined,
       parentThreadId: () => this.threadId,
       newId: () => { const id = this.nextTask ?? randomUUID().toLowerCase(); this.nextTask = null; return id; },
-    });
-    for (const record of config.restartWorkers ?? []) {
+    };
+    // The member's core lists only this conversation's workers (its ledger keeps every conversation's).
+    this.core = config.workerCore?.({ ...options, sessionScoped: true }) ?? new WorkerCore(options);
+    // After an explicit restart: the workers it interrupted (the ledger's), or the old restart journal's.
+    const restarted = config.restartWorkers
+      ?? (config.restartRecovery ? this.core.all().filter((r) => r.status === "interrupted" && r.interruptedBy === "restart").map(toLegacyCodex) : []);
+    for (const record of restarted) {
       if (record.wasActive && record.restartSafe && record.thread && ((!record.role && record.restartTurn) || (record.role === "component-editor" && record.editorCheckpoint)))
         this.restartPending.set(record.id, record);
     }
@@ -929,18 +941,9 @@ export class CodexSession implements CoordinatorPort {
     }
   }
 
-  /** The core's item, as the bot reads it today. */
-  private sink(item: CodexItem) {
-    if (item.kind === "usage") {
-      this.workerCost += item.totalCost;
-      item = { ...item, totalCost: this.workerCost };
-    } else if ((item.kind === "toolUse" && item.parent === null) || item.kind === "subagentStarted") {
-      // A run's opening items name its type by engine; the Maintainer's editor has its own (an editor, not a Claude worker).
-      const editor = this.core.get(item.id)?.adapter === "component-editor";
-      if (item.kind === "toolUse" && editor) item = { ...item, input: { ...item.input, subagent_type: EDITOR_TYPE } };
-      if (item.kind === "subagentStarted") item = { ...item, ...(editor ? { type: EDITOR_TYPE } : {}), execution: { ...item.execution, ownerSessionId: item.execution?.ownerSessionId || null } as SubagentExecution };
-    }
-    this.out.push(this.item(item));
+  /** A worker's item (the core's, its adapters', a restart check's): for the bot's worker entry. */
+  private workerItem(item: CodexItem): CodexOutput {
+    return { kind: "item", item, worker: true };
   }
 
   /** What the core, the adapters and the port said since the last call, in order. */
@@ -1016,12 +1019,20 @@ export class CodexSession implements CoordinatorPort {
     return [];
   }
 
+  /** A worker's approval (worker:<task>:<run>:<its own id>): the core's table, then its adapter. */
+  answerWorker(requestId: string, allow: boolean, why?: string): { answered: boolean; out: CodexOutput[] } {
+    const answered = !this.stopped && this.core.answer(requestId, allow, {}, why);
+    return { answered, out: this.take() };
+  }
+
+  /** The app is quitting: workers at work are interrupted (resumable later, never replayed); the coordinator is left. */
+  closeWorkers(): CodexOutput[] {
+    void this.core.close();
+    return [...this.take(), ...this.pendingChanged()];
+  }
+
   answer(requestId: string, allow: boolean, why?: string): CodexOutput[] {
-    // A worker's approval (worker:<task>:<run>:<its own id>): the core's table, then its adapter.
-    if (requestId.startsWith("worker:")) {
-      if (!this.stopped) this.core.answer(requestId, allow, {}, why);
-      return this.take();
-    }
+    if (requestId.startsWith("worker:")) return this.answerWorker(requestId, allow, why).out;
     if (requestId.startsWith("monitor:")) return this.approveMonitor(requestId.slice(8), allow);
     if (requestId.startsWith("codex-review:")) return this.answerReview(requestId, allow);
     const approval = this.approvals.get(requestId);
@@ -1053,7 +1064,7 @@ export class CodexSession implements CoordinatorPort {
     this.allowedCommands.clear();
     this.reviews.clear();
     this.inbox = [];
-    const out = [...this.restartPending.keys()].map((id) => this.item({ kind: "subagentEnded", id, status: "interrupted", summary: INTERRUPTED_REPORT.quit }));
+    const out = [...this.restartPending.keys()].map((id) => this.workerItem({ kind: "subagentEnded", id, status: "interrupted", summary: INTERRUPTED_REPORT.quit }));
     this.restartPending.clear();
     void this.core.close();
     return [...out, ...this.take(), ...this.closeApprovals(() => true, true), ...monitors, ...this.pendingChanged()];
@@ -1741,10 +1752,7 @@ export class CodexSession implements CoordinatorPort {
   get completionDependencies(): WorkerDependency[] {
     if (this.stopped) return [];
     // The core's (its own workers: runs under way and reports waiting), less the report shown right now.
-    const workers = this.core.completionDependencies.filter((dependency) => {
-      const state = this.core.get(dependency.id)?.report.state;
-      return state !== "dispatching" && state !== "unresolved";
-    });
+    const workers = this.core.completionDependencies.filter((dependency) => this.core.get(dependency.id)?.report.state !== "dispatching");
     const commands = [...this.monitors.values()].flatMap((monitor): WorkerDependency[] => {
       if (monitor.state !== "running" && monitor.wake !== "pending") return [];
       return [{ id: monitor.id, run: 1, task: monitor.command, state: monitor.state === "running" ? "running" : "reportQueued", callback: "app_monitor_result",
@@ -1875,11 +1883,15 @@ export class CodexSession implements CoordinatorPort {
     return [{ kind: "write", value: response }, ...out, ...this.pendingChanged()];
   }
 
-  /** A restart check came back: the worker's next run continues (or adopts) its original one. */
+  /**
+   * A restart check came back: its interrupted run goes on as the same run (continued or adopted). A worker from an old
+   * restart journal (no ledger record of the restart) starts its next run instead.
+   */
   private restartRun(id: string, words: string): CodexOutput[] {
-    const sent = syncResult(this.core.sendToWorker(id, words), { ok: false, reason: "Restart recovery could not resume this worker." });
+    const same = this.core.get(id)?.interruptedBy === "restart";
+    const sent = syncResult(same ? this.core.resumeRun(id, words) : this.core.sendToWorker(id, words), { ok: false, reason: "Restart recovery could not resume this worker." });
     const out = this.take();
-    if (!sent.ok) out.push(this.item({ kind: "subagentEnded", id, status: "interrupted", summary: `Restart recovery could not resume this worker: ${sent.reason}` }));
+    if (!sent.ok) out.push(this.workerItem({ kind: "subagentEnded", id, status: "interrupted", summary: `Restart recovery could not resume this worker: ${sent.reason}` }));
     return out;
   }
 
@@ -1889,7 +1901,7 @@ export class CodexSession implements CoordinatorPort {
     this.restartPending.delete(task);
     const worker = this.core.get(task);
     if (!worker || !record || worker.run !== run || worker.status !== "interrupted" || this.stopped) return this.pendingChanged();
-    if (outcome.state === "blocked") return [this.item({ kind: "subagentEnded", id: task, status: "interrupted", summary: outcome.reason }), ...this.pendingChanged()];
+    if (outcome.state === "blocked") return [this.workerItem({ kind: "subagentEnded", id: task, status: "interrupted", summary: outcome.reason }), ...this.pendingChanged()];
     if (outcome.state === "completed") {
       this.editor.adopt(task, outcome.report);
       return [...this.restartRun(task, ADOPTED_RUN), ...this.pendingChanged()];
@@ -1939,7 +1951,7 @@ export class CodexSession implements CoordinatorPort {
     for (const id of [...this.restartPending.keys()]) {
       if (ids && !ids.has(id)) continue;
       this.restartPending.delete(id);
-      out.push(this.item({ kind: "subagentEnded", id, status: "stopped", summary: STOPPED_REPORT }));
+      out.push(this.workerItem({ kind: "subagentEnded", id, status: "stopped", summary: STOPPED_REPORT }));
     }
     for (const id of this.core.running) if (!ids || ids.has(id)) void this.core.stopWorker(id);
     return [...out, ...this.take(), ...this.pendingChanged()];
@@ -2040,6 +2052,12 @@ export class CodexThreads {
 
 export interface CodexHeadConfig {
   restartWorkers?: WorkerRecord[];
+  /** After an explicit restart: the workers the ledger says it interrupted are checked and resumed. */
+  restartRecovery?: boolean;
+  /** The member's core (Bot: its worker ledger and projections); absent: codex-threads/<session>.workers.json. */
+  workerCore?: WorkerCoreFactory;
+  /** Where its workers' items go (Bot: its one worker entry); absent: `onItem` with the coordinator's. */
+  workerSink?: (item: CodexItem) => void;
   strictResume?: boolean;
   restartTurn?: string;
   /** `codex`, or the fake app-server's interpreter for tests. */
@@ -2117,8 +2135,9 @@ export class CodexHead {
       cwd: config.cwd, instructions: config.instructions + recovery, workerInstructions: config.workerInstructions, resumeThread,
       model: config.model ?? null, workerModel: config.workerModel ?? null, effort: config.effort ?? null,
       workerEffort: config.workerEffort ?? null, workerFast: config.workerFast ?? null,
-      restartWorkers: config.restartWorkers, strictResume:config.strictResume, restartTurn:config.restartTurn,
-      restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
+      restartWorkers: config.restartWorkers, restartRecovery: config.restartRecovery, strictResume:config.strictResume, restartTurn:config.restartTurn,
+      restoredWorkers: config.workerInstructions && !config.workerCore ? config.threads.workers(config.sessionId) : [],
+      workerCore: config.workerCore ? (options) => config.workerCore!(options, { codex: { threads: config.threads, session: config.sessionId } }) : undefined,
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
       autoMode: config.autoMode ?? true,
       bypassPermissions: config.bypassPermissions === true,
@@ -2212,7 +2231,8 @@ export class CodexHead {
   private perform(outputs: CodexOutput[]) {
     const records = this.session.workerRecords;
     const text = JSON.stringify(records);
-    if (text !== this.savedWorkers && this.config.workerInstructions) {
+    // With the member's core, its worker ledger is the record: the old journal is no longer written.
+    if (text !== this.savedWorkers && this.config.workerInstructions && !this.config.workerCore) {
       this.config.threads.saveWorkers(records, this.config.sessionId);
       this.savedWorkers = text;
     }
@@ -2230,6 +2250,7 @@ export class CodexHead {
           if (!this.closed && this.process) this.process.child.stdin.write(`${JSON.stringify(output.value)}\n`);
           break;
         case "item":
+          if (output.worker && this.config.workerSink) { this.config.workerSink(output.item); break; }
           this.handlers.onItem(output.item);
           if (output.item.kind === "apiRetry") this.findRetryTime(output.item);
           break;
@@ -2332,7 +2353,7 @@ export class CodexHead {
 
   // WorkerHost (workers.ts): a worker is a thread of this app-server; the coordinator's Stop leaves it be.
   private workerHostImpl?: WorkerHost;
-  private get workerHost(): WorkerHost { return this.workerHostImpl ??= codexWorkerHost(this.session, (out) => this.perform(out), () => !this.closed && this.running); }
+  get workerHost(): WorkerHost { return this.workerHostImpl ??= codexWorkerHost(this.session, (out) => this.perform(out), () => !this.closed && this.running); }
   readonly workerHostKind = "codex-thread" as const;
   readonly steersRunning = true;
   listWorkers(): WorkerInfo[] { return this.workerHost.listWorkers(); }
@@ -2386,6 +2407,12 @@ export function codexWorkerHost(session: CodexSession, perform: (out: CodexOutpu
       perform(set.out);
       return { ok: true };
     },
+    answer(requestId, allow, _input, message) {
+      const { answered, out } = session.answerWorker(requestId, allow, allow ? undefined : message);
+      perform(out);
+      return answered;
+    },
+    async close() { perform(session.closeWorkers()); },
   };
 }
 

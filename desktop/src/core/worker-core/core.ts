@@ -22,6 +22,7 @@ import type { HandoffArgs, HandoffRequest, RecoverResult, WorkerAdapter } from "
 import { classifyRun, ENGINE_NAMES, INTERRUPTED_REPORT } from "./classify";
 import type { RunEnd, RunHandle, WorkerAdapterKind, WorkerEvent } from "./events";
 import { MAX_PROCESSES, MAX_WORKER_RECORDS, trimRecords, type WorkerLedgerRecord, type WorkerStore } from "./ledger";
+import type { LegacySources } from "./migrate";
 import { RunPipeline, type ControlEvent } from "./pipeline";
 import { ownedWorkerReport, REPORT_LIMIT, reportTag, wireStatus, withDeniedNote, type AckPolicy, type WorkerReport } from "./report";
 import { reportOwed, workerState, type WorkerStatus } from "./status";
@@ -37,8 +38,15 @@ export interface CoordinatorPort {
   deliver(report: WorkerReport, text: string): "taken" | "queued" | "busy";
 }
 
-/** Where the core's items go. Interim (S1–S3): the facade's existing emit callback. Final (S4b): the bot's one worker entry. */
+/** Where the core's items go: the bot's one worker entry (`Bot.onWorkerOutput`), through the facade that made the core. */
 export interface WorkerSink { item(item: CodexItem): void }
+
+/**
+ * How a facade makes its core. A bot injects one per member that keeps the member's ledger (<member store>/
+ * worker-ledger.json, importing `legacy` once) and projects every transition; without one (tests, tools) the facade
+ * keeps the store it was given.
+ */
+export type WorkerCoreFactory = (options: WorkerCoreOptions, legacy: LegacySources) => WorkerCore;
 
 export interface WorkerCoreOptions {
   store: WorkerStore;
@@ -55,6 +63,8 @@ export interface WorkerCoreOptions {
   sessionScoped?: boolean;
   /** Ids the restart journal lists: found running at load, they were interrupted by a restart, not a crash. */
   restarted?(): ReadonlySet<string>;
+  /** Why it closes: the app quits (default) or restarts (runs under way keep their adapter's `restartData`). */
+  closeReason?(): "quit" | "restart";
   /** Emit `managedPending` items when whether anything is hosted changes (Codex and Antigravity heads use it to stay awake). */
   pendingSignal?: boolean;
   /** The coordinator's thread, for measurements that name none. */
@@ -63,6 +73,11 @@ export interface WorkerCoreOptions {
   newId?(): string;
   /** A process's start time (identity), for `process` events that carry none (default: process/kill-tree). */
   processStartTime?(pid: number): string | null;
+  /**
+   * A record's projected state changed (status, report, cleanup, end, owner): the bot's projections (subagents.json,
+   * the chip, agents.json, the step) follow it. A copy; called after the ledger is written.
+   */
+  projected?(record: WorkerLedgerRecord): void;
 }
 
 export interface HandoffResult { accepted: true; task_id: string; run: number }
@@ -117,6 +132,8 @@ export class WorkerCore implements WorkerHost {
   private activeReports = new Map<string, number>();
   private closed = false;
   private lastPending: boolean | null = null;
+  /** What each record last showed its projections (`projected`). */
+  private shown = new Map<string, string>();
 
   constructor(private options: WorkerCoreOptions) {
     const first = options.adapters[0];
@@ -147,7 +164,23 @@ export class WorkerCore implements WorkerHost {
   private save() {
     this.options.store.save([...this.records.values()]);
     this.signal();
+    this.project(false);
   }
+
+  /** Every record whose projected state changed since it was last shown (`all`: every record) goes to `projected`. */
+  private project(all: boolean) {
+    const projected = this.options.projected;
+    if (!projected) return;
+    for (const r of this.records.values()) {
+      const key = JSON.stringify([r.run, r.status, r.report.state, r.report.status, r.report.text, r.cleanup ?? null, r.endedAt, r.owner?.botId ?? null]);
+      if (!all && this.shown.get(r.id) === key) continue;
+      this.shown.set(r.id, key);
+      try { projected(structuredClone(r)); } catch (error) { this.options.log(`worker ${r.id}: projection failed: ${(error as Error).message}`); }
+    }
+  }
+
+  /** Every record to `projected` once (the bot's projections at start, after an import or a restart). */
+  projectAll(): void { this.project(true); }
   private emit(item: CodexItem) { this.options.sink.item(item); }
   private adapterOf(r: Pick<WorkerLedgerRecord, "adapter">) { return this.options.adapters.find((a) => a.kind === r.adapter); }
   private visible(r: WorkerLedgerRecord | undefined): r is WorkerLedgerRecord {
@@ -223,6 +256,24 @@ export class WorkerCore implements WorkerHost {
     });
   }
 
+  /**
+   * After an explicit restart: the interrupted run goes on as the same run (its task id and run stay what the
+   * coordinator was told), once its old processes are gone. Nothing is replayed: `words` say how to continue.
+   */
+  resumeRun(id: string, words: string): Maybe<WorkerSendResult> {
+    const r = this.find(id);
+    if (!r || this.closed) return { ok: false, reason: "No such worker." };
+    if (r.status !== "interrupted" || r.interruptedBy !== "restart") return { ok: false, reason: "Only a run interrupted by a restart resumes as the same run." };
+    if (typeof words !== "string" || !words.trim() || words.length > MAX_WORDS) return { ok: false, reason: `Message required (maximum ${MAX_WORDS} characters).` };
+    const adapter = this.adapterOf(r);
+    if (!adapter) return { ok: false, reason: "This worker's engine is not available here." };
+    return then(this.recover(r, adapter), (blocker) => {
+      if (blocker) return { ok: false, reason: blocker };
+      if (this.closed || this.records.get(r.id) !== r || r.status !== "interrupted") return { ok: false, busy: true, reason: "This worker is starting or stopping; try again in a moment." };
+      return then(this.launch(r, words, false, true), (error): WorkerSendResult => (error ? { ok: false, reason: error } : { ok: true, how: "newRun", run: r.run }));
+    });
+  }
+
   /** Clears an interruption or a failed cleanup once the adapter confirms its old processes are gone; else the reason it is blocked. */
   private recover(r: WorkerLedgerRecord, adapter: WorkerAdapter): Maybe<string | null> {
     if (r.recovery !== "required" && r.cleanup !== "failed") return null;
@@ -263,7 +314,7 @@ export class WorkerCore implements WorkerHost {
 
   /** An approval card's answer (`worker:<task>:<run>:<engine's request id>`). False: no such approval now. */
   answer(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): boolean {
-    const match = /^worker:([0-9a-f-]{36}):(\d+):(.+)$/i.exec(requestId);
+    const match = /^worker:([^:]+):(\d+):(.+)$/.exec(requestId);
     if (!match || this.closed) return false;
     const r = this.records.get(match[1]!);
     const live = r ? this.lives.get(r.id) : undefined;
@@ -280,12 +331,16 @@ export class WorkerCore implements WorkerHost {
    */
   async close(): Promise<void> {
     if (this.closed) return;
+    const by = this.options.closeReason?.() ?? "quit";
     for (const r of this.records.values()) {
       if (r.status !== "running") continue;
+      if (by === "restart") {
+        try { Object.assign(r.engineData, this.adapterOf(r)?.restartData?.(r) ?? {}); } catch (error) { this.options.log(`worker ${r.id}: restart data: ${(error as Error).message}`); }
+      }
       const live = this.lives.get(r.id);
       if (live) { live.done = true; live.waiting = undefined; live.pipeline.flush(); this.cancelApprovals(r, live); }
-      const verdict = classifyRun({ end: null, reply: "", stoppedByApp: false, interruptedBy: "quit", requireReply: true, failedTools: 0 });
-      Object.assign(r, { status: "interrupted", interruptedBy: "quit", recovery: "required", endedAt: this.now(), report: { ...noReport(), text: verdict.report, status: "interrupted" } });
+      const verdict = classifyRun({ end: null, reply: "", stoppedByApp: false, interruptedBy: by, requireReply: true, failedTools: 0 });
+      Object.assign(r, { status: "interrupted", interruptedBy: by, recovery: "required", endedAt: this.now(), report: { ...noReport(), text: verdict.report, status: "interrupted" } });
       this.emit({ kind: "subagentEnded", id: r.id, status: wireStatus("interrupted"), summary: verdict.report });
     }
     this.closed = true;
@@ -452,17 +507,20 @@ export class WorkerCore implements WorkerHost {
     for (const r of this.records.values()) if (this.visible(r) && !this.queued.has(r.id)) this.deliver(r);
   }
 
-  /** Every worker it runs or still owes a report to the coordinator, whoever owns it: the head stays awake for these. */
+  /**
+   * Every worker it runs or still owes a report to the coordinator, whoever owns it: the head stays awake for these. An
+   * unresolved report is not one: the coordinator was shown it and decided nothing, and waiting would keep it awake for good.
+   */
   get hostedLive(): string[] {
-    return [...this.records.values()].filter((r) => r.status === "running" || !!r.cleanup || (!r.owner && (reportOwed(r.report.state) || r.report.state === "unresolved"))).map((r) => r.id);
+    return [...this.records.values()].filter((r) => this.visible(r) && (r.status === "running" || !!r.cleanup || (!r.owner && reportOwed(r.report.state)))).map((r) => r.id);
   }
 
-  /** What the coordinator still waits for (its own workers only): runs under way and reports it has not settled. */
+  /** What the coordinator still waits for (its own workers only): runs under way and reports it has not been shown or decided on (an unresolved one is not waited for). */
   get completionDependencies(): WorkerDependency[] {
     return [...this.records.values()].filter((r) => this.visible(r) && !r.owner).flatMap((r): WorkerDependency[] => {
       const task = typeof r.engineData.ownershipInstructions === "string" ? r.engineData.ownershipInstructions : r.instructions;
       if (r.status === "running" || r.cleanup === "pending") return [{ id: r.id, run: r.run, task, state: "running", callback: "app_task_result", taskTruncated: false }];
-      if (reportOwed(r.report.state) || r.report.state === "unresolved")
+      if (reportOwed(r.report.state))
         return [{ id: r.id, run: r.run, task, state: "reportQueued", callback: "app_task_result", ...(r.report.status ? { outcome: wireStatus(r.report.status) } : {}), taskTruncated: false }];
       return [];
     });
@@ -475,12 +533,12 @@ export class WorkerCore implements WorkerHost {
   // Runs
 
   /** Starts its next run (now, or when a slot frees). An error text: nothing started (a new worker is forgotten, a follow-up undone). */
-  private launch(r: WorkerLedgerRecord, words: string, fresh: boolean): Maybe<string | null> {
+  private launch(r: WorkerLedgerRecord, words: string, fresh: boolean, sameRun = false): Maybe<string | null> {
     const adapter = this.adapterOf(r)!;
     const before = structuredClone(r);
     // Counted before this worker is at work itself.
     const wait = (adapter.needsSlot?.(r) ?? true) && this.busy >= this.limit;
-    r.run += 1;
+    if (!sameRun) r.run += 1;
     Object.assign(r, { status: "running", report: noReport(), runStartedAt: this.now(), endedAt: null });
     delete r.interruptedBy;
     this.queued.delete(r.id);
@@ -533,7 +591,7 @@ export class WorkerCore implements WorkerHost {
 
   private opening(r: WorkerLedgerRecord, adapter: WorkerAdapter, words: string) {
     const runtime = adapter.runtime?.(r) ?? { reasoningEffort: null };
-    for (const item of workerRunStarted({ id: r.id, engine: r.engine, name: r.name, run: r.run, conversationId: r.conversationId, ownerSessionId: this.options.ownerSessionId() }, words, runtime))
+    for (const item of workerRunStarted({ id: r.id, engine: r.engine, name: r.name, run: r.run, conversationId: r.conversationId, ownerSessionId: this.options.ownerSessionId() }, words, runtime, adapter.subagentType))
       this.emit(item);
   }
 

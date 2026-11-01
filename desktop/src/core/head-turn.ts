@@ -56,8 +56,8 @@ export function headTurnContent(f: HeadTurnFacts): TurnContent {
     body: keptOut ? "" : f.body,
     cards: 0, // drawn from the body
     choices: keptOut ? 0 : parsed.choices?.length ?? 0,
-    // A request (<component>, <need-folder>, …) is acted on with its bubble: it shows like a display.
-    displays: keptOut ? 0 : parsed.displays.length + parsed.requests.length,
+    displays: keptOut ? 0 : parsed.displays.length,
+    requests: keptOut ? 0 : parsed.requests.length,
     steps: keptOut ? 0 : f.steps,
     // Background work alone makes no bubble: a turn with nothing else to show leaves it in the head's latest reply.
     backgroundTasks: 0,

@@ -90,7 +90,7 @@ describe("the report format", () => {
 });
 
 describe("hasVisibleContent (blank bubbles)", () => {
-  const turn = (over: Partial<TurnContent>): TurnContent => ({ status: "done", body: "", reactionsOnly: false, cards: 0, choices: 0, displays: 0, steps: 0, backgroundTasks: 0, decisionReference: false, handoff: false, error: null, ...over });
+  const turn = (over: Partial<TurnContent>): TurnContent => ({ status: "done", body: "", reactionsOnly: false, cards: 0, choices: 0, displays: 0, steps: 0, backgroundTasks: 0, requests: 0, decisionReference: false, handoff: false, error: null, ...over });
 
   it("a turn that did not succeed always shows (its error)", () => {
     expect(hasVisibleContent(turn({ status: "failed", error: "x" }))).toBe(true);

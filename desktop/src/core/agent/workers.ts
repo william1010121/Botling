@@ -92,13 +92,10 @@ export interface WorkerHost {
    * while a report of it is being handed to the coordinator at this moment.
    */
   setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult;
-  /**
-   * An approval card's answer (request id `worker:<task id>:<run>:<engine's id>`); false when no such approval is
-   * open. Optional until every host is a WorkerCore (S4b makes it required).
-   */
-  answer?(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): boolean;
-  /** Ends every worker's process (the app quitting): one at work is interrupted, never replayed. Optional until S4b. */
-  close?(): Promise<void>;
+  /** An approval card's answer (request id `worker:<task id>:<run>:<engine's id>`); false when no such approval is open. */
+  answer(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): boolean;
+  /** Ends every worker's process (the app quitting): one at work is interrupted, never replayed. */
+  close(): Promise<void>;
 }
 
 export const isWorkerHost = (value: unknown): value is WorkerHost =>
@@ -124,11 +121,10 @@ export function workerHostKindFor(type: string | null | undefined, engine: Engin
 export const ownProcessWorker = (type: string | null | undefined) => type === "claude-worker";
 
 /** The items that open a worker's run (shared by every host that builds them itself). */
-export function workerRunStarted(w: { id: string; engine: Engine; name: string; run: number; conversationId: string | null; ownerSessionId: string }, text: string, runtime: { reasoningEffort: string | null; model?: string | null }): CodexItem[] {
-  const type = workerType(w.engine);
+export function workerRunStarted(w: { id: string; engine: Engine; name: string; run: number; conversationId: string | null; ownerSessionId: string }, text: string, runtime: { reasoningEffort: string | null; model?: string | null }, type = workerType(w.engine)): CodexItem[] {
   return [
     { kind: "toolUse", id: w.id, tool: "Agent", title: `Delegate ${w.name}`, detail: text, parent: null, input: { description: w.name, prompt: text, subagent_type: type, run_in_background: true } },
-    { kind: "subagentStarted", id: w.id, description: w.name, type, prompt: text, background: true, execution: { run: w.run, ownerSessionId: w.ownerSessionId, threadId: w.conversationId, turnId: null } },
+    { kind: "subagentStarted", id: w.id, description: w.name, type, prompt: text, background: true, execution: { run: w.run, ownerSessionId: w.ownerSessionId || null, threadId: w.conversationId, turnId: null } },
     { kind: "subagentRuntime", id: w.id, runtime: { engine: w.engine, reasoningEffort: runtime.reasoningEffort }, ...(runtime.model ? { model: runtime.model } : {}) },
   ];
 }

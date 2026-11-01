@@ -31,6 +31,8 @@ export interface WorkerAdapter {
   readonly engine: Engine;
   /** Whether a running worker takes words into its run (Claude stdin, Codex turn/steer); false: only between runs (ACP). */
   readonly steersRunning: boolean;
+  /** The subagent type its workers are listed with (default `<engine>-worker`; the component editor: its own). */
+  readonly subagentType?: string;
   /**
    * A handoff's engine-specific checks (agent definition, model name), before anything is recorded or emitted.
    * Throws the refusal (nothing started). Returns the new worker's initial engineData, and its engine when it is not
@@ -60,6 +62,8 @@ export interface WorkerAdapter {
   needsSlot?(record: Readonly<WorkerLedgerRecord>): boolean;
   /** The runtime a run's opening items show (`subagentRuntime`). */
   runtime?(record: Readonly<WorkerLedgerRecord>): { reasoningEffort: string | null; model?: string | null };
+  /** What a run under way needs to go on after an explicit restart (kept in its engineData before it is interrupted). */
+  restartData?(record: Readonly<WorkerLedgerRecord>): Record<string, unknown>;
   /** End every process (app quitting). */
   close(): Promise<void>;
 }

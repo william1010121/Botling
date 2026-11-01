@@ -284,10 +284,10 @@ describe("the component editor on the shared core", () => {
     expect(ended.of("subagentEnded")).toEqual([{ kind: "subagentEnded", id: task, status: "completed", summary: chunks.join("") }]);
   });
 
-  it("its costs reach the bot as the head's running total; an empty result fails with the one wording", () => {
+  it("its costs reach the bot as each usage's spend (the worker entry adds them up); an empty result fails with the one wording", () => {
     const { s, task } = editor();
     const usage = (total: number) => new Out(s.componentEditorItem(task, 1, { kind: "usage", totalCost: total, tokens: { input: 1, output: 1, cacheWrite: 0, cacheRead: 0 } })).of("usage")[0].totalCost;
-    expect([usage(0.25), usage(0.5)]).toEqual([0.25, 0.5]);
+    expect([usage(0.25), usage(0.5)]).toEqual([0.25, 0.25]);
     const ended = new Out(s.componentEditorItem(task, 1, { kind: "result", ok: true, text: " ", error: "", subtype: "success", how: "normal" }));
     expect(ended.of("subagentEnded")).toEqual([{ kind: "subagentEnded", id: task, status: "failed", summary: NO_REPORT }]);
   });

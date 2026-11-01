@@ -62,12 +62,12 @@ it('coordinator exposes delegation only and checkpoint needs its own exact grant
  expect(h.head.completionDependencies).toHaveLength(1);
 });
 
-it('report scheduling gives one reconciliation and retains an unresolved report',async()=>{
+it('report scheduling gives one reconciliation and retains an unresolved report, which no longer keeps the head waiting',async()=>{
  const h=await setup(),args={instructions:'research only'};h.bridge.grant('botling_app_handoff',args);
  const a=await h.bridge.invoke('app_handoff',args);h.acknowledged.decide=false;
  fixture.workers[0].handlers.onItem({kind:'result',ok:true,text:'evidence only',error:'',subtype:'end_turn'});await settle();
  h.acknowledged.available=true;await (h.head as any).drain();await settle();
- expect(h.prompts).toHaveLength(2);expect(h.head.completionDependencies).toMatchObject([{id:a.task_id,run:1}]);
+ expect(h.prompts).toHaveLength(2);expect(h.head.completionDependencies).toEqual([]);
  expect(h.events.some(e=>e.summary?.includes('unresolved'))).toBe(true);
 });
 it('the report turn can continue its own task through the approval-bound bridge',async()=>{

@@ -37,6 +37,8 @@ export function fakeHost(engine: Engine, ids: string[]): FakeHost {
       if (host.refuseOwner.has(id)) return { ok: false, reason: "its report is being handed over right now" };
       host.owners.set(id, owner); return { ok: true };
     },
+    answer: () => false,
+    close: async () => undefined,
   };
   return host;
 }

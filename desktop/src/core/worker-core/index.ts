@@ -22,6 +22,6 @@ export type { HandoffArgs, HandoffRequest, RecoverResult, WorkerAdapter } from "
 export {
   CHECKPOINT_OUTCOMES, CLEANUP_FAILED_NOTE, UNRESOLVED_REPORT, WorkerCore, workerRequestId,
   type CheckpointArgs, type CheckpointResult, type CoordinatorPort, type HandoffResult, type MessageArgs, type MessageResult,
-  type ReconcileArgs, type ReconcileResult, type WorkerCoreOptions, type WorkerSink,
+  type ReconcileArgs, type ReconcileResult, type WorkerCoreFactory, type WorkerCoreOptions, type WorkerSink,
 } from "./core";
 export { hasVisibleContent, type TurnContent } from "./visible";

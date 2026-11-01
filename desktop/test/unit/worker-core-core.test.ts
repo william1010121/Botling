@@ -614,3 +614,81 @@ describe("a port that begins the report turn at once", () => {
     expect(env.store.get(id).report.state).toBe("unresolved");
   });
 });
+
+describe("S4b: the member core's rules", () => {
+  it("a run's opening items name the adapter's own subagent type and no owner session as null, never \"\"", async () => {
+    const adapter = new FakeAdapter("component-editor", "claude");
+    Object.assign(adapter, { subagentType: "ccb-core:component-editor" });
+    const { core, kinds } = setup({ adapter, ownerSessionId: () => "" });
+    await core.handoff("component-editor", { instructions: "Edit it." });
+    expect(kinds("toolUse")[0].input.subagent_type).toBe("ccb-core:component-editor");
+    expect(kinds("subagentStarted")[0]).toMatchObject({ type: "ccb-core:component-editor", execution: { ownerSessionId: null } });
+  });
+
+  it("answer() takes any task id (not only a UUID)", async () => {
+    const { core, adapter, kinds } = setup({ newId: () => "task-1" });
+    await core.handoff("claude-process", { instructions: "Go." });
+    adapter.emit("task-1", { type: "permission", nativeId: "n:1", tool: "Bash", summary: "ls", input: { command: "ls" } });
+    expect(kinds("permission")[0].requestId).toBe("worker:task-1:1:n:1");
+    expect(core.answer("worker:task-1:1:n:1", true, { command: "ls" })).toBe(true);
+    expect(adapter.answers).toEqual([{ nativeId: "n:1", allow: true, input: { command: "ls" } }]);
+  });
+
+  it("an unresolved report keeps nobody awake and is no completion dependency", async () => {
+    const { core, adapter } = setup({ port: new FakePort("checkpoint"), pendingSignal: true });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    (core as any).options.port.answer = "queued";
+    adapter.emit(task_id, { type: "textWhole", text: "Done.", phase: null }, normal());
+    for (let i = 0; i < 2; i++) { expect(core.beginReport(task_id, 1)).toBe(true); core.finishReport(task_id, 1, true); }
+    expect(core.get(task_id)!.report.state).toBe("unresolved");
+    expect(core.hostedLive).toEqual([]);
+    expect(core.completionDependencies).toEqual([]);
+  });
+
+  it("a session-scoped core keeps nobody awake for another conversation's report", async () => {
+    let session = "a";
+    const { core, adapter } = setup({ sessionScoped: true, ownerSessionId: () => session });
+    (core as any).options.port.answer = "busy";
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    adapter.emit(task_id, { type: "textWhole", text: "Done.", phase: null }, normal());
+    expect(core.hostedLive).toEqual([task_id]);
+    session = "b";
+    expect(core.hostedLive).toEqual([]);
+  });
+
+  it("projected: every transition's record, once, after it is written; projectAll shows every record", async () => {
+    const shown: WorkerLedgerRecord[] = [];
+    const store = new MemoryStore();
+    const { core, adapter } = setup({ store, projected: (r) => { expect(store.get(r.id)).toMatchObject({ status: r.status }); shown.push(r); } });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    adapter.emit(task_id, { type: "textDelta", text: "work" }, { type: "usage", tokens: tokens(5), cost: 0.1 });
+    adapter.emit(task_id, normal("All done."));
+    expect(shown.map((r) => [r.status, r.report.state])).toEqual([["running", "none"], ["done", "pending"], ["done", "acknowledged"]]);
+    shown.length = 0;
+    core.projectAll();
+    expect(shown.map((r) => r.id)).toEqual([task_id]);
+  });
+
+  it("closing for a restart keeps the adapter's restart data and says restart; resumeRun goes on as the same run", async () => {
+    const adapter = new FakeAdapter();
+    Object.assign(adapter, { restartData: () => ({ restartSafe: true, restartTurn: "turn-7" }) });
+    const store = new MemoryStore();
+    const { core } = setup({ adapter, store, closeReason: () => "restart" });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    await core.close();
+    expect(store.get(task_id)).toMatchObject({ status: "interrupted", interruptedBy: "restart", recovery: "required", engineData: { restartSafe: true, restartTurn: "turn-7" } });
+    const next = setup({ adapter: new FakeAdapter(), store });
+    expect(await next.core.resumeRun(task_id, "Carry on.")).toEqual({ ok: true, how: "newRun", run: 1 });
+    expect(next.adapter.started).toEqual([{ id: task_id, run: 1, words: "Carry on." }]);
+    expect(next.core.get(task_id)).toMatchObject({ status: "running", run: 1 });
+  });
+
+  it("resumeRun refuses a run the app did not interrupt for a restart", async () => {
+    const store = new MemoryStore();
+    const { core } = setup({ store });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    await core.close();
+    const next = setup({ store });
+    expect(await next.core.resumeRun(task_id, "Carry on.")).toMatchObject({ ok: false });
+  });
+});

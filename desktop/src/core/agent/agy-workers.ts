@@ -2,8 +2,9 @@
 // `worker: true`). What is the engine's lives here, in `AgyAcpAdapter`: the head's config and process identities,
 // ACP's items translated into WorkerEvents, process-group cleanup and crash recovery, and approvals answered only with
 // the exact input they asked. Everything else (state, text, the end and its report, the approvals table, report
-// checkpoints) is the shared WorkerCore's. `AgyWorkers` keeps the constructor and methods agy-acp.ts uses, over a
-// WorkerCore that keeps <acpHome>/workers.json (AgyLegacyStore) until the bot moves every member to its ledger (S4b).
+// checkpoints) is the shared WorkerCore's. `AgyWorkers` keeps the constructor and methods agy-acp.ts uses, over the
+// member's core the bot injects (its worker ledger, importing <acpHome>/workers.json once); without one (tests), a core
+// over <acpHome>/workers.json (AgyLegacyStore).
 import {AGY_WORKER_POLICY} from '../prompts-agy';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
@@ -14,7 +15,7 @@ import type {AgyConfig} from './agy';
 import {groupAlive,processStartTime} from '../process/kill-tree';
 import type {TerminateResult} from '../process/tree';
 import {movedTaskError,type ProcessIdentity,type WorkerHost,type WorkerInfo,type WorkerOwner,type WorkerOwnerResult,type WorkerSendResult} from './workers';
-import {AgyLegacyStore,WorkerCore,wireStatus,type HandoffRequest,type RecoverResult,type RunEnd,type RunHandle,type WorkerAdapter,type WorkerEvent,type WorkerLedgerRecord,type WorkerStore} from '../worker-core';
+import {AgyLegacyStore,WorkerCore,wireStatus,type HandoffRequest,type RecoverResult,type RunEnd,type RunHandle,type WorkerAdapter,type WorkerCoreFactory,type WorkerCoreOptions,type WorkerEvent,type WorkerLedgerRecord,type WorkerStore} from '../worker-core';
 
 export interface AgyWorkerHead {
   start():void;send(text:string,uuid:string):void;
@@ -158,7 +159,8 @@ export class AgyAcpAdapter implements WorkerAdapter {
 export class AgyWorkers {
   private core:WorkerCore;
   private adapter:AgyAcpAdapter;
-  constructor(config:AgyConfig,emit:(i:CodexItem)=>void,report:(id:string,text:string,run:number)=>void,factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead){
+  /** `core`: the member's (the bot's worker ledger and projections), which lists only this conversation's workers. */
+  constructor(config:AgyConfig,emit:(i:CodexItem)=>void,report:(id:string,text:string,run:number)=>void,factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead,core?:WorkerCoreFactory){
     this.adapter=new AgyAcpAdapter(config,factory);
     const acpHome=config.acpHome!;
     // ACP names a new conversation at its start (config.sessionId changes once): the journal always carries the current one.
@@ -166,8 +168,9 @@ export class AgyWorkers {
       load:()=>new AgyLegacyStore(acpHome,config.sessionId,{resume:!!config.resume}).load(),
       save:records=>new AgyLegacyStore(acpHome,config.sessionId).save(records),
     };
-    this.core=new WorkerCore({store,sink:{item:emit},adapters:[this.adapter],ownerSessionId:()=>config.sessionId,pendingSignal:true,log:()=>undefined,
-      port:{ack:'checkpoint',deliver:(r,text)=>{report(r.id,text,r.run);return 'queued';}}});
+    const options:WorkerCoreOptions={store,sink:{item:emit},adapters:[this.adapter],ownerSessionId:()=>config.sessionId,pendingSignal:true,log:()=>undefined,
+      port:{ack:'checkpoint',deliver:(r,text)=>{report(r.id,text,r.run);return 'queued';}}};
+    this.core=core?.({...options,sessionScoped:true},{agy:{acpHome,sessionId:config.sessionId}})??new WorkerCore(options);
     this.core.redeliver();
   }
   get hostedLive(){return this.core.hostedLive;}
@@ -208,9 +211,9 @@ export class AgyWorkers {
   /** Delivery is not acceptance: a report turn that made no decision shows the report once more, then leaves it unresolved. */
   finishReport(id:string,run:number,completed:boolean){this.core.finishReport(id,run,completed);}
   /** An approval card's answer. One whose input is not exactly what was asked is not this approval's: its card stays. */
-  answer(id:string,allow:boolean,input:Record<string,unknown>,message?:string){
-    const match=/^worker:([0-9a-f-]{36}):(\d+):(.+)$/i.exec(id);
-    if(match&&this.adapter.asks(match[1]!,Number(match[2]),match[3]!,input))this.core.answer(id,allow,input,message);
+  answer(id:string,allow:boolean,input:Record<string,unknown>,message?:string):boolean{
+    const match=/^worker:([^:]+):(\d+):(.+)$/.exec(id);
+    return !!match&&this.adapter.asks(match[1]!,Number(match[2]),match[3]!,input)&&this.core.answer(id,allow,input,message);
   }
   /** Stops every worker at work and ends failed cleanups again; throws while one's processes may still be alive. */
   async cancel(){
@@ -238,5 +241,7 @@ export function agyWorkerHost(workers:()=>AgyWorkers|undefined):WorkerHost{
     sendToWorker:(id,text):WorkerSendResult|Promise<WorkerSendResult>=>workers()?.continueTask(id,text)??{ok:false,reason:'This Antigravity head has no workers.'},
     stopWorker:async id=>(await workers()?.cancelTask(id))??false,
     setWorkerOwner:(id,owner)=>workers()?.setOwner(id,owner)??{ok:false,reason:'This Antigravity head has no workers.'},
+    answer:(id,allow,input,message)=>workers()?.answer(id,allow,input,message)??false,
+    close:async()=>{await workers()?.close();},
   };
 }

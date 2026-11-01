@@ -9,6 +9,8 @@ export interface TurnContent {
   /** The reply only reacts (or sets the whiteboard). */
   reactionsOnly: boolean;
   cards: number; choices: number; displays: number; steps: number; backgroundTasks: number;
+  /** Requests the app acts on with the bubble (<component>, <need-folder>, …). */
+  requests: number;
   decisionReference: boolean;
   /** The reply hands work to the app (a partner hand-off). */
   handoff: boolean;
@@ -19,5 +21,5 @@ export interface TurnContent {
 export function hasVisibleContent(t: TurnContent): boolean {
   if (t.status !== "done" || t.handoff) return true;
   if (t.body.trim()) return true;
-  return t.cards > 0 || t.choices > 0 || t.displays > 0 || t.steps > 0 || t.backgroundTasks > 0 || t.decisionReference;
+  return t.cards > 0 || t.choices > 0 || t.displays > 0 || t.steps > 0 || t.backgroundTasks > 0 || t.requests > 0 || t.decisionReference;
 }

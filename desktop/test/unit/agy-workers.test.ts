@@ -271,17 +271,18 @@ it('continues the same task during its report turn and rejects stale checkpoint'
  expect(next).toMatchObject({task_id:a.task_id,run:2});
  await expect(h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'complete',evidence:'stale'})).rejects.toThrow('Stale');
 });
-it('allows one reconciliation turn then retains unresolved evidence without looping',async()=>{
+it('allows one reconciliation turn then retains unresolved evidence without looping (nor waiting on it)',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'research'});
  h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
  h.m.beginReport(a.task_id,1);h.m.finishReport(a.task_id,1,true);
  expect(h.reports).toHaveLength(2);expect(h.m.beginReport(a.task_id,1)).toBe(true);
  h.m.finishReport(a.task_id,1,true);
  expect(h.reports).toHaveLength(2);expect(h.m.beginReport(a.task_id,1)).toBe(false);
- expect(h.m.completionDependencies).toHaveLength(1);
+ // Unresolved: the coordinator decided nothing twice; it is kept for an explicit decision, never waited for.
+ expect(h.m.completionDependencies).toEqual([]);
  expect(h.events.some(e=>e.summary?.includes('unresolved'))).toBe(true);
  await h.m.close();const restored=harness(h.home,true);
- expect(restored.reports).toEqual([]);expect(restored.m.completionDependencies).toHaveLength(1);
+ expect(restored.reports).toEqual([]);expect(restored.m.completionDependencies).toEqual([]);
  await restored.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'missing acceptance evidence; authorized alternatives exhausted'});
  expect(restored.m.completionDependencies).toEqual([]);
 });
@@ -330,9 +331,17 @@ it('an uncertain report hand-over is never replayed and takes no checkpoint unti
  const persisted=JSON.parse(readFileSync(join(h.home,'workers.json'),'utf8'));
  expect(persisted.workers[0].checkpoint).toMatchObject({outcome:'waiting_user'});
 });
-// agy-workers.ts used to keep an acknowledged-uncertain report waiting for a checkpoint (the tool says "acknowledge as
-// received"); the shared core settles it at acknowledge (worker-core/core.ts reconcile). Reported to the core's owner.
-it.todo('app_reconcile_report acknowledge leaves the report delivered, still waiting for a checkpoint (worker-core change)');
+// agy-workers.ts used to keep an acknowledged-uncertain report waiting for a checkpoint; decided: acknowledge settles it,
+// for every engine (worker-core/core.ts reconcile).
+it('app_reconcile_report acknowledge settles an uncertain report: nothing waits for a checkpoint after it',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'});
+ h.starts[0]!.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ expect(h.m.beginReport(a.task_id,1)).toBe(true);h.m.finishReport(a.task_id,1,false);
+ expect(h.m.completionDependencies).toHaveLength(1);
+ await h.m.tool('app_reconcile_report',{task_id:a.task_id,run:1,action:'acknowledge'});
+ expect(h.m.completionDependencies).toEqual([]);
+ expect(JSON.parse(readFileSync(join(h.home,'workers.json'),'utf8')).workers[0]).toMatchObject({reportPending:false,reportDelivered:true});
+});
 
 it('retains the recovery obligation after checkpoint while a reconstructed process group is live',async()=>{
  const {processTreeAdapter}=await import('../../src/core/process/tree');

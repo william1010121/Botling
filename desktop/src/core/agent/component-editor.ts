@@ -205,6 +205,8 @@ export class ComponentEditorAdapter implements WorkerAdapter {
   readonly kind = "component-editor" as const;
   readonly engine = "claude" as const;
   readonly steersRunning = true;
+  /** Listed as the Maintainer's editor, not as a Claude worker. */
+  readonly subagentType = "ccb-core:component-editor";
   private runs = new Map<string, EditorRun>();
 
   constructor(private host: ComponentEditorHost) {}
@@ -307,6 +309,9 @@ export class ComponentEditorAdapter implements WorkerAdapter {
     return record.engineData.editorSessionConfirmed === true && typeof record.engineData.editorCheckpoint === "string" && !!record.engineData.editorCheckpoint
       && !s?.approvals.size && !s?.tools.size;
   }
+
+  /** Kept for an explicit restart: whether its transcript can resume it. */
+  restartData(record: Readonly<WorkerLedgerRecord>) { return { restartSafe: this.restartSafe(record) }; }
 
   /** Open approvals of its run (a restart is not safe with one). */
   hasApprovals(id: string): boolean { return !!this.runs.get(id)?.approvals.size; }

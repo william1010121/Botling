@@ -8,8 +8,8 @@
 // workers' state machine, text, end, report and approvals; this file keeps only what is Claude's (spec 4.2): the
 // process (one ClaudeHead per worker, kept alive a while after a result, then `--resume` of its own session), agent
 // definitions and model names, the settle wait for words steered into a run (command_lifecycle), and the process's
-// running cost turned into spend. Until the bot owns one core per member (S4b), the journal stays
-// <bot store>/claude-workers.json (ClaudeLegacyStore) and the core's items go to the bot's `emit` unchanged.
+// running cost turned into spend. The bot injects its member's core (`core`: the member's worker ledger, importing
+// claude-workers.json once, and its projections); the core's items go to the bot's `emit` (its one worker entry).
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -18,7 +18,7 @@ import { processStartTime } from "../process/kill-tree";
 import type { TerminateResult } from "../process/tree";
 import {
   ClaudeLegacyStore, costDelta, WorkerCore,
-  type HandoffRequest, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerEvent, type WorkerLedgerRecord,
+  type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerEvent, type WorkerLedgerRecord,
 } from "../worker-core";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
@@ -102,8 +102,10 @@ export function loadAgentDefinition(type: string | null | undefined, cwd: string
 }
 
 export interface ClaudeWorkersOptions {
-  /** claude-workers.json. */
+  /** claude-workers.json: imported once into the member's ledger; the journal itself when no core is injected. */
   file: string;
+  /** The member's core (Bot: its worker ledger and projections). Absent: a core of its own over `file`. */
+  core?: WorkerCoreFactory;
   /** The coordinator's session now (a run's `execution.ownerSessionId`). */
   ownerSessionId(): string;
   /** The coordinator head's config now: command, environment, permissions. Null: it cannot start one. */
@@ -397,8 +399,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
 }
 
 /**
- * claude-workers.json for the core (interim, until the member's ledger: S4b). A worker the journal still lists at
- * work was cut off by a crash: it goes to the core as running, so the core marks it interrupted and writes that down.
+ * claude-workers.json for a core of its own (no member ledger: tests, tools). A worker the journal still lists at work
+ * was cut off by a crash: it goes to the core as running, so the core marks it interrupted and writes that down.
  */
 class ClaudeJournal extends ClaudeLegacyStore {
   load(): WorkerLedgerRecord[] {
@@ -423,7 +425,7 @@ export class ClaudeWorkers implements WorkerHost {
     report: (id: string, text: string, run: number) => boolean,
     factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead,
   ) {
-    this.core = new WorkerCore({
+    const core: WorkerCoreOptions = {
       store: new ClaudeJournal(options.file),
       // A Claude coordinator is done with a report once it has it (decision D4: no checkpoint).
       port: { ack: "none", deliver: (r, text) => (report(r.id, text, r.run) ? "taken" : "busy") },
@@ -432,7 +434,8 @@ export class ClaudeWorkers implements WorkerHost {
       ownerSessionId: () => options.ownerSessionId(),
       maxRunning: () => workerLimit(options.maxRunning?.()),
       log: (line) => options.log?.(line),
-    });
+    };
+    this.core = options.core?.(core, { claudeFile: options.file }) ?? new WorkerCore(core);
   }
 
   listWorkers(): WorkerInfo[] { return this.core.listWorkers(); }

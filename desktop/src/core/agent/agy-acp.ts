@@ -10,7 +10,7 @@ import { dirname, join, isAbsolute } from "node:path";
 import type { AgyConfig } from "./agy";
 import type { HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
-import { classifyRun, type RunEnd } from "../worker-core";
+import { classifyRun, type RunEnd, type WorkerCoreFactory } from "../worker-core";
 import { imageMediaType } from "../attachments";
 import { agyWorkerRuntimeEnabled } from "./agy-capabilities";
 import { agyHotSettingsEnabled, settingsChange, type HotSettings } from "./hot-settings";
@@ -361,8 +361,12 @@ export class AgyAcpHead {
   private exitedResolve!: () => void;
   readonly exited = new Promise<void>(resolve => this.exitedResolve = resolve);
   running = false;
-  /** `tree`: where its process is spawned (a recorder's tee around the real one); default processTreeAdapter(). */
-  constructor(readonly config: AgyConfig, private handlers: Omit<HeadHandlers, "onItem"> & { onItem(item: CodexItem): void }, private tree?: ProcessTreeAdapter) {}
+  /**
+   * `tree`: where its process is spawned (a recorder's tee around the real one); default processTreeAdapter().
+   * `workers`: its bot's member core and worker entry (absent: a core of its own, its items through `onItem`).
+   */
+  constructor(readonly config: AgyConfig, private handlers: Omit<HeadHandlers, "onItem"> & { onItem(item: CodexItem): void }, private tree?: ProcessTreeAdapter,
+    private wiring: { core?: WorkerCoreFactory; sink?(item: CodexItem): void } = {}) {}
   get completionDependencies() { return this.workers?.completionDependencies ?? []; }
   get pid() { return this.process?.pid ?? -1; }
   start() {
@@ -430,9 +434,9 @@ export class AgyAcpHead {
     void this.protocol.start().then(() => this.drain()).catch(() => {});
   }
   private connectTools(cwd:string, home:string) {
-    if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.handlers.onItem,
+    if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.wiring.sink ?? this.handlers.onItem,
       (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
-      (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h,this.tree)));
+      (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h,this.tree)), this.wiring.core);
     this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item), this.config.addDirs);
     return this.bridge.start().then(server => [server]);
   }
@@ -485,7 +489,7 @@ export class AgyAcpHead {
   /** Stops one app-managed worker (not the head's turn); false when it is not at work. */
   async cancelWorker(id: string): Promise<boolean> { return (await this.workers?.cancelTask(id)) ?? false; }
   // WorkerHost (workers.ts): each worker is its own ACP process under this head.
-  private workerHost = agyWorkerHost(() => this.workers);
+  readonly workerHost = agyWorkerHost(() => this.workers);
   readonly workerHostKind = "agy-acp" as const;
   readonly steersRunning = false;
   listWorkers(): WorkerInfo[] { return this.workerHost.listWorkers(); }
