@@ -170,9 +170,13 @@ export type AgentMoveTo = { kind: "bot"; botId: string } | { kind: "newSubBot"; 
  * ones it cannot go to, and a name field for a new sub bot. The agent keeps running where it is; only its owner changes
  * (a Claude subagent's work is handed to a new sub bot instead).
  */
-export function AgentMenu({ row, at, load, onMove, onClose }: { row: SubagentRowView; at: { x: number; y: number }; load: () => Promise<AgentTargets>; onMove: (to: AgentMoveTo) => void; onClose: () => void }) {
+export function AgentMenu({ row, at, load, onMove, onClose, onMessage, onStop }: { row: SubagentRowView; at: { x: number; y: number }; load: () => Promise<AgentTargets>; onMove: (to: AgentMoveTo) => void; onClose: () => void;
+  /** "Send a message…" / "Stop": its owner's follow-up and stop. */
+  onMessage?: (text: string) => void; onStop?: () => void }) {
   const [targets, setTargets] = useState<AgentTargets | null>(null);
   const [listing, setListing] = useState(false);
+  const [writing, setWriting] = useState(false);
+  const [words, setWords] = useState("");
   const [failed, setFailed] = useState<string | null>(null);
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState("");
@@ -192,8 +196,16 @@ export function AgentMenu({ row, at, load, onMove, onClose }: { row: SubagentRow
   const fresh = targets?.targets.find((target) => target.kind === "newSubBot");
   return (
     <ShellOverlay><div className="bot-menu agent-menu" role="menu" style={{ left: at.x, top: at.y }} aria-label={`${row.title || "Subagent"} menu`}>
-      {!listing && <button type="button" role="menuitem" className="bot-menu-item" disabled={!!cannot} title={cannot ?? "Give it to another bot: it keeps running where it is, and its reports go there"} onClick={open}>Move to…</button>}
-      {!listing && cannot && <div className="agent-menu-reason">{cannot}</div>}
+      {!listing && !writing && row.agentId && onMessage && <button type="button" role="menuitem" className="bot-menu-item" title="Words for it: joined into its run while it works, or the start of its next run" onClick={() => setWriting(true)}>Send a message…</button>}
+      {!listing && writing && <form className="agent-menu-name agent-menu-message" onSubmit={(event) => { event.preventDefault(); if (words.trim()) onMessage?.(words.trim()); }}>
+          <textarea autoFocus rows={3} value={words} placeholder="Your words for it" aria-label="Message for the agent" onChange={(event) => setWords(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (words.trim()) onMessage?.(words.trim()); } }} />
+          <button type="submit" disabled={!words.trim()}>Send</button>
+        </form>}
+      {!listing && !writing && row.agentId && onStop && row.status === "running" && <button type="button" role="menuitem" className="bot-menu-item destructive" title="Stops it (its work so far stays; no report is made)" onClick={onStop}>Stop</button>}
+      {!listing && !writing && (row.agentId && (onMessage || onStop)) && <div className="bot-menu-rule" />}
+      {!listing && !writing && <button type="button" role="menuitem" className="bot-menu-item" disabled={!!cannot} title={cannot ?? "Give it to another bot: it keeps running where it is, and its reports go there"} onClick={open}>Move to…</button>}
+      {!listing && !writing && cannot && <div className="agent-menu-reason">{cannot}</div>}
       {listing && !targets && !failed && <div className="agent-menu-reason">Loading…</div>}
       {listing && failed && <div className="agent-menu-reason">{failed}</div>}
       {listing && targets && <>

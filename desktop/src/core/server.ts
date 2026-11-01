@@ -41,7 +41,7 @@ import {
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { AgentStore, migrationRecords } from "./store/agent-store";
 import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } from "./agent-moves";
-import { agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, ownedAgentsBriefing, ownerGoneNotice, subBotAdoptedFirstMessage, subBotGroupFirstMessage } from "./agent-relay";
+import { agentMessageNotice, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotGroupFirstMessage } from "./agent-relay";
 import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./specs";
@@ -1249,6 +1249,7 @@ First write a test that shows this, then fix it.`;
     if (!record) { this.log(`agent report from ${host.botId} for ${r.nativeId}: not in the registry`); return; }
     if (!this.agents.reported(record.id, r)) return;
     this.deliverAgentReport(record.id);
+    void this.sendQueuedMessages(record.id);
   }
 
   /** The owner's app turn with the report (its status file brought up to date first). Stays undelivered when the owner cannot run. */
@@ -1271,6 +1272,21 @@ First write a test that shows this, then fix it.`;
     this.reportTurns.set(turnId, { agentId, run: report.run });
   }
 
+  /** Words left for an agent whose host could not take them while it worked: sent now that its run ended. */
+  private async sendQueuedMessages(agentId: string) {
+    const record = this.agents.get(agentId);
+    if (!record?.relay.pendingMessages.length) return;
+    const host = this.removed.has(record.host.botId) ? undefined : this.bots.get(record.host.botId);
+    const owner = this.removed.has(record.owner.botId) ? undefined : this.bots.get(record.owner.botId);
+    if (!host) return;
+    const words = this.agents.takeMessages(agentId);
+    const sent = await host.commandWorker(record.nativeId, { kind: "message", text: words.map((message) => message.text).join("\n\n") });
+    const title = record.summary.description || "Agent";
+    if (sent.ok && sent.how !== "stopped") owner?.appNotice(queuedSentNotice({ title, run: sent.run }), undefined, undefined, { sourceID: record.host.botId });
+    else if (!sent.ok && sent.busy) for (const message of words) this.agents.queueMessage(agentId, message);
+    else if (!sent.ok) owner?.appNotice(`The words you left for "${title}" could not be sent: ${sent.reason}`);
+  }
+
   /** Reports that never reached their owner (the app stopped first): handed over again, once. */
   private redeliverAgentReports() {
     for (const record of this.agents.all) if (record.relay.report && !record.relay.report.delivered) this.deliverAgentReport(record.id);
@@ -1284,6 +1300,65 @@ First write a test that shows this, then fix it.`;
     if (!owner) return false;
     owner.askForWorker(head, { ...item, summary: `${item.summary} (worker "${record.summary.description || nativeId}" on ${this.agentBotName(record.host.botId)})` });
     return true;
+  }
+
+  /** An agent by what its owner calls it: its agent id, or the id its row shows (its native id). */
+  private ownedAgent(ownerBotId: string, key: string): AgentRecord | undefined {
+    return this.agents.get(key) ?? this.agents.movedIn(ownerBotId).find((record) => record.nativeId === key) ?? this.agents.byHostBot(ownerBotId, key);
+  }
+
+  /**
+   * The owner's follow-up or stop (`agent.message` / `agent.stop`, `<agent-message>` / `<agent-stop>`), through the host's
+   * WorkerHost. Only the registry owner may command. A follow-up a busy host cannot take now waits for the run to end.
+   */
+  async commandAgent(ownerBotId: string, key: string, action: { kind: "message"; text: string } | { kind: "stop" }): Promise<{ record: AgentRecord; how: "steered" | "newRun" | "queued" | "stopped"; run: number | null }> {
+    const record = this.ownedAgent(ownerBotId, key);
+    if (!record) throw new ContractError("not_found", `There is no agent "${key}".`);
+    if (record.owner.botId !== ownerBotId) throw new ContractError("forbidden", `It belongs to ${this.agentBotName(record.owner.botId)}; only its owner may command it.`);
+    if (record.host.kind === "claude-sidechain") throw new ContractError("conflict", "A Claude subagent inside its parent cannot be messaged or stopped on its own.");
+    if (record.state === "lost") throw new ContractError("conflict", "Its host is gone.");
+    const host = this.removed.has(record.host.botId) ? undefined : this.bots.get(record.host.botId);
+    if (!host) throw new ContractError("conflict", "Its host is gone.");
+    const result = await host.commandWorker(record.nativeId, action);
+    if (!result.ok) {
+      if (action.kind === "message" && result.busy) {
+        this.agents.queueMessage(record.id, { text: action.text, from: this.agentBotName(ownerBotId) });
+        return { record, how: "queued", run: null };
+      }
+      throw new ContractError("conflict", result.reason);
+    }
+    return { record, how: result.how, run: result.how === "stopped" ? null : result.run };
+  }
+
+  /** `agent.message` from a row's "Send a message…". */
+  private async agentMessageCommand(botId: string, subagentId: string, text: string): Promise<ResultOf<"agent.message">> {
+    const done = await this.commandAgent(botId, subagentId, { kind: "message", text });
+    const how = done.how === "stopped" ? "newRun" : done.how;
+    this.bots.get(botId)?.appNotice(agentMessageNotice({ title: done.record.summary.description || "Agent", how, run: done.run ?? 0 }), undefined, undefined, { sourceID: done.record.host.botId });
+    return { agentId: done.record.id, how, run: done.run };
+  }
+
+  /** `agent.stop` from a row's "Stop". */
+  private async agentStopCommand(botId: string, subagentId: string): Promise<ResultOf<"agent.stop">> {
+    const done = await this.commandAgent(botId, subagentId, { kind: "stop" });
+    this.bots.get(botId)?.appNotice(`Stopped "${done.record.summary.description || "Agent"}".`, undefined, undefined, { sourceID: done.record.host.botId });
+    return { agentId: done.record.id, stopped: true };
+  }
+
+  /** A bot's `<agent-message>` / `<agent-stop>`: as the commands, with what went wrong told to it and the chat, never silently. */
+  private async agentTag(bot: Bot, request: Extract<BotRequest, { kind: "agentMessage" | "agentStop" }>) {
+    const owner = this.bots.get(bot.id) ?? bot;
+    try {
+      const done = await this.commandAgent(owner.id, request.to, request.kind === "agentMessage" ? { kind: "message", text: request.text } : { kind: "stop" });
+      const title = done.record.summary.description || "Agent";
+      if (done.how === "stopped") owner.appNotice(`Stopped "${title}".`, undefined, undefined, { sourceID: done.record.host.botId });
+      else owner.appNotice(agentMessageNotice({ title, how: done.how, run: done.run ?? 0 }), undefined, undefined, { sourceID: done.record.host.botId });
+    } catch (error) {
+      const record = this.agents.get(request.to) ?? this.agents.all.find((candidate) => candidate.nativeId === request.to);
+      if (error instanceof ContractError && error.code === "forbidden") owner.queueNote(notOwnedNote(request.to, record ? this.agentBotName(record.owner.botId) : null));
+      else owner.queueNote(`(App: Nothing reached the agent "${request.to}": ${(error as Error).message})`);
+      owner.appNotice(`${request.kind === "agentStop" ? "Did not stop" : "Did not send to"} "${record?.summary.description || request.to}": ${(error as Error).message}`);
+    }
   }
 
 
@@ -1648,6 +1723,7 @@ First write a test that shows this, then fix it.`;
       if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
       else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
+      else if (request.kind === "agentMessage" || request.kind === "agentStop") later.push(() => { void this.agentTag(bot, request); });
       // A bot's <suggest-component>: a chip under its reply; Maintainer's <component-spec>: into that spec (`Workspace.handle`).
       else if (request.kind === "suggestComponent") later.push(() => this.specs.suggest(request.name, request.draft, this.bots.get(bot.id) ?? bot));
       else if (request.kind === "componentSpec") { if (bot.id === MAINTAINER_ID) later.push(() => this.specs.applyUpdate(request.id, request.json, bot.lines().findLast((line) => line.role === "bot")?.text ?? "")); }
@@ -2177,6 +2253,8 @@ First write a test that shows this, then fix it.`;
       case "subagent.view": return this.agentView(cmd.botId, cmd.subagentId);
       case "agent.targets": return this.agentTargets(cmd.botId, cmd.subagentId);
       case "agent.move": return this.moveAgent(cmd.botId, cmd.subagentId, cmd.to, { notifyAgent: cmd.notifyAgent === true });
+      case "agent.message": return this.agentMessageCommand(cmd.botId, cmd.subagentId, cmd.text);
+      case "agent.stop": return this.agentStopCommand(cmd.botId, cmd.subagentId);
       case "chat.read": {
         // You came back to it: many unread replies fold into a summary first (`arrive(at:)`).
         const bot = this.bot(cmd.botId);

@@ -118,7 +118,7 @@ import {
   HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, isUUID, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
-import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult } from "./agent/workers";
+import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, ClaudeWorkers, claudeWorkersFile } from "./agent/claude-workers";
 
 export type Status = "done" | "stopped" | "failed";
@@ -1275,6 +1275,24 @@ export class Bot {
       return bot.workerHostFor(nativeId, true)?.setWorkerOwner(nativeId, owner) ?? null;
     }
     return null;
+  }
+
+  /**
+   * The owner's follow-up or stop for one of the workers this bot hosts (any engine, through its WorkerHost). A follow-up to a
+   * worker whose Codex or Antigravity head is asleep wakes that head first (the worker lives in it).
+   */
+  async commandWorker(nativeId: string, action: { kind: "message"; text: string } | { kind: "stop" }): Promise<WorkerSendResult | { ok: true; how: "stopped" }> {
+    const holder = this.members.find((bot) => bot.subagents.get(nativeId));
+    if (!holder) return { ok: false, reason: "No such agent here." };
+    let host = holder.workerHostFor(nativeId, true);
+    if (!host && action.kind === "message" && holder.engine !== "claude" && isWorkerType(holder.subagents.get(nativeId)?.type)) {
+      try { holder.ensureHead(); }
+      catch (error) { return { ok: false, reason: `Its host could not start: ${(error as Error).message}` }; }
+      host = holder.workerHostFor(nativeId);
+    }
+    if (!host) return { ok: false, reason: action.kind === "stop" ? "It is not at work." : "It is not an app-managed worker this bot can reach now." };
+    if (action.kind === "stop") return (await host.stopWorker(nativeId)) ? { ok: true, how: "stopped" } : { ok: false, reason: "It is not at work." };
+    return await host.sendToWorker(nativeId, action.text);
   }
 
   /** A worker another bot owns ended a run: its report goes to the registry, which hands it to the owner. */
@@ -5709,8 +5727,8 @@ export function preview(record: ChatRecord): string {
 /** Tags held back while still being written, and those that end with their opening `>` (attributes only). */
 const BLOCK_TAGS = ["choices", "show", "component", "new-bot", "sub-bot", "new-project", "plugin", "install-build", "install", "need-folder",
   "give-component", "take-component", "suggest-component", "component-spec", "component-declined", "open-question", "no-reply",
-  "task", "reaction", "decision-ref", "app-screenshot", "end", "block"];
-const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-question", "app-screenshot"]);
+  "task", "reaction", "decision-ref", "app-screenshot", "end", "block", "agent-message", "agent-stop"];
+const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-question", "app-screenshot", "agent-stop"]);
 
 /**
  * The reply so far as the chat shows it while it streams: the app's complete tags taken out, and

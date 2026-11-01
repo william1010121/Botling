@@ -87,6 +87,23 @@ export function agentReportNote(input: { engine: Engine; title: string; from: st
   return `(App: The ${engineName(input.engine)} agent "${input.title}" you own (from ${input.from}; it runs on ${input.host}) finished run ${input.run}: ${input.status}. Its report:\n${clipReport(input.report.trim() || "(no words)")}\n${input.statusFile ? `Its status file: ${input.statusFile}\n` : ""}Tell the user what came of it in a sentence or two. ${agentTagsHelp(input.agentId)})`;
 }
 
+/** The owner's model note when it commands an agent it does not own. */
+export function notOwnedNote(to: string, owner: string | null): string {
+  return `(App: You do not own the agent "${to}"${owner ? `; it belongs to ${owner}` : ""}, so nothing was sent to it.)`;
+}
+
+/** The owner's chat line after its follow-up reached the agent (or waits for its run to end). */
+export function agentMessageNotice(input: { title: string; how: "steered" | "newRun" | "queued"; run: number }): string {
+  return input.how === "steered" ? `Sent your words to "${input.title}"; it reads them in the run under way.`
+    : input.how === "newRun" ? `Sent your words to "${input.title}"; it started run ${input.run}.`
+      : `"${input.title}" is at work and takes no words until it reports; your words are sent right after its run ends.`;
+}
+
+/** The owner's chat line after queued words were sent once the agent's run ended. */
+export function queuedSentNotice(input: { title: string; run: number }): string {
+  return `Sent the words you left for "${input.title}"; it started run ${input.run}.`;
+}
+
 /** The first message to a sub bot made to own several agents at once (`<sub-bot subagents="…">`, "New sub bot with these…"). */
 export function subBotGroupFirstMessage(input: { parentName: string; name: string; from: string; agents: { title: string; agentId: string; nativeId: string; engine: Engine; state: AgentState; host: string; statusFile: string | null }[]; task?: string }): string {
   const lines = input.agents.map((agent) => `- "${agent.title}" (${engineName(agent.engine)}, ${stateWords[agent.state]}, agent ${agent.agentId}, runs on ${agent.host}). Status file: ${agent.statusFile ?? "(not written yet)"}`);

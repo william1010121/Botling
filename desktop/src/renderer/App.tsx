@@ -153,6 +153,17 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "agent.move", botId, subagentId: row.id, to }).catch(fail);
   }, [client, fail]);
   const openAgentMenu = useCallback((botId: string, row: SubagentRowView, at: { x: number; y: number }) => setAgentMenu({ botId, row, ...at }), []);
+  // Its owner's follow-up and stop: through its host, whatever engine runs it (the chat says what happened).
+  const messageSubagent = useCallback((botId: string, row: SubagentRowView, text: string) => {
+    setAgentMenu(null);
+    setError(null);
+    void client.request({ type: "agent.message", botId, subagentId: row.id, text: text.slice(0, 64_000) }).catch(fail);
+  }, [client, fail]);
+  const stopSubagent = useCallback((botId: string, row: SubagentRowView) => {
+    setAgentMenu(null);
+    setError(null);
+    void client.request({ type: "agent.stop", botId, subagentId: row.id }).catch(fail);
+  }, [client, fail]);
 
   // "New bot": made, set up (it writes its routines and says hello), and shown.
   const createBot = useCallback((made: { name: string; job: string } | null) => {
@@ -348,7 +359,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         lang={view.settings?.effectiveLanguage ?? null} onRestart={() => { const target = menu.bot; setMenu(null); setError(null); void client.request({ type: "bot.restart", botId: target.id }).catch(fail); }} />}
       {agentMenu && <AgentMenu row={agentMenu.row} at={{ x: agentMenu.x, y: agentMenu.y }} onClose={() => setAgentMenu(null)}
         load={() => client.request({ type: "agent.targets", botId: agentMenu.botId, subagentId: agentMenu.row.id }) as Promise<AgentTargets>}
-        onMove={(to) => moveSubagent(agentMenu.botId, agentMenu.row, to)} />}
+        onMove={(to) => moveSubagent(agentMenu.botId, agentMenu.row, to)}
+        onMessage={(text) => messageSubagent(agentMenu.botId, agentMenu.row, text)}
+        onStop={() => stopSubagent(agentMenu.botId, agentMenu.row)} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>

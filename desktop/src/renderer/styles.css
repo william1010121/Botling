@@ -446,6 +446,8 @@ button { font: inherit; color: inherit; }
 .agent-menu-reason { padding: 4px 10px; }
 .agent-menu-name { display: flex; gap: 6px; padding: 4px 6px; }
 .agent-menu-name input { flex: 1; min-width: 0; font-size: 12px; }
+.agent-menu-message { flex-direction: column; align-items: stretch; }
+.agent-menu-message textarea { min-width: 220px; font-size: 12px; resize: vertical; }
 
 .rail-strip {
   width: 56px; flex-shrink: 0; background: var(--side); border-right: 1px solid var(--line); padding: 0 0 12px;

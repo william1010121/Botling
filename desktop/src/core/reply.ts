@@ -25,6 +25,10 @@ export type BotRequest =
    * inside the tag); without it (`subagent` is ""), a new empty sub bot whose first task is `note`, on `engine` if one was named.
    */
   | { kind: "subBot"; name: string; subagent: string; note: string; engine?: string }
+  /** The owner's follow-up for an agent it owns (`<agent-message to="agent id">words</agent-message>`). */
+  | { kind: "agentMessage"; to: string; text: string }
+  /** The owner stops an agent it owns (`<agent-stop to="agent id"/>`). */
+  | { kind: "agentStop"; to: string }
   | { kind: "newProject"; folder: string; task: string }
   | { kind: "installBuild"; path: string; note: string }
   | { kind: "appScreenshot" }
@@ -68,6 +72,8 @@ const choicesBlock = () => /<choices>\s*([\s\S]*?)\s*<\/choices>/g;
 const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*([\s\S]*?)\s*<\/\1>/g;
 const subBotTag = () => /<sub-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/sub-bot>)/g;
 const pluginTag = () => /<plugin>\s*([\s\S]*?)\s*<\/plugin>/g;
+const agentMessageTag = () => /<agent-message\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/agent-message>/g;
+const agentStopTag = () => /<agent-stop\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*\/?>(?:\s*<\/agent-stop>)?/g;
 const folderTag = () => /<need-folder>\s*([\s\S]*?)\s*<\/need-folder>/g;
 const installTag = () => /<install>\s*([\s\S]*?)\s*<\/install>/g;
 const buildTag = () => /<install-build\s+path\s*=\s*"([^"]+)"\s*(?:\/>|>\s*([\s\S]*?)\s*<\/install-build>)/g;
@@ -256,6 +262,17 @@ export function parseReply(reply: string): Parsed {
     if (name && (subagent || trimWS(note ?? ""))) subBots.unshift({ kind: "subBot", name, subagent, note: note ?? "", ...(!subagent && engine ? { engine } : {}) });
   });
   requests.push(...subBots);
+  const agentCommands: BotRequest[] = [];
+  take(agentMessageTag, ([double, single, words]) => {
+    const to = trimWS(double || single || "");
+    if (to && trimWS(words ?? "")) agentCommands.unshift({ kind: "agentMessage", to, text: words! });
+  });
+  const agentStops: BotRequest[] = [];
+  take(agentStopTag, ([double, single]) => {
+    const to = trimWS(double || single || "");
+    if (to) agentStops.unshift({ kind: "agentStop", to });
+  });
+  requests.push(...agentCommands, ...agentStops);
   take(pluginTag, ([request]) => requests.push({ kind: "plugin", request: request! }));
   take(installTag, ([source]) => requests.push({ kind: "install", source: source! }));
   const projects: BotRequest[] = [];
@@ -347,6 +364,8 @@ export function unsupportedRequest(request: BotRequest): string {
     case "install": return "installing a plugin";
     case "newBot": return `a new bot ("${request.name}")`;
     case "subBot": return `a sub bot ("${request.name}"): this bot cannot make one here, so nothing was moved`;
+    case "agentMessage": return `a message to the agent "${request.to}"`;
+    case "agentStop": return `stopping the agent "${request.to}"`;
     case "newProject": return `a new project (${request.folder})`;
     case "installBuild": return "installing a build";
     case "appScreenshot": return "a screenshot of the app";

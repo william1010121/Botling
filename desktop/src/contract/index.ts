@@ -1010,6 +1010,10 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("agent.targets"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   /** Moves an agent's ownership (it keeps running where it is), or hands a Claude subagent's work to a new sub bot. */
   z.strictObject({ type: z.literal("agent.move"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), to: AgentMoveTo, notifyAgent: z.boolean().optional() }),
+  /** The owner's follow-up for an agent shown in its rows (an app-managed worker of any engine): joined into its run, its next run, or sent after its run. */
+  z.strictObject({ type: z.literal("agent.message"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), text: z.string().min(1).max(64_000) }),
+  /** The owner stops one agent shown in its rows (no report is made). */
+  z.strictObject({ type: z.literal("agent.stop"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   /** "New bot": a bot of its own with a name and a job; it sets up its own routines (`createBot`, setUp). */
   z.strictObject({ type: z.literal("bots.create"), name: z.string().min(1).max(400), job: z.string().min(1).max(4_000) }),
   /** Removes a bot of its own or a project from the left column and stops it. Its folders stay on disk. */
@@ -1216,7 +1220,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
-  "subagent.settle", "agent.targets", "agent.move", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
+  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
@@ -1277,6 +1281,8 @@ export interface Results {
   "subagent.settle": { changed: boolean };
   "agent.targets": { engine: z.infer<typeof Engine>; targets: AgentTargetView[] };
   "agent.move": { agentId: string; ownerBotId: string; mode: "owner" | "handoff" };
+  "agent.message": { agentId: string; how: "steered" | "newRun" | "queued"; run: number | null };
+  "agent.stop": { agentId: string; stopped: boolean };
   "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
   "bots.remove": { removed: boolean };
