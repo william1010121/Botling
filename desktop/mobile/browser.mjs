@@ -11,11 +11,20 @@ function cacheDir(platform) {
   if (process.env.PLAYWRIGHT_BROWSERS_PATH) return process.env.PLAYWRIGHT_BROWSERS_PATH;
   return platform === 'darwin' ? join(homedir(), 'Library/Caches/ms-playwright') : platform === 'win32' ? join(homedir(), 'AppData/Local/ms-playwright') : join(homedir(), '.cache/ms-playwright');
 }
-const shellName = platform => platform === 'win32' ? 'chrome-headless-shell.exe' : platform === 'darwin' ? 'headless_shell' : 'headless_shell';
-const shellDirs = platform => platform === 'darwin' ? ['chrome-mac', 'chrome-mac-arm64'] : platform === 'win32' ? ['chrome-win'] : ['chrome-linux'];
+// Playwright changed the layout inside chromium_headless_shell-<rev>: older builds ship chrome-<os>/headless_shell,
+// newer ones chrome-headless-shell-<os>-<arch>/chrome-headless-shell (the CI log shows ...-mac-arm64.zip). Try the new first.
+const exe = platform => platform === 'win32' ? 'chrome-headless-shell.exe' : 'chrome-headless-shell';
+export function shellCandidates(platform, arch) {
+  if (platform === 'darwin') {
+    const a = arch === 'arm64' ? ['mac-arm64', 'mac-x64'] : ['mac-x64', 'mac-arm64'];
+    return [...a.map(x => [`chrome-headless-shell-${x}`, exe(platform)]), ['chrome-mac-arm64', 'headless_shell'], ['chrome-mac', 'headless_shell']];
+  }
+  if (platform === 'win32') return [['chrome-headless-shell-win64', exe(platform)], ['chrome-headless-shell-win32', exe(platform)], ['chrome-win', exe(platform)]];
+  return [['chrome-headless-shell-linux64', exe(platform)], ['chrome-linux', 'headless_shell']];
+}
 
 export function findHeadlessBrowser(env = process.env, host = {}) {
-  const exists = host.exists ?? existsSync, platform = host.platform ?? process.platform, cache = host.cache ?? cacheDir(platform);
+  const exists = host.exists ?? existsSync, platform = host.platform ?? process.platform, arch = host.arch ?? process.arch, cache = host.cache ?? cacheDir(platform);
   if (env.BOTLING_CHROMIUM) {
     return exists(env.BOTLING_CHROMIUM) ? { path: env.BOTLING_CHROMIUM } : { error: `BOTLING_CHROMIUM does not exist: ${env.BOTLING_CHROMIUM}` };
   }
@@ -23,8 +32,8 @@ export function findHeadlessBrowser(env = process.env, host = {}) {
   try { names = host.list ? host.list() : readdirSync(cache); } catch { /* no cache */ }
   const revisions = names.map(n => /^chromium_headless_shell-(\d+)$/.exec(n)).filter(Boolean).map(m => ({ name: m[0], n: Number(m[1]) })).sort((a, b) => b.n - a.n);
   for (const { name } of revisions) {
-    for (const dir of shellDirs(platform)) {
-      const path = join(cache, name, dir, shellName(platform));
+    for (const [dir, file] of shellCandidates(platform, arch)) {
+      const path = join(cache, name, dir, file);
       if (exists(path)) return { path };
     }
   }
