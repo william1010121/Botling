@@ -6,6 +6,10 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+## 2.3.2
+
+- **A sub bot's own subagents show under it in the left column.** The column now nests three levels: project bot, then each of its sub bots, then the subagents that sub bot started (with their settle buttons and read-only view), the same way a normal bot lists its subagents. They were already in the sub bot's own chat, but its row had no children because only top-level bots were given a subagent list. Not yet viewed in the real app.
+
 ## 2.3.1
 
 Adds sub bots for Codex and Antigravity workers (2.3.0 had them for Claude only) and fixes the release build

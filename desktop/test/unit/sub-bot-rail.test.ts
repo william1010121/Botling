@@ -30,6 +30,20 @@ describe("left column", () => {
     expect(markup).toContain("Settle subagent Fix API");
     expect(markup.match(/subagent-kind/g)).toHaveLength(1);
   });
+  it("lists a sub bot's own subagents nested under its row (project bot > sub bot > subagent), and not under the project bot's own list", () => {
+    const child: SubagentRowView = { ...plainRow, id: "toolu_child", title: "Check layout" };
+    const sub2: BotView = { ...sub, subagentRows: [child] };
+    const markup = renderToStaticMarkup(createElement(SubagentRows, { bot: parent, bots: [parent, sub2], now: Date.now(), watching: null, onOpen() {}, onSettle() {} }));
+    expect(markup).toContain('data-subagent="toolu_child"');
+    expect(markup).toContain("Subagent of Settings page");
+    expect(markup).toContain("Settle subagent Check layout");
+    expect(markup).toContain('subagent-rows nested" data-bot="s1"');
+    // Order: the sub bot's row, then its child directly under it.
+    const at = (text: string) => markup.indexOf(text);
+    expect(at('data-subagent="s1"')).toBeLessThan(at('data-subagent="toolu_child"'));
+    // Without the bots list nothing is nested.
+    expect(renderToStaticMarkup(createElement(SubagentRows, { bot: parent, now: Date.now(), watching: null, onOpen() {}, onSettle() {} }))).not.toContain("toolu_child");
+  });
   it("marks the row selected while the sub bot's chat is on screen", () => {
     const shown = renderToStaticMarkup(createElement(SubagentRows, { bot: parent, now: Date.now(), watching: null, shownBot: "s1", onOpen() {}, onSettle() {} }));
     expect(shown).toMatch(/subagent-row selected[^"]*" data-subagent="s1"/);

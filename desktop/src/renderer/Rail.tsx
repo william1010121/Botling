@@ -3,7 +3,7 @@ import { ShellOverlay } from "./ShellOverlay";
 // (SubagentRows / SubagentRow: running ones and ones that ended in the last 10 minutes, at most 4
 // with "Show N more", each with its settle button), the New bot form (NewBotForm), and a row's menu
 // with "Remove bot…" (and, in 2.0, "Remove project…") behind a confirmation (1.x's confirmationDialog).
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { LISTED_AT_MOST, listedRows, type BotView, type SubagentRowView } from "../contract";
 import { Icon, SubagentMark } from "./icons";
 import { faceURL, type Look } from "./avatars";
@@ -27,8 +27,16 @@ export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" 
   </span>;
 }
 
-export function SubagentRows({ bot, look = "original", now, watching, shownBot = null, onOpen, onSettle }: {
+export function SubagentRows({ bot, bots, nested = false, chat = null, look = "original", now, watching, shownBot = null, onOpen, onSettle, onOpenIn, onSettleIn }: {
   bot: BotView;
+  /** Every bot: a sub bot's row has that sub bot's own subagents listed under it (project bot > sub bot > subagent). */
+  bots?: BotView[];
+  nested?: boolean;
+  /** The bot whose chat is on screen and the subagent watched in it (for a nested bot's own rows). */
+  chat?: { botId: string | null; watching: string | null } | null;
+  /** Open / settle a row of another bot (a sub bot's own subagent); falls back to onOpen / onSettle. */
+  onOpenIn?: (botId: string, row: SubagentRowView) => void;
+  onSettleIn?: (botId: string, row: SubagentRowView) => void;
   look?: Look;
   now: number;
   /** The subagent shown in the chat's place, if one of this bot's is. */
@@ -45,9 +53,12 @@ export function SubagentRows({ bot, look = "original", now, watching, shownBot =
   const rows = all && more > 0 ? every : every.slice(0, LISTED_AT_MOST);
   if (!rows.length) return null;
   return (
-    <div className="subagent-rows" data-bot={bot.id}>
-      {rows.map((row) => (
-        <div key={row.id} className={`subagent-row${watching === row.id || (row.subBot && shownBot === row.subBot) ? " selected" : ""}${row.status === "running" ? " running" : ""}${row.subBot ? " sub-bot" : ""}`} data-subagent={row.id} {...(row.subBot ? { "data-sub-bot": row.subBot } : {})}>
+    <div className={`subagent-rows${nested ? " nested" : ""}`} data-bot={bot.id}>
+      {rows.map((row) => {
+        const sub = row.subBot ? bots?.find((candidate) => candidate.id === row.subBot) : undefined;
+        return (
+        <Fragment key={row.id}>
+        <div className={`subagent-row${watching === row.id || (row.subBot && shownBot === row.subBot) ? " selected" : ""}${row.status === "running" ? " running" : ""}${row.subBot ? " sub-bot" : ""}`} data-subagent={row.id} {...(row.subBot ? { "data-sub-bot": row.subBot } : {})}>
           <button type="button" className="subagent-open" title={row.prompt} onClick={() => onOpen(row)}
             aria-label={row.subBot ? `Sub bot of ${bot.name}: ${row.title}` : `Subagent of ${bot.name}${row.head ? ` (${row.head === "agy" ? "Antigravity" : row.head === "codex" ? "Codex" : "Claude"})` : ""}: ${row.title || "Subagent"}, ${row.status}`}>
             <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
@@ -63,7 +74,12 @@ export function SubagentRows({ bot, look = "original", now, watching, shownBot =
             <span className={`settle-icon ${row.status}`} aria-hidden="true"><Icon name="clock" size={12} /><SubagentMark status={row.status === "running" ? "completed" : row.status} /></span>
           </button>}
         </div>
-      ))}
+        {sub && <SubagentRows bot={sub} bots={bots} nested chat={chat} look={look} now={now} watching={chat?.botId === sub.id ? chat.watching : null} shownBot={shownBot}
+          onOpen={(child) => (onOpenIn ?? ((_id, r) => onOpen(r)))(sub.id, child)} onSettle={(child) => (onSettleIn ?? ((_id, r) => onSettle(r)))(sub.id, child)}
+          onOpenIn={onOpenIn} onSettleIn={onSettleIn} />}
+        </Fragment>
+        );
+      })}
       {more > 0 && (
         <button type="button" className="subagent-more" onClick={() => setAll(!all)}
           aria-label={all ? `Show fewer subagents of ${bot.name}` : `Show ${more} more subagents of ${bot.name}`}>

@@ -225,8 +225,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                     onTogglePin={() => togglePin(candidate.id)}
                     onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
                   />
-                  <SubagentRows bot={candidate} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null} shownBot={!watching ? chat?.botId ?? null : null}
-                    onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
+                  <SubagentRows bot={candidate} bots={view.bots} chat={{ botId: chat?.botId ?? null, watching }} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null} shownBot={!watching ? chat?.botId ?? null : null}
+                    onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)}
+                    onOpenIn={openSubagent} onSettleIn={(botId, row) => settleSubagent(botId, row, true)} />
                 </div>
               ))}
             </>
