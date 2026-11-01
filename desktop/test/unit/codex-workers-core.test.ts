@@ -136,7 +136,7 @@ describe("Codex workers on the shared core", () => {
     expect(h.s.completionDependencies).toEqual([]);
     h.answer(first.method("turn/start").id, { turn: { id: "r1" } });
     const second = h.endCoordinator("r1", "It is built.");
-    expect(second.of("result")).toEqual([{ kind: "result", ok: true, text: "", error: "", subtype: "success" }]);
+    expect(second.of("result")).toEqual([{ kind: "result", ok: true, text: "", error: "", subtype: "success", how: "normal" }]);
     expect(JSON.parse(second.method("turn/start").params.toolOutput.output).reconciliation_attempt).toBe(1);
     h.answer(second.method("turn/start").id, { turn: { id: "r2" } });
     const third = h.endCoordinator("r2", "Still built.");
@@ -239,6 +239,19 @@ describe("Codex workers on the shared core", () => {
     expect(new Out(s.receive(JSON.stringify({ id: 2, result: { thread: { id: COORD } } }))).of("backgroundTurn")).toEqual([]);
     expect(s.hasManagedWork).toBe(false);
     expect(s.workerRecords[0]).toMatchObject({ reportPending: false });
+  });
+});
+
+describe("the coordinator's turn end (for classifyRun)", () => {
+  it("says how the turn ended: completed normal, failed error, interrupted cancelled", () => {
+    const h = session();
+    const ends: unknown[] = [];
+    for (const [status, id] of [["completed", "t1"], ["failed", "t2"], ["interrupted", "t3"]] as const) {
+      h.coordinatorTurn("go", id);
+      if (status === "completed") h.say(COORD, id, "Done.");
+      ends.push(...h.line("turn/completed", { threadId: COORD, turn: { id, status, ...(status === "failed" ? { error: { message: "boom" } } : {}) } }).of("result").map((r) => [r.ok, r.how]));
+    }
+    expect(ends).toEqual([[true, "normal"], [false, "error"], [false, "cancelled"]]);
   });
 });
 

@@ -1463,7 +1463,7 @@ export class CodexSession implements CoordinatorPort {
       case "interrupted":
         // Stopped by the app (`interrupt`): an error result the bot does not show.
         out.push(this.result(false, monitor ? `Monitor continuation was interrupted: ${json(monitorPayload(monitor))}`
-          : evidence ? handbackFallback(evidence, "The summary turn was interrupted.") : current.interruptAsked ? "" : "Codex stopped this turn."));
+          : evidence ? handbackFallback(evidence, "The summary turn was interrupted.") : current.interruptAsked ? "" : "Codex stopped this turn.", "cancelled"));
         break;
       case "failed": {
         const reason = typeof finished.error?.message === "string" ? finished.error.message : "Codex failed.";
@@ -1580,8 +1580,9 @@ export class CodexSession implements CoordinatorPort {
     return { kind: "item", item };
   }
 
-  private result(ok: boolean, text: string): CodexOutput {
-    return this.item({ kind: "result", ok, text: ok ? text : "", error: ok ? "" : text, subtype: ok ? "success" : "error" });
+  /** A turn's end; `how` is how Codex ended it (classifyRun reads it: interrupted is "cancelled"). */
+  private result(ok: boolean, text: string, how: RunEnd["how"] = ok ? "normal" : "error"): CodexOutput {
+    return this.item({ kind: "result", ok, text: ok ? text : "", error: ok ? "" : text, subtype: ok ? "success" : "error", how });
   }
 
   // ------------------------------------------------------------------------------------------
