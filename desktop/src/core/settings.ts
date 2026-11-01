@@ -162,7 +162,13 @@ export function launchSettings(raw: RawSettings) {
   return { subagentHourCache: settingsView(raw).subagentHourCache, defaultPrimaryEngine: engineDefaultsFor(raw).primary, autoMode: bool(raw.autoApprove, true),
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false), agyBypassPermissions: bool(raw.agyBypassPermissions, false),
     // Hidden (debugging only): "native" gives Claude heads their own Agent tool back instead of app-managed workers.
-    claudeWorkers: claudeWorkersMode(raw) };
+    claudeWorkers: claudeWorkersMode(raw), claudeWorkerLimit: claudeWorkerLimit(raw) };
+}
+
+/** settings.json's `claudeWorkerLimit`: how many Claude workers of one bot may be at work at once (1–16; default 4); more wait for a slot. */
+export function claudeWorkerLimit(raw: RawSettings): number {
+  const value = (raw as Record<string, unknown>).claudeWorkerLimit;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? Math.min(value, 16) : 4;
 }
 
 /** settings.json's hidden `claudeWorkers`: "app" (default: every Claude subagent is an app-managed worker) or "native". */

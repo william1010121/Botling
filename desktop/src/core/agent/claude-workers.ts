@@ -107,6 +107,8 @@ interface Live {
   head?: ClaudeWorkerHead; queued: Set<string>; extraTurns: number; outputTokens: number; cost: number;
   approvals: Map<string, Record<string, unknown>>; settle?: ReturnType<typeof setTimeout>; pendingResult?: Extract<StreamItem, { kind: "result" }>;
   keepAlive?: ReturnType<typeof setTimeout>; stopping?: boolean;
+  /** A run waiting for a free slot (`maxRunning`): its words and definition; it starts when another worker's run ends. */
+  waiting?: { words: string; definition: AgentDefinition | null | undefined };
 }
 
 export interface ClaudeWorkersOptions {
@@ -127,11 +129,16 @@ export interface ClaudeWorkersOptions {
   keepAliveMs?: number;
   /** How long a result waits for a queued follow-up's own turn to start (default 1.5 s). */
   settleMs?: number;
+  /** How many workers may be at work in their own processes at once (settings.json `claudeWorkerLimit`); more wait for a slot. */
+  maxRunning?(): number;
   home?: string;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_WORKERS = 200;
+/** Workers at work at once in their own `claude` processes, unless settings.json says otherwise (each process is a few hundred MB). */
+export const DEFAULT_CLAUDE_WORKER_LIMIT = 4;
+export const CLAUDE_WORKER_LIMIT_MAX = 16;
 
 export class ClaudeWorkers implements WorkerHost {
   readonly workerHostKind = "claude-process" as const;
@@ -212,6 +219,11 @@ export class ClaudeWorkers implements WorkerHost {
     if (!w || this.closed) return { ok: false, reason: "No such worker." };
     if (!words.trim() || words.length > 64_000) return { ok: false, reason: "Message required (maximum 64000 characters)." };
     const live = this.liveOf(w);
+    if (w.active && live.waiting) {
+      // Still waiting for a slot: the words join the run it will start with.
+      live.waiting.words = `${live.waiting.words}\n\n${words}`;
+      return { ok: true, how: "steered", run: w.run };
+    }
     if (w.active) {
       if (!live.head?.running) return { ok: false, reason: "This worker is starting or stopping; try again in a moment." };
       const uuid = randomUUID();
@@ -241,6 +253,17 @@ export class ClaudeWorkers implements WorkerHost {
     this.save();
     if (owner && !w.active && w.reportPending && !w.reportDelivered) this.deliver(w);
     return { ok: true };
+  }
+
+  /** How many may be at work at once now. */
+  private get limit(): number {
+    const wanted = this.options.maxRunning?.() ?? DEFAULT_CLAUDE_WORKER_LIMIT;
+    return Number.isSafeInteger(wanted) && wanted >= 1 ? Math.min(wanted, CLAUDE_WORKER_LIMIT_MAX) : DEFAULT_CLAUDE_WORKER_LIMIT;
+  }
+
+  /** Workers at work in a process of their own now (one waiting for a slot is not). */
+  private get busy(): number {
+    return [...this.workers.values()].filter((w) => w.active && !this.live.get(w.id)?.waiting).length;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -299,6 +322,8 @@ export class ClaudeWorkers implements WorkerHost {
     if (!live.head?.running && !base) return "Workers cannot start now: this bot's Claude head is unavailable.";
     const def = definition === undefined ? (w.type ? loadAgentDefinition(w.type, this.options.cwd(), { home: this.options.home, pluginDirs: this.options.pluginDirs?.() ?? [] }) : null) : definition;
     if (def && "error" in def) return def.error;
+    // At the limit, the run waits for a slot (it is listed at work, with a line saying so); a kept-alive process needs none.
+    const wait = !live.head?.running && this.busy >= this.limit;
     w.run += 1;
     const run = w.run;
     w.active = true; w.status = "running"; w.reportPending = false; w.reportDelivered = false; w.interrupted = false; delete w.report;
@@ -307,8 +332,36 @@ export class ClaudeWorkers implements WorkerHost {
     const model = w.model ?? this.options.subagentModel() ?? base?.model ?? null;
     for (const item of workerRunStarted({ id: w.id, engine: "claude", name: w.name, run, conversationId: w.sessionId, ownerSessionId: this.options.ownerSessionId() }, words, { reasoningEffort: base?.effort ?? null, model }))
       this.emit(item);
+    if (wait) {
+      live.waiting = { words, definition: def };
+      this.emit({ kind: "subagentText", parent: w.id, text: `Waiting for a free worker slot (${this.limit} at work at once); it starts when another worker finishes.` });
+      return null;
+    }
+    this.spawn(w, run, words, def ?? null, base);
+    return null;
+  }
+
+  /** Workers waiting for a slot start, oldest first, while there is room. */
+  private startWaiting() {
+    if (this.closed) return;
+    for (const w of this.workers.values()) {
+      if (this.busy >= this.limit) return;
+      const live = this.live.get(w.id);
+      if (!live?.waiting || !w.active) continue;
+      const { words, definition } = live.waiting;
+      live.waiting = undefined;
+      const base = live.head?.running ? null : this.options.base();
+      if (!live.head?.running && !base) { this.finish(w, w.run, "failed", "Workers cannot start now: this bot's Claude head is unavailable."); continue; }
+      this.spawn(w, w.run, words, definition && !("error" in definition) ? definition : null, base);
+    }
+  }
+
+  /** Sends a run's first words: into its kept-alive process, or a new one. */
+  private spawn(w: Record_, run: number, words: string, def: AgentDefinition | null, base: HeadConfig | null) {
+    const live = this.liveOf(w);
+    const model = w.model ?? this.options.subagentModel() ?? base?.model ?? null;
     const uuid = randomUUID();
-    if (live.head?.running) { live.head.send(words, uuid); return null; }
+    if (live.head?.running) { live.head.send(words, uuid); return; }
     const config: HeadConfig = {
       ...base!, cwd: this.options.cwd(), sessionId: w.sessionId, resume: w.sessionStarted, forkSession: false, persistSession: true,
       model, monitorWorker: true, appMcp: null, agentGuard: CLAUDE_WORKER_GUARD,
@@ -328,7 +381,7 @@ export class ClaudeWorkers implements WorkerHost {
     } catch (error) {
       live.head = undefined;
       this.finish(w, run, "failed", `The worker could not start: ${(error as Error).message}`);
-      return null;
+      return;
     }
     if (head.pid > 0) {
       try { this.options.processStarted?.(head.pid); } catch { /* the ledger is best effort here; identity below */ }
@@ -336,7 +389,6 @@ export class ClaudeWorkers implements WorkerHost {
       if (started) { w.processes = [...w.processes, { pid: head.pid, started }].slice(-8); this.save(); }
     }
     head.send(words, uuid);
-    return null;
   }
 
   private onItem(w: Record_, head: ClaudeWorkerHead, run: number, item: StreamItem) {
@@ -431,6 +483,7 @@ export class ClaudeWorkers implements WorkerHost {
       live.keepAlive.unref?.();
     }
     this.deliver(w);
+    this.startWaiting();
   }
 
   private deliver(w: Record_) {
@@ -463,11 +516,13 @@ export class ClaudeWorkers implements WorkerHost {
     const live = this.liveOf(w);
     this.cancelApprovals(w, live);
     live.stopping = true;
+    live.waiting = undefined;
     if (live.settle) { clearTimeout(live.settle); live.settle = undefined; live.pendingResult = undefined; }
     w.active = false; w.status = "stopped"; w.reportPending = false; w.report = "Stopped by the app; its work was not finished.";
     this.save();
     this.emit({ kind: "subagentEnded", id: w.id, status: "stopped", summary: w.report });
     await this.release(w);
+    this.startWaiting();
   }
 
   /** Ends its kept-alive process, if any. */
@@ -518,6 +573,7 @@ export class ClaudeWorkers implements WorkerHost {
       const live = this.live.get(w.id);
       if (live?.settle) { clearTimeout(live.settle); live.settle = undefined; live.pendingResult = undefined; }
       if (live?.keepAlive) { clearTimeout(live.keepAlive); live.keepAlive = undefined; }
+      if (live) live.waiting = undefined;
       if (!w.active) continue;
       if (live) this.cancelApprovals(w, live);
       w.active = false; w.interrupted = true; w.status = "interrupted"; w.reportPending = false;

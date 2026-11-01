@@ -8,7 +8,7 @@ import type { HeadConfig, HeadHandlers } from "../src/core/agent/head";
 
 export interface FakeHead extends ClaudeWorkerHead { config: HeadConfig; handlers: HeadHandlers; sent: { text: string; uuid: string }[]; answers: unknown[]; finished: boolean; terminated: boolean; running: boolean; exit(code?: number | null, expected?: boolean): void }
 
-export function claudeHarness(dir = mkdtempSync(join(tmpdir(), "botling-claude-workers-")), options: { settleMs?: number; keepAliveMs?: number; base?: HeadConfig | null } = {}) {
+export function claudeHarness(dir = mkdtempSync(join(tmpdir(), "botling-claude-workers-")), options: { settleMs?: number; keepAliveMs?: number; base?: HeadConfig | null; maxRunning?: number } = {}) {
   const items: any[] = [], reports: { id: string; text: string; run: number }[] = [], heads: FakeHead[] = [];
   let accept = true;
   const cwd = join(dir, "project");
@@ -16,7 +16,7 @@ export function claudeHarness(dir = mkdtempSync(join(tmpdir(), "botling-claude-w
   const base: HeadConfig = { command: "claude", cwd: "/elsewhere", sessionId: "coordinator", resume: true, allowedTools: ["Read", "Bash"], disallowedTools: ["WebSearch"], model: "opus", effort: "high", autoMode: true };
   const workers = new ClaudeWorkers({
     file: join(dir, "claude-workers.json"), ownerSessionId: () => "coordinator", base: () => options.base === undefined ? base : options.base, cwd: () => cwd,
-    subagentModel: () => "sonnet", settleMs: options.settleMs ?? 5, keepAliveMs: options.keepAliveMs ?? 60_000, home: join(dir, "home"),
+    subagentModel: () => "sonnet", settleMs: options.settleMs ?? 5, ...(options.maxRunning ? { maxRunning: () => options.maxRunning! } : {}), keepAliveMs: options.keepAliveMs ?? 60_000, home: join(dir, "home"),
   }, (item) => items.push(item), (id, text, run) => { if (!accept) return false; reports.push({ id, text, run }); return true; }, (config, handlers) => {
     const head: FakeHead = {
       config, handlers, sent: [], answers: [], finished: false, terminated: false, running: false, pid: -1,

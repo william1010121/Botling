@@ -119,7 +119,7 @@ import {
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
 import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
-import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, ClaudeWorkers, claudeWorkersFile } from "./agent/claude-workers";
+import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
 
 export type Status = "done" | "stopped" | "failed";
 
@@ -223,7 +223,7 @@ export interface BotOptions {
   /** Its specs changed (the spec panel follows). */
   specsChanged?: (bot: Bot) => void;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native" };
+  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number };
   /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
   agents?: AgentPort;
 }
@@ -1193,6 +1193,7 @@ export class Bot {
       subagentModel: () => this.owner.choices().subagentModel,
       pluginDirs: () => this.options.plugins?.().dirs ?? [],
       processStarted: (pid) => this.options.ledger.record(pid),
+      maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
     }, (item) => this.onWorkerItem(item), (_id, text) => this.workerReport(text), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
     return this.claudeWorkerHost;
