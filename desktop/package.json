@@ -28,6 +28,7 @@
     "test:live": "node build.mjs && BOTLING_LIVE_CLAUDE=1 vitest run test/live",
     "test:live:codex": "node build.mjs && BOTLING_LIVE_CODEX=1 vitest run test/live/codex.test.ts",
     "test:live:3a": "node build.mjs && BOTLING_LIVE_PHASE3A=1 vitest run test/live/phase3a.test.ts",
+    "test:record": "node build.mjs && vitest run --config test/record/vitest.config.mts",
     "dist:mac": "node scripts/package.mjs --mac",
     "dist:dir": "node scripts/package.mjs --dir",
     "dist:win": "node scripts/package.mjs --win",
