@@ -97,8 +97,10 @@ describe("moving a Codex worker to a new sub bot", () => {
     } finally { await core.shutdown(); }
   });
 
-  it("is refused while agentMoves is off, and its rows say nothing of moving", async () => {
-    const h = fixture({}), core = h.open();
+  it("is refused while agentMoves is turned off (it is on by default), and its rows say nothing of moving", async () => {
+    const on = fixture({}), core0 = on.open();
+    try { expect(rows(core0, PROJECT).find((row) => row.id === WORKER)!.movable).toEqual({ ok: true, reason: null }); } finally { await core0.shutdown(); }
+    const h = fixture({ agentMoves: false }), core = h.open();
     try {
       expect(rows(core, PROJECT).find((row) => row.id === WORKER)!.movable).toBeUndefined();
       expect(() => core.agentTargets(PROJECT, WORKER)).toThrow(/agentMoves/);

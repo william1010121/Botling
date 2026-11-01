@@ -916,7 +916,8 @@ First write a test that shows this, then fix it.`;
     const now = Date.now();
     if (!this.flagCache || now - this.flagCache.at > 2_000) {
       const raw = readSettings(Layout.settings(this.options.dataDir)) as Record<string, unknown>;
-      this.flagCache = { at: now, agentMoves: raw.agentMoves === true, claudeOwnerMoves: raw.claudeOwnerMoves === true };
+      // agentMoves is on unless settings.json turns it off (A2 shipped).
+      this.flagCache = { at: now, agentMoves: raw.agentMoves !== false, claudeOwnerMoves: raw.claudeOwnerMoves === true };
     }
     return this.flagCache;
   }
