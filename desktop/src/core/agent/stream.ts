@@ -2,7 +2,7 @@
 // line means (text, a tool call and its result, a permission request, the end of a turn), as
 // plain items. Ported from the Swift app's `StreamEvent` (activity titles, permission summaries).
 
-import type { RequestEvent } from "../token-speed";
+import { estimateContentTokens, type RequestEvent } from "../token-speed";
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
 import type { MeteredTurn } from "../token-flow-ledger";
@@ -242,7 +242,9 @@ export function parseLine(line: string): StreamItem[] {
       if (parent) {
         const model = message.message?.model;
         if (typeof model === "string" && model && !model.startsWith("<")) items.push({ kind: "subagentRuntime", id: parent, runtime: { engine: "claude" }, model });
-        const tokens = message.message?.usage?.output_tokens;
+        const reported = message.message?.usage?.output_tokens;
+        // The line's own count is stale (from when its block began); the content's size is the floor.
+        const tokens = typeof reported === "number" && Number.isSafeInteger(reported) && reported >= 0 ? Math.max(reported, estimateContentTokens(content)) : reported;
         const id = message.message?.id;
         if (typeof id === "string" && id && typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0) {
           items.push({ kind: "subagentOutput", id: parent, counter: `message:${id}`, tokens });

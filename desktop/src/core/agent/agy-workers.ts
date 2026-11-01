@@ -118,7 +118,7 @@ export class AgyWorkers {
     };
     const onItem=(item:StreamItem)=>{
       if(this.closed||!w.active||w.run!==run)return;
-      if(item.kind==='usage'){this.emit(item);return;}
+      if(item.kind==='usage'){this.emit(item);if(Number.isSafeInteger(item.tokens.output)&&item.tokens.output>0)this.emit({kind:'subagentOutput',id:w.id,counter:`thread:${w.sessionId||w.id}:run${run}`,tokens:item.tokens.output});return;}
       if(item.kind==='request'){this.emit({kind:'request',request:{...item.request,scope:w.id}});return;}
       if(item.kind==='init'){
         if(w.sessionId&&w.sessionId!==item.sessionId){finish('failed','Worker changed its saved conversation identity.');return;}

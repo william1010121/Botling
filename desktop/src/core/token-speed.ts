@@ -22,6 +22,23 @@
  *   included) and is marked `estimated`; nothing finer is invented.
  */
 
+/**
+ * Output tokens of one assistant content array, estimated from its size (about 4 characters per
+ * token). The `usage.output_tokens` on a subagent's complete `assistant` line is the count from when
+ * its block began (40 against 463 measured), so a long message is far under-counted by it alone.
+ */
+export function estimateContentTokens(content: unknown): number {
+  if (!Array.isArray(content)) return 0;
+  let chars = 0;
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    if (typeof block.text === "string") chars += block.text.length;
+    else if (typeof block.thinking === "string") chars += block.thinking.length;
+    else if (block.type === "tool_use") chars += String(block.name ?? "").length + JSON.stringify(block.input ?? {}).length;
+  }
+  return Math.ceil(chars / 4);
+}
+
 /** The CLI's `--max-gap` default. */
 export const MAX_REQUEST_SECONDS = 300;
 
@@ -130,6 +147,18 @@ export class ClaudeRequestTracker {
   private timer = new RequestTimer();
   private open = new Map<string, { id: string; startMs: number; tokens: number; final: boolean }>();
   private key = (scope: string | null) => scope ?? "";
+  /** Scopes that stream real message_start..stop events: they need no estimate from `assistant` lines. */
+  private streamed = new Set<string>();
+  /** A subagent's complete `assistant` lines of one message, awaiting the line that closes the message. */
+  private lines = new Map<string, { id: string; startMs: number; endMs: number; reported: number; estimated: number }>();
+
+  private flush(scope: string | null): RequestEvent[] {
+    const k = this.key(scope);
+    const line = this.lines.get(k);
+    if (!line) return [];
+    this.lines.delete(k);
+    return [{ scope, id: line.id, estimated: true, sample: { outputTokens: Math.max(line.reported, line.estimated), startMs: line.startMs, endMs: line.endMs, complete: true } }];
+  }
 
   /** Our message went to Claude (or a tool result came back): the next request starts here. */
   boundary(scope: string | null, atMs: number) { this.timer.boundary(scope, atMs); }
@@ -137,15 +166,38 @@ export class ClaudeRequestTracker {
   observe(message: any, nowMs: number): RequestEvent[] {
     if (!message || typeof message !== "object") return [];
     const scope = typeof message.parent_tool_use_id === "string" && message.parent_tool_use_id ? message.parent_tool_use_id : null;
-    if (message.type === "user") {
-      this.timer.boundary(scope, nowMs);
+    if (message.type === "system" && message.subtype === "task_started" && typeof message.tool_use_id === "string") {
+      this.timer.boundary(message.tool_use_id, nowMs);
       return [];
+    }
+    if (message.type === "system" && message.subtype === "task_notification") {
+      const id = typeof message.tool_use_id === "string" ? message.tool_use_id : typeof message.task_id === "string" ? message.task_id : null;
+      return id ? this.flush(id) : [];
+    }
+    if (message.type === "user") {
+      const flushed = this.flush(scope);
+      this.timer.boundary(scope, nowMs);
+      return flushed;
+    }
+    if (message.type === "assistant" && scope !== null && !this.streamed.has(this.key(scope))) {
+      // No per-request events for this subagent: one estimated request per message id, from its lines.
+      const id = message.message?.id;
+      if (typeof id !== "string" || !id) return [];
+      const reported = message.message?.usage?.output_tokens;
+      const out = this.lines.get(this.key(scope))?.id === id ? [] : this.flush(scope);
+      const line = this.lines.get(this.key(scope)) ?? { id, startMs: this.timer.take(scope) ?? nowMs, endMs: nowMs, reported: 0, estimated: 0 };
+      line.endMs = nowMs;
+      if (typeof reported === "number" && Number.isFinite(reported)) line.reported = Math.max(line.reported, reported);
+      line.estimated += estimateContentTokens(message.message?.content);
+      this.lines.set(this.key(scope), line);
+      return out;
     }
     if (message.type !== "stream_event") return [];
     const event = message.event;
     const out: RequestEvent[] = [];
     const k = this.key(scope);
     if (event?.type === "message_start") {
+      this.streamed.add(k);
       const stale = this.open.get(k);
       if (stale) out.push(this.finish(scope, stale, nowMs, false));
       const id = event.message?.id;
