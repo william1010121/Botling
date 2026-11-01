@@ -6,6 +6,15 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+## 2.3.1
+
+Adds sub bots for Codex and Antigravity workers (2.3.0 had them for Claude only) and fixes the release build
+that failed on the browser check in 2.3.0 (no 2.3.0 release was published; this is the first build of it).
+
+Heads-up: sub bots for Claude, Codex and Antigravity are new. The Codex and Antigravity ones were covered by
+unit tests only and were not tried end to end in the real app. The browser-detection fix for the web isolation
+check was verified only by CI, not on a local machine.
+
 - **Sub bots for Codex and Antigravity workers.** A Codex or Antigravity project bot can now move a running app-managed worker into a sub bot with the same `<sub-bot name="..." subagent="task_id"/>` tag (the id is the `task_id` `app_handoff` returned). The app, not the project bot, asks the worker to wrap up: a Codex worker is sent a request (joined into its turn) to write `.bot/subagents/<id>/handoff.md` and end, and is cancelled and given an app-written handoff after 75 seconds if it does not; an Antigravity worker takes no message while it works, so it is stopped at once and the handoff is written from its recorded steps (no waiting). The sub bot runs on the worker's engine when its project bot has that engine, else on the project bot's own (the chat says so). A worker that already ended is moved from its record; one that ended with no record, or an unknown id, is still refused with a message. Prompt changes (requested): Codex and Antigravity project bots are told about the tag and may write `handoff.md` and `progress.md` under `.bot/subagents/<id>/`; Codex and Antigravity sub bots get the sub-bot rules (read the handoff, keep `progress.md`, report to the project bot). Not yet tried in the real app.
 - **Asking for a new sub bot.** When you ask a project bot for a sub bot and nothing is running, it now starts the subagent or worker first, moves it into a sub bot on its next turn, and says so instead of quietly using a plain subagent. Prompt change only; not yet tried with a real bot.
 
