@@ -52,6 +52,7 @@ import { codexLogsFile, codexRetryAt } from "./codex-retry-log";
 import { cliStartError, resolveExecutable } from "../process/executable";
 import { activity, type StreamItem } from "./stream";
 import { ClaudeHead, type HeadExit, type HeadHandlers } from "./head";
+import type { WorkerInfo, WorkerSendResult, WorkerState } from "./workers";
 import type { ComponentEditorAction, ComponentEditorRoute } from "./component-editor";
 import tools from "./codex-tools.json";
 import { RoutineError, ScheduledRoutineStore } from "../routines";
@@ -1124,6 +1125,24 @@ export class CodexSession {
     return [...this.workers.values()].filter((worker) => worker.active && !worker.cancelled).map((worker) => worker.id);
   }
 
+  /** Its workers, provider-neutral (workers.ts). */
+  get workerInfos(): WorkerInfo[] {
+    return [...this.workers.values()].map((worker): WorkerInfo => {
+      const queued = this.results.some((result) => result.task === worker.id && result.run === worker.run) || (this.active?.task === worker.id && this.active.run === worker.run);
+      const state: WorkerState = worker.active && !worker.cancelled ? "running" : worker.cancelled ? "stopped" : queued ? "reportPending" : this.restartPending.has(worker.id) ? "interrupted" : "idle";
+      return { id: worker.id, engine: worker.runtime?.engine ?? (worker.role === "component-editor" ? "claude" : "codex"), name: worker.name, run: worker.run, state, conversationId: worker.thread ?? null, processes: [] };
+    });
+  }
+
+  /** A follow-up for one worker (workers.ts `sendToWorker`): joined into its turn at work, else its next run. */
+  continueWorker(task: string, text: string): { out: CodexOutput[]; how: "steered" | "newRun"; run: number } | null {
+    const worker = this.workers.get(task);
+    if (!worker || this.stopped || !text.trim()) return null;
+    const how = worker.active && !worker.cancelled ? "steered" as const : "newRun" as const;
+    const out = this.messageWorker(task, text);
+    return { out, how, run: worker.run };
+  }
+
   private pendingChanged(): CodexOutput[] {
     const pending = this.hasManagedWork;
     if (pending === this.pending) return [];
@@ -2089,6 +2108,23 @@ export class CodexHead {
 
   cancelWorkers(ids?: Set<string>) {
     this.perform(this.session.cancelWorkers(ids));
+  }
+
+  // WorkerHost (workers.ts): a worker is a thread of this app-server; the coordinator's Stop leaves it be.
+  readonly workerHostKind = "codex-thread" as const;
+  readonly steersRunning = true;
+  listWorkers(): WorkerInfo[] { return this.session.workerInfos; }
+  sendToWorker(id: string, text: string): WorkerSendResult {
+    if (this.closed || !this.running) return { ok: false, reason: "Its Codex head is not running; the worker went with its process." };
+    const sent = this.session.continueWorker(id, text);
+    if (!sent) return { ok: false, reason: "No such worker." };
+    this.perform(sent.out);
+    return { ok: true, how: sent.how, run: sent.run };
+  }
+  async stopWorker(id: string): Promise<boolean> {
+    if (!this.session.runningWorkers.includes(id)) return false;
+    this.cancelWorkers(new Set([id]));
+    return true;
   }
 
   /** The sub-bot hand-off's wrap-up request to one worker at work (false: it is not at work, nothing was sent). */

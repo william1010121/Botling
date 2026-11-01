@@ -9,6 +9,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Engine } from "./heads";
 import type { SubagentRecord } from "./subagents";
+import { isWorkerType, workerHostKindFor } from "./agent/workers";
 import type { AgentStore } from "./store/agent-store";
 
 export type AgentEngine = Engine; // "claude" | "codex" | "agy"
@@ -151,10 +152,15 @@ export function hostKind(engine: AgentEngine): AgentHostKind {
   return engine === "codex" ? "codex-thread" : engine === "agy" ? "agy-acp" : "claude-sidechain";
 }
 
+/** Where this record runs: an app-managed worker in its own process (a Claude worker) whatever head lists it, else the head's kind. */
+export function recordHostKind(host: Pick<HostFacts, "kind">, record: Pick<SubagentRecord, "type">): AgentHostKind {
+  return workerHostKindFor(record.type, "claude") === "claude-process" ? "claude-process" : host.kind;
+}
+
 /** The registry state for a host book's status. An app-managed worker that ended a run is idle: it can take a follow-up. */
 export function stateFor(record: Pick<SubagentRecord, "status" | "type">, kind: AgentHostKind): AgentState {
   if (record.status === "running") return "running";
-  if (record.status === "completed") return (kind === "codex-thread" || kind === "agy-acp") && (record.type === "codex-worker" || record.type === "agy-worker") ? "idle" : "completed";
+  if (record.status === "completed") return kind !== "claude-sidechain" && isWorkerType(record.type) && record.type !== "ccb-core:component-editor" ? "idle" : "completed";
   return record.status;
 }
 
@@ -171,6 +177,7 @@ function handleFor(host: HostFacts, record: SubagentRecord): AgentHandle {
   if (host.kind === "codex-thread") return { kind: "codex-thread", threadId: execution?.threadId ?? null, coordinatorSessionId: execution?.ownerSessionId ?? host.sessionId ?? "", run: execution?.run ?? 1 };
   // acpHome is the head's (C1 fills it in when it binds resume to the record).
   if (host.kind === "agy-acp") return { kind: "agy-session", sessionId: execution?.threadId ?? null, acpHome: "", run: execution?.run ?? 1 };
+  if (host.kind === "claude-process") return { kind: "claude-session", sessionId: execution?.threadId ?? "", configDir: null };
   return { kind: "claude-sidechain", parentSessionId: execution?.ownerSessionId ?? host.sessionId ?? "", toolUseId: record.id, agentId: typeof record.agentID === "string" ? record.agentID : null, configDir: null, checkpoint: null };
 }
 
@@ -249,6 +256,7 @@ export class AgentRegistry {
       if (handle.kind === "codex-thread" && previous.handle.kind === "codex-thread") previous.handle = { ...previous.handle, threadId: handle.threadId ?? previous.handle.threadId, run: Math.max(previous.handle.run, handle.run) };
       else if (handle.kind === "agy-session" && previous.handle.kind === "agy-session") previous.handle = { ...previous.handle, sessionId: handle.sessionId ?? previous.handle.sessionId, run: Math.max(previous.handle.run, handle.run) };
       else if (handle.kind === "claude-sidechain" && previous.handle.kind === "claude-sidechain") previous.handle = { ...previous.handle, agentId: handle.agentId ?? previous.handle.agentId };
+      else if (handle.kind === "claude-session" && previous.handle.kind === "claude-session") previous.handle = { ...previous.handle, sessionId: handle.sessionId || previous.handle.sessionId };
     }
     previous.endedAt = rec.status === "running" ? null : previous.endedAt ?? now;
     if (JSON.stringify(before) === JSON.stringify(previous)) return previous;
@@ -260,6 +268,7 @@ export class AgentRegistry {
   }
 
   private make(host: HostFacts, rec: SubagentRecord, now: number): AgentRecord {
+    host = { ...host, kind: recordHostKind(host, rec) };
     const id = agentId(host.botId, host.engine, rec.id);
     if (!ID_PATTERN.test(id)) throw new Error(`agent id ${id} does not fit the contract`);
     const effort = (rec as { runtime?: { reasoningEffort?: unknown } }).runtime?.reasoningEffort;

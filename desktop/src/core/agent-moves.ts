@@ -38,11 +38,18 @@ export type MovePlan =
   | { mode: "owner" | "handoff"; to: BotRef; makeSubBot?: { parentId: string; name: string; engine: Engine; note: string } }
   | { refuse: string };
 
+/**
+ * A Claude subagent inside its parent's process (a sidechain) moves by the sub-bot hand-off, until A3 lets a
+ * background one change owner. Every app-managed worker (Codex, Antigravity, a Claude worker process) changes owner.
+ */
+const sidechainHandoff = (rec: AgentRecord, facts: Pick<MoveFacts, "claudeOwnerMoves">) =>
+  rec.host.kind === "claude-sidechain" && !(rec.background && facts.claudeOwnerMoves);
+
 /** Why this agent cannot move at all (null: it can, somewhere). */
 export function unmovable(rec: AgentRecord, facts: Pick<MoveFacts, "owner" | "pending" | "claudeOwnerMoves">): string | null {
   if (rec.state === "lost") return "Its host is gone, so it cannot be moved.";
   if (facts.pending) return "A move of it is still under way.";
-  if (rec.engine === "claude" && !(rec.background && facts.claudeOwnerMoves)) {
+  if (sidechainHandoff(rec, facts)) {
     // The hand-off makes a sub bot under the bot that holds it.
     if (facts.owner.role === "main" || facts.owner.maintainer) return "The main bot's and Maintainer's Claude subagents cannot move.";
     if (facts.owner.parent) return "A sub bot's Claude subagent cannot move: a sub bot cannot make another sub bot.";
@@ -53,7 +60,7 @@ export function unmovable(rec: AgentRecord, facts: Pick<MoveFacts, "owner" | "pe
 export function planMove(rec: AgentRecord, to: MoveTarget, facts: MoveFacts): MovePlan {
   const blocked = unmovable(rec, facts);
   if (blocked) return { refuse: blocked };
-  const claudeHandoff = rec.engine === "claude" && !(rec.background && facts.claudeOwnerMoves);
+  const claudeHandoff = sidechainHandoff(rec, facts);
   if (to.kind === "back" || (to.kind === "bot" && to.botId === rec.host.botId && to.botId !== facts.owner.id)) {
     if (!isDetached(rec)) return { refuse: `It is already with ${facts.owner.name}.` };
     if (!facts.host) return { refuse: "Its host is gone, so it cannot be moved." };

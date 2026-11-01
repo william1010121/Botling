@@ -15,6 +15,7 @@ import { agyWorkerRuntimeEnabled } from "./agy-capabilities";
 import { agyHotSettingsEnabled, settingsChange, type HotSettings } from "./hot-settings";
 import { createAgyWorkerHead } from "./agy-worker-router";
 import { AgyWorkers } from "./agy-workers";
+import type { WorkerInfo, WorkerSendResult } from "./workers";
 import type { CodexItem } from "./codex";
 import { AGY_LOCAL_TOOLS, AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
 import { processTreeAdapter, type ManagedProcess, type TerminateResult } from "../process/tree";
@@ -452,7 +453,8 @@ export class AgyAcpHead {
     else this.protocol?.answer(id, allow);
   }
   allow(_rules: string[]): never { throw new Error("ACP accepts single-action approval only; persistent allow rules are unavailable."); }
-  interrupt(): string { clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.interrupt(); void this.bridge?.cancel(); void this.workers?.cancel(); if (!this.protocol?.initialized) void this.terminate(500); return randomUUID(); }
+  // Stop ends the coordinator's turn only: app-managed workers are their own processes and carry on (workers.ts).
+  interrupt(): string { clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = this.queue.filter(q => !!q.taskId); this.protocol?.interrupt(); void this.bridge?.cancel(); if (!this.protocol?.initialized) void this.terminate(500); return randomUUID(); }
   /** Its model and effort in place (`AgyAcpProtocol.applySettings`), where that is on; false: restart it instead. */
   canApplySettings(target: HotSettings): boolean {
     return agyHotSettingsEnabled() && !this.stopped && !this.sending && !!this.protocol?.canApplySettings(target);
@@ -463,6 +465,12 @@ export class AgyAcpHead {
   }
   /** Stops one app-managed worker (not the head's turn); false when it is not at work. */
   async cancelWorker(id: string): Promise<boolean> { return (await this.workers?.cancelTask(id)) ?? false; }
+  // WorkerHost (workers.ts): each worker is its own ACP process under this head.
+  readonly workerHostKind = "agy-acp" as const;
+  readonly steersRunning = false;
+  listWorkers(): WorkerInfo[] { return this.workers?.list() ?? []; }
+  sendToWorker(id: string, text: string): WorkerSendResult { return this.workers?.continueTask(id, text) ?? { ok: false, reason: "This Antigravity head has no workers." }; }
+  stopWorker(id: string): Promise<boolean> { return this.cancelWorker(id); }
   finish() { void this.terminate(500); }
   async terminate(graceMs = 1500): Promise<TerminateResult> { this.expected = true; this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.close(); const cleanup = await Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs })]);
     if (cleanup.some(result => result.status === "rejected")) { this.failure ||= "ACP cleanup incomplete."; throw new Error(this.failure); }

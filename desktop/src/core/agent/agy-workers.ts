@@ -9,6 +9,7 @@ import type {CodexItem} from './codex';
 import type {AgyConfig} from './agy';
 import {groupAlive,processStartTime} from '../process/kill-tree';
 import type {TerminateResult} from '../process/tree';
+import type {WorkerInfo,WorkerSendResult,WorkerState} from './workers';
 
 export interface AgyWorkerHead {
   start():void;send(text:string,uuid:string):void;
@@ -55,6 +56,20 @@ export class AgyWorkers {
   }
   get running(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired).map(w=>w.id);}
   get completionDependencies(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired||w.reportPending).map(w=>({id:w.id,run:w.run,task:w.instructions,state:w.active||w.cleaning||w.cleanup||w.recoveryRequired?'running' as const:'reportQueued' as const,callback:'app_task_result' as const,taskTruncated:false}));}
+  /** Its workers, provider-neutral (workers.ts). */
+  list():WorkerInfo[]{
+    return [...this.workers.values()].map(w=>({id:w.id,engine:w.engine,name:w.name,run:w.run,conversationId:w.sessionId||null,processes:[...w.processes],
+      state:(w.active||w.cleaning||w.cleanup?'running':w.recoveryRequired?'interrupted':w.reportPending?'reportPending':w.status==='stopped'||w.status==='killed'?'stopped':w.status==='failed'||w.status==='cleanup-failed'?'failed':'idle') as WorkerState}));
+  }
+  /** A follow-up from the app (workers.ts `sendToWorker`): an idle worker's next run; a busy ACP worker takes no steering. */
+  continueTask(id:string,text:string):WorkerSendResult{
+    const w=this.workers.get(id);
+    if(!w||this.closed)return {ok:false,reason:'No such worker.'};
+    if(w.active||w.cleaning||w.cleanup)return {ok:false,busy:true,reason:'This Antigravity worker is at work and takes no messages until it reports.'};
+    try{this.verifyRecovery(w);}catch(error){return {ok:false,reason:(error as Error).message};}
+    if(!text.trim()||text.length>64_000)return {ok:false,reason:'Message required (maximum 64000 characters).'};
+    this.launch(w,text);return {ok:true,how:'newRun',run:w.run};
+  }
   /** Stops one worker and its tools (the sub-bot hand-off: a busy ACP worker cannot be messaged). False: no such worker, or not at work. */
   async cancelTask(id:string):Promise<boolean>{
     const w=this.workers.get(id);

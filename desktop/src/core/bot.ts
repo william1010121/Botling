@@ -118,6 +118,7 @@ import {
   HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, isUUID, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
+import { isWorkerHost, isWorkerType, type WorkerHost } from "./agent/workers";
 
 export type Status = "done" | "stopped" | "failed";
 
@@ -1122,28 +1123,32 @@ export class Bot {
    */
   handoffMode(subagentId: string): "ask" | "steer" | "stop" {
     const holder = this.members.find((bot) => bot.subagents.find(subagentId));
-    if (holder?.head instanceof CodexHead) return "steer";
-    if (holder?.head instanceof AgyAcpHead) return "stop";
+    const host = holder?.workerHostFor(subagentId);
+    if (host) return host.steersRunning ? "steer" : "stop";
     return "ask";
   }
 
-  /** Sends a Codex worker at work the wrap-up request (false: not sent, it is not at work or its head is not Codex). */
+  /** Sends a worker at work the wrap-up request (false: not sent: it is not at work, not a worker, or its engine cannot be steered). */
   askForHandoff(subagentId: string, text: string): boolean {
     const holder = this.members.find((bot) => bot.subagents.find(subagentId));
     const found = holder?.subagents.find(subagentId);
-    return holder?.head instanceof CodexHead && found ? holder.head.messageRunningWorker(found.id, text) : false;
+    const host = found ? holder?.workerHostFor(found.id) : null;
+    if (!host?.steersRunning || !found) return false;
+    if (host.listWorkers().find((worker) => worker.id === found.id)?.state !== "running") return false;
+    const sent = host.sendToWorker(found.id, text);
+    return !(sent instanceof Promise) && sent.ok && sent.how === "steered";
   }
 
   /**
    * The hand-off's last resort. Claude: the turn running now is stopped whole (claude has no stop for one subagent).
-   * A Codex or Antigravity worker is stopped alone (its turn is interrupted, no report is made). Either way the
+   * An app-managed worker (any engine) is stopped alone (no report is made). Either way the
    * subagent, if it still shows as running, is marked stopped. It then goes on in a sub bot from its handoff file.
    */
   async stopForHandoff(subagentId: string): Promise<void> {
     const holder = this.members.find((bot) => bot.subagents.find(subagentId));
     const found = holder?.subagents.find(subagentId);
-    if (holder && found && holder.head instanceof CodexHead) holder.head.cancelWorkers(new Set([found.id]));
-    else if (holder && found && holder.head instanceof AgyAcpHead) await holder.head.cancelWorker(found.id).catch((error) => this.log(`sub-bot hand-off: stopping worker ${found.id}: ${(error as Error).message}`));
+    const host = found ? holder?.workerHostFor(found.id) : null;
+    if (holder && found && host) await host.stopWorker(found.id).catch((error) => this.log(`sub-bot hand-off: stopping worker ${found.id}: ${(error as Error).message}`));
     else {
       const owner = this.owner;
       const turn = owner.turn;
@@ -1152,6 +1157,20 @@ export class Bot {
     for (const bot of this.members) {
       if (bot.subagents.stopOne(subagentId)) { bot.saveSubagents(false, bot.subagents.get(subagentId)); this.rowsChanged(true); }
     }
+  }
+
+  /** This head's app-managed workers, whatever the engine (workers.ts): its Codex or Antigravity head, or its Claude workers. */
+  get workerHost(): WorkerHost | null {
+    if (this.engine === "claude") return null;
+    return isWorkerHost(this.head) ? this.head : null;
+  }
+
+  /** The worker host holding this subagent of its own, when it is an app-managed worker. */
+  workerHostFor(nativeId: string): WorkerHost | null {
+    const record = this.subagents.get(nativeId);
+    if (!record || !isWorkerType(record.type)) return null;
+    const host = this.workerHost;
+    return host?.listWorkers().some((worker) => worker.id === record.id) ? host : null;
   }
 
   /** Its subagents' rows (and its partner's, with the head that sent each). */
