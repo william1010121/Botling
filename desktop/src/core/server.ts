@@ -30,7 +30,7 @@ import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
-import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { answerLabel } from "./attachments";
 import {
@@ -1805,7 +1805,7 @@ First write a test that shows this, then fix it.`;
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
       workingFolder: workingFolder !== profile.folder ? workingFolder : null,
       parentName: profile.parent ? this.profiles.find((candidate) => candidate.id === profile.parent)?.name ?? null : null,
-    }), profile, this.options.reports ?? null, engine);
+    }), profile, this.options.reports ?? null, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app");
   }
 
   private event(event: Event) {

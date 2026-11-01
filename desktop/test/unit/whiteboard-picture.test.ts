@@ -38,7 +38,7 @@ describe("the line bots are told", () => {
     }
     const main = botPrompts({ profile: profile("main") });
     // The main bot gets no picture line; every bot gets only the <task> stage sentence besides.
-    expect(desktopPrompts(main, profile("main")).system).toBe(main.system.replace(" done or stopped.", ` done or stopped. ${TASK_STAGE_SENTENCE}`));
+    expect(desktopPrompts(main, profile("main"), null, "claude", false).system).toBe(main.system.replace(" done or stopped.", ` done or stopped. ${TASK_STAGE_SENTENCE}`));
     expect(WHITEBOARD_PICTURE_LINE).toContain('<whiteboard name="component name" size="1x1">JSON</whiteboard>');
   });
 });

@@ -67,6 +67,31 @@ export interface HeadConfig {
   bypassPermissions?: boolean;
   /** Permission rules let through without asking ("Bash(rm -rf build)"): calls the user allowed after auto mode blocked them (`--settings`). */
   allowRules?: string[];
+  /**
+   * The app's own tools (app_handoff, …), served by this process's host over the SDK control channel: `--mcp-config`
+   * names an in-process ("sdk") server and claude sends its MCP requests as `mcp_message` control requests, answered
+   * by `HeadHandlers.onAppTool`. Its tools are allowed without asking (`mcp__<server>__<tool>`). None in harmless mode.
+   */
+  appMcp?: { server: string; tools: AppToolSpec[] } | null;
+  /**
+   * Native subagents are off: Agent and Task are removed (`--disallowedTools`; spike S6: the init list names it Task,
+   * calls name it Agent), and a PreToolUse hook denies any call that still comes with this reason, in case a CLI
+   * version ignores the disallow. None in harmless mode.
+   */
+  agentGuard?: string | null;
+}
+
+/** One app tool as MCP's tools/list gives it. */
+export interface AppToolSpec { name: string; description: string; inputSchema: Record<string, unknown> }
+
+/** The PreToolUse hook that keeps native subagents out of a head whose workers the app manages. */
+export const AGENT_GUARD_HOOK = "botling-agent-guard";
+const NATIVE_AGENT_TOOLS = ["Agent", "Task"];
+
+/** The hook's answer: every Agent/Task call is denied with `reason` (shown to the model as "PreToolUse:Agent hook error: <reason>"). */
+export function agentGuardDecision(input: any, reason: string): Record<string, unknown> {
+  if (input?.hook_event_name !== "PreToolUse" || !NATIVE_AGENT_TOOLS.includes(input?.tool_name)) return {};
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: reason } };
 }
 
 /** Only normal bot sessions explicitly carry the app setting. Auxiliary sessions omit it. */
@@ -86,9 +111,11 @@ export function headArguments(config: HeadConfig): string[] {
   // Approvals are asked on stdout and answered on stdin.
   if (config.askPermission !== false) args.push("--permission-prompt-tool", "stdio");
   // Bots ask in the chat; AskUserQuestion would arrive as a permission request with no way to answer it.
-  const disallowed = [...new Set([...(config.askPermission !== false ? ["AskUserQuestion"] : []), ...(config.disallowedTools ?? [])])];
+  const guard = !!config.agentGuard && !config.harmless;
+  const disallowed = [...new Set([...(config.askPermission !== false ? ["AskUserQuestion"] : []), ...(guard ? NATIVE_AGENT_TOOLS : []), ...(config.disallowedTools ?? [])])];
   if (disallowed.length) args.push("--disallowedTools", disallowed.join(","));
-  const allowed = config.harmless ? [] : config.allowedTools;
+  const app = config.appMcp && !config.harmless ? config.appMcp : null;
+  const allowed = config.harmless ? [] : [...new Set([...config.allowedTools, ...(app?.tools.map((tool) => `mcp__${app.server}__${tool.name}`) ?? [])])];
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   if (config.tools && !config.harmless) args.push("--tools", config.tools.join(","));
   if (config.model) args.push("--model", config.model);
@@ -104,6 +131,7 @@ export function headArguments(config: HeadConfig): string[] {
   if (config.systemPrompt && !config.harmless) args.push("--append-system-prompt", config.systemPrompt);
   if (!config.harmless) for (const dir of config.pluginDirs ?? []) args.push("--plugin-dir", dir);
   if (!config.harmless) for (const dir of config.addDirs ?? []) args.push("--add-dir", dir);
+  if (app) args.push("--mcp-config", JSON.stringify({ mcpServers: { [app.server]: { type: "sdk", name: app.server } } }));
   if (config.harmless) {
     args.push("--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--tools", (config.harmlessTools ?? []).join(","));
   }
@@ -128,6 +156,8 @@ export interface HeadExit {
 export interface HeadHandlers {
   onItem(item: StreamItem): void;
   onExit(exit: HeadExit): void;
+  /** An app tool call (`HeadConfig.appMcp`): its result (JSON-able), or a thrown error the model reads. */
+  onAppTool?(name: string, args: Record<string, unknown>): Promise<unknown>;
 }
 
 export class ClaudeHead {
@@ -184,12 +214,17 @@ export class ClaudeHead {
     child.once("close", (code, signal) => report(code, signal));
     // The SDK control hook runs before execution, including auto/bypass mode.
     // Unsupported CLIs fail closed before any queued user input is sent.
-    if (!this.config.harmless && (!this.config.tools || this.config.tools.includes("Monitor"))) {
+    // The app's tools and the native-subagent guard register in the same initialize, before any input.
+    const monitor = !this.config.harmless && (!this.config.tools || this.config.tools.includes("Monitor"));
+    const guard = !this.config.harmless && !!this.config.agentGuard;
+    const app = !this.config.harmless && this.config.appMcp ? this.config.appMcp : null;
+    if (monitor || guard || app) {
       this.monitorInit = `monitor-policy-${randomUUID()}`;
       this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), 10_000);
       this.monitorInitTimer.unref();
+      const hooks = [...(monitor ? [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] : []), ...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : [])];
       this.write({ type: "control_request", request_id: this.monitorInit, request: { subtype: "initialize",
-        hooks: { PreToolUse: [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] } } });
+        ...(hooks.length ? { hooks: { PreToolUse: hooks } } : {}), ...(app ? { sdkMcpServers: [app.server] } : {}) } });
     }
   }
 
@@ -210,7 +245,7 @@ export class ClaudeHead {
     this.monitorPolicyFailed = true;
     if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
     this.queuedMessages = [];
-    this.stderrTail += "\nBotling could not register coordinator-only monitor enforcement; no queued user input was sent.";
+    this.stderrTail += "\nBotling could not register its tool policy (coordinator-only monitor enforcement, the native subagent guard, the app tools); no queued user input was sent.";
     void this.process?.terminate({ graceMs: 0 });
   }
 
@@ -239,6 +274,12 @@ export class ClaudeHead {
         response: claudeMonitorDecision(message.request.input, this.config.monitorWorker !== false) } });
       return;
     }
+    if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === AGENT_GUARD_HOOK) {
+      this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
+        response: agentGuardDecision(message.request.input, this.config.agentGuard ?? "Native subagents are off here.") } });
+      return;
+    }
+    if (message?.type === "control_request" && message.request?.subtype === "mcp_message") { void this.appMcp(message); return; }
     for (const request of this.speed.observe(message, Date.now())) this.handlers.onItem({ kind: "request", request });
     for (const item of parseLine(line)) {
       if (item.kind === "unsupportedRequest") {
@@ -249,6 +290,37 @@ export class ClaudeHead {
       this.handlers.onItem(item);
     }
     for (const measurement of measurements) this.handlers.onItem({ kind: "measurement", provider: "claude", measurement });
+  }
+
+  /** One MCP request for the app's in-process server (`HeadConfig.appMcp`), answered on the control channel. */
+  private async appMcp(message: any) {
+    const app = this.config.harmless ? null : this.config.appMcp;
+    const rpc = message.request.message ?? {};
+    const answer = (mcp: Record<string, unknown>) => this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { mcp_response: { jsonrpc: "2.0", ...mcp } } } });
+    if (!app || message.request.server_name !== app.server) {
+      this.write({ type: "control_response", response: { subtype: "error", request_id: message.request_id, error: "Unknown MCP server." } });
+      return;
+    }
+    if (rpc.id === undefined || rpc.id === null) { answer({ result: {} }); return; } // a notification
+    const id = rpc.id;
+    switch (rpc.method) {
+      case "initialize": answer({ id, result: { protocolVersion: typeof rpc.params?.protocolVersion === "string" ? rpc.params.protocolVersion : "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: app.server, version: "1" } } }); return;
+      case "ping": answer({ id, result: {} }); return;
+      case "tools/list": answer({ id, result: { tools: app.tools } }); return;
+      case "tools/call": {
+        const name = String(rpc.params?.name ?? "");
+        const args = rpc.params?.arguments && typeof rpc.params.arguments === "object" && !Array.isArray(rpc.params.arguments) ? rpc.params.arguments as Record<string, unknown> : {};
+        let text: string, isError = false;
+        try {
+          if (!app.tools.some((tool) => tool.name === name) || !this.handlers.onAppTool) throw new Error(`Unknown app tool ${name}.`);
+          const result = await this.handlers.onAppTool(name, args);
+          text = typeof result === "string" ? result : JSON.stringify(result);
+        } catch (error) { text = (error as Error).message; isError = true; }
+        answer({ id, result: { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) } });
+        return;
+      }
+      default: answer({ id, error: { code: -32601, message: `Unsupported MCP method ${String(rpc.method)}.` } });
+    }
   }
 
   private write(value: unknown) {

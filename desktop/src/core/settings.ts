@@ -160,7 +160,14 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
 export function launchSettings(raw: RawSettings) {
   // 1.x's `autoApprove` (AppSettings.autoApprovesSafeActions), on unless turned off; settings.json comes over from 1.x as it is.
   return { subagentHourCache: settingsView(raw).subagentHourCache, defaultPrimaryEngine: engineDefaultsFor(raw).primary, autoMode: bool(raw.autoApprove, true),
-    claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false), agyBypassPermissions: bool(raw.agyBypassPermissions, false) };
+    claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false), agyBypassPermissions: bool(raw.agyBypassPermissions, false),
+    // Hidden (debugging only): "native" gives Claude heads their own Agent tool back instead of app-managed workers.
+    claudeWorkers: claudeWorkersMode(raw) };
+}
+
+/** settings.json's hidden `claudeWorkers`: "app" (default: every Claude subagent is an app-managed worker) or "native". */
+export function claudeWorkersMode(raw: RawSettings): "app" | "native" {
+  return (raw as Record<string, unknown>).claudeWorkers === "native" ? "native" : "app";
 }
 
 /** What Codex workers start on with the app's choice applied (`appliedCodexWorkerDefaults`): following

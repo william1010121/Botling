@@ -517,15 +517,15 @@ describe("prompts", () => {
     expect(botPrompts({ profile: manager }).system).not.toContain("<sub-bot");
     expect(botPrompts({ profile: manager }).system).toContain("In .bot/ only .bot/memory.md, .bot/routines.cron, inbox.md and artifacts/ are yours");
   });
-  it("a Claude project bot is told how to move a subagent out, and may write handoff.md and progress.md", () => {
-    const system = desktop(manager);
+  it("a Claude project bot (native subagents, the hidden fallback) is told how to move a subagent out, and may write handoff.md and progress.md", () => {
+    const system = desktopPrompts(botPrompts({ profile: manager }), manager, null, "claude", false).system;
     expect(system).toContain("<sub-bot name=");
     expect(system).toContain("SendMessage");
     expect(system).toContain("handoff.md and progress.md files under .bot/subagents/<id>/ are yours");
     expect(system).toContain("inbox.md, artifacts/");
   });
-  it("Codex and Antigravity project bots are offered the tag for their app-managed workers, and may write handoff.md and progress.md", () => {
-    for (const engine of ["codex", "agy"] as const) {
+  it("Claude (app workers, the default), Codex and Antigravity project bots are offered the tag for their app-managed workers, and may write handoff.md and progress.md", () => {
+    for (const engine of ["claude", "codex", "agy"] as const) {
       const system = desktop(manager, engine);
       expect(system, engine).toContain("<sub-bot name=");
       expect(system, engine).toContain("task_id");

@@ -51,7 +51,7 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 //   decision retains one owner, and a pick on any copy is applied exactly once.
 import { createHash, randomUUID } from "node:crypto";
 import { backgroundTaskOutput, backgroundTaskView, backgroundOutputFile } from "./background-work";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
@@ -118,7 +118,8 @@ import {
   HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, isUUID, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
-import { isWorkerHost, isWorkerType, type WorkerHost } from "./agent/workers";
+import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost } from "./agent/workers";
+import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, ClaudeWorkers, claudeWorkersFile } from "./agent/claude-workers";
 
 export type Status = "done" | "stopped" | "failed";
 
@@ -222,7 +223,7 @@ export interface BotOptions {
   /** Its specs changed (the spec panel follows). */
   specsChanged?: (bot: Bot) => void;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean };
+  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native" };
   /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
   agents?: AgentPort;
 }
@@ -527,6 +528,12 @@ export class Bot {
     this.load();
     // Subagents that were running when the app went away went with their process.
     if (this.subagents.stopRunning()) this.saveSubagents();
+    // Claude workers kept in claude-workers.json: restored (one at work when the app went away is interrupted), and a
+    // report that never reached this head is handed over again once the bot is up.
+    if (this.engine === "claude" && existsSync(claudeWorkersFile(this.store.directory))) {
+      const workers = this.ensureClaudeWorkers();
+      setTimeout(() => { if (!this.shuttingDown) workers.redeliver(); }, 0).unref?.();
+    }
     if (!options.deferStartup) this.activateStartup();
     if (!primary) {
       if (!this.readOnly) this.saveHeads();
@@ -1159,9 +1166,72 @@ export class Bot {
     }
   }
 
+  /** Claude's app-managed workers (claude-workers.ts), made when first needed; they belong to this bot, not to its head process. */
+  private claudeWorkerHost: ClaudeWorkers | null = null;
+  /** Answers worker approval cards (the bot's approvals keep the head that asked; a worker's is its manager). */
+  private readonly workerApprovals = { running: true, answer: (requestId: string, allow: boolean, input: Record<string, unknown>, message?: string) => { this.claudeWorkerHost?.answer(requestId, allow, input, message); } } as unknown as AgentHead;
+
+  /** Whether this bot's Claude subagents are app-managed workers (the default) or native Agent calls (settings.json `claudeWorkers: "native"`). */
+  private claudeWorkersOn(): boolean {
+    return this.options.launch?.().claudeWorkers !== "native";
+  }
+
+  private ensureClaudeWorkers(): ClaudeWorkers {
+    return this.claudeWorkerHost ??= new ClaudeWorkers({
+      file: claudeWorkersFile(this.store.directory),
+      ownerSessionId: () => this.session.sessionId,
+      base: () => {
+        try {
+          const base = this.options.headConfig(this.profile, this.sessionStart(false, this.prompts()));
+          const tree = this.owner.options.worktree?.() ?? null;
+          return tree ? { ...base, cwd: tree.cwd, addDirs: [...new Set([...(base.addDirs ?? []), ...tree.addDirs])] } : base;
+        } catch (error) { this.log(`claude workers: no head config: ${(error as Error).message}`); return null; }
+      },
+      cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
+      subagentModel: () => this.owner.choices().subagentModel,
+      pluginDirs: () => this.options.plugins?.().dirs ?? [],
+      processStarted: (pid) => this.options.ledger.record(pid),
+    }, (item) => this.onWorkerItem(item), (_id, text) => this.workerReport(text), (config, handlers) => new ClaudeHead(config, handlers));
+  }
+
+  /** A Claude worker's run ended: its report goes to this head as the app's message (waking it, or queued behind its turn). */
+  private workerReport(text: string): boolean {
+    if (this.shuttingDown || this.problem || this.profile.problem) return false;
+    try { (this.options.primary ?? this).deliverTo(this.engine, text, null, { origin: "app" }); return true; }
+    catch (error) { this.log(`claude worker report not delivered: ${(error as Error).message}`); return false; }
+  }
+
+  /**
+   * A Claude worker's item. Workers are not the head's: they arrive whether or not the head is awake, and only their
+   * own bookkeeping happens here (the book, the step that started one, approvals, usage), never the coordinator's turn.
+   */
+  private onWorkerItem(item: CodexItem) {
+    if (this.shuttingDown && item.kind !== "subagentEnded") return;
+    if (item.kind === "usage") {
+      if (item.totalCost > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, item.totalCost, item.tokens);
+      return;
+    }
+    if (item.kind === "permission" && item.workerId) return this.ask(this.workerApprovals, item, null);
+    if (item.kind === "permissionCancelled") {
+      for (const [id, approval] of this.approvals) if (approval.head === this.workerApprovals && approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
+      return;
+    }
+    this.noteProgressOf(item);
+    if (item.kind === "toolUse") this.noteToolCall(item);
+    if (this.onSubagentItem(item)) return;
+    // The step in the coordinator's turn that started it (as a Codex or Antigravity worker's).
+    const turn = this.turn;
+    if (item.kind === "toolUse" && item.parent === null && turn?.open && turn.origin !== "tidy") {
+      turn.steps.push({ id: item.id, kind: "subagent", tool: item.tool, title: item.title, detail: item.detail, failed: false, done: false });
+      this.noteWork(turn, true);
+      this.linkSubagent(turn, item.id);
+      this.emitSteps(turn);
+    }
+  }
+
   /** This head's app-managed workers, whatever the engine (workers.ts): its Codex or Antigravity head, or its Claude workers. */
   get workerHost(): WorkerHost | null {
-    if (this.engine === "claude") return null;
+    if (this.engine === "claude") return this.claudeWorkerHost;
     return isWorkerHost(this.head) ? this.head : null;
   }
 
@@ -2101,7 +2171,7 @@ export class Bot {
   /** The switch can be done now: nothing would be lost (`restartsBeforeMessage`). */
   private get switchReady(): boolean {
     return !!this.switchTo && !this.turn && !this.tidying && !this.switching && !!this.head?.running && !this.approvals.size
-      && !this.subagents.running.length && !this.managedPending && !this.shuttingDown;
+      && !this.inHeadSubagents.length && !this.managedPending && !this.shuttingDown;
   }
 
   /**
@@ -2788,7 +2858,13 @@ export class Bot {
     } else {
       const base = this.options.headConfig(this.profile, start);
       const config = tree ? { ...base, cwd: tree.cwd, addDirs: [...new Set([...(base.addDirs ?? []), ...tree.addDirs])] } : base;
-      head = new ClaudeHead({ ...config, monitorWorker: false }, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
+      // Claude's subagents are app-managed workers (claude-workers.ts): the app's tools come in over the control channel
+      // and the native Agent/Task tool is gone. The hidden settings.json `claudeWorkers: "native"` keeps the native one.
+      const workers = !config.harmless && this.claudeWorkersOn() ? this.ensureClaudeWorkers() : null;
+      head = new ClaudeHead({ ...config, monitorWorker: false, ...(workers ? { appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_APP_TOOLS }, agentGuard: CLAUDE_AGENT_GUARD } : {}) }, {
+        onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit),
+        ...(workers ? { onAppTool: (name: string, args: Record<string, unknown>) => workers.tool(name, args) } : {}),
+      });
     }
     head.start();
     this.head = head;
@@ -3671,7 +3747,7 @@ export class Bot {
     // Gone because of the network (or gone while waiting for it): its session and the subagents still
     // at work are picked up again when the network is back (1.x's `lostToNetwork`).
     const lostToNetwork = !exit.expected && !this.shuttingDown && (this.outage !== null || (exit.code !== 0 && mentionsConnectionError(exit.stderr)));
-    const cutOff = lostToNetwork ? this.subagents.running.map((subagent) => subagent.id) : [];
+    const cutOff = lostToNetwork ? this.inHeadSubagents.map((subagent) => subagent.id) : [];
     const lostSession = this.session.started ? this.session.sessionId : null;
     this.head = null;
     this.retryingConnection = false;
@@ -3945,13 +4021,18 @@ export class Bot {
    * whoever they report to), background tasks it started, or its wait for the network. Never a partner head's.
    */
   private get ownWorkRunning(): boolean {
-    return this.subagents.running.length > 0 || this.managedPending || this.backgroundWorkRunning || !!this.outage;
+    return this.inHeadSubagents.length > 0 || this.managedPending || this.backgroundWorkRunning || !!this.outage;
+  }
+
+  /** Its subagents at work inside its head's process (a Claude worker is a process of its own: a restart or sleep leaves it be). */
+  private get inHeadSubagents(): SubagentRecord[] {
+    return this.subagents.running.filter((subagent) => !ownProcessWorker(subagent.type));
   }
 
   /** Words for the work that holds a model/effort restart back (the queue card). */
   private ownWorkWords(): string {
     const parts: string[] = [];
-    const subagents = this.subagents.running.length;
+    const subagents = this.inHeadSubagents.length;
     if (subagents) parts.push(`${subagents} ${this.engine === "claude" ? "subagent" : "worker"}${subagents === 1 ? "" : "s"}`);
     else if (this.managedPending) parts.push("its workers");
     if (this.backgroundWorkRunning) parts.push("background tasks");
@@ -4091,7 +4172,7 @@ export class Bot {
     // A subagent (or a Codex worker) at work in the background would end with the process: wait for it.
     // So would a command or Monitor it left running in the background (1.x's `hasBackgroundWorkRunning`).
     // Cut off by the network, it keeps its session for when the network is back.
-    if ((this.subagents.running.length || this.managedPending || this.backgroundWorkRunning || this.outage) && !this.shuttingDown) { this.scheduleIdle(); return; }
+    if ((this.inHeadSubagents.length || this.managedPending || this.backgroundWorkRunning || this.outage) && !this.shuttingDown) { this.scheduleIdle(); return; }
     this.clearIdle();
     this.tidying = true;
     this.updated();
@@ -5399,7 +5480,7 @@ export class Bot {
     return [this, ...(peers ?? (this.partner ? [this.partner] : []))].flatMap(bot => {
       const turn = bot.turn;
       const workers = bot.head instanceof CodexHead ? bot.head.restartWorkers : undefined;
-      const nativeChildren=bot.engine==="claude"?bot.subagents.running.map(child=>({id:child.id,agentId:child.agentID,parentId:child.parentID?(bot.subagents.get(child.parentID)?.id??child.parentID):undefined,
+      const nativeChildren=bot.engine==="claude"?bot.subagents.running.filter(child=>!ownProcessWorker(child.type)).map(child=>({id:child.id,agentId:child.agentID,parentId:child.parentID?(bot.subagents.get(child.parentID)?.id??child.parentID):undefined,
         checkpoint:child.steps.findLast(step=>step.kind==="tool"&&step.done&&!step.failed)?.id,
         prompt:child.prompt,description:child.description,type:child.type})):undefined;
       const nativeConfig=bot.head instanceof ClaudeHead?bot.head.config:undefined;
@@ -5515,6 +5596,8 @@ export class Bot {
       const ended = await Promise.race([last.exited.then(() => true), sleep(1_000).then(() => false)]);
       if (!ended) await last.terminate(1_000);
     }
+    // Its Claude workers end with the app: one at work is interrupted, to be resumed later (claude-workers.ts).
+    await this.claudeWorkerHost?.close().catch((error) => this.log(`claude workers: close failed: ${(error as Error).message}`));
     const partnerError = await partner;
     let historyError: unknown;
     try { this.flushSubagents(); if (!this.readOnly) this.store.flushSubagents(); }

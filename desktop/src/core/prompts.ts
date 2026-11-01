@@ -108,6 +108,13 @@ export const workerSubBotRule = [
   "- When the app's wake note lists sub bots, each has a progress file: to answer how a sub bot is going, read its progress file; do not wake it. It reports to you when it finishes.",
 ].join("\n");
 /** How a message from the app itself (not the user) starts. */
+/** The native line a Claude bot is told about subagents (kept as the Swift goldens have it; replaced below for app workers). */
+export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.";
+/** What a Claude bot is told instead when its subagents are app-managed workers (the default; claude-workers.ts). */
+export const CLAUDE_WORKERS_RULE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to app-managed workers with the app_handoff tool and keep yourself free for the user. A worker is a Claude subagent running as its own session in this folder; the Agent tool is off. Give each one a short name and a clear, self-contained task (subagent_type picks a .claude/agents definition), run independent ones in parallel, say in one sentence what you handed off, then end your turn: do not wait or poll. Its report arrives later as an app message (<app_task_result task_id=\"…\" run=\"…\">); tell the user what came of it. To follow up, use app_send_message with its task_id (joined into its run while it works, or its next run once it reported); to stop one, app_cancel_task. Do it yourself only when it is quicker than explaining it.";
+const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id.";
+const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
+
 export const APP_LEAD = "(App: ";
 /** The start of the note that wakes a bot, and of the one before it falls asleep. */
 export const WAKE_LEAD = `${APP_LEAD}You were just woken up.`;
@@ -367,7 +374,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
       ]),
       codex
         ? "- Hand execution to app-managed workers with app_handoff, using the app-owned delegation policy below."
-        : "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.",
+        : NATIVE_SUBAGENT_LINE,
       profile.instructions ?? "",
     ].join("\n");
   }
@@ -455,13 +462,19 @@ const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
  * main bot, and — when the app has its report command — the report page line after the results rule
  * for every bot and Codex worker.
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, reports: ReportTool | null = null, engine: Engine = "claude"): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, reports: ReportTool | null = null, engine: Engine = "claude", claudeWorkers = true): BotPrompts {
   let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
+  // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
+  const workers = engine === "claude" && claudeWorkers;
+  if (workers) {
+    system = system.replace(NATIVE_SUBAGENT_LINE, CLAUDE_WORKERS_RULE).replace(NATIVE_SUB_BOT_AGENTS, "you may start your own workers with app_handoff.");
+    if (profile.role === "main") system = `${system}\n${CLAUDE_MAIN_WORKERS_LINE}`;
+  }
   // Sub bots (desktop only; the Swift goldens stay as they are): a project's or bot's own bot may write handoff.md and
   // progress.md in .bot/subagents/<id>/, and it is told how to move a running subagent or worker out into a sub bot (Claude, Codex
   // and Antigravity alike; Antigravity's own prompt has no such line to extend, so its text is appended whole).
   if (profile.role !== "main" && !profile.parent && profile.id !== MAINTAINER_PROMPT_ID) {
-    system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.\n${engine === "claude" ? subBotRule : workerSubBotRule}`);
+    system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.\n${engine === "claude" && !workers ? subBotRule : workerSubBotRule}`);
     if (engine === "agy" && !system.includes(workerSubBotRule)) system = `${system}\nIn .bot/ the handoff.md and progress.md files under .bot/subagents/<id>/ are also yours to write.\n${workerSubBotRule}`;
   }
   // An Antigravity sub bot: its prompt is a short one of its own, so what a sub bot is told is appended whole.
