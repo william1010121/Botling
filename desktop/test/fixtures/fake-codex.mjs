@@ -33,7 +33,7 @@
 // "Answered you: <the steered words>"; the app's "(App: Now carry on…" note: "Carried on: finished the
 // handed work."); "/solo <words>": with two heads, the head that hears the other's
 // words first says only <no-reply/>.
-// A worker's task: "/slowworker" runs until interrupted; "/failworker" fails; else it reports
+// A worker's task: "/slowworker" runs until interrupted; "/failworker" fails; "/failtool": its command fails, it reports anyway; else it reports
 // "Worker did: <first line>" after FAKE_CODEX_WORKER_MS (default 300), or — FAKE_CODEX_WORKER_GATE=<file>
 // — once that file exists (a test opens the gate when it has seen the worker at work).
 // FAKE_CODEX_INPUT: a file it appends {thread, kind, text} to for every turn input and steer.
@@ -292,8 +292,10 @@ async function workerTurn(thread, turn, text) {
     return complete(thread, turn);
   }
   const id = `exec-${randomUUID().slice(0, 8)}`;
+  // "/failtool": its command fails on the way; it reports anyway.
+  const failing = text.includes("/failtool");
   item(thread, turn, "started", { type: "commandExecution", id, command: "/bin/zsh -lc 'ls'", commandActions: [{ type: "listFiles", command: "ls" }], status: "inProgress" });
-  item(thread, turn, "completed", { type: "commandExecution", id, command: "/bin/zsh -lc 'ls'", commandActions: [{ type: "listFiles", command: "ls" }], status: "completed", exitCode: 0, aggregatedOutput: "a.txt\n" });
+  item(thread, turn, "completed", { type: "commandExecution", id, command: "/bin/zsh -lc 'ls'", commandActions: [{ type: "listFiles", command: "ls" }], status: failing ? "failed" : "completed", exitCode: failing ? 1 : 0, aggregatedOutput: failing ? "ls: no such file\n" : "a.txt\n" });
   say(thread, turn, "Looking into it.", "commentary");
   if (text.includes("/slowworker")) {
     while (!state.turn?.interrupted) await sleep(40);

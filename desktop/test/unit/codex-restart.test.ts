@@ -66,3 +66,23 @@ it('cancellation during provider reconciliation prevents a late worker resume',(
  const out=answer(read.id,{thread:{id:'original-worker',turns:[{id:'old-turn',status:'interrupted',items:[]}]}});
  expect(writes(out)).toEqual([]);expect(s.runningWorkers).toEqual([]);expect(s.workerInfos[0]).toMatchObject({id:'original-task',run:4,state:'interrupted'});
 });
+
+// With the member's worker ledger (S4b): the restart's workers come from the ledger (interrupted by "restart", with the
+// restart data the core kept when it closed), and the interrupted run goes on as the SAME run.
+it('from the worker ledger: the run the restart interrupted resumes as the same run, task and thread kept',async()=>{
+ const {WorkerCore,WorkerLedger}=await import('../../src/core/worker-core');
+ const {mkdtempSync}=await import('node:fs');const {join}=await import('node:path');const {tmpdir}=await import('node:os');
+ const file=join(mkdtempSync(join(tmpdir(),'codex-ledger-')),'worker-ledger.json');
+ new WorkerLedger(file).save([{v:3,id:'original-task',engine:'codex',adapter:'codex-thread',name:'Research',instructions:'Research only; no implementation.',type:null,
+   ownerSessionId:'original-session',run:4,status:'interrupted',interruptedBy:'restart',recovery:'required',report:{state:'none',text:null,status:'interrupted',attempts:0},
+   conversationId:'original-worker',processes:[],createdAt:1,runStartedAt:1,endedAt:2_000,engineData:{restartSafe:true,restartTurn:'old-turn'}}]);
+ const s=new CodexSession({cwd:'/tmp',instructions:'Coordinator',workerInstructions:'Worker',resumeThread:'original-owner',model:null,workerModel:null,effort:null,restoredWorkers:[],
+   ownerSession:'original-session',restartRecovery:1_000,workerCore:(options)=>new WorkerCore({...options,store:new WorkerLedger(file)})});
+ const answer=(id:number,result:any)=>s.receive(JSON.stringify({id,result}));
+ s.start();answer(1,{});const setup=writes(answer(2,{thread:{id:'original-owner'}}));
+ const read=writes(answer(setup.find(x=>x.method==='thread/inject_items').id,{})).find(x=>x.method==='thread/read');
+ expect(read.params).toEqual({threadId:'original-worker',includeTurns:true});
+ const resumed=answer(read.id,{thread:{id:'original-worker',turns:[{id:'old-turn',status:'interrupted',items:[]}]}});
+ expect(items(resumed)).toContainEqual(expect.objectContaining({kind:'subagentStarted',id:'original-task',execution:expect.objectContaining({run:4,threadId:'original-worker'})}));
+ expect(s.core.get('original-task')).toMatchObject({status:'running',run:4});
+});

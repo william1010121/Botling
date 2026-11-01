@@ -23,6 +23,7 @@
 //              a turn of its own to say so ("/bgagent:silent": that turn says only <no-reply/>)
 //   worker   — (long-lived) "/worker <instructions>": calls the app's app_handoff tool (its in-process MCP server, an
 //              mcp_message control request) and replies "Handed off: <task_id>" (or "Handoff failed: <error>")
+//   failtool — "/failtool <words>": a Bash call that fails, then "Recovered after a failed tool: <words>" (a worker's run that succeeds anyway)
 //   say      — "/say <text>": replies exactly <text> (a hand-off tag, say)
 //   mention  — "/mention <name> <words>[|…]": "Let me ask." and a line "@<name> <words>" each (a bot's @)
 //   solo     — "/solo <words>": with two heads, the head that hears the other's words first says only
@@ -111,7 +112,7 @@ function helper(ignoreTerm) {
 }
 
 function directive(prompt) {
-  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|react|agent|bgagent|worker)(?::([A-Za-z]+))?\s*/.exec(prompt);
+  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|react|agent|bgagent|worker|failtool)(?::([A-Za-z]+))?\s*/.exec(prompt);
   return match ? { mode: match[1], tool: match[2] ?? "Bash", rest: prompt.slice(match[0].length) } : { mode: envMode, tool: "Bash", rest: prompt };
 }
 
@@ -479,6 +480,14 @@ async function turn(job) {
     delta("partial ");
     await sleep(20);
     process.exit(3);
+  }
+  if (mode === "failtool") {
+    // A tool that fails on the way, then a normal end with a reply (a run that succeeds anyway).
+    const id = toolId();
+    assistant([{ type: "tool_use", id, name: "Bash", input: { command: "false", description: "Try it" } }]);
+    out({ type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "exit 1", is_error: true }] } });
+    result(await stream(`Recovered after a failed tool: ${rest}`));
+    return;
   }
   if (mode === "tool") {
     const command = rest || "echo hi";

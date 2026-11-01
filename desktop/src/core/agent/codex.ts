@@ -1601,9 +1601,15 @@ export class CodexSession implements CoordinatorPort {
   // App-managed workers
 
   /** For codex-threads/<session>.workers.json: follow-ups work after the app-server is recreated. */
+  /** This conversation's workers in the old journal's shape (the restart snapshot, and the journal of a core of its own). */
   get workerRecords(): WorkerRecord[] {
-    // A restart snapshot's own keys are not the journal's.
-    return this.journal.map(({ restartSafe: _safe, restartTurn: _turn, ...record }) => record);
+    if (!this.config.workerCore) {
+      // A restart snapshot's own keys are not the journal's.
+      return this.journal.map(({ restartSafe: _safe, restartTurn: _turn, ...record }) => record);
+    }
+    const session = this.config.ownerSession ?? "";
+    return this.core.all().filter((r) => r.ownerSessionId === session).map(toLegacyCodex)
+      .map(({ restartSafe: _safe, restartTurn: _turn, ...record }) => record).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   get restartTurn(): string | undefined { return this.turn?.id ?? undefined; }
