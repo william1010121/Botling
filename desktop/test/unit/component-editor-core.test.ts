@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { CoreHarness, MAIN } from "../core-harness";
 import { alive, tempDir, until } from "../helpers";
 import { MAINTAINER_ID } from "../../src/core/store/records";
+import { deniedNote } from "../../src/core/worker-core";
 
 const harnesses: CoreHarness[] = [];
 afterEach(async () => { for (const c of harnesses.splice(0)) await c.kill("SIGTERM"); });
@@ -58,7 +59,8 @@ describe("Maintainer component editor through the built core", () => {
     expect(card.approval.tool).toBe("Bash");
     expect(card.choices.map((item: any) => item.action)).toEqual(["allowOnce", "deny"]);
     await c.call({ type: "chat.choose", botId: MAINTAINER_ID, messageId: card.id, index: choice });
-    const evidence = choice === 0 ? "Let me run that. \n\nAllowed: ran echo editor" : "Let me run that. \n\nDenied: The user did not allow it.";
+    // A denial no longer fails the run; its report says so first (decision D2).
+    const evidence = choice === 0 ? "Let me run that. \n\nAllowed: ran echo editor" : `${deniedNote(1)}\nLet me run that. \n\nDenied: The user did not allow it.`;
     await report(c, evidence);
     expect(await c.call({ type: "chat.choose", botId: MAINTAINER_ID, messageId: card.id, index: 0 })).toEqual({ accepted: false });
   });

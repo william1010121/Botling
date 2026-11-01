@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CodexSession, CodexThreads, handbackFallback, MANAGED_TOOL_SIGNATURE, type CodexConfig, type CodexOutput } from "../../src/core/agent/codex";
+import { INTERRUPTED_REPORT, NO_REPORT } from "../../src/core/worker-core";
 import { desktop, tempDir } from "../helpers";
 
 const recordings: Record<string, string[]> = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "codex-recordings.json"), "utf8"));
@@ -259,21 +260,24 @@ describe("Codex head: app-managed workers", () => {
     expect(second.results).toEqual([{ ok: false, text: handbackFallback({ name: "Parser", task: "task-1", status: "completed", report: "built" }, "No acceptance checkpoint or next owner action was recorded after one reconciliation. The user objective remains unverified; no automatic retry is scheduled.") }]);
   });
 
-  it("a worker at work when the app stopped reports as interrupted; app_send_message resumes its session", () => {
+  it("a worker at work when the app stopped is interrupted (no report turn, as a Claude worker); app_send_message resumes its session", () => {
     const session = new CodexSession(config({ restoredWorkers: [{ id: "task-1", name: "Parser", instructions: "Build", thread: "w1", run: 1, wasActive: true, reportPending: false }] }));
-    ready(session);
-    session.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+    expect(new Out(ready(session)).of("backgroundTurn")).toEqual([]);
+    expect(session.workerInfos).toMatchObject([{ id: "task-1", run: 1, state: "interrupted" }]);
     const again = new Out(session.receive(toolCall("app_send_message", { task_id: "task-1", message: "Carry on" })));
     expect(receipt(again)).toEqual({ task_id: "task-1", status: "accepted" });
     expect(again.params("thread/resume")).toMatchObject({ threadId: "w1", excludeTurns: true });
-    expect(again.of("subagentStarted")).toMatchObject([{ id: "task-1", prompt: "Carry on" }]);
-    expect(session.workerRecords).toMatchObject([{ id: "task-1", run: 2, wasActive: true, instructions: "Carry on" }]);
-    // A resumed worker's instructions are appended before its turn.
-    expect(new Out(session.receive(JSON.stringify({ id: 4, result: { thread: { id: "w1" } } }))).methods).toEqual(["thread/inject_items"]);
-    expect(new Out(session.receive(JSON.stringify({ id: 5, result: {} }))).params("turn/start")).toMatchObject({ threadId: "w1", input: [{ type: "text", text: "Carry on" }] });
+    expect(again.of("subagentStarted")).toMatchObject([{ id: "task-1", prompt: "Carry on", execution: { run: 2 } }]);
+    // The journal keeps the hand-off's task; the follow-up is the run's scope.
+    expect(session.workerRecords).toMatchObject([{ id: "task-1", run: 2, wasActive: true, instructions: "Build", ownershipInstructions: "Carry on" }]);
+    // A resumed worker's instructions are appended before its turn, which has the follow-up's words only (no replay).
+    const injected = new Out(session.receive(JSON.stringify({ id: again.writes.find((w) => w.method === "thread/resume").id, result: { thread: { id: "w1" } } })));
+    expect(injected.methods).toEqual(["thread/inject_items"]);
+    const turn = new Out(session.receive(JSON.stringify({ id: injected.writes[0].id, result: {} }))).params("turn/start");
+    expect(turn).toMatchObject({ threadId: "w1", input: [{ type: "text", text: "Carry on" }] });
   });
 
-  it("stop cancels workers (no report); routines need their file, a monitor its owning turn; others' calls are refused", () => {
+  it("stop interrupts workers (no report, resumable); routines need their file, a monitor its owning turn; others' calls are refused", () => {
     const session = new CodexSession(config());
     ready(session);
     session.send("go");
@@ -293,7 +297,8 @@ describe("Codex head: app-managed workers", () => {
     expect(receipt(new Out(session.receive(foreign)))).toEqual({ error: "App handoff tools are available only to the active coordinator." });
     const stopped = new Out(session.stop());
     expect(stopped.params("turn/interrupt")).toEqual({ threadId: "w1", turnId: "wt1" });
-    expect(stopped.of("subagentEnded")).toEqual([{ kind: "subagentEnded", id: task, status: "killed", summary: "Stopped by the app." }]);
+    expect(stopped.of("subagentEnded")).toEqual([{ kind: "subagentEnded", id: task, status: "interrupted", summary: INTERRUPTED_REPORT.quit }]);
+    expect(session.workerInfos).toMatchObject([{ id: task, state: "interrupted" }]);
     // Its monitors too: the card goes, nothing will run or wake.
     expect(stopped.of("permissionCancelled")).toEqual([{ kind: "permissionCancelled", requestId: `monitor:${receipt(monitor).monitor_id}` }]);
     expect(replay(session, [note("turn/completed", { threadId: "w1", turn: { id: "wt1", status: "interrupted" } })]).all).toEqual([]);
@@ -308,7 +313,9 @@ describe("Codex head: app-managed workers", () => {
     session.receive(JSON.stringify({ id: 4, result: { thread: { id: "w1" } } }));
     session.receive(JSON.stringify({ id: 5, result: { turn: { id: "wt1" } } }));
     const out = new Out(session.receive(note("turn/completed", { threadId: "w1", turn: { id: "wt1", status: "completed" } })));
-    expect(out.of("subagentEnded")).toEqual([{ kind: "subagentEnded", id: task, status: "failed", summary: "Worker turn ended without a final evidence report. Ask the same task_id for the missing result." }]);
+    expect(out.of("subagentEnded")).toEqual([{ kind: "subagentEnded", id: task, status: "failed", summary: NO_REPORT }]);
+    // A failed worker shows failed, not idle (its report waits for the coordinator meanwhile).
+    expect(session.workerInfos).toMatchObject([{ id: task, state: "reportPending" }]);
     // The coordinator's turn still runs: the report waits for it.
     expect(out.of("backgroundTurn")).toEqual([]);
     expect(replay(session, [agent(COORD, "t1", "ok"), note("turn/completed", { threadId: COORD, turn: { id: "t1", status: "completed" } })]).of("backgroundTurn")).toHaveLength(1);
@@ -398,7 +405,8 @@ it("reports worker session metadata and attributable absolute output without usi
   const accepted = new Out(session.receive(JSON.stringify({ id: turn.id, result: { turn: { id: "worker-turn" } } })));
   expect(accepted.of("subagentRuntime")).toMatchObject([{ id: task, runtime: { reasoningEffort: "high", serviceTier: "priority" } }]);
   const usage = new Out(session.receive(note("thread/tokenUsage/updated", { threadId: "worker-thread", tokenUsage: { total: { inputTokens: 900, outputTokens: 100 } } })));
-  expect(usage.of("subagentOutput")).toEqual([{ kind: "subagentOutput", id: task, counter: "thread:worker-thread", tokens: 100 }]);
+  // The run's own output (one counter per run of the thread).
+  expect(usage.of("subagentOutput")).toEqual([{ kind: "subagentOutput", id: task, counter: "thread:worker-thread:run1", tokens: 100 }]);
   expect(new Out(session.receive(note("thread/tokenUsage/updated", { threadId: COORD, tokenUsage: { total: { outputTokens: 9000 } } }))).of("subagentOutput")).toEqual([]);
   expect(new Out(session.receive(note("thread/tokenUsage/updated", { threadId: "worker-thread", tokenUsage: { total: { outputTokens: true } } }))).of("subagentOutput")).toEqual([]);
 });

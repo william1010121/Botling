@@ -5,6 +5,7 @@ import { maintainerEditorBinding, type ComponentEditorAction, type ComponentEdit
 import { CodexSession, type CodexConfig, type CodexOutput } from "../../src/core/agent/codex";
 import { headArguments, type HeadConfig } from "../../src/core/agent/head";
 import { maintainerProfile } from "../../src/core/maintainer";
+import { NO_REPORT } from "../../src/core/worker-core";
 import { tempDir } from "../helpers";
 
 function binding() {
@@ -218,7 +219,7 @@ describe("Maintainer editor task lifecycle", () => {
     const retry = call(session, "app_send_message", { task_id: task, message: "retry" });
     expect(retry.actions).toContainEqual(expect.objectContaining({ kind: "start", config: expect.objectContaining({ resume: false }) }));
     const empty = new Out(session.componentEditorItem(task, 2, { ...done, text: " " }));
-    expect(empty.items).toContainEqual(expect.objectContaining({ kind: "subagentEnded", status: "failed", summary: expect.stringContaining("without an evidence report") }));
+    expect(empty.items).toContainEqual(expect.objectContaining({ kind: "subagentEnded", status: "failed", summary: NO_REPORT }));
     expect(session.componentEditorFailed(task, 2, "exit after result")).toEqual([]);
   });
 });
@@ -238,13 +239,13 @@ describe('component-editor restart reconciliation',()=>{
   expect(out.all).toContainEqual({kind:'recoverEditor',task:b.task,run:1,session:b.action.config.sessionId,checkpoint:'read-checkpoint'});
   expect(out.actions).toEqual([]);return s;
  }
- it('resumes the same Claude child/task/run with the original role and permissions, only after reconciliation',()=>{
+ it('resumes the same Claude child/task with the original role and permissions, only after reconciliation (its next run)',()=>{
   const b=checkpoint();expect(b.records[0].restartSafe).toBe(true);const s=reboot(b);
   const out=new Out(s.recoverEditor(b.task,1,{state:'continue'})),a=out.actions[0];
-  expect(a).toMatchObject({kind:'start',task:b.task,run:1,config:{...b.action.config,resume:true}});
+  expect(a).toMatchObject({kind:'start',task:b.task,run:2,config:{...b.action.config,resume:true}});
   if(a.kind!=='start')throw Error('not a start');
   expect(a.text).toContain('authorized edit');expect(a.text).toContain('Do not repeat completed actions');
-  expect(s.workerRecords[0]).toMatchObject({id:b.task,run:1,thread:b.action.config.sessionId,role:'component-editor',instructions:'authorized edit'});
+  expect(s.workerRecords[0]).toMatchObject({id:b.task,run:2,thread:b.action.config.sessionId,role:'component-editor',instructions:'authorized edit'});
  });
  it('uses completion-before-crash evidence without another Claude prompt or duplicate callback',()=>{
   const b=checkpoint(),s=reboot(b),out=new Out(s.recoverEditor(b.task,1,{state:'completed',report:'Already changed and checked'}));

@@ -24,9 +24,11 @@ import { codexAutoRiskConfig } from "./auto-risk-policy";
 //   explicitly owned isolated-worker Git requests automatically, one request at a time.
 // - The head is a coordinator: shell and native subagents are off, and it hands execution to
 //   app-managed workers with the app's dynamic tools (app_handoff, app_send_message,
-//   app_task_checkpoint). Each worker is an independent Codex thread in the same app-server; its
-//   record is kept in codex-threads/<session>.workers.json; when its turn ends, the app starts a
-//   report turn on the coordinator with an `app_task_result` tool output.
+//   app_task_checkpoint). Each worker is an independent Codex thread in the same app-server, run by
+//   the shared worker core (worker-core/: its state, text, end, report and approvals) through
+//   `CodexThreadAdapter`; its record is kept in codex-threads/<session>.workers.json; when its turn
+//   ends, the app starts a report turn on the coordinator with an `app_task_result` tool output
+//   (`CodexSession` is the core's CoordinatorPort).
 // - The reply is the turn's last agent message that is not commentary; commentary is a step.
 // - `interrupt` stops the turn (`turn/interrupt`).
 //
@@ -52,13 +54,17 @@ import { codexLogsFile, codexRetryAt } from "./codex-retry-log";
 import { cliStartError, resolveExecutable } from "../process/executable";
 import { activity, type StreamItem } from "./stream";
 import type { HeadExit, HeadHandlers } from "./head";
-import { movedTaskError, ownedWorkerReport, readWorkerOwner, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult, type WorkerState } from "./workers";
-import { EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
+import { movedTaskError, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./workers";
+import { ComponentEditorAdapter, EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
 import tools from "./codex-tools.json";
 import { RoutineError, ScheduledRoutineStore } from "../routines";
 import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
 import { toSwiftDate } from "../store/records";
 import { codexRateLimits, codexTokens, isEmptyLimits, minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
+import {
+  CodexLegacyStore, INTERRUPTED_REPORT, reportPayload, STOPPED_REPORT, wireStatus, WorkerCore,
+  type CodexJournal, type CoordinatorPort, type HandoffRequest, type RecoverResult, type RunEnd, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord, type WorkerReport,
+} from "../worker-core";
 
 /** What a Codex head gives the bot besides claude's items. */
 export type CodexItem =
@@ -158,14 +164,12 @@ function writableRootsConfig(roots: readonly string[] | undefined): Record<strin
 type Call =
   | { kind: "initialize" | "thread" | "turn" | "interrupt" | "other" }
   | { kind: "coordinatorInstructions"; thread: string }
-  | { kind: "workerInstructions"; task: string }
   | { kind: "steer"; input: Input }
-  | { kind: "workerThread"; task: string }
   | { kind: "restartCoordinatorRead"; turn: string }
   | { kind: "restartWorkerRead"; task: string; turn: string }
-  | { kind: "workerTurn"; task: string; run: number }
-  | { kind: "workerSteer"; task: string; run: number; text: string }
-  | { kind: "monitorCommand"; id: string };
+  | { kind: "monitorCommand"; id: string }
+  /** A worker adapter's own request (CodexWire). */
+  | { kind: "adapter"; reply: (result: any, error: any) => void };
 
 interface Input { text: string; token: string; images?: string[] }
 interface Turn { id: string | null; waitingSteers: Input[]; interruptAsked: boolean; interruptSent: boolean; said: { text: string; phase: string | null }[] }
@@ -174,51 +178,26 @@ interface Approval {
   kind: "command" | "fileChange" | { permissions: Record<string, unknown> };
   thread: string;
   turn: string | null;
-  worker?: { task: string; run: number };
 }
-
-interface Worker {
-  runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
-  id: string; name: string; instructions: string; ownershipInstructions?: string; role?: string; isolatedGit?: IsolatedGitOwnership;
-  thread?: string; turnId: string | null; run: number; active: boolean; loaded: boolean; cancelled: boolean;
-  messages: string[]; said: { text: string; phase: string | null }[]; completedTurns: Set<string>;
-  /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
-  reviewerNext?: string;
-  /** Its thread's tokens so far, and at the start of the run under way (Phase 5c). */
-  tokens?: TokenUsage; tokensAtRunStart?: TokenUsage;
-  editorCost?: number;
-  restartText?: string;
-  editorCheckpoint?: string;
-  editorSessionConfirmed?: boolean;
-  /** Given to another bot: its reports are emitted as `workerReport`, never the coordinator's. */
-  owner?: WorkerOwner;
-}
-
-interface Result {
-  task: string; name: string; thread?: string; turn?: string; run: number; status: string; report: string;
-  reconciliationAttempt: number; reconciled: boolean;
-}
-
-const resultPayload = (result: Result) => ({
-  task_id: result.task, name: result.name, thread_id: result.thread ?? null, turn_id: result.turn ?? null, run: result.run,
-  status: result.status, report: result.report, completion_scope: "worker_turn", objective_status: "unverified",
-  reconciliation_attempt: result.reconciliationAttempt,
-});
 
 /** Codex's coordinator: no shell, no native subagents, no web search (`coordinatorConfig`). */
 const COORDINATOR_CONFIG = { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled" };
 export const MANAGED_TOOLS = tools as Record<string, unknown>[];
+/** The longest hand-off the worker core takes. */
+const MAX_HANDOFF = 64_000;
 /** Changing the tools needs a new coordinator thread (tools are fixed when a thread starts). */
 export const MANAGED_TOOL_SIGNATURE = JSON.stringify(MANAGED_TOOLS);
 // All bot sessions in this app share destination claims. A second session must never adopt
 // another worker's grant just because its branch/worktree names happen to match.
 const isolatedGitOwners = new Map<string, string>();
+/** The subagent type of the Maintainer's component editor. */
+const EDITOR_TYPE = "ccb-core:component-editor";
 
 /** The shell a monitored command runs in (1.x: zsh on macOS). */
 const shell = (command: string): string[] => (process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c", command] : process.platform === "darwin" ? ["/bin/zsh", "-c", command] : ["/bin/sh", "-c", command]);
 
 /** `CodexSession.handbackFallback`: worker evidence kept, fenced so its tags are not the app's. */
-export function handbackFallback(result: Pick<Result, "name" | "task" | "status" | "report">, reason: string): string {
+export function handbackFallback(result: { name: string; task: string; status: string; report: string }, reason: string): string {
   const evidence = `Reason: ${reason}\nWorker: ${result.name}\nTask: ${result.task}\nStatus: ${result.status}\n\n${result.report}`;
   const longest = Math.max(0, ...(evidence.match(/~+/g) ?? []).map((run) => run.length));
   const fence = "~".repeat(Math.max(3, longest + 1));
@@ -238,6 +217,12 @@ const json = (value: unknown): string => {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 };
 
+/** The words a restarted worker's run shows when it adopts the answer its original turn completed with before the restart. */
+const ADOPTED_RUN = "(App: this worker's turn completed before the app restarted; its answer is reported as it was. Nothing was sent to it again.)";
+
+/** A worker core result its sync adapters already have (a promise would mean an adapter that is not: `pending` instead). */
+const syncResult = <T>(value: T | Promise<T>, pending: T): T => (value instanceof Promise ? pending : value);
+
 /** What it ran, without the shell wrapping it when Codex parsed it (`CodexSession.command`). */
 export function codexCommand(item: Record<string, any>): string {
   const actions = (Array.isArray(item.commandActions) ? item.commandActions : []).map((a: any) => a?.command).filter((c: unknown): c is string => typeof c === "string");
@@ -245,7 +230,611 @@ export function codexCommand(item: Record<string, any>): string {
   return typeof item.command === "string" ? item.command : actions.join(" && ");
 }
 
-export class CodexSession {
+/** A Codex tool call starting (a step): what it ran or changed. `changedFiles` keeps a patch's paths for its approval card. */
+export function codexToolStarted(item: any, changedFiles: Map<string, string[]>): { id: string; tool: string; title: string; detail: string; input: Record<string, unknown> } | null {
+  if (!item || typeof item.id !== "string") return null;
+  const id = item.id;
+  switch (item.type) {
+    case "commandExecution": {
+      const command = codexCommand(item);
+      return { id, tool: "Bash", title: activity("Bash", { command }), detail: command, input: { command } };
+    }
+    case "fileChange": {
+      const changes: any[] = Array.isArray(item.changes) ? item.changes : [];
+      const paths = changes.map((change) => change?.path).filter((path): path is string => typeof path === "string");
+      changedFiles.set(id, paths);
+      const adds = changes.length > 0 && changes.every((change) => change?.kind?.type === "add");
+      const tool = adds ? "Write" : "Edit";
+      let title = activity(tool, paths[0] ? { file_path: paths[0] } : {});
+      if (paths.length > 1) title += ` +${paths.length - 1}`;
+      return { id, tool, title, detail: paths.join("\n"), input: {} };
+    }
+    case "mcpToolCall": {
+      const server = String(item.server ?? ""), tool = String(item.tool ?? "");
+      return { id, tool: `mcp__${server}__${tool}`, title: `${server} ${tool}`, detail: json(item.arguments), input: {} };
+    }
+    case "dynamicToolCall": {
+      // The app's own tools show as their own steps (a hand-off as its subagent row).
+      const tool = String(item.tool ?? "tool");
+      if (tool === "app_handoff" || tool === "app_send_message" || tool === "app_task_checkpoint") return null;
+      return { id, tool, title: tool, detail: json(item.arguments), input: {} };
+    }
+    case "webSearch": {
+      const query = String(item.query ?? "");
+      return { id, tool: "WebSearch", title: activity("WebSearch", { query }), detail: query, input: {} };
+    }
+    default:
+      return null;
+  }
+}
+
+/** A Codex tool call done: its result (words it said are not one). */
+export function codexToolCompleted(item: any, changedFiles: Map<string, string[]>): { id: string; output: string; failed: boolean } | null {
+  if (!item || typeof item.id !== "string") return null;
+  const id = item.id;
+  const status = item.status;
+  switch (item.type) {
+    case "commandExecution": {
+      const failed = status !== "completed" || (typeof item.exitCode === "number" && item.exitCode !== 0);
+      return { id, output: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : "", failed };
+    }
+    case "fileChange": {
+      changedFiles.delete(id);
+      const diffs = (Array.isArray(item.changes) ? item.changes : []).map((change: any) => change?.diff).filter((diff: unknown): diff is string => typeof diff === "string");
+      return { id, output: diffs.join("\n"), failed: status !== "completed" };
+    }
+    case "mcpToolCall":
+    case "dynamicToolCall": {
+      if (item.type === "dynamicToolCall" && ["app_handoff", "app_send_message", "app_task_checkpoint"].includes(item.tool)) return null;
+      const output = item.error != null ? json(item.error) : json(item.result ?? item.contentItems);
+      return { id, output, failed: status === "failed" };
+    }
+    case "webSearch":
+      return { id, output: json(item.results), failed: false };
+    default:
+      return null;
+  }
+}
+
+/** Who answers a thread's escalations: Codex's own reviewer in auto mode, else the app ("user"). */
+const reviewerOf = (config: Pick<CodexConfig, "bypassPermissions" | "autoMode">) => (config.bypassPermissions || config.autoMode === false ? "user" : "auto_review");
+
+/** The words a Codex message phase is, for the run's text blocks. */
+const phaseOf = (phase: string | null): "commentary" | "final" | null => (phase === "commentary" ? "commentary" : phase ? "final" : null);
+
+// ---------------------------------------------------------------------------------------------
+// App-managed Codex workers (shared-core spec 4.2). Each is a thread of its coordinator's app-server. The adapter keeps
+// only the protocol: thread/start|resume, turn/start|steer|interrupt, the worker's approvals and auto-accepted isolated
+// Git requests, and the thread's tokens as differences; it turns the thread's notifications into the shared core's
+// WorkerEvents. The worker's state, its text, how its run ended, its report and the approvals table are the core's.
+
+/** What a Codex worker adapter uses of the app-server connection its coordinator owns. */
+export interface CodexWire {
+  /** A JSON-RPC request; `reply` gets its result or error. */
+  request(method: string, params: Record<string, unknown>, reply: (result: any, error: any) => void): void;
+  /** An answer to one of the app-server's requests. */
+  write(value: Record<string, unknown>): void;
+  /** Items a run shows beside its events (its runtime, its execution, the token-flow dispatch). */
+  item(item: CodexItem): void;
+}
+
+export interface CodexWorkerOptions {
+  /** The coordinator's settings, read when used (a hot switch changes them). */
+  config: CodexConfig;
+  wire: CodexWire;
+  /** Codex's reviewer refused one of its calls: the card (CodexSession.reviewed). */
+  reviewed?(params: any, worker: { id: string; name: string }): void;
+  /** A manual override of the reviewer covers this exact retry, once. */
+  allowedRetry?(key: string): boolean;
+  /** Why a follow-up must wait (restart recovery still reads its thread), else null. */
+  recovering?(id: string): string | null;
+  /** Words its turn refused after the run had ended: they start the next run. */
+  followUp?(id: string, text: string): void;
+  /** Every worker's record (an isolated Git destination must be the worker's alone). */
+  records?(): readonly WorkerLedgerRecord[];
+  now?(): number;
+}
+
+interface ThreadWorker {
+  id: string;
+  name: string;
+  /** The run under way (null: none, or it was stopped). */
+  run: RunHandle | null;
+  thread: string | null;
+  turnId: string | null;
+  /** Its thread is open in this app-server (a resumed one is once its instructions are refreshed). */
+  loaded: boolean;
+  completedTurns: Set<string>;
+  said: { text: string; phase: string | null }[];
+  /** Words for the turn under way before its id is known (or refused by a turn that was ending). */
+  messages: string[];
+  /** The words its turn starts with once its thread is ready. */
+  text: string;
+  /** Its thread's token totals last seen (null: not known in this app-server yet). */
+  tokens: TokenUsage | null;
+  /** JSON-RPC calls of its own not answered yet. */
+  calls: number;
+  /** Tool calls without a result yet. */
+  tools: Set<string>;
+  /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
+  reviewerNext?: string;
+  /** Stopped: a turn that starts now is interrupted at once. */
+  cancelled: boolean;
+  isolatedGit?: IsolatedGitOwnership;
+  runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
+  /** Restart: the original turn had completed with these messages (adopted, nothing is sent). */
+  adopt?: { said: { text: string; phase: string | null }[]; turn: string };
+  /** Restart: the run continues the original one (its scope and Git grant stay). */
+  continuing?: boolean;
+}
+
+interface WorkerApproval { worker: ThreadWorker; run: RunHandle; rpcId: unknown; kind: Approval["kind"]; turn: string | null }
+
+const decline = (rpcId: unknown, kind: Approval["kind"]) => ({ jsonrpc: "2.0", id: rpcId, result: typeof kind === "string" ? { decision: "decline" } : { permissions: {} } });
+
+/** Codex's app-managed workers as the shared core's adapter (kind "codex-thread"). */
+export class CodexThreadAdapter implements WorkerAdapter {
+  readonly kind = "codex-thread" as const;
+  readonly engine = "codex" as const;
+  readonly steersRunning = true;
+  /** After an explicit restart a resumed thread must be the very one it was. */
+  strictResume = false;
+  private workers = new Map<string, ThreadWorker>();
+  private approvals = new Map<string, WorkerApproval>();
+  private changedFiles = new Map<string, string[]>();
+  private speed = new CodexRequestTracker();
+  private meter = new TokenFlowMeter();
+
+  constructor(private o: CodexWorkerOptions) {}
+
+  private now() { return this.o.now?.() ?? Date.now(); }
+
+  private worker(record: Readonly<WorkerLedgerRecord>): ThreadWorker {
+    let w = this.workers.get(record.id);
+    if (!w) {
+      w = { id: record.id, name: record.name, run: null, thread: record.conversationId, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, tools: new Set(), cancelled: false };
+      this.workers.set(record.id, w);
+    }
+    w.thread ??= record.conversationId;
+    w.isolatedGit = record.engineData.isolatedGit as IsolatedGitOwnership | undefined;
+    return w;
+  }
+
+  /** The worker whose thread this is. */
+  private ofThread(thread: unknown): ThreadWorker | undefined {
+    return typeof thread === "string" ? [...this.workers.values()].find((w) => w.thread === thread) : undefined;
+  }
+
+  /** A worker's thread asking an app tool (its task and run). */
+  requester(thread: unknown): { id: string; run: number | null } | null {
+    const w = this.ofThread(thread);
+    return w ? { id: w.id, run: w.run?.run ?? null } : null;
+  }
+
+  private execution(w: ThreadWorker, run: RunHandle): SubagentExecution {
+    return { run: run.run, ownerSessionId: this.o.config.ownerSession ?? null, threadId: w.thread, turnId: w.turnId };
+  }
+
+  /** One of its own calls: the reply is dropped once its run is over. */
+  private call(w: ThreadWorker, run: RunHandle, method: string, params: Record<string, unknown>, reply: (result: any, error: any) => void) {
+    w.calls += 1;
+    this.o.wire.request(method, params, (result, error) => {
+      w.calls -= 1;
+      if (w.run === run && !w.cancelled) reply(result, error);
+    });
+  }
+
+  private fail(w: ThreadWorker, run: RunHandle, error: string) {
+    w.run = null;
+    this.drop(w, () => true, false);
+    run.emit({ type: "end", end: { how: "error", finalText: null, error, detail: "app-server" } });
+  }
+
+  prepare(request: HandoffRequest) {
+    const isolatedGit = request.args.isolatedGit;
+    return { engineData: isolatedGit ? { isolatedGit } : {} };
+  }
+
+  runtime(record: Readonly<WorkerLedgerRecord>) {
+    return { reasoningEffort: this.workers.get(record.id)?.runtime?.reasoningEffort ?? this.o.config.workerEffort ?? this.o.config.effort ?? null };
+  }
+
+  start(record: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle) {
+    const w = this.worker(record);
+    Object.assign(w, { run, cancelled: false, turnId: null, said: [], messages: [] });
+    w.tools.clear();
+    this.o.wire.item({ kind: "measurementDispatch", workerId: record.id, run: run.run });
+    if (w.adopt) {
+      // Completed before the app restarted: its answer is the run's, and nothing is sent again.
+      const { said, turn } = w.adopt;
+      delete w.adopt;
+      for (const message of said) run.emit({ type: "textWhole", text: message.text, phase: phaseOf(message.phase) });
+      this.end(w, run, { id: turn, status: "completed" }, said);
+      return;
+    }
+    if (record.engineData.role !== undefined) {
+      run.emit({ type: "end", end: { how: "error", finalText: null, error: "Unknown persisted worker role; no generic worker was substituted.", detail: "role" } });
+      return;
+    }
+    if (w.continuing) delete w.continuing;
+    else if (run.run > 1) {
+      // A follow-up is a task of its own: the hand-off's Git grant does not carry over.
+      w.isolatedGit = undefined;
+      run.setEngineData({ isolatedGit: undefined, ownershipInstructions: words });
+    }
+    if (w.loaded && w.thread) this.startTurn(w, run, words);
+    else { w.text = words; this.openThread(w, run); }
+  }
+
+  private openThread(w: ThreadWorker, run: RunHandle) {
+    const c = this.o.config;
+    const params: Record<string, unknown> = {
+      cwd: c.cwd, approvalPolicy: c.bypassPermissions ? "never" : "on-request", approvalsReviewer: reviewerOf(c), sandbox: c.bypassPermissions ? "danger-full-access" : "workspace-write",
+      developerInstructions: `${c.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate."}\n\n${MONITOR_HANDBACK}`,
+      // The workers write where the coordinator may, as in 1.x (`writable_roots`).
+      config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(c.autoMode, c.bypassPermissions), ...writableRootsConfig(c.writableRoots) },
+    };
+    const model = c.workerModel ?? c.model;
+    if (model) params.model = model;
+    // Fast mode: the priority service tier (`CodexWorkerDefaults.fast`).
+    if (typeof c.workerFast === "boolean") params.serviceTier = c.workerFast ? "priority" : "default";
+    const resumed = !!w.thread;
+    if (resumed) { params.threadId = w.thread; params.excludeTurns = true; }
+    this.call(w, run, resumed ? "thread/resume" : "thread/start", params, (result, error) => this.threadReady(w, run, resumed, result, error));
+  }
+
+  private threadReady(w: ThreadWorker, run: RunHandle, resumed: boolean, result: any, error: any) {
+    const thread = result?.thread?.id;
+    if (error || typeof thread !== "string") return this.fail(w, run, `Could not start worker session: ${message(error)}`);
+    if (this.strictResume && resumed && thread !== w.thread) return this.fail(w, run, "Restart resume returned a different worker thread; no prompt was sent.");
+    w.thread = thread;
+    run.emit({ type: "session", conversationId: thread });
+    if (!resumed) { this.meter.fresh(thread); w.tokens = noTokens(); }
+    else w.tokens = null;
+    w.loaded = !resumed;
+    const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
+    w.runtime = { engine: "codex", reasoningEffort: text(result.reasoningEffort), serviceTier: text(result.serviceTier) };
+    const model = text(result.model);
+    this.o.wire.item({ kind: "subagentRuntime", id: w.id, runtime: w.runtime, ...(model ? { model } : {}) });
+    this.o.wire.item({ kind: "subagentExecution", id: w.id, execution: this.execution(w, run) });
+    if (!resumed) return this.startTurn(w, run, w.text);
+    // Resume alone can leave the rollout's old developer policy in force: the current one is appended.
+    const policy = `${this.o.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate."}\n\n${MONITOR_HANDBACK}`;
+    this.call(w, run, "thread/inject_items", { threadId: thread, items: [{ type: "message", role: "developer", content: [{ type: "input_text", text: policy }] }] }, (_result, refused) => {
+      if (refused) return this.fail(w, run, `Could not refresh worker instructions: ${message(refused)}`);
+      w.loaded = true;
+      this.startTurn(w, run, w.text);
+    });
+  }
+
+  private startTurn(w: ThreadWorker, run: RunHandle, text: string) {
+    if (!w.thread) return;
+    w.turnId = null;
+    w.said = [];
+    const params: Record<string, unknown> = { threadId: w.thread, input: [{ type: "text", text }] };
+    const effort = this.o.config.workerEffort ?? this.o.config.effort;
+    if (effort) params.effort = effort;
+    if (w.reviewerNext) {
+      params.approvalsReviewer = w.reviewerNext;
+      w.reviewerNext = w.reviewerNext === "user" ? "auto_review" : undefined;
+    }
+    this.call(w, run, "turn/start", params, (result, error) => {
+      if (error) return this.fail(w, run, `Could not start worker turn: ${message(error)}`);
+      const id = result?.turn?.id;
+      if (typeof id !== "string") return;
+      // The successful turn/start accepted this explicit override. Otherwise keep thread settings.
+      if (effort) {
+        w.runtime = { engine: "codex", reasoningEffort: effort, serviceTier: w.runtime?.serviceTier ?? null };
+        this.o.wire.item({ kind: "subagentRuntime", id: w.id, runtime: w.runtime });
+      }
+      this.learnTurn(w, run, id);
+    });
+  }
+
+  private learnTurn(w: ThreadWorker, run: RunHandle, id: string) {
+    if (w.turnId || w.completedTurns.has(id)) return;
+    w.turnId = id;
+    if (w.thread) this.meter.begin(w.thread, id);
+    this.o.wire.item({ kind: "subagentExecution", id: w.id, execution: this.execution(w, run) });
+    const messages = w.messages;
+    w.messages = [];
+    for (const text of messages) this.steerCall(w, run, text, id);
+  }
+
+  private steerCall(w: ThreadWorker, run: RunHandle, text: string, turnId: string) {
+    w.calls += 1;
+    this.o.wire.request("turn/steer", { threadId: w.thread ?? "", expectedTurnId: turnId, input: [{ type: "text", text }] }, (_result, error) => {
+      w.calls -= 1;
+      if (!error || w.cancelled) return;
+      // The turn had just ended: the words go into its next turn (this run's), or the next run.
+      if (w.run === run) w.messages.push(text);
+      else if (!w.run) this.o.followUp?.(w.id, text);
+    });
+  }
+
+  steer(record: Readonly<WorkerLedgerRecord>, words: string): boolean {
+    const w = this.workers.get(record.id);
+    if (!w?.run || w.cancelled) return false;
+    w.isolatedGit = undefined;
+    const scope = typeof record.engineData.ownershipInstructions === "string" ? record.engineData.ownershipInstructions : record.instructions;
+    w.run.setEngineData({ isolatedGit: undefined, ownershipInstructions: `${scope}\nFollow-up: ${words}` });
+    if (w.turnId) this.steerCall(w, w.run, words, w.turnId);
+    else w.messages.push(words);
+    return true;
+  }
+
+  /** Ends its run's turn; its open approvals are declined. No end is emitted (the core decided "stopped"). */
+  async stop(record: Readonly<WorkerLedgerRecord>) {
+    const w = this.workers.get(record.id);
+    if (w?.run) this.interrupt(w);
+    return { cleaned: true };
+  }
+
+  private interrupt(w: ThreadWorker) {
+    const turn = w.turnId;
+    if (turn) w.completedTurns.add(turn);
+    w.run = null;
+    w.cancelled = true;
+    w.messages = [];
+    this.drop(w, () => true, true);
+    if (w.thread && turn) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
+  }
+
+  answer(record: Readonly<WorkerLedgerRecord>, nativeId: string, allow: boolean, _input: Record<string, unknown>, why?: string) {
+    const approval = this.approvals.get(nativeId);
+    if (!approval || approval.worker.id !== record.id) return;
+    this.approvals.delete(nativeId);
+    const w = approval.worker;
+    if (w.run !== approval.run || !this.current(w, approval.turn)) return;
+    const result = approval.kind === "command" || approval.kind === "fileChange"
+      ? { decision: allow ? "accept" : "decline" }
+      : allow ? { permissions: approval.kind.permissions, scope: "turn" } : { permissions: {} };
+    this.o.wire.write({ jsonrpc: "2.0", id: approval.rpcId, result });
+    // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
+    if (!allow && why && w.run) {
+      const text = `(App: ${why})`;
+      if (w.turnId) this.steerCall(w, w.run, text, w.turnId);
+      else w.messages.push(text);
+    }
+  }
+
+  recover(record: Readonly<WorkerLedgerRecord>): RecoverResult {
+    // Its turns lived in an app-server that is gone; only a restart's own check of the thread can hold it back.
+    const waiting = this.o.recovering?.(record.id);
+    return waiting ? { state: "blocked", reason: waiting } : { state: "clean" };
+  }
+
+  async close() {
+    for (const w of this.workers.values()) if (w.run) this.interrupt(w);
+  }
+
+  /** The app-server went away: every run under way ends with it, and every thread must be resumed again. */
+  exited(reason: string) {
+    for (const w of this.workers.values()) {
+      w.loaded = false;
+      const run = w.run;
+      if (!run) continue;
+      w.run = null;
+      this.drop(w, () => true, false);
+      run.emit({ type: "end", end: { how: "exited", finalText: null, error: reason, detail: "app-server exited" } });
+    }
+  }
+
+  /** Restart: its next run adopts the original turn's completed answer. */
+  adopt(id: string, said: { text: string; phase: string | null }[], turn: string) {
+    const w = this.workers.get(id) ?? this.blank(id);
+    w.adopt = { said, turn };
+  }
+
+  /** Restart: its next run continues the original one. */
+  continueAfterRestart(id: string) { (this.workers.get(id) ?? this.blank(id)).continuing = true; }
+
+  private blank(id: string): ThreadWorker {
+    const w: ThreadWorker = { id, name: "", run: null, thread: null, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, tools: new Set(), cancelled: false };
+    this.workers.set(id, w);
+    return w;
+  }
+
+  /** After the user allowed a refused call: its next turn asks the app once. */
+  askAppNext(id: string) { const w = this.workers.get(id); if (w) w.reviewerNext = "user"; }
+
+  /** Its turn under way (a restart snapshot). */
+  turnOf(id: string): string | null { return this.workers.get(id)?.turnId ?? null; }
+
+  /** Whether an app restart now could resume it: a known turn and nothing unanswered or half-done. */
+  restartSafe(id: string): boolean {
+    const w = this.workers.get(id);
+    return !!w?.run && !w.cancelled && !!w.turnId && !w.calls && !w.tools.size && !w.messages.length && ![...this.approvals.values()].some((a) => a.worker === w);
+  }
+
+  private current(w: ThreadWorker, turn: string | null): boolean {
+    return !!w.run && !w.cancelled && (!turn || !w.completedTurns.has(turn)) && (!w.turnId || !turn || w.turnId === turn);
+  }
+
+  /** Forgets its approvals that match (declining them to Codex when `deny`); the core cancels their cards. */
+  private drop(w: ThreadWorker, matches: (approval: WorkerApproval) => boolean, deny: boolean, notify = false) {
+    for (const [nativeId, approval] of this.approvals) {
+      if (approval.worker !== w || !matches(approval)) continue;
+      this.approvals.delete(nativeId);
+      if (deny) this.o.wire.write(decline(approval.rpcId, approval.kind));
+      if (notify) approval.run.emit({ type: "permissionCancelled", nativeId });
+    }
+  }
+
+  // From the app-server
+
+  /** One of the app-server's requests on a worker's thread (its approvals). False: not a worker's. */
+  serverRequest(method: string, rpcId: unknown, params: any): boolean {
+    const w = this.ofThread(params.threadId);
+    if (!w) return false;
+    const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
+    switch (method) {
+      case "item/commandExecution/requestApproval": {
+        const turn = typeof params.turnId === "string" ? params.turnId : null;
+        const current = this.current(w, turn);
+        const plain = params.environmentId === "local" && !params.networkApprovalContext && (params.kind === undefined || params.kind === "command") // never stdin to a running process
+          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"));
+        // A manual override covers one retry in its exact thread and working directory.
+        if (current && plain && this.o.allowedRetry?.(JSON.stringify([params.threadId, params.cwd, params.command]))) {
+          this.o.wire.write({ jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } });
+          return true;
+        }
+        const ownership = w.isolatedGit;
+        const exclusive = ownership && !(this.o.records?.() ?? []).some((r) => {
+          const other = r.engineData.isolatedGit as IsolatedGitOwnership | undefined;
+          return r.id !== w.id && !!other && (other.worktree === ownership.worktree || other.branch === ownership.branch);
+        });
+        if (this.o.config.bypassPermissions === true && current && w.turnId && turn === w.turnId && plain
+          && exclusive && isolatedGitOwners.get(ownership.worktree) === w.id && approveIsolatedGit(ownership, this.o.config.cwd, params)) {
+          // One request only: never acceptForSession / execpolicy amendments / wider permissions.
+          this.o.wire.write({ jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } });
+          return true;
+        }
+        let summary = typeof params.command === "string" ? params.command : "";
+        if (reason) summary += (summary ? "\n\n" : "") + reason;
+        this.ask(w, rpcId, "command", params, "Bash", summary);
+        return true;
+      }
+      case "item/fileChange/requestApproval": {
+        const files = typeof params.itemId === "string" ? this.changedFiles.get(params.itemId) ?? [] : [];
+        let summary = files.join("\n");
+        if (typeof params.grantRoot === "string" && params.grantRoot) summary += (summary ? "\n" : "") + params.grantRoot;
+        if (reason) summary += (summary ? "\n\n" : "") + reason;
+        this.ask(w, rpcId, "fileChange", params, "Edit", summary);
+        return true;
+      }
+      case "item/permissions/requestApproval": {
+        const asked = params.permissions && typeof params.permissions === "object" ? params.permissions : {};
+        this.ask(w, rpcId, { permissions: asked }, params, "Permissions", [reason, JSON.stringify(asked, Object.keys(asked).sort())].filter(Boolean).join("\n\n"));
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * An approval card through the core. Its native id is a fresh local identity, never the RPC id: Codex reuses those, and
+   * a stale card must never answer a later request.
+   */
+  private ask(w: ThreadWorker, rpcId: unknown, kind: Approval["kind"], params: any, tool: string, summary: string) {
+    const turn = typeof params.turnId === "string" ? params.turnId : w.turnId;
+    if (!w.run || !this.current(w, turn)) { this.o.wire.write(decline(rpcId, kind)); return; }
+    if ([...this.approvals.values()].some((open) => open.rpcId === rpcId && open.worker === w && open.turn === turn)) return;
+    const nativeId = randomUUID();
+    this.approvals.set(nativeId, { worker: w, run: w.run, rpcId, kind, turn });
+    w.run.emit({ type: "permission", nativeId, tool, summary, input: {} });
+  }
+
+  /** A notification on a worker's thread. False: not a worker's. */
+  receive(method: string, params: any): boolean {
+    const w = this.ofThread(params.threadId);
+    if (!w) return false;
+    const run = w.run;
+    const supplied = params.turnId ?? (method === "turn/started" ? params.turn?.id : null);
+    // Metadata only; routing below remains authoritative.
+    if ((!w.turnId || !supplied || w.turnId === supplied) && (run || method === "thread/tokenUsage/updated")) this.meter.observe(method, params);
+    if (run) for (const { scope: _scope, ...request } of this.speed.observe(w.id, method, params, this.now())) run.emit({ type: "request", request });
+    switch (method) {
+      case "turn/started": {
+        const id = params.turn?.id;
+        if (typeof id !== "string") return true;
+        if (w.cancelled && w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: id }, () => undefined);
+        else if (run) this.learnTurn(w, run, id);
+        return true;
+      }
+      case "item/started":
+      case "item/completed": {
+        const item = params.item;
+        if (!run || !item || typeof item !== "object") return true;
+        if (typeof params.turnId === "string" && w.turnId && params.turnId !== w.turnId) return true;
+        if (method === "item/started") {
+          const step = codexToolStarted(item, this.changedFiles);
+          if (step) { w.tools.add(step.id); run.emit({ type: "toolUse", ...step }); }
+          return true;
+        }
+        if (item.type === "agentMessage") {
+          const text = typeof item.text === "string" ? item.text : "";
+          const phase = typeof item.phase === "string" ? item.phase : null;
+          w.said.push({ text, phase });
+          run.emit({ type: "textWhole", text, phase: phaseOf(phase) });
+          return true;
+        }
+        const result = codexToolCompleted(item, this.changedFiles);
+        if (result) { w.tools.delete(result.id); run.emit({ type: "toolResult", ...result }); }
+        return true;
+      }
+      case "turn/completed":
+        this.turnCompleted(w, params.turn);
+        return true;
+      case "item/autoApprovalReview/completed":
+        this.o.reviewed?.(params, { id: w.id, name: w.name });
+        return true;
+      case "serverRequest/resolved":
+        for (const [nativeId, approval] of this.approvals) {
+          if (approval.rpcId !== params.requestId || approval.worker !== w || (typeof params.turnId === "string" && approval.turn !== params.turnId)) continue;
+          this.approvals.delete(nativeId);
+          approval.run.emit({ type: "permissionCancelled", nativeId });
+        }
+        return true;
+      case "thread/tokenUsage/updated":
+        if (run) this.tokenUsage(w, run, params);
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  /** What the thread used since the last update (the totals' difference; a resumed thread's first update: its last request). */
+  private tokenUsage(w: ThreadWorker, run: RunHandle, params: any) {
+    const total = params.tokenUsage?.total;
+    if (total && typeof total === "object" && Number.isSafeInteger(total.outputTokens) && total.outputTokens >= 0) {
+      const now = codexTokens(total);
+      const last = params.tokenUsage?.last;
+      const used = w.tokens ? minusTokens(now, w.tokens) : last && typeof last === "object" ? codexTokens(last) : noTokens();
+      w.tokens = now;
+      if (totalTokens(used) > 0 && Object.values(used).every((count) => count >= 0)) run.emit({ type: "usage", tokens: used, cost: 0 });
+    }
+    const snapshot = w.thread ? this.meter.snapshot(w.thread) : null;
+    if (snapshot && (!params.turnId || params.turnId === snapshot.turnId)) run.emit({ type: "measurement", provider: "codex", measurement: snapshot });
+  }
+
+  private turnCompleted(w: ThreadWorker, turn: any) {
+    const run = w.run;
+    const id = turn?.id;
+    if (!run || w.cancelled || typeof id !== "string" || w.completedTurns.has(id) || (w.turnId && w.turnId !== id)) return;
+    w.completedTurns.add(id);
+    const measured = w.thread ? this.meter.finish(w.thread, id) : null;
+    if (measured) run.emit({ type: "measurement", provider: "codex", measurement: measured });
+    const gap = this.meter.takeMissing();
+    if (gap) run.emit({ type: "measurement", provider: "codex", measurement: gap });
+    w.turnId = null;
+    if (w.messages.length) {
+      // Words a steer could not put into the turn as it ended: they are this run's, in a turn of their own.
+      this.drop(w, (approval) => !approval.turn || approval.turn === id, false, true);
+      const text = w.messages.join("\n\n");
+      w.messages = [];
+      this.startTurn(w, run, text);
+      return;
+    }
+    this.end(w, run, turn, w.said);
+  }
+
+  /** Its run's end as Codex says it: the last message that is not commentary is its final answer. */
+  private end(w: ThreadWorker, run: RunHandle, turn: { id: string; status?: unknown; error?: any }, said: { text: string; phase: string | null }[]) {
+    w.run = null;
+    this.drop(w, () => true, false);
+    run.setEngineData({ turn: turn.id });
+    const final = said.findLast((s) => s.phase !== "commentary")?.text.trim() || null;
+    const status = typeof turn.status === "string" ? turn.status : "failed";
+    const end: RunEnd = status === "completed" ? { how: "normal", finalText: final, error: null, detail: status }
+      : status === "interrupted" ? { how: "cancelled", finalText: final, error: "Codex interrupted the worker's turn.", detail: status }
+        : { how: "error", finalText: final, error: typeof turn.error?.message === "string" ? turn.error.message : "Worker failed.", detail: status };
+    run.emit({ type: "end", end });
+  }
+}
+
+export class CodexSession implements CoordinatorPort {
   private nextId = 1;
   private calls = new Map<number, Call>();
   threadId: string | null = null;
@@ -266,42 +855,99 @@ export class CodexSession {
   private reviews = new Map<string, { command: string; task: string | null; thread: string; cwd: string }>();
   private finishing = false;
   private stopped = false;
-  private workers = new Map<string, Worker>();
+  /** Workers whose turn under way when the app restarted is being checked (thread/read, the editor's transcript). */
   private restartPending = new Map<string, WorkerRecord>();
   private restartCoordinatorPending = false;
-  private workerTools = new Set<string>();
-  private results: Result[] = [];
-  private active: Result | null = null;
   private toolReplies = new Map<string, { intent: string; response: Record<string, unknown> }>();
   private pending = false;
   private monitors = new Map<string, CommandMonitor>();
   private activeMonitor: string | null = null;
-  private editorApprovals = new Map<string, { task: string; run: number; requestId: string; input: Record<string, unknown> }>();
-  private editorCost = 0;
   /** A model switched to in place: every coordinator turn/start carries it (it holds for later turns too). */
   private turnModel: string | null = null;
+  /**
+   * Its app-managed workers (shared-core spec 3.3): their state, runs, reports and approvals. The Codex threads and the
+   * Maintainer's component editor are its two adapters; codex-threads/<session>.workers.json stays their journal
+   * (CodexLegacyStore over `journal`, which CodexHead saves) until the bot keeps one ledger.
+   */
+  readonly core: WorkerCore;
+  readonly threads: CodexThreadAdapter;
+  readonly editor: ComponentEditorAdapter;
+  private journal: WorkerRecord[];
+  /** What the core, the adapters and the report port said since the last call returned (in order). */
+  private out: CodexOutput[] = [];
+  /** The report turn under way: whose report the coordinator is shown now. */
+  private report: { id: string; run: number } | null = null;
+  /** A coordinator turn is ending: a report waits for next(), which decides what goes first. */
+  private settling = false;
+  /** The task id the next hand-off gets (its receipt is written before the core has made it). */
+  private nextTask: string | null = null;
+  /** The workers' dollars so far: the bot reads a usage item's cost as a running total of its head. */
+  private workerCost = 0;
 
   constructor(readonly config: CodexConfig) {
     for (const record of config.restoredMonitors ?? []) {
       if (config.ownerSession && record.owner.toLowerCase() !== config.ownerSession.toLowerCase()) continue;
       this.monitors.set(record.id, reconcile(record));
     }
-    for (const record of config.restartWorkers ?? config.restoredWorkers) {
-      this.workers.set(record.id, {
-        id: record.id, name: record.name, instructions: record.instructions, ownershipInstructions: record.ownershipInstructions, role: record.role, isolatedGit: record.isolatedGit, editorCheckpoint:record.editorCheckpoint, editorSessionConfirmed:record.editorSessionConfirmed,
-        thread: record.thread, turnId: null, run: record.run, active: false, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set(),
-        ...(readWorkerOwner(record.owner) ? { owner: readWorkerOwner(record.owner) } : {}),
-      });
-      if(config.restartWorkers && record.wasActive && record.restartSafe && record.thread && ((!record.role && record.restartTurn) || (record.role==="component-editor" && record.editorCheckpoint))){
-        this.restartPending.set(record.id,record);
-      } else if(record.reportDispatching){
-        // Delivery is uncertain: never duplicate the coordinator wake.
-      } else if (record.reportPending && record.report !== undefined && record.status) {
-        this.results.push({ task: record.id, name: record.name, thread: record.thread, turn: record.turn, run: record.run, status: record.status, report: record.report, reconciliationAttempt: 0, reconciled: false });
-      } else if (record.wasActive) {
-        this.results.push({ task: record.id, name: record.name, thread: record.thread, run: record.run, status: "interrupted", report: "The app stopped before this worker completed. Send a message to the same task_id to resume its session.", reconciliationAttempt: 0, reconciled: false });
-      }
+    const restored = config.restartWorkers ?? config.restoredWorkers;
+    this.journal = restored.map((record) => ({ ...record }));
+    const journal: CodexJournal = { folder: "", workers: () => this.journal, saveWorkers: (rows) => { this.journal = rows; } };
+    const recovering = (id: string) => (this.restartPending.has(id) ? "Restart recovery is still checking this worker's original turn; try again in a moment." : null);
+    this.threads = new CodexThreadAdapter({
+      config, recovering, records: () => this.core.all(),
+      wire: {
+        request: (method, params, reply) => this.out.push(this.request(method, params, { kind: "adapter", reply })),
+        write: (value) => this.out.push({ kind: "write", value }),
+        item: (item) => this.out.push(this.item(item)),
+      },
+      reviewed: (params, worker) => this.out.push(...this.reviewed(params, worker)),
+      allowedRetry: (key) => this.allowedCommands.delete(key),
+      followUp: (id, text) => { void this.core.sendToWorker(id, text); },
+    });
+    this.threads.strictResume = !!config.restartWorkers;
+    this.editor = new ComponentEditorAdapter({
+      route: () => this.config.componentEditor, recovering,
+      act: (action) => this.out.push({ kind: "componentEditor", action }),
+      item: (item) => this.out.push(this.item(item)),
+      ownerSessionId: () => this.config.ownerSession ?? null,
+    });
+    this.core = new WorkerCore({
+      store: new CodexLegacyStore(journal, config.ownerSession ?? ""), port: this, sink: { item: (item) => this.sink(item) },
+      adapters: [this.threads, this.editor], ownerSessionId: () => this.config.ownerSession ?? "", log: () => undefined,
+      parentThreadId: () => this.threadId,
+      newId: () => { const id = this.nextTask ?? randomUUID().toLowerCase(); this.nextTask = null; return id; },
+    });
+    for (const record of config.restartWorkers ?? []) {
+      if (record.wasActive && record.restartSafe && record.thread && ((!record.role && record.restartTurn) || (record.role === "component-editor" && record.editorCheckpoint)))
+        this.restartPending.set(record.id, record);
     }
+    // A report whose hand-over was under way when the app went away: delivery is uncertain, and the coordinator is never
+    // woken for it twice (it has no reconcile tool), so it counts as handed over.
+    for (const record of this.core.all()) {
+      if (record.report.state !== "dispatching" || record.owner) continue;
+      try { this.core.reconcile({ task_id: record.id, run: record.run, action: "acknowledge" }); } catch { /* not the coordinator's to settle */ }
+    }
+  }
+
+  /** The core's item, as the bot reads it today. */
+  private sink(item: CodexItem) {
+    if (item.kind === "usage") {
+      this.workerCost += item.totalCost;
+      item = { ...item, totalCost: this.workerCost };
+    } else if ((item.kind === "toolUse" && item.parent === null) || item.kind === "subagentStarted") {
+      // A run's opening items name its type by engine; the Maintainer's editor has its own (an editor, not a Claude worker).
+      const editor = this.core.get(item.id)?.adapter === "component-editor";
+      if (item.kind === "toolUse" && editor) item = { ...item, input: { ...item.input, subagent_type: EDITOR_TYPE } };
+      if (item.kind === "subagentStarted") item = { ...item, ...(editor ? { type: EDITOR_TYPE } : {}), execution: { ...item.execution, ownerSessionId: item.execution?.ownerSessionId || null } as SubagentExecution };
+    }
+    this.out.push(this.item(item));
+  }
+
+  /** What the core, the adapters and the port said since the last call, in order. */
+  private take(): CodexOutput[] {
+    const out = this.out;
+    this.out = [];
+    return out;
   }
 
   private get managed() { return this.config.workerInstructions !== null; }
@@ -371,12 +1017,10 @@ export class CodexSession {
   }
 
   answer(requestId: string, allow: boolean, why?: string): CodexOutput[] {
-    const editor = this.editorApprovals.get(requestId);
-    if (editor) {
-      this.editorApprovals.delete(requestId);
-      const worker = this.workers.get(editor.task);
-      if (this.stopped || !worker?.active || worker.cancelled || worker.run !== editor.run) return [this.item({ kind: "permissionCancelled", requestId })];
-      return [{ kind: "componentEditor", action: { kind: "answer", ...editor, allow, message: why } }];
+    // A worker's approval (worker:<task>:<run>:<its own id>): the core's table, then its adapter.
+    if (requestId.startsWith("worker:")) {
+      if (!this.stopped) this.core.answer(requestId, allow, {}, why);
+      return this.take();
     }
     if (requestId.startsWith("monitor:")) return this.approveMonitor(requestId.slice(8), allow);
     if (requestId.startsWith("codex-review:")) return this.answerReview(requestId, allow);
@@ -389,11 +1033,7 @@ export class CodexSession {
       : allow ? { permissions: approval.kind.permissions, scope: "turn" } : { permissions: {} };
     const out: CodexOutput[] = [{ kind: "write", value: { jsonrpc: "2.0", id: approval.rpcId, result } }];
     // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
-    if (!allow && why) {
-      const worker = approval.worker ? this.workers.get(approval.worker.task) : undefined;
-      if (worker) out.push(...this.messageWorker(worker.id, `(App: ${why})`));
-      else if (this.turn?.id) out.push(this.steerCall({ text: `(App: ${why})`, token: randomUUID() }, this.turn.id));
-    }
+    if (!allow && why && this.turn?.id) out.push(this.steerCall({ text: `(App: ${why})`, token: randomUUID() }, this.turn.id));
     return out;
   }
 
@@ -403,14 +1043,20 @@ export class CodexSession {
     return !this.turn && !this.inbox.length && !this.hasManagedWork ? [{ kind: "close" }] : [];
   }
 
-  /** The app stops: workers are cancelled (an interrupt of the coordinator alone leaves them). */
+  /**
+   * The head goes away (the app quits, the bot stops): workers at work are interrupted with it (resumable later, never
+   * replayed); an interrupt of the coordinator alone leaves them.
+   */
   stop(): CodexOutput[] {
     const monitors = this.cancelMonitors();
     this.stopped = true;
     this.allowedCommands.clear();
     this.reviews.clear();
     this.inbox = [];
-    return [...this.cancelWorkers(), ...this.closeApprovals(() => true, true), ...monitors];
+    const out = [...this.restartPending.keys()].map((id) => this.item({ kind: "subagentEnded", id, status: "interrupted", summary: INTERRUPTED_REPORT.quit }));
+    this.restartPending.clear();
+    void this.core.close();
+    return [...out, ...this.take(), ...this.closeApprovals(() => true, true), ...monitors, ...this.pendingChanged()];
   }
 
   // ------------------------------------------------------------------------------------------
@@ -422,30 +1068,29 @@ export class CodexSession {
     if (!value || typeof value !== "object") return [];
     const method = typeof value.method === "string" ? value.method : null;
     const params = value.params && typeof value.params === "object" ? value.params : {};
-    // Metadata only; routing and permission decisions below remain authoritative.
-    if (method && typeof params.threadId === "string") {
-      const worker = [...this.workers.values()].find(w => w.thread === params.threadId && !w.role);
-      const activeTurn = worker ? worker.turnId : this.turn?.id;
+    // Metadata only; routing and permission decisions below remain authoritative. (Workers' threads: their adapter's.)
+    if (method && typeof params.threadId === "string" && params.threadId === this.threadId) {
       const suppliedTurn = params.turnId ?? (method === "turn/started" ? params.turn?.id : null);
-      if ((!activeTurn || !suppliedTurn || activeTurn === suppliedTurn) && ((params.threadId === this.threadId && (this.turn || method === "thread/tokenUsage/updated")) || (worker && (worker.active || method === "thread/tokenUsage/updated")))) this.usageMeter.observe(method, params);
+      if ((!this.turn?.id || !suppliedTurn || this.turn.id === suppliedTurn) && (this.turn || method === "thread/tokenUsage/updated")) this.usageMeter.observe(method, params);
     }
-    if (method && value.id !== undefined) return this.serverRequest(method, value.id, params);
+    if (method && value.id !== undefined) return [...this.serverRequest(method, value.id, params), ...this.take()];
     if (method) {
+      // A worker's thread: its adapter turns it into the core's events.
+      if (this.threads.receive(method, params)) return [...this.take(), ...this.pendingChanged()];
       const out=this.notification(method, params);
       out.push(...this.requests(method, params));
-      if(method === "thread/tokenUsage/updated" && typeof params.threadId === "string") {
-        const worker=[...this.workers.values()].find(w=>w.thread===params.threadId&&!w.role);
+      if(method === "thread/tokenUsage/updated" && params.threadId === this.threadId) {
         const snapshot=this.usageMeter.snapshot(params.threadId);
-        if(snapshot && (!params.turnId || params.turnId===snapshot.turnId)) out.push(this.item({kind:"measurement",measurement:{...snapshot,
-          workerId:worker?.id??null,run:worker?.run??null,parentThreadId:worker?this.threadId:null}}));
+        if(snapshot && (!params.turnId || params.turnId===snapshot.turnId)) out.push(this.item({kind:"measurement",measurement:{...snapshot,workerId:null,run:null,parentThreadId:null}}));
       }
-      return out;
+      return [...out, ...this.take()];
     }
     if (typeof value.id === "number") {
       const call = this.calls.get(value.id);
       if (!call) return [];
       this.calls.delete(value.id);
-      return this.response(call, value.result ?? null, value.error ?? null);
+      const out = this.response(call, value.result ?? null, value.error ?? null);
+      return [...out, ...this.take(), ...(call.kind === "adapter" ? this.pendingChanged() : [])];
     }
     return [];
   }
@@ -471,25 +1116,24 @@ export class CodexSession {
         return this.inbox.length?this.startTurn(this.inbox.shift()!):this.next();
       }
       case "restartWorkerRead": {
-        const worker=this.workers.get(call.task), record=this.restartPending.get(call.task);
+        const record = this.restartPending.get(call.task);
         this.restartPending.delete(call.task);
-        if(!worker || !record || worker.cancelled || this.stopped)return this.pendingChanged();
+        const worker = this.core.get(call.task);
+        if (!worker || !record || worker.status !== "interrupted" || this.stopped) return this.pendingChanged();
         const turns=result?.thread?.turns;
         const turn=Array.isArray(turns)?turns.find((t:any)=>t.id===call.turn):null;
         const unresolvedItems = turn?.status === "interrupted" && (!Array.isArray(turn.items) || turn.items.some((item:any) =>
           !["agentMessage", "reasoning", "plan", "contextCompaction"].includes(item.type)
           && !["completed", "failed", "declined"].includes(item.status)));
-        if(error || result?.thread?.id!==worker.thread || !turn || turns.at(-1)?.id!==call.turn || unresolvedItems || !["completed","interrupted"].includes(turn.status)){
+        if(error || result?.thread?.id!==worker.conversationId || !turn || turns.at(-1)?.id!==call.turn || unresolvedItems || !["completed","interrupted"].includes(turn.status)){
           return [this.item({kind:"subagentEnded",id:worker.id,status:"interrupted",summary:"Restart recovery could not confirm the original worker turn outcome. No task was replayed; reconcile this task and thread."}),...this.pendingChanged()];
         }
-        worker.active=true;worker.turnId=call.turn;
         if(turn.status==="completed"){
-          worker.said=(turn.items??[]).filter((i:any)=>i.type==="agentMessage").map((i:any)=>({text:i.text??"",phase:i.phase??null}));
-          return this.workerLine("turn/completed",{turn},worker);
+          this.threads.adopt(worker.id,(turn.items??[]).filter((i:any)=>i.type==="agentMessage").map((i:any)=>({text:i.text??"",phase:i.phase??null})),call.turn);
+          return [...this.restartRun(worker.id,ADOPTED_RUN),...this.pendingChanged()];
         }
-        worker.restartText=RESTART_NOTE+"\nOriginal assignment (scope remains unchanged):\n"+record.instructions;
-        worker.turnId=null;
-        return [this.item({kind:"subagentStarted",id:worker.id,description:worker.name,type:"codex-worker",prompt:record.instructions,background:true,execution:this.workerExecution(worker)}),...this.startWorkerThread(worker.id),...this.pendingChanged()];
+        this.threads.continueAfterRestart(worker.id);
+        return [...this.restartRun(worker.id,RESTART_NOTE+"\nOriginal assignment (scope remains unchanged):\n"+(record.ownershipInstructions??record.instructions)),...this.pendingChanged()];
       }
       case "initialize":
         if (error) return [{ kind: "failed", message: message(error) }];
@@ -505,15 +1149,6 @@ export class CodexSession {
       case "coordinatorInstructions":
         if (error) return [{ kind: "failed", message: `Could not refresh coordinator instructions: ${message(error)}` }];
         return this.coordinatorReady(call.thread);
-      case "workerInstructions": {
-        if (error) return this.failWorker(call.task, `Could not refresh worker instructions: ${message(error)}`);
-        const worker = this.workers.get(call.task);
-        if (!worker?.active || worker.cancelled || this.stopped) return [];
-        worker.loaded = true;
-        const text=worker.restartText??worker.instructions;
-        delete worker.restartText;
-        return this.startWorkerTurn(call.task, text);
-      }
       case "monitorCommand":
         return this.completeMonitor(call.id, result, error);
       case "turn": {
@@ -522,11 +1157,13 @@ export class CodexSession {
         if (error) {
           // The turn never started: its message gets an error reply, and the next goes.
           this.turn = null;
+          const shown = this.report;
+          const evidence = shown ? this.evidence(shown) : null;
           const text = monitor ? `Monitor callback could not start: ${json(monitorPayload(monitor))}\n${message(error)}`
-            : this.active ? handbackFallback(this.active, message(error)) : message(error);
-          this.active = null;
+            : evidence ? handbackFallback(evidence, message(error)) : message(error);
+          this.report = null;
           this.activeMonitor = null;
-          return [this.result(false, text), ...this.next()];
+          return [this.result(false, text), ...this.settleReport(shown, false), ...this.next()];
         }
         const id = result?.turn?.id;
         return typeof id === "string" ? this.learnTurn(id) : [];
@@ -537,29 +1174,9 @@ export class CodexSession {
         if (!this.turn) return this.startTurn(call.input);
         this.inbox.push(call.input);
         return [];
-      case "workerThread":
-        return this.workerThreadReady(call.task, result, error);
-      case "workerTurn": {
-        const worker = this.workers.get(call.task);
-        if (!worker || worker.run !== call.run || !worker.active || worker.cancelled || this.stopped) return [];
-        if (error) return this.failWorker(call.task, `Could not start worker turn: ${message(error)}`);
-        const id = result?.turn?.id;
-        if (typeof id !== "string") return [];
-        const effort = this.config.workerEffort ?? this.config.effort;
-        // The successful turn/start accepted this explicit override. Otherwise keep thread settings.
-        const metadata: CodexOutput[] = [];
-        if (effort) {
-          worker.runtime = { engine: "codex", reasoningEffort: effort, serviceTier: worker.runtime?.serviceTier ?? null };
-          metadata.push(this.item({ kind: "subagentRuntime", id: call.task, runtime: worker.runtime }));
-        }
-        return [...metadata, ...this.learnWorkerTurn(call.task, id)];
-      }
-      case "workerSteer": {
-        const worker = this.workers.get(call.task);
-        if (!error || !worker || worker.run !== call.run || worker.cancelled || this.stopped) return [];
-        if (worker.active) { worker.messages.push(call.text); return []; }
-        return this.messageWorker(call.task, call.text);
-      }
+      case "adapter":
+        call.reply(result, error);
+        return [];
       default:
         return [];
     }
@@ -572,11 +1189,9 @@ export class CodexSession {
       const limits = codexRateLimits(params.rateLimits);
       return isEmptyLimits(limits) ? [] : [this.item({ kind: "rateLimits", engine: "codex", limits })];
     }
+    // Another thread that is not one of its workers' (they went to their adapter): not this coordinator's.
     const thread = typeof params.threadId === "string" ? params.threadId : null;
-    if (thread && this.threadId && thread !== this.threadId) {
-      const worker = [...this.workers.values()].find((w) => !w.role && w.thread === thread);
-      return worker ? this.workerLine(method, params, worker) : [];
-    }
+    if (thread && this.threadId && thread !== this.threadId) return [];
     switch (method) {
       case "item/autoApprovalReview/completed":
         return this.reviewed(params, null);
@@ -585,8 +1200,8 @@ export class CodexSession {
         return typeof id === "string" ? this.learnTurn(id) : [];
       }
       case "item/started": {
-        const step = this.started(params.item);
-        return step ? [this.item(step)] : [];
+        const step = codexToolStarted(params.item, this.changedFiles);
+        return step ? [this.item({ kind: "toolUse", ...step, parent: null })] : [];
       }
       case "item/completed":
         return this.completed(params.item).map((item) => this.item(item));
@@ -621,35 +1236,18 @@ export class CodexSession {
 
   private serverRequest(method: string, rpcId: unknown, params: any): CodexOutput[] {
     if (method === "item/tool/call") return this.managedTool(rpcId, params);
+    // A worker's approvals are its adapter's (through the core's table).
+    if (this.threads.serverRequest(method, rpcId, params)) return [];
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
         // A manual override covers one retry in its exact thread and working directory.
         const retryKey = JSON.stringify([params.threadId, params.cwd, params.command]);
-        const retryWorker = [...this.workers.values()].find(w => !w.role && w.thread === params.threadId);
-        const current = this.approvalCurrent({ rpcId, kind: "command", thread: params.threadId, turn: params.turnId ?? null,
-          ...(retryWorker ? { worker: { task: retryWorker.id, run: retryWorker.run } } : {}) });
+        const current = this.approvalCurrent({ rpcId, kind: "command", thread: params.threadId, turn: params.turnId ?? null });
         if (current && params.environmentId === "local" && !params.networkApprovalContext
           && (params.kind === undefined || params.kind === "command")
           && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
           && this.allowedCommands.delete(retryKey)) {
-          return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
-        }
-        // Keep the automatic path independent of manual-card correlation: lifecycle handling
-        // owns local permission.requestId; this immediate RPC answer preserves rpcId's type.
-        const workerThread = typeof params.threadId === "string" ? params.threadId : null;
-        const worker = workerThread && workerThread !== this.threadId ? [...this.workers.values()].find((w) => !w.role && w.thread === workerThread) : undefined;
-        const ownership = worker?.isolatedGit;
-        const exclusive = ownership && ![...this.workers.values()].some((w) => w !== worker && w.isolatedGit
-          && (w.isolatedGit.worktree === ownership.worktree || w.isolatedGit.branch === ownership.branch));
-        if (this.config.bypassPermissions === true && !this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
-          && !worker.completedTurns.has(worker.turnId)
-          && (params.kind === undefined || params.kind === "command") // never stdin to a running process
-          && params.environmentId === "local" && !params.networkApprovalContext
-          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
-          && exclusive && isolatedGitOwners.get(ownership.worktree) === worker.id
-          && approveIsolatedGit(ownership, this.config.cwd, params)) {
-          // One request only: never acceptForSession / execpolicy amendments / wider permissions.
           return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
         }
         let summary = typeof params.command === "string" ? params.command : "";
@@ -677,7 +1275,7 @@ export class CodexSession {
     }
   }
 
-  private get reviewer(): string { return this.config.bypassPermissions || this.config.autoMode === false ? "user" : "auto_review"; }
+  private get reviewer(): string { return reviewerOf(this.config); }
 
   private nextReviewer(params: Record<string, unknown>) {
     if (!this.reviewerNext) return;
@@ -686,7 +1284,7 @@ export class CodexSession {
   }
 
   /** Codex's reviewer refused a call: a card with its reason (1.x `reviewed`). Allow lets it through next time. */
-  private reviewed(params: any, worker: Worker | null): CodexOutput[] {
+  private reviewed(params: any, worker: { id: string; name: string } | null): CodexOutput[] {
     const review = params.review && typeof params.review === "object" ? params.review : {};
     if (review.status === "approved") return [];
     const action = params.action && typeof params.action === "object" ? params.action : {};
@@ -711,20 +1309,13 @@ export class CodexSession {
     this.reviews.delete(requestId);
     if (!allow || this.stopped) return [];
     if (review.command && review.thread && review.cwd) this.allowedCommands.add(JSON.stringify([review.thread, review.cwd, review.command]));
-    const worker = review.task ? this.workers.get(review.task) : undefined;
     // The next turn of the refused call's thread asks the app (which accepts the allowed call), once.
-    if (this.config.autoMode !== false) { if (worker) worker.reviewerNext = "user"; else this.reviewerNext = "user"; }
+    if (this.config.autoMode !== false) { if (review.task) this.threads.askAppNext(review.task); else this.reviewerNext = "user"; }
     return [];
   }
 
   private approvalCurrent(approval: Approval): boolean {
     if (this.stopped) return false;
-    if (approval.worker) {
-      const worker = this.workers.get(approval.worker.task);
-      return !!worker?.active && !worker.cancelled && worker.run === approval.worker.run
-        && (!approval.turn || !worker.completedTurns.has(approval.turn))
-        && worker.thread === approval.thread && (!worker.turnId || !approval.turn || worker.turnId === approval.turn);
-    }
     return approval.thread === this.threadId && !!this.turn
       && (!approval.turn || !this.completedTurns.has(approval.turn))
       && !this.turn.interruptAsked && (!this.turn.id || !approval.turn || this.turn.id === approval.turn);
@@ -732,15 +1323,14 @@ export class CodexSession {
 
   private askApproval(rpcId: unknown, kind: Approval["kind"], params: any, tool: string, summary: string): CodexOutput[] {
     const thread = typeof params.threadId === "string" ? params.threadId : "";
-    const worker = [...this.workers.values()].find((candidate) => !candidate.role && candidate.thread === thread);
-    const turn = typeof params.turnId === "string" ? params.turnId : (worker ? worker.turnId : this.turn?.id ?? null);
-    const approval: Approval = { rpcId, kind, thread, turn, ...(worker ? { worker: { task: worker.id, run: worker.run } } : {}) };
+    const turn = typeof params.turnId === "string" ? params.turnId : this.turn?.id ?? null;
+    const approval: Approval = { rpcId, kind, thread, turn };
     if (!this.approvalCurrent(approval)) return [this.declineApproval(approval)];
     if ([...this.approvals.values()].some((pending) => pending.rpcId === rpcId && pending.thread === thread && pending.turn === turn)) return [];
     // UI decisions use a fresh local identity, never a reusable/string-coerced RPC id.
     const requestId = `codex-approval:${randomUUID()}`;
     this.approvals.set(requestId, approval);
-    return [this.item({ kind: "permission", requestId, tool, summary, input: {}, ...(worker ? { workerId: worker.id } : {}) })];
+    return [this.item({ kind: "permission", requestId, tool, summary, input: {} })];
   }
 
   private declineApproval(approval: Approval): CodexOutput {
@@ -833,7 +1423,7 @@ export class CodexSession {
     const turn = this.turn;
     if (!turn || turn.id || this.completedTurns.has(id)) return [];
     turn.id = id;
-    if (this.threadId) { this.usageMeter.begin(this.threadId, id); if (this.active) this.usageMeter.coordination(this.threadId); }
+    if (this.threadId) { this.usageMeter.begin(this.threadId, id); if (this.report) this.usageMeter.coordination(this.threadId); }
     const out = turn.waitingSteers.map((input) => this.steerCall(input, id));
     turn.waitingSteers = [];
     if (turn.interruptAsked && !turn.interruptSent && this.threadId) {
@@ -850,11 +1440,15 @@ export class CodexSession {
     if (current.id && typeof finished.id === "string" && finished.id !== current.id) return [];
     if (typeof finished.id === "string") this.completedTurns.add(finished.id);
     this.turn = null;
-    const handback = this.active;
-    this.active = null;
+    const handback = this.report;
+    this.report = null;
+    // The report it was shown, and whether the coordinator decided on it in this turn (a checkpoint or a follow-up).
+    const shown = handback ? this.core.get(handback.id) : undefined;
+    const evidence = handback ? this.evidence(handback) : null;
+    const undecided = !!shown && shown.run === handback!.run && shown.report.state === "dispatching";
     const monitor = this.activeMonitor ? this.monitors.get(this.activeMonitor) ?? null : null;
     this.activeMonitor = null;
-    const out: CodexOutput[] = this.closeApprovals((approval) => !approval.worker && approval.thread === this.threadId
+    const out: CodexOutput[] = this.closeApprovals((approval) => approval.thread === this.threadId
       && (!approval.turn || approval.turn === finished.id));
     // What this turn used: the thread's tokens since the last turn ended (`tokensAtTurnStart`).
     const used = minusTokens(this.tokensTotal, this.tokensAtTurnStart);
@@ -869,63 +1463,87 @@ export class CodexSession {
       case "interrupted":
         // Stopped by the app (`interrupt`): an error result the bot does not show.
         out.push(this.result(false, monitor ? `Monitor continuation was interrupted: ${json(monitorPayload(monitor))}`
-          : handback ? handbackFallback(handback, "The summary turn was interrupted.") : current.interruptAsked ? "" : "Codex stopped this turn."));
+          : evidence ? handbackFallback(evidence, "The summary turn was interrupted.") : current.interruptAsked ? "" : "Codex stopped this turn."));
         break;
       case "failed": {
         const reason = typeof finished.error?.message === "string" ? finished.error.message : "Codex failed.";
-        out.push(this.result(false, monitor ? `Monitor continuation failed: ${json(monitorPayload(monitor))}\n${reason}` : handback ? handbackFallback(handback, reason) : reason));
+        out.push(this.result(false, monitor ? `Monitor continuation failed: ${json(monitorPayload(monitor))}\n${reason}` : evidence ? handbackFallback(evidence, reason) : reason));
         break;
       }
       default:
         if (monitor && !reply(current.said)) {
           out.push(this.result(true, `Monitor result: ${json(monitorPayload(monitor))}`));
-        } else if (handback && !final) {
-          out.push(this.result(false, handbackFallback(handback, "The summary ended without a final answer.")));
-        } else if (handback && !handback.reconciled && !this.stopped) {
-          if (handback.reconciliationAttempt === 0) {
+        } else if (evidence && !final) {
+          out.push(this.result(false, handbackFallback(evidence, "The summary ended without a final answer.")));
+        } else if (evidence && undecided && !this.stopped) {
+          if (shown!.report.attempts === 0) {
             // One event-driven decision turn, never a timer or an execution retry. As in 1.x the
             // turn that recorded no decision says nothing; the next one decides.
-            handback.reconciliationAttempt = 1;
-            this.results.unshift(handback);
             out.push(this.item({ kind: "stepText", text: "Worker turn ended; reconciling acceptance and next owner action." }));
             out.push(this.result(true, ""));
           } else {
-            out.push(this.result(false, handbackFallback(handback, "No acceptance checkpoint or next owner action was recorded after one reconciliation. The user objective remains unverified; no automatic retry is scheduled.")));
+            out.push(this.result(false, handbackFallback(evidence, "No acceptance checkpoint or next owner action was recorded after one reconciliation. The user objective remains unverified; no automatic retry is scheduled.")));
           }
         } else {
           out.push(this.result(true, reply(current.said)));
         }
     }
+    if (undecided) out.push(...this.settleReport(handback, finished.status === "completed" && !!final && !this.stopped));
     out.push(...this.next());
     return out;
   }
 
-  /** The next waiting message's turn, a worker's report, or the end once `finish` asked for it. */
-  /** Results of workers another bot owns never reach this coordinator: each goes out as a `workerReport` for the app to route. */
-  private routeOwned(): CodexOutput[] {
-    const out: CodexOutput[] = [];
-    this.results = this.results.filter((result) => {
-      const worker = this.workers.get(result.task);
-      if (!worker?.owner || worker.run !== result.run) return true;
-      out.push(this.item(ownedWorkerReport({ id: result.task, run: result.run, engine: "codex", status: result.status, report: result.report })));
-      return false;
-    });
-    return out;
+  /** What a report turn's fallback keeps of the report it showed. */
+  private evidence(shown: { id: string; run: number }): { name: string; task: string; status: string; report: string } | null {
+    const r = this.core.get(shown.id);
+    return r ? { name: r.name, task: r.id, status: wireStatus(r.report.status ?? "failed"), report: r.report.text ?? "" } : null;
   }
 
-  /** workers.ts `setWorkerOwner`. */
+  /**
+   * A report turn ended with no decision on its report. Completed: shown once more (then unresolved, the core's rule).
+   * Cut short (interrupted, failed, no final answer): its evidence went to the chat instead, and, as the coordinator
+   * has no reconcile tool, the report counts as handed over (never shown twice).
+   */
+  private settleReport(shown: { id: string; run: number } | null, completed: boolean): CodexOutput[] {
+    if (!shown) return [];
+    this.settling = true;
+    try {
+      this.core.finishReport(shown.id, shown.run, completed);
+      if (!completed && this.core.get(shown.id)?.report.state === "dispatching") this.core.reconcile({ task_id: shown.id, run: shown.run, action: "acknowledge" });
+    } catch { /* settled meanwhile */ } finally { this.settling = false; }
+    return this.take();
+  }
+
+  /**
+   * The coordinator end of report delivery (CoordinatorPort, checkpoint policy): a report is shown in an app turn of
+   * its own with the `app_task_result` tool output, when the coordinator is free; else it waits in the core.
+   */
+  readonly ack = "checkpoint" as const;
+  deliver(report: WorkerReport): "taken" | "queued" | "busy" {
+    if (this.settling || this.turn || this.stopped || !this.threadId || this.restartCoordinatorPending || this.inbox.length) return "busy";
+    if (!this.core.beginReport(report.id, report.run)) return "busy";
+    const r = this.core.get(report.id)!;
+    this.report = { id: report.id, run: report.run };
+    this.turn = { id: null, waitingSteers: [], interruptAsked: false, interruptSent: false, said: [] };
+    const payload = reportPayload(report, { name: r.name, threadId: r.conversationId, turnId: typeof r.engineData.turn === "string" ? r.engineData.turn : null, reconciliationAttempt: r.report.attempts });
+    const params: Record<string, unknown> = {
+      threadId: this.threadId, input: [], toolOutput: { name: "app_task_result", namespace: null, output: JSON.stringify(payload, null, 2) }, environments: [],
+    };
+    this.turnSettings(params);
+    this.nextReviewer(params);
+    this.out.push(this.item({ kind: "backgroundTurn", taskId: report.id }), this.request("turn/start", params, { kind: "turn" }));
+    return "queued";
+  }
+
+  /** workers.ts `setWorkerOwner`: a report already waiting for the coordinator goes to the owner (`workerReport`). */
   setWorkerOwner(task: string, owner: WorkerOwner | null): { ok: true; out: CodexOutput[] } | { ok: false; reason: string } {
-    const worker = this.workers.get(task);
-    if (!worker) return { ok: false, reason: "No such worker." };
-    if (owner && this.active?.task === task) return { ok: false, reason: "Its report is being handed to its coordinator right now; try again in a moment." };
-    if (owner) worker.owner = { ...owner };
-    else delete worker.owner;
-    return { ok: true, out: [...this.routeOwned(), ...this.pendingChanged()] };
+    const set = this.core.setWorkerOwner(task, owner);
+    if (!set.ok) return set;
+    return { ok: true, out: [...this.take(), ...this.pendingChanged()] };
   }
 
+  /** The next waiting message's turn, a monitor's wake, a worker's report, or the end once `finish` asked for it. */
   private next(): CodexOutput[] {
-    const routed = this.routeOwned();
-    if (routed.length) return [...routed, ...this.next()];
     if(this.restartCoordinatorPending)return [];
     if (this.turn) return [];
     if (this.inbox.length) return this.startTurn(this.inbox.shift()!);
@@ -941,20 +1559,11 @@ export class CodexSession {
       this.nextReviewer(params);
       return [this.item({ kind: "backgroundTurn", taskId: null }), this.request("turn/start", params, { kind: "turn" }), ...this.pendingChanged()];
     }
-    if (this.results.length && this.threadId && !this.stopped) {
-      const result = this.results.shift()!;
-      this.active = result;
-      this.turn = { id: null, waitingSteers: [], interruptAsked: false, interruptSent: false, said: [] };
-      const params: Record<string, unknown> = {
-        threadId: this.threadId, input: [],
-        toolOutput: { name: "app_task_result", namespace: null, output: JSON.stringify(resultPayload(result), null, 2) },
-        environments: [],
-      };
-      this.turnSettings(params);
-      this.nextReviewer(params);
-      return [this.item({ kind: "backgroundTurn", taskId: result.task }), this.request("turn/start", params, { kind: "turn" }), ...this.pendingChanged()];
-    }
-    return this.finishing && !this.hasManagedWork ? [{ kind: "close" }] : [];
+    // Reports waiting in the core: routed to their owner, or the first shown in a turn of its own (`deliver`).
+    if (this.threadId && !this.stopped) this.core.redeliver();
+    const out = this.take();
+    if (this.turn) return [...out, ...this.pendingChanged()];
+    return this.finishing && !this.hasManagedWork ? [...out, { kind: "close" }] : out;
   }
 
   private steerCall(input: Input, turnId: string): CodexOutput {
@@ -980,20 +1589,8 @@ export class CodexSession {
 
   /** For codex-threads/<session>.workers.json: follow-ups work after the app-server is recreated. */
   get workerRecords(): WorkerRecord[] {
-    return [...this.workers.values()].map((worker) => {
-      const result = this.results.find((r) => r.task === worker.id && r.run === worker.run) ?? (this.active?.task === worker.id && this.active.run === worker.run ? this.active : undefined);
-      const record: WorkerRecord = { id: worker.id, name: worker.name, instructions: worker.instructions, run: worker.run, wasActive: worker.active, reportPending: !!result };
-      if (worker.thread) record.thread = worker.thread;
-      if(this.active?.task===worker.id && this.active.run===worker.run)record.reportDispatching=true;
-      if (result) { record.report = result.report; record.status = result.status; if (result.turn) record.turn = result.turn; }
-      if (worker.ownershipInstructions) record.ownershipInstructions = worker.ownershipInstructions;
-      if (worker.role) record.role = worker.role;
-      if(worker.editorCheckpoint)record.editorCheckpoint=worker.editorCheckpoint;
-      if(worker.editorSessionConfirmed)record.editorSessionConfirmed=true;
-      if (worker.isolatedGit) record.isolatedGit = worker.isolatedGit;
-      if (worker.owner) record.owner = { ...worker.owner };
-      return record;
-    }).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    // A restart snapshot's own keys are not the journal's.
+    return this.journal.map(({ restartSafe: _safe, restartTurn: _turn, ...record }) => record);
   }
 
   get restartTurn(): string | undefined { return this.turn?.id ?? undefined; }
@@ -1005,18 +1602,23 @@ export class CodexSession {
   }
 
   get restartWorkers(): WorkerRecord[] {
-    return this.workerRecords.map(record=>{
-      const worker=this.workers.get(record.id)!;
-      const pendingCall=[...this.calls.values()].some(call=>'task' in call && call.task===worker.id);
-      const approval=[...this.approvals.values()].some(a=>a.worker?.task===worker.id);
-      return {...record,restartTurn:worker.turnId??undefined,restartSafe:((!worker.role && !!worker.turnId) || (worker.role==="component-editor" && worker.editorSessionConfirmed===true && !!worker.editorCheckpoint && ![...this.editorApprovals.values()].some(a=>a.task===worker.id))) && !worker.cancelled
-        && !pendingCall && !approval && ![...this.workerTools].some(id=>id.startsWith(worker.id+':')) && !worker.messages.length && !record.reportDispatching};
+    const records = new Map(this.core.all().map((r) => [r.id, r]));
+    return this.workerRecords.map((record) => {
+      const r = records.get(record.id);
+      const editor = r?.adapter === "component-editor";
+      const safe = r?.status === "running" && (editor ? this.editor.restartSafe(r) : this.threads.restartSafe(r.id));
+      return { ...record, restartTurn: r && !editor ? this.threads.turnOf(r.id) ?? undefined : undefined, restartSafe: !!safe };
     });
   }
 
+  /** Workers at work, reports the coordinator has not been shown, restart checks and monitors: the bot must not sleep. */
   get hasManagedWork(): boolean {
-    return this.restartPending.size > 0 || [...this.workers.values()].some((worker) => worker.active) || this.results.length > 0
-      || [...this.monitors.values()].some((monitor) => monitorActive(monitor) || monitor.wake === "pending");
+    // A report shown in the turn under way keeps the bot awake through that turn (as in 1.x), not as pending work.
+    const workers = this.core.hostedLive.some((id) => {
+      const r = this.core.get(id);
+      return !!r && (r.status === "running" || !!r.cleanup || (!r.owner && r.report.state === "pending"));
+    });
+    return workers || this.restartPending.size > 0 || [...this.monitors.values()].some((monitor) => monitorActive(monitor) || monitor.wake === "pending");
   }
 
   /** For codex-threads/<session>.monitors.json, by id. */
@@ -1131,57 +1733,47 @@ export class CodexSession {
     }
   }
 
-  /** Workers at work now (for the bot's view and tests). */
   /**
    * Execution and queued callbacks in this live runtime, for the completion judge (`completionWorkerDependencies`);
    * persisted flags and cards cannot establish liveness.
    */
   get completionDependencies(): WorkerDependency[] {
     if (this.stopped) return [];
-    // A worker another bot owns is not this coordinator's to wait for (it still keeps the head awake: `hasManagedWork`).
-    const running = [...this.workers.values()].filter((worker) => worker.active && !worker.cancelled && !worker.owner)
-      .map((worker): WorkerDependency => ({ id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions, state: "running", callback: "app_task_result", taskTruncated: false }));
-    const queued = this.results.flatMap((result): WorkerDependency[] => {
-      const worker = this.workers.get(result.task);
-      if (!worker || worker.active || worker.run !== result.run || worker.owner) return [];
-      return [{ id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions, state: "reportQueued", callback: "app_task_result", outcome: result.status, taskTruncated: false }];
+    // The core's (its own workers: runs under way and reports waiting), less the report shown right now.
+    const workers = this.core.completionDependencies.filter((dependency) => {
+      const state = this.core.get(dependency.id)?.report.state;
+      return state !== "dispatching" && state !== "unresolved";
     });
     const commands = [...this.monitors.values()].flatMap((monitor): WorkerDependency[] => {
       if (monitor.state !== "running" && monitor.wake !== "pending") return [];
       return [{ id: monitor.id, run: 1, task: monitor.command, state: monitor.state === "running" ? "running" : "reportQueued", callback: "app_monitor_result",
         ...(monitor.state === "running" ? {} : { outcome: monitor.state }), taskTruncated: false }];
     });
-    return [...running, ...queued, ...commands];
+    return [...workers, ...commands];
   }
 
+  /** Workers at work now (for the bot's view and tests). */
   get runningWorkers(): string[] {
-    return [...this.workers.values()].filter((worker) => worker.active && !worker.cancelled).map((worker) => worker.id);
+    return this.core.running;
   }
 
   /** Its workers, provider-neutral (workers.ts). */
   get workerInfos(): WorkerInfo[] {
-    return [...this.workers.values()].map((worker): WorkerInfo => {
-      const queued = this.results.some((result) => result.task === worker.id && result.run === worker.run) || (this.active?.task === worker.id && this.active.run === worker.run);
-      const state: WorkerState = worker.active && !worker.cancelled ? "running" : worker.cancelled ? "stopped" : queued ? "reportPending" : this.restartPending.has(worker.id) ? "interrupted" : "idle";
-      return { id: worker.id, engine: worker.runtime?.engine ?? (worker.role === "component-editor" ? "claude" : "codex"), name: worker.name, run: worker.run, state, conversationId: worker.thread ?? null, processes: [], owner: worker.owner ? { ...worker.owner } : null };
-    });
+    return this.core.listWorkers();
   }
 
   /** A follow-up for one worker (workers.ts `sendToWorker`): joined into its turn at work, else its next run. */
-  continueWorker(task: string, text: string): { out: CodexOutput[]; how: "steered" | "newRun"; run: number } | null {
-    const worker = this.workers.get(task);
-    if (!worker || this.stopped || !text.trim()) return null;
-    const how = worker.active && !worker.cancelled ? "steered" as const : "newRun" as const;
-    const out = this.messageWorker(task, text);
-    return { out, how, run: worker.run };
+  sendToWorker(task: string, text: string): { result: WorkerSendResult; out: CodexOutput[] } {
+    if (this.stopped) return { result: { ok: false, reason: "No such worker." }, out: [] };
+    const result = syncResult(this.core.sendToWorker(task, text), { ok: false, reason: "This worker is starting or stopping; try again in a moment.", busy: true });
+    return { result, out: [...this.take(), ...this.pendingChanged()] };
   }
 
   private pendingChanged(): CodexOutput[] {
-    const routed = this.routeOwned();
     const pending = this.hasManagedWork;
-    if (pending === this.pending) return routed;
+    if (pending === this.pending) return [];
     this.pending = pending;
-    return [...routed, this.item({ kind: "managedPending", pending })];
+    return [this.item({ kind: "managedPending", pending })];
   }
 
   private managedTool(rpcId: unknown, params: any): CodexOutput[] {
@@ -1192,7 +1784,7 @@ export class CodexSession {
     if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = null; } }
     if (!args || typeof args !== "object") args = {};
     if (tool?.startsWith("app_monitor_") && params.threadId !== this.threadId) {
-      const requester = [...this.workers.values()].find(worker => worker.thread === params.threadId);
+      const requester = this.threads.requester(params.threadId);
       const response = reply(monitorHandback(tool, args, { task_id: requester?.id ?? null, run: requester?.run ?? null, owner_session_id: this.config.ownerSession?.toLowerCase() ?? null,
         requester_thread_id: params.threadId ?? null, requester_turn_id: params.turnId ?? null, cwd: this.config.cwd }), false);
       return [{ kind: "write", value: response }];
@@ -1213,7 +1805,7 @@ export class CodexSession {
       : reply({ error: "RPC identity was reused with different tool intent; nothing was executed." }, false) }];
     const out: CodexOutput[] = [];
     let response: Record<string, unknown>;
-    const owned = (tool === "app_send_message" || tool === "app_task_checkpoint" || tool === "app_cancel_task") && typeof args.task_id === "string" ? this.workers.get(args.task_id)?.owner : undefined;
+    const owned = (tool === "app_send_message" || tool === "app_task_checkpoint" || tool === "app_cancel_task") && typeof args.task_id === "string" ? this.core.get(args.task_id)?.owner : undefined;
     if (owned) {
       response = reply({ error: movedTaskError(owned.name) }, false);
     } else if (tool === "app_routines") {
@@ -1236,46 +1828,43 @@ export class CodexSession {
         this.toolReplies.set(cacheKey, { intent, response: denied });
         return [{ kind: "write", value: denied }];
       }
+      if (args.instructions.length > MAX_HANDOFF) {
+        const refused = reply({ error: `instructions required (maximum ${MAX_HANDOFF} characters).` }, false);
+        this.toolReplies.set(cacheKey, { intent, response: refused });
+        return [{ kind: "write", value: refused }];
+      }
       const task = randomUUID().toLowerCase();
       const name = typeof args.name === "string" && args.name ? args.name : firstLine(args.instructions);
       let isolatedGit = args.role === "component-editor" ? undefined : isolatedGitOwnership(args.isolated_git, this.config.cwd,
-        [...this.workers.values()].flatMap((w) => w.isolatedGit ? [w.isolatedGit] : []));
+        this.core.all().flatMap((r) => r.engineData.isolatedGit ? [r.engineData.isolatedGit as IsolatedGitOwnership] : []));
       if (isolatedGit) {
         if (isolatedGitOwners.has(isolatedGit.worktree)) isolatedGit = undefined;
         else isolatedGitOwners.set(isolatedGit.worktree, task);
       }
       // An invalid/missing grant still launches the task, with the existing approval cards.
       const instructions = isolatedGit ? `${args.instructions}\n\nValidated isolated Git path metadata (not proof of user authorization; only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Permission mode still controls approval; model-supplied implementationAuthorized is not a user grant.` : args.instructions;
-      this.workers.set(task, { id: task, name, instructions, role: args.role, isolatedGit, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
-      out.push(
-        this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", run_in_background: true } }),
-        this.item({kind:"measurementDispatch",workerId:task,run:1}),
-        this.item({ kind: "subagentStarted", id: task, description: name, type: args.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
-        ...this.startWorkerThread(task),
-      );
+      // The core makes the worker and starts its run now (its adapters are synchronous); the receipt goes first.
+      this.nextTask = task;
+      void this.core.handoff(args.role === "component-editor" ? "component-editor" : "codex-thread", { instructions, name, ...(isolatedGit ? { isolatedGit } : {}) }).catch(() => undefined);
+      this.nextTask = null;
+      out.push(...this.take());
       response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
-    } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.workers.has(args.task_id)) {
-      const queued = this.workers.get(args.task_id)!.active;
-      out.push(...this.messageWorker(args.task_id, args.message));
-      const active = this.active;
-      if (active && active.task === args.task_id) active.reconciled = true;
-      response = reply({ task_id: args.task_id, status: queued ? "queued" : "accepted" }, true);
+    } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.core.get(args.task_id)) {
+      // Into its turn at work, else its next run (a report the coordinator was not shown yet is dropped, as before).
+      const { result, out: sent } = this.sendToWorker(args.task_id, args.message);
+      out.push(...sent);
+      response = result.ok ? reply({ task_id: args.task_id, status: result.how === "steered" ? "queued" : "accepted" }, true) : reply({ error: result.reason }, false);
     } else if (tool === "app_task_checkpoint") {
-      const task = typeof args.task_id === "string" ? args.task_id : null;
-      const outcome = typeof args.outcome === "string" ? args.outcome : "";
-      const evidence = typeof args.evidence === "string" ? args.evidence.trim() : "";
-      const dependency = typeof args.dependency_task_id === "string" ? args.dependency_task_id : null;
-      const ok = task && this.active?.task === task && ["complete", "waiting_user", "waiting_dependency", "blocked"].includes(outcome) && evidence
-        && (outcome !== "waiting_dependency" || (dependency !== task && !!dependency && this.workers.get(dependency)?.active === true));
-      if (ok) {
-        this.active!.reconciled = true;
+      // The coordinator's decision on a report it was shown (the core's checks).
+      try {
+        const done = this.core.checkpoint(args);
         out.push(
-          this.item({ kind: "toolUse", id, tool: "app_task_checkpoint", title: `Task checkpoint: ${outcome}`, detail: json(args), parent: null, input: {} }),
-          this.item({ kind: "toolResult", id, output: evidence, failed: false, parent: null, launch: null }),
+          this.item({ kind: "toolUse", id, tool: "app_task_checkpoint", title: `Task checkpoint: ${done.outcome}`, detail: json(args), parent: null, input: {} }),
+          this.item({ kind: "toolResult", id, output: done.evidence.trim(), failed: false, parent: null, launch: null }),
         );
-        response = reply({ task_id: task, outcome, recorded: true }, true);
-      } else {
-        response = reply({ error: "Checkpoint requires the active report task_id, a valid outcome and concrete evidence. A dependency must be another actively running app task; otherwise assign an owner, request exact user input, or report a concrete blocker." }, false);
+        response = reply({ task_id: done.task_id, outcome: done.outcome, recorded: true }, true);
+      } catch (error) {
+        response = reply({ error: (error as Error).message }, false);
       }
     } else {
       response = reply({ error: "Invalid app tool arguments or unknown task_id. Use app_handoff to create a task, then app_send_message with its task_id." }, false);
@@ -1285,173 +1874,46 @@ export class CodexSession {
     return [{ kind: "write", value: response }, ...out, ...this.pendingChanged()];
   }
 
-  private startWorkerThread(task: string): CodexOutput[] {
-    const worker = this.workers.get(task)!;
-    if (worker.role === "component-editor") {
-      const launch = this.config.componentEditor?.launch;
-      if (!launch) return this.failWorker(task, this.config.componentEditor?.error ?? "The existing component-editor definition is unavailable; no generic worker was substituted.");
-      const resume = !!worker.thread;
-      worker.thread ??= randomUUID();
-      return [this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) }),
-        this.item({ kind: "subagentRuntime", id: task, runtime: { engine: "claude", reasoningEffort: launch.effort ?? null, serviceTier: null }, model: launch.model ?? undefined }),
-        { kind: "componentEditor", action: { kind: "start", task, run: worker.run, config: { ...launch, monitorWorker: true, sessionId: worker.thread, resume }, text: worker.restartText ?? worker.instructions } }];
-    }
-    if (worker.role !== undefined) return this.failWorker(task, "Unknown persisted worker role; no generic worker was substituted.");
-    const params: Record<string, unknown> = {
-      cwd: this.config.cwd, approvalPolicy: this.config.bypassPermissions ? "never" : "on-request", approvalsReviewer: this.reviewer, sandbox: this.config.bypassPermissions ? "danger-full-access" : "workspace-write",
-      developerInstructions: `${this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate."}\n\n${MONITOR_HANDBACK}`,
-      config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(this.config.autoMode, this.config.bypassPermissions) },
-    };
-    // The workers write where the coordinator may, as in 1.x (`writable_roots`).
-    params.config = { ...(params.config as Record<string, unknown>), ...writableRootsConfig(this.config.writableRoots) };
-    const model = this.config.workerModel ?? this.config.model;
-    if (model) params.model = model;
-    // Fast mode: the priority service tier (`CodexWorkerDefaults.fast`).
-    if (typeof this.config.workerFast === "boolean") params.serviceTier = this.config.workerFast ? "priority" : "default";
-    if (worker.thread) {
-      params.threadId = worker.thread;
-      params.excludeTurns = true;
-      return [this.request("thread/resume", params, { kind: "workerThread", task })];
-    }
-    return [this.request("thread/start", params, { kind: "workerThread", task })];
-  }
-
-  private clearEditorApprovals(task: string): CodexOutput[] {
-    const out: CodexOutput[] = [];
-    for (const [requestId, approval] of this.editorApprovals) {
-      if (approval.task !== task) continue;
-      this.editorApprovals.delete(requestId);
-      out.push(this.item({ kind: "permissionCancelled", requestId }));
-    }
+  /** A restart check came back: the worker's next run continues (or adopts) its original one. */
+  private restartRun(id: string, words: string): CodexOutput[] {
+    const sent = syncResult(this.core.sendToWorker(id, words), { ok: false, reason: "Restart recovery could not resume this worker." });
+    const out = this.take();
+    if (!sent.ok) out.push(this.item({ kind: "subagentEnded", id, status: "interrupted", summary: `Restart recovery could not resume this worker: ${sent.reason}` }));
     return out;
   }
 
-  recoverEditor(task:string,run:number,outcome:ClaudeRestartOutcome):CodexOutput[] {
-    const worker=this.workers.get(task),record=this.restartPending.get(task);
+  /** CodexHead read the editor's transcript after a restart (`recoverEditor` output). */
+  recoverEditor(task: string, run: number, outcome: ClaudeRestartOutcome): CodexOutput[] {
+    const record = this.restartPending.get(task);
     this.restartPending.delete(task);
-    if(!worker||!record||worker.run!==run||worker.cancelled||this.stopped)return this.pendingChanged();
-    if(outcome.state==='blocked')return [this.item({kind:'subagentEnded',id:task,status:'interrupted',summary:outcome.reason}),...this.pendingChanged()];
-    worker.active=true;
-    if(outcome.state==='completed')return this.componentEditorItem(task,run,{kind:'result',ok:true,text:outcome.report,error:'',subtype:'success'});
-    worker.restartText=RESTART_NOTE+'\nOriginal assignment (unchanged scope):\n'+record.instructions;
-    const out=[this.item({kind:'subagentStarted',id:task,description:worker.name,type:'ccb-core:component-editor',prompt:record.instructions,background:true,execution:this.workerExecution(worker)}),...this.startWorkerThread(task),...this.pendingChanged()];
-    delete worker.restartText;
-    return out;
+    const worker = this.core.get(task);
+    if (!worker || !record || worker.run !== run || worker.status !== "interrupted" || this.stopped) return this.pendingChanged();
+    if (outcome.state === "blocked") return [this.item({ kind: "subagentEnded", id: task, status: "interrupted", summary: outcome.reason }), ...this.pendingChanged()];
+    if (outcome.state === "completed") {
+      this.editor.adopt(task, outcome.report);
+      return [...this.restartRun(task, ADOPTED_RUN), ...this.pendingChanged()];
+    }
+    this.editor.continueAfterRestart(task);
+    return [...this.restartRun(task, `${RESTART_NOTE}\nOriginal assignment (unchanged scope):\n${record.ownershipInstructions ?? record.instructions}`), ...this.pendingChanged()];
   }
 
-  componentEditorStarted(task: string, run: number) {
-    const worker = this.workers.get(task);
-    if (worker?.role === "component-editor" && worker.run === run) worker.editorCost = 0;
+  /** The editor's Claude process started (EditorTransport). */
+  componentEditorStarted(task: string, run: number, pid = 0): CodexOutput[] {
+    this.editor.started(task, run, pid);
+    return this.take();
   }
 
-  /** Claude child's events belong to this task/run, never to the coordinator's reply. */
+  /** The editor's Claude events belong to its task/run, never to the coordinator's reply. */
   componentEditorItem(task: string, run: number, item: StreamItem): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker || worker.role !== "component-editor" || worker.run !== run || worker.cancelled || this.stopped) return [];
-    if (item.kind === "measurement") return [this.item({ ...item, provider: "claude", measurement: {
-      ...item.measurement, workerId: item.measurement.workerId ? `${task}:${item.measurement.workerId}` : task,
-      run, parentThreadId: item.measurement.parentThreadId ?? this.threadId,
-    } })];
-    if (item.kind === "usage") {
-      this.editorCost += Math.max(0, item.totalCost - (worker.editorCost ?? 0));
-      worker.editorCost = Math.max(worker.editorCost ?? 0, item.totalCost);
-      return [this.item({ ...item, totalCost: this.editorCost })];
-    }
-    if (!worker.active) return [];
-    switch (item.kind) {
-      case "init": worker.editorSessionConfirmed=item.sessionId===worker.thread; return [];
-      case "permission": {
-        const requestId = `component-editor:${task}:${run}:${item.requestId}`;
-        this.editorApprovals.set(requestId, { task, run, requestId: item.requestId, input: item.input });
-        return [this.item({ ...item, requestId, workerId: task })];
-      }
-      case "permissionCancelled": {
-        const requestId = `component-editor:${task}:${run}:${item.requestId}`;
-        this.editorApprovals.delete(requestId);
-        return [this.item({ kind: "permissionCancelled", requestId })];
-      }
-      case "toolUse": this.workerTools.add(task+':'+item.id); return [this.item({...item,parent:task,id:`${task}:${item.id}`})];
-      case "toolResult":
-        this.workerTools.delete(task+':'+item.id);
-        worker.editorCheckpoint=item.failed?undefined:item.id;
-        return [this.item({...item,parent:task,id:`${task}:${item.id}`})];
-      case "permissionDenied": return [this.item({ ...item, toolUseId: `${task}:${item.toolUseId}` })];
-      // claude streams a message in chunks that cut words, then sends it whole: one step per message, as in claude-workers.ts.
-      case "delta": return [];
-      case "assistantText": return [this.item({ kind: "subagentText", parent: task, text: item.text })];
-      case "connectionLost": return [this.item({ ...item, parent: task })];
-      case "rateLimits": return [this.item(item)];
-      case "result": {
-        const report = (item.ok ? item.text : item.error || item.text).trim();
-        const status = item.ok && report ? "completed" : "failed";
-        const evidence = report || "Component-editor ended without an evidence report.";
-        worker.active = false;
-        this.results.push({ task, name: worker.name, thread: worker.thread, run, status, report: evidence, reconciliationAttempt: 0, reconciled: false });
-        const out = [...this.clearEditorApprovals(task), this.item({ kind: "subagentEnded", id: task, status, summary: evidence })];
-        if (!this.turn) out.push(...this.next());
-        return [...out, ...this.pendingChanged()];
-      }
-      default: return [];
-    }
+    if (this.stopped) return [];
+    this.editor.item(task, run, item);
+    return [...this.take(), ...this.pendingChanged()];
   }
 
   componentEditorFailed(task: string, run: number, reason: string, fresh = false): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker?.active || worker.role !== "component-editor" || worker.run !== run || worker.cancelled || this.stopped) return [];
-    if (fresh) delete worker.thread;
-    return [...this.clearEditorApprovals(task), ...this.failWorker(task, `Claude component-editor failed: ${reason}`)];
-  }
-
-  private workerExecution(worker: Worker): SubagentExecution {
-    return { run: worker.run, ownerSessionId: this.config.ownerSession ?? null, threadId: worker.thread ?? null, turnId: worker.turnId };
-  }
-
-  private workerThreadReady(task: string, result: any, error: any): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker?.active || worker.cancelled || this.stopped) return [];
-    const thread = result?.thread?.id;
-    if (error || typeof thread !== "string") return this.failWorker(task, `Could not start worker session: ${message(error)}`);
-    if(this.config.restartWorkers && worker.thread && thread!==worker.thread)return this.failWorker(task,"Restart resume returned a different worker thread; no prompt was sent.");
-    const resumed = !!worker.thread;
-    worker.thread = thread;
-    if (!resumed) this.usageMeter.fresh(thread);
-    worker.loaded = !resumed;
-    const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
-    worker.runtime = { engine: "codex", reasoningEffort: text(result.reasoningEffort), serviceTier: text(result.serviceTier) };
-    const model = text(result.model);
-    const metadata = this.item({ kind: "subagentRuntime", id: task, runtime: worker.runtime, ...(model ? { model } : {}) });
-    const execution = this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) });
-    if (resumed) return [metadata, execution, this.refreshInstructions(`${this.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate."}\n\n${MONITOR_HANDBACK}`, thread, { kind: "workerInstructions", task })];
-    return [metadata, execution, ...this.startWorkerTurn(task, worker.instructions)];
-  }
-
-  private startWorkerTurn(task: string, text: string): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker?.thread || worker.cancelled || this.stopped) return [];
-    worker.turnId = null;
-    worker.said = [];
-    const params: Record<string, unknown> = { threadId: worker.thread, input: [{ type: "text", text }] };
-    const effort = this.config.workerEffort ?? this.config.effort;
-    if (effort) params.effort = effort;
-    if (worker.reviewerNext) {
-      params.approvalsReviewer = worker.reviewerNext;
-      worker.reviewerNext = worker.reviewerNext === "user" ? "auto_review" : undefined;
-    }
-    return [this.request("turn/start", params, { kind: "workerTurn", task, run: worker.run })];
-  }
-
-  private learnWorkerTurn(task: string, id: string): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker?.active || worker.turnId || worker.completedTurns.has(id) || worker.cancelled) return [];
-    worker.turnId = id;
-    if (worker.thread) this.usageMeter.begin(worker.thread, id);
-    const messages = worker.messages;
-    worker.messages = [];
-    return [this.item({ kind: "subagentExecution", id: task, execution: this.workerExecution(worker) }), ...messages.map((text) => this.workerSteerCall(worker, text, id))];
-  }
-
-  private workerSteerCall(worker: Worker, text: string, turnId: string): CodexOutput {
-    return this.request("turn/steer", { threadId: worker.thread ?? "", expectedTurnId: turnId, input: [{ type: "text", text }] }, { kind: "workerSteer", task: worker.id, run: worker.run, text });
+    if (this.stopped) return [];
+    this.editor.failed(task, run, reason, fresh);
+    return [...this.take(), ...this.pendingChanged()];
   }
 
   /**
@@ -1459,263 +1921,50 @@ export class CodexSession {
    * (`turn/steer`) like any follow-up. A worker not at work gets nothing: this never starts a new run.
    */
   wrapUpWorker(task: string, text: string): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker?.active || worker.cancelled || this.stopped) return [];
-    return this.messageWorker(task, text);
+    if (this.stopped || !this.core.running.includes(task)) return [];
+    return this.sendToWorker(task, text).out;
   }
 
-  private messageWorker(task: string, text: string): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker || this.stopped) return [];
-    if (worker.role === "component-editor" && !this.config.componentEditor?.launch) {
-      if (!worker.active) {
-        this.results = this.results.filter(result => result.task !== task);
-        worker.run += 1;
-        worker.instructions = text;
-      }
-      worker.active = true;
-      worker.cancelled = false;
-      return [...this.clearEditorApprovals(task), { kind: "componentEditor", action: { kind: "stop", task } } as CodexOutput,
-        ...this.failWorker(task, "Cannot resume component-editor: its existing definition is unavailable. No generic worker was substituted.")];
-    }
-    if (worker.active) {
-      delete worker.isolatedGit;
-      worker.ownershipInstructions = `${worker.ownershipInstructions ?? worker.instructions}\nFollow-up: ${text}`;
-      if (worker.role === "component-editor") { worker.editorCheckpoint=undefined; return [{ kind: "componentEditor", action: { kind: "send", task, run: worker.run, text } }]; }
-      if (worker.turnId) return [this.workerSteerCall(worker, text, worker.turnId)];
-      worker.messages.push(text);
-      return [];
-    }
-    this.results = this.results.filter((result) => result.task !== task);
-    delete worker.isolatedGit;
-    worker.run += 1;
-    worker.active = true;
-    worker.cancelled = false;
-    worker.instructions = text;
-    worker.editorCheckpoint=undefined;
-    delete worker.ownershipInstructions;
-    worker.turnId = null;
-    const out: CodexOutput[] = [this.item({kind:"measurementDispatch",workerId:task,run:worker.run}), this.item({ kind: "subagentStarted", id: task, description: worker.name, type: worker.role === "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: text, background: true, execution: this.workerExecution(worker) })];
-    out.push(...(worker.loaded && !worker.role ? this.startWorkerTurn(task, text) : this.startWorkerThread(task)));
-    out.push(...this.pendingChanged());
-    return out;
-  }
-
+  /** One finished model request per `thread/tokenUsage/updated` of the coordinator's (workers': their adapter's). */
   private speed = new CodexRequestTracker();
-
-  /** One finished model request per `thread/tokenUsage/updated`: the head's (scope null) or a worker's. */
   private requests(method: string, params: any): CodexOutput[] {
-    if (typeof params.threadId !== "string") return [];
-    const worker = [...this.workers.values()].find(w => w.thread === params.threadId && !w.role);
-    const scope = worker ? worker.id : params.threadId === this.threadId ? null : undefined;
-    if (scope === undefined) return [];
-    return this.speed.observe(scope, method, params, Date.now()).map(request => this.item({ kind: "request", request }));
+    if (typeof params.threadId !== "string" || params.threadId !== this.threadId) return [];
+    return this.speed.observe(null, method, params, Date.now()).map(request => this.item({ kind: "request", request }));
   }
 
-  private workerLine(method: string, params: any, worker: Worker): CodexOutput[] {
-    const task = worker.id;
-    switch (method) {
-      case "turn/started": {
-        const id = params.turn?.id;
-        if (typeof id !== "string") return [];
-        if (worker.cancelled || this.stopped) return [this.request("turn/interrupt", { threadId: worker.thread ?? "", turnId: id }, { kind: "interrupt" })];
-        return this.learnWorkerTurn(task, id);
-      }
-      case "item/started":
-      case "item/completed": {
-        const item = params.item;
-        if (!worker.active || worker.cancelled || !item || typeof item !== "object") return [];
-        if (typeof params.turnId === "string" && worker.turnId && params.turnId !== worker.turnId) return [];
-        if (method === "item/started") {
-          const step = this.started(item, task);
-          if(step?.kind === "toolUse")this.workerTools.add(task+':'+item.id);
-          return step ? [this.item(step)] : [];
-        }
-        if (item.type === "agentMessage") {
-          const text = typeof item.text === "string" ? item.text : "";
-          worker.said.push({ text, phase: typeof item.phase === "string" ? item.phase : null });
-          return text ? [this.item({ kind: "subagentText", parent: task, text })] : [];
-        }
-        const completed=this.completed(item, task);
-        if(completed.some(step=>step.kind==="toolResult"))this.workerTools.delete(task+':'+item.id);
-        return completed.map((step) => this.item(step));
-      }
-      case "turn/completed": {
-        const ended = params.turn;
-        const id = ended?.id;
-        if (!worker.active || worker.cancelled || typeof id !== "string" || worker.completedTurns.has(id) || (worker.turnId && worker.turnId !== id)) return [];
-        worker.completedTurns.add(id);
-        const closed = this.closeApprovals((approval) => approval.worker?.task === task && approval.worker.run === worker.run
-          && (!approval.turn || approval.turn === id));
-        const usage = this.workerUsage(worker);
-        worker.turnId = null;
-        let status: string = typeof ended.status === "string" ? ended.status : "failed";
-        const said = worker.said.findLast((s) => s.phase !== "commentary")?.text.trim() ?? "";
-        let report = status === "failed" ? (typeof ended.error?.message === "string" ? ended.error.message : said || "Worker failed.") : said;
-        if (status === "completed" && !said) {
-          status = "failed";
-          report = "Worker turn ended without a final evidence report. Ask the same task_id for the missing result.";
-        }
-        // A rejected steer can have queued a message while the old turn was ending.
-        if (worker.messages.length) {
-          const text = worker.messages.join("\n\n");
-          worker.messages = [];
-          worker.run += 1;
-          worker.instructions = text;
-          return [...closed, ...usage, this.item({kind:"measurementDispatch",workerId:task,run:worker.run,inheritRun:worker.run-1}), this.item({ kind: "subagentStarted", id: task, description: worker.name, type: "codex-worker", prompt: text, background: true,
-            execution: { ...this.workerExecution(worker), turnId: null }, previousRunEnd: { status: status === "completed" ? "completed" : status === "failed" ? "failed" : "stopped", result: report } }), ...this.startWorkerTurn(task, text)];
-        }
-        worker.active = false;
-        this.results.push({ task, name: worker.name, thread: worker.thread, turn: id, run: worker.run, status, report, reconciliationAttempt: 0, reconciled: false });
-        const out: CodexOutput[] = [...closed, ...usage, this.item({ kind: "subagentEnded", id: task, status: status === "interrupted" ? "killed" : status, summary: report })];
-        if (!this.turn) out.push(...this.next());
-        out.push(...this.pendingChanged());
-        return out;
-      }
-      case "item/autoApprovalReview/completed":
-        return this.reviewed(params, worker);
-      case "serverRequest/resolved": {
-        return this.resolveApproval(params);
-      }
-      case "thread/tokenUsage/updated": {
-        if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") worker.tokens = codexTokens(params.tokenUsage.total);
-        const tokens = params.tokenUsage?.total?.outputTokens;
-        return worker.thread && typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0
-          ? [this.item({ kind: "subagentOutput", id: task, counter: `thread:${worker.thread}`, tokens })] : [];
-      }
-      default:
-        return [];
-    }
-  }
-
-  /** What a worker's run used since it started (or since the last count). */
-  private workerUsage(worker: Worker): CodexOutput[] {
-    const now = worker.tokens ?? noTokens();
-    const used = minusTokens(now, worker.tokensAtRunStart ?? noTokens());
-    worker.tokensAtRunStart = now;
-    const measured = worker.thread && worker.turnId ? this.usageMeter.finish(worker.thread, worker.turnId) : null;
-    const gap = this.usageMeter.takeMissing();
-    const out: CodexOutput[] = totalTokens(used) > 0 || measured ? [this.item({ kind: "usage", totalCost: 0, tokens: used,
-      ...(measured ? { measurement: { ...measured, workerId: worker.id, run: worker.run, parentThreadId: this.threadId } } : {}) })] : [];
-    if (gap) out.push(this.item({ kind: "measurement", measurement: { ...gap, workerId: worker.id, run: worker.run, parentThreadId: this.threadId } }));
-    return out;
-  }
-
-  private failWorker(task: string, report: string): CodexOutput[] {
-    const worker = this.workers.get(task);
-    if (!worker?.active) return [];
-    worker.active = false;
-    if (worker.turnId) worker.completedTurns.add(worker.turnId);
-    worker.turnId = null;
-    worker.messages = [];
-    this.results.push({ task, name: worker.name, thread: worker.thread, run: worker.run, status: "failed", report, reconciliationAttempt: 0, reconciled: false });
-    const out: CodexOutput[] = [...this.closeApprovals((approval) => approval.worker?.task === task), this.item({ kind: "subagentEnded", id: task, status: "failed", summary: report })];
-    if (!this.turn) out.push(...this.next());
-    out.push(...this.pendingChanged());
-    return out;
-  }
-
-  /** Stops workers (all, or these): their turns are interrupted and no report is made. */
+  /** Stops workers (all, or these): their turns end and no report is made. A restart check of one is dropped. */
   cancelWorkers(ids?: Set<string>): CodexOutput[] {
     const out: CodexOutput[] = [];
-    if (ids) {
-      this.results = this.results.filter((result) => !ids.has(result.task));
-      if (this.active && ids.has(this.active.task)) this.active = null;
-    } else {
-      this.results = [];
-      this.active = null;
+    for (const id of [...this.restartPending.keys()]) {
+      if (ids && !ids.has(id)) continue;
+      this.restartPending.delete(id);
+      out.push(this.item({ kind: "subagentEnded", id, status: "stopped", summary: STOPPED_REPORT }));
     }
-    for (const worker of this.workers.values()) {
-      if ((!worker.active && !this.restartPending.has(worker.id)) || (ids && !ids.has(worker.id))) continue;
-      this.restartPending.delete(worker.id);
-      worker.active = false;
-      if (worker.turnId) worker.completedTurns.add(worker.turnId);
-      worker.cancelled = true;
-      worker.messages = [];
-      out.push(...this.closeApprovals((approval) => approval.worker?.task === worker.id, true), ...this.clearEditorApprovals(worker.id));
-      if (worker.role === "component-editor") out.push({ kind: "componentEditor", action: { kind: "stop", task: worker.id } });
-      else if (worker.thread && worker.turnId) out.push(this.request("turn/interrupt", { threadId: worker.thread, turnId: worker.turnId }, { kind: "interrupt" }));
-      out.push(this.item({ kind: "subagentEnded", id: worker.id, status: "killed", summary: "Stopped by the app." }));
-    }
-    out.push(...this.pendingChanged());
-    return out;
+    for (const id of this.core.running) if (!ids || ids.has(id)) void this.core.stopWorker(id);
+    return [...out, ...this.take(), ...this.pendingChanged()];
+  }
+
+  /** The app-server went away: its workers' runs end with it (their reports wait for the next head). */
+  exited(reason: string): CodexOutput[] {
+    this.stopped = true;
+    this.threads.exited(reason.trim() || "The Codex app-server ended while this worker was at work.");
+    return this.take();
   }
 
   // ------------------------------------------------------------------------------------------
   // Items
 
-  /** A tool call starting, as a step. */
-  private started(item: any, parent: string | null = null): StreamItem | null {
-    if (!item || typeof item.id !== "string") return null;
-    const id = item.id;
-    switch (item.type) {
-      case "commandExecution": {
-        const command = codexCommand(item);
-        return { kind: "toolUse", id, tool: "Bash", title: activity("Bash", { command }), detail: command, parent, input: { command } };
-      }
-      case "fileChange": {
-        const changes: any[] = Array.isArray(item.changes) ? item.changes : [];
-        const paths = changes.map((change) => change?.path).filter((path): path is string => typeof path === "string");
-        this.changedFiles.set(id, paths);
-        const adds = changes.length > 0 && changes.every((change) => change?.kind?.type === "add");
-        const tool = adds ? "Write" : "Edit";
-        let title = activity(tool, paths[0] ? { file_path: paths[0] } : {});
-        if (paths.length > 1) title += ` +${paths.length - 1}`;
-        return { kind: "toolUse", id, tool, title, detail: paths.join("\n"), parent, input: {} };
-      }
-      case "mcpToolCall": {
-        const server = String(item.server ?? ""), tool = String(item.tool ?? "");
-        return { kind: "toolUse", id, tool: `mcp__${server}__${tool}`, title: `${server} ${tool}`, detail: json(item.arguments), parent, input: {} };
-      }
-      case "dynamicToolCall": {
-        // The app's own tools show as their own steps (a hand-off as its subagent row).
-        const tool = String(item.tool ?? "tool");
-        if (tool === "app_handoff" || tool === "app_send_message" || tool === "app_task_checkpoint") return null;
-        return { kind: "toolUse", id, tool, title: tool, detail: json(item.arguments), parent, input: {} };
-      }
-      case "webSearch": {
-        const query = String(item.query ?? "");
-        return { kind: "toolUse", id, tool: "WebSearch", title: activity("WebSearch", { query }), detail: query, parent, input: {} };
-      }
-      default:
-        return null;
+  /** An item of the coordinator's turn done: words it said (commentary is a step, the final answer the reply), or a tool's result. */
+  private completed(item: any): CodexItem[] {
+    if (item?.type === "agentMessage" && typeof item.id === "string") {
+      const text = typeof item.text === "string" ? item.text : "";
+      const phase = typeof item.phase === "string" ? item.phase : null;
+      this.turn?.said.push({ text, phase });
+      const words = text.trim();
+      return phase === "commentary" && words ? [{ kind: "stepText", text: words }] : [];
     }
-  }
-
-  /** An item done: a tool call's result, or words it said. */
-  private completed(item: any, parent: string | null = null): CodexItem[] {
-    if (!item || typeof item.id !== "string") return [];
-    const id = item.id;
-    const status = item.status;
-    switch (item.type) {
-      case "agentMessage": {
-        const text = typeof item.text === "string" ? item.text : "";
-        const phase = typeof item.phase === "string" ? item.phase : null;
-        this.turn?.said.push({ text, phase });
-        // Words between tool calls are a step; the final answer is the reply.
-        const words = text.trim();
-        return phase === "commentary" && words ? [{ kind: "stepText", text: words }] : [];
-      }
-      case "commandExecution": {
-        const failed = status !== "completed" || (typeof item.exitCode === "number" && item.exitCode !== 0);
-        return [{ kind: "toolResult", id, output: typeof item.aggregatedOutput === "string" ? item.aggregatedOutput : "", failed, parent, launch: null }];
-      }
-      case "fileChange": {
-        this.changedFiles.delete(id);
-        const diffs = (Array.isArray(item.changes) ? item.changes : []).map((change: any) => change?.diff).filter((diff: unknown): diff is string => typeof diff === "string");
-        return [{ kind: "toolResult", id, output: diffs.join("\n"), failed: status !== "completed", parent, launch: null }];
-      }
-      case "mcpToolCall":
-      case "dynamicToolCall": {
-        if (item.type === "dynamicToolCall" && ["app_handoff", "app_send_message", "app_task_checkpoint"].includes(item.tool)) return [];
-        const output = item.error != null ? json(item.error) : json(item.result ?? item.contentItems);
-        return [{ kind: "toolResult", id, output, failed: status === "failed", parent, launch: null }];
-      }
-      case "webSearch":
-        return [{ kind: "toolResult", id, output: json(item.results), failed: false, parent, launch: null }];
-      default:
-        return [];
-    }
+    const result = codexToolCompleted(item, this.changedFiles);
+    return result ? [{ kind: "toolResult", ...result, parent: null, launch: null }] : [];
   }
 }
 
@@ -1849,7 +2098,7 @@ export class CodexHead {
       item: (task, run, item) => this.perform(this.session.componentEditorItem(task, run, item)),
       failed: (task, run, reason, fresh) => this.perform(this.session.componentEditorFailed(task, run, reason, fresh)),
       started: (task, run, pid) => {
-        this.session.componentEditorStarted(task, run);
+        this.perform(this.session.componentEditorStarted(task, run, pid));
         this.config.editorStarted?.(pid);
       },
     }, adapter);
@@ -1909,6 +2158,8 @@ export class CodexHead {
       this.stopEditors();
       this.exitedResolve();
       const why = [this.failure, this.stderrTail.trim(), extra].filter(Boolean).join("\n");
+      // Its workers' turns went with it: their runs end (failed), and their reports wait in the journal for the next head.
+      this.perform(this.session.exited(why));
       this.handlers.onExit({ code: this.failure ? 1 : code, signal, stderr: why, expected: this.expected, silent: !this.printed });
     };
     child.once("error", (error) => report(null, null, cliStartError("codex", this.config.command, error)));
@@ -2119,10 +2370,9 @@ export function codexWorkerHost(session: CodexSession, perform: (out: CodexOutpu
     listWorkers: () => session.workerInfos,
     sendToWorker(id, text) {
       if (!alive()) return { ok: false, reason: "Its Codex head is not running; the worker went with its process." };
-      const sent = session.continueWorker(id, text);
-      if (!sent) return { ok: false, reason: "No such worker." };
-      perform(sent.out);
-      return { ok: true, how: sent.how, run: sent.run };
+      const { result, out } = session.sendToWorker(id, text);
+      perform(out);
+      return result;
     },
     async stopWorker(id) {
       if (!session.runningWorkers.includes(id)) return false;

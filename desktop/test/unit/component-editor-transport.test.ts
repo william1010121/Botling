@@ -149,7 +149,7 @@ it.each(['continue','completed','uncertain'])('restart transport reconciles the 
  if(mode==='continue'){
   expect(processes).toHaveLength(4);const child=processes[3];expect(child.args[child.args.indexOf('--resume')+1]).toBe(session);
   expect(child.writes.find(w=>w.type==='user').message.content).toContain('Original assignment (unchanged scope):\ninitial edit');
-  expect(restored.session.workerRecords[0]).toMatchObject({id:task,run:1,thread:session,role:'component-editor'});
+  expect(restored.session.workerRecords[0]).toMatchObject({id:task,run:2,thread:session,role:'component-editor'}); // the continuation is its next run
  }else{
   expect(processes).toHaveLength(3);expect(events).toContainEqual(expect.objectContaining({kind:'subagentEnded',id:task,status:mode==='completed'?'completed':'interrupted'}));
  }

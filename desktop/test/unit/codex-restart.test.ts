@@ -11,15 +11,15 @@ function boot(records:WorkerRecord[]=[record], options:Partial<CodexConfig>={}){
  const out=answer(setup.find(x=>x.method==='thread/inject_items').id,{});
  return {s,answer,read:writes(out).find(x=>x.method==='thread/read')};
 }
-it('reconciles original child before resume, retaining task/run/owner and research scope',()=>{
+it('reconciles original child before resume, retaining task/owner/thread and research scope (as its next run)',()=>{
  const {s,answer,read}=boot();expect(read.params).toEqual({threadId:'original-worker',includeTurns:true});
  const resumed=answer(read.id,{thread:{id:'original-worker',turns:[{id:'old-turn',status:'interrupted',items:[]}]}});
  const call=writes(resumed).find(x=>x.method==='thread/resume');expect(call.params.threadId).toBe('original-worker');
- expect(items(resumed)).toContainEqual(expect.objectContaining({kind:'subagentStarted',id:'original-task',execution:expect.objectContaining({run:4,ownerSessionId:'original-session',threadId:'original-worker'})}));
+ expect(items(resumed)).toContainEqual(expect.objectContaining({kind:'subagentStarted',id:'original-task',execution:expect.objectContaining({run:5,ownerSessionId:'original-session',threadId:'original-worker'})}));
  const injected=writes(answer(call.id,{thread:{id:'original-worker'}})).find(x=>x.method==='thread/inject_items');
  const started=writes(answer(injected.id,{})).find(x=>x.method==='turn/start');
  expect(started.params.input[0].text).toContain('Research only; no implementation.');
- expect(s.workerRecords[0]).toMatchObject({id:'original-task',thread:'original-worker',run:4,wasActive:true,instructions:'Research only; no implementation.'});
+ expect(s.workerRecords[0]).toMatchObject({id:'original-task',thread:'original-worker',run:5,wasActive:true,instructions:'Research only; no implementation.'});
 });
 it('completion-before-crash delivers the existing result without re-running the worker',()=>{
  const {answer,read}=boot();
@@ -64,5 +64,5 @@ it('unconfirmed coordinator turn is surfaced without a prompt',()=>{
 it('cancellation during provider reconciliation prevents a late worker resume',()=>{
  const {s,answer,read}=boot();s.cancelWorkers(new Set(['original-task']));
  const out=answer(read.id,{thread:{id:'original-worker',turns:[{id:'old-turn',status:'interrupted',items:[]}]}});
- expect(writes(out)).toEqual([]);expect(s.workerRecords[0].wasActive).toBe(false);
+ expect(writes(out)).toEqual([]);expect(s.runningWorkers).toEqual([]);expect(s.workerInfos[0]).toMatchObject({id:'original-task',run:4,state:'interrupted'});
 });
