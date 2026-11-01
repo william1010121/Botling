@@ -15,7 +15,7 @@ import { ShellOverlay, shellPortal } from "./ShellOverlay";
 import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type WaitingItemView, type WaitingView } from "../contract";
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
-import { OwnerMark, useMinuteClock } from "./Rail";
+import { AgentMenuButton, OwnerMark, useMinuteClock } from "./Rail";
 
 type Section = "waiting" | "results" | "settled";
 
@@ -49,6 +49,8 @@ export interface RightPanelProps {
   onOpenResult: (result: ResultView) => void;
   onOpenSubagent: (row: Pick<SubagentRowView, "id" | "subBot">) => void;
   onUnsettle: (row: SubagentRowView) => void;
+  /** A settled row's "⋯" (agentMoves): its agent menu. */
+  onAgentMenu?: (row: SubagentRowView, at: { x: number; y: number }) => void;
   /** Open the bot's settings in the panel (the strip's button also opens the panel). */
   onSettings: () => void;
   /** The bot's settings shown in the overview's place, and their page (1.x's SettingsPage). */
@@ -86,7 +88,7 @@ function OpenPanel(props: RightPanelProps) {
   return <Overview {...props} />;
 }
 
-function Overview({ worktrees, bot, bots, waiting, look, status, results, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask, onSettings }: RightPanelProps) {
+function Overview({ worktrees, bot, bots, waiting, look, status, results, watching, tasks: all, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask, onSettings }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
@@ -132,7 +134,7 @@ function Overview({ worktrees, bot, bots, waiting, look, status, results, watchi
       {settled.length > 0 && (
         <section className="detail-section settled-section">
           <h3>Settled</h3>
-          <SettledList avatar={bot.avatar} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} />
+          <SettledList avatar={bot.avatar} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} onAgentMenu={onAgentMenu} />
         </section>
       )}
     </aside>
@@ -520,7 +522,7 @@ function ResultRow({ result, onOpen, compact = false }: { result: ResultView; on
 }
 
 /** "Settled": the subagents you settled, five then "Show N more"; ↩ brings one back to the left column (1.x's SettledList). */
-function SettledList({ avatar, look, rows, watching, onOpen, onUnsettle }: { avatar: string; look: "original" | "cute"; rows: SubagentRowView[]; watching: string | null; onOpen: (row: SubagentRowView) => void; onUnsettle: (row: SubagentRowView) => void }) {
+function SettledList({ avatar, look, rows, watching, onOpen, onUnsettle, onAgentMenu }: { avatar: string; look: "original" | "cute"; rows: SubagentRowView[]; watching: string | null; onOpen: (row: SubagentRowView) => void; onUnsettle: (row: SubagentRowView) => void; onAgentMenu?: (row: SubagentRowView, at: { x: number; y: number }) => void }) {
   const [all, setAll] = useState(false);
   const more = Math.max(0, rows.length - 5);
   return (
@@ -531,7 +533,9 @@ function SettledList({ avatar, look, rows, watching, onOpen, onUnsettle }: { ava
             <span className="settled-mark"><SubagentMark status={row.status} /></span>
             <OwnerMark head={row.head} avatar={avatar} look={look} />
             <span className={`settled-title${row.status === "running" ? " running" : ""}`}>{row.title || "Subagent"}</span>
+            {row.host && <span className="subagent-kind subagent-host">on {row.host.name}</span>}
           </button>
+          {row.movable && onAgentMenu && <AgentMenuButton row={row} onMenu={(at) => onAgentMenu(row, at)} />}
           <button type="button" className="settled-back" title="Back to the left column" aria-label={`Bring ${row.title} back to the left column`} onClick={() => onUnsettle(row)}>
             <Icon name="uturn" size={11} />
           </button>
@@ -547,7 +551,7 @@ function SettledList({ avatar, look, rows, watching, onOpen, onUnsettle }: { ava
 }
 
 /** The panel folded (1.x's RightStrip): the face, an icon per section with something in it, the bot's settings. */
-function RightStrip({ bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSettings, onExpand }: RightPanelProps) {
+function RightStrip({ bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSettings, onExpand }: RightPanelProps) {
   const [open, setOpen] = useState<Section | null>(null);
   const [tip, setTip] = useState(false);
   const items = panelWaiting(bot, waiting);
@@ -603,7 +607,7 @@ function RightStrip({ bot, bots, waiting, look, status, results, watching, onSel
                     {results.slice(0, 12).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} compact onOpen={(chosen) => { setOpen(null); onOpenResult(chosen); }} />)}
                   </div>
                 )}
-                {section === "settled" && <SettledList avatar={bot.avatar} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} />}
+                {section === "settled" && <SettledList avatar={bot.avatar} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} onAgentMenu={onAgentMenu} />}
               </div>
             </div></ShellOverlay>
           )}

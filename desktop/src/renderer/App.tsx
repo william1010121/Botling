@@ -26,7 +26,7 @@ import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { Worktrees } from "./Worktrees";
 import { Review, type ReviewTarget } from "./Review";
-import { BotMenu, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
+import { AgentMenu, BotMenu, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon } from "./icons";
 import { SpecFrame } from "./SpecFrame";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
@@ -47,6 +47,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [makingBot, setMakingBot] = useState(false);
   const [creating, setCreating] = useState(false);
   const [menu, setMenu] = useState<{ bot: BotView; x: number; y: number } | null>(null);
+  /** A subagent row's "⋯" menu: the bot whose row it is, the row, and where it opens. */
+  const [agentMenu, setAgentMenu] = useState<{ botId: string; row: SubagentRowView; x: number; y: number } | null>(null);
   const [removing, setRemoving] = useState<BotView | null>(null);
   /** The task card pressed open in the right panel (`selectedTask`); pressed again, it closes. */
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
@@ -144,6 +146,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const settleSubagent = useCallback((botId: string, row: SubagentRowView, settled: boolean) => {
     void client.request({ type: "subagent.settle", botId, subagentId: row.id, settled }).catch(fail);
   }, [client, fail]);
+  // "Move to…": it keeps running where it is; its row and reports go to the other bot (the chats say so).
+  const moveSubagent = useCallback((botId: string, row: SubagentRowView, to: AgentMoveTo) => {
+    setAgentMenu(null);
+    setError(null);
+    void client.request({ type: "agent.move", botId, subagentId: row.id, to }).catch(fail);
+  }, [client, fail]);
+  const openAgentMenu = useCallback((botId: string, row: SubagentRowView, at: { x: number; y: number }) => setAgentMenu({ botId, row, ...at }), []);
 
   // "New bot": made, set up (it writes its routines and says hello), and shown.
   const createBot = useCallback((made: { name: string; job: string } | null) => {
@@ -227,7 +236,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                   />
                   <SubagentRows bot={candidate} bots={view.bots} chat={{ botId: chat?.botId ?? null, watching }} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null} shownBot={!watching ? chat?.botId ?? null : null}
                     onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)}
-                    onOpenIn={openSubagent} onSettleIn={(botId, row) => settleSubagent(botId, row, true)} />
+                    onOpenIn={openSubagent} onSettleIn={(botId, row) => settleSubagent(botId, row, true)} onAgentMenu={openAgentMenu} />
                 </div>
               ))}
             </>
@@ -324,6 +333,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           onOpenResult={openResult}
           onOpenSubagent={(row) => openSubagent(bot.id, row)}
           onUnsettle={(row) => settleSubagent(bot.id, row, false)}
+          onAgentMenu={(row, at) => openAgentMenu(bot.id, row, at)}
           onSettings={openBotSettings}
           showingSettings={botSettings}
           settingsPage={botSettings ? <BotSettings client={client} bot={bot} /> : undefined}
@@ -336,6 +346,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         onRemove={() => { setRemoving(menu.bot); setMenu(null); }}
         pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }}
         lang={view.settings?.effectiveLanguage ?? null} onRestart={() => { const target = menu.bot; setMenu(null); setError(null); void client.request({ type: "bot.restart", botId: target.id }).catch(fail); }} />}
+      {agentMenu && <AgentMenu row={agentMenu.row} at={{ x: agentMenu.x, y: agentMenu.y }} onClose={() => setAgentMenu(null)}
+        load={() => client.request({ type: "agent.targets", botId: agentMenu.botId, subagentId: agentMenu.row.id }) as Promise<AgentTargets>}
+        onMove={(to) => moveSubagent(agentMenu.botId, agentMenu.row, to)} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>

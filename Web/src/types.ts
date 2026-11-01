@@ -411,6 +411,8 @@ export interface SubagentHeaderView {
   id: string;
   title: string;
   owner: string;
+  /** The bot whose process runs it, when that is not its owner (an agent moved to another bot). */
+  host?: string | null;
   status: string;
   type: string | null;
   engine?: string | null;

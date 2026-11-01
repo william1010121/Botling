@@ -64,3 +64,23 @@ describe("opening a row", () => {
     expect(markup.indexOf("botling")).toBeLessThan(markup.indexOf("Settings page"));
   });
 });
+
+describe("agents moved in (A1)", () => {
+  const moved: SubagentRowView = { ...plainRow, id: "task-9", title: "Research the API", head: "codex", agentId: "ag-0123456789abcdef01234567", host: { botId: "p1", name: "botling" }, movable: { ok: true, reason: null } };
+  it("a sub bot's moved-in row, nested under it, shows where it runs and its ⋯ menu", () => {
+    const sub2: BotView = { ...sub, subagentRows: [moved] };
+    const opened: string[] = [];
+    const markup = renderToStaticMarkup(createElement(SubagentRows, { bot: parent, bots: [parent, sub2], now: Date.now(), watching: null, onOpen() {}, onSettle() {}, onAgentMenu: (botId: string, row: SubagentRowView) => { opened.push(`${botId}/${row.id}`); } }));
+    expect(markup).toContain('subagent-rows nested" data-bot="s1"');
+    expect(markup).toMatch(/class="subagent-kind subagent-host"[^>]*>on botling</);
+    expect(markup).toContain('aria-label="More for Research the API"');
+    // Only rows that say whether they can move (agentMoves on) get the menu; a row with no host gets no chip.
+    expect(markup).not.toContain('aria-label="More for Fix API"');
+    expect(markup.match(/subagent-host/g)).toHaveLength(1);
+  });
+  it("without a menu handler there is no ⋯", () => {
+    const markup = renderToStaticMarkup(createElement(SubagentRows, { bot: { ...parent, subagentRows: [moved] }, now: Date.now(), watching: null, onOpen() {}, onSettle() {} }));
+    expect(markup).toContain(">on botling<");
+    expect(markup).not.toContain("More for");
+  });
+});

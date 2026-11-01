@@ -4,7 +4,7 @@ import { ShellOverlay } from "./ShellOverlay";
 // with "Show N more", each with its settle button), the New bot form (NewBotForm), and a row's menu
 // with "Remove bot…" (and, in 2.0, "Remove project…") behind a confirmation (1.x's confirmationDialog).
 import { Fragment, useEffect, useState } from "react";
-import { LISTED_AT_MOST, listedRows, type BotView, type SubagentRowView } from "../contract";
+import { LISTED_AT_MOST, listedRows, type AgentTargetView, type BotView, type SubagentRowView } from "../contract";
 import { Icon, SubagentMark } from "./icons";
 import { faceURL, type Look } from "./avatars";
 
@@ -27,7 +27,7 @@ export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" 
   </span>;
 }
 
-export function SubagentRows({ bot, bots, nested = false, chat = null, look = "original", now, watching, shownBot = null, onOpen, onSettle, onOpenIn, onSettleIn }: {
+export function SubagentRows({ bot, bots, nested = false, chat = null, look = "original", now, watching, shownBot = null, onOpen, onSettle, onOpenIn, onSettleIn, onAgentMenu }: {
   bot: BotView;
   /** Every bot: a sub bot's row has that sub bot's own subagents listed under it (project bot > sub bot > subagent). */
   bots?: BotView[];
@@ -45,6 +45,8 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
   shownBot?: string | null;
   onOpen: (row: SubagentRowView) => void;
   onSettle: (row: SubagentRowView) => void;
+  /** A row's "⋯" (agentMoves: the row says whether it can move): opens its menu at the button, for the bot whose row it is. */
+  onAgentMenu?: (botId: string, row: SubagentRowView, at: { x: number; y: number }) => void;
 }) {
   // "Show more" lists every row; per bot, forgotten on restart.
   const [all, setAll] = useState(false);
@@ -65,8 +67,10 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
             <OwnerMark head={row.head} avatar={bot.avatar} look={look} />
             <span className="subagent-title">{row.title || "Subagent"}</span>
             {row.subBot && <span className="subagent-kind">sub bot</span>}
+            {row.host && <span className="subagent-kind subagent-host" title={`It runs on ${row.host.name}; its reports come here`}>on {row.host.name}</span>}
             {row.waitingForNetwork && <span className="subagent-network">網路中斷</span>}
           </button>
+          {!row.subBot && row.movable && onAgentMenu && <AgentMenuButton row={row} onMenu={(at) => onAgentMenu(bot.id, row, at)} />}
           {!row.subBot && <button type="button" className="subagent-settle" onClick={() => onSettle(row)}
             title={row.status === "running" ? "Settle: move to Settled in the right column (it keeps working)" : "Settle: move to Settled in the right column"}
             aria-label={`Settle subagent ${row.title}`}>
@@ -76,7 +80,7 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
         </div>
         {sub && <SubagentRows bot={sub} bots={bots} nested chat={chat} look={look} now={now} watching={chat?.botId === sub.id ? chat.watching : null} shownBot={shownBot}
           onOpen={(child) => (onOpenIn ?? ((_id, r) => onOpen(r)))(sub.id, child)} onSettle={(child) => (onSettleIn ?? ((_id, r) => onSettle(r)))(sub.id, child)}
-          onOpenIn={onOpenIn} onSettleIn={onSettleIn} />}
+          onOpenIn={onOpenIn} onSettleIn={onSettleIn} onAgentMenu={onAgentMenu} />}
         </Fragment>
         );
       })}
@@ -151,3 +155,66 @@ export function RemoveDialog({ bot, onRemove, onCancel }: { bot: BotView; onRemo
   );
 }
 
+
+/** A subagent row's "⋯": its agent menu (only shown when the row says whether it can move, i.e. with agentMoves on). */
+export function AgentMenuButton({ row, onMenu }: { row: SubagentRowView; onMenu: (at: { x: number; y: number }) => void }) {
+  return <button type="button" className="subagent-more-menu" aria-haspopup="menu" aria-label={`More for ${row.title || "Subagent"}`} title="More"
+    onClick={(event) => { const box = event.currentTarget.getBoundingClientRect(); onMenu({ x: box.left, y: box.bottom + 2 }); }}>⋯</button>;
+}
+
+export type AgentTargets = { engine: "claude" | "codex" | "agy"; targets: AgentTargetView[] };
+export type AgentMoveTo = { kind: "bot"; botId: string } | { kind: "newSubBot"; name: string } | { kind: "back" };
+
+/**
+ * A subagent row's menu (modeled on BotMenu): "Move to…" lists where it can go (`agent.targets`), with why not for the
+ * ones it cannot go to, and a name field for a new sub bot. The agent keeps running where it is; only its owner changes
+ * (a Claude subagent's work is handed to a new sub bot instead).
+ */
+export function AgentMenu({ row, at, load, onMove, onClose }: { row: SubagentRowView; at: { x: number; y: number }; load: () => Promise<AgentTargets>; onMove: (to: AgentMoveTo) => void; onClose: () => void }) {
+  const [targets, setTargets] = useState<AgentTargets | null>(null);
+  const [listing, setListing] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  useEffect(() => {
+    const close = (event: Event) => { if (!(event.target instanceof Element && event.target.closest(".agent-menu"))) onClose(); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("pointerdown", close, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("blur", onClose);
+    return () => { window.removeEventListener("pointerdown", close, true); window.removeEventListener("keydown", key); window.removeEventListener("blur", onClose); };
+  }, [onClose]);
+  const open = () => {
+    setListing(true);
+    if (!targets) load().then(setTargets, (error: unknown) => setFailed(error instanceof Error ? error.message : String(error)));
+  };
+  const cannot = row.movable && !row.movable.ok ? row.movable.reason ?? "It cannot be moved now." : null;
+  const fresh = targets?.targets.find((target) => target.kind === "newSubBot");
+  return (
+    <ShellOverlay><div className="bot-menu agent-menu" role="menu" style={{ left: at.x, top: at.y }} aria-label={`${row.title || "Subagent"} menu`}>
+      {!listing && <button type="button" role="menuitem" className="bot-menu-item" disabled={!!cannot} title={cannot ?? "Give it to another bot: it keeps running where it is, and its reports go there"} onClick={open}>Move to…</button>}
+      {!listing && cannot && <div className="agent-menu-reason">{cannot}</div>}
+      {listing && !targets && !failed && <div className="agent-menu-reason">Loading…</div>}
+      {listing && failed && <div className="agent-menu-reason">{failed}</div>}
+      {listing && targets && <>
+        {targets.targets.filter((target) => target.kind !== "newSubBot").map((target) => (
+          <button key={`${target.kind}:${target.botId}`} type="button" role="menuitem" className="bot-menu-item agent-target" disabled={!!target.disabled}
+            title={target.disabled ?? (target.sameFolder ? target.folder : `Runs in ${target.folder}`)} data-target={target.botId ?? ""}
+            onClick={() => onMove(target.kind === "back" ? { kind: "back" } : { kind: "bot", botId: target.botId! })}>
+            {target.kind === "back" ? `Back to ${target.name}` : target.name}
+            {target.disabled ? <span className="agent-target-why"> — {target.disabled}</span> : !target.sameFolder ? <span className="agent-target-why"> — runs in {target.folder}</span> : null}
+          </button>
+        ))}
+        {fresh && <div className="bot-menu-rule" />}
+        {fresh && (!naming
+          ? <button type="button" role="menuitem" className="bot-menu-item" disabled={!!fresh.disabled} title={fresh.disabled ?? (fresh.mode === "handoff" ? "Its work is handed over through handoff.md to a new sub bot" : "A new sub bot owns it; it keeps running where it is")} onClick={() => setNaming(true)}>
+              New sub bot…{fresh.disabled ? <span className="agent-target-why"> — {fresh.disabled}</span> : null}
+            </button>
+          : <form className="agent-menu-name" onSubmit={(event) => { event.preventDefault(); if (name.trim()) onMove({ kind: "newSubBot", name: name.trim() }); }}>
+              <input autoFocus value={name} placeholder="Sub bot name" aria-label="Sub bot name" onChange={(event) => setName(event.target.value)} />
+              <button type="submit" disabled={!name.trim()}>Move</button>
+            </form>)}
+      </>}
+    </div></ShellOverlay>
+  );
+}

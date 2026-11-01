@@ -94,7 +94,7 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
   const fast = tier === "fast" || tier === "priority" ? t("subagent.fastOn")
     : tier === "default" || tier === "flex" ? t("subagent.fastOff")
     : tier === "ultrafast" ? "Ultrafast" : t("subagent.fastUnknown");
-  meta.textContent = [header.model, type === "codex-worker" ? null : type, t("subagent.effort", { effort }), engine === "codex" ? fast : null,
+  meta.textContent = [header.host ? `Host: ${header.host}` : null, header.model, type === "codex-worker" ? null : type, t("subagent.effort", { effort }), engine === "codex" ? fast : null,
     statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
   meta.title = t("subagent.runtimeHelp") + (engine === "codex" && tier ? ` (${tier})` : "");
   bar.append(back, separator, name, badge, meta, subagentSpeedElement(header));
