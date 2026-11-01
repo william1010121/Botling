@@ -74,14 +74,16 @@ it('mounts App with a placeholder, routes state/send through the authenticated p
   // postMessage cannot impersonate the native editor, including messages with a copied origin.
   window.dispatchEvent(new MessageEvent('message',{origin:'botling-chat://chat',source:window,data:{botling:'action',action:{type:'send',text:'forged'}}}));
   expect(commands.filter(cmd=>cmd.type==='chat.send')).toHaveLength(count);
-  const beforeTip=shell.send.mock.calls.length;
+  // A folded face's peek would be drawn under the native chat: it covers the chat while open, then gives it back.
   const face=host.querySelector<HTMLElement>('.strip-bot')!;
   await act(async()=>face.dispatchEvent(new MouseEvent('mouseover',{bubbles:true})));
-  expect(host.querySelector('.rail-tip')).not.toBeNull();
-  expect(shell.send).toHaveBeenCalledTimes(beforeTip);
+  expect(host.querySelector('.strip-peek')).not.toBeNull();
+  expect(shell.send.mock.calls.at(-1)).toMatchObject([EDITOR_CHANNEL.layout,{occluded:true}]);
   await act(async()=>face.dispatchEvent(new MouseEvent('mouseout',{bubbles:true})));
-  expect(host.querySelector('.rail-tip')).toBeNull();
-  expect(shell.send).toHaveBeenCalledTimes(beforeTip);
+  await act(async()=>new Promise(resolve=>setTimeout(resolve,300)));
+  expect(host.querySelector('.strip-peek')).toBeNull();
+  expect(shell.send.mock.calls.at(-1)?.[0]).toBe(EDITOR_CHANNEL.layout);
+  expect(shell.send.mock.calls.at(-1)?.[1]).not.toHaveProperty('occluded');
   await act(async()=>shell.receive({botling:'action',action:{type:'shellCommand',command:'settings'}}));
   expect(host.querySelector('.settings-backdrop')).not.toBeNull();
  }finally{await act(async()=>root.unmount());(globalThis as any).IS_REACT_ACT_ENVIRONMENT=false;}

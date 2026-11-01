@@ -124,8 +124,9 @@ export function subBotsOf(bot: BotView, bots: BotView[], depth = 0): { bot: BotV
 }
 
 /**
- * The folded column's peek at a face that has sub bots: the bot's name (opens it) and its sub bots as the open
+ * The folded column's peek at a face: the bot's name and status (opens it) and its sub bots, if any, as the open
  * column lists them (each opens its chat). It sits beside the face, rendered right after it so Tab reaches it.
+ * RailStrip covers the native chat for it (ShellOverlay), once for all faces.
  */
 export function StripPeek({ bot, subs, detail, look = "original", top, shown, onOpen, onEnter, onLeave, onDismiss }: {
   bot: BotView; subs: ReturnType<typeof subBotsOf>; detail: string; look?: Look;
@@ -153,14 +154,14 @@ export function StripPeek({ bot, subs, detail, look = "original", top, shown, on
     onLeave();
   };
   return (
-    <ShellOverlay><div ref={box} className="strip-peek" role="group" aria-label={`${bot.name} and its sub bots`} style={{ top: y }}
+    <div ref={box} className="strip-peek" role="group" aria-label={subs.length ? `${bot.name} and its sub bots` : bot.name} style={{ top: y }}
       onMouseEnter={onEnter} onMouseLeave={onLeave} onFocus={onEnter} onBlur={blur}
       onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onDismiss(); } }}>
       <button type="button" className="strip-peek-name" onClick={() => onOpen(bot.id)} title={`Open ${bot.name}`}>
         <span className="rail-tip-title">{bot.name}</span>
         {detail && <span className="rail-tip-detail">{detail}</span>}
       </button>
-      <div className="subagent-rows">
+      {subs.length > 0 && <div className="subagent-rows">
         {subs.map(({ bot: sub, depth, owner }) => (
           <div key={sub.id} className={`subagent-row running sub-bot${sub.id === shown ? " selected" : ""}`} style={depth ? { marginLeft: depth * 14 } : undefined}>
             <button type="button" className="subagent-open" data-sub-bot={sub.id} title={sub.job ?? undefined} onClick={() => onOpen(sub.id)}
@@ -172,8 +173,8 @@ export function StripPeek({ bot, subs, detail, look = "original", top, shown, on
             </button>
           </div>
         ))}
-      </div>
-    </div></ShellOverlay>
+      </div>}
+    </div>
   );
 }
 

@@ -130,10 +130,10 @@ describe("sidebar network status (1.x Workspace+Components / RailStrip)", () => 
     expect(button().getAttribute("aria-label")).toContain("網路中斷，重試中…");
     expect(button().querySelector(".strip-disconnected")?.textContent).toBe("!");
     await act(async () => button().dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
-    expect(host.querySelector('[role="tooltip"]')?.textContent).toContain("網路中斷，重試中…");
+    expect(host.querySelector('.strip-peek')?.textContent).toContain("網路中斷，重試中…");
     await act(async () => h.feed({ kind: "delta", text: "Back" }));
     expect(button().querySelector(".strip-disconnected")).toBeNull();
     expect(button().getAttribute("aria-label")).not.toContain("網路中斷");
-    expect(host.querySelector('[role="tooltip"]')?.textContent).not.toContain("網路中斷");
+    expect(host.querySelector('.strip-peek')?.textContent).not.toContain("網路中斷");
   });
 });

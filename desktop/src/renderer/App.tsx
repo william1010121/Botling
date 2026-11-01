@@ -529,8 +529,9 @@ function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 const PEEK_GRACE_MS = 200;
 
 /**
- * The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover (or focus) for name and status,
- * and for a bot with sub bots a peek listing them (StripPeek), each opening its chat.
+ * The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover (or focus) a face for a peek
+ * (StripPeek) with its name and status and, for a bot with sub bots, those sub bots, each opening its chat.
+ * The chat is a native view above the shell, so an open peek covers it as one shell overlay across faces.
  */
 export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, settingsControl }: {
   bots: BotView[]; pinned: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
@@ -569,16 +570,16 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
               <button type="button" ref={(face) => { if (face) faces.current.set(bot.id, face); else faces.current.delete(bot.id); }} className={`strip-bot${bot.id === shown ? " selected" : ""}${asleep ? " asleep" : ""}${bot.working ? " working" : ""}${bot.connection ? " disconnected" : ""}`} data-bot={bot.id}
                 aria-label={[bot.name, ...parts, subs.length ? `${subs.length} sub bot${subs.length === 1 ? "" : "s"}` : null].filter(Boolean).join(", ")}
                 aria-expanded={subs.length ? open : undefined} onClick={() => onSelect(bot.id)}
-                onMouseEnter={(event) => show(event.currentTarget)} onMouseLeave={() => hide(subs.length > 0)}
+                onMouseEnter={(event) => show(event.currentTarget)} onMouseLeave={() => hide(true)}
                 onFocus={(event) => { if (!quiet.current) show(event.currentTarget); }}
-                onBlur={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.parentElement?.contains(event.relatedTarget))) hide(subs.length > 0); }}
+                onBlur={(event) => { if (!(event.relatedTarget instanceof Node && event.currentTarget.parentElement?.contains(event.relatedTarget))) hide(true); }}
                 onKeyDown={(event) => { if (event.key === "Escape" && open) { event.preventDefault(); hide(false); } }}
                 onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
                 <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
                 {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
                 {unread && <span className="strip-unread" aria-hidden="true" />}
               </button>
-              {open && tip && (subs.length ? (
+              {open && tip && (
                 <StripPeek bot={bot} subs={subs} detail={parts.join(" · ")} look={look} top={tip.top} shown={shown}
                   onOpen={(id) => { hide(false); onSelect(id); }} onEnter={keep} onLeave={() => hide(true)}
                   onDismiss={() => {
@@ -587,16 +588,12 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
                     quiet.current = false;
                     hide(false);
                   }} />
-              ) : (
-                <div className="rail-tip" role="tooltip" style={{ top: tip.top + 20 }}>
-                  <div className="rail-tip-title">{bot.name}</div>
-                  <div className="rail-tip-detail">{parts.join(" · ")}</div>
-                </div>
-              ))}
+              )}
             </div>
           );
         })}
       </nav>
+      <ShellOverlay active={tip !== null}>{null}</ShellOverlay>
       <div className="strip-add">
         <button type="button" className="strip-plus" title="Add a project or a bot" aria-label="Add a project or a bot" aria-expanded={adding} onClick={() => setAdding(!adding)}><Icon name="plus" size={13} /></button>
         {adding && (

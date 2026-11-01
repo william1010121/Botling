@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktop, tempDir, swiftLine } from "../helpers";
 import { chatFrame, launch, post } from "./launch";
+import { MESSAGE_WIDTH_MAX } from "../../src/contract/message-width";
 
 const transcript = [swiftLine({ id: "ABCD0000-0000-4000-8000-000000000001", role: "user", text: "Compare the widths using this synthetic conversation." }),
   swiftLine({ id: "ABCD0000-0000-4000-8000-000000000002", role: "bot", text: "A wider message column gives this long reply more room. ".repeat(12) + "\n\n```text\n" + "wide_content_".repeat(80) + "\n```" })];
@@ -113,16 +114,19 @@ test("drag and keyboard bounds, responsive narrow windows, and saved preference 
   const { app, page, chat, dataDir } = await launch({ chat: transcript });
   try {
     await page.setViewportSize({ width: 1900, height: 900 });
+    const frame = await chatFrame(page);
+    // The column grows past the old 1200 px cap and stops only at the chat's own width.
+    const full = await frame.evaluate(() => document.documentElement.clientWidth);
     await drag(page, chat, "right", 400);
-    await aligned(chat, 1200);
-    await expect.poll(() => saved(dataDir)).toBe(1200);
-    await drag(page, chat, "right", -500);
+    await aligned(chat, Math.min(1440, full));
+    await expect.poll(() => saved(dataDir)).toBe(Math.min(1440, full));
+    await drag(page, chat, "right", -700);
     await aligned(chat, 360);
     await expect.poll(() => saved(dataDir)).toBe(360);
     // The left edge also finishes a drag released over the app's left column.
     await drag(page, chat, "left", -600);
-    await aligned(chat, 1200);
-    await expect.poll(() => saved(dataDir)).toBe(1200);
+    await aligned(chat, Math.min(1560, full));
+    await expect.poll(() => saved(dataDir)).toBe(Math.min(1560, full));
     const handle = chat.locator(".message-width-handle.right");
     await handle.focus();
     await page.keyboard.press("Home");
@@ -132,10 +136,9 @@ test("drag and keyboard bounds, responsive narrow windows, and saved preference 
     await aligned(chat, 380);
     await expect.poll(() => saved(dataDir)).toBe(380);
     await page.keyboard.press("End");
-    await aligned(chat, 1200);
-    await expect.poll(() => saved(dataDir)).toBe(1200);
+    await aligned(chat, full);
+    await expect.poll(() => saved(dataDir)).toBe(MESSAGE_WIDTH_MAX);
     await page.setViewportSize({ width: 580, height: 780 });
-    const frame = await chatFrame(page);
     const available = await frame.evaluate(() => document.documentElement.clientWidth);
     expect(available).toBeLessThan(360);
     await aligned(chat, available);
@@ -143,11 +146,11 @@ test("drag and keyboard bounds, responsive narrow windows, and saved preference 
     for (const selector of ["#messages", "#composer-slot", ".row.bot .bot-bubble", ".composer", ".cm-editor"]) {
       expect(await chat.locator(selector).last().evaluate((el) => { const r = el.getBoundingClientRect(); return r.left >= -1 && r.right <= document.documentElement.clientWidth + 1; })).toBe(true);
     }
-    expect(saved(dataDir)).toBe(1200);
+    expect(saved(dataDir)).toBe(MESSAGE_WIDTH_MAX);
     await screenshot(page, "narrow-width-fit");
     await page.setViewportSize({ width: 1900, height: 900 });
-    await aligned(chat, 1200);
-    await screenshot(page, "wide-width-1200");
+    await aligned(chat, full);
+    await screenshot(page, "wide-width-full");
     // A preferred wide column starts an inward drag from its actual constrained width.
     await page.setViewportSize({ width: 1200, height: 900 });
     const constrained = await frame.evaluate(() => document.documentElement.clientWidth);

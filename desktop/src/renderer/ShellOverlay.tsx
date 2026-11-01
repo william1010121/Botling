@@ -1,8 +1,8 @@
 import { useLayoutEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-// Shell surfaces that cover chat share this lifetime contract, including body portals and task
-// timelines. Brief rail/status tips stay outside it to avoid snapshot work and input handoff on hover.
+// Shell surfaces that cover chat share this lifetime contract, including body portals, task
+// timelines and the folded rail's face peek (a tip outside it is drawn under the native chat).
 // No class names, roles or individual feature selectors participate in native stacking.
 const overlays = new Map<symbol, boolean>();
 const listeners = new Set<() => void>();

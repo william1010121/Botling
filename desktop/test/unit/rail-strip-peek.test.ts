@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RailStrip } from "../../src/renderer/App";
 import { subBotsOf } from "../../src/renderer/Rail";
+import { shellOverlayActive, subscribeShellOverlays } from "../../src/renderer/ShellOverlay";
 import type { BotView, SubagentRowView } from "../../src/contract";
 
 const base: BotView = { id: "p1", name: "botling", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 1, problem: null, heads: ["claude"], job: null, subagentRows: [] };
@@ -15,7 +16,12 @@ const parent: BotView = { ...base, subagentRows: [subRow, workerRow] };
 const sub: BotView = { ...base, id: "s1", name: "Settings page", role: "bot", job: "Continue", parent: "p1", subagentRows: [] };
 const grandchild: BotView = { ...sub, id: "s2", name: "Dark mode", parent: "s1" };
 const main: BotView = { ...base, id: "m", name: "Main bot", role: "main", subagentRows: [] };
-const bots = [main, parent, sub, grandchild];
+// As in the user's projects.json: eeg has two sub bots, token-speed has none.
+const eeg: BotView = { ...base, id: "525203F0", name: "eeg", subagentRows: [] };
+const bench: BotView = { ...sub, id: "B1", name: "bench-correction", parent: eeg.id };
+const meeting: BotView = { ...sub, id: "B2", name: "Peer Meeting 準備", parent: eeg.id };
+const plain: BotView = { ...base, id: "7757A552", name: "token-speed", subagentRows: [] };
+const bots = [main, parent, sub, grandchild, eeg, bench, meeting, plain];
 
 describe("subBotsOf", () => {
   it("lists a bot's sub bots, nested ones under theirs, and none of its subagents", () => {
@@ -92,10 +98,38 @@ describe("folded column peek", () => {
     expect(peek()).toBeNull();
   });
 
-  it("a bot with no sub bots shows just its name", async () => {
-    await over(face("m"));
+  it("a bot with no sub bots shows a card with just its name, which opens the bot", async () => {
+    await over(face(plain.id));
+    expect(peek()?.querySelector(".strip-peek-name .rail-tip-title")?.textContent).toBe("token-speed");
     expect(host.querySelector("[data-sub-bot]")).toBeNull();
-    expect(host.textContent).toContain("Main bot");
+    await act(async () => (peek()!.querySelector(".strip-peek-name") as HTMLButtonElement).click());
+    expect(selected).toEqual([plain.id]);
+  });
+
+  it("a project bot lists its own sub bots", async () => {
+    await over(face(eeg.id));
+    expect([...peek()!.querySelectorAll<HTMLElement>("[data-sub-bot] .subagent-title")].map((row) => row.textContent)).toEqual(["bench-correction", "Peer Meeting 準備"]);
+  });
+
+  // The chat is a native view above the shell: a card that does not cover it as a shell overlay is drawn under
+  // the chat, so only a face high enough for its card to land on the header (the main bot) showed one.
+  it("every face's card covers the native chat while it is open, as one cover across faces", async () => {
+    const seen: boolean[] = [];
+    const stop = subscribeShellOverlays(() => seen.push(shellOverlayActive()));
+    try {
+      for (const id of ["m", plain.id, eeg.id]) {
+        await over(face(id));
+        expect(peek()).not.toBeNull();
+        expect(shellOverlayActive()).toBe(true);
+        await out(face(id), face(id === "m" ? plain.id : eeg.id));
+      }
+      // Moving from face to face never uncovers the chat in between.
+      expect(seen).toEqual([true]);
+      await out(face(eeg.id));
+      await wait(1_000);
+      expect(peek()).toBeNull();
+      expect(shellOverlayActive()).toBe(false);
+    } finally { stop(); }
   });
 
   it("opens on keyboard focus, lets Tab reach the sub bots, and Escape closes it", async () => {
