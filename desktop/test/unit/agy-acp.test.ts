@@ -1,4 +1,6 @@
 import {mkdtempSync,writeFileSync,rmSync,readFileSync} from 'node:fs';
+import {spawn} from 'node:child_process';
+import {createInterface} from 'node:readline';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {AgyMcpBridge} from '../../src/core/agent/agy-mcp';
@@ -9,9 +11,9 @@ import {AgyAcpProtocol,AgyAcpHead,AGY_REPLY_REMINDER,ACP_TOOLS,verifyAcpRuntime}
 const clients:AgyAcpProtocol[]=[];
 afterEach(()=>{gate.workers=true;clients.splice(0).forEach(c=>c.close());});
 const tick=async()=>{for(let i=0;i<15;i++)await Promise.resolve();};
-function harness(resume=false, full=false, localToolEvents=false){
+function harness(resume=false, full=false, localToolEvents=false, worker=false){
  const frames:any[]=[],items:any[]=[],errors:Error[]=[];
- const client=new AgyAcpProtocol({command:'never-launched',cwd:'/owned',sessionId:'old',resume,bypassPermissions:full},m=>frames.push(m),i=>items.push(i),e=>errors.push(e),{localToolEvents});clients.push(client);
+ const client=new AgyAcpProtocol({command:'never-launched',cwd:'/owned',sessionId:'old',resume,bypassPermissions:full,worker},m=>frames.push(m),i=>items.push(i),e=>errors.push(e),{localToolEvents});clients.push(client);
  const reply=(result:any)=>client.receive({jsonrpc:'2.0',id:frames.findLast(f=>f.method&&f.id).id,result});
  const policy=()=>reply({configOptions:[{id:'mode',currentValue:full?'yolo':'default'}]});
  const init=async()=>{reply({protocolVersion:1,agentInfo:{name:'antigravity-acp',version:'1.4.3'},agentCapabilities:{loadSession:true}});await tick();reply({sessionId:resume?'old':'new'});await tick();policy();await tick();policy();await tick();};
@@ -96,13 +98,13 @@ it('a turn that ended normally with a reply succeeds although a tool failed on t
  update({sessionUpdate:'tool_call',toolCallId:'which',status:'failed',rawOutput:{exitCode:1,output:'/opt/homebrew/bin/pdflatex'}});
  update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:'The PDF is ready.'}});
  h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(true);
- expect(h.items.at(-1)).toMatchObject({kind:'result',ok:true,text:'The PDF is ready.',error:'',subtype:'tool_failed'});
+ expect(h.items.at(-1)).toMatchObject({kind:'result',ok:true,how:'normal',failedTools:1,text:'The PDF is ready.',error:'',subtype:'tool_failed'});
 });
 it('failed tool with no reply cannot become a successful terminal result',async()=>{
  const h=harness(),sent=h.client.send('test','one');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
  h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call',toolCallId:'failed',status:'failed'}}});
  h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'  '}}}});
- h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);expect(h.items.at(-1)).toMatchObject({ok:false,subtype:'tool_failed'});
+ h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);expect(h.items.at(-1)).toMatchObject({ok:false,how:'normal',failedTools:1,subtype:'tool_failed',error:'Antigravity stopped: tool_failed'});
 });
 
 // tool_failed means "ended its turn after a failed tool" (a success when it has a reply), so it must
@@ -114,13 +116,66 @@ it('a failed tool never hides a cancel, an unresolved approval or a non-end_turn
  };
  const turn=async()=>{const h=harness(),sent=h.client.send('test','one');await h.init();h.policy();await tick();return {h,sent,id:h.frames.at(-1).id};};
  let t=await turn();failTool(t.h);t.h.client.receive({jsonrpc:'2.0',id:t.id,result:{stopReason:'max_tokens'}});await t.sent;
- expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'max_tokens'});
+ expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,how:'error',subtype:'max_tokens'});
  t=await turn();failTool(t.h);t.h.client.interrupt();t.h.client.receive({jsonrpc:'2.0',id:t.id,result:{stopReason:'end_turn'}});await t.sent;
- expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'cancelled'});
+ expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,how:'cancelled',subtype:'cancelled'});
  t=await turn();failTool(t.h);
  t.h.client.receive({jsonrpc:'2.0',id:80,method:'session/request_permission',params:{sessionId:'new',toolCall:{title:'write'},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'deny'}]}});
  t.h.client.receive({jsonrpc:'2.0',id:t.id,result:{stopReason:'end_turn'}});await t.sent;
- expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'cancelled'});
+ expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,how:'cancelled',subtype:'cancelled'});
+});
+
+// Decision D2: a worker's denied approval is a note in its report (the shared core counts it), so its turn still ended
+// normally; the main chat keeps a denied approval as the end of its turn.
+it('a denied approval ends a main-chat turn as an error, a worker turn normally',async()=>{
+ for(const worker of [false,true]){
+  const h=harness(false,false,false,worker),sent=h.client.send('write it','one');await h.init();h.policy();await tick();const id=h.frames.at(-1).id;
+  h.client.receive({jsonrpc:'2.0',id:60,method:'session/request_permission',params:{sessionId:'new',toolCall:{title:'write',rawInput:{path:'x'}},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'deny'}]}});
+  h.client.answer('acp:60',false);
+  h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'Left the file as it was.'}}}});
+  h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});await sent;
+  expect(h.items.at(-1),worker?'worker':'main chat').toMatchObject(worker?{how:'normal',subtype:'permission_denied'}:{ok:false,how:'error',subtype:'permission_denied'});
+ }
+});
+
+// Real Antigravity streams (test/fixtures/worker-streams/agy, recorded from agy_acp_server 1.4.3), replayed by a real
+// process (test/fixtures/fake-agy.mjs) into the protocol, set up as the main chat's head (bridge tools on).
+describe('recorded Antigravity turns, replayed by fake-agy.mjs',()=>{
+ const fixtures=join(__dirname,'..','fixtures');
+ async function replayed(scenario:string,during?:(items:any[],client:AgyAcpProtocol)=>Promise<void>){
+  const child=spawn(process.execPath,[join(fixtures,'fake-agy.mjs'),join(fixtures,'worker-streams','agy',`${scenario}.jsonl`)],{stdio:['pipe','pipe','ignore']});
+  const items:any[]=[],errors:Error[]=[];
+  const exit=new Promise<{code:number|null,signal:string|null}>(resolve=>child.once('exit',(code,signal)=>{client.close();resolve({code,signal});}));
+  const client:AgyAcpProtocol=new AgyAcpProtocol({command:'fake-agy',cwd:'/WORK',sessionId:'unused',resume:false},m=>{if(child.stdin.writable)child.stdin.write(JSON.stringify(m)+'\n');},
+   i=>{items.push(i);if(i.kind==='permission')client.answer(i.requestId,true);},e=>errors.push(e),{localToolEvents:true});clients.push(client);
+  createInterface({input:child.stdout}).on('line',line=>client.receive(JSON.parse(line)));
+  const sent=client.send('the recorded task','u');
+  await during?.(items,client);
+  const ok=await sent;client.close();
+  return {ok,items,errors,exit:await exit};
+ }
+ // The head half of the contract's C2: `git status` failed (through the bridge), the reply came, the turn is done.
+ it('a failed tool then a reply: the main chat turn is done',async()=>{
+  const r=await replayed('failed-tool-then-success');
+  expect(r.errors).toEqual([]);expect(r.ok).toBe(true);
+  expect(r.items.at(-1)).toMatchObject({kind:'result',ok:true,how:'normal',failedTools:1,subtype:'tool_failed',error:'',text:'DONE — git failed as expected.'});
+  expect(r.items.filter(i=>i.kind==='request')).toHaveLength(1);
+  expect(r.exit.signal).toBe('SIGTERM');
+ });
+ it('22 streamed chunks are one reply',async()=>{
+  const r=await replayed('chunked-text');
+  expect(r.items.filter(i=>i.kind==='delta')).toHaveLength(22);
+  expect(r.items.at(-1)).toMatchObject({kind:'result',ok:true,how:'normal',failedTools:0,subtype:'end_turn'});
+  expect(r.items.at(-1).text).toMatch(/^A hash table is a foundational data structure[\s\S]*`05B44DD6-73BB`[\s\S]* data access\.$/);
+ });
+ it('a turn cancelled while its tool runs is cancelled, not done',async()=>{
+  const r=await replayed('cancel',async(items,client)=>{await vi.waitFor(()=>expect(items.some(i=>i.kind==='permission')).toBe(true));await new Promise(resolve=>setTimeout(resolve,100));client.interrupt();});
+  expect(r.items.at(-1)).toMatchObject({kind:'result',ok:false,how:'cancelled',subtype:'cancelled'});
+ });
+ it('a process killed mid-turn gives no result',async()=>{
+  const r=await replayed('process-exit');
+  expect(r.ok).toBeUndefined();expect(r.items.some(i=>i.kind==='result')).toBe(false);expect(r.exit.signal).toBe('SIGKILL');
+ });
 });
 
 it('worker entrypoint is blocked before any runtime or profile action when the worker gate is closed',()=>{

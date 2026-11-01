@@ -10,6 +10,7 @@ import { dirname, join, isAbsolute } from "node:path";
 import type { AgyConfig } from "./agy";
 import type { HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
+import { classifyRun, type RunEnd } from "../worker-core";
 import { imageMediaType } from "../attachments";
 import { agyWorkerRuntimeEnabled } from "./agy-capabilities";
 import { agyHotSettingsEnabled, settingsChange, type HotSettings } from "./hot-settings";
@@ -18,7 +19,7 @@ import { AgyWorkers, agyWorkerHost } from "./agy-workers";
 import type { WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 import type { CodexItem } from "./codex";
 import { AGY_LOCAL_TOOLS, AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
-import { processTreeAdapter, type ManagedProcess, type TerminateResult } from "../process/tree";
+import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 
 export const ACP_VERSION = "1.4.3";
 export const ACP_SERVER_SHA = "1251927db3e21f3d693fd042d6890d82f65eb00587e97f1f3d8f0d798e7f0954";
@@ -48,6 +49,8 @@ export class AgyAcpProtocol {
   private cancelEpoch = 0;
   private turnCancelled = false;
   private turnFailure: "permission_denied" | "cancelled" | "tool_failed" | undefined;
+  /** This turn's tools that failed (ACP's own and the bridge's mirrored ones), for classifyRun. */
+  private failedTools = new Set<string>();
   private confirmed = false;
   private submitting = false;
   private readonly mode: "default" | "yolo";
@@ -180,7 +183,7 @@ export class AgyAcpProtocol {
       await this.start();
       await this.verifyMode();
       if (!this.ready || this.closed || epoch !== this.cancelEpoch) throw new Error("ACP cancelled before task submission.");
-      this.text = ""; this.tools.clear(); this.completedTools.clear(); this.bridgeTools.clear();
+      this.text = ""; this.tools.clear(); this.completedTools.clear(); this.bridgeTools.clear(); this.failedTools.clear();
       const prompt: Obj[] = [{ type: "text", text }];
       for (const path of images) {
         const mimeType = imageMediaType(path);
@@ -202,12 +205,13 @@ export class AgyAcpProtocol {
       const stop = epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason);
       // tool_failed means "ended its turn normally after a failed tool"; it never hides another stop.
       const reason = this.turnFailure && (this.turnFailure !== "tool_failed" || stop === "end_turn") ? this.turnFailure : stop;
-      // A non-zero exit on the way is ordinary work: a turn that ended normally with a reply succeeds.
-      const ok = reason === "end_turn" || (reason === "tool_failed" && !!this.text.trim());
+      const how = this.ended(stop), error = `Antigravity stopped: ${reason || "unknown reason"}`, failedTools = this.failedTools.size;
+      // The one rule for every engine (classifyRun): a turn that ended normally with a reply succeeds, whatever failed on the way.
+      const ok = classifyRun({ end: { how, finalText: null, error, detail: reason }, reply: this.text, stoppedByApp: false, interruptedBy: null, requireReply: false, failedTools, engine: "agy" }).status === "done";
       // ACP gives one usage block per prompt and no per-request timing: the whole prompt turn, an estimate.
       const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, ok);
       if (request) this.emit({ kind: "request", request });
-      this.emit({ kind: "result", ok, text: this.text, error: ok ? "" : `Antigravity stopped: ${reason || "unknown reason"}`, subtype: reason });
+      this.emit({ kind: "result", ok, how, failedTools, text: this.text, error: ok ? "" : error, subtype: reason });
       return ok;
     } catch (error) {
       this.fail(error as Error);
@@ -252,7 +256,7 @@ export class AgyAcpProtocol {
         if (this.bridgeTools.has(id)) {
           // Keep ACP's conservative turn/permission failure semantics, but never
           // overwrite bridge-owned execution cards with its mirrored results.
-          if (u.status === "failed" && this.busy) this.turnFailure ??= "tool_failed";
+          if (u.status === "failed" && this.busy) { this.turnFailure ??= "tool_failed"; this.failedTools.add(id); }
           return;
         }
         if (!this.tools.has(id)) {
@@ -260,12 +264,22 @@ export class AgyAcpProtocol {
           this.emit({ kind: "toolUse", id, tool: str(u.kind) || "ACP tool", title: str(u.title) || "Antigravity tool", detail: json(u.rawInput), input: obj(u.rawInput), parent: null });
         }
         if (["completed", "failed"].includes(u.status) && !this.completedTools.has(id)) {
-          if (u.status === "failed" && this.busy) this.turnFailure ??= "tool_failed";
+          if (u.status === "failed" && this.busy) { this.turnFailure ??= "tool_failed"; this.failedTools.add(id); }
           this.completedTools.add(id);
           this.emit({ kind: "toolResult", id, output: json(u.rawOutput ?? u.content), failed: u.status === "failed", parent: null, launch: null });
         }
       }
     } catch (error) { this.fail(error as Error); }
+  }
+  /**
+   * How the engine ended this turn (worker-core RunEnd): its stop reason, whatever tool failed on the way. An approval
+   * still open at the end makes it a cancelled turn. A denied approval ends the main chat's turn as an error; a
+   * worker's denial is only a note in its report (shared-core decision D2), so its turn ended normally.
+   */
+  private ended(stop: string): RunEnd["how"] {
+    if (stop === "cancelled" || this.turnFailure === "cancelled") return "cancelled";
+    if (stop !== "end_turn") return "error";
+    return this.turnFailure === "permission_denied" && !this.config.worker ? "error" : "normal";
   }
   private permission(message: Obj) {
     if (this.quotaCapture) {
@@ -347,7 +361,8 @@ export class AgyAcpHead {
   private exitedResolve!: () => void;
   readonly exited = new Promise<void>(resolve => this.exitedResolve = resolve);
   running = false;
-  constructor(readonly config: AgyConfig, private handlers: Omit<HeadHandlers, "onItem"> & { onItem(item: CodexItem): void }) {}
+  /** `tree`: where its process is spawned (a recorder's tee around the real one); default processTreeAdapter(). */
+  constructor(readonly config: AgyConfig, private handlers: Omit<HeadHandlers, "onItem"> & { onItem(item: CodexItem): void }, private tree?: ProcessTreeAdapter) {}
   get completionDependencies() { return this.workers?.completionDependencies ?? []; }
   get pid() { return this.process?.pid ?? -1; }
   start() {
@@ -376,7 +391,7 @@ export class AgyAcpHead {
     for (const key of ["HOME", "USER", "PATH", "TMPDIR", "LANG"]) if (process.env[key]) env[key] = process.env[key];
     const mcpServers = this.connectTools(cwd, home);
     void mcpServers.catch(() => {});
-    this.process = processTreeAdapter().spawn(this.config.command, [], { cwd, env });
+    this.process = (this.tree ?? processTreeAdapter()).spawn(this.config.command, [], { cwd, env });
     const child = this.process.child; this.running = true;
     this.protocol = new AgyAcpProtocol(this.config, value => { if (child.stdin.writable) child.stdin.write(JSON.stringify(value) + "\n"); }, item => { if (item.kind === "init") { this.config.sessionId = item.sessionId; updateAgyPermissions(this, {sessionId:item.sessionId}); } this.handlers.onItem(item); }, error => {
       this.failure = error.message; this.stopped = true; void this.workers?.close(); void this.bridge?.close(); void this.process?.terminate({ graceMs: 500 });
@@ -417,7 +432,7 @@ export class AgyAcpHead {
   private connectTools(cwd:string, home:string) {
     if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.handlers.onItem,
       (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
-      (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h)));
+      (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h,this.tree)));
     this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item), this.config.addDirs);
     return this.bridge.start().then(server => [server]);
   }
@@ -474,7 +489,7 @@ export class AgyAcpHead {
   readonly workerHostKind = "agy-acp" as const;
   readonly steersRunning = false;
   listWorkers(): WorkerInfo[] { return this.workerHost.listWorkers(); }
-  sendToWorker(id: string, text: string): WorkerSendResult { return this.workerHost.sendToWorker(id, text) as WorkerSendResult; }
+  sendToWorker(id: string, text: string): WorkerSendResult | Promise<WorkerSendResult> { return this.workerHost.sendToWorker(id, text); }
   stopWorker(id: string): Promise<boolean> { return this.workerHost.stopWorker(id); }
   setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult { return this.workerHost.setWorkerOwner(id, owner); }
   finish() { void this.terminate(500); }
