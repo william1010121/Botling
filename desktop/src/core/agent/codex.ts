@@ -378,6 +378,8 @@ interface ThreadWorker {
   isolating?: RunHandle;
   /** Calls not answered yet, by the run that made them. */
   pending: Map<RunHandle, number>;
+  /** Its latest run (the one under way, or the last to end): a late reply of an earlier run is that run's, not this one's. */
+  latest?: RunHandle;
   /** Tool calls without a result yet. */
   tools: Set<string>;
   /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
@@ -496,7 +498,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
 
   start(record: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle) {
     const w = this.worker(record);
-    Object.assign(w, { run, cancelled: false, turnId: null, said: [], messages: [] });
+    Object.assign(w, { run, latest: run, cancelled: false, turnId: null, said: [], messages: [] });
     w.tools.clear();
     this.o.wire.item({ kind: "measurementDispatch", workerId: record.id, run: run.run });
     if (w.adopt) {
@@ -600,8 +602,9 @@ export class CodexThreadAdapter implements WorkerAdapter {
     this.count(w, run, 1);
     this.o.wire.request("turn/steer", { threadId: w.thread ?? "", expectedTurnId: turnId, input: [{ type: "text", text }] }, (_result, error) => {
       this.count(w, run, -1);
-      if (!error || w.cancelled) return;
-      // The turn had just ended: the words go into its next turn (this run's), or the next run.
+      // Only the run that sent them: a run stopped meanwhile, or followed by another, drops its late words.
+      if (!error || w.latest !== run || w.cancelled) return;
+      // Its turn had just ended: the words go into its next turn (this run's), or, the run over, its next run.
       if (w.run === run) w.messages.push(text);
       else if (!w.run) this.o.followUp?.(w.id, text);
     });

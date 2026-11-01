@@ -201,6 +201,33 @@ describe("Codex workers on the shared core", () => {
     expect(h.s.core.get(task)).toMatchObject({ run: 3, status: "done", report: { text: "Run three." } });
   });
 
+  it("round 5 a late steer error from a cancelled run never replays its words nor drops a later run's report", () => {
+    const h = session({}, true);
+    h.coordinatorTurn();
+    const task = h.worker("Job", "w1", "wt1");
+    const steered = h.take(h.s.sendToWorker(task, "OLD CANCELLED INSTRUCTION").out).method("turn/steer");
+    expect(steered.params).toMatchObject({ expectedTurnId: "wt1" });
+    h.take(h.s.cancelWorkers(new Set([task])));
+    const second = h.tool("app_send_message", { task_id: task, message: "Run two" });
+    h.answer(second.method("turn/start").id, { turn: { id: "t2" } });
+    h.finish("w1", "t2", "RUN TWO REPORT");
+    expect(h.s.core.get(task)).toMatchObject({ run: 2, status: "done", report: { state: "pending", text: "RUN TWO REPORT" } });
+    const late = h.take(h.s.receive(JSON.stringify({ id: steered.id, error: { message: "no active turn" } })));
+    expect(late.method("turn/start")).toBeUndefined();
+    expect(h.s.core.get(task)).toMatchObject({ run: 2, status: "done", report: { state: "pending", text: "RUN TWO REPORT" } });
+  });
+
+  it("round 5 a steer that missed its run's turn as that run ended normally starts its next run (as before)", () => {
+    const h = session({}, true);
+    h.coordinatorTurn();
+    const task = h.worker("Job", "w1", "wt1");
+    const steered = h.take(h.s.sendToWorker(task, "One more thing").out).method("turn/steer");
+    h.finish("w1", "wt1", "First answer.");
+    const late = h.take(h.s.receive(JSON.stringify({ id: steered.id, error: { message: "no active turn" } })));
+    expect(late.method("turn/start").params).toMatchObject({ threadId: "w1", input: [{ type: "text", text: "One more thing" }] });
+    expect(h.s.core.get(task)).toMatchObject({ run: 2, status: "running" });
+  });
+
   it("a report waits for the coordinator's turn; a report with no decision is shown once more, then unresolved", () => {
     const h = session();
     h.coordinatorTurn();
