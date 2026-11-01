@@ -124,6 +124,34 @@ describe("Codex workers on the shared core", () => {
     expect(again.of("subagentStarted")).toMatchObject([{ id: task, execution: { run: 2 } }]);
   });
 
+  it("A a stop before its turn is known holds the next run until that turn is interrupted; the old turn's words never reach run 2", async () => {
+    const h = session({}, true);
+    h.coordinatorTurn();
+    const handed = h.tool("app_handoff", { instructions: "Old job", name: "Old job" });
+    const task = h.receipt(handed).task_id as string;
+    const start = h.answer(handed.method("thread/start").id, { thread: { id: "w1" } }).method("turn/start");
+    // Stopped while its turn/start has no answer yet: no turn id to interrupt.
+    h.take(h.s.cancelWorkers(new Set([task])));
+    expect(h.s.core.get(task)).toMatchObject({ status: "stopped", cleanup: "pending" });
+    const early = h.tool("app_send_message", { task_id: task, message: "New job" });
+    expect(h.receipt(early)).toMatchObject({ error: expect.stringContaining("try again") });
+    // Its turn comes: interrupted at once, and only then is the worker free.
+    const late = h.answer(start.id, { turn: { id: "old-t" } });
+    expect(late.method("turn/interrupt").params).toEqual({ threadId: "w1", turnId: "old-t" });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(h.s.core.get(task)!.cleanup).toBeUndefined();
+    const again = h.tool("app_send_message", { task_id: task, message: "New job" });
+    expect(h.receipt(again)).toEqual({ task_id: task, status: "accepted" });
+    // The old turn's late words and end belong to nobody.
+    h.say("w1", "old-t", "OLD RUN OUTPUT");
+    h.line("turn/completed", { threadId: "w1", turn: { id: "old-t", status: "interrupted" } });
+    expect(h.s.core.get(task)).toMatchObject({ run: 2, status: "running" });
+    const second = again.method("turn/start");
+    h.answer(second.id, { turn: { id: "new-t" } });
+    h.finish("w1", "new-t", "New answer.");
+    expect(h.s.core.get(task)!.report).toMatchObject({ status: "done", text: "New answer." });
+  });
+
   it("a report waits for the coordinator's turn; a report with no decision is shown once more, then unresolved", () => {
     const h = session();
     h.coordinatorTurn();

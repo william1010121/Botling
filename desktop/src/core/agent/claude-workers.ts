@@ -342,9 +342,11 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (proc.settle) { clearTimeout(proc.settle); proc.settle = undefined; proc.pendingResult = undefined; }
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const head = proc.head;
-    proc.head = undefined;
-    if (head) await head.terminate(1_500).catch(() => undefined);
-    return { cleaned: true };
+    if (!head) return { cleaned: true };
+    // Clean only once its process has ended; a failed terminate keeps the head, for recovery to end it again.
+    const ended = await head.terminate(1_500).then(() => true, () => false);
+    if (ended && proc.head === head) proc.head = undefined;
+    return { cleaned: ended };
   }
 
   answer(r: Readonly<WorkerLedgerRecord>, nativeId: string, allow: boolean, input: Record<string, unknown>, message?: string) {
@@ -355,8 +357,17 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
    * An interrupted worker may continue only once its old processes are gone (never two processes on one session). A
    * pid with the recorded start time is that process, still alive.
    */
-  recover(r: Readonly<WorkerLedgerRecord>): RecoverResult {
-    if (this.procs.get(r.id)?.head) return { state: "clean" };
+  recover(r: Readonly<WorkerLedgerRecord>): RecoverResult | Promise<RecoverResult> {
+    const proc = this.procs.get(r.id);
+    const head = proc?.head;
+    // A process this app still holds: one at work in a kept-alive head is fine; one a stop could not end is ended now.
+    if (head && !(r.cleanup === "failed")) return { state: "clean" };
+    if (head) {
+      return head.terminate(1_500).then(
+        () => { if (proc!.head === head) proc!.head = undefined; return { state: "clean" } as RecoverResult; },
+        () => ({ state: "blocked", reason: "This worker's earlier process could not be ended; it cannot be resumed until it has." }),
+      );
+    }
     const alive = r.processes.some(({ pid, started }) => processStartTime(pid) === started);
     return alive ? { state: "blocked", reason: "This worker's earlier process is still running; it cannot be resumed until it has ended." } : { state: "clean" };
   }

@@ -366,6 +366,8 @@ interface ThreadWorker {
   tokens: TokenUsage | null;
   /** JSON-RPC calls of its own not answered yet. */
   calls: number;
+  /** A stop waiting for the start requests of the run it stopped to be answered (their turn, if any, interrupted). */
+  stopping?: (result: { cleaned: boolean }) => void;
   /** Tool calls without a result yet. */
   tools: Set<string>;
   /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
@@ -432,8 +434,26 @@ export class CodexThreadAdapter implements WorkerAdapter {
     w.calls += 1;
     this.o.wire.request(method, params, (result, error) => {
       w.calls -= 1;
-      if (w.run === run && !w.cancelled) reply(result, error);
+      if (w.run === run && !w.cancelled) return reply(result, error);
+      // A call of a run that was stopped: a turn it started is that run's, never a later one's, and is interrupted now.
+      if (method === "turn/start" && typeof result?.turn?.id === "string") this.isolate(w, result.turn.id);
+      this.drained(w);
     });
+  }
+
+  /** A turn of a run that was stopped: no later run takes its events, and it is interrupted. */
+  private isolate(w: ThreadWorker, turn: string) {
+    if (w.completedTurns.has(turn)) return;
+    w.completedTurns.add(turn);
+    if (w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
+  }
+
+  /** No call of the stopped run is left unanswered: its stop is done (nothing of it can start any more). */
+  private drained(w: ThreadWorker) {
+    if (!w.stopping || w.calls > 0) return;
+    const done = w.stopping;
+    w.stopping = undefined;
+    done({ cleaned: true });
   }
 
   private fail(w: ThreadWorker, run: RunHandle, error: string) {
@@ -576,11 +596,18 @@ export class CodexThreadAdapter implements WorkerAdapter {
   }
 
   /** Ends its run's turn; its open approvals are declined. No end is emitted (the core decided "stopped"). */
-  /** Interrupts its turn: done at once (Codex ends the turn; its late events are dropped). */
-  stop(record: Readonly<WorkerLedgerRecord>) {
+  /**
+   * Interrupts its turn: done at once when its turn is known (Codex ends it; its late events are dropped). When a start
+   * request has no answer yet there is no turn to interrupt: the stop is done once those are answered (a turn one
+   * started is interrupted then), so no next run starts while the old turn may still begin.
+   */
+  stop(record: Readonly<WorkerLedgerRecord>): { cleaned: boolean } | Promise<{ cleaned: boolean }> {
     const w = this.workers.get(record.id);
-    if (w?.run) this.interrupt(w);
-    return { cleaned: true };
+    if (!w?.run) return { cleaned: true };
+    const unsettled = !w.turnId && w.calls > 0;
+    this.interrupt(w);
+    if (!unsettled) return { cleaned: true };
+    return new Promise((resolve) => { w.stopping = resolve; });
   }
 
   private interrupt(w: ThreadWorker) {
@@ -618,13 +645,20 @@ export class CodexThreadAdapter implements WorkerAdapter {
   }
 
   async close() {
-    for (const w of this.workers.values()) if (w.run) this.interrupt(w);
+    for (const w of this.workers.values()) {
+      if (w.run) this.interrupt(w);
+      // A stop still waiting for its start requests' answers never gets them now: not known to be clean.
+      if (w.stopping) { const done = w.stopping; w.stopping = undefined; done({ cleaned: false }); }
+    }
   }
 
   /** The app-server went away: every run under way ends with it, and every thread must be resumed again. */
   exited(reason: string) {
     for (const w of this.workers.values()) {
       w.loaded = false;
+      // Its turns went with it: a stop waiting for one is done (nothing of the old run can start).
+      w.calls = 0;
+      this.drained(w);
       const run = w.run;
       if (!run) continue;
       w.run = null;
@@ -755,7 +789,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
       case "turn/started": {
         const id = params.turn?.id;
         if (typeof id !== "string") return true;
-        if (w.cancelled && w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: id }, () => undefined);
+        if (w.cancelled) this.isolate(w, id);
         else if (run) this.learnTurn(w, run, id);
         return true;
       }
@@ -763,7 +797,8 @@ export class CodexThreadAdapter implements WorkerAdapter {
       case "item/completed": {
         const item = params.item;
         if (!run || !item || typeof item !== "object") return true;
-        if (typeof params.turnId === "string" && w.turnId && params.turnId !== w.turnId) return true;
+        // Another turn's (a stopped run's, even before this run's turn is known): never this run's.
+        if (typeof params.turnId === "string" && (w.completedTurns.has(params.turnId) || (w.turnId && params.turnId !== w.turnId))) return true;
         if (method === "item/started") {
           const step = codexToolStarted(item, this.changedFiles);
           if (step) { w.tools.add(step.id); run.emit({ type: "toolUse", ...step }); }

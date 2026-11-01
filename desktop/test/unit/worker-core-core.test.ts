@@ -693,6 +693,51 @@ describe("S4b: the member core's rules", () => {
   });
 });
 
+describe("review round 2: one operation at a time per worker", () => {
+  it("B a second cancel while a stop's cleanup is pending waits for it (never cleans it up early): no next run meanwhile", async () => {
+    const adapter = new FakeAdapter();
+    let finish!: (result: { cleaned: boolean }) => void;
+    let calls = 0;
+    // Like the Claude adapter: the first stop takes the process and waits for it; a second finds nothing and says clean.
+    adapter.stop = (record) => { calls += 1; adapter.stopped.push(record.id); return calls === 1 ? new Promise((resolve) => { finish = resolve; }) : { cleaned: true } as never; };
+    const { core, store } = setup({ adapter });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    const stopping = core.stopWorker(task_id);
+    const cancelling = core.cancel(task_id);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(store.get(task_id).cleanup).toBe("pending");
+    expect(await core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: false, busy: true });
+    expect(adapter.started).toHaveLength(1);
+    finish({ cleaned: true });
+    await stopping; await cancelling;
+    expect(store.get(task_id).cleanup).toBeUndefined();
+    expect(await core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
+  });
+
+  it("C a follow-up while app_cancel_task works on a worker not at work is refused; the cancel never touches a newer run", async () => {
+    const adapter = new FakeAdapter();
+    const { core, store } = setup({ adapter });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    adapter.emit(task_id, { type: "textWhole", text: "Done.", phase: null }, normal());
+    const cancelling = core.cancel(task_id);
+    expect(await core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: false, busy: true });
+    await cancelling;
+    expect(adapter.started).toHaveLength(1);
+    expect(store.get(task_id)).toMatchObject({ status: "done", run: 1 });
+    expect(core.completionDependencies).toEqual([]);
+    expect(await core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
+  });
+
+  it("an operation done at once holds nothing: a stop then a follow-up in the same tick starts the next run (sync adapters)", async () => {
+    const adapter = new FakeAdapter();
+    adapter.stop = (record) => { adapter.stopped.push(record.id); return { cleaned: true } as never; };
+    const { core } = setup({ adapter });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    void core.stopWorker(task_id);
+    expect(core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
+  });
+});
+
 describe("review fixes", () => {
   it("#5 a run resumed after a restart counts its output on top of what it had (100 + 20 = 120), never under it", async () => {
     const { SubagentBook, reportedOutputTokens } = await import("../../src/core/subagents");

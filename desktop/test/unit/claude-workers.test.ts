@@ -379,3 +379,19 @@ describe("agent definitions", () => {
     await expect(h.workers.tool("app_handoff", { instructions: "x" })).rejects.toThrow("unavailable");
   });
 });
+
+describe("review round 2", () => {
+  it("D a stop whose terminate fails is not clean: the worker stays blocked, and a later recovery ends the process first", async () => {
+    const h = claudeHarness();
+    const started: any = await h.workers.tool("app_handoff", { instructions: "Go." });
+    const head = h.heads[0]!;
+    let fail = true;
+    head.terminate = async function () { if (fail) throw new Error("kill failed"); this.terminated = true; this.exit(null, true); return { killed: [], forced: false }; };
+    expect(await h.workers.stopWorker(started.task_id)).toBe(true);
+    expect(h.workers.core.get(started.task_id)).toMatchObject({ status: "stopped", cleanup: "failed", recovery: "required" });
+    expect(await h.workers.sendToWorker(started.task_id, "Again.")).toMatchObject({ ok: false });
+    fail = false;
+    expect(await h.workers.sendToWorker(started.task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
+    expect(head.terminated).toBe(true);
+  });
+});

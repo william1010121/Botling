@@ -134,6 +134,12 @@ export class WorkerCore implements WorkerHost {
   private lastPending: boolean | null = null;
   /** What each record last showed its projections (`projected`). */
   private shown = new Map<string, string>();
+  /**
+   * The operation under way on each worker, when it has not finished at once: a start, a stop and its cleanup, a
+   * cancel, a recovery, a run's cleanup after its end. One at a time: a follow-up meanwhile is refused (busy), a stop
+   * or cancel waits for it. So a run's cleanup is never cut short, overlapped by a next run, or applied to another run.
+   */
+  private ops = new Map<string, Promise<unknown>>();
 
   constructor(private options: WorkerCoreOptions) {
     const first = options.adapters[0];
@@ -209,6 +215,33 @@ export class WorkerCore implements WorkerHost {
     this.emit({ kind: "managedPending", pending });
   }
 
+  /**
+   * Runs `op` as the worker's one operation: now when none is under way (an op done at once holds nothing), else after
+   * the one under way (`wait`) or not at all (`busy`'s answer).
+   */
+  private exclusive<T>(id: string, op: () => Maybe<T>, busy: (() => T) | "wait"): Maybe<T> {
+    const current = this.ops.get(id);
+    if (current) return busy === "wait" ? current.then(() => this.exclusive(id, op, busy)) : busy();
+    const result = op();
+    return result instanceof Promise ? this.track(id, result) : result;
+  }
+
+  /**
+   * Work on this worker that has not finished: no other operation starts until it (and the one before it) has. The
+   * promise it returns settles as `work` does, once the worker is free again (an awaited cancel, then a follow-up).
+   */
+  private track<T>(id: string, work: Promise<T>): Promise<T> {
+    const previous = this.ops.get(id);
+    const held: Promise<unknown> = (previous ? Promise.all([previous, work]) : work).catch(() => undefined);
+    this.ops.set(id, held);
+    return held.then(() => {
+      if (this.ops.get(id) === held) this.ops.delete(id);
+      return work;
+    });
+  }
+
+  private static readonly BUSY: WorkerSendResult = { ok: false, busy: true, reason: "This worker is starting or stopping; try again in a moment." };
+
   // ------------------------------------------------------------------------------------------
   // WorkerHost
 
@@ -234,6 +267,7 @@ export class WorkerCore implements WorkerHost {
     if (typeof words !== "string" || !words.trim() || words.length > MAX_WORDS) return { ok: false, reason: `Message required (maximum ${MAX_WORDS} characters).` };
     const adapter = this.adapterOf(r);
     if (!adapter) return { ok: false, reason: "This worker's engine is not available here." };
+    if (this.ops.has(r.id)) return WorkerCore.BUSY;
     if (r.status === "running") {
       const live = this.lives.get(r.id);
       if (live?.waiting) {
@@ -249,11 +283,12 @@ export class WorkerCore implements WorkerHost {
       return steered ? { ok: true, how: "steered", run: r.run } : { ok: false, busy: true, reason: "This worker is starting or stopping; try again in a moment." };
     }
     if (r.cleanup === "pending") return { ok: false, busy: true, reason: "This worker is still cleaning up after its run; try again in a moment." };
-    return then(this.recover(r, adapter), (blocker) => {
+    const run = r.run;
+    return this.exclusive(r.id, () => then(this.recover(r, adapter), (blocker) => {
       if (blocker) return { ok: false, reason: blocker };
-      if (this.closed || this.records.get(r.id) !== r || r.status === "running") return { ok: false, busy: true, reason: "This worker is starting or stopping; try again in a moment." };
+      if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status === "running") return WorkerCore.BUSY;
       return then(this.launch(r, words, false), (error): WorkerSendResult => (error ? { ok: false, reason: error } : { ok: true, how: "newRun", run: r.run }));
-    });
+    }), () => WorkerCore.BUSY);
   }
 
   /**
@@ -267,11 +302,12 @@ export class WorkerCore implements WorkerHost {
     if (typeof words !== "string" || !words.trim() || words.length > MAX_WORDS) return { ok: false, reason: `Message required (maximum ${MAX_WORDS} characters).` };
     const adapter = this.adapterOf(r);
     if (!adapter) return { ok: false, reason: "This worker's engine is not available here." };
-    return then(this.recover(r, adapter), (blocker) => {
+    const run = r.run;
+    return this.exclusive(r.id, () => then(this.recover(r, adapter), (blocker) => {
       if (blocker) return { ok: false, reason: blocker };
-      if (this.closed || this.records.get(r.id) !== r || r.status !== "interrupted") return { ok: false, busy: true, reason: "This worker is starting or stopping; try again in a moment." };
+      if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status !== "interrupted") return WorkerCore.BUSY;
       return then(this.launch(r, words, false, true), (error): WorkerSendResult => (error ? { ok: false, reason: error } : { ok: true, how: "newRun", run: r.run }));
-    });
+    }), () => WorkerCore.BUSY);
   }
 
   /** Clears an interruption or a failed cleanup once the adapter confirms its old processes are gone; else the reason it is blocked. */
@@ -289,11 +325,14 @@ export class WorkerCore implements WorkerHost {
     return checked instanceof Promise ? checked.then(settle, (error: Error) => error.message) : settle(checked);
   }
 
-  async stopWorker(id: string): Promise<boolean> {
+  /** Stops its run (after the operation under way, if any): false when it is not at work by then. */
+  stopWorker(id: string): Promise<boolean> {
     const r = this.find(id);
-    if (!r || r.status !== "running" || this.closed) return false;
-    await this.stop(r);
-    return true;
+    if (!r || this.closed) return Promise.resolve(false);
+    return Promise.resolve(this.exclusive(r.id, () => {
+      if (this.closed || this.records.get(r.id) !== r || r.status !== "running") return false;
+      return then(this.stop(r), () => true);
+    }, "wait"));
   }
 
   setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult {
@@ -452,21 +491,31 @@ export class WorkerCore implements WorkerHost {
   async cancel(id: string, run?: number): Promise<{ status: WorkerStatus }> {
     if (this.closed) throw new Error("Workers are closed: the app is stopping.");
     const r = this.owned(id, run);
+    // One operation at a time: taken before anything yields, so no follow-up starts a run this cancel could touch.
+    return this.exclusive(r.id, () => this.cancelOp(r), "wait");
+  }
+
+  private cancelOp(r: WorkerLedgerRecord): Maybe<{ status: WorkerStatus }> {
+    const finish = () => {
+      if (r.cleanup === "failed") throw new Error("Worker cleanup incomplete; task remains blocked.");
+      return { status: r.status };
+    };
+    if (this.closed || this.records.get(r.id) !== r) return finish();
+    if (r.status === "running") return then(this.stop(r), finish);
     const adapter = this.adapterOf(r);
-    if (r.status === "running") {
-      await this.stop(r);
-    } else if (adapter) {
-      const blocker = await this.recover(r, adapter);
+    if (!adapter) return finish();
+    const run = r.run;
+    return then(this.recover(r, adapter), (blocker) => {
       if (blocker) throw new Error(blocker);
+      // Never a newer run's (none can start meanwhile, but this is the rule).
+      if (this.records.get(r.id) !== r || r.run !== run || r.status === "running") return finish();
       if (r.report.state === "pending" || r.report.state === "delivered") r.report.state = "none";
       this.queued.delete(r.id);
       this.activeReports.delete(r.id);
       r.cleanup = "pending";
       this.save();
-      await this.cleanUp(r, adapter);
-    }
-    if (r.cleanup === "failed") throw new Error("Worker cleanup incomplete; task remains blocked.");
-    return { status: r.status };
+      return then(this.cleanUp(r, adapter), finish);
+    });
   }
 
   // ------------------------------------------------------------------------------------------
@@ -693,13 +742,13 @@ export class WorkerCore implements WorkerHost {
     }
     r.cleanup = "pending";
     this.save();
-    void adapter.cleanup(r).then((result) => result.cleaned, () => false).then((cleaned) => {
+    void this.track(r.id, adapter.cleanup(r).then((result) => result.cleaned, () => false).then((cleaned) => {
       if (this.records.get(r.id) !== r || this.lives.get(r.id) !== live) return;
       delete r.cleanup;
       if (cleaned) this.save();
       else this.cleanupFailed(r);
       this.reported(r);
-    });
+    }));
   }
 
   /** A run's end is out: subagentEnded, the report's delivery, and a waiting run may take the slot. */
@@ -743,7 +792,7 @@ export class WorkerCore implements WorkerHost {
   }
 
   /** Stops its run: no report is made; its adapter ends the run's turn/process. */
-  private async stop(r: WorkerLedgerRecord) {
+  private stop(r: WorkerLedgerRecord): Maybe<void> {
     const live = this.lives.get(r.id);
     const facts = live ? live.pipeline.facts({ stoppedByApp: true, interruptedBy: null, requireReply: true }) : { end: null, reply: "", stoppedByApp: true, interruptedBy: null, requireReply: true, failedTools: 0 };
     const verdict = classifyRun(facts);
@@ -752,8 +801,7 @@ export class WorkerCore implements WorkerHost {
     Object.assign(r, { status: "stopped", endedAt: this.now(), cleanup: "pending", report: { ...noReport(), text: verdict.report, status: "stopped" } });
     this.save();
     this.emit({ kind: "subagentEnded", id: r.id, status: wireStatus("stopped"), summary: verdict.report });
-    await this.cleanUp(r, this.adapterOf(r));
-    this.startWaiting();
+    return then(this.cleanUp(r, this.adapterOf(r)), () => this.startWaiting());
   }
 
   /**
