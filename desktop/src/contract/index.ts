@@ -164,6 +164,8 @@ export const SubagentView = z.strictObject({
   /** ISO-8601. */
   startedAt: z.string(),
   endedAt: z.string().nullable(),
+  /** The bot whose process runs it, when that is not its owner (A1: an agent moved to another bot). */
+  host: z.string().max(200).nullable().optional(),
 });
 export type SubagentView = z.infer<typeof SubagentView>;
 
@@ -443,8 +445,31 @@ export const SubagentRowView = z.strictObject({
   prompt: z.string().max(1_000),
   /** A sub bot (a hidden bot of its own under this one): the row opens its chat, with an input box, and this is its bot id. */
   subBot: BotId.optional(),
+  /** Its agent registry id (agents.json). */
+  agentId: z.string().max(40).optional(),
+  /** The bot that runs it, present only when that is not this row's bot (an agent moved here: "on <host>"). */
+  host: z.strictObject({ botId: BotId, name: z.string().max(400) }).optional(),
+  /** Whether "Move to…" can move it (present only with the agentMoves setting on). */
+  movable: z.strictObject({ ok: z.boolean(), reason: z.string().max(200).nullable() }).optional(),
 });
 export type SubagentRowView = z.infer<typeof SubagentRowView>;
+
+/** "Move to…": where an agent can go (`agent.targets`), each with why it cannot, if it cannot. */
+export const AgentTargetView = z.strictObject({
+  kind: z.enum(["bot", "newSubBot", "back"]),
+  botId: BotId.nullable(),
+  name: z.string().max(400),
+  folder: z.string().max(4_000),
+  sameFolder: z.boolean(),
+  disabled: z.string().max(400).nullable(),
+  mode: z.enum(["owner", "handoff"]),
+});
+export type AgentTargetView = z.infer<typeof AgentTargetView>;
+const AgentMoveTo = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("bot"), botId: BotId }),
+  z.strictObject({ kind: z.literal("newSubBot"), name: z.string().min(1).max(400), note: z.string().max(4_000).optional() }),
+  z.strictObject({ kind: z.literal("back") }),
+]);
 
 /** How long a finished subagent stays in the left column (`TraceBook.listedAfterEnding`), and the most rows listed under one bot. */
 export const LISTED_AFTER_ENDING_MS = 10 * 60_000;
@@ -981,6 +1006,10 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("subagent.view"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   /** Settles a subagent's row out of the left column into the right panel's "Settled" (false: back). It keeps working. */
   z.strictObject({ type: z.literal("subagent.settle"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), settled: z.boolean() }),
+  /** "Move to…" (agentMoves): the bots an agent shown in `botId`'s rows can go to. */
+  z.strictObject({ type: z.literal("agent.targets"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
+  /** Moves an agent's ownership (it keeps running where it is), or hands a Claude subagent's work to a new sub bot. */
+  z.strictObject({ type: z.literal("agent.move"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), to: AgentMoveTo, notifyAgent: z.boolean().optional() }),
   /** "New bot": a bot of its own with a name and a job; it sets up its own routines (`createBot`, setUp). */
   z.strictObject({ type: z.literal("bots.create"), name: z.string().min(1).max(400), job: z.string().min(1).max(4_000) }),
   /** Removes a bot of its own or a project from the left column and stops it. Its folders stay on disk. */
@@ -1187,7 +1216,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
-  "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
+  "subagent.settle", "agent.targets", "agent.move", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
@@ -1246,6 +1275,8 @@ export interface Results {
   "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; doctor?: DoctorView; waiting?: WaitingView; spec?: SpecStateView | null };
   "chat.history": { messages: MessageView[]; hasMore: boolean; older: number; /** With `until`: the line is in `messages`. */ found: boolean };
   "subagent.settle": { changed: boolean };
+  "agent.targets": { engine: z.infer<typeof Engine>; targets: AgentTargetView[] };
+  "agent.move": { agentId: string; ownerBotId: string; mode: "owner" | "handoff" };
   "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
   "bots.remove": { removed: boolean };
