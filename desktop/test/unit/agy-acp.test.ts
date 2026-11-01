@@ -94,6 +94,21 @@ it('failed tool alone cannot become a successful terminal result',async()=>{
  h.client.receive({jsonrpc:'2.0',id,result:{stopReason:'end_turn'}});expect(await sent).toBe(false);expect(h.items.at(-1)).toMatchObject({ok:false,subtype:'tool_failed'});
 });
 
+// tool_failed means "ended its turn after a failed tool" (agy-workers.ts counts that as completed), so it must
+// never stand in for a cancelled turn, an unresolved approval or another stop reason.
+it('a failed tool never hides a cancel, an unresolved approval or a non-end_turn stop reason',async()=>{
+ const failTool=(h:any)=>h.client.receive({jsonrpc:'2.0',method:'session/update',params:{sessionId:'new',update:{sessionUpdate:'tool_call',toolCallId:'failed',status:'failed'}}});
+ const turn=async()=>{const h=harness(),sent=h.client.send('test','one');await h.init();h.policy();await tick();return {h,sent,id:h.frames.at(-1).id};};
+ let t=await turn();failTool(t.h);t.h.client.receive({jsonrpc:'2.0',id:t.id,result:{stopReason:'max_tokens'}});await t.sent;
+ expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'max_tokens'});
+ t=await turn();failTool(t.h);t.h.client.interrupt();t.h.client.receive({jsonrpc:'2.0',id:t.id,result:{stopReason:'end_turn'}});await t.sent;
+ expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'cancelled'});
+ t=await turn();failTool(t.h);
+ t.h.client.receive({jsonrpc:'2.0',id:80,method:'session/request_permission',params:{sessionId:'new',toolCall:{title:'write'},options:[{kind:'allow_once',optionId:'allow'},{kind:'reject_once',optionId:'deny'}]}});
+ t.h.client.receive({jsonrpc:'2.0',id:t.id,result:{stopReason:'end_turn'}});await t.sent;
+ expect(t.h.items.at(-1)).toMatchObject({kind:'result',ok:false,subtype:'cancelled'});
+});
+
 it('worker entrypoint is blocked before any runtime or profile action when the worker gate is closed',()=>{
  gate.workers=false;try{
  const head=new AgyAcpHead({command:'/never-launched',cwd:'/never-created',sessionId:'old',resume:false,worker:true},{onItem(){},onExit(){}});

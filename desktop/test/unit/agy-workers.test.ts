@@ -156,6 +156,27 @@ it('cancel closes pending approval cards and stale answers cannot reach the stop
  expect(h.events.some(e=>e.kind==='permissionCancelled'&&e.requestId===`worker:${a.task_id}:1:p`)).toBe(true);
  h.m.answer(`worker:${a.task_id}:1:p`,true,{});expect(w.answers).toEqual([]);expect(h.m.completionDependencies).toEqual([]);
 });
+// Replay "Build resume PDF": `which xelatex pdflatex lualatex tectonic` exited 1 and `git status` 128 on the
+// way to a valid PDF; the head ended the turn normally but reported it as tool_failed, and the card said Failed.
+it('a worker whose turn ended normally after failed tool calls is completed, not failed',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'Compile the LaTeX attachment into a PDF'}),w=h.starts[0]!;
+ w.h.onItem({kind:'toolUse',id:'t1',tool:'other',title:'botling_run_command',detail:'which xelatex pdflatex lualatex tectonic',input:{}} as any);
+ w.h.onItem({kind:'toolResult',id:'t1',output:'{"exitCode":1,"output":"/opt/homebrew/bin/pdflatex\\n"}',failed:true} as any);
+ w.h.onItem({kind:'toolUse',id:'t2',tool:'other',title:'botling_run_command',detail:'git status --short',input:{}} as any);
+ w.h.onItem({kind:'toolResult',id:'t2',output:'{"exitCode":128,"output":"fatal: not a git repository"}',failed:true} as any);
+ w.h.onItem({kind:'result',ok:false,text:'### Execution Report\n\n**Status:** Completed successfully',error:'Antigravity stopped: tool_failed',subtype:'tool_failed'});await settle();
+ expect(h.events.find(e=>e.kind==='subagentEnded'&&e.id===a.task_id)).toMatchObject({status:'completed'});
+ expect(h.reports[0].text).toContain('status="completed"');expect(h.reports[0].text).toContain('Completed successfully');
+});
+
+it('a worker that stopped early, was cancelled or wrote no report after a failed tool is still failed',async()=>{
+ for(const [subtype,text] of [['max_tokens','partial report'],['cancelled','partial report'],['permission_denied','partial report'],['tool_failed','  ']]){
+  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+  w.h.onItem({kind:'result',ok:false,text,error:`Antigravity stopped: ${subtype}`,subtype});await settle();
+  expect(h.events.find(e=>e.kind==='subagentEnded'&&e.id===a.task_id),subtype).toMatchObject({status:'failed'});
+ }
+});
+
 it('worker crash produces one failed report only after cleanup',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;let clean!:()=>void;w.cleanup=new Promise<void>(r=>clean=r);
  w.h.onExit({code:1,signal:null,stderr:'fixture crashed',expected:false,silent:false});await settle();expect(h.reports).toEqual([]);

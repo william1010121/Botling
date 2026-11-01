@@ -199,7 +199,9 @@ export class AgyAcpProtocol {
       const usage = obj(result.usage);
       const count = (key: string) => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] as number : 0;
       if (result.usage) this.emit({kind:"usage",totalCost:0,tokens:{input:Math.max(0,count("inputTokens")-count("cachedReadTokens")),output:count("outputTokens")+count("thoughtTokens"),cacheRead:count("cachedReadTokens"),cacheWrite:count("cachedWriteTokens")}});
-      const reason = this.turnFailure ?? (epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason));
+      const stop = epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason);
+      // tool_failed means "ended its turn normally after a failed tool" (agy-workers.ts reads it so); it never hides another stop.
+      const reason = this.turnFailure && (this.turnFailure !== "tool_failed" || stop === "end_turn") ? this.turnFailure : stop;
       // ACP gives one usage block per prompt and no per-request timing: the whole prompt turn, an estimate.
       const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, reason === "end_turn");
       if (request) this.emit({ kind: "request", request });
@@ -291,7 +293,7 @@ export class AgyAcpProtocol {
     this.write({ jsonrpc: "2.0", id: pending.id, result: { outcome: { outcome: "selected", optionId: allow ? pending.allow : pending.deny } } });
   }
   private cancelApprovals() {
-    if (this.approvals.size && this.busy) this.turnFailure ??= "cancelled";
+    if (this.approvals.size && this.busy && (!this.turnFailure || this.turnFailure === "tool_failed")) this.turnFailure = "cancelled";
     for (const [requestId, pending] of this.approvals) {
       this.write({ jsonrpc: "2.0", id: pending.id, result: { outcome: { outcome: "cancelled" } } });
       this.emit({ kind: "permissionCancelled", requestId });
@@ -302,7 +304,7 @@ export class AgyAcpProtocol {
     if (this.quotaCapture) this.quotaCapture.invalid = true;
     this.submitting = false; this.confirmed = false; this.transport.revoke?.();
     this.cancelEpoch++;
-    if (this.busy) { this.turnCancelled = true; this.turnFailure ??= "cancelled"; }
+    if (this.busy) { this.turnCancelled = true; if (!this.turnFailure || this.turnFailure === "tool_failed") this.turnFailure = "cancelled"; }
     if (this.sessionId && !this.closed) this.write({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: this.sessionId } });
     this.cancelApprovals();
   }
