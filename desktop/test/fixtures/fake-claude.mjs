@@ -46,6 +46,7 @@
 // note ("(App: You have been idle …") is answered "OK" after writing the memory file it names.
 // FAKE_CLAUDE_INPUT: a file it appends {session, text} to for every message it reads.
 // FAKE_CLAUDE_PIDS: a file this process appends "<pid>\n" to, for itself and each helper it starts.
+// FAKE_CLAUDE_CONTROLS: a file it appends {session, request} to for every set_model request.
 // FAKE_CLAUDE_LOG: a file it appends one JSON line to per start: {pid, args, resume, session, cwd}.
 // FAKE_CLAUDE_FORGET=1: `--resume` fails like claude's for a session it does not have (exit 1, stderr only).
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -234,6 +235,12 @@ lines.on("line", (line) => {
     wake?.();
   } else if (message.type === "control_request" && message.request?.subtype === "initialize") {
     out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } });
+  } else if (message.type === "control_request" && message.request?.subtype === "set_model") {
+    // As claude 2.1.311: the running session's model changes; FAKE_CLAUDE_SET_MODEL refuses it.
+    const model = message.request.model ?? "default";
+    if (process.env.FAKE_CLAUDE_CONTROLS) appendFileSync(process.env.FAKE_CLAUDE_CONTROLS, JSON.stringify({ session, request: message.request }) + "\n");
+    if (process.env.FAKE_CLAUDE_SET_MODEL === "refuse") out({ type: "control_response", response: { subtype: "error", request_id: message.request_id, error: `Unknown model ${model}` } });
+    else out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { model } } });
   } else if (message.type === "control_request" && message.request?.subtype === "interrupt") {
     if (process.env.FAKE_CLAUDE_INTERRUPTS) appendFileSync(process.env.FAKE_CLAUDE_INTERRUPTS, `${session}\n`);
     out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } });

@@ -313,7 +313,7 @@ export class ClaudeHead {
    * (null: claude's default), `apply_flag_settings` `{effortLevel}`. False: not applied (refused, failed, no
    * answer in time, or the change is one it does not take in place); the bot restarts it instead.
    */
-  async applySettings(target: HotSettings, timeoutMs = 10_000): Promise<boolean> {
+  async applySettings(target: HotSettings, timeoutMs = 5_000): Promise<boolean> {
     if (!this.canApplySettings(target)) return false;
     const change = settingsChange(target, this.config);
     if ("model" in change) {
