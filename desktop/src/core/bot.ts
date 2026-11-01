@@ -400,6 +400,14 @@ export class Bot {
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   private restartPending = false;
   private modelSettingsPending = false;
+  /** The restart waiting is also for something other than its model or effort (plugins, folders, subagents' model): a hot switch cannot stand in for it. */
+  private restartNonModel = false;
+  /**
+   * Your message waits for this head's own work (its subagents, workers, background tasks) to finish, so a
+   * model or effort change that needs a restart can be applied first; it is sent then, never on the old
+   * settings. `noticeId`: the chat card that says so.
+   */
+  private settingsHold: { noticeId: string; timer: ReturnType<typeof setInterval> } | null = null;
   /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
   private restartReason: { told: string; shown: string } | null = null;
   /** The restart waiting is only for plugins: when they changed back, it is not needed (1.x's `pendingRestartForPluginsOnly`). */
@@ -2215,6 +2223,12 @@ export class Bot {
     if (this.swapHold) { this.queue.push(turn); return turn; }
     // A switch of engine waits for this message: the handoff first, then the message (`restartsBeforeMessage`).
     if (!current && this.switchReady) { this.queue.push(turn); void this.handOver(); return turn; }
+    // A message already waits for this head's work before a model/effort restart: this one goes after it.
+    if (this.settingsHold) { this.queue.push(turn); this.checkSettingsHold(); return turn; }
+    if (!current && !this.tidying && !this.switching && turn.origin === "user" && this.modelSettingsPending && this.head?.running && this.ownWorkRunning) {
+      this.holdForSettings(turn);
+      return turn;
+    }
     if (!current && !this.tidying && !this.switching) { this.begin(turn); return turn; }
     // A saved model/effort belongs to a new turn, never to steering the old configuration.
     if (current && this.modelSettingsPending) { this.queue.push(turn); return turn; }
@@ -2376,9 +2390,10 @@ export class Bot {
   /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
   private restartFor(reason: { told: string; shown: string } | null, modelSettings = false) {
     this.restartForPluginsOnly = false;
-    if (!this.head?.running) { this.restartPending = false; return; }
+    if (!this.head?.running) { this.restartPending = false; this.restartNonModel = false; return; }
     this.restartPending = true;
     this.modelSettingsPending ||= modelSettings;
+    if (!modelSettings) this.restartNonModel = true;
     if (reason) this.restartReason = reason;
   }
 
@@ -2396,7 +2411,7 @@ export class Bot {
   reloadPlugins() {
     if (this.options.primary) return;
     if (this.hasCurrentPlugins()) {
-      if (this.restartForPluginsOnly) { this.restartPending = false; this.restartReason = null; this.restartForPluginsOnly = false; }
+      if (this.restartForPluginsOnly) { this.restartPending = false; this.restartNonModel = false; this.restartReason = null; this.restartForPluginsOnly = false; }
       return;
     }
     const waiting = this.restartPending;
@@ -2415,17 +2430,24 @@ export class Bot {
     // The restart waiting was only for plugins, and they came back to what its session has (`restartWaiting`).
     if (!given && this.restartPending && this.restartForPluginsOnly && this.hasCurrentPlugins()) {
       this.restartPending = false;
+      this.restartNonModel = false;
       this.restartForPluginsOnly = false;
       this.restartReason = null;
     }
-    // Keep workers alive, but never accept a user turn under a known stale model/effort.
-    if (!given && turn.origin === "user" && this.modelSettingsPending && old?.running
-      && (this.subagents.running.length || this.managedPending || this.backgroundWorkRunning || this.outage)) {
-      this.finishTurn(turn, "failed", "Model or effort change is waiting for active work to finish. Send this message again when it finishes.");
+    // Keep workers alive, but never send a user turn under a known stale model/effort: it waits for this
+    // head's own work to finish (a partner head's work does not count), then the restart, then it goes.
+    if (!given && turn.origin === "user" && this.modelSettingsPending && old?.running && this.ownWorkRunning) {
+      this.turn = null;
+      turn.head = null;
+      turn.sent = false;
+      // It was shown as under way: no longer (its reply line does not exist yet).
+      this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status: "stopped", text: "" });
+      this.holdForSettings(turn);
       return;
     }
-    if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending && !this.backgroundWorkRunning && !this.outage) {
+    if (!given && this.restartPending && old?.running && !this.ownWorkRunning) {
       this.restartPending = false;
+      this.restartNonModel = false;
       this.restartForPluginsOnly = false;
       this.restarting = old;
       restarted = this.restartReason;
@@ -2589,6 +2611,7 @@ export class Bot {
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
     this.requireEngineRoute(this.engine, this.owner.engine);
     this.restartPending = false;
+    this.restartNonModel = false;
     this.modelSettingsPending = false;
     this.restartForPluginsOnly = false;
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
@@ -2708,6 +2731,7 @@ export class Bot {
     if (item.kind === "managedPending") {
       this.managedPending = item.pending;
       if (!item.pending && !this.turn && !this.queue.length) this.scheduleIdle();
+      if (!item.pending) this.checkSettingsHold();
       return;
     }
     if (item.kind === "monitorState") return this.monitorState(item.record);
@@ -3113,6 +3137,7 @@ export class Bot {
     else this.pendingEnded.push(id);
     this.saveTasks(); // A card's "at work" may have changed.
     if (!this.turn && !this.queue.length && !this.tidying) this.scheduleIdle();
+    this.checkSettingsHold();
   }
 
   private emitSteps(turn: Turn) {
@@ -3293,6 +3318,8 @@ export class Bot {
     }
     if (this.swapHold) return;
     if (this.resumePaused()) return;
+    // Your message waits for this head's own work before a model/effort restart.
+    if (this.settingsHold && !this.releaseSettingsHold()) return;
     if (this.queue.some((turn) => turn.open) && this.switchReady) { void this.handOver(); return; }
     const waiting = this.queue.shift();
     if (waiting) {
@@ -3340,6 +3367,8 @@ export class Bot {
         this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: waiting.messageId, status: "stopped", text: "" });
         this.finished.set(turnId, "stopped");
         waiting.resolve("stopped");
+        // The message that waited for a model/effort restart was taken back: its card goes too.
+        this.checkSettingsHold();
         return { stopped: true, killed: [], forced: false };
       }
       // Sent, but set aside while claude answers the other head's words first.
@@ -3551,6 +3580,7 @@ export class Bot {
     if (!outage) return;
     this.outage = null;
     this.retryingConnection = false;
+    queueMicrotask(() => this.checkSettingsHold());
     const elapsed = Math.max(0, now - outage.since);
     const warm = elapsed <= WARM_WINDOW_MS;
     const cut: CutOff[] = outage.subagents.flatMap((id) => {
@@ -3673,6 +3703,7 @@ export class Bot {
     if (pending) { endTask(pending, status, summary); return; }
     const record = endBackgroundTask(this.records, id, status, summary);
     if (record) this.changed(record);
+    this.checkSettingsHold();
   }
 
   /** The turn's background work goes in its reply (`message.backgroundTasks = trace.takeTasks()`). */
@@ -3691,13 +3722,78 @@ export class Bot {
   private stopTasks() {
     this.scheduleCalls.clear();
     this.scheduleDueAt = null;
-    const changed = stopBackgroundTasks(this.records, "stopped");
+    // Only this head's: a partner head's tasks run in its own process, which goes on.
+    const changed = stopBackgroundTasks(this.ownRecords, "stopped");
     for (const record of changed) this.changed(record);
   }
 
   /** Background work still going that it started not too long ago (sleeping or a restart would end it). */
   private get backgroundWorkRunning(): boolean {
-    return hasBackgroundWorkRunning(this.records);
+    return hasBackgroundWorkRunning(this.ownRecords);
+  }
+
+  /**
+   * The chat lines whose background tasks are this head's. A shared chat holds the partner head's replies
+   * too (their tasks, e.g. an Antigravity worker, run in the partner's process): they are left out.
+   */
+  private get ownRecords(): ChatRecord[] {
+    if (!this.sharesChat) return this.records;
+    return this.records.filter((record) => (record.engine ?? "claude") === this.engine);
+  }
+
+  /**
+   * Work in this head's own process that a restart would end: its subagents or workers (hosted ones count,
+   * whoever they report to), background tasks it started, or its wait for the network. Never a partner head's.
+   */
+  private get ownWorkRunning(): boolean {
+    return this.subagents.running.length > 0 || this.managedPending || this.backgroundWorkRunning || !!this.outage;
+  }
+
+  /** Words for the work that holds a model/effort restart back (the queue card). */
+  private ownWorkWords(): string {
+    const parts: string[] = [];
+    const subagents = this.subagents.running.length;
+    if (subagents) parts.push(`${subagents} ${this.engine === "claude" ? "subagent" : "worker"}${subagents === 1 ? "" : "s"}`);
+    else if (this.managedPending) parts.push("its workers");
+    if (this.backgroundWorkRunning) parts.push("background tasks");
+    if (this.outage) parts.push("the network to come back");
+    return parts.join(", ") || "its work";
+  }
+
+  /** `turn` (your message) waits for this head's own work to finish before its model/effort restart; a card says so. */
+  private holdForSettings(turn: Turn) {
+    this.queue.unshift(turn);
+    if (!this.settingsHold) {
+      const id = newId();
+      const settings = this.restartReason?.shown ?? "the new model or effort";
+      this.owner.add({ id, role: "notice", text: `Model or effort change is waiting for active work to finish (${displayName(this.engine)}: ${this.ownWorkWords()}). Your message is queued and is sent on ${settings} as soon as that work finishes.`, date: toSwiftDate() });
+      // Work whose end the app hears of without an event (a background task too old to hold the bot) is seen here.
+      const timer = setInterval(() => this.checkSettingsHold(), 15_000);
+      timer.unref?.();
+      this.settingsHold = { noticeId: id, timer };
+      this.log(`your message waits for its own work to finish before restarting for ${settings}`);
+    }
+    this.updated();
+  }
+
+  /** Lets the held message go once this head's own work is done (or nothing waits any more). True: let go. */
+  private releaseSettingsHold(): boolean {
+    const hold = this.settingsHold;
+    if (!hold) return true;
+    const waiting = this.queue.some((turn) => turn.open && turn.origin === "user");
+    if (waiting && this.modelSettingsPending && this.head?.running && this.ownWorkRunning) return false;
+    clearInterval(hold.timer);
+    this.settingsHold = null;
+    const card = this.owner.records.find((record) => record.id === hold.noticeId);
+    if (card) this.owner.remove(card);
+    if (waiting) this.log("its own work finished: your queued message goes now");
+    return true;
+  }
+
+  /** Something that may have ended this head's own work happened: a held message may go now. */
+  private checkSettingsHold() {
+    if (!this.settingsHold || !this.releaseSettingsHold()) return;
+    if (!this.turn && !this.tidying && !this.switching) this.next();
   }
 
   /** The interrupted-work note for a wake, once: those tasks count as told from now on (`takeInterruptedNote`). */
@@ -5198,6 +5294,13 @@ export class Bot {
     this.shuttingDown = true;
     // Messages still waiting never reached claude.
     for (const waiting of this.queue.splice(0)) { waiting.open = false; waiting.resolve("stopped"); }
+    const held = this.settingsHold;
+    if (held) {
+      clearInterval(held.timer);
+      this.settingsHold = null;
+      const card = this.owner.records.find((record) => record.id === held.noticeId);
+      if (card) { card.text = "Model or effort change was waiting for active work to finish; the app quit first, so the queued message was not sent."; this.owner.changed(card); }
+    }
     if (this.deferred) { this.deferred.open = false; this.deferred.resolve("stopped"); this.deferred = null; }
     // A running turn's tree is ended at once (what it said so far stays); such a head does not tidy.
     const working = this.shownTurn;
