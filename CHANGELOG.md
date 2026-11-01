@@ -4,20 +4,27 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
-## Unreleased
+## 2.3.0
 
-- Added: Sub bots (Claude only). A project or bot's own bot can move a running Claude subagent out into a sub bot with a `<sub-bot name="…" subagent="agent id"/>` tag at the end of its reply: it first asks the subagent (SendMessage) to write `.bot/subagents/<id>/handoff.md` and end; the app waits up to 75 seconds for that, and only then stops the whole turn and writes `handoff.md` itself from the subagent's recorded steps. The sub bot is a hidden bot of its own (own chat and subagents) in the same folder, no worktree; it is not in the left column but listed under its project bot as a "sub bot" row, opens as a normal chat with an input box titled "project bot › sub bot", keeps `progress.md` next to `handoff.md`, and tells its project bot when it sets "Status: done". The project bot wakes with the list of its sub bots and their progress files. Codex and Antigravity subagents and bots are refused out loud for now. Prompt rules changed for this (listed here on purpose): project bots get a rule on moving a subagent to a sub bot and on reading sub bots' progress files; their `.bot/` rule now also lets them write `handoff.md` and `progress.md` under `.bot/subagents/<id>/` (the Swift golden prompts are untouched, the desktop layer adds it); a sub bot has its own prompt, reports to its project bot, and its first message starts "(From your project bot)" instead of "(From the main bot)".
-- Removed: Temporary teams. The main bot no longer starts a separate hidden Claude with a `<team>` tag; it uses subagents, which show their steps in the right panel. The team rows in the right panel, the built-in research and prototype teams and the `ccb-teams` fallback are gone. Old `runs/` folders and `plugins/ccb-teams` are left on disk and not read.
-- Removed: The "New group" entry and group chats (creating, editing and deleting a group, the group row and its right panel). Hand-offs between bots, @ call-ins and the shared chat of several heads are not affected. Old `groups.json` and `groups/` files are kept on disk and not read, and the app starts normally with them.
-- Changed: Token speed is now measured the same way for Claude, Codex and Antigravity and for the main bot, aligned with the token-speed tool.
-- Fixed: A Claude subagent now shows a token speed (marked as an estimate) and a realistic output-token count. Its progress arrives as complete messages whose token count is stale, so speed was blank and tokens were far too low; both are now estimated from the message size. Antigravity workers also report their output tokens.
-- Fixed: When the app attached a git worktree, every agent (Claude, Codex workers, Antigravity) is told its working folder is that worktree, to use relative paths, and not to make worktrees of its own; Antigravity can also reach the project's memory files.
-- Fixed: @ mention search stops at a space instead of previewing all following text.
-- Fixed: Bots asked to call another engine now hand off to it instead of emulating it with a subagent.
-- Fixed: Antigravity workers no longer marked Failed when a harmless command exits non-zero.
+Adds sub bots (new, Claude engine only), phone pairing, one token-speed measure for all engines, and
+removes temporary teams and group chats. It keeps the "Botling 2 Dev Trial" profile, so your chats and
+settings stay where they are. Updates arrive in the app.
 
+Heads-up: sub bots are new and have only been covered by unit tests so far, not tried in the real app.
+They work with Claude only; Codex and Antigravity subagents and bots are refused with a message.
 
 ### New
+
+- **Sub bots (Claude only).** A project bot can move a running Claude subagent out into a sub bot with a
+  `<sub-bot name="..." subagent="agent id"/>` tag at the end of its reply. It first asks the subagent to write
+  `.bot/subagents/<id>/handoff.md` and end; the app waits up to 75 seconds, then stops the turn and writes
+  `handoff.md` itself from the subagent's recorded steps. A sub bot is a hidden bot of its own (own chat and
+  subagents) in the same folder, with no worktree. It is listed under its project bot as a "sub bot" row, keeps
+  `progress.md` next to `handoff.md`, and tells its project bot when it sets "Status: done". The project bot wakes
+  with the list of its sub bots and their progress files.
+- **Prompt rule changes (listed on purpose).** Claude project bots get two new rules: how to move a subagent to a
+  sub bot, and how to read the sub bots' progress files. Their `.bot/` rule is relaxed so they may also write
+  `.bot/subagents/<id>/handoff.md` and `progress.md`. A sub bot has its own prompt and reports to its project bot.
 
 - **Pair a phone with a one-time QR link.** `out/mobile-bridge/pair.cjs PAIRING_DIR ORIGIN BOT_ID...`
   prints a link that works once and expires in 5 minutes. Its secret is in the URL fragment, the
@@ -44,10 +51,28 @@ app and publishes it on GitHub Releases.
 - **Web isolation check** runs headless only (no window, no focus), uses an installed headless shell
   when Playwright's pinned one is missing, stops on a time limit, and exits 2 when there is no browser.
 
+### Improved
+
+- Token speed is measured the same way for Claude, Codex and Antigravity and for the main bot.
+- A Claude subagent shows a token speed (marked as an estimate) and a realistic output-token count. Antigravity
+  workers also report their output tokens.
+- Bots asked to call another engine hand off to it instead of emulating it with a subagent.
+- When the app attached a git worktree, every agent is told its working folder is that worktree and not to make
+  worktrees of its own.
+
 ### Fixed
 
-- A stranger's wrong pairing guesses no longer lock out a valid code: past five wrong guesses a
-  minute they get 429, but a valid code still pairs.
+- A stranger's wrong pairing guesses no longer lock out a valid code: past five wrong guesses a minute they get
+  429, but a valid code still pairs.
+- Antigravity workers are no longer marked Failed when a harmless command exits non-zero.
+- @ mention search stops at a space instead of previewing all following text.
+
+### Removed
+
+- Temporary teams: the main bot uses subagents instead of a hidden `<team>` Claude, and the team rows, built-in
+  teams and the `ccb-teams` fallback are gone. Old `runs/` folders and `plugins/ccb-teams` stay on disk, unread.
+- The "New group" entry and group chats. Hand-offs, @ call-ins and the shared chat of several heads are not
+  affected. Old `groups.json` and `groups/` files stay on disk, unread.
 
 ## 2.2.0
 
