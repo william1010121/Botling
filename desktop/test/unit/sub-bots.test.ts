@@ -31,6 +31,12 @@ describe("the <sub-bot> tag", () => {
     expect(parseReply('<sub-bot name="A"/>').requests).toEqual([]);
     expect(parseReply('<sub-bot name="A"/>').body).toBe("");
   });
+  it("with no subagent, the words inside the tag are the first task of a new sub bot (and an engine may be named)", () => {
+    expect(parseReply('Started.\n<sub-bot name="Docs">Write the README</sub-bot>').requests).toEqual([{ kind: "subBot", name: "Docs", subagent: "", note: "Write the README" }]);
+    expect(parseReply('<sub-bot name="Docs" engine="Codex">Write the README</sub-bot>').requests).toEqual([{ kind: "subBot", name: "Docs", subagent: "", note: "Write the README", engine: "codex" }]);
+    expect(parseReply('<sub-bot name="Docs">   </sub-bot>').requests).toEqual([]);
+    expect(parseReply('<sub-bot name="Docs" subagent="x1">hi</sub-bot>').requests).toEqual([{ kind: "subBot", name: "Docs", subagent: "x1", note: "hi" }]);
+  });
   it("says out loud, never silently, what an engine that cannot do it was refused", () => {
     expect(unsupportedRequest({ kind: "subBot", name: "A", subagent: "b", note: "" })).toMatch(/sub bot/);
   });
@@ -270,6 +276,78 @@ describe("a sub bot in the core", () => {
       expect(notice).toHaveBeenCalledTimes(1);
       expect(note.mock.calls[0]![0]).toContain("Settings page");
     } finally { await core.shutdown(); }
+  });
+});
+
+describe("making a sub bot directly", () => {
+  async function direct(request: { name: string; note: string; engine?: string }, over: { heads?: string[]; parentId?: string } = {}) {
+    const h = fixture({ sub: false }), core = h.open();
+    const parent = bots(core).get(over.parentId ?? PROJECT)!;
+    if (over.heads) vi.spyOn(parent, "headEngines", "get").mockReturnValue(over.heads as any);
+    const notices: string[] = [];
+    vi.spyOn(parent, "appNotice").mockImplementation(((text: string) => { notices.push(text); return "n"; }) as any);
+    vi.spyOn(parent, "queueNote").mockImplementation(() => {});
+    const relays: { text: string; id: string }[] = [];
+    vi.spyOn(Bot.prototype, "relay").mockImplementation(function (this: Bot, text: string) { relays.push({ text, id: this.id }); return { messageId: "m", turnId: "t" } as any; });
+    await (core as any).subBotRequested(parent, { subagent: "", ...request });
+    return { h, core, notices, relays, subs: [...bots(core).values()].filter((bot) => bot.profile.parent) };
+  }
+
+  it("makes a hidden sub bot under the project bot and sends it the task, with no subagent involved", async () => {
+    const r = await direct({ name: "Docs", note: "Write the README" });
+    try {
+      expect(r.subs).toHaveLength(1);
+      const sub = r.subs[0]!;
+      expect(sub.profile.parent).toBe(PROJECT);
+      expect(sub.profile.name).toBe("Docs");
+      expect(sub.profile.folder).toBe(r.h.folder);
+      expect(sub.profile.job).toBe("Write the README");
+      const progress = progressFile(r.h.folder, sub.id);
+      expect(readFileSync(progress, "utf8")).toBe("Status: working\n");
+      expect(r.relays).toHaveLength(1);
+      expect(r.relays[0]!.id).toBe(sub.id);
+      expect(r.relays[0]!.text).toContain("Write the README");
+      expect(r.relays[0]!.text).toContain(progress);
+      expect(r.notices.join("\n")).toContain('Made the sub bot "Docs"');
+      const rows = JSON.parse(readFileSync(join(r.h.dir, "projects.json"), "utf8"));
+      const row = rows.find((x: any) => x.id === sub.id);
+      expect(row).toMatchObject({ parent: PROJECT });
+      expect(row.handoff).toBeUndefined();
+      expect(r.core.snapshot().bots.find((bot) => bot.id === PROJECT)!.subagentRows.some((x) => x.subBot === sub.id)).toBe(true);
+      // Its progress file is found again for the wake note.
+      expect((r.core as any).subBotNote((r.core as any).profiles.find((p: any) => p.id === PROJECT))).toContain(`Docs (working): progress file ${progress}`);
+    } finally { vi.restoreAllMocks(); await r.core.shutdown(); }
+  });
+
+  it("runs on an engine the project bot has when one is named, else on the project bot's own, saying so", async () => {
+    const named = await direct({ name: "Docs", note: "t", engine: "codex" }, { heads: ["claude", "codex"] });
+    try {
+      expect(named.subs[0]!.engine).toBe("codex");
+    } finally { vi.restoreAllMocks(); await named.core.shutdown(); }
+    const missing = await direct({ name: "Docs", note: "t", engine: "agy" }, { heads: ["claude"] });
+    try {
+      expect(missing.subs[0]!.engine).toBe("claude");
+      expect(missing.notices.join("\n")).toContain("not one of this project bot's engines");
+    } finally { vi.restoreAllMocks(); await missing.core.shutdown(); }
+  });
+
+  it("is refused out loud for the main bot and for a sub bot", async () => {
+    const main = await direct({ name: "Docs", note: "t" }, { parentId: MAIN_BOT_ID });
+    try {
+      expect(main.subs).toHaveLength(0);
+      expect(main.notices.join("\n")).toContain("No sub bot was made");
+    } finally { vi.restoreAllMocks(); await main.core.shutdown(); }
+    const h = fixture(), core = h.open();
+    try {
+      const sub = bots(core).get(SUB)!;
+      const notices: string[] = [];
+      vi.spyOn(sub, "appNotice").mockImplementation(((text: string) => { notices.push(text); return "n"; }) as any);
+      vi.spyOn(sub, "queueNote").mockImplementation(() => {});
+      const before = bots(core).size;
+      await (core as any).subBotRequested(sub, { name: "X", subagent: "", note: "t" });
+      expect(bots(core).size).toBe(before);
+      expect(notices.join("\n")).toContain("cannot make another sub bot");
+    } finally { vi.restoreAllMocks(); await core.shutdown(); }
   });
 });
 

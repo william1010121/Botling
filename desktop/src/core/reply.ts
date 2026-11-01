@@ -20,8 +20,11 @@ export type BotRequest =
   | { kind: "folder"; path: string }
   | { kind: "install"; source: string }
   | { kind: "newBot"; name: string; job: string }
-  /** A running subagent moved out into a sub bot (`<sub-bot name="…" subagent="agent id"/>`); `note` is any words inside the tag. */
-  | { kind: "subBot"; name: string; subagent: string; note: string }
+  /**
+   * A sub bot (`<sub-bot name="…" subagent="agent id"/>`): with `subagent`, a running subagent moved out (`note` is any words
+   * inside the tag); without it (`subagent` is ""), a new empty sub bot whose first task is `note`, on `engine` if one was named.
+   */
+  | { kind: "subBot"; name: string; subagent: string; note: string; engine?: string }
   | { kind: "newProject"; folder: string; task: string }
   | { kind: "installBuild"; path: string; note: string }
   | { kind: "appScreenshot" }
@@ -248,9 +251,9 @@ export function parseReply(reply: string): Parsed {
   const subBots: BotRequest[] = [];
   take(subBotTag, ([attrs, note]) => {
     const found = attributes(attrs!);
-    // Both the name and the subagent are needed; one without the other is left out, never guessed.
-    const name = trimWS(found.name ?? ""), subagent = trimWS(found.subagent ?? "");
-    if (name && subagent) subBots.unshift({ kind: "subBot", name, subagent, note: note ?? "" });
+    // A name is needed, and either a subagent to move or a task (the words inside the tag) for a new sub bot; neither is never guessed.
+    const name = trimWS(found.name ?? ""), subagent = trimWS(found.subagent ?? ""), engine = trimWS(found.engine ?? "").toLowerCase();
+    if (name && (subagent || trimWS(note ?? ""))) subBots.unshift({ kind: "subBot", name, subagent, note: note ?? "", ...(!subagent && engine ? { engine } : {}) });
   });
   requests.push(...subBots);
   take(pluginTag, ([request]) => requests.push({ kind: "plugin", request: request! }));

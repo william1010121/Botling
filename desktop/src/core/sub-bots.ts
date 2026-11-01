@@ -116,6 +116,22 @@ export function subBotFirstMessage(input: { parentName: string; name: string; ha
   ].filter(Boolean).join("\n");
 }
 
+/** The first message to a new, empty sub bot made directly (no subagent behind it): its task, and progress.md. */
+export function subBotDirectFirstMessage(input: { parentName: string; name: string; task: string; progress: string }): string {
+  return [
+    `You are the sub bot "${input.name}", made by "${input.parentName}" for one job in this folder. Your job:`,
+    input.task,
+    `Keep ${input.progress} current as you work: what is done, what you are doing now, what is next, anything waiting on the user. Its first line is "Status: working", and "Status: done" when your job is finished. ${input.parentName} reads this file to answer the user's progress questions.`,
+    "Then say in one sentence what you are starting. The user may talk to you directly in this chat, and you may start your own subagents.",
+  ].join("\n");
+}
+
+/** The engine a directly made sub bot runs on: the one asked for when the project bot has it, else the project bot's own. */
+export function directSubBotEngine(asked: string | undefined, parent: { engine: Engine; heads: Engine[] }): { engine: Engine; note: string } {
+  if (asked === "claude" || asked === "codex" || asked === "agy") return subBotEngine(asked, parent);
+  return { engine: parent.engine, note: asked ? `"${asked}" is not an engine (claude, codex or agy), so the sub bot runs on ${engineName(parent.engine)}.` : "" };
+}
+
 /** One sub bot as the project bot's wake note lists it. */
 export interface SubBotRow { name: string; progress: string; working: boolean; status: string | null }
 

@@ -55,7 +55,7 @@ import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botDescription, latestAction } from "./whiteboard-data";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
-import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
+import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
 import { Conversations } from "./conversations";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
@@ -793,7 +793,7 @@ First write a test that shows this, then fix it.`;
    * folder, on the worker's engine when the project bot has it, and handed the file. A request that cannot be done says
    * why in the chat, never silently.
    */
-  private async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string }): Promise<void> {
+  private async subBotRequested(bot: Bot, request: { name: string; subagent: string; note: string; engine?: string }): Promise<void> {
     const profile = bot.profile;
     const refuse = (why: string) => {
       bot.appNotice(`No sub bot was made: ${why}`);
@@ -804,6 +804,7 @@ First write a test that shows this, then fix it.`;
     const name = botName(request.name);
     if (!name) return refuse("it needs a name.");
     const key = request.subagent;
+    if (!key) return this.subBotMade(bot, name, request);
     const found = bot.findSubagent(key);
     if (!found) return refuse(`there is no subagent "${key}" here.`);
     // One that already ended can still move if the app has a record of what it did; with none there is nothing to hand over.
@@ -845,12 +846,32 @@ First write a test that shows this, then fix it.`;
     }
   }
 
+  /** A <sub-bot> with no subagent: a new empty sub bot under the project bot, sent the words inside the tag as its first task. */
+  private subBotMade(bot: Bot, name: string, request: { note: string; engine?: string }): void {
+    const profile = bot.profile;
+    const task = request.note.trim();
+    const refuse = (why: string) => { bot.appNotice(`No sub bot was made: ${why}`); bot.queueNote(`(App: No sub bot was made: ${why})`); };
+    if (!task) return refuse("it needs a task (the words inside the tag) or a subagent to move.");
+    try {
+      const chosen = directSubBotEngine(request.engine, { engine: bot.engine, heads: bot.headEngines });
+      const subId = this.makeSubBot(profile, name, task.slice(0, 1_000), undefined, chosen.engine);
+      const progress = progressFile(profile.folder, subId);
+      mkdirSync(join(progress, ".."), { recursive: true });
+      writeFileAtomic(progress, "Status: working\n");
+      bot.appNotice(`Made the sub bot "${name}" and gave it its first task.${chosen.note ? ` ${chosen.note}` : ""}`, undefined, undefined, { sourceID: subId });
+      this.bots.get(subId)?.relay(subBotDirectFirstMessage({ parentName: profile.name, name, task, progress }));
+      this.log(`sub bot ${name} made directly under ${profile.name}`);
+    } catch (error) {
+      refuse((error as Error).message);
+    }
+  }
+
   private movingSubagents = new Set<string>();
   /** Sub bots that already told their project bot they were done. */
   private subBotsReported = new Set<string>();
 
   /** Makes the hidden sub bot: a Bot of its own (head, chat.json, subagents.json) under `parent`, in the same folder, no worktree. */
-  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string, engine?: Engine): string {
+  makeSubBot(parent: BotProfile, rawName: string, job: string, handoff: string | undefined, engine?: Engine): string {
     const taken = new Set(this.profiles.filter((profile) => profile.parent === parent.id).map((profile) => profile.name.toLowerCase()));
     let name = botName(rawName) || "Sub bot";
     for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${botName(rawName) || "Sub bot"} ${n}`;
@@ -863,7 +884,7 @@ First write a test that shows this, then fix it.`;
       store.saveSetting("heads", headsJSON(singleHead(engine)));
       store.saveSetting("engine", engine);
     }
-    const row = { id, name, folder: parent.folder, avatar: parent.avatar, job, parent: parent.id, createdAt: Date.now(), handoff };
+    const row = { id, name, folder: parent.folder, avatar: parent.avatar, job, parent: parent.id, createdAt: Date.now(), ...(handoff ? { handoff } : {}) };
     saveProjectRow(this.options.dataDir, row);
     this.attach(projectProfile(this.options.dataDir, { ...row, folder: folderURLText(parent.folder) }));
     // The project bot's subagent list gains the row.
