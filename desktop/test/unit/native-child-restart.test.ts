@@ -58,6 +58,8 @@ it('a native child without a matching checkpoint is listed as unresumable instea
  expect(note).toContain('bad-agent');expect(note).toContain('no matching acknowledged checkpoint');
  const only=nativeRestartContext([bad],{cwd,sessionId,configDir:root});
  expect(only).toContain('could not be resumed');expect(only).toContain('Other work');
+ // The cause is each child's own reason, not one claim for all of them.
+ expect(only).not.toContain('saved transcript did not match');expect(only).toContain('"reason"');
 });
 it('a native child with no checkpoint does not block the main bot entry',()=>{
  const children=[{id:'running-call',agentID:'agent',status:'running',prompt:'Research only',description:'Research',steps:[]}];
