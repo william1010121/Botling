@@ -130,6 +130,14 @@ describe("a Claude worker's run", () => {
     expect(h.workers.listWorkers()[0]!.state).toBe("failed");
   });
 
+  it("takes the Agent tool's names for its instructions and name (models carry them over)", async () => {
+    const h = harness();
+    await h.workers.tool("app_handoff", { task: "Count the files", name: "Counter" });
+    await h.workers.tool("app_handoff", { prompt: "Read the README", description: "Reader" });
+    expect(h.heads.map((head) => head.sent[0]!.text)).toEqual(["Count the files", "Read the README"]);
+    expect(h.workers.listWorkers().map((w) => w.name)).toEqual(["Counter", "Reader"]);
+  });
+
   it("refuses a stale run, an unknown task and empty instructions", async () => {
     const h = harness();
     const { task_id } = await h.workers.tool("app_handoff", { instructions: "x" }) as any;

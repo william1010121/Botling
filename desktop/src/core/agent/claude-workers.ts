@@ -235,14 +235,17 @@ export class ClaudeWorkers implements WorkerHost {
   async tool(name: string, args: Record<string, unknown>): Promise<unknown> {
     if (this.closed) throw new Error("Workers are closed: the app is stopping.");
     if (name === "app_handoff") {
-      const instructions = typeof args.instructions === "string" ? args.instructions : "";
+      // The Agent tool's own names (prompt, description) and "task" are taken too: models carry them over (live check).
+      const given = [args.instructions, args.prompt, args.task].find((value) => typeof value === "string" && value.trim());
+      const instructions = typeof given === "string" ? given : "";
       if (!instructions.trim() || instructions.length > 64_000) throw new Error("instructions required (maximum 64000 characters).");
       const type = typeof args.subagent_type === "string" && args.subagent_type.trim() ? args.subagent_type.trim() : null;
       const definition = loadAgentDefinition(type, this.options.cwd(), { home: this.options.home, pluginDirs: this.options.pluginDirs?.() ?? [] });
       if (definition && "error" in definition) throw new Error(definition.error);
       const model = typeof args.model === "string" && args.model.trim() ? args.model.trim() : null;
       if (model && !MODEL_ALIASES.has(model) && !/^claude-[a-z0-9.-]+$/.test(model)) throw new Error(`Unknown model "${model}": use haiku, sonnet or opus.`);
-      const name = typeof args.name === "string" && args.name.trim() ? args.name.trim().slice(0, 200) : instructions.split("\n")[0]!.slice(0, 80);
+      const named = [args.name, args.description].find((value) => typeof value === "string" && value.trim());
+      const name = typeof named === "string" ? named.trim().slice(0, 200) : instructions.split("\n")[0]!.slice(0, 80);
       const w: Record_ = {
         id: randomUUID(), name, type, instructions, sessionId: randomUUID(), sessionStarted: false, run: 0, status: "new", active: false,
         reportPending: false, reportDelivered: false, model: model ?? definition?.model ?? null, processes: [], interrupted: false, createdAt: Date.now(),
