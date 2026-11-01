@@ -31,10 +31,13 @@ describe("bot.restart", () => {
     await until(() => c.of("turn.finished").some((e: any) => e.event.turnId === sent.turnId));
     const starts = lines(join(dir, "start.log"));
     expect(starts).toHaveLength(2);
-    expect(starts[1].args).toContain("--resume");
-    expect((await c.chat()).messages.some((m: any) => m.role === "divider" && m.text === "Restarted → manual restart")).toBe(true);
-    const note = lines(join(dir, "input.log")).map((entry) => String(entry.text)).find((text) => text.startsWith("(App: Botling restarted you in this same conversation"));
-    expect(note).toContain("current instructions");
+    // A new session with the wake briefing (claude keeps a session's first system prompt on --resume).
+    expect(starts[1].args).not.toContain("--resume");
+    expect(starts[1].args).not.toEqual(starts[0].args);
+    expect((await c.chat()).messages.some((m: any) => m.role === "divider" && m.text === NEW_SESSION)).toBe(true);
+    const inputs = lines(join(dir, "input.log")).map((entry) => String(entry.text));
+    expect(inputs.some((text) => text.includes("Read ") && text.includes("memory.md"))).toBe(true);
+    expect(inputs.some((text) => text.includes("current instructions"))).toBe(false);
     // Once: the turn after has no second restart.
     sent = await c.call({ type: "chat.send", botId: MAIN, text: "third" });
     await until(() => c.of("turn.finished").some((e: any) => e.event.turnId === sent.turnId));
@@ -50,6 +53,7 @@ describe("bot.restart", () => {
   });
 });
 
+const NEW_SESSION = "New session (instructions updated)";
 describe("row menu", () => {
   const bot: BotView = { id: "p1", name: "botling", role: "bot", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
   const menu = (lang: string | null) => renderToStaticMarkup(createElement(BotMenu, { bot, at: { x: 0, y: 0 }, onRemove() {}, onClose() {}, pinned: false, onTogglePin() {}, onRestart() {}, lang }));
