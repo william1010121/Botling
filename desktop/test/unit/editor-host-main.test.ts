@@ -1,5 +1,6 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {EventEmitter} from 'node:events';
+import {join} from 'node:path';
 import {ipcMain} from 'electron';
 import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds,reloadNativeEditor,nativeEditorLayer} from '../../src/main/editor-host';
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
@@ -314,7 +315,7 @@ it('loads the editor preload from a chosen developer preload directory',async()=
  const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn(),getZoomFactor:()=>1});
  const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:()=>false,isDestroyed:()=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
  const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',Promise.resolve(),'/Volumes/My-SSD/synthetic/dev-preload');disposers.push(result.dispose);
- expect((result.view as any).options.webPreferences.preload).toBe('/Volumes/My-SSD/synthetic/dev-preload/editor-host.cjs');
+ expect((result.view as any).options.webPreferences.preload).toBe(join('/Volumes/My-SSD/synthetic/dev-preload','editor-host.cjs'));
  await result.ready;
 });
 it('offers the chat view to a window picture only while it is laid out and uncovered',async()=>{

@@ -30,8 +30,8 @@ describe("attachments (Models.swift Attachment, Bot.keep)", () => {
     expect(["a.PNG", "b.jpeg", "c.heic", "d.mov", "e.webm", "f.pdf", "g"].map(attachmentKind)).toEqual(["image", "image", "image", "video", "video", "file", "file"]);
     expect(["a.png", "a.JPG", "a.gif", "a.webp", "a.heic"].map(imageMediaType)).toEqual(["image/png", "image/jpeg", "image/gif", "image/webp", null]);
     expect(attachmentList(["/x/a.png", "/x/b.txt"])).toBe("(Attachments:\n- /x/a.png\n- /x/b.txt)");
-    expect(attachmentsFolder({ role: "main", folder: "/m" })).toBe("/m/attachments");
-    expect(attachmentsFolder({ role: "manager", folder: "/p" })).toBe("/p/.bot/attachments");
+    expect(attachmentsFolder({ role: "main", folder: "/m" })).toBe(join("/m", "attachments"));
+    expect(attachmentsFolder({ role: "manager", folder: "/p" })).toBe(join("/p", ".bot", "attachments"));
     expect(stamp(new Date(2026, 0, 2, 3, 4, 5))).toBe("20260102-030405");
     expect(safeName("../../etc/passwd")).toBe("-..-etc-passwd");
     expect(safeName(".hidden")).toBe("hidden");
