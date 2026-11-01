@@ -5116,9 +5116,11 @@ export class Bot {
       return;
     }
     const choices: ChoiceRecord[] = [{ label: "Allow once", recommended: true, action: "allowOnce" }];
-    if (!this.singleActionApprovals && !NEVER_ALWAYS.has(item.tool)) choices.push({ label: `Always allow ${item.tool}`, detail: `For ${this.profile.name}, from now on`, recommended: false, action: "alwaysAllow" });
+    if (!this.singleActionApprovals && !NEVER_ALWAYS.has(item.tool) && !item.noAlways) choices.push({ label: `Always allow ${item.tool}`, detail: `For ${this.profile.name}, from now on`, recommended: false, action: "alwaysAllow" });
     choices.push({ label: "Don't allow", recommended: false, action: "deny" });
-    const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary), date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
+    // Claude Code asks this itself, bypass or not (an rm on a variable that may be empty, …): the card says so, or it reads as broken permissions.
+    const safety = item.safetyCheck ? `\n\nClaude Code's own safety check asks about this even when permissions are bypassed: ${item.safetyCheck.replaceAll("\n", " ")}` : "";
+    const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary) + safety, date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
     const expires = Date.now() + this.options.approvalTimeoutMs;
     const timer = setTimeout(() => this.expire(record.id), this.options.approvalTimeoutMs);
     this.approvals.set(record.id, { lasting: !!item.workerId || item.requestId.startsWith("monitor:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });

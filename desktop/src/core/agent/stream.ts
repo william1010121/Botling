@@ -46,7 +46,8 @@ export type StreamItem =
   /** A notification that is not a report: the subagent waits on its own background work. */
   | { kind: "subagentWaiting"; id: string }
   /** A tool approval. Codex's workerId makes its lifetime independent of the coordinator turn. */
-  | { kind: "permission"; requestId: string; tool: string; summary: string; input: Record<string, unknown>; workerId?: string }
+  /** `safetyCheck`: why Claude Code's own safety check asks, even with permissions bypassed; `noAlways`: no always rule may cover it. */
+  | { kind: "permission"; requestId: string; tool: string; summary: string; input: Record<string, unknown>; workerId?: string; safetyCheck?: string; noAlways?: boolean }
   | { kind: "permissionCancelled"; requestId: string }
   /**
    * Auto mode's classifier blocked a call (1.x's `PermissionDenial`): the `permission_denied` frame
@@ -283,7 +284,9 @@ export function parseLine(line: string): StreamItem[] {
       if (typeof requestId !== "string" || !request) return [];
       if (request.subtype === "can_use_tool" && typeof request.tool_name === "string") {
         const input = request.input && typeof request.input === "object" ? request.input : {};
-        return [{ kind: "permission", requestId, tool: request.tool_name, summary: permissionSummary(request.tool_name, input, request.description), input }];
+        const safety = request.decision_reason_type === "safetyCheck" ? String(request.decision_reason ?? "").slice(0, 1_000) : "";
+        return [{ kind: "permission", requestId, tool: request.tool_name, summary: permissionSummary(request.tool_name, input, request.description), input,
+          ...(safety ? { safetyCheck: safety } : {}), ...(request.suppress_always_allow_rule === true ? { noAlways: true } : {}) }];
       }
       return [{ kind: "unsupportedRequest", requestId, subtype: String(request.subtype ?? "") }];
     }
