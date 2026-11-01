@@ -107,6 +107,8 @@ interface Live {
   head?: ClaudeWorkerHead; queued: Set<string>; extraTurns: number; outputTokens: number; cost: number;
   approvals: Map<string, Record<string, unknown>>; settle?: ReturnType<typeof setTimeout>; pendingResult?: Extract<StreamItem, { kind: "result" }>;
   keepAlive?: ReturnType<typeof setTimeout>; stopping?: boolean;
+  /** The text block being streamed: its chunks, shown as one step when the whole message (or the run's end) comes. */
+  text: string;
   /** A run waiting for a free slot (`maxRunning`): its words and definition; it starts when another worker's run ends. */
   waiting?: { words: string; definition: AgentDefinition | null | undefined };
 }
@@ -194,7 +196,7 @@ export class ClaudeWorkers implements WorkerHost {
 
   private liveOf(w: Record_): Live {
     let live = this.live.get(w.id);
-    if (!live) { live = { queued: new Set(), extraTurns: 0, outputTokens: 0, cost: 0, approvals: new Map() }; this.live.set(w.id, live); }
+    if (!live) { live = { queued: new Set(), extraTurns: 0, outputTokens: 0, cost: 0, approvals: new Map(), text: "" }; this.live.set(w.id, live); }
     return live;
   }
 
@@ -407,7 +409,9 @@ export class ClaudeWorkers implements WorkerHost {
       return;
     }
     switch (item.kind) {
-      case "delta": this.emit({ kind: "subagentText", parent: w.id, text: item.text }); return;
+      case "textBlock": this.flushText(w, live); return;
+      case "delta": live.text += item.text; return;
+      case "assistantText": live.text = ""; this.emit({ kind: "subagentText", parent: w.id, text: item.text }); return;
       case "toolUse": case "toolResult": this.emit({ ...item, parent: w.id, id: `${w.id}:${run}:${item.id}` }); return;
       case "permission":
         live.approvals.set(item.requestId, item.input);
@@ -469,9 +473,17 @@ export class ClaudeWorkers implements WorkerHost {
     this.finish(w, run, "failed", `The worker's process ended before its report${exit.code !== null ? ` (exit ${exit.code})` : ""}.${exit.stderr ? `\n${exit.stderr.slice(-2_000)}` : ""}`);
   }
 
+  /** Chunks no whole message came for (the run ended mid-block, or claude sent none). */
+  private flushText(w: Record_, live: Live) {
+    const text = live.text;
+    live.text = "";
+    if (text.trim()) this.emit({ kind: "subagentText", parent: w.id, text });
+  }
+
   private finish(w: Record_, run: number, status: "completed" | "failed", report: string) {
     if (!w.active || w.run !== run) return;
     const live = this.liveOf(w);
+    this.flushText(w, live);
     this.cancelApprovals(w, live);
     w.active = false; w.status = status; w.report = report.slice(0, 200_000); w.reportPending = true; w.reportDelivered = false;
     this.save();

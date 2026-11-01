@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeWorkers, CLAUDE_WORKER_POLICY, loadAgentDefinition } from "../../src/core/agent/claude-workers";
 import { claudeHarness } from "../claude-workers-fake";
+import { parseLine } from "../../src/core/agent/stream";
 
 const made: ClaudeWorkers[] = [];
 afterEach(async () => { for (const w of made.splice(0)) await w.close(); });
@@ -57,6 +58,28 @@ describe("a Claude worker's run", () => {
     expect(h.workers.listWorkers()[0]!.state).toBe("idle");
     const saved = JSON.parse(readFileSync(join(h.dir, "claude-workers.json"), "utf8"));
     expect(saved.workers[0]).toMatchObject({ id: task_id, run: 1, status: "completed", reportDelivered: true, reportPending: false, sessionStarted: true });
+  });
+
+  it("shows each text block of its reply as one paragraph, not one per streamed chunk, and the whole message does not repeat it", async () => {
+    const h = harness();
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "Find the data" }) as any;
+    const head = h.heads[0]!;
+    const line = (message: unknown) => { for (const item of parseLine(JSON.stringify(message))) h.say(head, item); };
+    const block = (chunks: string[]) => {
+      line({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+      for (const text of chunks) line({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
+      line({ type: "assistant", parent_tool_use_id: null, message: { id: "m", role: "assistant", content: [{ type: "text", text: chunks.join("") }] } });
+    };
+    block(["正", "在定", "位 e", "eg 專", "案與", " bench-correction 子", "bot 的資料位", "置。"]);
+    line({ type: "assistant", parent_tool_use_id: null, message: { id: "m2", role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "Bash", input: { command: "ls" } }] } });
+    block(["Found ", "it in ", "data/."]);
+    h.result(head, "Found it in data/.");
+    expect(h.items.filter((i) => i.kind === "subagentText")).toEqual([
+      { kind: "subagentText", parent: task_id, text: "正在定位 eeg 專案與 bench-correction 子bot 的資料位置。" },
+      { kind: "subagentText", parent: task_id, text: "Found it in data/." },
+    ]);
+    const order = h.items.map((i) => i.kind === "toolUse" && i.parent === task_id ? "tool" : i.kind === "subagentText" ? "text" : null).filter(Boolean);
+    expect(order).toEqual(["text", "tool", "text"]);
   });
 
   it("is steered while it works: the words go into the same process and run", async () => {
