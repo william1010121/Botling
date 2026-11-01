@@ -34,6 +34,8 @@ describe("core process", () => {
     const seqs = c.events.map((e) => e.seq);
     expect(seqs).toEqual(seqs.map((_, i) => snapshot.seq + i + 1));
     expect(new Set(c.events.map((e) => e.epoch))).toEqual(new Set([snapshot.epoch]));
+    // The routine clock's first look at startup repeats no bot's unchanged routines.
+    expect(c.of("routines.updated")).toEqual([]);
     // Persisted.
     // Persisted in the Swift app's chat.json format: a list of lines, dates in seconds since 2001.
     const saved = JSON.parse(readFileSync(join(c.dataDir, "main", "chat.json"), "utf8"));

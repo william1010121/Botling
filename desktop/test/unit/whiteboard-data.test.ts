@@ -181,7 +181,8 @@ describe("done log in the bot: review regressions", () => {
   const logged = (file: string) => Object.keys(JSON.parse(readFileSync(file, "utf8")).tasks).length;
 
   it("retries a done log it could not save, on the next read, instead of losing it", async () => {
-    const { bot, file } = await makeBot([doneCard(1, Date.now() - 3_600_000)]);
+    // Done an hour ago, but never before today's midnight: it is counted in today's row.
+    const { bot, file } = await makeBot([doneCard(1, Math.max(Date.now() - 3_600_000, new Date().setHours(0, 0, 0, 0)))]);
     const save = bot.store.saveDoneLog.bind(bot.store);
     let fail = true;
     bot.store.saveDoneLog = (value: unknown) => { if (fail) { fail = false; throw new Error("disk full"); } save(value); };

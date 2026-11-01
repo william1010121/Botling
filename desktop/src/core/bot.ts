@@ -4463,6 +4463,9 @@ export class Bot {
         this.log(`routines.cron could not be made: ${(error as Error).message}`);
       }
     }
+    // A snapshot from now on carries these, so the clock's first look tells only a change. A deferred
+    // startup may have served one before they were read: then that first look tells them.
+    if (!this.options.deferStartup) this.routinesShown = routinesKey(this.routinesView());
   }
 
   /** The store Codex's `app_routines` uses (null for a partner: its primary's). */
