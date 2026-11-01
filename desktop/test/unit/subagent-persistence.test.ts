@@ -162,3 +162,13 @@ it('an app-managed worker ends by its ledger projection, durable before it is pu
   expect(f.disk()[0]).toMatchObject({status:'completed',result:'final report',steps:[{title:'final evidence'}]});
   expect(f.events.findLast(e=>e.type==='subagent.updated').subagent.status).toBe('completed');
 });
+it('#4 a run that ended before its opening items arrived (Codex buffers them) shows its ledger end, not running',async()=>{
+  const f=fixture();
+  const view=(status:string,run=1)=>({v:3,id:'w4',engine:'claude',adapter:'component-editor',name:'Editor',instructions:'Edit',type:'ccb-core:component-editor',ownerSessionId:'s',run,status,
+    report:{state:status==='running'?'none':'pending',text:status==='running'?null:'The worker could not start: no definition',status:status==='running'?null:'failed',attempts:0},conversationId:null,processes:[],createdAt:0,runStartedAt:0,endedAt:status==='running'?null:Date.now(),engineData:{}});
+  (f.bot as any).projectWorker(view('running'));
+  (f.bot as any).projectWorker(view('failed'));
+  (f.bot as any).onWorkerOutput({kind:'subagentStarted',id:'w4',description:'Editor',type:'ccb-core:component-editor',prompt:'Edit',background:true,execution:{run:1,ownerSessionId:null,threadId:null,turnId:null}});
+  expect(f.bot.subagents.get('w4')).toMatchObject({status:'failed',result:'The worker could not start: no definition'});
+  expect(f.disk()[0]).toMatchObject({status:'failed'});
+});

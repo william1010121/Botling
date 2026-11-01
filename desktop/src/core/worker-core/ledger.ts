@@ -39,6 +39,8 @@ export interface WorkerLedgerRecord {
   /** The coordinator conversation that started it (a session-scoped core lists only its own). */
   ownerSessionId: string;
   run: number;
+  /** Segments of this run resumed after a restart (absent: none); each counts its output on a counter of its own. */
+  segment?: number;
   status: WorkerStatus;
   report: WorkerReportRecord;
   /** Claude session / Codex thread / ACP session (null: not known yet). */
@@ -98,7 +100,7 @@ export function readLedgerRecord(value: unknown): WorkerLedgerRecord | null {
   const owner = readWorkerOwner(r.owner);
   return {
     v: 3, id: r.id, engine: r.engine, adapter: r.adapter, name: r.name, instructions: r.instructions, type: str(r.type) ? r.type : null,
-    ownerSessionId: r.ownerSessionId, run: r.run, status: r.status,
+    ownerSessionId: r.ownerSessionId, run: r.run, ...(Number.isSafeInteger(r.segment) && r.segment > 0 ? { segment: r.segment } : {}), status: r.status,
     report: { state: report.state, text: str(report.text) ? report.text : null, status: RUN_STATUSES.has(report.status) ? report.status : null,
       attempts: Number.isSafeInteger(report.attempts) && report.attempts >= 0 ? report.attempts : 0, ...(checkpoint ? { checkpoint } : {}) },
     conversationId: str(r.conversationId) && r.conversationId ? r.conversationId : null,

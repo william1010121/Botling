@@ -9,7 +9,8 @@ import { processStartTime } from "../process/kill-tree";
 import type { ProcessTreeAdapter, TerminateResult } from "../process/tree";
 import { MAINTAINER_ID } from "../store/records";
 import { Layout, type BotProfile } from "../store/workspace";
-import { costDelta, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerEvent, type WorkerLedgerRecord } from "../worker-core";
+import type { RecoverResult, RunHandle, WorkerAdapter, WorkerLedgerRecord } from "../worker-core";
+import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import { ClaudeHead, type HeadConfig } from "./head";
 import type { StreamItem } from "./stream";
@@ -188,8 +189,8 @@ interface EditorRun {
   run: RunHandle | null;
   /** The Claude session the run's process uses. */
   session: string | null;
-  /** The process's running cost total (it lives on across runs while it is kept alive). */
-  cost: { last: number };
+  /** Its stream as WorkerEvents (text blocks, spend: the cost total lives on across runs while it is kept alive), the same as a Claude worker's. */
+  stream: ClaudeStreamEvents;
   /** Open approvals: the child's own input, which its answer carries. */
   approvals: Map<string, Record<string, unknown>>;
   /** Tool calls without a result yet. */
@@ -213,7 +214,7 @@ export class ComponentEditorAdapter implements WorkerAdapter {
 
   private state(id: string): EditorRun {
     let s = this.runs.get(id);
-    if (!s) this.runs.set(id, s = { run: null, session: null, cost: { last: 0 }, approvals: new Map(), tools: new Set() });
+    if (!s) this.runs.set(id, s = { run: null, session: null, stream: new ClaudeStreamEvents(), approvals: new Map(), tools: new Set() });
     return s;
   }
 
@@ -233,6 +234,7 @@ export class ComponentEditorAdapter implements WorkerAdapter {
   start(record: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle) {
     const s = this.state(record.id);
     s.run = run;
+    s.stream.newRun();
     s.approvals.clear();
     s.tools.clear();
     this.host.item({ kind: "measurementDispatch", workerId: record.id, run: run.run });
@@ -270,7 +272,8 @@ export class ComponentEditorAdapter implements WorkerAdapter {
     return true;
   }
 
-  async stop(record: Readonly<WorkerLedgerRecord>) {
+  /** Done at once: the transport keeps its own barrier (a next run waits for the old transcript to close). */
+  stop(record: Readonly<WorkerLedgerRecord>) {
     const s = this.runs.get(record.id);
     if (s) { s.run = null; s.approvals.clear(); s.tools.clear(); }
     this.host.act({ kind: "stop", task: record.id });
@@ -321,7 +324,7 @@ export class ComponentEditorAdapter implements WorkerAdapter {
   started(task: string, run: number, pid: number) {
     const live = this.live(task, run);
     if (!live) return;
-    live.s.cost = { last: 0 };
+    live.s.stream.newProcess();
     if (pid > 0) live.run.emit({ type: "process", pid });
   }
 
@@ -338,40 +341,25 @@ export class ComponentEditorAdapter implements WorkerAdapter {
     const live = this.live(task, run);
     if (!live) return;
     const { s, run: handle } = live;
-    const emit = (event: WorkerEvent) => handle.emit(event);
+    // The engine's own bookkeeping first; the events are a Claude worker's (one translation, claude-worker-events.ts).
     switch (item.kind) {
       case "init":
         handle.setEngineData({ editorSessionConfirmed: item.sessionId === s.session });
-        if (item.sessionId) emit({ type: "session", conversationId: item.sessionId });
+        if (item.sessionId) handle.emit({ type: "session", conversationId: item.sessionId });
         return;
-      case "delta": return emit({ type: "textDelta", text: item.text });
-      case "textBlock": return emit({ type: "textBreak" });
-      case "assistantText": return emit({ type: "textWhole", text: item.text, phase: null });
-      case "toolUse":
-        s.tools.add(item.id);
-        return emit({ type: "toolUse", id: item.id, tool: item.tool, title: item.title, detail: item.detail, input: item.input });
+      case "toolUse": s.tools.add(item.id); break;
       case "toolResult":
         s.tools.delete(item.id);
         handle.setEngineData({ editorCheckpoint: item.failed ? undefined : item.id });
-        return emit({ type: "toolResult", id: item.id, output: item.output, failed: item.failed });
-      case "usage": return emit({ type: "usage", tokens: item.tokens, cost: costDelta(s.cost, item.totalCost) });
-      case "request": { const { scope: _scope, ...request } = item.request; return emit({ type: "request", request }); }
-      case "measurement": return emit({ type: "measurement", provider: "claude", measurement: item.measurement });
-      case "permission":
-        s.approvals.set(item.requestId, item.input);
-        return emit({ type: "permission", nativeId: item.requestId, tool: item.tool, summary: item.summary, input: item.input,
-          ...(item.safetyCheck ? { safetyCheck: item.safetyCheck } : {}), ...(item.noAlways ? { noAlways: true } : {}) });
-      case "permissionCancelled":
-        s.approvals.delete(item.requestId);
-        return emit({ type: "permissionCancelled", nativeId: item.requestId });
-      case "permissionDenied": return emit({ type: "permissionDenied", toolUseId: item.toolUseId, tool: item.tool, reason: item.reason, confirmed: item.confirmed });
-      case "connectionLost": return emit({ type: "connectionLost" });
-      case "rateLimits": return emit({ type: "rateLimits", engine: item.engine, limits: item.limits });
+        break;
+      case "permission": s.approvals.set(item.requestId, item.input); break;
+      case "permissionCancelled": s.approvals.delete(item.requestId); break;
       case "result":
         s.run = null;
-        return emit({ type: "end", end: { how: item.how ?? (item.ok ? "normal" : "error"), finalText: item.ok && item.text ? item.text : null,
+        return handle.emit({ type: "end", end: { how: item.how ?? (item.ok ? "normal" : "error"), finalText: item.ok && item.text ? item.text : null,
           error: item.ok ? null : item.error || item.text || null, detail: item.subtype } });
-      default: return;
     }
+    const event = s.stream.event(item);
+    if (event) handle.emit(event);
   }
 }

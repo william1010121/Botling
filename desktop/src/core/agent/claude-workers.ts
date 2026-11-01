@@ -17,9 +17,10 @@ import { join } from "node:path";
 import { processStartTime } from "../process/kill-tree";
 import type { TerminateResult } from "../process/tree";
 import {
-  ClaudeLegacyStore, costDelta, WorkerCore,
-  type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerEvent, type WorkerLedgerRecord,
+  ClaudeLegacyStore, WorkerCore,
+  type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
 } from "../worker-core";
+import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
@@ -146,13 +147,11 @@ interface Proc {
   record?: Readonly<WorkerLedgerRecord>;
   /** Words steered into the run whose turn has not started yet (command_lifecycle). */
   queued: Set<string>;
-  /** claude reports the process's cost so far: each usage becomes the spend since the last. */
-  cost: { last: number };
+  /** Its stream as WorkerEvents (text blocks, spend), the same as the component editor's. */
+  stream: ClaudeStreamEvents;
   settle?: ReturnType<typeof setTimeout>;
   pendingResult?: Extract<StreamItem, { kind: "result" }>;
   keepAlive?: ReturnType<typeof setTimeout>;
-  /** The streamed text block: "open" while its chunks come; "closed" once a tool call on its own line closed it. */
-  chunks: "none" | "open" | "closed";
   /** The config a run started with, for its opening items (null: it went into the kept-alive process). */
   opening?: { run: number; base: HeadConfig | null };
 }
@@ -175,7 +174,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
 
   private procOf(id: string): Proc {
     let proc = this.procs.get(id);
-    if (!proc) { proc = { queued: new Set(), cost: { last: 0 }, chunks: "none" }; this.procs.set(id, proc); }
+    if (!proc) { proc = { queued: new Set(), stream: new ClaudeStreamEvents() }; this.procs.set(id, proc); }
     return proc;
   }
 
@@ -210,7 +209,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const sessionId = nonEmpty(r.engineData.sessionId) ?? r.conversationId ?? r.id;
     if (proc.head?.running) {
-      Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, chunks: "none", pendingResult: undefined });
+      Object.assign(proc, { run, record: r, opening: { run: run.run, base: null }, pendingResult: undefined });
+      proc.stream.newRun();
       proc.queued.clear();
       run.emit({ type: "session", conversationId: sessionId });
       proc.head.send(words, randomUUID());
@@ -230,7 +230,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
     const head: ClaudeWorkerHead = this.factory(config, { onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit) });
     head.start();
-    Object.assign(proc, { head, run, record: r, cost: { last: 0 }, opening: { run: run.run, base }, chunks: "none", pendingResult: undefined });
+    Object.assign(proc, { head, run, record: r, opening: { run: run.run, base }, pendingResult: undefined });
+    proc.stream.newProcess();
     proc.queued.clear();
     run.emit({ type: "session", conversationId: sessionId });
     if (head.pid > 0) {
@@ -266,34 +267,9 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: this worker's run has ended.");
       return;
     }
-    const emit = (event: WorkerEvent) => run.emit(event);
+    const event = proc.stream.event(item);
+    if (event) { run.emit(event); return; }
     switch (item.kind) {
-      case "textBlock": proc.chunks = "none"; emit({ type: "textBreak" }); return;
-      case "delta": proc.chunks = "open"; emit({ type: "textDelta", text: item.text }); return;
-      case "assistantText": {
-        // claude streams a block's chunks, then sends its whole message. A line that also carries a tool call gives
-        // the call first, which closed the block: its words are shown already.
-        const shown = proc.chunks === "closed";
-        proc.chunks = "none";
-        if (!shown) emit({ type: "textWhole", text: item.text, phase: null });
-        return;
-      }
-      case "toolUse":
-        if (proc.chunks === "open") proc.chunks = "closed";
-        emit({ type: "toolUse", id: item.id, tool: item.tool, title: item.title, detail: item.detail, input: item.input });
-        return;
-      case "toolResult": proc.chunks = "none"; emit({ type: "toolResult", id: item.id, output: item.output, failed: item.failed }); return;
-      case "permission":
-        emit({ type: "permission", nativeId: item.requestId, tool: item.tool, summary: item.summary, input: item.input,
-          ...(item.safetyCheck ? { safetyCheck: item.safetyCheck } : {}), ...(item.noAlways ? { noAlways: true } : {}) });
-        return;
-      case "permissionCancelled": emit({ type: "permissionCancelled", nativeId: item.requestId }); return;
-      case "permissionDenied": emit({ type: "permissionDenied", toolUseId: item.toolUseId, tool: item.tool, reason: item.reason, confirmed: item.confirmed }); return;
-      case "connectionLost": emit({ type: "connectionLost" }); return;
-      case "rateLimits": emit({ type: "rateLimits", engine: item.engine, limits: item.limits }); return;
-      case "usage": emit({ type: "usage", tokens: item.tokens, cost: costDelta(proc.cost, item.totalCost) }); return;
-      case "request": { const { scope: _scope, ...request } = item.request; emit({ type: "request", request }); return; }
-      case "measurement": { const { run: _run, ...measurement } = item.measurement; emit({ type: "measurement", provider: item.provider ?? "claude", measurement }); return; }
       case "command":
         if (item.state !== "started" || !proc.queued.delete(item.id)) return;
         // "started" after the turn's result: a turn of its own (init follows), the run goes on until its result.

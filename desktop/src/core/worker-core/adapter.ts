@@ -47,8 +47,12 @@ export interface WorkerAdapter {
   start(record: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle): void | Promise<void>;
   /** Words into the run under way. false: it cannot take them now (the core answers busy). */
   steer?(record: Readonly<WorkerLedgerRecord>, words: string): boolean;
-  /** End the run's turn/process. Must NOT emit `end` (the core already decided "stopped"). Also called for a worker not at work (a cancel): end anything it keeps alive. */
-  stop(record: Readonly<WorkerLedgerRecord>): Promise<{ cleaned: boolean }>;
+  /**
+   * End the run's turn/process. Must NOT emit `end` (the core already decided "stopped"). Also called for a worker not
+   * at work (a cancel): end anything it keeps alive. Until it answers, the worker is cleaning up (no next run starts); an
+   * adapter that is done at once (a turn interrupt, a transport with its own barrier) answers synchronously.
+   */
+  stop(record: Readonly<WorkerLedgerRecord>): { cleaned: boolean } | Promise<{ cleaned: boolean }>;
   /** An approval's answer (nativeId = the engine's own request id). */
   answer(record: Readonly<WorkerLedgerRecord>, nativeId: string, allow: boolean, input: Record<string, unknown>, message?: string): void;
   /** After an interruption: are its old processes / turns gone? */

@@ -692,3 +692,68 @@ describe("S4b: the member core's rules", () => {
     expect(await next.core.resumeRun(task_id, "Carry on.")).toMatchObject({ ok: false });
   });
 });
+
+describe("review fixes", () => {
+  it("#5 a run resumed after a restart counts its output on top of what it had (100 + 20 = 120), never under it", async () => {
+    const { SubagentBook, reportedOutputTokens } = await import("../../src/core/subagents");
+    const store = new MemoryStore();
+    const first = setup({ store, closeReason: () => "restart" });
+    const { task_id } = await first.core.handoff("claude-process", { instructions: "Go." });
+    first.adapter.emit(task_id, { type: "session", conversationId: "conv-1" }, { type: "usage", tokens: tokens(100), cost: 0 });
+    await first.core.close();
+    const next = setup({ store });
+    await next.core.resumeRun(task_id, "Carry on.");
+    next.adapter.emit(task_id, { type: "usage", tokens: tokens(20), cost: 0 });
+    const book = new SubagentBook();
+    book.started({ id: task_id, description: "w", type: "claude-worker", prompt: "Go.", background: true });
+    for (const item of [...first.kinds("subagentOutput"), ...next.kinds("subagentOutput")]) book.output(item.id, item.counter, item.tokens);
+    expect(reportedOutputTokens(book.get(task_id)!)).toBe(120);
+    expect(next.core.get(task_id)).toMatchObject({ run: 1, segment: 1 });
+  });
+
+  it("#3 a new worker is never trimmed away to make room: with 200 records none of which may go, it is kept as the 201st", async () => {
+    const owed = (i: number): WorkerLedgerRecord => ({ v: 3, id: `owed-${i}`, engine: "claude", adapter: "claude-process", name: "w", instructions: "x", type: null,
+      ownerSessionId: "coord-session", run: 1, status: "done", report: { state: "pending", text: "r", status: "done", attempts: 0 }, conversationId: null,
+      processes: [], createdAt: i, runStartedAt: 0, endedAt: 1, engineData: {} });
+    const store = new MemoryStore(Array.from({ length: 200 }, (_, i) => owed(i)));
+    const { core, adapter } = setup({ store });
+    (core as any).options.port.answer = "busy";
+    const { task_id } = await core.handoff("claude-process", { instructions: "One more." });
+    expect(adapter.started).toHaveLength(1);
+    expect(core.get(task_id)).toMatchObject({ status: "running" });
+    expect(store.records.some((r) => r.id === task_id)).toBe(true);
+    expect(core.listWorkers()).toHaveLength(201);
+  });
+
+  it("#1 a stop is not over until its cleanup is: no next run meanwhile, and a late cleanup failure blocks it", async () => {
+    const adapter = new FakeAdapter();
+    let finish!: (result: { cleaned: boolean }) => void;
+    adapter.stop = async (record) => { adapter.stopped.push(record.id); return new Promise((resolve) => { finish = resolve; }); };
+    const { core, store } = setup({ adapter });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    const stopping = core.stopWorker(task_id);
+    expect(store.get(task_id)).toMatchObject({ status: "stopped", cleanup: "pending" });
+    expect(await core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: false, busy: true });
+    expect(adapter.started).toHaveLength(1);
+    finish({ cleaned: false });
+    await stopping;
+    expect(store.get(task_id)).toMatchObject({ status: "stopped", cleanup: "failed", recovery: "required", run: 1 });
+  });
+
+  it("#1 app_cancel_task of a worker not at work holds it as cleaning up until its adapter is done", async () => {
+    const adapter = new FakeAdapter();
+    let finish!: (result: { cleaned: boolean }) => void;
+    const { core, store } = setup({ adapter });
+    const { task_id } = await core.handoff("claude-process", { instructions: "Go." });
+    adapter.emit(task_id, { type: "textWhole", text: "Done.", phase: null }, normal());
+    adapter.stop = async () => new Promise((resolve) => { finish = resolve; });
+    const cancelling = core.cancel(task_id);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(store.get(task_id).cleanup).toBe("pending");
+    expect(await core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: false, busy: true });
+    finish({ cleaned: true });
+    await cancelling;
+    expect(store.get(task_id).cleanup).toBeUndefined();
+    expect(await core.sendToWorker(task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
+  });
+});

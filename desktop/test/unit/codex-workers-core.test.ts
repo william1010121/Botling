@@ -116,6 +116,8 @@ describe("Codex workers on the shared core", () => {
     expect(JSON.stringify(h.all)).not.toContain("killed");
     expect(h.finish("w1", "wt1", "late", "interrupted").items).toEqual([]);
     expect(h.s.workerInfos[0]).toMatchObject({ state: "stopped" });
+    // Its stop (a turn interrupt) is done at once: nothing holds the next run back.
+    expect(h.s.core.get(task)!.cleanup).toBeUndefined();
     const again = h.tool("app_send_message", { task_id: task, message: "Try once more" });
     expect(h.receipt(again)).toEqual({ task_id: task, status: "accepted" });
     expect(again.method("turn/start").params).toMatchObject({ threadId: "w1", input: [{ type: "text", text: "Try once more" }] });
@@ -147,15 +149,19 @@ describe("Codex workers on the shared core", () => {
     expect(h.s.completionDependencies).toEqual([]);
   });
 
-  it("a report turn cut short shows its evidence and is never shown again", () => {
+  it("#2 a report turn cut short shows its evidence and counts as an attempt without a decision: shown once more, then unresolved", () => {
     const h = session();
     const task = h.worker();
     const ended = h.finish("w1", "wt1", "Built.");
     h.answer(ended.method("turn/start").id, { turn: { id: "r1" } });
     const cut = h.line("turn/completed", { threadId: COORD, turn: { id: "r1", status: "failed", error: { message: "boom" } } });
     expect(cut.of("result")[0]).toMatchObject({ ok: false, error: expect.stringContaining("Built.") });
-    expect(cut.method("turn/start")).toBeUndefined();
-    expect(h.s.workerRecords[0]).toMatchObject({ id: task, reportPending: false });
+    const again = cut.method("turn/start");
+    expect(JSON.parse(again.params.toolOutput.output)).toMatchObject({ task_id: task, reconciliation_attempt: 1 });
+    h.answer(again.id, { turn: { id: "r2" } });
+    const last = h.line("turn/completed", { threadId: COORD, turn: { id: "r2", status: "interrupted" } });
+    expect(last.method("turn/start")).toBeUndefined();
+    expect(h.s.core.get(task)!.report.state).toBe("unresolved");
     expect(h.s.hasManagedWork).toBe(false);
   });
 
@@ -233,12 +239,28 @@ describe("Codex workers on the shared core", () => {
     expect(JSON.parse(out.method("turn/start").params.toolOutput.output)).toMatchObject({ task_id: record.id, run: 4, turn_id: "old", report: "Found it." });
   });
 
-  it("an uncertain report from before the restart is not shown twice; it no longer keeps the bot awake", () => {
+  it("#2 an uncertain report from before the restart is never taken as handed over: shown once more as a reconciliation attempt", () => {
     const s = new CodexSession(config({ restoredWorkers: [{ id: "task-1", name: "R", instructions: "x", thread: "w1", run: 1, wasActive: false, reportPending: true, reportDispatching: true, report: "sent?", status: "completed" }] }));
+    expect(s.core.get("task-1")!.report).toMatchObject({ state: "pending", attempts: 1 });
     s.start(); s.receive(JSON.stringify({ id: 1, result: {} }));
-    expect(new Out(s.receive(JSON.stringify({ id: 2, result: { thread: { id: COORD } } }))).of("backgroundTurn")).toEqual([]);
-    expect(s.hasManagedWork).toBe(false);
-    expect(s.workerRecords[0]).toMatchObject({ reportPending: false });
+    const ready = new Out(s.receive(JSON.stringify({ id: 2, result: { thread: { id: COORD } } })));
+    expect(ready.of("backgroundTurn")).toEqual([{ kind: "backgroundTurn", taskId: "task-1" }]);
+    expect(JSON.parse(ready.method("turn/start").params.toolOutput.output)).toMatchObject({ task_id: "task-1", run: 1, report: "sent?", reconciliation_attempt: 1 });
+  });
+
+  it("#2 a report turn that never started is not taken as handed over: shown again, then unresolved (never lost)", () => {
+    const h = session();
+    h.coordinatorTurn();
+    const task = h.worker();
+    h.endCoordinator();
+    const first = h.finish("w1", "wt1", "Found it.").method("turn/start");
+    expect(JSON.parse(first.params.toolOutput.output)).toMatchObject({ task_id: task, reconciliation_attempt: 0 });
+    const again = h.take(h.s.receive(JSON.stringify({ id: first.id, error: { message: "turn/start failed" } }))).method("turn/start");
+    expect(h.s.core.get(task)!.report.state).toBe("dispatching");
+    expect(JSON.parse(again.params.toolOutput.output)).toMatchObject({ task_id: task, reconciliation_attempt: 1 });
+    const last = h.take(h.s.receive(JSON.stringify({ id: again.id, error: { message: "turn/start failed" } })));
+    expect(last.method("turn/start")).toBeUndefined();
+    expect(h.s.core.get(task)!.report.state).toBe("unresolved");
   });
 });
 
@@ -264,6 +286,20 @@ describe("the component editor on the shared core", () => {
     const task = h.receipt(handed).task_id as string;
     return { ...h, task, handed };
   }
+
+  it("#6 a message whose words were streamed and that also carries a tool call shows its words once (the Claude workers' rule)", async () => {
+    const { s, task } = editor();
+    const { parseLine } = await import("../../src/core/agent/stream");
+    const texts: string[] = [];
+    const feed = (line: unknown) => { for (const item of parseLine(JSON.stringify(line))) texts.push(...new Out(s.componentEditorItem(task, 1, item)).of("subagentText").map((i) => i.text)); };
+    feed({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    feed({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Let me look." } } });
+    feed({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Let me look." }, { type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "/x" } }] } });
+    feed({ type: "user", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok", is_error: false }] } });
+    feed({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Edited it." }] } });
+    feed({ type: "result", subtype: "success", is_error: false, result: "Edited it.", session_id: "s", total_cost_usd: 0 });
+    expect(texts).toEqual(["Let me look.", "Edited it."]);
+  });
 
   it("is listed as the Maintainer's editor (not a Claude worker), with its model", () => {
     const { handed, task } = editor();

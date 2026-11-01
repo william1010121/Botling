@@ -576,7 +576,8 @@ export class CodexThreadAdapter implements WorkerAdapter {
   }
 
   /** Ends its run's turn; its open approvals are declined. No end is emitted (the core decided "stopped"). */
-  async stop(record: Readonly<WorkerLedgerRecord>) {
+  /** Interrupts its turn: done at once (Codex ends the turn; its late events are dropped). */
+  stop(record: Readonly<WorkerLedgerRecord>) {
     const w = this.workers.get(record.id);
     if (w?.run) this.interrupt(w);
     return { cleaned: true };
@@ -940,12 +941,10 @@ export class CodexSession implements CoordinatorPort {
       if (record.wasActive && record.restartSafe && record.thread && ((!record.role && record.restartTurn) || (record.role === "component-editor" && record.editorCheckpoint)))
         this.restartPending.set(record.id, record);
     }
-    // A report whose hand-over was under way when the app went away: delivery is uncertain, and the coordinator is never
-    // woken for it twice (it has no reconcile tool), so it counts as handed over.
-    for (const record of this.core.all()) {
-      if (record.report.state !== "dispatching" || record.owner) continue;
-      try { this.core.reconcile({ task_id: record.id, run: record.run, action: "acknowledge" }); } catch { /* not the coordinator's to settle */ }
-    }
+    // A report whose hand-over was under way when the app went away: whether the coordinator saw it is unknown, and it
+    // has no reconcile tool. One attempt without a decision: shown once more (reconciliation_attempt says so), then
+    // unresolved. Never taken as handed over.
+    for (const record of this.core.all()) if (record.report.state === "dispatching" && !record.owner) this.core.retryUncertain(record.id, record.run);
   }
 
   /** A worker's item (the core's, its adapters', a restart check's): for the bot's worker entry. */
@@ -1518,17 +1517,14 @@ export class CodexSession implements CoordinatorPort {
   }
 
   /**
-   * A report turn ended with no decision on its report. Completed: shown once more (then unresolved, the core's rule).
-   * Cut short (interrupted, failed, no final answer): its evidence went to the chat instead, and, as the coordinator
-   * has no reconcile tool, the report counts as handed over (never shown twice).
+   * A report turn ended with no decision on its report: completed, cut short (interrupted, failed, no final answer: its
+   * evidence also went to the chat) or never started. The coordinator has no reconcile tool, so each is one attempt
+   * without a decision: shown once more, then unresolved (the core's rule). Never taken as handed over.
    */
-  private settleReport(shown: { id: string; run: number } | null, completed: boolean): CodexOutput[] {
+  private settleReport(shown: { id: string; run: number } | null, _completed: boolean): CodexOutput[] {
     if (!shown) return [];
     this.settling = true;
-    try {
-      this.core.finishReport(shown.id, shown.run, completed);
-      if (!completed && this.core.get(shown.id)?.report.state === "dispatching") this.core.reconcile({ task_id: shown.id, run: shown.run, action: "acknowledge" });
-    } catch { /* settled meanwhile */ } finally { this.settling = false; }
+    try { this.core.finishReport(shown.id, shown.run, true); } catch { /* settled meanwhile */ } finally { this.settling = false; }
     return this.take();
   }
 
@@ -1873,6 +1869,10 @@ export class CodexSession implements CoordinatorPort {
       response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
     } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.core.get(args.task_id)) {
       // Into its turn at work, else its next run (a report the coordinator was not shown yet is dropped, as before).
+      // Not the core's `message()`: its checkpoint rule refuses a follow-up until an unshown or uncertain report is
+      // settled (Antigravity's contract, which has app_reconcile_report), while a Codex coordinator's follow-up
+      // supersedes a report it has not been shown (1.x's contract; it has no reconcile tool); and `message()` is async,
+      // where this answers the tool call with the outputs it causes. Owner and task checks are the same (above).
       const { result, out: sent } = this.sendToWorker(args.task_id, args.message);
       out.push(...sent);
       response = result.ok ? reply({ task_id: args.task_id, status: result.how === "steered" ? "queued" : "accepted" }, true) : reply({ error: result.reason }, false);

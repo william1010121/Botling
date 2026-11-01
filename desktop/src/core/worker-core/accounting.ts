@@ -15,20 +15,24 @@ export function costDelta(state: { last: number }, total: number): number {
   return spent;
 }
 
-/** The output counter of a worker's run. */
-export const runCounter = (conversationId: string | null, workerId: string, run: number) => `thread:${conversationId ?? workerId}:run${run}`;
+/**
+ * The output counter of a worker's run. A run resumed after a restart counts its next segment on a counter of its own
+ * (`segment` 1, 2, …): the counters add up, so what it said before the restart is never counted under again.
+ */
+export const runCounter = (conversationId: string | null, workerId: string, run: number, segment = 0) =>
+  `thread:${conversationId ?? workerId}:run${run}${segment ? `:part${segment + 1}` : ""}`;
 
 export class RunAccounting {
   private output = 0;
 
-  constructor(private ids: { workerId: string; run: number; conversationId(): string | null; parentThreadId(): string | null }) {}
+  constructor(private ids: { workerId: string; run: number; segment?: number; conversationId(): string | null; parentThreadId(): string | null }) {}
 
   /** usage → [usage item (cost = delta), subagentOutput item (this run's output so far)] */
   usage(e: Extract<WorkerEvent, { type: "usage" }>): CodexItem[] {
     const items: CodexItem[] = [{ kind: "usage", totalCost: Number.isFinite(e.cost) && e.cost > 0 ? e.cost : 0, tokens: e.tokens }];
     if (Number.isSafeInteger(e.tokens.output) && e.tokens.output > 0) {
       this.output += e.tokens.output;
-      items.push({ kind: "subagentOutput", id: this.ids.workerId, counter: runCounter(this.ids.conversationId(), this.ids.workerId, this.ids.run), tokens: this.output });
+      items.push({ kind: "subagentOutput", id: this.ids.workerId, counter: runCounter(this.ids.conversationId(), this.ids.workerId, this.ids.run, this.ids.segment), tokens: this.output });
     }
     return items;
   }

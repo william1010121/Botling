@@ -371,7 +371,9 @@ export class WorkerCore implements WorkerHost {
       processes: [], createdAt: this.now(), runStartedAt: null, endedAt: null, engineData: { ...(prepared.engineData ?? {}) },
     };
     this.records.set(r.id, r);
-    this.trim();
+    // Room is made among the others: the worker being made is never the one forgotten (with none forgettable it is
+    // kept as one more; the ledger keeps it too, as a running record).
+    this.trim(r.id);
     const error = await this.launch(r, instructions, true);
     if (error) throw new Error(error);
     return { accepted: true, task_id: r.id, run: r.run };
@@ -459,9 +461,9 @@ export class WorkerCore implements WorkerHost {
       if (r.report.state === "pending" || r.report.state === "delivered") r.report.state = "none";
       this.queued.delete(r.id);
       this.activeReports.delete(r.id);
+      r.cleanup = "pending";
       this.save();
-      const cleaned = await adapter.stop(r).then((result) => result.cleaned, () => false);
-      if (!cleaned) this.cleanupFailed(r);
+      await this.cleanUp(r, adapter);
     }
     if (r.cleanup === "failed") throw new Error("Worker cleanup incomplete; task remains blocked.");
     return { status: r.status };
@@ -490,6 +492,23 @@ export class WorkerCore implements WorkerHost {
     this.activeReports.delete(id);
     const r = this.records.get(id);
     if (this.closed || !r || r.run !== run || r.report.state !== "dispatching" || !completed) return;
+    this.undecided(r);
+  }
+
+  /**
+   * A hand-over whose outcome is unknown and that its coordinator cannot reconcile itself (Codex has no reconcile tool:
+   * its report turn never started, or the app went away while it was being shown). It counts as one attempt without a
+   * decision: shown once more, then unresolved. Never taken as acknowledged. False: no such uncertain report.
+   */
+  retryUncertain(id: string, run: number): boolean {
+    const r = this.records.get(id);
+    if (this.closed || !r || r.run !== run || r.report.state !== "dispatching" || this.activeReports.get(id) === run) return false;
+    this.undecided(r);
+    return true;
+  }
+
+  /** A delivery attempt that ended without the coordinator's decision: shown once more, then unresolved. */
+  private undecided(r: WorkerLedgerRecord) {
     r.report.attempts += 1;
     if (r.report.attempts < 2) {
       r.report.state = "pending";
@@ -538,7 +557,8 @@ export class WorkerCore implements WorkerHost {
     const before = structuredClone(r);
     // Counted before this worker is at work itself.
     const wait = (adapter.needsSlot?.(r) ?? true) && this.busy >= this.limit;
-    if (!sameRun) r.run += 1;
+    if (sameRun) r.segment = (r.segment ?? 0) + 1;
+    else { r.run += 1; delete r.segment; }
     Object.assign(r, { status: "running", report: noReport(), runStartedAt: this.now(), endedAt: null });
     delete r.interruptedBy;
     this.queued.delete(r.id);
@@ -553,7 +573,7 @@ export class WorkerCore implements WorkerHost {
     }
     const undo = () => {
       if (fresh) this.records.delete(r.id);
-      else { Object.assign(r, before); r.engineData = before.engineData; }
+      else { Object.assign(r, before); r.engineData = before.engineData; if (before.segment === undefined) delete r.segment; }
       if (this.lives.get(r.id) === live) this.lives.delete(r.id);
       this.save();
     };
@@ -611,7 +631,7 @@ export class WorkerCore implements WorkerHost {
         },
       },
       pipeline: new RunPipeline(
-        { workerId: r.id, run, engine: r.engine, conversationId: () => r.conversationId, parentThreadId: () => this.options.parentThreadId?.() ?? null },
+        { workerId: r.id, run, segment: r.segment, engine: r.engine, conversationId: () => r.conversationId, parentThreadId: () => this.options.parentThreadId?.() ?? null },
         (item) => this.emit(item),
         { control: (event) => this.control(r, live, event), ended: (end) => this.ended(r, live, end) },
       ),
@@ -728,12 +748,30 @@ export class WorkerCore implements WorkerHost {
     const facts = live ? live.pipeline.facts({ stoppedByApp: true, interruptedBy: null, requireReply: true }) : { end: null, reply: "", stoppedByApp: true, interruptedBy: null, requireReply: true, failedTools: 0 };
     const verdict = classifyRun(facts);
     if (live) { live.done = true; live.waiting = undefined; live.pipeline.flush(); this.cancelApprovals(r, live); }
-    Object.assign(r, { status: "stopped", endedAt: this.now(), report: { ...noReport(), text: verdict.report, status: "stopped" } });
+    // Stopped, but not over until its processes are: no next run starts while they may still be alive.
+    Object.assign(r, { status: "stopped", endedAt: this.now(), cleanup: "pending", report: { ...noReport(), text: verdict.report, status: "stopped" } });
     this.save();
     this.emit({ kind: "subagentEnded", id: r.id, status: wireStatus("stopped"), summary: verdict.report });
-    const cleaned = await (this.adapterOf(r)?.stop(r) ?? Promise.resolve({ cleaned: true })).then((result) => result.cleaned, () => false);
-    if (!cleaned && this.records.get(r.id) === r && r.status === "stopped") this.cleanupFailed(r);
+    await this.cleanUp(r, this.adapterOf(r));
     this.startWaiting();
+  }
+
+  /**
+   * The adapter's cleanup of this run (`cleanup` is "pending" while it runs): cleared when it is done, failed when it
+   * could not be. Its result belongs to the run it was started for, never to a later one.
+   */
+  private cleanUp(r: WorkerLedgerRecord, adapter: WorkerAdapter | undefined): Maybe<void> {
+    const run = r.run;
+    const settle = (cleaned: boolean) => {
+      if (this.records.get(r.id) !== r || r.run !== run || r.cleanup !== "pending") return;
+      if (cleaned) { delete r.cleanup; this.save(); }
+      else this.cleanupFailed(r);
+    };
+    let stopped: Maybe<{ cleaned: boolean }>;
+    try { stopped = adapter?.stop(r) ?? { cleaned: true }; } catch { stopped = { cleaned: false }; }
+    // An adapter done at once settles it now (a follow-up right after the stop finds it clean).
+    if (!(stopped instanceof Promise)) return settle(stopped.cleaned);
+    return stopped.then((result) => result.cleaned, () => false).then(settle);
   }
 
   /** Workers waiting for a slot start, oldest first, while there is room. */
@@ -751,9 +789,9 @@ export class WorkerCore implements WorkerHost {
     }
   }
 
-  private trim() {
+  private trim(making: string) {
     if (this.records.size <= MAX_WORKER_RECORDS) return;
-    const kept = trimRecords([...this.records.values()], MAX_WORKER_RECORDS, (id) => { const live = this.lives.get(id); return !!live && !live.done; });
+    const kept = trimRecords([...this.records.values()], MAX_WORKER_RECORDS, (id) => { const live = this.lives.get(id); return id === making || (!!live && !live.done); });
     const keep = new Set(kept.map((r) => r.id));
     for (const id of [...this.records.keys()]) if (!keep.has(id)) { this.records.delete(id); this.lives.delete(id); }
   }

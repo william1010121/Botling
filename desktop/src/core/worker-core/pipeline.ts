@@ -14,6 +14,8 @@ export type ControlEvent = Extract<WorkerEvent, { type: "session" | "process" | 
 export interface PipelineIds {
   workerId: string;
   run: number;
+  /** Its segment of the run (a run resumed after a restart: 1, 2, …). */
+  segment?: number;
   engine: Engine;
   conversationId(): string | null;
   /** The coordinator's thread, for measurements that name none. */

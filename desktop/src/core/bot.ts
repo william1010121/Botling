@@ -1268,7 +1268,12 @@ export class Bot {
     }
     this.noteProgressOf(item);
     if (item.kind === "toolUse") this.noteToolCall(item);
-    if (this.onSubagentItem(item)) return;
+    const handled = this.onSubagentItem(item);
+    // A run whose end reached the ledger before its opening items did (Codex hands them over after the call that ended
+    // it, e.g. a start that failed at once): its end shows now, over the opening's "running".
+    const opened = item.kind === "subagentStarted" ? this.workerViews.get(item.id) : undefined;
+    if (opened && opened.status !== "running") this.projectWorker(opened);
+    if (handled) return;
     // The step in the coordinator's turn that started it.
     const turn = this.turn;
     if (item.kind === "toolUse" && item.parent === null && turn?.open && turn.origin !== "tidy") {
