@@ -5577,6 +5577,8 @@ export class Bot {
       const nativeChildren=bot.engine==="claude"?bot.subagents.running.filter(child=>!ownProcessWorker(child.type)).map(child=>({id:child.id,agentId:child.agentID,parentId:child.parentID?(bot.subagents.get(child.parentID)?.id??child.parentID):undefined,
         checkpoint:child.steps.findLast(step=>step.kind==="tool"&&step.done&&!step.failed)?.id,
         prompt:child.prompt,description:child.description,type:child.type})):undefined;
+      // Own-process Claude workers end as interrupted on quit (ClaudeWorkers.close); the coordinator is told their ids.
+      const claudeWorkers=bot.engine==="claude"?bot.subagents.running.filter(child=>ownProcessWorker(child.type)).map(child=>child.id):undefined;
       const nativeConfig=bot.head instanceof ClaudeHead?bot.head.config:undefined;
       const active = !!turn?.open && turn.origin !== "tidy";
       const queued=bot.queue.filter(t=>t.open&&!t.sent&&t.origin!=="tidy").map(t=>({words:t.words,userId:t.userId,origin:t.origin,turnId:t.id,messageId:t.messageId,handoffId:t.handoffId,conducted:t.conducted}));
@@ -5591,11 +5593,11 @@ export class Bot {
         : bot.turn?.steps.some(step=>step.kind==="tool"&&!step.done) ? "A tool call had no confirmed result. Reconcile its outcome before continuing."
         : bot.deferred || bot.paused || bot.claimHold ? "Paused or deferred work needs explicit reconciliation."
         : nativeChildren?.some(child=>!child.agentId) ? "Native child lacks an observed agent ID. Original assignment remains in subagent history; no replacement was started."
-        : bot.subagents.running.length && !workers?.length && !nativeChildren?.length ? "This child transport has no safe restart contract."
+        : bot.subagents.running.some(child=>!ownProcessWorker(child.type)) && !workers?.length && !nativeChildren?.length ? "This child transport has no safe restart contract."
         : workers?.some(w => w.wasActive && (!w.restartSafe || !w.thread)) ? "A worker has pending approval, tool execution, or unconfirmed delivery. Reconcile the original task."
         : active && !bot.session.started ? "Provider session creation was not confirmed." : undefined;
       return [{botId:this.owner.id,engine:bot.engine,sessionId:bot.session.sessionId,sessionStarted:bot.session.started,
-        continue:active||!!nativeChildren?.length,queued,nativeChildren,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
+        continue:active||!!nativeChildren?.length||!!claudeWorkers?.length,queued,nativeChildren,claudeWorkers:claudeWorkers?.length?claudeWorkers:undefined,nativeCwd:nativeConfig?.cwd,nativeConfigDir:nativeConfig?claudeConfigFolder({...process.env,...nativeConfig.env}):undefined,turnId:turn?.id,messageId:turn?.messageId,userId:turn?.userId,handoffId:turn?.handoffId,
         blocked,workers,providerTurnId:bot.head instanceof CodexHead ? bot.head.restartTurn : undefined}];
     });
   }
@@ -5616,7 +5618,8 @@ export class Bot {
     bot.restartProviderTurn=entry.providerTurnId;
     const nativeContext=entry.nativeChildren?.length?nativeRestartContext(entry.nativeChildren,{cwd:entry.nativeCwd??bot.commandFolder,configDir:entry.nativeConfigDir,sessionId:entry.sessionId!}):"";
     if(entry.continue){
-      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+nativeContext+(entry.workers?.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+entry.workers.map(w=>w.id).join(", ") : ""),entry.userId??null);
+      const turn=bot.newTurn(entry.userId ? "user" : "app",RESTART_NOTE+nativeContext+(entry.workers?.length ? "\nExisting worker task IDs (the app reconciles these; do not create replacements): "+entry.workers.map(w=>w.id).join(", ") : "")
+        +(entry.claudeWorkers?.length ? "\nApp worker task IDs interrupted by the restart (nothing was replayed; continue any that are still needed with app_send_message to the same task_id, do not create replacements): "+entry.claudeWorkers.join(", ") : ""),entry.userId??null);
       turn.handoffId=entry.handoffId??null;
       // Keep task correlation, but use a new transport turn: the prior turn is visibly interrupted.
       turn.retried=true; // A failed resume must never fall back to a fresh session/replay.

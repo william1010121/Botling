@@ -30,6 +30,8 @@ export interface RestartEntry extends SwapEntry {
   handoffId?: string | null;
   blocked?: string;
   workers?: WorkerRecord[];
+  /** Claude app workers (own processes) that were at work: interrupted by the restart, named in the continuation note. */
+  claudeWorkers?: string[];
   state?: "pending" | "claimed" | "dispatched" | "blocked";
 }
 interface RestartIntent { v: 1; id: string; phase: "preparing" | "ready"; entries: RestartEntry[]; at?: number }
@@ -42,6 +44,7 @@ function validEntry(e: RestartEntry): boolean {
     && Array.isArray(e.queued) && e.queued.every(q => q && typeof q.words === "string"
       && ["user", "app", "background"].includes(q.origin) && typeof q.turnId === "string"
       && typeof q.messageId === "string" && (q.userId === null || typeof q.userId === "string"))
+    && (e.claudeWorkers === undefined || Array.isArray(e.claudeWorkers) && e.claudeWorkers.every(id => typeof id === "string"))
     && (e.workers === undefined || Array.isArray(e.workers) && e.workers.every(w => w
       && typeof w.id === "string" && typeof w.name === "string" && typeof w.instructions === "string"
       && Number.isSafeInteger(w.run) && w.run >= 1 && typeof w.wasActive === "boolean" && typeof w.reportPending === "boolean"));
