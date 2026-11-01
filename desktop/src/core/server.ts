@@ -36,8 +36,13 @@ import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView, type WhiteboardView,
-  type SettingsChange, type SettingsView, type SpecAction, type SubagentRowView,
+  type SettingsChange, type SettingsView, type SpecAction, type SubagentRowView, type AgentTargetView,
 } from "../contract";
+import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type MoveIntent, type ReconcileReport } from "./agent-registry";
+import { AgentStore, migrationRecords } from "./store/agent-store";
+import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } from "./agent-moves";
+import { agentToldOfMove, backNote, detachedEndedNotice, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, ownedAgentsBriefing, ownerGoneNotice, subBotAdoptedFirstMessage } from "./agent-relay";
+import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./specs";
 import { PAGE_COMPONENT } from "./preview-url";
 import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
@@ -214,6 +219,14 @@ export class Core {
   private removedPluginBots = new Set<string>();
   /** <open-question> copies in the main bot's chat: the copy's id → the question it copies. */
   private copies = new Map<string, { botId: string; questionId: string }>();
+  /** The app-wide agent registry (agents.json, A1): who owns each agent apart from who runs it. */
+  readonly agents!: AgentRegistry;
+  private readonly agentStatus = new AgentStatusWriter();
+  /** What the constructor's reconcile found, told once the core is active (a candidate start changes nothing outside the data folder). */
+  private agentReconcile: ReconcileReport | null = null;
+  /** Detached agents whose end the owner was told of (per run). */
+  private agentEndsTold = new Set<string>();
+  private flagCache: { at: number; agentMoves: boolean; claudeOwnerMoves: boolean } | null = null;
 
   constructor(private options: CoreOptions) {
     this.doctor = new DoctorModel(options.doctor ?? new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(options.dataDir)), options.dataDir) }), doctor => this.event({ type: "doctor.updated", doctor }));
@@ -261,6 +274,13 @@ export class Core {
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
     this.profiles = profiles;
+    // The agent registry, before any bot: the first start adopts every host book (running ones were cut off with the app).
+    (this as { agents: AgentRegistry }).agents = new AgentRegistry(new AgentStore(options.dataDir, (line) => this.log(line)));
+    if (this.agents.fresh) {
+      try { const adopted = this.agents.adopt(migrationRecords(profiles)); if (adopted) this.log(`agents.json made from the bots' subagent lists (${adopted})`); }
+      catch (error) { this.log(`agents.json migration: ${(error as Error).message}`); }
+    }
+    this.agents.onChange((record, previous) => this.agentChanged(record, previous));
     this.worktrees = new WorktreeDesk({
       dataDir: options.dataDir,
       settings: () => { const view = settingsView(readSettings(Layout.settings(options.dataDir))); return { enabled: view.worktrees, root: view.worktreeRoot }; },
@@ -302,7 +322,7 @@ export class Core {
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
           : profile.id !== MAINTAINER_ID
-            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.worktrees.current(profile) !== null) : "", this.worktrees.note(profile), this.subBotNote(profile)].filter(Boolean).join("\n\n")
+            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.worktrees.current(profile) !== null) : "", this.worktrees.note(profile), this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
             : undefined,
         worktree: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => {
           const cwd = this.worktrees.sessionFolder(profile);
@@ -327,6 +347,7 @@ export class Core {
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
+        agents: this.agentPort(profile),
       });
       return bot;
     };
@@ -449,6 +470,8 @@ export class Core {
       },
       log: (line) => this.log(line),
     });
+    // The registry against the bots' subagent lists (A1.3), once everything is built; its notices wait for `activate`.
+    try { this.reconcileAgents(false); } catch (error) { this.log(`agents reconcile: ${(error as Error).message}`); }
     if (!options.deferStartup) this.activate();
   }
 
@@ -470,6 +493,8 @@ export class Core {
       this.log(String(error));
       this.bots.get(MAIN_BOT_ID)?.appNotice("Restart continuation could not be read. The checkpoint is preserved; no recovery prompt was sent. Reconcile it before retrying.");
     }
+    // After restart recovery: the registry again, and what it found told (moves cut short finish their notices).
+    try { this.reconcileAgents(true); } catch (error) { this.log(`agents reconcile: ${(error as Error).message}`); }
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
     try { this.devBuilds.check(); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
@@ -834,6 +859,7 @@ First write a test that shows this, then fix it.`;
       });
       const chosen = subBotEngine(found.engine, { engine: bot.engine, heads: bot.headEngines });
       const subId = this.makeSubBot(profile, name, `Continue the work moved out of a subagent: ${found.description || found.prompt.slice(0, 200)}`, token, chosen.engine);
+      this.agents.succeed(profile.id, found.id, { kind: "subBot", botId: subId }, file);
       const progress = progressFile(profile.folder, token);
       if (!existsSync(progress)) writeFileAtomic(progress, "Status: working\n");
       bot.appNotice(`Moved "${found.description || key}" to the sub bot "${name}".${result.outcome === "forced" ? (mode === "stop" ? " The worker cannot take a message while it works, so it was stopped at once and the handoff was written from its recorded steps." : " The subagent did not end in time, so it was stopped and the handoff was written from its recorded steps.") : ""}${chosen.note ? ` ${chosen.note}` : ""}`, undefined, undefined, { sourceID: subId });
@@ -864,6 +890,305 @@ First write a test that shows this, then fix it.`;
     } catch (error) {
       refuse((error as Error).message);
     }
+  }
+
+  // ---- Agents (A1): the registry, "Move to…", notices, status files ----
+
+  /** settings.json's agent flags (read at most every 2 s: rows ask often). */
+  private agentFlags(): { agentMoves: boolean; claudeOwnerMoves: boolean } {
+    const now = Date.now();
+    if (!this.flagCache || now - this.flagCache.at > 2_000) {
+      const raw = readSettings(Layout.settings(this.options.dataDir)) as Record<string, unknown>;
+      this.flagCache = { at: now, agentMoves: raw.agentMoves === true, claudeOwnerMoves: raw.claudeOwnerMoves === true };
+    }
+    return this.flagCache;
+  }
+
+  private requireAgentMoves() {
+    if (!this.agentFlags().agentMoves) throw new ContractError("forbidden", "Moving agents is off (agentMoves in settings.json).");
+  }
+
+  /** A bot's name as agent notices say it. */
+  private agentBotName(id: string): string {
+    const profile = this.profiles.find((candidate) => candidate.id === id);
+    return !profile ? "a removed bot" : profile.role === "main" ? "Main bot" : profile.name;
+  }
+
+  private botFacts(id: string): BotFacts | null {
+    const profile = this.profiles.find((candidate) => candidate.id === id);
+    const bot = this.bots.get(id);
+    if (!profile || !bot || this.removed.has(id)) return null;
+    return { id, name: this.agentBotName(id), role: profile.role, parent: profile.parent ?? null, maintainer: id === MAINTAINER_ID, problem: profile.problem, folder: profile.folder, engine: bot.engine, heads: bot.headEngines };
+  }
+
+  /** The registry as one bot's heads see it (a partner head shares its primary's). */
+  private agentPort(profile: BotProfile): AgentPort {
+    const id = profile.id;
+    return {
+      observed: (host, rec) => { this.agents.observe(host, rec); },
+      ended: (host, rec) => {
+        const record = this.agents.observe(host, rec);
+        if (isDetached(record)) this.detachedEnded(record, rec);
+      },
+      retained: (engine) => this.agents.retained(id, engine),
+      movedOut: (engine) => new Map([...this.agents.movedOut(id, engine)].map(([nativeId, record]) => [nativeId, {
+        agentId: record.id, owner: { botId: record.owner.botId, engine: record.owner.engine }, ownerName: this.agentBotName(record.owner.botId), muted: record.relay.muted,
+      }])),
+      movedInRows: () => this.movedInRows(id),
+      settle: (ownerBotId, nativeId, settled) => this.agents.settle(ownerBotId, nativeId, settled),
+      rowInfo: (engine, nativeId) => {
+        const record = this.agents.byNative(id, engine, nativeId);
+        if (!record) return {};
+        return { agentId: record.id, ...(this.agentFlags().agentMoves ? { movable: this.movability(record) } : {}) };
+      },
+    };
+  }
+
+  private movability(record: AgentRecord): { ok: boolean; reason: string | null } {
+    const owner = this.botFacts(record.owner.botId);
+    if (!owner) return { ok: false, reason: "Its owner is gone." };
+    const reason = unmovable(record, { owner, pending: this.agents.moving(record.id), claudeOwnerMoves: this.agentFlags().claudeOwnerMoves });
+    return { ok: !reason, reason: reason ? reason.slice(0, 200) : null };
+  }
+
+  /** The rows of agents this bot owns that another bot runs: the host's row, with the registry's status, settling and host. */
+  private movedInRows(ownerId: string): SubagentRowView[] {
+    const moves = this.agentFlags().agentMoves;
+    return this.agents.movedIn(ownerId).map((record): SubagentRowView => {
+      const row = this.bots.get(record.host.botId)?.subagentRowFor(record.nativeId) ?? null;
+      return {
+        outputTokens: row?.outputTokens ?? null,
+        id: record.nativeId.slice(0, 200),
+        title: (row?.title || record.summary.description).slice(0, 400),
+        status: rowStatus(record.state),
+        head: row?.head ?? record.host.engine,
+        startedAt: row?.startedAt ?? record.createdAt,
+        endedAt: record.state === "running" ? null : row?.endedAt ?? record.endedAt,
+        unsettledAt: record.ownerView.unsettledAt,
+        settled: record.ownerView.settledAt !== null,
+        prompt: (row?.prompt ?? record.summary.prompt).slice(0, 1_000),
+        agentId: record.id,
+        host: { botId: record.host.botId, name: this.agentBotName(record.host.botId).slice(0, 400) },
+        ...(moves ? { movable: this.movability(record) } : {}),
+      };
+    });
+  }
+
+  /** A registry record changed: the rows of the bots it concerns, and its status file while it is owned elsewhere. */
+  private agentChanged(record: AgentRecord, previous: AgentRecord | null) {
+    const detached = isDetached(record);
+    if (!detached && !(previous && isDetached(previous))) return;
+    const ownerChanged = !!previous && previous.owner.botId !== record.owner.botId;
+    const rowChanged = !previous || ownerChanged || previous.state !== record.state || previous.summary.description !== record.summary.description
+      || previous.endedAt !== record.endedAt || previous.ownerView.settledAt !== record.ownerView.settledAt || previous.ownerView.unsettledAt !== record.ownerView.unsettledAt;
+    if (rowChanged) {
+      this.bots.get(record.owner.botId)?.refresh();
+      if (ownerChanged) { this.bots.get(previous!.owner.botId)?.refresh(); this.bots.get(record.host.botId)?.refresh(); }
+    }
+    if (detached && this.activated) this.writeAgentStatus(record, !previous || previous.state !== record.state || ownerChanged);
+  }
+
+  /** <owner folder>/.bot/agents/<id>/status.md (A1.4); its path, or null when it could not be written. */
+  private writeAgentStatus(record: AgentRecord, force: boolean): string | null {
+    const owner = this.profiles.find((candidate) => candidate.id === record.owner.botId);
+    if (!owner || owner.problem) return null;
+    try {
+      const file = this.agentStatus.write(owner.folder, record, () => this.bots.get(record.host.botId)?.agentFacts(record.nativeId)?.steps ?? [], this.agentBotName(record.host.botId), force);
+      if (record.summary.statusFile !== file) this.agents.setFiles(record.id, { statusFile: file });
+      return file;
+    } catch (error) {
+      this.log(`agent status ${record.id}: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /** A1 interim: an agent owned elsewhere ended. Its owner's chat says so; its host still gets its own report turn. */
+  private detachedEnded(record: AgentRecord, rec: { status: string; result?: string; endedAt?: number; execution?: { run: number } }) {
+    const key = `${record.id}:${rec.execution?.run ?? 0}:${rec.endedAt ?? ""}`;
+    if (this.agentEndsTold.has(key)) return;
+    this.agentEndsTold.add(key);
+    this.bots.get(record.owner.botId)?.appNotice(detachedEndedNotice({ title: record.summary.description || "Subagent", status: rec.status, report: rec.result ?? "" }), undefined, undefined, { sourceID: record.host.botId });
+  }
+
+  /** Reconcile (A1.3). `notify`: tell what it found (and what the constructor's found), and finish moves cut short. */
+  private reconcileAgents(notify: boolean) {
+    const alive = [...this.bots.keys()].filter((id) => !this.removed.has(id));
+    const report = this.agents.reconcile({ hosts: alive.flatMap((id) => this.bots.get(id)!.hostBooks()), bots: new Set(alive) });
+    const held = this.agentReconcile;
+    this.agentReconcile = null;
+    const found: ReconcileReport = held ? { ...report, hostLost: [...held.hostLost, ...report.hostLost], ownerReverted: [...held.ownerReverted, ...report.ownerReverted] } : report;
+    if (report.added.length || report.dropped.length || report.interrupted.length) this.log(`agents: ${report.added.length} added, ${report.dropped.length} dropped, ${report.interrupted.length} interrupted`);
+    if (!notify) { this.agentReconcile = found; return; }
+    for (const record of found.hostLost) {
+      this.bots.get(record.owner.botId)?.appNotice(hostLostNotice({ title: record.summary.description || "Subagent", host: this.agentBotName(record.host.botId), statusFile: record.summary.statusFile }), undefined, undefined, { moveNotice: `lost:${record.id}` });
+    }
+    for (const { record, from } of found.ownerReverted) {
+      this.bots.get(record.host.botId)?.appNotice(ownerGoneNotice({ title: record.summary.description || "Subagent", owner: this.agentBotName(from.botId) }));
+    }
+    for (const move of found.resend) {
+      try { this.finishMove(move, {}); } catch (error) { this.log(`agent move ${move.id}: ${(error as Error).message}`); }
+    }
+  }
+
+  /** `removeBot`'s part: reconcile rules 4 and 5 for that bot, before it leaves the profiles. */
+  private agentsOfRemovedBot(id: string) {
+    const name = this.agentBotName(id);
+    const gone = this.agents.botRemoved(id, (other) => other !== id && this.bots.has(other) && !this.removed.has(other));
+    for (const record of gone.hostLost) {
+      this.bots.get(record.owner.botId)?.appNotice(hostLostNotice({ title: record.summary.description || "Subagent", host: name, statusFile: record.summary.statusFile }), undefined, undefined, { moveNotice: `lost:${record.id}` });
+    }
+    for (const { record } of gone.ownerReverted) {
+      const host = this.bots.get(record.host.botId);
+      host?.appNotice(ownerGoneNotice({ title: record.summary.description || "Subagent", owner: name }));
+      host?.refresh();
+    }
+  }
+
+  /** The wake note's part for agents it owns that run on another bot. */
+  private ownedAgentsNote(profile: BotProfile): string {
+    return ownedAgentsBriefing(this.agents.movedIn(profile.id).filter((record) => !TERMINAL_STATES.has(record.state) || record.ownerView.settledAt === null).map((record) => ({
+      title: record.summary.description || "Subagent", id: record.nativeId, engine: record.engine, host: this.agentBotName(record.host.botId), state: record.state, statusFile: record.summary.statusFile,
+    })));
+  }
+
+  /** An agent by the bot whose rows show it and its row id: that bot's own book first, then the agents it owns elsewhere. */
+  private resolveAgent(botId: string, subagentId: string): AgentRecord {
+    this.bot(botId);
+    const record = this.agents.byHostBot(botId, subagentId) ?? this.agents.movedIn(botId).find((candidate) => candidate.nativeId === subagentId);
+    if (!record) throw new ContractError("not_found", "No such agent.");
+    return record;
+  }
+
+  /** `subagent.view`: one of the bot's own, or one it owns that another bot runs (read from its host, named as the owner's). */
+  private agentView(botId: string, subagentId: string): ResultOf<"subagent.view"> {
+    const bot = this.bot(botId);
+    const own = this.agents.byHostBot(botId, subagentId);
+    if (own || bot.agentFacts(subagentId)) {
+      return bot.subagentView(subagentId, own && isDetached(own) ? { owner: this.agentBotName(own.owner.botId), host: this.agentBotName(botId) } : undefined);
+    }
+    const moved = this.agents.movedIn(botId).find((candidate) => candidate.nativeId === subagentId);
+    if (!moved) return bot.subagentView(subagentId);
+    const host = this.removed.has(moved.host.botId) ? undefined : this.bots.get(moved.host.botId);
+    if (!host) throw new ContractError("not_found", "The bot that ran it is gone.");
+    return host.subagentView(subagentId, { owner: this.agentBotName(botId), host: this.agentBotName(moved.host.botId) });
+  }
+
+  private moveFacts(record: AgentRecord, to?: MoveTarget): MoveFacts {
+    const owner = this.botFacts(record.owner.botId);
+    if (!owner) throw new ContractError("not_found", "Its owner is gone.");
+    return {
+      owner, host: this.botFacts(record.host.botId),
+      ...(to?.kind === "bot" ? { target: this.botFacts(to.botId) } : {}),
+      project: owner.parent ? this.botFacts(owner.parent) : owner,
+      pending: this.agents.moving(record.id),
+      claudeOwnerMoves: this.agentFlags().claudeOwnerMoves,
+    };
+  }
+
+  /** `agent.targets`: where "Move to…" can take it, each with why not when it cannot. */
+  agentTargets(botId: string, subagentId: string): ResultOf<"agent.targets"> {
+    this.requireAgentMoves();
+    const record = this.resolveAgent(botId, subagentId);
+    const base = this.moveFacts(record);
+    const view = (kind: AgentTargetView["kind"], target: MoveTarget, botIdOf: string | null, name: string, folder: string, facts: MoveFacts): AgentTargetView => {
+      const plan = planMove(record, target, facts);
+      return { kind, botId: botIdOf, name: name.slice(0, 400), folder: folder.slice(0, 4_000), sameFolder: folder === record.host.folder,
+        disabled: "refuse" in plan ? plan.refuse.slice(0, 400) : null, mode: "refuse" in plan ? "owner" : plan.mode };
+    };
+    const targets: AgentTargetView[] = [];
+    if (isDetached(record) && base.host) targets.push(view("back", { kind: "back" }, base.host.id, base.host.name, base.host.folder, base));
+    const handoff = record.engine === "claude" && !(record.background && base.claudeOwnerMoves);
+    targets.push(view("newSubBot", { kind: "newSubBot", name: "New sub bot" }, null, "New sub bot…", (handoff ? base.owner.folder : base.project?.folder) ?? base.owner.folder, base));
+    // Its project's own family first (the project bot and its sub bots), then every other bot that can take one.
+    const project = base.project?.id ?? null;
+    const candidates = this.profiles.filter((profile) => !this.removed.has(profile.id) && profile.role !== "main" && profile.id !== MAINTAINER_ID && profile.id !== record.owner.botId && !(isDetached(record) && profile.id === record.host.botId));
+    const family = (profile: BotProfile) => profile.id === project || (project !== null && profile.parent === project) ? 0 : 1;
+    for (const profile of [...candidates].sort((a, b) => family(a) - family(b))) {
+      const facts = { ...base, target: this.botFacts(profile.id) };
+      targets.push(view("bot", { kind: "bot", botId: profile.id }, profile.id, this.agentBotName(profile.id), profile.folder, facts));
+    }
+    return { engine: record.engine, targets: targets.slice(0, 200) };
+  }
+
+  /**
+   * `agent.move` (A1.6). An owner move writes its intent first, makes the new sub bot when asked, then changes the owner and
+   * commits in one write; the notices follow, once per move (sent again at the next start when cut short). A Claude
+   * subagent's work goes by the sub-bot hand-off instead (unchanged).
+   */
+  async moveAgent(botId: string, subagentId: string, to: MoveTarget, options: { notifyAgent?: boolean } = {}): Promise<ResultOf<"agent.move">> {
+    this.requireAgentMoves();
+    const record = this.resolveAgent(botId, subagentId);
+    const plan = planMove(record, to, this.moveFacts(record, to));
+    if ("refuse" in plan) throw new ContractError("conflict", plan.refuse);
+    if (plan.mode === "handoff") {
+      const host = this.bots.get(record.host.botId);
+      if (!host) throw new ContractError("not_found", "The bot that runs it is gone.");
+      void this.subBotRequested(host, { name: to.kind === "newSubBot" ? to.name : "", subagent: record.nativeId, note: to.kind === "newSubBot" ? to.note ?? "" : "" });
+      return { agentId: record.id, ownerBotId: record.owner.botId, mode: "handoff" };
+    }
+    const move: MoveIntent = { id: newMoveId(), agentId: record.id, kind: "owner", from: { owner: { botId: record.owner.botId, engine: record.owner.engine } }, to: { owner: plan.to }, phase: "intent", at: Date.now() };
+    this.agents.beginMove(move);
+    let made = false;
+    try {
+      if (plan.makeSubBot) {
+        const parent = this.profiles.find((candidate) => candidate.id === plan.makeSubBot!.parentId);
+        if (!parent) throw new Error("its project bot is gone");
+        const title = record.summary.description || "an agent";
+        const subId = this.makeSubBot(parent, plan.makeSubBot.name, `Own the agent "${title}" handed over by ${this.agentBotName(record.owner.botId)}.`.slice(0, 1_000), undefined, plan.makeSubBot.engine);
+        made = true;
+        this.agents.retarget(move.id, { botId: subId, engine: plan.makeSubBot.engine });
+      }
+      this.agents.commitMove(move.id);
+    } catch (error) {
+      this.agents.endMove(move.id);
+      throw new ContractError("conflict", `It was not moved: ${(error as Error).message}`);
+    }
+    const committed = this.agents.pendingMoves.find((candidate) => candidate.id === move.id);
+    if (committed) {
+      try { this.finishMove(committed, { note: to.kind === "newSubBot" ? to.note : undefined, notifyAgent: options.notifyAgent === true, madeSubBot: made }); }
+      catch (error) { this.log(`agent move ${move.id}: notices will be sent again at the next start (${(error as Error).message})`); }
+    }
+    const after = this.agents.get(record.id);
+    this.log(`agent ${record.id} now belongs to ${this.agentBotName(after?.owner.botId ?? "")}`);
+    return { agentId: record.id, ownerBotId: after?.owner.botId ?? plan.to.botId, mode: "owner" };
+  }
+
+  /** A committed move's notices (A1.7), each posted once (keyed by move id), then the move is done. */
+  private finishMove(move: MoveIntent, options: { note?: string; notifyAgent?: boolean; madeSubBot?: boolean }) {
+    const record = this.agents.get(move.agentId);
+    if (record) {
+      const title = record.summary.description || "Subagent";
+      const fromId = move.from.owner.botId, toId = move.to.owner.botId, hostId = record.host.botId;
+      const fromName = this.agentBotName(fromId), toName = this.agentBotName(toId), hostName = this.agentBotName(hostId);
+      const back = toId === hostId;
+      const statusFile = back ? null : this.writeAgentStatus(record, true);
+      const old = this.removed.has(fromId) ? undefined : this.bots.get(fromId);
+      if (old && !old.hasMoveNotice(`${move.id}:from`)) {
+        old.appNotice(movedAwayNotice({ title, to: toName, host: hostName }), undefined, undefined, { sourceID: toId, moveNotice: `${move.id}:from` });
+        old.queueNote(movedAwayNote({ title, nativeId: record.nativeId, to: toName }));
+      }
+      const next = this.removed.has(toId) ? undefined : this.bots.get(toId);
+      if (next && !next.hasMoveNotice(`${move.id}:to`)) {
+        if (back) {
+          next.appNotice(`${fromName} gave "${title}" back. Its reports come to you again.`, undefined, undefined, { sourceID: fromId, moveNotice: `${move.id}:to` });
+          next.queueNote(backNote({ title, nativeId: record.nativeId, from: fromName }));
+        } else {
+          // A sub bot made for it (or, after a crash, one that has said nothing yet) is woken with it; an existing bot hears with its next message.
+          const fresh = options.madeSubBot ?? (!!next.profile.parent && next.view().lastActivity === null);
+          next.appNotice(handedNotice({ from: fromName, title, engine: record.engine, state: record.state, host: hostName, folder: record.host.folder, statusFile: statusFile ?? "(not written yet)" }), undefined, undefined, { sourceID: fromId, moveNotice: `${move.id}:to` });
+          if (fresh) {
+            const parent = next.profile.parent ? this.agentBotName(next.profile.parent) : fromName;
+            next.relay(subBotAdoptedFirstMessage({ parentName: parent, name: next.profile.name, from: fromName, title, nativeId: record.nativeId, engine: record.engine, host: hostName, folder: record.host.folder, statusFile: statusFile ?? "(not written yet)", ...(options.note ? { note: options.note } : {}) }));
+          } else next.queueNote(handedNote({ from: fromName, title, nativeId: record.nativeId, engine: record.engine, host: hostName, statusFile: statusFile ?? "(not written yet)" }));
+        }
+      }
+      // The host, when it is neither: it must leave the agent alone too.
+      if (hostId !== fromId && hostId !== toId) this.bots.get(hostId)?.queueNote(movedAwayNote({ title, nativeId: record.nativeId, to: toName }));
+      // The agent itself: a running Codex worker, only when asked for. Never Claude, never Antigravity.
+      if (options.notifyAgent && record.engine === "codex" && record.host.kind === "codex-thread" && record.state === "running") this.bots.get(hostId)?.askForHandoff(record.nativeId, agentToldOfMove(toName));
+    }
+    this.agents.setPhase(move.id, "notified");
+    this.agents.endMove(move.id);
   }
 
   private movingSubagents = new Set<string>();
@@ -949,6 +1274,8 @@ First write a test that shows this, then fix it.`;
     // Its sub bots go with it (they hang under it, in its folder).
     for (const sub of this.profiles.filter((candidate) => candidate.parent === id)) await this.removeBot(sub.id);
     const bot = this.bots.get(id);
+    // Its agents (reconcile rules 4 and 5, at once): ones it ran for another owner are lost; ones it owned go back to their host.
+    this.agentsOfRemovedBot(id);
     this.removed.add(id);
     this.profiles = this.profiles.filter((candidate) => candidate.id !== id);
     this.order = this.order.filter((candidate) => candidate !== id);
@@ -1485,6 +1812,13 @@ First write a test that shows this, then fix it.`;
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    // An agent another bot owns: its owner's view of it follows too.
+    if (event.type === "subagent.updated") {
+      const record = this.agents.byHostBot(event.botId, event.subagent.id);
+      if (record && isDetached(record) && !this.removed.has(record.owner.botId) && this.bots.has(record.owner.botId)) {
+        this.event({ ...event, botId: record.owner.botId, subagent: { ...event.subagent, owner: this.agentBotName(record.owner.botId).slice(0, 200), host: this.agentBotName(record.host.botId).slice(0, 200) } });
+      }
+    }
     // A sub bot's row under its project bot follows it (working or not, unread).
     if (event.type === "bot.updated" && event.bot.parent) this.bots.get(event.bot.parent)?.refresh();
     if (this.changeListeners.size) {
@@ -1739,7 +2073,9 @@ First write a test that shows this, then fix it.`;
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
       case "chat.history": return this.bot(cmd.botId).history(cmd.before, cmd.bytes, cmd.until);
       case "task.output": return this.bot(cmd.botId).taskOutput(cmd.messageId, cmd.taskId);
-      case "subagent.view": return this.bot(cmd.botId).subagentView(cmd.subagentId);
+      case "subagent.view": return this.agentView(cmd.botId, cmd.subagentId);
+      case "agent.targets": return this.agentTargets(cmd.botId, cmd.subagentId);
+      case "agent.move": return this.moveAgent(cmd.botId, cmd.subagentId, cmd.to, { notifyAgent: cmd.notifyAgent === true });
       case "chat.read": {
         // You came back to it: many unread replies fold into a summary first (`arrive(at:)`).
         const bot = this.bot(cmd.botId);
@@ -1956,6 +2292,8 @@ First write a test that shows this, then fix it.`;
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     this.memoryWatch?.stop(); this.memoryWatch = null;
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
+    this.agentStatus.close();
+    try { this.agents.flush(); } catch (error) { this.log(`agents.json: ${(error as Error).message}`); }
     // After a swap's drain the heads end without the tidy (it would end their sessions): the new core resumes them.
     const tidy = !this.swapping && !this.restarting;
     // Invoke every participant even if one throws synchronously, and never let an early

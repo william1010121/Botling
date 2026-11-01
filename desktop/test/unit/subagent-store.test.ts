@@ -212,3 +212,35 @@ it("a failed append keeps the lines staged; the retry lands them on a fresh line
   expect(store.pending).toBe(false);
   expect(store.readSteps("w").steps.map(s => s.id)).toEqual(["one", "two"]);
 });
+
+it("never trims a subagent another bot owns now (A1), and its steps file survives the commit that drops older ones", async () => {
+  const { Core } = await import("../../src/core/server");
+  const { saveProjectRow } = await import("../../src/core/projects");
+  const { Layout } = await import("../../src/core/store/workspace");
+  const PROJECT = "98BDBF26-850C-4521-AEB4-CCF9073E8BD0", OTHER = "C0FFEE00-0000-4000-8000-000000000009";
+  const dir = folder("subagent-store-moved"), work = folder("subagent-store-moved-work");
+  writeFileSync(Layout.settings(dir), JSON.stringify({ agentMoves: true }));
+  saveProjectRow(dir, { id: PROJECT, name: "botling", folder: work, avatar: "triangle" });
+  saveProjectRow(dir, { id: OTHER, name: "Helper", folder: work, avatar: "square", job: "helps" });
+  const store = Layout.bot(dir, PROJECT);
+  mkdirSync(join(store, "subagents"), { recursive: true });
+  writeFileSync(join(store, "bot.json"), JSON.stringify({ engine: "codex", heads: { engines: ["codex"] } }));
+  // The moved one is the oldest of 42 ended workers: the next trim would drop it first.
+  const ended = Array.from({ length: 42 }, (_, i) => ({ id: `task-${i}`, description: `W${i}`, prompt: "p", status: "completed", background: true, startedAt: 800_000_000 + i, endedAt: 800_000_100 + i, type: "codex-worker" }));
+  writeFileSync(join(store, "subagents.json"), JSON.stringify({ format: INDEX_FORMAT, subagents: ended }));
+  for (const row of ended) writeFileSync(join(store, "subagents", subagentFileName(row.id)), JSON.stringify({ k: "step", step: step(`${row.id}-s`) }) + "\n");
+  const core = new Core({ dataDir: dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true, routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
+  try {
+    await core.moveAgent(PROJECT, "task-0", { kind: "bot", botId: OTHER });
+    const bot = (core as any).bots.get(PROJECT);
+    // A new worker starts: the book trims its ended ones to 40, and the commit removes the dropped ones' files.
+    bot.subagents.started({ id: "task-new", description: "New", type: "codex-worker", prompt: "p", background: true });
+    bot.saveSubagents();
+    const ids = bot.subagents.list.map((s: { id: string }) => s.id);
+    expect(ids).toContain("task-0");
+    expect(ids).not.toContain("task-1");
+    expect(existsSync(join(store, "subagents", subagentFileName("task-0")))).toBe(true);
+    expect(existsSync(join(store, "subagents", subagentFileName("task-1")))).toBe(false);
+    expect((JSON.parse(readFileSync(join(store, "subagents.json"), "utf8")).subagents as { id: string }[]).map((s) => s.id)).toContain("task-0");
+  } finally { await core.shutdown(); }
+});

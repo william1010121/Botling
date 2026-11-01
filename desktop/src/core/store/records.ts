@@ -94,6 +94,8 @@ export interface ChatRecord {
   state?: "streaming" | "done" | "stopped" | "failed";
   cards?: CardRecord[];
   error?: string;
+  /** An agent move's notice or relay (`<move id>:<who>`): posted once per move (core/agent-relay.ts). */
+  moveNotice?: string;
   [key: string]: unknown;
 }
 

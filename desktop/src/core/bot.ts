@@ -57,6 +57,7 @@ import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
 import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import { parseFeedback } from "./feedback";
+import { hostKind, type AgentPort, type HostFacts } from "./agent-registry";
 import {
   ContractError, type RoutineView, type BotView, type SubagentRowView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView, type WhiteboardPictureView,
@@ -221,6 +222,8 @@ export interface BotOptions {
   specsChanged?: (bot: Bot) => void;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
   launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean };
+  /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
+  agents?: AgentPort;
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -488,7 +491,11 @@ export class Bot {
     this.alwaysAllowed = (primary ?? this).storeAlwaysAllowed();
     this.unread = primary ? 0 : this.store.loadUnread();
     this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard), (from,into) => this.measurementTaskMerged(from,into));
-    this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set(this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }]))));
+    // Kept from trimming: the ones a task card shows, and the ones another bot owns now (their rows and steps are its to show).
+    this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set([
+      ...this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }])),
+      ...(this.options.agents?.retained(this.engine) ?? []),
+    ]));
     this.subagents.sink = (id, line) => { if (!this.readOnly) this.store.stageSubagentLine(id, line); };
     this.subagents.loadSteps = (id) => this.store.readSubagentSteps(id).steps.slice(-500);
     if (!primary) {
@@ -819,9 +826,11 @@ export class Bot {
    * never to the bot; after a restart nobody waits for it, so it is closed ("No longer needed").
    */
   appNotice(text: string, choices?: { label: string; recommended?: boolean; detail?: string }[], onPick?: (index: number) => void,
-    more: { onAnswer?: (text: string, files: string[]) => boolean; sourceID?: string; sourceMessageID?: string } = {}): string {
+    more: { onAnswer?: (text: string, files: string[]) => boolean; sourceID?: string; sourceMessageID?: string; moveNotice?: string } = {}): string {
     if (this.options.primary) return this.options.primary.appNotice(text, choices, onPick, more);
     const record: ChatRecord = { id: newId(), role: "notice", text, date: toSwiftDate() };
+    // An agent move's notice: keyed so a move's notices are posted once, even when they are sent again after a crash.
+    if (more.moveNotice) record.moveNotice = more.moveNotice;
     if (choices?.length) record.choices = choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended }));
     // 1.x's keys: the project or bot a line came from, and the question it is a copy of.
     if (more.sourceID) record.sourceID = more.sourceID;
@@ -1047,7 +1056,40 @@ export class Bot {
       if (changed) { bot.saveSubagents(false, bot.subagents.get(id)); this.rowsChanged(true); }
       return { changed };
     }
+    // An agent it owns that another bot hosts: its row here is the registry's.
+    const moved = this.options.agents?.settle(this.id, id, settled) ?? null;
+    if (moved) { if (moved.changed) this.rowsChanged(true); return moved; }
     throw new ContractError("not_found", "No such subagent.");
+  }
+
+  /** Where this head's subagents live, for the agent registry. */
+  hostFacts(): HostFacts {
+    return { botId: this.owner.profile.id, engine: this.engine, sessionId: this.session.sessionId, folder: this.commandFolder, kind: hostKind(this.engine) };
+  }
+
+  /** What the registry (and C1) reads of one of its subagents, whichever head holds it. */
+  agentFacts(nativeId: string): { status: SubagentRecord["status"]; steps: StepRecord[]; result: string; execution: SubagentRecord["execution"] | null; agentID: string | null; background: boolean } | null {
+    for (const bot of this.members) {
+      const found = bot.subagents.get(nativeId);
+      if (!found) continue;
+      const steps = found.steps.length ? found.steps : bot.subagentHistory(found).steps;
+      return { status: found.status, steps: [...steps], result: found.result ?? "", execution: found.execution ?? null, agentID: typeof found.agentID === "string" ? found.agentID : null, background: found.background };
+    }
+    return null;
+  }
+
+  /** Its heads' subagent lists as they are now, for the registry's reconcile at start. */
+  hostBooks(): (HostFacts & { running: boolean; list: readonly SubagentRecord[] })[] {
+    return this.members.map((bot) => ({ ...bot.hostFacts(), running: bot.head?.running ?? false, list: bot.subagents.list }));
+  }
+
+  /** One of its own rows by native id (for the owner's list when another bot owns it), with the head that holds it. */
+  subagentRowFor(nativeId: string): SubagentRowView | null {
+    for (const bot of this.members) {
+      if (!bot.subagents.get(nativeId)) continue;
+      return bot.subagents.rows(bot.engine).find((row) => row.id === nativeId) ?? null;
+    }
+    return null;
   }
 
   /**
@@ -1113,15 +1155,24 @@ export class Bot {
   }
 
   /** Its subagents' rows (and its partner's, with the head that sent each). */
-  private subagentRows() {
-    // 1.x shows the owning head's navigation avatar even for a single-head bot.
-    const rows = this.members.flatMap(bot => bot.subagents.rows(bot.engine));
-    const own = rows.slice(-100).map((row) => ({
-      ...row,
-      waitingForNetwork: this.members.find(bot => bot.subagents.get(row.id))?.outage?.subagents.includes(row.id) ?? false,
-    }));
-    // Its sub bots (hidden bots of their own under it) are rows of a new kind: they open as a chat with an input box.
-    return [...own, ...(this.options.subBotRows?.() ?? [])].slice(-100);
+  private subagentRows(): SubagentRowView[] {
+    const agents = this.options.agents;
+    // 1.x shows the owning head's navigation avatar even for a single-head bot. Ones another bot owns now are listed there instead.
+    const rows = this.members.flatMap(bot => {
+      const out = agents?.movedOut(bot.engine);
+      return bot.subagents.rows(bot.engine).filter((row) => !out?.has(row.id)).map((row) => ({ row, bot }));
+    });
+    const own: SubagentRowView[] = rows.slice(-100).map(({ row, bot }) => {
+      const info = agents?.rowInfo?.(bot.engine, row.id);
+      return {
+        ...row,
+        waitingForNetwork: bot.outage?.subagents.includes(row.id) ?? false,
+        ...(info?.agentId ? { agentId: info.agentId } : {}),
+        ...(info?.movable ? { movable: info.movable } : {}),
+      };
+    });
+    // Agents it owns that run on another bot, then its sub bots (hidden bots of their own under it: rows that open as a chat with an input box).
+    return [...own, ...(agents?.movedInRows() ?? []), ...(this.options.subBotRows?.() ?? [])].slice(-100);
   }
 
   /** The rows changed: the windows hear of it once (`force`: always). */
@@ -1495,15 +1546,24 @@ export class Bot {
     return { text: await backgroundTaskOutput(task, withSteps) };
   }
 
-  subagentView(id: string): ResultOf<"subagent.view"> {
+  /** `who`: the names the registry gives when another bot owns it (its owner, and this bot as its host). */
+  subagentView(id: string, who?: { owner: string; host: string | null }): ResultOf<"subagent.view"> {
     const subagent = this.subagents.get(id);
     if (!subagent) {
       const peer = this.peers.find(bot => bot.subagents.get(id));
-      if (peer) return peer.subagentView(id);
+      if (peer) return peer.subagentView(id, who);
       throw new ContractError("not_found", "No such subagent.");
     }
     // Opened: its steps are read from its file now, not kept in memory.
-    return { subagent: subagentView(subagent, this.speaker, this.subagents, this.engine, this.subagentHistory(subagent)) };
+    const view = subagentView(subagent, who?.owner ?? this.speaker, this.subagents, this.engine, this.subagentHistory(subagent));
+    return { subagent: who?.host ? { ...view, host: who.host.slice(0, 200) } : view };
+  }
+
+  /** A chat line or relay already posted for this move key (notices are sent once per move). */
+  hasMoveNotice(key: string): boolean {
+    const records = this.owner.records;
+    for (let i = records.length - 1, seen = 0; i >= 0 && seen < 2_000; i--, seen++) if (records[i]!.moveNotice === key) return true;
+    return false;
   }
 
   subagentHistory(subagent: SubagentRecord): SubagentHistory {
@@ -3216,6 +3276,7 @@ export class Bot {
   private subagentChanged(subagent: SubagentRecord | undefined, progress = false) {
     if (!subagent) return;
     this.saveSubagents(progress && subagent.status === "running", subagent);
+    if (!subagent.parentID) this.options.agents?.observed(this.hostFacts(), subagent);
     this.rowsChanged();
     // The current run's tail is in memory; earlier runs (rare) come from its file so an open view keeps them.
     const live = subagent.runs ? { runs: this.subagentHistory(subagent).runs, steps: subagent.steps } : undefined;
@@ -3237,6 +3298,8 @@ export class Bot {
   private subagentEnded(id: string) {
     const subagent = this.subagents.get(id);
     if (!subagent) return;
+    // A1: the host still reports natively; an owner elsewhere hears of it too.
+    if (!subagent.parentID) this.options.agents?.ended(this.hostFacts(), subagent);
     this.endSubagentTasks(subagent.id);
     const mark = (steps: StepRecord[] | undefined) => {
       const step = steps?.findLast((candidate) => candidate.id === id);
