@@ -131,8 +131,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   }, [client, store, fail]);
 
   // A subagent's row (left column or Settled): its conversation in the chat's place (its bot's chat first).
-  const openSubagent = useCallback((botId: string, row: Pick<SubagentRowView, "id">) => {
+  const openSubagent = useCallback((botId: string, row: Pick<SubagentRowView, "id" | "subBot">) => {
     setError(null);
+    // A sub bot is a bot of its own: its chat opens, with the input box (a subagent's view is read-only).
+    const target = rowTarget(row);
+    if (target.kind === "bot") { void store.select(target.botId); return; }
     const show = () => client.request({ type: "subagent.view", botId, subagentId: row.id })
       .then((result) => { if (store.getView().chat?.botId === botId) store.watch(result.subagent); }, fail);
     if (store.getView().chat?.botId === botId) void show();
@@ -222,7 +225,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                     onTogglePin={() => togglePin(candidate.id)}
                     onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
                   />
-                  <SubagentRows bot={candidate} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null}
+                  <SubagentRows bot={candidate} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null} shownBot={!watching ? chat?.botId ?? null : null}
                     onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
                 </div>
               ))}
@@ -248,7 +251,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}${review ? " review-on" : ""}`}>
         <header className="chat-header drag">
           {web?.headerLead}
-          {bot && <span className="chat-title">{bot.name}</span>}
+          {bot && <span className="chat-title">{bot.parent ? <SubBotTitle bot={bot} parent={view.bots.find((candidate) => candidate.id === bot.parent) ?? null} onOpenParent={selectBot} /> : bot.name}</span>}
           {bot && bot.heads.length > 0 && (
             <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => ({ claude: "Claude", codex: "Codex", agy: "Antigravity" }[head])).join(" & ")}</span>
           )}
@@ -398,7 +401,9 @@ export function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned,
  * they were pinned, then the rest — projects and bots together — the one with the newest line
  * first, as in Messages (`entries`, `RailLayout.pinnedFirst`).
  */
-export function railOrder(bots: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
+export function railOrder(all: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
+  // A sub bot is not a row of the column: it is listed under its project bot (SubagentRows) and opens from there.
+  const bots = all.filter((bot) => !bot.parent);
   const main = bots.filter((bot) => bot.role === "main" || bot.id === MAINTAINER_BOT_ID).sort((a, b) => (a.role === "main" ? -1 : b.role === "main" ? 1 : 0));
   const top = pinned.map((id) => bots.find((bot) => bot.id === id && bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID)).filter((bot): bot is BotView => !!bot);
   const when = (bot: BotView) => (bot.lastActivity ? Date.parse(bot.lastActivity) : -Infinity);
@@ -410,6 +415,22 @@ export function railOrder(bots: BotView[], pinned: string[]): { bot: BotView; se
     ...top.map((bot, index) => ({ bot, section: index === 0 ? "pinned" as const : null })),
     ...rest.map((bot, index) => ({ bot, section: index === 0 ? "rest" as const : null })),
   ];
+}
+
+/** What a click on a subagent row opens: a sub bot's own chat (with the input box), or a subagent's read-only view. */
+export function rowTarget(row: Pick<SubagentRowView, "id" | "subBot">): { kind: "bot"; botId: string } | { kind: "subagent"; id: string } {
+  return row.subBot ? { kind: "bot", botId: row.subBot } : { kind: "subagent", id: row.id };
+}
+
+/** A sub bot's title: the project bot it belongs to (a button back to it), then its own name. */
+export function SubBotTitle({ bot, parent, onOpenParent }: { bot: BotView; parent: BotView | null; onOpenParent: (botId: string) => void }) {
+  return (
+    <>
+      {parent && <button type="button" className="chat-parent" title={`Back to ${parent.name}`} onClick={() => onOpenParent(parent.id)}>{parent.name}</button>}
+      {parent && <span className="chat-parent-sep" aria-hidden="true"> › </span>}
+      <span className="chat-sub-bot" data-sub-bot={bot.id}>{bot.name}</span>
+    </>
+  );
 }
 
 /** `RailLayout.matches`: the name, or a project's folder name, contains the query, ignoring case and accents. */

@@ -27,12 +27,14 @@ export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" 
   </span>;
 }
 
-export function SubagentRows({ bot, look = "original", now, watching, onOpen, onSettle }: {
+export function SubagentRows({ bot, look = "original", now, watching, shownBot = null, onOpen, onSettle }: {
   bot: BotView;
   look?: Look;
   now: number;
   /** The subagent shown in the chat's place, if one of this bot's is. */
   watching: string | null;
+  /** The bot whose chat is on screen (a sub bot row is selected when its chat is). */
+  shownBot?: string | null;
   onOpen: (row: SubagentRowView) => void;
   onSettle: (row: SubagentRowView) => void;
 }) {
@@ -45,20 +47,21 @@ export function SubagentRows({ bot, look = "original", now, watching, onOpen, on
   return (
     <div className="subagent-rows" data-bot={bot.id}>
       {rows.map((row) => (
-        <div key={row.id} className={`subagent-row${watching === row.id ? " selected" : ""}${row.status === "running" ? " running" : ""}`} data-subagent={row.id}>
+        <div key={row.id} className={`subagent-row${watching === row.id || (row.subBot && shownBot === row.subBot) ? " selected" : ""}${row.status === "running" ? " running" : ""}${row.subBot ? " sub-bot" : ""}`} data-subagent={row.id} {...(row.subBot ? { "data-sub-bot": row.subBot } : {})}>
           <button type="button" className="subagent-open" title={row.prompt} onClick={() => onOpen(row)}
-            aria-label={`Subagent of ${bot.name}${row.head ? ` (${row.head === "agy" ? "Antigravity" : row.head === "codex" ? "Codex" : "Claude"})` : ""}: ${row.title || "Subagent"}, ${row.status}`}>
+            aria-label={row.subBot ? `Sub bot of ${bot.name}: ${row.title}` : `Subagent of ${bot.name}${row.head ? ` (${row.head === "agy" ? "Antigravity" : row.head === "codex" ? "Codex" : "Claude"})` : ""}: ${row.title || "Subagent"}, ${row.status}`}>
             <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
             <OwnerMark head={row.head} avatar={bot.avatar} look={look} />
             <span className="subagent-title">{row.title || "Subagent"}</span>
+            {row.subBot && <span className="subagent-kind">sub bot</span>}
             {row.waitingForNetwork && <span className="subagent-network">網路中斷</span>}
           </button>
-          <button type="button" className="subagent-settle" onClick={() => onSettle(row)}
+          {!row.subBot && <button type="button" className="subagent-settle" onClick={() => onSettle(row)}
             title={row.status === "running" ? "Settle: move to Settled in the right column (it keeps working)" : "Settle: move to Settled in the right column"}
             aria-label={`Settle subagent ${row.title}`}>
             <span className="settle-mark"><SubagentMark status={row.status} /></span>
             <span className={`settle-icon ${row.status}`} aria-hidden="true"><Icon name="clock" size={12} /><SubagentMark status={row.status === "running" ? "completed" : row.status} /></span>
-          </button>
+          </button>}
         </div>
       ))}
       {more > 0 && (

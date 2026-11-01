@@ -71,11 +71,28 @@ export interface HeadsSettings {
 }
 export const DEFAULT_HEADS: HeadsSettings = { handoffs: true, limits: { discussion: 3, review: 2, handoffs: 6 } };
 
+/** The Swift prompt's line on which .bot/ files a project's or bot's own bot may change (the sub-bot files are added to it for the desktop app). */
+const BOT_NOTES_LINE = /- In \.bot\/ only (.+?), inbox\.md and artifacts\/ are yours, and archive\/ to read; leave every other file alone\./;
+/** Maintainer's id (maintainer.ts imports this file, so it is not imported back). */
+const MAINTAINER_PROMPT_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
+
 /** `Workspace.projectSearchDepth`. */
 const PROJECT_SEARCH_DEPTH = 5;
 
 /** `BotPrompts.relayPrefix`: work the main bot passed on starts with this. */
 export const RELAY_PREFIX = "(From the main bot) ";
+/** How the first message to a sub bot starts: its project bot (not the main bot) passes the work on. */
+export const SUB_BOT_RELAY_PREFIX = "(From your project bot) ";
+
+/**
+ * What a project bot is told about making a running subagent into a sub bot (Claude only). The two steps
+ * go in one turn: the subagent is asked to write its handoff file and end, then the reply's tail carries the tag.
+ */
+export const subBotRule = [
+  "- To move a running subagent out into a sub bot of its own (a bot the user can open and talk to directly, which can start subagents too): in one turn (1) send that subagent a SendMessage asking it to write .bot/subagents/<its id>/handoff.md (what is done, what is left, the next steps, the files it touched, anything the next owner must know) and then end; (2) end your reply with <sub-bot name=\"short name, no quotes\" subagent=\"its id\"/>, where <its id> is the agent id you reach it by in SendMessage. The app waits for it to end, makes the sub bot in this same folder, and hands it the work. Reply with one sentence, \"Moved to X\".",
+  "  Use it only on a subagent that is still running and was started by you, only when the user asks for it or the work clearly deserves its own conversation. Never write the tag inside code or examples.",
+  "- When the app's wake note lists sub bots, each has a progress file: to answer how a sub bot is going, read its progress file; do not wake it. It reports to you when it finishes.",
+].join("\n");
 /** How a message from the app itself (not the user) starts. */
 export const APP_LEAD = "(App: ";
 /** The start of the note that wakes a bot, and of the one before it falls asleep. */
@@ -88,16 +105,18 @@ const ARTIFACT_TOOL = "Artifact";
 const DESIGN_STEPS = `with the ${ARTIFACT_TOOL} tool, run quickstart with intent "design" and publish from the Design type it names`;
 
 /** Where a bot's files are, as the Swift `BotProfile` names them. */
-export function profilePaths(profile: Pick<BotProfile, "role" | "folder" | "memoryPath">) {
+export function profilePaths(profile: Pick<BotProfile, "role" | "folder" | "memoryPath"> & { id?: string; parent?: string | null }) {
   const main = profile.role === "main";
+  // A sub bot shares its project bot's folder, so its own files (routines, archive, artifacts, attachments) sit under .bot/sub-bots/<id>/.
+  const notes = profile.parent && profile.id ? `.bot/sub-bots/${profile.id}` : ".bot";
   return {
     /** memory.md, relative to the folder (the prompt names it so). */
     memory: profile.memoryPath,
     memoryFile: join(profile.folder, profile.memoryPath),
-    routines: main ? "routines.cron" : ".bot/routines.cron",
-    archive: join(profile.folder, main ? "archive" : ".bot/archive"),
-    artifacts: join(profile.folder, main ? "artifacts" : ".bot/artifacts"),
-    attachments: join(profile.folder, main ? "attachments" : ".bot/attachments"),
+    routines: main ? "routines.cron" : `${notes}/routines.cron`,
+    archive: join(profile.folder, main ? "archive" : `${notes}/archive`),
+    artifacts: join(profile.folder, main ? "artifacts" : `${notes}/artifacts`),
+    attachments: join(profile.folder, main ? "attachments" : `${notes}/attachments`),
   };
 }
 
@@ -186,7 +205,9 @@ export function codexWorkerInstructions(profile: PromptInput["profile"], languag
 }
 
 export interface PromptInput {
-  profile: Pick<BotProfile, "name" | "role" | "folder" | "memoryPath" | "job"> & { instructions?: string | null };
+  profile: Pick<BotProfile, "name" | "role" | "folder" | "memoryPath" | "job"> & { instructions?: string | null; id?: string; parent?: string | null };
+  /** A sub bot: its project bot's name, for what its prompt says about who it reports to. */
+  parentName?: string | null;
   results?: ResultPublishing;
   language?: AppLanguage;
   /** Set for a bot with two heads (Claude and Codex). */
@@ -210,7 +231,7 @@ export interface BotPrompts {
 
 /** `BotPrompts.init(profile:results:language:engine:heads:)`. */
 export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; they go into a page, and the chat reply links to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
-export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null }: PromptInput): BotPrompts {
+export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null, parentName = null }: PromptInput): BotPrompts {
   // Only a project or bot session can stand in an app worktree; the main bot never does.
   const tree = profile.role === "main" || !attached || attached === profile.folder ? null : attached;
   if (engine === "agy") {
@@ -309,7 +330,10 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
       "- You may read anything that helps you answer or decide where work goes. Change only your own files (memory, Routines) and projects' and bots' inbox files: changing a project's files is its manager's job.",
     ].join("\n");
   } else {
-    const who = profile.job != null
+    const sub = Boolean(profile.parent);
+    const who = sub
+      ? `You are "${profile.name}", a sub bot: a bot of its own that belongs to the project bot "${parentName ?? "your project bot"}" and works in the same folder (${profile.folder}). The user talks to you directly; you may start your own subagents with the Agent tool.${tree ? ` ${worktreeSessionLine(tree, profile.folder)}` : ""}\nYour job: ${profile.job}`
+      : profile.job != null
       ? `You are "${profile.name}", one of the user's bots, with a folder of your own (your working folder) rather than a project.${tree ? ` ${worktreeSessionLine(tree, profile.folder)}` : ""}\nYour job: ${profile.job}`
       : tree
         ? `You are the manager of the "${profile.name}" project; the project folder is ${profile.folder}. ${worktreeSessionLine(tree, profile.folder)}`
@@ -317,9 +341,16 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     system = [
       who,
       style,
+      ...(sub ? [
+        `- You are a sub bot of "${parentName ?? "your project bot"}". Your first message, starting with "${SUB_BOT_RELAY_PREFIX}", names a handoff.md file: read it and take over exactly where it stops, then keep going from its "next steps".`,
+        `- Keep a progress file current as you work (the file named in that first message, .bot/subagents/<id>/progress.md): what is done, what you are doing now, what is next, and anything waiting on the user. "${parentName ?? "The project bot"}" reads it to answer the user's progress questions, so update it whenever it changes.`,
+        `- When your job is finished, say so in one sentence in your chat and set the progress file's first line to "Status: done"; the app tells "${parentName ?? "the project bot"}".`,
+        `- In .bot/ only ${memory}, ${paths.routines}, artifacts/ under .bot/sub-bots/${profile.id}/, the .bot/subagents/<id>/handoff.md and progress.md files named in your first message are yours (and archive/ to read); leave every other file alone.`,
+      ] : [
       `- The main bot reads the "${MEMORY_SECTIONS[0].heading}" and "${waiting}" sections of your memory file to follow progress, so update them whenever they change.`,
       `- Messages starting with "${RELAY_PREFIX}" are work passed on by the main bot. When done, say the result in one sentence; when stuck, say where, and attach a choices block if the user needs to decide. The app passes your report on to the user.`,
       `- In .bot/ only ${memory}, ${paths.routines}, inbox.md and artifacts/ are yours, and archive/ to read; leave every other file alone.`,
+      ]),
       codex
         ? "- Hand execution to app-managed workers with app_handoff, using the app-owned delegation policy below."
         : "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.",
@@ -410,8 +441,13 @@ const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
  * main bot, and — when the app has its report command — the report page line after the results rule
  * for every bot and Codex worker.
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder">>, reports: ReportTool | null = null): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, reports: ReportTool | null = null, engine: Engine = "claude"): BotPrompts {
   let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
+  // Sub bots (desktop only; the Swift goldens stay as they are): a project's or bot's own bot may write handoff.md and
+  // progress.md in .bot/subagents/<id>/, and a Claude one is told how to move a running subagent out into a sub bot.
+  if (profile.role !== "main" && !profile.parent && profile.id !== MAINTAINER_PROMPT_ID) {
+    system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.${engine === "claude" ? `\n${subBotRule}` : ""}`);
+  }
   if (profile.role !== "main") {
     system = system.includes(SHOW_LINE)
       ? system.replace(SHOW_LINE, `${SHOW_LINE}\n${WHITEBOARD_PICTURE_LINE}`)

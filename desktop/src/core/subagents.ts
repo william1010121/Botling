@@ -387,6 +387,17 @@ export class SubagentBook {
     }));
   }
 
+  /** A subagent by its call's id, or by the agentId/name claude reaches it by. */
+  find(id: string) { return this.resolve(id); }
+
+  /** Marks one subagent still at work as stopped (the sub-bot hand-off's forced end). True when it changed. */
+  stopOne(id: string, now = toSwiftDate()): boolean {
+    const subagent = this.resolve(id);
+    if (!subagent || subagent.status !== "running") return false;
+    this.end(subagent, "stopped", undefined, now);
+    return true;
+  }
+
   /** Its process went away: every one still at work stopped with it (`TraceBook.stopRunning`). */
   stopRunning(now = toSwiftDate()): boolean {
     let changed = false;

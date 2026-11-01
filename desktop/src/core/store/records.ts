@@ -117,6 +117,12 @@ export interface ProjectRecord {
   avatar: string;
   job?: string;
   plugin?: string;
+  /** A sub bot: the id of the project bot it belongs to (hidden from the left column). */
+  parent?: string;
+  /** ms since 1970 it was made (sub bots). */
+  createdAt?: number;
+  /** A sub bot: the subagent id whose handoff.md it took over. */
+  handoff?: string;
   [key: string]: unknown;
 }
 

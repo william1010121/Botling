@@ -58,7 +58,7 @@ import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMe
 import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import { parseFeedback } from "./feedback";
 import {
-  ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
+  ContractError, type RoutineView, type BotView, type SubagentRowView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView, type WhiteboardPictureView,
 } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
@@ -77,7 +77,7 @@ import {
 } from "./briefing";
 import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
-import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
+import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
 import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest, type WhiteboardTag } from "./reply";
 import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
@@ -204,6 +204,8 @@ export interface BotOptions {
   plugins?: () => { dirs: string[]; env: Record<string, string>; tools?: string[] };
   /** What the plugins' Claude parts are now (`PluginRegistry.claudeStamp`, 1.x's `pluginStamp`). */
   pluginStamp?: () => string[];
+  /** Rows for the sub bots under this bot (the core builds them from the bots whose `parent` is this one). */
+  subBotRows?: () => SubagentRowView[];
   /** Said at each wake after the wake line (the main bot's project list: `wakeNote`). */
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
@@ -840,7 +842,7 @@ export class Bot {
     this.add(line);
     this.tasks.begin(line.id, words, this.engine, line.date);
     this.saveTasks();
-    const turn = this.deliverTo(this.engine, RELAY_PREFIX + words + (kept.length ? `\n\n${attachmentList(kept.map((file) => file.path))}` : ""), line.id);
+    const turn = this.deliverTo(this.engine, (this.profile.parent ? SUB_BOT_RELAY_PREFIX : RELAY_PREFIX) + words + (kept.length ? `\n\n${attachmentList(kept.map((file) => file.path))}` : ""), line.id);
     return { messageId: turn.messageId, turnId: turn.id };
   }
 
@@ -1036,14 +1038,43 @@ export class Bot {
     throw new ContractError("not_found", "No such subagent.");
   }
 
+  /**
+   * A subagent by the id or name claude reaches it by (`SendMessage`'s `to`), or its call's id, for the sub-bot
+   * hand-off: where it is, which head sent it, what it was asked and the steps it has taken (read from its file).
+   */
+  findSubagent(key: string): { id: string; status: SubagentRecord["status"]; head: Engine; description: string; prompt: string; result: string; steps: StepRecord[] } | null {
+    for (const bot of this.members) {
+      const found = bot.subagents.find(key);
+      if (!found) continue;
+      const steps = found.steps.length ? found.steps : bot.subagentHistory(found).steps;
+      return { id: found.id, status: found.status, head: bot.engine, description: found.description, prompt: found.prompt, result: found.result ?? "", steps: [...steps] };
+    }
+    return null;
+  }
+
+  /**
+   * The hand-off's last resort: the turn running now is stopped whole (claude has no stop for one subagent),
+   * and the subagent, if it still shows as running, is marked stopped. It then goes on in a sub bot from its handoff file.
+   */
+  async stopForHandoff(subagentId: string): Promise<void> {
+    const owner = this.owner;
+    const turn = owner.turn;
+    if (turn && turn.origin !== "tidy") await owner.stop(turn.id);
+    for (const bot of this.members) {
+      if (bot.subagents.stopOne(subagentId)) { bot.saveSubagents(false, bot.subagents.get(subagentId)); this.rowsChanged(true); }
+    }
+  }
+
   /** Its subagents' rows (and its partner's, with the head that sent each). */
   private subagentRows() {
     // 1.x shows the owning head's navigation avatar even for a single-head bot.
     const rows = this.members.flatMap(bot => bot.subagents.rows(bot.engine));
-    return rows.slice(-100).map((row) => ({
+    const own = rows.slice(-100).map((row) => ({
       ...row,
       waitingForNetwork: this.members.find(bot => bot.subagents.get(row.id))?.outage?.subagents.includes(row.id) ?? false,
     }));
+    // Its sub bots (hidden bots of their own under it) are rows of a new kind: they open as a chat with an input box.
+    return [...own, ...(this.options.subBotRows?.() ?? [])].slice(-100);
   }
 
   /** The rows changed: the windows hear of it once (`force`: always). */
@@ -1269,6 +1300,7 @@ export class Bot {
       problem: (this.problem ?? this.profile.problem)?.slice(0, 2_000) ?? null,
       heads: this.headsSettings.engines,
       job: this.profile.job?.slice(0, 4_000) ?? null,
+      ...(this.profile.parent ? { parent: this.profile.parent } : {}),
       subagentRows: this.subagentRows(),
       guest: this.options.guest?.() ?? null,
       openTasks: shownTasks(this.owner.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length,
@@ -2029,7 +2061,8 @@ export class Bot {
   /** No silent fallback to a Claude worker/plugin from an Antigravity reply. */
   private handleRequests(requests: BotRequest[]): BotRequest[] {
     const unavailable = new Set(["component", "plugin", "newBot", "newProject", "suggestComponent", "componentSpec"]);
-    const blocked = this.engine === "agy" ? requests.filter(request => unavailable.has(request.kind)) : [];
+    // A sub bot is made from a Claude subagent only: from Codex or Antigravity the request is refused out loud (the chat says so), never dropped.
+    const blocked = requests.filter(request => request.kind === "subBot" ? this.engine !== "claude" : this.engine === "agy" && unavailable.has(request.kind));
     const supported = requests.filter(request => !blocked.includes(request));
     return [...blocked, ...(supported.length && this.options.onRequests ? this.options.onRequests(this.owner, supported) : supported)];
   }
@@ -5180,7 +5213,7 @@ export function preview(record: ChatRecord): string {
 }
 
 /** Tags held back while still being written, and those that end with their opening `>` (attributes only). */
-const BLOCK_TAGS = ["choices", "show", "component", "new-bot", "new-project", "plugin", "install-build", "install", "need-folder",
+const BLOCK_TAGS = ["choices", "show", "component", "new-bot", "sub-bot", "new-project", "plugin", "install-build", "install", "need-folder",
   "give-component", "take-component", "suggest-component", "component-spec", "component-declined", "open-question", "no-reply",
   "task", "reaction", "decision-ref", "app-screenshot", "end", "block"];
 const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-question", "app-screenshot"]);
