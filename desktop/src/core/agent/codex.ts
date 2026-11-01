@@ -51,9 +51,9 @@ import { childEnvironment } from "./runner";
 import { codexLogsFile, codexRetryAt } from "./codex-retry-log";
 import { cliStartError, resolveExecutable } from "../process/executable";
 import { activity, type StreamItem } from "./stream";
-import { ClaudeHead, type HeadExit, type HeadHandlers } from "./head";
+import type { HeadExit, HeadHandlers } from "./head";
 import { movedTaskError, ownedWorkerReport, readWorkerOwner, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult, type WorkerState } from "./workers";
-import type { ComponentEditorAction, ComponentEditorRoute } from "./component-editor";
+import { EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
 import tools from "./codex-tools.json";
 import { RoutineError, ScheduledRoutineStore } from "../routines";
 import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
@@ -1826,9 +1826,8 @@ export interface CodexHeadConfig {
 /** One long-lived `codex app-server` for one bot session: `CodexSession` over its stdio. */
 export class CodexHead {
   readonly engine = "codex" as const;
-  private editors = new Map<string, { head: ClaudeHead; run: number; messages: string[] }>();
-  private editorCleanup = new Set<Promise<TerminateResult>>();
-  private editorStops = new Map<string, Promise<TerminateResult>>();
+  /** The Maintainer's component editors: their own Claude processes. */
+  private editors: EditorTransport;
   private process: ManagedProcess | null = null;
   private buffer = "";
   private stderrTail = "";
@@ -1846,6 +1845,14 @@ export class CodexHead {
   running = false;
 
   constructor(readonly config: CodexHeadConfig, private handlers: HeadHandlers & { onItem(item: CodexItem): void }, private adapter: ProcessTreeAdapter = processTreeAdapter()) {
+    this.editors = new EditorTransport({
+      item: (task, run, item) => this.perform(this.session.componentEditorItem(task, run, item)),
+      failed: (task, run, reason, fresh) => this.perform(this.session.componentEditorFailed(task, run, reason, fresh)),
+      started: (task, run, pid) => {
+        this.session.componentEditorStarted(task, run);
+        this.config.editorStarted?.(pid);
+      },
+    }, adapter);
     let resumeThread: string | null = null;
     if (config.resume) {
       const thread = config.threads.thread(config.sessionId);
@@ -2003,87 +2010,12 @@ export class CodexHead {
     if (monitorsChanged) for (const record of monitors) this.handlers.onItem({ kind: "monitorState", record });
   }
 
-  private retireEditor(task: string, head: ClaudeHead) {
-    if (head.pid < 0) { void head.terminate(); return; }
-    const ending = head.terminate(1_000);
-    this.editorCleanup.add(ending);
-    this.editorStops.set(task, ending);
-    const clean = () => {
-      this.editorCleanup.delete(ending);
-      if (this.editorStops.get(task) === ending) this.editorStops.delete(task);
-    };
-    void ending.then(clean, clean);
-  }
-
   private stopEditors() {
-    for (const [task, { head }] of this.editors) this.retireEditor(task, head);
-    this.editors.clear();
+    this.editors.stopAll();
   }
 
   private performEditor(action: ComponentEditorAction) {
-    const current = this.editors.get(action.task);
-    if (action.kind === "stop") {
-      if (current) { this.editors.delete(action.task); this.retireEditor(action.task, current.head); }
-      return;
-    }
-    if (action.kind === "send") {
-      if (current?.run === action.run) {
-        if (current.head.running) current.head.send(action.text, randomUUID());
-        else current.messages.push(action.text);
-      }
-      return;
-    }
-    if (action.kind === "answer") {
-      if (current?.run === action.run) current.head.answer(action.requestId, action.allow, action.input, action.message);
-      return;
-    }
-    // As in Swift's transport, a finished editor stays alive for corrections in its same session.
-    if (current?.head.running && current.head.config.sessionId === action.config.sessionId) {
-      current.run = action.run;
-      current.head.send(action.text, randomUUID());
-      return;
-    }
-    if (current) { this.editors.delete(action.task); this.retireEditor(action.task, current.head); }
-    const head = new ClaudeHead({ ...action.config, monitorWorker: true }, {
-      onItem: item => {
-        const live = this.editors.get(action.task);
-        if (live?.head !== head) return;
-        this.perform(this.session.componentEditorItem(action.task, live.run, item));
-      },
-      onExit: exit => {
-        const live = this.editors.get(action.task);
-        if (live?.head !== head) return;
-        this.editors.delete(action.task);
-        this.retireEditor(action.task, head);
-        this.perform(this.session.componentEditorFailed(action.task, live.run, exit.stderr || `exited (${exit.code})`, !action.config.resume && exit.silent));
-      },
-    }, this.adapter);
-    this.editors.set(action.task, { head, run: action.run, messages: [] });
-    const start = () => {
-      // Cancellation or replacement while the prior process was ending revokes this launch.
-      if (this.editors.get(action.task)?.head !== head) return;
-      try {
-        this.session.componentEditorStarted(action.task, action.run);
-        head.start();
-        this.config.editorStarted?.(head.pid);
-        head.send(action.text, randomUUID());
-        const pending = this.editors.get(action.task)?.messages ?? [];
-        for (const text of pending) head.send(text, randomUUID());
-        pending.length = 0;
-      } catch (error) {
-        this.editors.delete(action.task);
-        this.retireEditor(action.task, head);
-        this.perform(this.session.componentEditorFailed(action.task, action.run, (error as Error).message, !action.config.resume));
-      }
-    };
-    // Never open the same Claude transcript while its old process is still shutting down.
-    const ending = this.editorStops.get(action.task);
-    if (ending) void ending.then(start, error => {
-      if (this.editors.get(action.task)?.head !== head) return;
-      this.editors.delete(action.task);
-      this.perform(this.session.componentEditorFailed(action.task, action.run, `Could not stop the prior editor: ${String(error)}`));
-    });
-    else start();
+    this.editors.perform(action);
   }
 
   private closeInput() {
@@ -2124,10 +2056,7 @@ export class CodexHead {
     const launch = this.config.componentEditor?.launch;
     if (!launch) return;
     launch.allowRules = [...rules];
-    for (const { head } of this.editors.values()) {
-      head.config.allowRules = [...rules];
-      if (head.running) head.allow(rules);
-    }
+    this.editors.allow(rules);
   }
 
   interrupt(): string {
@@ -2177,7 +2106,7 @@ export class CodexHead {
     this.perform(this.session.stop());
     this.stopEditors();
     this.closeInput();
-    const results = await Promise.all([...this.editorCleanup, ...(this.process ? [this.process.terminate({ graceMs })] : [])]);
+    const results = await Promise.all([...this.editors.ending, ...(this.process ? [this.process.terminate({ graceMs })] : [])]);
     return { killed: [...new Set(results.flatMap(result => result.killed))], forced: results.some(result => result.forced) };
   }
 }
