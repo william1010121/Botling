@@ -1,0 +1,12 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^A hash table is a foundational data structure",
+  "textBlocks": 1,
+  "tools": 0,
+  "failedTools": 0,
+  "requests": 1,
+  "counter": "thread:<conv>:run1",
+  "process": "signal SIGTERM",
+  "notes": "22 agent_message_chunk updates for one message; the end is the session/prompt response (stopReason end_turn). The process is ended by the worker's cleanup (SIGTERM)."
+}

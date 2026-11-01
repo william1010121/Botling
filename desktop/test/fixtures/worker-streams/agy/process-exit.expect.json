@@ -1,0 +1,8 @@
+{
+  "status": "failed",
+  "reportState": "pending",
+  "textBlocks": 0,
+  "tools": 1,
+  "process": "signal SIGKILL",
+  "notes": "SIGKILL while the perl command runs: no session/prompt response. Antigravity stderr is not kept (it can hold OAuth URLs)."
+}

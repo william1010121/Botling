@@ -1,0 +1,12 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^DONE — git failed as expected\\.$",
+  "textBlocks": 2,
+  "tools": 1,
+  "failedTools": 1,
+  "requests": 2,
+  "counter": "thread:<conv>:run1",
+  "process": "exit 0",
+  "notes": "textBlocks: one commentary message (\"I'll run `git status`…\") and the final answer. commandExecution exit 128 is the failed tool."
+}

@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^已執行 `true`",
+  "textBlocks": 1,
+  "tools": 2,
+  "failedTools": 0,
+  "requests": 4,
+  "counter": "thread:<conv>:run1",
+  "cost": 0.0448209,
+  "process": "exit 0",
+  "emptyReport": false,
+  "notes": "claude -p does not end on an empty reply: after the empty turn it injects a synthetic user message (\"[Your previous response had no visible output...]\", isSynthetic) and the model writes a report. A true empty report cannot be recorded for this engine; C3 synthesizes one (drop the text lines)."
+}

@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^雜湊表（hash table）是一種",
+  "reportChars": 892,
+  "textBlocks": 1,
+  "tools": 0,
+  "failedTools": 0,
+  "requests": 1,
+  "counter": "thread:<conv>:run1",
+  "cost": 0.085926,
+  "process": "exit 0",
+  "notes": "Component editor launch config (model sonnet, tools Read/Write/Edit/Bash). 208 text_delta chunks for one block: today's editor path drops them (codex.ts componentEditorItem) and keeps assistantText."
+}

@@ -1,0 +1,10 @@
+{
+  "status": "stopped",
+  "reportState": "none",
+  "report": "^Stopped by the app",
+  "textBlocks": 0,
+  "tools": 1,
+  "failedTools": 0,
+  "process": "exit 143",
+  "notes": "stopWorker while the perl command (60 s) runs: the app terminates the process group (SIGTERM; claude exits 143). No result line."
+}

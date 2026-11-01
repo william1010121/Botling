@@ -1,0 +1,14 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^# 雜湊表（Hash Table）如何運作",
+  "reportChars": 1131,
+  "textBlocks": 1,
+  "tools": 0,
+  "failedTools": 0,
+  "requests": 1,
+  "counter": "thread:<conv>:run1",
+  "cost": 0.1517816,
+  "process": "exit 0",
+  "notes": "234 text_delta chunks for one block; the report is result.result (the whole block). Thinking blocks come first."
+}

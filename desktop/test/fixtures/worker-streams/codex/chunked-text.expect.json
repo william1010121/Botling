@@ -1,0 +1,13 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^A hash table stores pairs of keys and values",
+  "reportChars": 2626,
+  "textBlocks": 1,
+  "tools": 0,
+  "failedTools": 0,
+  "requests": 1,
+  "counter": "thread:<conv>:run1",
+  "process": "exit 0",
+  "notes": "One app-server: the coordinator's dispatch turn, then the worker thread (second thread/started). The worker's answer streams as item/agentMessage/delta (neighbouring deltas joined by the scrubber to stay under 200 KB; the text is exact) and arrives whole in item/completed (phase final_answer). The recording ends when the app ends the app-server during the coordinator's report turn."
+}

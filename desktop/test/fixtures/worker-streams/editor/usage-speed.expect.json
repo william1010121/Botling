@@ -1,0 +1,12 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^notes\\.txt 共有 5 行",
+  "textBlocks": 1,
+  "tools": 1,
+  "failedTools": 0,
+  "requests": 2,
+  "counter": "thread:<conv>:run1",
+  "cost": 0.0401844,
+  "process": "exit 0"
+}

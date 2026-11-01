@@ -1,0 +1,12 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^DONE — git failed as expected\\.$",
+  "textBlocks": 1,
+  "tools": 1,
+  "failedTools": 1,
+  "requests": 1,
+  "counter": "thread:<conv>:run1",
+  "process": "signal SIGTERM",
+  "notes": "The command runs through the app's MCP bridge (botling_run_command): its output is not in this stdout recording; ACP shows tool_call, request_permission (allowed), tool_call_update failed. Normal end with a reply = done (not the old tool_failed rule)."
+}

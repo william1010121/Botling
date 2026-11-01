@@ -1,0 +1,28 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "workers": 2,
+  "reports": [
+    "^ALPHA$",
+    "^BETA$"
+  ],
+  "textBlocks": [
+    1,
+    2
+  ],
+  "tools": [
+    0,
+    1
+  ],
+  "failedTools": [
+    0,
+    0
+  ],
+  "requests": [
+    1,
+    2
+  ],
+  "counter": "thread:<conv>:run1",
+  "process": "exit 0",
+  "notes": "Two worker threads in one app-server, in handoff order; their notifications interleave by threadId."
+}
