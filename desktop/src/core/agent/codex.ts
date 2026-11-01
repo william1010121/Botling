@@ -52,7 +52,7 @@ import { codexLogsFile, codexRetryAt } from "./codex-retry-log";
 import { cliStartError, resolveExecutable } from "../process/executable";
 import { activity, type StreamItem } from "./stream";
 import { ClaudeHead, type HeadExit, type HeadHandlers } from "./head";
-import type { WorkerHost, WorkerInfo, WorkerSendResult, WorkerState } from "./workers";
+import { movedTaskError, ownedWorkerReport, readWorkerOwner, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult, type WorkerState } from "./workers";
 import type { ComponentEditorAction, ComponentEditorRoute } from "./component-editor";
 import tools from "./codex-tools.json";
 import { RoutineError, ScheduledRoutineStore } from "../routines";
@@ -69,6 +69,8 @@ export type CodexItem =
   | { kind: "backgroundTurn"; taskId: string | null }
   /** Workers at work or reports waiting: the bot must not sleep. */
   | { kind: "managedPending"; pending: boolean }
+  /** A run report of a worker another bot owns (workers.ts `setWorkerOwner`): the app routes it to that bot, never to this coordinator. */
+  | { kind: "workerReport"; id: string; run: number; engine: "claude" | "codex" | "agy"; status: string; report: string }
   /** A monitored command ended: its step (from an earlier turn) is done. */
   | { kind: "monitorState"; record: CommandMonitor }
   | { kind: "monitorEnded"; id: string; output: string; failed: boolean }
@@ -110,6 +112,8 @@ export interface WorkerRecord {
   isolatedGit?: IsolatedGitOwnership;
   ownershipInstructions?: string;
   role?: string;
+  /** The bot it was given to (workers.ts `setWorkerOwner`); absent: the coordinator's. */
+  owner?: WorkerOwner;
 }
 
 export interface CodexConfig {
@@ -186,6 +190,8 @@ interface Worker {
   restartText?: string;
   editorCheckpoint?: string;
   editorSessionConfirmed?: boolean;
+  /** Given to another bot: its reports are emitted as `workerReport`, never the coordinator's. */
+  owner?: WorkerOwner;
 }
 
 interface Result {
@@ -284,6 +290,7 @@ export class CodexSession {
       this.workers.set(record.id, {
         id: record.id, name: record.name, instructions: record.instructions, ownershipInstructions: record.ownershipInstructions, role: record.role, isolatedGit: record.isolatedGit, editorCheckpoint:record.editorCheckpoint, editorSessionConfirmed:record.editorSessionConfirmed,
         thread: record.thread, turnId: null, run: record.run, active: false, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set(),
+        ...(readWorkerOwner(record.owner) ? { owner: readWorkerOwner(record.owner) } : {}),
       });
       if(config.restartWorkers && record.wasActive && record.restartSafe && record.thread && ((!record.role && record.restartTurn) || (record.role==="component-editor" && record.editorCheckpoint))){
         this.restartPending.set(record.id,record);
@@ -894,7 +901,31 @@ export class CodexSession {
   }
 
   /** The next waiting message's turn, a worker's report, or the end once `finish` asked for it. */
+  /** Results of workers another bot owns never reach this coordinator: each goes out as a `workerReport` for the app to route. */
+  private routeOwned(): CodexOutput[] {
+    const out: CodexOutput[] = [];
+    this.results = this.results.filter((result) => {
+      const worker = this.workers.get(result.task);
+      if (!worker?.owner || worker.run !== result.run) return true;
+      out.push(this.item(ownedWorkerReport({ id: result.task, run: result.run, engine: "codex", status: result.status, report: result.report })));
+      return false;
+    });
+    return out;
+  }
+
+  /** workers.ts `setWorkerOwner`. */
+  setWorkerOwner(task: string, owner: WorkerOwner | null): { ok: true; out: CodexOutput[] } | { ok: false; reason: string } {
+    const worker = this.workers.get(task);
+    if (!worker) return { ok: false, reason: "No such worker." };
+    if (owner && this.active?.task === task) return { ok: false, reason: "Its report is being handed to its coordinator right now; try again in a moment." };
+    if (owner) worker.owner = { ...owner };
+    else delete worker.owner;
+    return { ok: true, out: [...this.routeOwned(), ...this.pendingChanged()] };
+  }
+
   private next(): CodexOutput[] {
+    const routed = this.routeOwned();
+    if (routed.length) return [...routed, ...this.next()];
     if(this.restartCoordinatorPending)return [];
     if (this.turn) return [];
     if (this.inbox.length) return this.startTurn(this.inbox.shift()!);
@@ -960,6 +991,7 @@ export class CodexSession {
       if(worker.editorCheckpoint)record.editorCheckpoint=worker.editorCheckpoint;
       if(worker.editorSessionConfirmed)record.editorSessionConfirmed=true;
       if (worker.isolatedGit) record.isolatedGit = worker.isolatedGit;
+      if (worker.owner) record.owner = { ...worker.owner };
       return record;
     }).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
@@ -1106,11 +1138,12 @@ export class CodexSession {
    */
   get completionDependencies(): WorkerDependency[] {
     if (this.stopped) return [];
-    const running = [...this.workers.values()].filter((worker) => worker.active && !worker.cancelled)
+    // A worker another bot owns is not this coordinator's to wait for (it still keeps the head awake: `hasManagedWork`).
+    const running = [...this.workers.values()].filter((worker) => worker.active && !worker.cancelled && !worker.owner)
       .map((worker): WorkerDependency => ({ id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions, state: "running", callback: "app_task_result", taskTruncated: false }));
     const queued = this.results.flatMap((result): WorkerDependency[] => {
       const worker = this.workers.get(result.task);
-      if (!worker || worker.active || worker.run !== result.run) return [];
+      if (!worker || worker.active || worker.run !== result.run || worker.owner) return [];
       return [{ id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions, state: "reportQueued", callback: "app_task_result", outcome: result.status, taskTruncated: false }];
     });
     const commands = [...this.monitors.values()].flatMap((monitor): WorkerDependency[] => {
@@ -1130,7 +1163,7 @@ export class CodexSession {
     return [...this.workers.values()].map((worker): WorkerInfo => {
       const queued = this.results.some((result) => result.task === worker.id && result.run === worker.run) || (this.active?.task === worker.id && this.active.run === worker.run);
       const state: WorkerState = worker.active && !worker.cancelled ? "running" : worker.cancelled ? "stopped" : queued ? "reportPending" : this.restartPending.has(worker.id) ? "interrupted" : "idle";
-      return { id: worker.id, engine: worker.runtime?.engine ?? (worker.role === "component-editor" ? "claude" : "codex"), name: worker.name, run: worker.run, state, conversationId: worker.thread ?? null, processes: [] };
+      return { id: worker.id, engine: worker.runtime?.engine ?? (worker.role === "component-editor" ? "claude" : "codex"), name: worker.name, run: worker.run, state, conversationId: worker.thread ?? null, processes: [], owner: worker.owner ? { ...worker.owner } : null };
     });
   }
 
@@ -1144,10 +1177,11 @@ export class CodexSession {
   }
 
   private pendingChanged(): CodexOutput[] {
+    const routed = this.routeOwned();
     const pending = this.hasManagedWork;
-    if (pending === this.pending) return [];
+    if (pending === this.pending) return routed;
     this.pending = pending;
-    return [this.item({ kind: "managedPending", pending })];
+    return [...routed, this.item({ kind: "managedPending", pending })];
   }
 
   private managedTool(rpcId: unknown, params: any): CodexOutput[] {
@@ -1179,7 +1213,10 @@ export class CodexSession {
       : reply({ error: "RPC identity was reused with different tool intent; nothing was executed." }, false) }];
     const out: CodexOutput[] = [];
     let response: Record<string, unknown>;
-    if (tool === "app_routines") {
+    const owned = (tool === "app_send_message" || tool === "app_task_checkpoint" || tool === "app_cancel_task") && typeof args.task_id === "string" ? this.workers.get(args.task_id)?.owner : undefined;
+    if (owned) {
+      response = reply({ error: movedTaskError(owned.name) }, false);
+    } else if (tool === "app_routines") {
       const handled = this.routinesTool(args);
       response = reply(handled.payload, handled.success);
       if (handled.success) {
@@ -2118,6 +2155,7 @@ export class CodexHead {
   listWorkers(): WorkerInfo[] { return this.workerHost.listWorkers(); }
   sendToWorker(id: string, text: string): WorkerSendResult { return this.workerHost.sendToWorker(id, text) as WorkerSendResult; }
   stopWorker(id: string): Promise<boolean> { return this.workerHost.stopWorker(id); }
+  setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult { return this.workerHost.setWorkerOwner(id, owner); }
 
   /** The sub-bot hand-off's wrap-up request to one worker at work (false: it is not at work, nothing was sent). */
   messageRunningWorker(id: string, text: string): boolean {
@@ -2159,6 +2197,12 @@ export function codexWorkerHost(session: CodexSession, perform: (out: CodexOutpu
       if (!session.runningWorkers.includes(id)) return false;
       perform(session.cancelWorkers(new Set([id])));
       return true;
+    },
+    setWorkerOwner(id, owner) {
+      const set = session.setWorkerOwner(id, owner);
+      if (!set.ok) return set;
+      perform(set.out);
+      return { ok: true };
     },
   };
 }

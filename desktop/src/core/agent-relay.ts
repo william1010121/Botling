@@ -26,16 +26,17 @@ export function handedNotice(input: { from: string; title: string; engine: Engin
 }
 
 /** The new owner's model note (an existing bot: with its next message, so it is not woken). */
-export function handedNote(input: { from: string; title: string; nativeId: string; engine: Engine; host: string; statusFile: string }): string {
-  return `(App: ${input.from} handed you its ${engineName(input.engine)} agent "${input.title}" (${input.nativeId}). It keeps running on ${input.host}; its reports will come to you as app messages. Read ${input.statusFile} to see how it is going.)`;
+export function handedNote(input: { from: string; title: string; nativeId: string; agentId?: string; engine: Engine; host: string; statusFile: string }): string {
+  return `(App: ${input.from} handed you its ${engineName(input.engine)} agent "${input.title}" (${input.nativeId}). It keeps running on ${input.host}; its reports will come to you as app messages. Read ${input.statusFile} to see how it is going.${input.agentId ? ` ${agentTagsHelp(input.agentId)}` : ""})`;
 }
 
 /** The first message to a sub bot made to own a moved agent (a sibling of `subBotDirectFirstMessage`). */
-export function subBotAdoptedFirstMessage(input: { parentName: string; name: string; from: string; title: string; nativeId: string; engine: Engine; host: string; folder: string; statusFile: string; note?: string }): string {
+export function subBotAdoptedFirstMessage(input: { parentName: string; name: string; from: string; title: string; nativeId: string; agentId?: string; engine: Engine; host: string; folder: string; statusFile: string; note?: string }): string {
   return [
     `You are the sub bot "${input.name}", made under "${input.parentName}" to own one agent: "${input.title}" (${engineName(input.engine)}, ${input.nativeId}), handed over by ${input.from}.`,
     `You own the agent: it keeps running on ${input.host} in ${input.folder}, and it is not restarted or re-prompted. Its status file is ${input.statusFile}; read it to see what it has done.`,
     "Its reports will come to you as app messages. Do not start the same work again yourself.",
+    input.agentId ? agentTagsHelp(input.agentId) : "",
     input.note ? `Extra words from ${input.from}: ${input.note}` : "",
     "Then say in one sentence which agent you now own. The user may talk to you directly in this chat.",
   ].filter(Boolean).join("\n");
@@ -72,4 +73,29 @@ export function ownedAgentsBriefing(rows: { title: string; id: string; engine: E
   if (!rows.length) return "";
   const lines = rows.map((row) => `- "${row.title}" (${row.id}, ${engineName(row.engine)}, on ${row.host}, ${stateWords[row.state]})${row.statusFile ? `: status file ${row.statusFile}` : ""}`);
   return `(App: Agents handed to you that run on another bot. They keep running there; their reports come to you as app messages. To check how one is going, read its status file.)\n${lines.join("\n")}`;
+}
+
+const clipReport = (text: string, limit = 8_000) => (text.length > limit ? `${text.slice(0, limit)}\n… (cut; the rest is in its status file)` : text);
+
+/** How the owner follows an agent up or stops it (the tags the app reads from its reply; hidden from the chat). */
+export function agentTagsHelp(agentId: string): string {
+  return `To continue it: <agent-message to="${agentId}">your words</agent-message>. To stop it: <agent-stop to="${agentId}"/>.`;
+}
+
+/** The owner's app message with a run's report of an agent it owns that another bot runs (A2.4). */
+export function agentReportNote(input: { engine: Engine; title: string; from: string; host: string; run: number; status: string; report: string; agentId: string; statusFile: string | null }): string {
+  return `(App: The ${engineName(input.engine)} agent "${input.title}" you own (from ${input.from}; it runs on ${input.host}) finished run ${input.run}: ${input.status}. Its report:\n${clipReport(input.report.trim() || "(no words)")}\n${input.statusFile ? `Its status file: ${input.statusFile}\n` : ""}Tell the user what came of it in a sentence or two. ${agentTagsHelp(input.agentId)})`;
+}
+
+/** The first message to a sub bot made to own several agents at once (`<sub-bot subagents="…">`, "New sub bot with these…"). */
+export function subBotGroupFirstMessage(input: { parentName: string; name: string; from: string; agents: { title: string; agentId: string; nativeId: string; engine: Engine; state: AgentState; host: string; statusFile: string | null }[]; task?: string }): string {
+  const lines = input.agents.map((agent) => `- "${agent.title}" (${engineName(agent.engine)}, ${stateWords[agent.state]}, agent ${agent.agentId}, runs on ${agent.host}). Status file: ${agent.statusFile ?? "(not written yet)"}`);
+  return [
+    `You are the sub bot "${input.name}", made under "${input.parentName}" to own ${input.agents.length === 1 ? "this agent" : `these ${input.agents.length} agents`}, handed over by ${input.from}:`,
+    ...lines,
+    "They keep running where they are; nothing was restarted or re-prompted. Read their status files to see what they have done. Their reports come to you as app messages.",
+    `To follow one up: <agent-message to="its agent id">your words</agent-message>. To stop one: <agent-stop to="its agent id"/>. Do not start the same work again yourself.`,
+    input.task?.trim() ? `Your task from ${input.from}: ${input.task.trim()}` : "",
+    "Then say in one sentence what you now own. The user may talk to you directly in this chat.",
+  ].filter(Boolean).join("\n");
 }

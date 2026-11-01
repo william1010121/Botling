@@ -18,7 +18,7 @@ import type { TerminateResult } from "../process/tree";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
-import { workerReportText, workerRunStarted, type ProcessIdentity, type WorkerHost, type WorkerInfo, type WorkerSendResult, type WorkerState } from "./workers";
+import { movedTaskError, ownedWorkerReport, readWorkerOwner, workerReportText, workerRunStarted, type ProcessIdentity, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult, type WorkerState } from "./workers";
 
 /** What the manager needs of a worker's process (ClaudeHead; a fake in tests). */
 export interface ClaudeWorkerHead {
@@ -100,6 +100,8 @@ interface Record_ {
   id: string; name: string; type: string | null; instructions: string; sessionId: string; sessionStarted: boolean;
   run: number; status: string; active: boolean; reportPending: boolean; reportDelivered: boolean; report?: string;
   model: string | null; processes: ProcessIdentity[]; interrupted: boolean; createdAt: number;
+  /** Given to another bot (workers.ts `setWorkerOwner`): its reports are emitted as `workerReport`, never the coordinator's. */
+  owner?: WorkerOwner;
 }
 interface Live {
   head?: ClaudeWorkerHead; queued: Set<string>; extraTurns: number; outputTokens: number; cost: number;
@@ -164,6 +166,7 @@ export class ClaudeWorkers implements WorkerHost {
         active: false, reportPending: r.reportPending === true, reportDelivered: r.reportDelivered === true, report: typeof r.report === "string" ? r.report : undefined,
         model: typeof r.model === "string" ? r.model : null, interrupted: r.interrupted === true, createdAt: Number.isFinite(r.createdAt) ? r.createdAt : Date.now(),
         processes: Array.isArray(r.processes) ? r.processes.filter((p: any) => Number.isSafeInteger(p?.pid) && p.pid > 0 && typeof p.started === "string" && p.started) : [],
+        ...(readWorkerOwner(r.owner) ? { owner: readWorkerOwner(r.owner) } : {}),
       };
       // It was at work when the app went away without closing it (a crash): interrupted, never replayed.
       if (r.active === true) {
@@ -192,7 +195,7 @@ export class ClaudeWorkers implements WorkerHost {
   // WorkerHost
 
   listWorkers(): WorkerInfo[] {
-    return [...this.workers.values()].map((w) => ({ id: w.id, engine: "claude" as const, name: w.name, run: w.run, state: this.stateOf(w), conversationId: w.sessionStarted ? w.sessionId : null, processes: [...w.processes] }));
+    return [...this.workers.values()].map((w) => ({ id: w.id, engine: "claude" as const, name: w.name, run: w.run, state: this.stateOf(w), conversationId: w.sessionStarted ? w.sessionId : null, processes: [...w.processes], owner: w.owner ? { ...w.owner } : null }));
   }
 
   private stateOf(w: Record_): WorkerState {
@@ -229,6 +232,17 @@ export class ClaudeWorkers implements WorkerHost {
     return true;
   }
 
+  /** workers.ts `setWorkerOwner`: a report still waiting for the coordinator goes to the owner instead. */
+  setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult {
+    const w = this.workers.get(id);
+    if (!w || this.closed) return { ok: false, reason: "No such worker." };
+    if (owner) w.owner = { ...owner };
+    else delete w.owner;
+    this.save();
+    if (owner && !w.active && w.reportPending && !w.reportDelivered) this.deliver(w);
+    return { ok: true };
+  }
+
   // ------------------------------------------------------------------------------------------
   // App tools (the coordinator's in-process MCP server)
 
@@ -259,6 +273,7 @@ export class ClaudeWorkers implements WorkerHost {
     const id = typeof args.task_id === "string" ? args.task_id : "";
     const w = this.workers.get(id);
     if (!w) throw new Error("Unknown task_id. Use the task_id app_handoff returned.");
+    if (w.owner) throw new Error(movedTaskError(w.owner.name));
     if (args.run !== undefined && args.run !== w.run) throw new Error(`Stale run: this worker is on run ${w.run}.`);
     if (name === "app_send_message") {
       const sent = this.sendToWorker(id, typeof args.message === "string" ? args.message : "");
@@ -420,6 +435,13 @@ export class ClaudeWorkers implements WorkerHost {
 
   private deliver(w: Record_) {
     if (!w.reportPending || w.reportDelivered || this.closed) return;
+    if (w.owner) {
+      // Another bot owns it: the app routes the report there (the coordinator never sees it).
+      w.reportDelivered = true; w.reportPending = false;
+      this.save();
+      this.emit(ownedWorkerReport({ id: w.id, run: w.run, engine: "claude", status: w.status, report: w.report ?? "" }));
+      return;
+    }
     const tail = "This is the worker's own account, not proof the user's goal is met: check what matters, then tell the user in a sentence or two what came of it. To continue this worker, use app_send_message with its task_id; to stop it, app_cancel_task.";
     let taken = false;
     try { taken = this.report(w.id, workerReportText({ id: w.id, run: w.run, engine: "claude", status: w.status, report: w.report ?? "" }, tail), w.run); } catch { taken = false; }

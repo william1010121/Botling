@@ -9,7 +9,7 @@ import type {CodexItem} from './codex';
 import type {AgyConfig} from './agy';
 import {groupAlive,processStartTime} from '../process/kill-tree';
 import type {TerminateResult} from '../process/tree';
-import type {WorkerHost,WorkerInfo,WorkerSendResult,WorkerState} from './workers';
+import {movedTaskError,ownedWorkerReport,readWorkerOwner,type WorkerHost,type WorkerInfo,type WorkerOwner,type WorkerOwnerResult,type WorkerSendResult,type WorkerState} from './workers';
 
 export interface AgyWorkerHead {
   start():void;send(text:string,uuid:string):void;
@@ -21,6 +21,8 @@ interface Worker {
   cleaning:boolean;denied:boolean;recoveryRequired?:boolean;reportDispatching?:boolean;report?:string;status:string;reportPending:boolean;
   reportDelivered?:boolean; reviewAttempts?:number; checkpoint?:{outcome:string;evidence:string;dependency_task_id?:string};
   head?:AgyWorkerHead;cleanup?:Promise<void>;discardReport?:boolean;
+  /** Given to another bot (workers.ts `setWorkerOwner`): its reports are emitted as `workerReport`, never the coordinator's. */
+  owner?:WorkerOwner;
   approvals:Map<string,Record<string,unknown>>;processes:{pid:number;started:string}[];
 }
 const canonical=(v:any):string=>v&&typeof v==='object'?Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
@@ -41,25 +43,46 @@ export class AgyWorkers {
         if(!r||typeof r.id!=='string'||!uuid.test(r.id)||(r.engine!==undefined&&r.engine!=='agy'&&r.engine!=='codex')||typeof r.sessionId!=='string'||!Number.isSafeInteger(r.run)||r.run<1||typeof r.name!=='string'||typeof r.instructions!=='string'||typeof r.status!=='string'||typeof r.active!=='boolean'||typeof r.cleaning!=='boolean'||typeof r.reportPending!=='boolean'||(r.report!==undefined&&typeof r.report!=='string'))throw Error('Invalid worker state');
         if((r.reviewAttempts!==undefined&&(!Number.isSafeInteger(r.reviewAttempts)||r.reviewAttempts<0||r.reviewAttempts>2))||(r.reportDelivered!==undefined&&typeof r.reportDelivered!=='boolean'))throw Error('Invalid report review state');
         if(!Array.isArray(r.processes)||r.processes.some((p:any)=>!Number.isSafeInteger(p.pid)||p.pid<=0||typeof p.started!=='string'||!p.started))throw Error('Invalid process identity');
-        return {id:r.id,engine:r.engine??"agy",name:r.name,instructions:r.instructions,sessionId:r.sessionId,run:r.run,active:false,cleaning:false,denied:false,approvals:new Map(),processes:r.processes,status:r.status,report:r.report,reportPending:r.reportPending,recoveryRequired:r.recoveryRequired===true||r.active||r.cleaning,reportDispatching:r.reportDispatching===true,reportDelivered:r.reportDelivered===true,reviewAttempts:r.reviewAttempts??0,checkpoint:r.checkpoint,
+        if(r.owner!==undefined&&!readWorkerOwner(r.owner))throw Error('Invalid worker owner');
+        return {id:r.id,engine:r.engine??"agy",name:r.name,instructions:r.instructions,sessionId:r.sessionId,run:r.run,active:false,cleaning:false,denied:false,approvals:new Map(),processes:r.processes,status:r.status,report:r.report,reportPending:r.reportPending,recoveryRequired:r.recoveryRequired===true||r.active||r.cleaning,reportDispatching:r.reportDispatching===true,reportDelivered:r.reportDelivered===true,reviewAttempts:r.reviewAttempts??0,checkpoint:r.checkpoint,...(r.owner?{owner:readWorkerOwner(r.owner)}:{}),
           ...(r.active||r.cleaning?{status:'stopped',report:'Worker interrupted before confirmed cleanup/result. Process-ledger recovery is required before any explicit continuation; no task was replayed.',reportPending:true}:{})};
       });
       if(new Set(restored.map(w=>w.id)).size!==restored.length)throw Error('Duplicate worker identity');
       for(const w of restored)this.workers.set(w.id,w);
       this.save();
       for(const w of restored)if(w.reportPending){
-        if(w.reportDispatching)this.emit({kind:'subagentEnded',id:w.id,status:'failed',summary:'Worker report delivery is uncertain after restart. No report prompt was replayed; explicit reconciliation is required.'});
+        if(w.owner&&!w.reportDispatching)this.handOver(w);
+        else if(w.reportDispatching)this.emit({kind:'subagentEnded',id:w.id,status:'failed',summary:'Worker report delivery is uncertain after restart. No report prompt was replayed; explicit reconciliation is required.'});
         else if((w.reviewAttempts??0)<2)this.deliverReport(w);
         else this.unresolved(w);
       }
     }catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw new Error('ACP worker state is unreadable or belongs to another conversation; preserved for recovery.');}
   }
+  /** A run's report of a worker another bot owns: out to the app (`workerReport`), done here. */
+  private handOver(w:Worker){
+    w.reportPending=false;w.reportDispatching=false;w.reportDelivered=true;w.checkpoint={outcome:'moved',evidence:`Delivered to its owner ${w.owner?.agentId??''}`};this.activeReports.delete(w.id);this.save();
+    this.emit(ownedWorkerReport({id:w.id,run:w.run,engine:w.engine,status:w.status,report:w.report??''}));
+    this.emit({kind:'managedPending',pending:this.hostedLive.length>0});
+  }
+  /** workers.ts `setWorkerOwner`: a report waiting for the coordinator goes to the owner instead; refused while one is being handed over. */
+  setOwner(id:string,owner:WorkerOwner|null):WorkerOwnerResult{
+    const w=this.workers.get(id);
+    if(!w||this.closed)return {ok:false,reason:'No such worker.'};
+    if(owner&&(w.reportDispatching||this.activeReports.has(w.id)))return {ok:false,reason:'Its report is being handed to its coordinator right now; try again in a moment.'};
+    if(owner)w.owner={...owner};else delete w.owner;
+    this.save();
+    if(owner&&w.reportPending&&!w.active&&!w.cleaning&&!w.cleanup)this.handOver(w);
+    else this.emit({kind:'managedPending',pending:this.hostedLive.length>0});
+    return {ok:true};
+  }
+  /** Every worker this head runs or still owes a report to the coordinator, whoever owns it: the head stays awake for these. */
+  get hostedLive(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired||(w.reportPending&&!w.owner)).map(w=>w.id);}
   get running(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired).map(w=>w.id);}
-  get completionDependencies(){return [...this.workers.values()].filter(w=>w.active||w.cleaning||w.cleanup||w.recoveryRequired||w.reportPending).map(w=>({id:w.id,run:w.run,task:w.instructions,state:w.active||w.cleaning||w.cleanup||w.recoveryRequired?'running' as const:'reportQueued' as const,callback:'app_task_result' as const,taskTruncated:false}));}
+  get completionDependencies(){return [...this.workers.values()].filter(w=>!w.owner&&(w.active||w.cleaning||w.cleanup||w.recoveryRequired||w.reportPending)).map(w=>({id:w.id,run:w.run,task:w.instructions,state:w.active||w.cleaning||w.cleanup||w.recoveryRequired?'running' as const:'reportQueued' as const,callback:'app_task_result' as const,taskTruncated:false}));}
   /** Its workers, provider-neutral (workers.ts). */
   list():WorkerInfo[]{
     return [...this.workers.values()].map(w=>({id:w.id,engine:w.engine,name:w.name,run:w.run,conversationId:w.sessionId||null,processes:[...w.processes],
-      state:(w.active||w.cleaning||w.cleanup?'running':w.recoveryRequired?'interrupted':w.reportPending?'reportPending':w.status==='stopped'||w.status==='killed'?'stopped':w.status==='failed'||w.status==='cleanup-failed'?'failed':'idle') as WorkerState}));
+      state:(w.active||w.cleaning||w.cleanup?'running':w.recoveryRequired?'interrupted':w.reportPending?'reportPending':w.status==='stopped'||w.status==='killed'?'stopped':w.status==='failed'||w.status==='cleanup-failed'?'failed':'idle') as WorkerState,owner:w.owner?{...w.owner}:null}));
   }
   /** A follow-up from the app (workers.ts `sendToWorker`): an idle worker's next run; a busy ACP worker takes no steering. */
   continueTask(id:string,text:string):WorkerSendResult{
@@ -89,6 +112,7 @@ export class AgyWorkers {
       this.launch(w,args.instructions);return {accepted:true,task_id:id,run:w.run};
     }
     const w=this.workers.get(String(args.task_id));if(!w)throw new Error('Unknown task_id.');
+    if(w.owner)throw new Error(movedTaskError(w.owner.name));
     if(args.engine!==undefined&&args.engine!==w.engine)throw new Error('Worker engine identity cannot change on continuation.');
     if(args.run!==w.run)throw new Error('Stale or missing worker run identity.');
     if(name==='app_reconcile_report'){
@@ -136,7 +160,8 @@ export class AgyWorkers {
         if(w.run!==run)return;
         if(w.discardReport){w.status='stopped';w.reportPending=false;}else w.reportPending=true;
         this.save();this.emit({kind:'subagentEnded',id:w.id,status:w.status,summary:w.report??''});
-        if(!this.closed&&w.reportPending)this.deliverReport(w);
+        if(!this.closed&&w.reportPending&&w.owner)this.handOver(w);
+        else if(!this.closed&&w.reportPending)this.deliverReport(w);
       });
     };
     const onItem=(item:StreamItem)=>{
@@ -187,7 +212,7 @@ export class AgyWorkers {
     this.report(w.id,`<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${(w.report??'').replaceAll('<','&lt;')}\n</app_task_result>\nWorker completion is execution evidence, not acceptance of the user's full objective. Resolve this exact task_id and run with app_task_checkpoint (outcome and concrete evidence) or same-task app_send_message before ending this report turn. Research-only scope and existing permissions remain unchanged.`,w.run);
   }
   beginReport(id:string,run:number):boolean {
-    const w=this.workers.get(id);if(this.closed||!w||w.run!==run||!w.reportPending||w.reportDispatching||w.active||w.cleaning||w.cleanup||(w.reviewAttempts??0)>=2)return false;
+    const w=this.workers.get(id);if(this.closed||!w||w.owner||w.run!==run||!w.reportPending||w.reportDispatching||w.active||w.cleaning||w.cleanup||(w.reviewAttempts??0)>=2)return false;
     w.reportDispatching=true;this.activeReports.set(id,run);this.save();return true;
   }
   /** Delivery is not acceptance. A successful report turn must make a decision. */
@@ -223,7 +248,7 @@ export class AgyWorkers {
     await this.clean(w);
     w.reportPending=!discard;this.save();this.emit({kind:'subagentEnded',id:w.id,status:w.status,summary:w.report??''});
   }
-  async cancel(discardReports=true){const stopped=await Promise.allSettled([...this.workers.values()].map(w=>this.stop(w,discardReports)));this.emit({kind:'managedPending',pending:this.completionDependencies.length>0});if(stopped.some(r=>r.status==='rejected')||this.running.length)throw new Error('Worker cleanup incomplete; live or recovery dependencies retained.');}
+  async cancel(discardReports=true){const stopped=await Promise.allSettled([...this.workers.values()].map(w=>this.stop(w,discardReports)));this.emit({kind:'managedPending',pending:this.hostedLive.length>0});if(stopped.some(r=>r.status==='rejected')||this.running.length)throw new Error('Worker cleanup incomplete; live or recovery dependencies retained.');}
   async close(){this.closed=true;await this.cancel(false);}
 }
 
@@ -234,5 +259,6 @@ export function agyWorkerHost(workers:()=>AgyWorkers|undefined):WorkerHost{
     listWorkers:()=>workers()?.list()??[],
     sendToWorker:(id,text)=>workers()?.continueTask(id,text)??{ok:false,reason:'This Antigravity head has no workers.'},
     stopWorker:async id=>(await workers()?.cancelTask(id))??false,
+    setWorkerOwner:(id,owner)=>workers()?.setOwner(id,owner)??{ok:false,reason:'This Antigravity head has no workers.'},
   };
 }

@@ -9,6 +9,12 @@
 // its steps are `toolUse`/`toolResult` with `parent` = task id and `subagentText`; tokens are `subagentOutput`;
 // a run ends with `subagentEnded`. Approvals are `permission` items with `workerId` and a request id
 // `worker:<task id>:<run>:<engine's id>`, answered through `answer`.
+//
+// Owners. A worker belongs to the coordinator that started it until the app gives it to another bot
+// (`setWorkerOwner`, the agent registry's owner move). From then on its host keeps running it exactly as before,
+// but its run reports are not the coordinator's: the host emits them as `workerReport` items for the app to route
+// to the owner, leaves them out of the coordinator's completion checks, and refuses the coordinator's own app tool
+// calls on it (`movedTaskError`). `setWorkerOwner(id, null)` gives it back.
 import type { Engine } from "../heads";
 import type { CodexItem } from "./codex";
 
@@ -26,6 +32,21 @@ export type WorkerState =
 
 export interface ProcessIdentity { pid: number; started: string }
 
+/** The bot a worker was given to (the registry's owner), as its host keeps it in its journal. */
+export interface WorkerOwner { botId: string; name: string; agentId: string }
+
+export type WorkerOwnerResult = { ok: true } | { ok: false; reason: string };
+
+/** What a coordinator's app tool call on a worker it no longer owns gets back. */
+export const movedTaskError = (owner: string) => `This task now belongs to "${owner}"; the app routes its reports there. Do not message, wait for, cancel or checkpoint it.`;
+
+/** Owners as journals keep them: three non-empty strings, else none. */
+export function readWorkerOwner(value: unknown): WorkerOwner | undefined {
+  const v = value as Partial<WorkerOwner> | null | undefined;
+  return v && typeof v === "object" && typeof v.botId === "string" && v.botId && typeof v.name === "string" && typeof v.agentId === "string" && v.agentId
+    ? { botId: v.botId, name: v.name.slice(0, 400), agentId: v.agentId } : undefined;
+}
+
 /** One worker, provider-neutral. */
 export interface WorkerInfo {
   id: string;
@@ -37,6 +58,8 @@ export interface WorkerInfo {
   conversationId: string | null;
   /** Its own processes, when it has any (Codex threads live in the coordinator's app-server). */
   processes: ProcessIdentity[];
+  /** The bot it was given to (null or absent: its coordinator's). */
+  owner?: WorkerOwner | null;
 }
 
 /** What a follow-up did: joined the run under way (`steered`), or started the next run (`newRun`). */
@@ -59,11 +82,18 @@ export interface WorkerHost {
   sendToWorker(id: string, text: string): WorkerSendResult | Promise<WorkerSendResult>;
   /** Stops one worker; false when there is no such worker or it is not at work. No report is made. */
   stopWorker(id: string): Promise<boolean>;
+  /**
+   * Gives the worker to another bot (`owner`) or back to its coordinator (null). Never stops, restarts or re-prompts it.
+   * With an owner, a report already waiting for the coordinator is pulled out and emitted as `workerReport`; refused only
+   * while a report of it is being handed to the coordinator at this moment.
+   */
+  setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult;
 }
 
 export const isWorkerHost = (value: unknown): value is WorkerHost =>
   !!value && typeof value === "object" && typeof (value as WorkerHost).workerHostKind === "string"
-  && typeof (value as WorkerHost).listWorkers === "function" && typeof (value as WorkerHost).sendToWorker === "function";
+  && typeof (value as WorkerHost).listWorkers === "function" && typeof (value as WorkerHost).sendToWorker === "function"
+  && typeof (value as WorkerHost).setWorkerOwner === "function";
 
 /** The subagent type a worker of this engine is listed with (`codex-worker`, `agy-worker`, `claude-worker`). */
 export const workerType = (engine: Engine) => `${engine}-worker`;
@@ -95,4 +125,9 @@ export function workerRunStarted(w: { id: string; engine: Engine; name: string; 
 /** The report a coordinator reads when a worker's run ends (the tags every engine's report uses). */
 export function workerReportText(w: { id: string; run: number; engine: Engine; status: string; report: string }, tail: string): string {
   return `<app_task_result task_id="${w.id}" run="${w.run}" engine="${w.engine}" status="${w.status}">\n${w.report.replaceAll("<", "&lt;")}\n</app_task_result>\n${tail}`;
+}
+
+/** A run report of a worker another bot owns: the host's `workerReport` item, for the app to route. */
+export function ownedWorkerReport(w: { id: string; run: number; engine: Engine; status: string; report: string }): Extract<CodexItem, { kind: "workerReport" }> {
+  return { kind: "workerReport", id: w.id, run: w.run, engine: w.engine, status: w.status, report: w.report };
 }

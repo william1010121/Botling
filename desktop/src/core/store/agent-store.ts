@@ -14,7 +14,7 @@ import { readHeads, type Engine } from "../heads";
 import { readSubagent } from "../subagents";
 import { fromSwiftDate } from "./records";
 import { safeToken } from "../sub-bots";
-import { AGENTS_FORMAT, agentEngine, agentId, hostKind, stateFor, type AgentRecord, type AgentsFile, type HostFacts } from "../agent-registry";
+import { AGENTS_FORMAT, agentEngine, agentId, hostKind, recordHostKind, stateFor, type AgentRecord, type AgentsFile, type HostFacts } from "../agent-registry";
 import type { BotProfile } from "./workspace";
 
 const DEBOUNCE_MS = 250;
@@ -117,12 +117,16 @@ export function migrationRecords(profiles: readonly BotProfile[], now = Date.now
     if (!value || value.format !== INDEX_FORMAT || !Array.isArray(value.subagents)) continue;
     let head: { sessionId?: unknown } | undefined;
     try { head = readJSON(join(book.directory, "head.json")) as typeof head; } catch { /* none */ }
-    const host: HostFacts = { botId: book.profile.id, engine: book.engine, sessionId: typeof head?.sessionId === "string" ? head.sessionId : null, folder: book.profile.folder, kind: hostKind(book.engine) };
+    const book_host: HostFacts = { botId: book.profile.id, engine: book.engine, sessionId: typeof head?.sessionId === "string" ? head.sessionId : null, folder: book.profile.folder, kind: hostKind(book.engine) };
     for (const raw of value.subagents) {
       const rec = readSubagent(raw);
       if (!rec || rec.parentID) continue;
       const execution = rec.execution;
-      const handle: AgentRecord["handle"] = host.kind === "codex-thread"
+      // A Claude worker runs in a process of its own whatever head lists it (never a sidechain).
+      const host: HostFacts = { ...book_host, kind: recordHostKind(book_host, rec) };
+      const handle: AgentRecord["handle"] = host.kind === "claude-process"
+        ? { kind: "claude-session", sessionId: execution?.threadId ?? "", configDir: null }
+        : host.kind === "codex-thread"
         ? { kind: "codex-thread", threadId: execution?.threadId ?? null, coordinatorSessionId: execution?.ownerSessionId ?? host.sessionId ?? "", run: execution?.run ?? 1 }
         : host.kind === "agy-acp"
           ? { kind: "agy-session", sessionId: execution?.threadId ?? null, acpHome: "", run: execution?.run ?? 1 }

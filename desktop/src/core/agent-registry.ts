@@ -242,6 +242,7 @@ export class AgentRegistry {
       return made;
     }
     const before = structuredClone(previous);
+    this.fixHostKind(previous, rec);
     const state = stateFor(rec, previous.host.kind);
     const stateChanged = state !== previous.state;
     previous.state = state;
@@ -265,6 +266,15 @@ export class AgentRegistry {
     this.save(stateChanged);
     this.changed(previous, before);
     return previous;
+  }
+
+  /** A Claude worker first recorded as a sidechain (agents.json from before its host kind was told apart): its own process. */
+  private fixHostKind(record: AgentRecord, rec: SubagentRecord): boolean {
+    const kind = recordHostKind(record.host, rec);
+    if (kind === record.host.kind || kind !== "claude-process") return false;
+    record.host = { ...record.host, kind };
+    record.handle = handleFor(record.host, rec);
+    return true;
   }
 
   private make(host: HostFacts, rec: SubagentRecord, now: number): AgentRecord {
@@ -406,6 +416,55 @@ export class AgentRegistry {
     this.save(false);
   }
 
+  /**
+   * A run's report reached the app for its owner (A2): its state, last report and an undelivered relay mark, written at once.
+   * False: this run's report was already taken (a duplicate).
+   */
+  reported(id: string, r: { run: number; status: string; text: string }): boolean {
+    const record = this.records.get(id);
+    if (!record) return false;
+    if (record.relay.report && record.relay.report.run >= r.run && r.run > 0) return false;
+    const before = structuredClone(record);
+    const now = this.clock();
+    record.summary = { ...record.summary, lastReport: clip(r.text, TEXT_LIMIT) || record.summary.lastReport };
+    record.relay = { ...record.relay, report: { run: r.run, delivered: false } };
+    if (record.state === "running" || record.state === "reportPending") record.state = r.status === "failed" ? "failed" : r.status === "stopped" || r.status === "killed" ? "stopped" : "idle";
+    record.endedAt ??= now;
+    record.updatedAt = now; record.rev++;
+    this.save(true);
+    this.changed(record, before);
+    return true;
+  }
+
+  /** Its owner's turn with that run's report started: delivered. */
+  reportDelivered(id: string, run: number): void {
+    const record = this.records.get(id);
+    if (!record?.relay.report || record.relay.report.run !== run || record.relay.report.delivered) return;
+    record.relay = { ...record.relay, report: { run, delivered: true } };
+    record.rev++;
+    this.save(true);
+  }
+
+  /** Words for it that wait until its run ends (a host that cannot steer a running worker). */
+  queueMessage(id: string, message: { text: string; from: string }): void {
+    const record = this.records.get(id);
+    if (!record) return;
+    record.relay = { ...record.relay, pendingMessages: [...record.relay.pendingMessages, { id: newMoveId().replace(/^mv-/, "msg-"), text: clip(message.text, 64_000), at: this.clock(), from: message.from }].slice(-20) };
+    record.rev++;
+    this.save(true);
+  }
+
+  /** The words waiting for it, taken (they are sent now). */
+  takeMessages(id: string): { id: string; text: string; at: number; from: string }[] {
+    const record = this.records.get(id);
+    if (!record?.relay.pendingMessages.length) return [];
+    const taken = record.relay.pendingMessages;
+    record.relay = { ...record.relay, pendingMessages: [] };
+    record.rev++;
+    this.save(true);
+    return taken;
+  }
+
   /** The sub-bot hand-off made a sub bot that continues this agent's work. */
   succeed(hostBotId: string, nativeId: string, by: { kind: "subBot" | "owner"; botId: string }, handoffFile?: string): void {
     const record = this.byHostBot(hostBotId, nativeId);
@@ -484,6 +543,7 @@ export class AgentRegistry {
       }
       const host = hosts.get(`${record.host.botId}|${record.host.engine}`);
       const native = host?.list.find((candidate) => candidate.id === record.nativeId);
+      if (native) this.fixHostKind(record, native);
       // 3. The host book no longer has it.
       if (!native) {
         if (!isDetached(record)) { this.remove(record.id); report.dropped.push(record.id); continue; }
@@ -564,6 +624,19 @@ export interface AgentPort {
   settle(ownerBotId: string, nativeId: string, settled: boolean): { changed: boolean } | null;
   /** The registry's part of one of this bot's own rows (its agent id and, with agentMoves on, whether it can move). */
   rowInfo?(engine: AgentEngine, nativeId: string): { agentId?: string; movable?: { ok: boolean; reason: string | null } };
-  report?(host: HostFacts, r: { nativeId: string; run: number; status: string; text: string }): void;  // A2
+  /** A run report of a worker another bot owns (its host's `workerReport`): the app routes it to the owner. */
+  report?(host: HostFacts, r: { nativeId: string; run: number; status: string; text: string }): void;
+  /**
+   * A worker another bot owns asks for an approval: the card goes to the owner's chat, and the pick back to `head` (the host's).
+   * False: nobody else owns it (the host asks itself).
+   */
+  approval?(host: HostFacts, nativeId: string, item: WorkerApproval, head: ApprovalAnswerer): boolean;
+  /** That approval is no longer needed (the worker's run ended or it withdrew the request). */
+  approvalCancelled?(host: HostFacts, requestId: string): void;
   hostSessionEnded?(host: HostFacts, oldSessionId: string): void;                                    // A3/C1
 }
+
+/** A worker's approval request as the host's head sent it (a `permission` stream item). */
+export interface WorkerApproval { requestId: string; tool: string; summary: string; input: Record<string, unknown>; workerId?: string }
+/** Who answers it: the host's head (or its Claude workers). */
+export interface ApprovalAnswerer { readonly running: boolean; answer(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): void }

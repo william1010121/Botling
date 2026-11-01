@@ -15,7 +15,7 @@ import { agyWorkerRuntimeEnabled } from "./agy-capabilities";
 import { agyHotSettingsEnabled, settingsChange, type HotSettings } from "./hot-settings";
 import { createAgyWorkerHead } from "./agy-worker-router";
 import { AgyWorkers, agyWorkerHost } from "./agy-workers";
-import type { WorkerInfo, WorkerSendResult } from "./workers";
+import type { WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 import type { CodexItem } from "./codex";
 import { AGY_LOCAL_TOOLS, AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
 import { processTreeAdapter, type ManagedProcess, type TerminateResult } from "../process/tree";
@@ -443,7 +443,7 @@ export class AgyAcpHead {
     catch (error) { this.failure = (error as Error).message; await this.terminate(); }
     finally {
       this.bridge?.revoke(); this.sending = false;
-      this.handlers.onItem({kind:"managedPending",pending:!!this.workers?.completionDependencies.length || this.queue.some(q=>!!q.taskId)});
+      this.handlers.onItem({kind:"managedPending",pending:!!this.workers?.hostedLive.length || this.queue.some(q=>!!q.taskId)});
       void this.drain();
     }
   }
@@ -472,6 +472,7 @@ export class AgyAcpHead {
   listWorkers(): WorkerInfo[] { return this.workerHost.listWorkers(); }
   sendToWorker(id: string, text: string): WorkerSendResult { return this.workerHost.sendToWorker(id, text) as WorkerSendResult; }
   stopWorker(id: string): Promise<boolean> { return this.workerHost.stopWorker(id); }
+  setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult { return this.workerHost.setWorkerOwner(id, owner); }
   finish() { void this.terminate(500); }
   async terminate(graceMs = 1500): Promise<TerminateResult> { this.expected = true; this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.close(); const cleanup = await Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs })]);
     if (cleanup.some(result => result.status === "rejected")) { this.failure ||= "ACP cleanup incomplete."; throw new Error(this.failure); }
