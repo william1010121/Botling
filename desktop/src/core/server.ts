@@ -2292,8 +2292,9 @@ First write a test that shows this, then fix it.`;
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     this.memoryWatch?.stop(); this.memoryWatch = null;
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
-    this.agentStatus.close();
-    try { this.agents.flush(); } catch (error) { this.log(`agents.json: ${(error as Error).message}`); }
+    // (Optional: a core made without its constructor, as tests make one, has neither.)
+    this.agentStatus?.close();
+    try { this.agents?.flush(); } catch (error) { this.log(`agents.json: ${(error as Error).message}`); }
     // After a swap's drain the heads end without the tidy (it would end their sessions): the new core resumes them.
     const tidy = !this.swapping && !this.restarting;
     // Invoke every participant even if one throws synchronously, and never let an early
