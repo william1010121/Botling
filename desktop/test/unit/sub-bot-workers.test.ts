@@ -34,7 +34,7 @@ it("a Codex worker at work takes the wrap-up request into its run; one not at wo
   expect(s.workerRecords[0]!.run).toBe(before);
   expect(s.wrapUpWorker("nobody", "x")).toEqual([]);
   const cancelled = s.cancelWorkers(new Set(["task-1"]));
-  expect(items(cancelled)).toContainEqual(expect.objectContaining({ kind: "subagentEnded", id: "task-1", status: "killed" }));
+  expect(items(cancelled)).toContainEqual(expect.objectContaining({ kind: "subagentEnded", id: "task-1", status: "stopped" }));
   const runBefore = s.workerRecords[0]!.run;
   expect(s.wrapUpWorker("task-1", "again")).toEqual([]);
   expect(s.workerRecords[0]!.run).toBe(runBefore);
