@@ -6,5 +6,6 @@
   "tools": 1,
   "failedTools": 0,
   "process": "exit 143",
+  "stopAt": 4710,
   "notes": "stopWorker while the perl command (60 s) runs: the app terminates the process group (SIGTERM; claude exits 143). No result line."
 }

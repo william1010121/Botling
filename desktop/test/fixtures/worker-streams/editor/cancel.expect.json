@@ -6,5 +6,6 @@
   "tools": 1,
   "failedTools": 0,
   "process": "exit 143",
+  "stopAt": 5349,
   "notes": "performEditor's stop (terminate) while the perl command runs."
 }

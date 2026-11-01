@@ -6,5 +6,6 @@
   "tools": 1,
   "failedTools": 0,
   "process": "exit 0",
+  "stopAt": 9880,
   "notes": "stopWorker while the perl command runs: turn/interrupt, then turn/completed status interrupted (today: \"killed\")."
 }
