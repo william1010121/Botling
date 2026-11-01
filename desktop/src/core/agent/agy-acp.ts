@@ -497,6 +497,8 @@ export class AgyAcpHead {
   stopWorker(id: string): Promise<boolean> { return this.workerHost.stopWorker(id); }
   setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult { return this.workerHost.setWorkerOwner(id, owner); }
   finish() { void this.terminate(500); }
+  /** Whether its process tree is gone, checked now (no process: nothing to wait for; unknown: undefined). */
+  gone(): boolean | undefined { return this.process ? this.process.gone?.() : true; }
   async terminate(graceMs = 1500): Promise<TerminateResult> { this.expected = true; this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.close(); const cleanup = await Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs })]);
     if (cleanup.some(result => result.status === "rejected")) { this.failure ||= "ACP cleanup incomplete."; throw new Error(this.failure); }
     const processResult = cleanup[2]; return processResult?.status === "fulfilled" && processResult.value ? processResult.value : { killed: [], forced: false }; }

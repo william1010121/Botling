@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { processStartTime } from "../process/kill-tree";
-import type { TerminateResult } from "../process/tree";
+import { endTree, type TerminateResult } from "../process/tree";
 import {
   ClaudeLegacyStore, WorkerCore,
   type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
@@ -35,6 +35,8 @@ export interface ClaudeWorkerHead {
   answer(requestId: string, allow: boolean, input: Record<string, unknown>, message?: string): void;
   finish(): void;
   terminate(graceMs?: number): Promise<TerminateResult>;
+  /** Whether its process tree is gone, checked now (absent or undefined: only terminate's answer tells). */
+  gone?(): boolean | undefined;
 }
 
 /** The in-process MCP server Claude coordinators get (head.ts `appMcp`). */
@@ -141,6 +143,11 @@ const nonEmpty = (value: unknown): string | null => (typeof value === "string" &
 /** A worker's process and the run under way in it; everything else about the worker is the core's. */
 interface Proc {
   head?: ClaudeWorkerHead;
+  /**
+   * The process tree it must see gone before another process takes its session: the head's, kept after its leader
+   * exits until the whole tree is confirmed gone (`endTree`).
+   */
+  tree?: ClaudeWorkerHead;
   /** The run under way (undefined: between runs, or stopped). */
   run?: RunHandle;
   /** The worker's record as the core keeps it (read only here). */
@@ -216,6 +223,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       proc.head.send(words, randomUUID());
       return;
     }
+    // Never two processes on one session: an earlier tree must be gone first (a leader that exited may leave children).
+    if (proc.tree && proc.tree.gone?.() === false) throw new Error("This worker's earlier process is still ending; try again in a moment.");
     const base = this.options.base();
     if (!base) throw new Error("Workers cannot start now: this bot's Claude head is unavailable.");
     const def = r.type ? this.definition(r.type) : null;
@@ -230,7 +239,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
     const head: ClaudeWorkerHead = this.factory(config, { onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit) });
     head.start();
-    Object.assign(proc, { head, run, record: r, opening: { run: run.run, base }, pendingResult: undefined });
+    Object.assign(proc, { head, tree: head, run, record: r, opening: { run: run.run, base }, pendingResult: undefined });
     proc.stream.newProcess();
     proc.queued.clear();
     run.emit({ type: "session", conversationId: sessionId });
@@ -316,6 +325,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const proc = this.procs.get(id);
     if (!proc || proc.head !== head) return;
     proc.head = undefined;
+    // Its leader exited; the tree it led is kept until it is confirmed gone (children may outlive it).
+    void endTree(head, 1_500).then((gone) => { if (gone && proc.tree === head) proc.tree = undefined; });
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
     const run = proc.run;
     if (proc.settle) {
@@ -341,19 +352,24 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     proc.queued.clear();
     if (proc.settle) { clearTimeout(proc.settle); proc.settle = undefined; proc.pendingResult = undefined; }
     if (proc.keepAlive) { clearTimeout(proc.keepAlive); proc.keepAlive = undefined; }
-    const head = proc.head;
-    if (!head) return { cleaned: true };
-    // Clean only once its process is confirmed gone; otherwise the head is kept, for recovery to end it again.
-    const ended = await this.ended(r, head);
-    if (ended && proc.head === head) proc.head = undefined;
+    const tree = proc.tree ?? proc.head;
+    if (!tree) return { cleaned: true };
+    // Clean only once its tree is confirmed gone; otherwise it is kept, for recovery to end it again.
+    const ended = await this.ended(proc, r, tree);
     return { cleaned: ended };
   }
 
-  /** Ends `head` and confirms it is gone: the process layer says its tree ended, and no recorded process of it lives on. */
-  private async ended(r: Readonly<WorkerLedgerRecord>, head: ClaudeWorkerHead): Promise<boolean> {
-    const result = await head.terminate(1_500).catch(() => null);
-    if (!result || result.alive) return false;
-    return !r.processes.some(({ pid, started }) => pid === head.pid && processStartTime(pid) === started);
+  /**
+   * Ends `tree` and confirms it is gone (the process layer's `endTree`, checked live, and no recorded process of it
+   * lives on); then it is let go.
+   */
+  private async ended(proc: Proc, r: Readonly<WorkerLedgerRecord>, tree: ClaudeWorkerHead): Promise<boolean> {
+    const gone = await endTree(tree, 1_500) && !r.processes.some(({ pid, started }) => pid === tree.pid && processStartTime(pid) === started);
+    if (gone) {
+      if (proc.tree === tree) proc.tree = undefined;
+      if (proc.head === tree) proc.head = undefined;
+    }
+    return gone;
   }
 
   answer(r: Readonly<WorkerLedgerRecord>, nativeId: string, allow: boolean, input: Record<string, unknown>, message?: string) {
@@ -366,15 +382,13 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
    */
   recover(r: Readonly<WorkerLedgerRecord>): RecoverResult | Promise<RecoverResult> {
     const proc = this.procs.get(r.id);
-    const head = proc?.head;
-    // A process this app still holds: one at work in a kept-alive head is fine; one a stop could not end is ended now.
-    if (head && !(r.cleanup === "failed")) return { state: "clean" };
-    if (head) {
-      return this.ended(r, head).then((ended): RecoverResult => {
-        if (!ended) return { state: "blocked", reason: "This worker's earlier process could not be ended; it cannot be resumed until it has." };
-        if (proc!.head === head) proc!.head = undefined;
-        return { state: "clean" };
-      });
+    const tree = proc?.tree;
+    // Its kept-alive process, at hand and fine: the next run goes into it.
+    if (proc && tree && proc.head === tree && tree.running && r.cleanup !== "failed") return { state: "clean" };
+    // A tree a stop could not end, or one whose leader exited: ended and confirmed gone first.
+    if (proc && tree) {
+      return this.ended(proc, r, tree).then((ended): RecoverResult => ended ? { state: "clean" }
+        : { state: "blocked", reason: "This worker's earlier process could not be ended; it cannot be resumed until it has." });
     }
     const alive = r.processes.some(({ pid, started }) => processStartTime(pid) === started);
     return alive ? { state: "blocked", reason: "This worker's earlier process is still running; it cannot be resumed until it has ended." } : { state: "clean" };
@@ -386,9 +400,9 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       if (proc.settle) clearTimeout(proc.settle);
       if (proc.keepAlive) clearTimeout(proc.keepAlive);
       Object.assign(proc, { settle: undefined, keepAlive: undefined, pendingResult: undefined, run: undefined });
-      const head = proc.head;
+      const tree = proc.tree ?? proc.head;
       proc.head = undefined;
-      return head?.terminate(1_500);
+      return tree?.terminate(1_500);
     }));
   }
 }

@@ -371,10 +371,13 @@ interface ThreadWorker {
   /** A stop waiting for the start requests of the run it stopped to be answered (their turn, if any, interrupted). */
   stopping?: (result: { cleaned: boolean }) => void;
   /**
-   * A stopped run's start request is still unanswered and no turn of it is known: it may yet begin a turn. Until it is
-   * answered (or that turn is seen and interrupted, or the app-server goes away) no next run may start.
+   * The stopped run whose start request is still unanswered and no turn of which is known: it may yet begin a turn.
+   * Until that run's own request is answered (or its turn is seen and interrupted, or the app-server goes away) no next
+   * run may start. Bound to that run: nothing of another run (an old turn seen again) clears it.
    */
-  unconfirmed?: boolean;
+  isolating?: RunHandle;
+  /** Calls not answered yet, by the run that made them. */
+  pending: Map<RunHandle, number>;
   /** Tool calls without a result yet. */
   tools: Set<string>;
   /** After the user allowed a refused call: its next turn asks the app ("user"), the one after the reviewer again. */
@@ -413,7 +416,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
   private worker(record: Readonly<WorkerLedgerRecord>): ThreadWorker {
     let w = this.workers.get(record.id);
     if (!w) {
-      w = { id: record.id, name: record.name, run: null, thread: record.conversationId, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, tools: new Set(), cancelled: false };
+      w = { id: record.id, name: record.name, run: null, thread: record.conversationId, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, pending: new Map(), tools: new Set(), cancelled: false };
       this.workers.set(record.id, w);
     }
     w.thread ??= record.conversationId;
@@ -438,33 +441,39 @@ export class CodexThreadAdapter implements WorkerAdapter {
 
   /** One of its own calls: the reply is dropped once its run is over. */
   private call(w: ThreadWorker, run: RunHandle, method: string, params: Record<string, unknown>, reply: (result: any, error: any) => void) {
-    w.calls += 1;
+    this.count(w, run, 1);
     this.o.wire.request(method, params, (result, error) => {
-      w.calls -= 1;
+      this.count(w, run, -1);
       if (w.run === run && !w.cancelled) return reply(result, error);
       // A call of a run that was stopped: a turn it started is that run's, never a later one's, and is interrupted now.
-      if (method === "turn/start" && typeof result?.turn?.id === "string") this.isolate(w, result.turn.id);
-      this.drained(w);
+      if (method === "turn/start" && typeof result?.turn?.id === "string") this.isolate(w, result.turn.id, run);
+      // That run's last request answered: nothing of it can start any more.
+      if (w.isolating === run && !w.pending.has(run)) this.confirmed(w);
     });
   }
 
-  /** A turn of a run that was stopped: no later run takes its events, and it is interrupted. Its isolation is confirmed. */
-  private isolate(w: ThreadWorker, turn: string) {
-    if (!w.completedTurns.has(turn)) {
-      w.completedTurns.add(turn);
-      if (w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
-    }
-    this.confirmed(w);
+  private count(w: ThreadWorker, run: RunHandle, by: 1 | -1) {
+    w.calls += by;
+    const left = (w.pending.get(run) ?? 0) + by;
+    if (left > 0) w.pending.set(run, left);
+    else w.pending.delete(run);
   }
 
-  /** No call of the stopped run is left unanswered: nothing of it can start any more. */
-  private drained(w: ThreadWorker) {
-    if (w.calls <= 0) this.confirmed(w);
+  /**
+   * A turn of a stopped run: no later run takes its events, and it is interrupted. One seen before (an old turn, its
+   * notice again) says nothing new. A new one is the run's being isolated (`run`, or the one that could start a turn
+   * unseen) and confirms it.
+   */
+  private isolate(w: ThreadWorker, turn: string, run?: RunHandle) {
+    if (w.completedTurns.has(turn)) return;
+    w.completedTurns.add(turn);
+    if (w.thread) this.o.wire.request("turn/interrupt", { threadId: w.thread, turnId: turn }, () => undefined);
+    if (w.isolating && (!run || run === w.isolating)) this.confirmed(w);
   }
 
   /** The stopped run is isolated: its stop (if it still waits) is done, and a next run may start. */
   private confirmed(w: ThreadWorker) {
-    w.unconfirmed = false;
+    w.isolating = undefined;
     const done = w.stopping;
     w.stopping = undefined;
     done?.({ cleaned: true });
@@ -588,9 +597,9 @@ export class CodexThreadAdapter implements WorkerAdapter {
   }
 
   private steerCall(w: ThreadWorker, run: RunHandle, text: string, turnId: string) {
-    w.calls += 1;
+    this.count(w, run, 1);
     this.o.wire.request("turn/steer", { threadId: w.thread ?? "", expectedTurnId: turnId, input: [{ type: "text", text }] }, (_result, error) => {
-      w.calls -= 1;
+      this.count(w, run, -1);
       if (!error || w.cancelled) return;
       // The turn had just ended: the words go into its next turn (this run's), or the next run.
       if (w.run === run) w.messages.push(text);
@@ -618,10 +627,11 @@ export class CodexThreadAdapter implements WorkerAdapter {
   stop(record: Readonly<WorkerLedgerRecord>): { cleaned: boolean } | Promise<{ cleaned: boolean }> {
     const w = this.workers.get(record.id);
     if (!w?.run) return { cleaned: true };
-    const unsettled = !w.turnId && w.calls > 0;
+    const run = w.run;
+    const unsettled = !w.turnId && w.pending.has(run);
     this.interrupt(w);
     if (!unsettled) return { cleaned: true };
-    w.unconfirmed = true;
+    w.isolating = run;
     // Not forever: an app-server that never answers leaves it not clean (blocked until the answer comes, or a restart).
     return new Promise((resolve) => {
       const settle = (result: { cleaned: boolean }) => { clearTimeout(timer); resolve(result); };
@@ -660,7 +670,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
   }
 
   recover(record: Readonly<WorkerLedgerRecord>): RecoverResult {
-    if (this.workers.get(record.id)?.unconfirmed) return { state: "blocked", reason: "Its stopped run's start request has not been answered yet, so its old turn may still begin; it cannot start again until that is known (or the app-server restarts)." };
+    if (this.workers.get(record.id)?.isolating) return { state: "blocked", reason: "Its stopped run's start request has not been answered yet, so its old turn may still begin; it cannot start again until that is known (or the app-server restarts)." };
     // Its turns lived in an app-server that is gone; only a restart's own check of the thread can hold it back.
     const waiting = this.o.recovering?.(record.id);
     return waiting ? { state: "blocked", reason: waiting } : { state: "clean" };
@@ -680,7 +690,8 @@ export class CodexThreadAdapter implements WorkerAdapter {
       w.loaded = false;
       // Its turns went with it: a stop waiting for one is done (nothing of the old run can start).
       w.calls = 0;
-      this.drained(w);
+      w.pending.clear();
+      this.confirmed(w);
       const run = w.run;
       if (!run) continue;
       w.run = null;
@@ -699,7 +710,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
   continueAfterRestart(id: string) { (this.workers.get(id) ?? this.blank(id)).continuing = true; }
 
   private blank(id: string): ThreadWorker {
-    const w: ThreadWorker = { id, name: "", run: null, thread: null, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, tools: new Set(), cancelled: false };
+    const w: ThreadWorker = { id, name: "", run: null, thread: null, turnId: null, loaded: false, completedTurns: new Set(), said: [], messages: [], text: "", tokens: null, calls: 0, pending: new Map(), tools: new Set(), cancelled: false };
     this.workers.set(id, w);
     return w;
   }

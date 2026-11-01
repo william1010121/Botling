@@ -16,7 +16,7 @@ import { tempDir } from "../helpers";
 
 function transport() {
   let rpc = 100;
-  const processes: { child: ChildProcessWithoutNullStreams; writes: any[]; args: string[]; release(): void; terminateCalls: number }[] = [];
+  const processes: { child: ChildProcessWithoutNullStreams; writes: any[]; args: string[]; release(): void; survive(): void; terminateCalls: number }[] = [];
   const adapter: ProcessTreeAdapter = { platform: "test", verified: true, spawn(_command, args) {
     const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() }) as unknown as ChildProcessWithoutNullStreams;
     const pid = 10_000 + processes.length;
@@ -24,7 +24,9 @@ function transport() {
     child.stdin.on("data", chunk => { for (const line of String(chunk).trim().split("\n")) writes.push(JSON.parse(line)); });
     let resolve!: (result: TerminateResult) => void;
     const ended = new Promise<TerminateResult>(r => { resolve = r; });
-    const record = { child, writes, args, terminateCalls: 0, release() { child.emit("close", 0, null); resolve({ killed: [pid], forced: false }); } };
+    const record = { child, writes, args, terminateCalls: 0, release() { child.emit("close", 0, null); resolve({ killed: [pid], forced: false }); },
+      /** The terminate answers, but its tree is still alive (not confirmed gone). */
+      survive() { resolve({ killed: [pid], forced: true, alive: true }); } };
     processes.push(record);
     return { pid, child, terminate() { record.terminateCalls++; return ended; } };
   } };
@@ -67,6 +69,19 @@ describe("Claude editor transport ownership", () => {
     // Old process callbacks cannot complete or alter the replacement run.
     (first.child.stdout as PassThrough).write(JSON.stringify({ type: "result", subtype: "success", result: "late" }) + "\n");
     expect(head.session.runningWorkers).toEqual([task]);
+    const ending = head.terminate();
+    for (const process of processes) process.release();
+    await ending;
+  });
+
+  it("round 4 #2 an old editor whose tree is not confirmed gone keeps its transcript closed: no relaunch, the run fails instead", async () => {
+    const { head, task, processes, call, items } = transport();
+    head.cancelWorkers(new Set([task]));
+    call("app_send_message", { task_id: task, message: "resume after cancel" });
+    processes[1]!.survive();
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(processes).toHaveLength(2);
+    expect(items).toContainEqual(expect.objectContaining({ kind: "subagentEnded", id: task, status: "failed", summary: expect.stringContaining("prior editor") }));
     const ending = head.terminate();
     for (const process of processes) process.release();
     await ending;

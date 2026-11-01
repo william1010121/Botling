@@ -24,3 +24,16 @@ it.skipIf(process.platform === "win32")("a group still alive after SIGKILL is re
   const ended = await plain.terminate({ graceMs: 500 });
   expect(ended.alive).toBeFalsy();
 }, 10_000);
+
+it.skipIf(process.platform === "win32")("round 4 #4 a failed terminate is not kept: the next one signals again and sees the group gone", async () => {
+  const adapter = new PosixGroupAdapter();
+  const stuck = adapter.spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { env: { PATH: process.env.PATH } });
+  children.push(stuck.child);
+  kill.survive = true;
+  expect(await stuck.terminate({ graceMs: 0 })).toMatchObject({ alive: true });
+  expect(stuck.gone?.()).toBe(false);
+  kill.survive = false;
+  const again = await stuck.terminate({ graceMs: 500 });
+  expect(again.alive).toBeFalsy();
+  expect(stuck.gone?.()).toBe(true);
+}, 15_000);

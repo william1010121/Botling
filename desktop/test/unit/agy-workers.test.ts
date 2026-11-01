@@ -390,3 +390,16 @@ it('has no concurrent worker cap: 6 workers start and a resume succeeds with 5 r
  await expect(h.m.tool('app_send_message',{task_id:ids[0],run:1,message:'again'})).resolves.toMatchObject({accepted:true});
  expect(h.m.running).toHaveLength(6);
 });
+
+it('round 4 #4 a cleanup decides by a live check: a stale "still alive" answer never blocks a tree that is gone now',async()=>{
+ const {AgyAcpAdapter}=await import('../../src/core/agent/agy-workers');
+ const {mkdtempSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join:joinPath}=await import('node:path');
+ let gone=false;
+ const head={start(){},send(){},answer(){},terminate:async()=>({killed:[7],forced:true,alive:true}),gone:()=>gone};
+ const adapter=new AgyAcpAdapter({acpHome:mkdtempSync(joinPath(tmpdir(),'agy-confirm-'))} as any,()=>head as any,{processStartTime:()=>null});
+ const record:any={id:'11111111-1111-4111-8111-111111111111',engine:'agy',conversationId:null,processes:[],engineData:{},run:1};
+ adapter.start(record,'go',{workerId:record.id,run:1,emit(){},setEngineData(){}} as any);
+ expect(await adapter.stop(record)).toEqual({cleaned:false});
+ gone=true;
+ expect(await adapter.cleanup(record)).toEqual({cleaned:true});
+});

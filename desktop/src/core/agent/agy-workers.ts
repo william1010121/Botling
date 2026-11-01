@@ -13,7 +13,7 @@ import type {StreamItem} from './stream';
 import type {CodexItem} from './codex';
 import type {AgyConfig} from './agy';
 import {groupAlive,processStartTime} from '../process/kill-tree';
-import type {TerminateResult} from '../process/tree';
+import {endTree,type TerminateResult} from '../process/tree';
 import {movedTaskError,type ProcessIdentity,type WorkerHost,type WorkerInfo,type WorkerOwner,type WorkerOwnerResult,type WorkerSendResult} from './workers';
 import {AgyLegacyStore,WorkerCore,wireStatus,type HandoffRequest,type RecoverResult,type RunEnd,type RunHandle,type WorkerAdapter,type WorkerCoreFactory,type WorkerCoreOptions,type WorkerEvent,type WorkerLedgerRecord,type WorkerStore} from '../worker-core';
 
@@ -21,6 +21,8 @@ export interface AgyWorkerHead {
   start():void;send(text:string,uuid:string):void;
   answer(id:string,allow:boolean,input:Record<string,unknown>,message?:string):void;
   terminate(graceMs?:number):Promise<TerminateResult>;
+  /** Whether its process tree is gone, checked now (absent or undefined: only terminate's answer tells). */
+  gone?():boolean|undefined;
 }
 
 const canonical=(v:any):string=>v&&typeof v==='object'?Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
@@ -119,10 +121,9 @@ export class AgyAcpAdapter implements WorkerAdapter {
   /** Ends the head (kept when that fails, to try again) and checks its recorded processes are gone. */
   private async terminate(record:Readonly<WorkerLedgerRecord>):Promise<boolean> {
     const live=this.runs.get(record.id);
-    // Gone only when the process layer confirms its tree ended and no recorded process lives on.
-    let ended:TerminateResult|undefined;
-    try{ended=await live?.head?.terminate();}catch{return false;}
-    if(ended?.alive)return false;
+    // Gone only when the process layer confirms its tree ended (checked live, tried again after a failure) and no
+    // recorded process lives on.
+    if(live?.head&&!await endTree(live.head))return false;
     if(record.processes.length&&!this.gone(record.processes))return false;
     if(live)live.head=undefined;
     return true;

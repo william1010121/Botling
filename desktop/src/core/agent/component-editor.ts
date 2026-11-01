@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { SessionStart } from "../bot";
 import { processStartTime } from "../process/kill-tree";
-import type { ProcessTreeAdapter, TerminateResult } from "../process/tree";
+import { endTree, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import { MAINTAINER_ID } from "../store/records";
 import { Layout, type BotProfile } from "../store/workspace";
 import type { RecoverResult, RunHandle, WorkerAdapter, WorkerLedgerRecord } from "../worker-core";
@@ -74,7 +74,8 @@ export interface EditorEvents {
 export class EditorTransport {
   private editors = new Map<string, { head: ClaudeHead; run: number; messages: string[] }>();
   private cleanup = new Set<Promise<TerminateResult>>();
-  private stops = new Map<string, Promise<TerminateResult>>();
+  /** A task's earlier process still to be confirmed gone (`endTree`) before its transcript is opened again. */
+  private stops = new Map<string, { head: ClaudeHead; gone: Promise<boolean> }>();
 
   constructor(private events: EditorEvents, private adapter: ProcessTreeAdapter) {}
 
@@ -85,12 +86,11 @@ export class EditorTransport {
     if (head.pid < 0) { void head.terminate(); return; }
     const ending = head.terminate(1_000);
     this.cleanup.add(ending);
-    this.stops.set(task, ending);
-    const clean = () => {
-      this.cleanup.delete(ending);
-      if (this.stops.get(task) === ending) this.stops.delete(task);
-    };
-    void ending.then(clean, clean);
+    void ending.then(() => this.cleanup.delete(ending), () => this.cleanup.delete(ending));
+    // The barrier holds until its tree is confirmed gone; one not confirmed stays (the next launch tries again).
+    const stop = { head, gone: endTree(head, 1_000, ending) };
+    this.stops.set(task, stop);
+    void stop.gone.then((gone) => { if (gone && this.stops.get(task) === stop) this.stops.delete(task); });
   }
 
   stopAll() {
@@ -160,14 +160,18 @@ export class EditorTransport {
         this.events.failed(action.task, action.run, (error as Error).message, !action.config.resume);
       }
     };
-    // Never open the same Claude transcript while its old process is still shutting down.
-    const ending = this.stops.get(action.task);
-    if (ending) void ending.then(start, (error) => {
-      if (this.editors.get(action.task)?.head !== head) return;
-      this.editors.delete(action.task);
-      this.events.failed(action.task, action.run, `Could not stop the prior editor: ${String(error)}`, false);
-    });
-    else start();
+    // Never open the same Claude transcript while its old process tree may still live: confirmed gone first (once
+    // more if it was not); else this run fails, and its transcript stays closed.
+    const prior = this.stops.get(action.task);
+    if (prior) {
+      void prior.gone.then((gone) => gone || endTree(prior.head, 1_000)).then((gone) => {
+        if (gone && this.stops.get(action.task) === prior) this.stops.delete(action.task);
+        if (this.editors.get(action.task)?.head !== head) return;
+        if (gone) return start();
+        this.editors.delete(action.task);
+        this.events.failed(action.task, action.run, "Could not stop the prior editor: its process tree is still alive. Its transcript stays closed.", false);
+      });
+    } else start();
   }
 }
 

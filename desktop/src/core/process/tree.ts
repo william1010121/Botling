@@ -18,8 +18,31 @@ export interface TerminateResult {
 export interface ManagedProcess {
   readonly pid: number;
   readonly child: ChildProcessWithoutNullStreams;
-  /** Ends the whole tree: politely first, forcefully after `graceMs`. Safe to call twice. */
+  /**
+   * Ends the whole tree: politely first, forcefully after `graceMs`. A call while one is under way shares it; one that
+   * left the tree alive is not kept, so the next call signals again.
+   */
   terminate(options?: { graceMs?: number }): Promise<TerminateResult>;
+  /** Whether the whole tree is gone, checked now: its leader exited and nothing of its group lives on. */
+  gone?(): boolean;
+}
+
+/** A process tree the app must see gone before it reuses what it held (a worker's head, an editor's process). */
+export interface TreeHandle {
+  terminate(graceMs?: number): Promise<TerminateResult>;
+  /** Checked now (absent: only the terminate's own answer tells). */
+  gone?(): boolean | undefined;
+}
+
+/**
+ * Ends a tree and confirms it is gone: the one check every worker adapter uses (Claude workers, the component editor,
+ * Antigravity). Live, never a remembered answer: a terminate that failed or left the tree alive is no confirmation,
+ * and a later call tries again.
+ */
+export async function endTree(handle: TreeHandle, graceMs?: number, started?: Promise<TerminateResult>): Promise<boolean> {
+  // `started`: a terminate of it already asked (its answer is awaited, not a second one).
+  const result = await (started ?? handle.terminate(graceMs)).catch(() => null);
+  return handle.gone?.() ?? (!!result && !result.alive);
 }
 
 export interface ProcessTreeAdapter {
@@ -54,12 +77,15 @@ export class PosixGroupAdapter implements ProcessTreeAdapter {
     const pid = child.pid;
     if (pid === undefined) {
       // spawn failed (ENOENT etc.); the 'error' event carries why. Give a process that is already gone.
-      return { pid: -1, child, terminate: async () => ({ killed: [], forced: false }) };
+      return { pid: -1, child, terminate: async () => ({ killed: [], forced: false }), gone: () => true };
     }
     let ending: Promise<TerminateResult> | null = null;
+    const exited = () => child.exitCode !== null || child.signalCode !== null;
     return {
       pid,
       child,
+      // Its own child: Node knows when the leader exited; the group cannot be another's while it has a member.
+      gone: () => exited() && !groupAlive(pid),
       terminate: ({ graceMs = 2_000 } = {}) => {
         ending ??= (async () => {
           const killed = groupMembers(pid);
@@ -74,7 +100,10 @@ export class PosixGroupAdapter implements ProcessTreeAdapter {
           for (let i = 0; i < 80 && groupAlive(pid); i++) await sleep(25);
           return groupAlive(pid) ? { killed, forced: true, alive: true } : { killed, forced: true };
         })();
-        return ending;
+        const current = ending;
+        // Only a terminate under way is shared: one that left the tree alive is tried again next time.
+        void current.then((result) => { if (result.alive && ending === current) ending = null; });
+        return current;
       },
     };
   }
@@ -104,6 +133,7 @@ export class WindowsTreeAdapter implements ProcessTreeAdapter {
     return {
       pid,
       child,
+      gone: () => pid < 0 || child.exitCode !== null || child.signalCode !== null,
       terminate: ({ graceMs = 2_000 } = {}) => {
         ending ??= (async () => {
           if (pid < 0 || child.exitCode !== null) return { killed: [], forced: false };
@@ -113,7 +143,9 @@ export class WindowsTreeAdapter implements ProcessTreeAdapter {
           const gone = !timedOut || await Promise.race([exited.then(() => true), sleep(graceMs).then(() => child.exitCode !== null)]);
           return { killed: [pid], forced: timedOut, ...(gone ? {} : { alive: true }) };
         })();
-        return ending;
+        const current = ending;
+        void current.then((result) => { if (result.alive && ending === current) ending = null; });
+        return current;
       },
     };
   }

@@ -176,6 +176,31 @@ describe("Codex workers on the shared core", () => {
     expect(h.s.core.get(task)!.report).toMatchObject({ status: "done", text: "New answer." });
   });
 
+  it("round 4 #1 an old run's late turn notice never clears a later run's isolation: run 3 waits until run 2's own turn is known", async () => {
+    const h = session({ workerStopDeadlineMs: 20 }, true);
+    h.coordinatorTurn();
+    const task = h.worker("Job", "w1", "wt1");
+    h.take(h.s.cancelWorkers(new Set([task]))); // run 1: its turn known, interrupted at once
+    const second = h.tool("app_send_message", { task_id: task, message: "Run two" });
+    expect(h.receipt(second)).toEqual({ task_id: task, status: "accepted" });
+    const start2 = second.method("turn/start");
+    h.take(h.s.cancelWorkers(new Set([task]))); // run 2: its turn/start never answered
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(h.s.core.get(task)).toMatchObject({ run: 2, cleanup: "failed" });
+    // Run 1's turn notice again (an old, isolated turn): it says nothing about run 2.
+    h.line("turn/started", { threadId: "w1", turn: { id: "wt1" } });
+    expect(h.receipt(h.tool("app_send_message", { task_id: task, message: "Run three" }))).toMatchObject({ error: expect.stringContaining("not been answered") });
+    // Run 2's own turn: interrupted, and only now may run 3 start; run 2's words never reach it.
+    expect(h.answer(start2.id, { turn: { id: "t2" } }).method("turn/interrupt").params).toEqual({ threadId: "w1", turnId: "t2" });
+    const third = h.tool("app_send_message", { task_id: task, message: "Run three" });
+    expect(h.receipt(third)).toEqual({ task_id: task, status: "accepted" });
+    h.say("w1", "t2", "OLD RUN TWO ANSWER");
+    h.line("turn/completed", { threadId: "w1", turn: { id: "t2", status: "completed" } });
+    h.answer(third.method("turn/start").id, { turn: { id: "t3" } });
+    h.finish("w1", "t3", "Run three.");
+    expect(h.s.core.get(task)).toMatchObject({ run: 3, status: "done", report: { text: "Run three." } });
+  });
+
   it("a report waits for the coordinator's turn; a report with no decision is shown once more, then unresolved", () => {
     const h = session();
     h.coordinatorTurn();

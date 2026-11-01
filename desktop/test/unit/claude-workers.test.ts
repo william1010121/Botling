@@ -412,3 +412,21 @@ describe("review round 3", () => {
     expect(head.terminated).toBe(true);
   });
 });
+
+describe("review round 4", () => {
+  it("#3 its process's leader exiting does not drop its tree: a recovery still ends and confirms the tree before a next run", async () => {
+    const h = claudeHarness();
+    const started: any = await h.workers.tool("app_handoff", { instructions: "Go." });
+    const head = h.heads[0]!;
+    let alive = true;
+    head.terminate = async function () { return alive ? { killed: [1], forced: true, alive: true } : { killed: [1], forced: false }; };
+    expect(await h.workers.stopWorker(started.task_id)).toBe(true);
+    expect(h.workers.core.get(started.task_id)).toMatchObject({ cleanup: "failed" });
+    // The leader exits; its group is not confirmed gone.
+    head.exit(null, true);
+    expect(await h.workers.sendToWorker(started.task_id, "Again.")).toMatchObject({ ok: false });
+    expect(h.heads).toHaveLength(1);
+    alive = false;
+    expect(await h.workers.sendToWorker(started.task_id, "Again.")).toMatchObject({ ok: true, run: 2 });
+  });
+});

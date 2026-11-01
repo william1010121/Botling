@@ -423,6 +423,9 @@ export class ClaudeHead {
   }
 
   /** Ends the process and its whole tree now. */
+  /** Whether its process tree is gone, checked now (no process: nothing to wait for; unknown: undefined). */
+  gone(): boolean | undefined { return this.process ? this.process.gone?.() : true; }
+
   async terminate(graceMs = 1_500): Promise<TerminateResult> {
     if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
     this.queuedMessages = [];
