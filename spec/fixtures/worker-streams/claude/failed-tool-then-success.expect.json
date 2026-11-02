@@ -1,0 +1,13 @@
+{
+  "status": "done",
+  "reportState": "pending",
+  "report": "^DONE — git failed as expected\\.$",
+  "textBlocks": 1,
+  "tools": 1,
+  "failedTools": 1,
+  "requests": 2,
+  "counter": "thread:<conv>:run1",
+  "cost": 0.2164643,
+  "process": "exit 0",
+  "notes": "Bash git status: is_error tool_result (exit 128), then a normal end with the reply."
+}

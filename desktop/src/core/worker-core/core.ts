@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import type { CodexItem, WorkerDependency } from "../agent/codex";
 import { movedTaskError, workerRunStarted, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "../agent/workers";
 import { processStartTime } from "../process/kill-tree";
+import { specTrace } from "../spec-trace";
 import type { HandoffArgs, HandoffRequest, RecoverResult, WorkerAdapter } from "./adapter";
 import { classifyRun, ENGINE_NAMES, INTERRUPTED_REPORT } from "./classify";
 import type { RunEnd, RunHandle, WorkerAdapterKind, WorkerEvent } from "./events";
@@ -121,6 +122,14 @@ const then = <T, U>(value: Maybe<T>, next: (value: T) => Maybe<U>): Maybe<U> => 
 const firstText = (...values: unknown[]) => values.find((value): value is string => typeof value === "string" && !!value.trim());
 const noReport = (): WorkerLedgerRecord["report"] => ({ state: "none", text: null, status: null, attempts: 0 });
 
+/** A record as spec/models/worker sees it. */
+const specView = (r: WorkerLedgerRecord) => ({
+  id: r.id, status: r.status, run: r.run, report: r.report.state, attempts: r.report.attempts, cleanup: r.cleanup ?? "none",
+  recovery: r.recovery === "required", owned: !!r.owner,
+});
+/** One step of spec/models/worker (an action of Worker.tla), for trace checking: no-op unless BOTLING_SPEC_TRACE is set. */
+const traceStep = (action: string, r: WorkerLedgerRecord, args: Record<string, unknown> = {}) => specTrace("worker", action, { ...args, ...specView(r) });
+
 export class WorkerCore implements WorkerHost {
   readonly workerHostKind: WorkerAdapterKind;
   readonly steersRunning: boolean;
@@ -164,6 +173,7 @@ export class WorkerCore implements WorkerHost {
       this.records.set(record.id, record);
     }
     if (changed) this.save();
+    specTrace("worker", "Crash", { workers: [...this.records.values()].map(specView) });
   }
 
   private now() { return this.options.now?.() ?? Date.now(); }
@@ -280,15 +290,21 @@ export class WorkerCore implements WorkerHost {
       if (live && !live.starting && !live.done) {
         try { steered = adapter.steer(r, words); } catch (error) { this.options.log(`worker ${r.id}: steer failed: ${(error as Error).message}`); }
       }
+      if (steered) traceStep("Steer", r);
       return steered ? { ok: true, how: "steered", run: r.run } : { ok: false, busy: true, reason: "This worker is starting or stopping; try again in a moment." };
     }
     if (r.cleanup === "pending") return { ok: false, busy: true, reason: "This worker is still cleaning up after its run; try again in a moment." };
     const run = r.run;
-    return this.exclusive(r.id, () => then(this.recover(r, adapter), (blocker) => {
-      if (blocker) return { ok: false, reason: blocker };
-      if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status === "running") return WorkerCore.BUSY;
-      return then(this.launch(r, words, false), (error): WorkerSendResult => (error ? { ok: false, reason: error } : { ok: true, how: "newRun", run: r.run }));
-    }), () => WorkerCore.BUSY);
+    // Spec trace: with a recovery to wait for, Send is the step that asks for it and RecoverDone the one that launches.
+    const recovering = r.recovery === "required" || r.cleanup === "failed";
+    return this.exclusive(r.id, () => {
+      if (recovering) traceStep("Send", r);
+      return then(this.recover(r, adapter), (blocker) => {
+        if (blocker) { if (recovering) traceStep("RecoverDone", r); return { ok: false, reason: blocker }; }
+        if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status === "running") return WorkerCore.BUSY;
+        return then(this.launch(r, words, false, false, recovering ? "RecoverDone" : "Send"), (error): WorkerSendResult => (error ? { ok: false, reason: error } : { ok: true, how: "newRun", run: r.run }));
+      });
+    }, () => WorkerCore.BUSY);
   }
 
   /**
@@ -306,7 +322,7 @@ export class WorkerCore implements WorkerHost {
     return this.exclusive(r.id, () => then(this.recover(r, adapter), (blocker) => {
       if (blocker) return { ok: false, reason: blocker };
       if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status !== "interrupted") return WorkerCore.BUSY;
-      return then(this.launch(r, words, false, true), (error): WorkerSendResult => (error ? { ok: false, reason: error } : { ok: true, how: "newRun", run: r.run }));
+      return then(this.launch(r, words, false, true, "Resume"), (error): WorkerSendResult => (error ? { ok: false, reason: error } : { ok: true, how: "newRun", run: r.run }));
     }), () => WorkerCore.BUSY);
   }
 
@@ -334,10 +350,15 @@ export class WorkerCore implements WorkerHost {
     const r = this.find(id);
     if (!r || this.closed) return Promise.resolve(false);
     const run = r.run;
-    return Promise.resolve(this.exclusive(r.id, () => {
-      if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status !== "running") return false;
-      return then(this.stop(r), () => true);
+    // Spec trace: asked while an operation holds the worker, it runs later as RunQueued.
+    const waits = this.ops.has(r.id);
+    const stopping = Promise.resolve(this.exclusive(r.id, () => {
+      const step = waits ? "RunQueued" : "StopWorker";
+      if (this.closed || this.records.get(r.id) !== r || r.run !== run || r.status !== "running") { traceStep(step, r); return false; }
+      return then(this.stop(r, step), () => true);
     }, "wait"));
+    if (waits) traceStep("StopWorker", r);
+    return stopping;
   }
 
   setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult {
@@ -352,6 +373,7 @@ export class WorkerCore implements WorkerHost {
       this.queued.delete(r.id);
     }
     this.save();
+    if (owner) traceStep("SetOwner", r);
     if (owner) this.deliver(r);
     return { ok: true };
   }
@@ -418,7 +440,7 @@ export class WorkerCore implements WorkerHost {
     // Room is made among the others: the worker being made is never the one forgotten (with none forgettable it is
     // kept as one more; the ledger keeps it too, as a running record).
     this.trim(r.id);
-    const error = await this.exclusive(r.id, () => this.launch(r, instructions, true), "wait");
+    const error = await this.exclusive(r.id, () => this.launch(r, instructions, true, false, "Handoff"), "wait");
     if (error) throw new Error(error);
     return { accepted: true, task_id: r.id, run: r.run };
   }
@@ -472,6 +494,7 @@ export class WorkerCore implements WorkerHost {
     this.activeReports.delete(r.id);
     this.queued.delete(r.id);
     this.save();
+    traceStep("Checkpoint", r);
     return { task_id: r.id, run: r.run, outcome, evidence: args.evidence, ...(dependency ? { dependency_task_id: dependency } : {}) };
   }
 
@@ -485,6 +508,7 @@ export class WorkerCore implements WorkerHost {
     r.report.state = args.action === "acknowledge" ? "acknowledged" : "pending";
     if (args.action === "retry") r.report.attempts = 0;
     this.save();
+    traceStep("Reconcile", r, { action: args.action });
     if (args.action === "retry") this.deliver(r);
     return { task_id: r.id, run: r.run, action: args.action, taskReplayed: false };
   }
@@ -499,25 +523,33 @@ export class WorkerCore implements WorkerHost {
     // The run it is for is fixed now. It waits for the operation under way, then checks again: a cancel that run has
     // been followed by another meanwhile is stale and refused, never applied to the newer run.
     const target = r.run;
-    return this.exclusive(r.id, () => {
+    // Spec trace: asked while an operation holds the worker, it runs later as RunQueued.
+    const waits = this.ops.has(r.id);
+    const cancelling = this.exclusive(r.id, () => {
+      const step = waits ? "RunQueued" : "Cancel";
       if (this.closed) throw new Error("Workers are closed: the app is stopping.");
-      this.owned(id, target);
-      return this.cancelOp(r);
+      try { this.owned(id, target); } catch (error) { traceStep(step, r); throw error; }
+      return this.cancelOp(r, step);
     }, "wait");
+    if (waits) traceStep("Cancel", r);
+    return cancelling;
   }
 
-  private cancelOp(r: WorkerLedgerRecord): Maybe<{ status: WorkerStatus }> {
+  /** `step`: the spec action this cancel is (Cancel, or RunQueued when it waited for the worker). */
+  private cancelOp(r: WorkerLedgerRecord, step: string): Maybe<{ status: WorkerStatus }> {
     const finish = () => {
       if (r.cleanup === "failed") throw new Error("Worker cleanup incomplete; task remains blocked.");
       return { status: r.status };
     };
-    if (this.closed || this.records.get(r.id) !== r) return finish();
-    if (r.status === "running") return then(this.stop(r), finish);
+    if (this.closed || this.records.get(r.id) !== r) { traceStep(step, r); return finish(); }
+    if (r.status === "running") return then(this.stop(r, step), finish);
     const adapter = this.adapterOf(r);
-    if (!adapter) return finish();
+    if (!adapter) { traceStep(step, r); return finish(); }
     const run = r.run;
+    const recovering = r.recovery === "required" || r.cleanup === "failed";
+    if (recovering) traceStep(step, r);
     return then(this.recover(r, adapter), (blocker) => {
-      if (blocker) throw new Error(blocker);
+      if (blocker) { if (recovering) traceStep("RecoverDone", r); throw new Error(blocker); }
       // Never a newer run's (none can start meanwhile, but this is the rule).
       if (this.records.get(r.id) !== r || r.run !== run || r.status === "running") return finish();
       if (r.report.state === "pending" || r.report.state === "delivered") r.report.state = "none";
@@ -525,6 +557,7 @@ export class WorkerCore implements WorkerHost {
       this.activeReports.delete(r.id);
       r.cleanup = "pending";
       this.save();
+      traceStep(recovering ? "RecoverDone" : step, r);
       return then(this.cleanUp(r, adapter), finish);
     });
   }
@@ -540,6 +573,7 @@ export class WorkerCore implements WorkerHost {
     r.report.state = "dispatching";
     this.activeReports.set(id, run);
     this.save();
+    traceStep("BeginReport", r);
     return true;
   }
 
@@ -551,8 +585,8 @@ export class WorkerCore implements WorkerHost {
     if (this.activeReports.get(id) !== run) return;
     this.activeReports.delete(id);
     const r = this.records.get(id);
-    if (this.closed || !r || r.run !== run || r.report.state !== "dispatching" || !completed) return;
-    this.undecided(r);
+    if (this.closed || !r || r.run !== run || r.report.state !== "dispatching" || !completed) { if (r) traceStep("FinishReport", r, { completed }); return; }
+    this.undecided(r, "FinishReport", { completed });
   }
 
   /**
@@ -563,21 +597,23 @@ export class WorkerCore implements WorkerHost {
   retryUncertain(id: string, run: number): boolean {
     const r = this.records.get(id);
     if (this.closed || !r || r.run !== run || r.report.state !== "dispatching" || this.activeReports.get(id) === run) return false;
-    this.undecided(r);
+    this.undecided(r, "RetryUncertain");
     return true;
   }
 
-  /** A delivery attempt that ended without the coordinator's decision: shown once more, then unresolved. */
-  private undecided(r: WorkerLedgerRecord) {
+  /** A delivery attempt that ended without the coordinator's decision: shown once more, then unresolved. `step`: its spec action. */
+  private undecided(r: WorkerLedgerRecord, step: string, args: Record<string, unknown> = {}) {
     r.report.attempts += 1;
     if (r.report.attempts < 2) {
       r.report.state = "pending";
       this.save();
+      traceStep(step, r, args);
       this.deliver(r);
       return;
     }
     r.report.state = "unresolved";
     this.save();
+    traceStep(step, r, args);
     this.emit({ kind: "subagentEnded", id: r.id, status: "failed", summary: UNRESOLVED_REPORT });
   }
 
@@ -611,8 +647,11 @@ export class WorkerCore implements WorkerHost {
   // ------------------------------------------------------------------------------------------
   // Runs
 
-  /** Starts its next run (now, or when a slot frees). An error text: nothing started (a new worker is forgotten, a follow-up undone). */
-  private launch(r: WorkerLedgerRecord, words: string, fresh: boolean, sameRun = false): Maybe<string | null> {
+  /**
+   * Starts its next run (now, or when a slot frees). An error text: nothing started (a new worker is forgotten, a
+   * follow-up undone). `step`: the spec action that launches it.
+   */
+  private launch(r: WorkerLedgerRecord, words: string, fresh: boolean, sameRun: boolean, step: string): Maybe<string | null> {
     const adapter = this.adapterOf(r)!;
     const before = structuredClone(r);
     // Counted before this worker is at work itself.
@@ -626,6 +665,7 @@ export class WorkerCore implements WorkerHost {
     const live = this.newLive(r);
     if (wait) live.waiting = { words };
     this.save();
+    traceStep(step, r);
     if (wait) {
       this.opening(r, adapter, words);
       this.emit({ kind: "subagentText", parent: r.id, text: `Waiting for a free worker slot (${this.limit} at work at once); it starts when another worker finishes.` });
@@ -644,6 +684,7 @@ export class WorkerCore implements WorkerHost {
   private begin(r: WorkerLedgerRecord, live: Live, adapter: WorkerAdapter, words: string, opening: boolean, undo: (() => void) | null): Maybe<string | null> {
     live.starting = true;
     const started = (): null => {
+      traceStep("StartDone", r);
       live.starting = false;
       const held = live.held;
       live.held = [];
@@ -748,11 +789,13 @@ export class WorkerCore implements WorkerHost {
     const adapter = this.adapterOf(r);
     if (!adapter?.cleanup) {
       this.save();
+      traceStep("End", r, { v: verdict.status });
       this.reported(r);
       return;
     }
     r.cleanup = "pending";
     this.save();
+    traceStep("End", r, { v: verdict.status });
     void this.track(r.id, adapter.cleanup(r).then((result) => result.cleaned, () => false).then((cleaned) => {
       if (this.records.get(r.id) !== r || this.lives.get(r.id) !== live) return;
       delete r.cleanup;
@@ -786,6 +829,7 @@ export class WorkerCore implements WorkerHost {
       // Another bot owns it: the app routes the report there (the coordinator never sees it).
       r.report.state = "routed";
       this.save();
+      traceStep("Route", r);
       this.emit(ownedWorkerReport({ id: r.id, run: r.run, engine: r.engine, status: wireStatus(report.status), report: report.text }));
       return;
     }
@@ -795,15 +839,16 @@ export class WorkerCore implements WorkerHost {
       taken = "busy";
     }
     // A port may begin the report turn before it returns: then it is no longer waiting in the port's queue.
-    if (taken === "queued") { if (r.report.state === "pending") this.queued.add(r.id); return; }
+    if (taken === "queued") { if (r.report.state === "pending") { this.queued.add(r.id); traceStep("Deliver", r, { how: "queued" }); } return; }
     if (taken !== "taken") return;
     r.report.attempts += 1;
     r.report.state = this.options.port.ack === "none" ? "acknowledged" : "delivered";
     this.save();
+    traceStep("Deliver", r, { how: "taken" });
   }
 
-  /** Stops its run: no report is made; its adapter ends the run's turn/process. */
-  private stop(r: WorkerLedgerRecord): Maybe<void> {
+  /** Stops its run: no report is made; its adapter ends the run's turn/process. `step`: the spec action that stops it. */
+  private stop(r: WorkerLedgerRecord, step: string): Maybe<void> {
     const live = this.lives.get(r.id);
     const facts = live ? live.pipeline.facts({ stoppedByApp: true, interruptedBy: null, requireReply: true }) : { end: null, reply: "", stoppedByApp: true, interruptedBy: null, requireReply: true, failedTools: 0 };
     const verdict = classifyRun(facts);
@@ -811,6 +856,7 @@ export class WorkerCore implements WorkerHost {
     // Stopped, but not over until its processes are: no next run starts while they may still be alive.
     Object.assign(r, { status: "stopped", endedAt: this.now(), cleanup: "pending", report: { ...noReport(), text: verdict.report, status: "stopped" } });
     this.save();
+    traceStep(step, r);
     this.emit({ kind: "subagentEnded", id: r.id, status: wireStatus("stopped"), summary: verdict.report });
     return then(this.cleanUp(r, this.adapterOf(r)), () => this.startWaiting());
   }
@@ -825,6 +871,7 @@ export class WorkerCore implements WorkerHost {
       if (this.records.get(r.id) !== r || r.run !== run || r.cleanup !== "pending") return;
       if (cleaned) { delete r.cleanup; this.save(); }
       else this.cleanupFailed(r);
+      traceStep("StopDone", r, { ok: cleaned });
     };
     let stopped: Maybe<{ cleaned: boolean }>;
     try { stopped = adapter?.stop(r) ?? { cleaned: true }; } catch { stopped = { cleaned: false }; }
