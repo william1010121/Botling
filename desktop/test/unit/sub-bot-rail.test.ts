@@ -44,6 +44,20 @@ describe("left column", () => {
     // Without the bots list nothing is nested.
     expect(renderToStaticMarkup(createElement(SubagentRows, { bot: parent, now: Date.now(), watching: null, onOpen() {}, onSettle() {} }))).not.toContain("toolu_child");
   });
+  it("lists sub bots first, then workers; \"Show N more\" counts and hides only workers", () => {
+    const worker = (id: string, startedAt: number): SubagentRowView => ({ ...plainRow, id, title: id, startedAt });
+    const subAt = (id: string, startedAt: number): SubagentRowView => ({ ...subRow, id, title: id, subBot: id, startedAt });
+    // Book order interleaves them (as the user saw): worker, sub bot, sub bot, worker, then more workers.
+    const many: BotView = { ...base, subagentRows: [worker("w1", 10), subAt("tla", 9), subAt("specs", 8), worker("w2", 7), worker("w3", 6), worker("w4", 5), worker("w5", 4), worker("w6", 3)] };
+    const render = (extra = {}) => renderToStaticMarkup(createElement(SubagentRows, { bot: many, now: Date.now(), watching: null, onOpen() {}, onSettle() {}, ...extra }));
+    const ids = (markup: string) => [...markup.matchAll(/data-subagent="([^"]+)"/g)].map((match) => match[1]);
+    const markup = render();
+    const order = ids(markup);
+    expect(order.slice(0, 2).sort()).toEqual(["specs", "tla"]);
+    expect(order.slice(2)).toHaveLength(4);
+    expect(order.slice(2).every((id) => id.startsWith("w"))).toBe(true);
+    expect(markup).toContain("Show 2 more");
+  });
   it("marks the row selected while the sub bot's chat is on screen", () => {
     const shown = renderToStaticMarkup(createElement(SubagentRows, { bot: parent, now: Date.now(), watching: null, shownBot: "s1", onOpen() {}, onSettle() {} }));
     expect(shown).toMatch(/subagent-row selected[^"]*" data-subagent="s1"/);

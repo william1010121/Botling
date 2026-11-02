@@ -60,9 +60,12 @@ export function SubagentRows({ bot, bots, nested = false, chat = null, look = "o
   const [all, setAll] = useState(false);
   const [groupName, setGroupName] = useState("");
   const picking = selection?.botId === bot.id ? selection : null;
-  const every = listedRows(bot.subagentRows, now, null);
-  const more = Math.max(0, every.length - LISTED_AT_MOST);
-  const rows = all && more > 0 ? every : every.slice(0, LISTED_AT_MOST);
+  // Sub bots always come first (and are never folded away); "Show more" counts and hides only the worker rows.
+  const listed = listedRows(bot.subagentRows, now, null);
+  const subBots = listed.filter((row) => row.subBot);
+  const workers = listed.filter((row) => !row.subBot);
+  const more = Math.max(0, workers.length - LISTED_AT_MOST);
+  const rows = [...subBots, ...(all && more > 0 ? workers : workers.slice(0, LISTED_AT_MOST))];
   if (!rows.length) return null;
   return (
     <div className={`subagent-rows${nested ? " nested" : ""}`} data-bot={bot.id}>
