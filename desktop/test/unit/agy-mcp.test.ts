@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {gunzipSync} from 'node:zlib';
-import {AgyMcpBridge,verifyAgyFileHelper} from '../../src/core/agent/agy-mcp';
+import {AgyMcpBridge,verifyAgyFileHelper,AGY_LOCAL_TOOLS,AGY_OUTPUT_CAP,capHeadTail,sliceFileText} from '../../src/core/agent/agy-mcp';
 // Exact approved macOS arm64 Botling file helper, built from agy-file-helper.c with
 // scripts/build-agy-file-helper.mjs (Apple clang 21.0.0). Gzip preserves all signed
 // Mach-O bytes; the production verifier pins SHA256
@@ -186,4 +186,45 @@ it('reaches the project .bot only when it is passed as an extra folder, and noth
  expect(await withDir.invoke('read_file',{path:join(project,'.bot','memory.md')})).toBe('remembered');
  for(const path of [join(project,'secret.txt'),join(project,'.bot','..','secret.txt')]){withDir.grant('botling_read_file',{path});await expect(withDir.invoke('read_file',{path})).rejects.toThrow(/outside/);}
  rmSync(project,{recursive:true,force:true});
+});
+
+it('capHeadTail keeps head and tail with an omitted-count marker',()=>{
+ expect(AGY_OUTPUT_CAP).toBe(30_000);
+ const small='x'.repeat(30_000);expect(capHeadTail(small)).toBe(small);
+ const big='H'.repeat(20_000)+'M'.repeat(50_000)+'T'.repeat(20_000);
+ const out=capHeadTail(big);
+ expect(out.startsWith('H'.repeat(15_000))).toBe(true);expect(out.endsWith('T'.repeat(15_000))).toBe(true);
+ expect(out).toContain('60000 characters omitted');
+ expect(out).toMatch(/narrow the command/i);expect(out).toMatch(/\.venv/);expect(out).toMatch(/head\/tail/);
+ expect(out.length).toBeLessThan(31_000);
+});
+it('run_command caps big output at 30000 characters but keeps head, tail and exit code',async()=>{
+ const {b}=setup();const command="printf 'START'; head -c 100000 /dev/zero | tr '\\0' a; printf 'END'; exit 3";
+ b.grant('botling_run_command',{command});
+ const r=await b.invoke('run_command',{command}) as {exitCode:number;output:string};
+ expect(r.exitCode).toBe(3);expect(r.output.startsWith('START')).toBe(true);expect(r.output.endsWith('END')).toBe(true);
+ expect(r.output).toMatch(/characters omitted/);expect(r.output.length).toBeLessThan(31_000);
+});
+it('sliceFileText supports offset/limit lines and a cap marker',()=>{
+ const lines=Array.from({length:10},(_,i)=>`line${i+1}`).join('\n');
+ expect(sliceFileText(lines)).toBe(lines);
+ expect(sliceFileText(lines,3,2)).toMatch(/^line3\nline4\n/);
+ expect(sliceFileText(lines,3,2)).not.toContain('line5\n');
+ expect(sliceFileText(lines,3,2)).toMatch(/lines 3-4 of 10/);
+ expect(sliceFileText(lines,9)).toContain('line10');
+ const big=Array.from({length:5000},(_,i)=>`row ${i+1} `+'y'.repeat(20)).join('\n');
+ const capped=sliceFileText(big);
+ expect(capped.length).toBeLessThan(31_000);expect(capped).toMatch(/offset and limit/);expect(capped.startsWith('row 1 ')).toBe(true);
+ expect(sliceFileText(big,100,2)).toContain('row 100 ');
+});
+it('read_file schema advertises offset and limit and tool works with them',async()=>{
+ const rf=AGY_LOCAL_TOOLS.find(t=>t.name==='read_file')!;
+ expect(Object.keys((rf.inputSchema as any).properties)).toEqual(['path','offset','limit']);
+ expect((rf.inputSchema as any).required).toEqual(['path']);
+ expect((rf.inputSchema as any).properties.offset.type).toBe('integer');expect(rf.description).toMatch(/offset/);
+ const {b,cwd}=setup();writeFileSync(join(cwd,'f.txt'),'a\nb\nc\nd\n');
+ const args={path:'f.txt',offset:2,limit:2};b.grant('botling_read_file',args);
+ const out=await b.invoke('read_file',args) as string;expect(out).toMatch(/^b\nc\n/);expect(out).not.toContain('d');
+ await expect(b.invoke('read_file',args)).rejects.toThrow('No matching');
+ const bad={path:'f.txt',offset:0};b.grant('botling_read_file',bad);await expect(b.invoke('read_file',bad)).rejects.toThrow(/offset/);
 });

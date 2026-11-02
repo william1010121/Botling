@@ -23,8 +23,35 @@ type Args = Record<string, unknown>;
 export interface AgyTool { name: string; description: string; inputSchema: Args }
 const schema = (properties: Args, required: string[]) => ({ type: 'object', properties, required, additionalProperties: false });
 const text = { type: 'string' };
+export const AGY_OUTPUT_CAP = 30_000;
+/** Keep head and tail of an oversized output; the marker says how much was dropped and how to narrow. */
+export function capHeadTail(output: string, cap = AGY_OUTPUT_CAP, omitted = Math.max(0, output.length - cap)): string {
+  if (output.length <= cap && !omitted) return output;
+  const half = Math.floor(cap / 2);
+  const dropped = omitted || output.length - cap;
+  return output.slice(0, half) + `\n[... ${dropped} characters omitted. Narrow the command: grep with excludes like --exclude-dir={.venv,node_modules,.git}, head/tail, or wc to count first ...]\n` + output.slice(output.length - half);
+}
+/** Line-based read: offset is 1-based, limit is a line count; always bounded by AGY_OUTPUT_CAP. */
+export function sliceFileText(text: string, offset?: number, limit?: number, cap = AGY_OUTPUT_CAP): string {
+  const ranged = offset !== undefined || limit !== undefined;
+  if (!ranged && text.length <= cap) return text;
+  const lines = text.split('\n'), total = text.endsWith('\n') ? lines.length - 1 : lines.length;
+  const start = (offset ?? 1) - 1, end = limit === undefined ? total : Math.min(total, start + limit);
+  let out = lines.slice(start, end).map(l => l + '\n').join('');
+  if (!ranged || out.length > cap) {
+    let shown = out;
+    if (out.length > cap) { shown = out.slice(0, cap); shown = shown.slice(0, shown.lastIndexOf('\n') + 1) || shown; }
+    const n = shown.split('\n').length - 1 || 1, last = start + n;
+    return shown + `[Truncated: showing lines ${start + 1}-${last} of ${total}. Use offset and limit to read other parts.]`;
+  }
+  return out + (end < total || start > 0 ? `[Showing lines ${start + 1}-${end} of ${total}.]` : '');
+}
+function readRange(args: Args): {offset?: number; limit?: number} {
+  const pick = (k: string) => { const v = args[k]; if (v === undefined) return undefined; if (!Number.isInteger(v) || (v as number) < 1) throw new Error(`${k} must be a positive integer.`); return v as number; };
+  return {offset: pick('offset'), limit: pick('limit')};
+}
 export const AGY_LOCAL_TOOLS: AgyTool[] = [
-  { name:'read_file', description:'Read a UTF-8 file inside this workspace.', inputSchema:schema({path:text},['path']) },
+  { name:'read_file', description:`Read a UTF-8 file inside this workspace. Output is capped at ${AGY_OUTPUT_CAP} characters; for big files pass offset (1-based first line) and limit (number of lines) instead of using cat.`, inputSchema:schema({path:text,offset:{type:'integer',minimum:1,description:'1-based line number to start at.'},limit:{type:'integer',minimum:1,description:'Maximum number of lines to return.'}},['path']) },
   { name:'write_file', description:'Write exact UTF-8 contents to a workspace file. Requires approval unless Full permission is active.', inputSchema:schema({path:text,content:text},['path','content']) },
   { name:'run_command', description:'Run a shell command in this workspace, waiting for completion (maximum 120 seconds). Requires approval unless Full permission is active. Stop cancels its process group.', inputSchema:schema({command:text},['command']) },
 ];
@@ -192,7 +219,7 @@ export class AgyMcpBridge {
           writeFileSync(path,args.content,'utf8'); return 'File written.';
         }
         const stat=statSync(path); if(!stat.isFile()||stat.size>2_000_000)throw new Error('Regular file required (maximum 2 MB).');
-        const output=readFileSync(path,'utf8');return output.slice(0,200_000)+(output.length>200_000?'\n[Truncated at 200000 characters]':'');
+        const {offset,limit}=readRange(args);return sliceFileText(readFileSync(path,'utf8'),offset,limit);
       }
       const target=resolve(this.base,args.path);
       const under=(root:string)=>{const r=relative(root,target);return !!r&&r!=='..'&&!r.startsWith('../')&&!isAbsolute(r);};
@@ -205,6 +232,7 @@ export class AgyMcpBridge {
       if(rel===protectedRel||rel.startsWith(protectedRel+'/'))throw new Error('Protected ACP state.');
       if(this.stopped||epoch!==this.epoch)throw new Error('Tool cancelled.');
       if(name==='write_file'&&(typeof args.content!=='string'||Buffer.byteLength(args.content,'utf8')>2_000_000))throw new Error('File content required (maximum 2 MB).');
+      const rangeArgs=name==='read_file'?readRange(args):undefined;
       verifyAgyFileHelper(this.helperPath, base);
       // openat walks anchored directory FDs, rejects every symlink and never truncates before fstat.
       const output = await new Promise<string>((resolve,reject)=>{
@@ -213,7 +241,7 @@ export class AgyMcpBridge {
         child.stdin?.on("error",()=>{});
         child.stdin?.end(name==='write_file'?args.content as string:undefined);
       });
-      return name==='write_file'?'File written.':output.slice(0,200_000)+(output.length>200_000?'\n[Truncated at 200000 characters]':'');
+      return name==='write_file'?'File written.':sliceFileText(output,rangeArgs?.offset,rangeArgs?.limit);
     }
     if(!agyWorkerRuntimeEnabled() || !this.delegate)throw new Error('Workers unavailable.');
     if(name==='app_handoff' && args.engine!==undefined && args.engine!=='agy')throw new Error('Cross-engine workers unavailable.');
@@ -238,11 +266,13 @@ export class AgyMcpBridge {
     const child=processTreeAdapter().spawn(full ? '/bin/sh' : '/usr/bin/sandbox-exec',full ? ['-c',command] : ['-p',sandbox,'/bin/sh','-c',command],{cwd,env});this.commands.add(child);
     try{if(child.pid>0)this.processStarted?.(child.pid);}catch(error){void child.terminate({graceMs:500});return Promise.reject(error);}
     return new Promise(resolve=>{
-      let output='',ended=false;
-      const capture=(chunk:Buffer)=>{output=(output+chunk.toString()).slice(-100_000);};
+      // Bounded memory: first half of the cap, a rolling tail, and a count of what fell between.
+      const half=Math.floor(AGY_OUTPUT_CAP/2);let head='',tail='',dropped=0,ended=false,note='';
+      const capture=(chunk:Buffer)=>{let s=chunk.toString();if(head.length<half){const take=half-head.length;head+=s.slice(0,take);s=s.slice(take);}tail+=s;if(tail.length>half){dropped+=tail.length-half;tail=tail.slice(-half);}};
+      const result=()=>capHeadTail(head+tail,AGY_OUTPUT_CAP,dropped)+note;
       child.child.stdout.on('data',capture);child.child.stderr.on('data',capture);
-      const timer=setTimeout(()=>{output+='\nCommand timed out.';void child.terminate({graceMs:500});},120_000);
-      const finish=(code:number|null)=>{if(ended)return;ended=true;clearTimeout(timer);void child.terminate({graceMs:500}).finally(()=>{this.commands.delete(child);resolve({exitCode:code,output});});};
+      const timer=setTimeout(()=>{note+='\nCommand timed out.';void child.terminate({graceMs:500});},120_000);
+      const finish=(code:number|null)=>{if(ended)return;ended=true;clearTimeout(timer);void child.terminate({graceMs:500}).finally(()=>{this.commands.delete(child);resolve({exitCode:code,output:result()});});};
       child.child.once('error',()=>finish(null));child.child.once('close',finish);
     });
   }
