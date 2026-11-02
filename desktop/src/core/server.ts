@@ -83,7 +83,6 @@ import { DevBuilds, devWorkRoot, readBuild, spawnInstaller } from "./app-swap";
 export type AppOp = "screenshot" | "quit" | "installRelease";
 export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown }
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
-import { specTrace } from "./spec-trace";
 
 export interface CoreOptions {
   quotaRetriever?: import("./quota").QuotaRetriever;

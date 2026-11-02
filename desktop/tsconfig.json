@@ -19,6 +19,9 @@
       "node"
     ],
     "paths": {
+      "vitest": [
+        "./node_modules/vitest"
+      ],
       "markdown-it": [
         "./node_modules/@types/markdown-it/index.d.mts",
         "./node_modules/markdown-it"
@@ -41,6 +44,8 @@
   "include": [
     "src",
     "test",
+    "spec-adapters",
+    "../spec",
     "*.ts"
   ],
   "//": "Web/src is type-checked here too (the chat frame bundles it); its packages resolve from desktop/node_modules."
