@@ -86,6 +86,8 @@ export interface PluginWorld {
   botId?(botId: string): string | null;
   /** A chat's message decorations changed. */
   decorated?(botId: string): void;
+  /** What the `usage.view` command answers (a fresh quota read first), for `usage.view`; absent: a world without usage (tests, spec adapters). */
+  usageView?(): Promise<unknown>;
   /** An engine's CLI as Botling starts it (null: not here). */
   engineCli?(engine: "claude" | "codex"): EngineCli | null;
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
@@ -775,6 +777,12 @@ export class Plugins {
         if (outcome === "no-bot") throw new Error("No such bot.");
         if (outcome === "bad-schedule") throw new Error("Invalid schedule (it must be the 5 crontab fields).");
         return null;
+      }
+      case "usage.view": {
+        // Read only, for any plugin: what Settings → Usage and the quota rings show, as the `usage.view` command gives it.
+        this.asked(PluginOnly, params);
+        if (!world.usageView) throw new Error("Usage is not available here.");
+        return world.usageView();
       }
       case "workspace.bots":
         this.asked(PluginOnly, params);

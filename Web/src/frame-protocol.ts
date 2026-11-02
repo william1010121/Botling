@@ -15,6 +15,8 @@
 //                                                         asks the user to allow a bot's command: the page around it
 //                                                         shows its own ApprovalSheet; the reply is { allowed }. A
 //                                                         frame can ask, never allow (`ccb.requestApproval`)
+//                  { ccb: "resize", height }              how tall its content is (px), for a frame the page sizes to its content
+//                                                         (a block in Settings or a popover; `panelPage` with `fit`)
 //   page → frame   { ccb: "reply", id, ok, value }        the call's answer, or why it failed
 
 export type FrameRequest =
@@ -22,6 +24,7 @@ export type FrameRequest =
   | { ccb: "command"; id: string; args?: string[] }
   | { ccb: "notify"; text: string }
   | { ccb: "error"; message: string }
+  | { ccb: "resize"; height: number }
   | { ccb: "tile"; id: number; component: string; data: unknown; size: TileSize; botId: string }
   | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string };
 
@@ -32,6 +35,8 @@ export type TileSize = (typeof TILE_SIZES)[number];
 export interface FrameReply { ccb: "reply"; id: number; ok: boolean; value: unknown }
 
 export const METHOD_MAX = 200;
+/** The tallest a frame may ask to be (px). */
+export const RESIZE_MAX = 20_000;
 export const PARAMS_MAX = 1_000_000;
 const COMMAND_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 /** A command's arguments: a few strings (a bot's id, a link). */
@@ -44,6 +49,7 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   command: ["ccb", "id", "args"],
   notify: ["ccb", "text"],
   error: ["ccb", "message"],
+  resize: ["ccb", "height"],
   tile: ["ccb", "id", "component", "data", "size", "botId"],
   approval: ["ccb", "id", "botId", "command", "folder", "card"],
 };
@@ -75,6 +81,8 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
       if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.command, 20_000) || !text(message.folder, 4_000)) return null;
       if (message.card !== undefined && !text(message.card, 200)) return null;
       return { ccb: "approval", id: message.id as number, botId: message.botId, command: message.command, folder: message.folder, ...(message.card !== undefined ? { card: message.card as string } : {}) };
+    case "resize":
+      return typeof message.height === "number" && Number.isFinite(message.height) && message.height >= 0 ? { ccb: "resize", height: Math.min(RESIZE_MAX, Math.ceil(message.height)) } : null;
     default:
       return typeof message.message === "string" ? { ccb: "error", message: message.message } : null;
   }

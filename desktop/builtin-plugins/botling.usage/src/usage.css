@@ -1,0 +1,34 @@
+/* botling.usage's styles: the rules of Settings → Usage and the gear popover's quota cards, as the app's styles.css had them
+   (the tokens, Web/src/tokens.css, are put before these in the frame). */
+.settings-group { margin-top: 14px; }
+.settings-group h3 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 6px 4px; }
+.settings-card { background: var(--side); border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px; }
+.settings-note { color: var(--faint); font-size: 12px; margin: 4px 4px 0; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.settings-row:last-child { border-bottom: 0; }
+.settings-hint { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+.settings-control { display: flex; align-items: center; gap: 8px; }
+.settings-control button { background: var(--chip); border: 0; border-radius: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.usage-number { font-variant-numeric: tabular-nums; }
+.usage-faint { color: var(--muted); font-variant-numeric: tabular-nums; }
+.usage-line { display: flex; gap: 12px; align-items: baseline; }
+.usage-cost { min-width: 72px; text-align: right; }
+.usage-limits { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-variant-numeric: tabular-nums; }
+.usage-stale { color: var(--faint); font-size: 11px; }
+
+/* Subscription quota cards (1.x RateLimitCards). */
+.quick-usage { border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 10px; }
+.quick-usage h3 { font-size: 12px; font-weight: 400; color: var(--faint); margin: 8px 0 6px; }
+.quick-usage-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.quick-usage-cards.single { grid-template-columns: minmax(0, 1fr); }
+.quick-usage-card { display: flex; align-items: center; gap: 8px; padding: 10px 8px; background: #232328; border-radius: 8px; min-width: 0; }
+.quick-usage-ring { position: relative; width: 41px; height: 41px; flex-shrink: 0; display: grid; place-items: center; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.quick-usage-ring svg { position: absolute; inset: 0; width: 41px; height: 41px; transform: rotate(-90deg); }
+.quick-usage-card strong { display: block; font-size: 13px; font-weight: 400; }
+.quick-usage-card small { display: block; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.quick-usage-note { margin: 6px 0 0; font-size: 11px; color: var(--faint); }
+.quick-usage-retry { white-space: nowrap; }
+.quick-usage-note button { border: 0; background: none; color: var(--blue); font: inherit; cursor: pointer; padding: 0 2px; border-radius: 4px; }
+.quick-usage-note button:hover:not(:disabled) { text-decoration: underline; }
+.quick-usage-note button:disabled { color: var(--faint); cursor: default; }
+.quick-usage-note button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }

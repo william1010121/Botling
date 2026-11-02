@@ -9,13 +9,25 @@
 // nothing here.
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").replace(new RegExp("\u2028", "g"), "\\u2028").replace(new RegExp("\u2029", "g"), "\\u2029");
 
-export function panelPage(plugin: string, panel: string, source: string, settings: Record<string, unknown>): string {
+/**
+ * `fit`: the frame is a block of the app page's own (a page of Settings, a block in the gear's popover), not a panel:
+ * no padding or background of its own, the app's text size, and its height told to the page (`resize`) as its content changes.
+ */
+export interface PanelFit { fontSize: number }
+
+export function panelPage(plugin: string, panel: string, source: string, settings: Record<string, unknown>, fit?: PanelFit): string {
+  const look = fit
+    ? `html, body { margin: 0; background: transparent; color: #EDEDF0; font: ${Math.round(fit.fontSize)}px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  * { box-sizing: border-box; }
+  #panel-root { display: flow-root; overflow-wrap: anywhere; }
+  button { font: inherit; color: inherit; }`
+    : `html, body { margin: 0; background: #1B1B1F; color: #EDEDF0; font: 13px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif; }
+  #panel-root { padding: 12px; overflow-wrap: anywhere; }`;
   return `<!doctype html>
 <html data-surface="panel"><head><meta charset="utf-8">
 <style>
   :root { color-scheme: dark; }
-  html, body { margin: 0; background: #1B1B1F; color: #EDEDF0; font: 13px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif; }
-  #panel-root { padding: 12px; overflow-wrap: anywhere; }
+  ${look}
   pre { white-space: pre-wrap; }
   .panel-empty, .panel-failed { color: #8E8E96; }
   .panel-failed { color: #FF8A80; }
@@ -24,6 +36,7 @@ export function panelPage(plugin: string, panel: string, source: string, setting
 <script type="module">
 const NAME = ${json(plugin)}, PANEL = ${json(panel)}, SOURCE = ${json(source)};
 let SETTINGS = ${json(settings)};
+const FIT = ${json(!!fit)};
 const root = document.getElementById("panel-root");
 const post = (message) => parent.postMessage(message, "*");
 const waiting = new Map();
@@ -99,6 +112,12 @@ const ccb = {
   components: { register: nothing },
   codemirror: {},
 };
+if (FIT && typeof ResizeObserver === "function") {
+  let last = -1;
+  const tell = () => { const height = Math.ceil(root.getBoundingClientRect().height); if (height !== last) { last = height; post({ ccb: "resize", height }); } };
+  new ResizeObserver(tell).observe(root);
+  tell();
+}
 try {
   const url = URL.createObjectURL(new Blob([SOURCE], { type: "text/javascript" }));
   const module = await import(url);

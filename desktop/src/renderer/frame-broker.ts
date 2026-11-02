@@ -105,10 +105,12 @@ export interface PluginFrame {
   plugin: string;
   onNotice?(text: string): void;
   onError?(message: string): void;
+  /** How tall its content is (px); a frame sized to its content (`panelPage` with `fit`) says so. */
+  onResize?(height: number): void;
 }
 
 /** Hears a plugin's frame; who it is comes from here, never from its messages. */
-export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, { frame, plugin, onNotice, onError }: PluginFrame): () => void {
+export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, { frame, plugin, onNotice, onError, onResize }: PluginFrame): () => void {
   const target: FrameTarget = {
     frame,
     label: plugin,
@@ -154,6 +156,9 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
         }
         case "notify":
           onNotice?.(message.text.slice(0, 400));
+          return;
+        case "resize":
+          onResize?.(message.height);
           return;
         case "error":
           onError?.(message.message.slice(0, 400));

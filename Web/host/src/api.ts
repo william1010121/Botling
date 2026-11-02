@@ -116,6 +116,31 @@ export interface WorkspaceApi {
   onChange(fn: (change: WorkspaceChange) => void): Dispose;
 }
 
+// ── Usage: what Settings → Usage and the quota rings show, for any plugin, read only ──
+export interface UsageLimitWindow { used: number; resetsAt: number | null; seen: number }
+export interface UsageLimits { fiveHour: UsageLimitWindow | null; week: UsageLimitWindow | null }
+export type UsageQuotaStatus = "available" | "missing" | "auth_required" | "token_expired" | "auth_rejected" | "forbidden" | "timeout" | "network_error" | "invalid_response" | "cli_unavailable";
+/** One of Antigravity's quota buckets; groups and windows are the provider's own. */
+export interface AntigravityBucket { group: string; label: string; remainingFraction?: number; remainingAmount?: string; resetsAt?: number; disabled?: boolean }
+export type AntigravityQuota =
+  | { status: "available"; source: "antigravity_acp"; seen: number; buckets: AntigravityBucket[] }
+  | { status: "unavailable" | "error"; source: "antigravity_acp"; reason: "unsupported_connection" | "no_connection" | "busy" | "missing_data" | "request_failed" | "invalid_response"; lastKnown?: { seen: number; buckets: AntigravityBucket[] } };
+export interface UsageTokens { input: number; output: number; cacheWrite: number; cacheRead: number }
+/** What the bots used today, by bot, the days before and each CLI's subscription limits (the `usage.view` command's answer; times are ms since 1970). */
+export interface UsageView {
+  antigravity?: AntigravityQuota;
+  quotaStatus?: { claude: UsageQuotaStatus; codex: UsageQuotaStatus };
+  spendingStatus: "available" | "missing" | "unreadable";
+  day: string; spent: number; tokens: UsageTokens;
+  byBot: { name: string; spent: number; tokens: number; breakdown?: UsageTokens | null }[];
+  history: { day: string; spent: number; tokens: number }[];
+  claude: UsageLimits; codex: UsageLimits;
+}
+export interface UsageApi {
+  /** The usage now: the core reads the CLIs' quota first (at most about once a minute), then answers. */
+  view(): Promise<UsageView>;
+}
+
 export interface BotlingApi {
   /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
   readonly plugin: { name: string; version: string; dir: string; storageDir: string; appDataDir?: string };
@@ -164,6 +189,7 @@ export interface BotlingApi {
   };
   routines: { add(botId: string, cron: string, task: string): Promise<void> };
   workspace: WorkspaceApi;
+  usage: UsageApi;
   /** The tags this plugin declared in its manifest (`replyTags`), from bots' replies. */
   replyTags: { on(tag: string, fn: (tag: ReplyTag) => void): Dispose };
   approvals: {
@@ -371,6 +397,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     routines: {
       add: async (botId, cron, task) => { await ask("routines.add", { bot: botId, cron, task }); },
     },
+    usage: { view: async () => (await ask("usage.view")) as UsageView },
     workspace: {
       bots: async () => (await ask("workspace.bots")) as BotSummary[],
       memory: async (botId) => (await ask("workspace.memory", { bot: botId })) as never,

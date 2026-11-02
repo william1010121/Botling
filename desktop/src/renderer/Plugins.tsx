@@ -7,7 +7,7 @@ import type { BotView, ComponentInfoView, PluginView, PluginsView } from "../con
 import { Client, RequestFailed } from "./client";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import type { BuiltinCommand } from "../../../Web/src/frame-protocol";
-import { panelPage } from "./panel-page";
+import { panelPage, type PanelFit } from "./panel-page";
 import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -143,11 +143,12 @@ export interface FrameServices { components?: Record<string, ComponentInfoView>;
  * A plugin view's sandboxed frame: its page made from the web part, its calls to its own program part, its commands,
  * its tiles and approval asks (answered here; only this page's ApprovalSheet allows).
  */
-function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner, services: FrameServices = {}) {
+function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner, services: FrameServices = {}, fit?: PanelFit) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [height, setHeight] = useState(0);
   // Read through a ref, so a new handler does not register the frame again.
   const builtin = useRef(onBuiltin);
   builtin.current = onBuiltin;
@@ -157,7 +158,7 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
   useEffect(() => {
     let live = true;
     client.request({ type: "plugins.panel", name: plugin, panel })
-      .then((part) => client.request({ type: "card.page", html: panelPage(plugin, panel, part.source, part.settings), panel: true }))
+      .then((part) => client.request({ type: "card.page", html: panelPage(plugin, panel, part.source, part.settings, fit), panel: true }))
       .then((page) => { if (live) setUrl(page.url); }, (failure) => { if (live) setProblem(why(failure)); });
     return () => { live = false; };
   }, [client, plugin, panel]);
@@ -178,9 +179,10 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
       plugin,
       onNotice: (text) => setNote(text),
       onError: (message) => setNote(`The panel failed: ${message}`),
+      ...(fit ? { onResize: setHeight } : {}),
     });
-  }, [client, plugin, url, runsBuiltins]);
-  return { frame, url, problem, note };
+  }, [client, plugin, url, runsBuiltins, !!fit]);
+  return { frame, url, problem, note, height };
 }
 
 /** A plugin's panel: its web part in a sandboxed frame; its `host.call`s go to its own program part. */
@@ -207,6 +209,21 @@ export function MainTabFrame({ client, plugin, view, title, onBuiltin, ...servic
       {problem && <p className="plugins-problem">{problem}</p>}
       {note && <p className="plugins-result" role="status">{note}</p>}
       {url && <iframe ref={frame} className="main-tab-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={url} title={title} />}
+    </div>
+  );
+}
+
+/**
+ * A plugin's block inside the app page's own surface (`settings.section`, `quickSettings`): the same sandboxed frame,
+ * as tall as its content (the frame says so) and without a border or background, so it reads as part of the page.
+ */
+export function SlotFrame({ client, plugin, view, title, fontSize, ...services }: { client: Client; plugin: string; view: string; title: string; fontSize: number } & FrameServices) {
+  const { frame, url, problem, note, height } = usePluginFrame(client, plugin, view, undefined, services, { fontSize });
+  return (
+    <div className="plugin-slot" data-plugin={plugin} data-view={view}>
+      {problem && <p className="plugins-problem">{problem}</p>}
+      {note && <p className="plugins-result" role="status">{note}</p>}
+      {url && <iframe ref={frame} className="plugin-slot-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={url} title={title} style={{ height }} />}
     </div>
   );
 }

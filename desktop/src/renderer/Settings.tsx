@@ -1,5 +1,3 @@
-import { useUsageRefresh } from "./QuickSettingsUsage";
-import { AntigravityQuota } from "./AntigravityQuota";
 import { ModelPicker, SummaryModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
@@ -13,11 +11,10 @@ import { UpdateActions } from "./Updates";
 // choices (its bot.json) are `BotSettings`, in the right panel one level in, as in 1.x. Each
 // control shows what the core saved: a change goes out, the answer (or `settings.updated`) comes back.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView, UsageView } from "../contract";
-import { asOf, countdown, dollars, isEmpty, percent, resetDay, staleSince, tokenCount, type Limits } from "./usage-text";
+import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView } from "../contract";
 import { MESSAGE_WIDTH_DEFAULT, MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX } from "../contract/message-width";
 import { Client, RequestFailed } from "./client";
-import { PanelFrame, PluginsPanel } from "./Plugins";
+import { PanelFrame, PluginsPanel, SlotFrame } from "./Plugins";
 import { faceURL } from "./avatars";
 import { EFFORTS_BY_ENGINE } from "../contract/efforts";
 import { FIXED_SHORTCUTS, SHORTCUTS, bindingsFor, comboFromEvent, findConflict, formatCombo, normalizeOverrides, pluginBindings, resetBinding, setBinding, type Conflict } from "../contract/shortcuts";
@@ -27,13 +24,14 @@ import type { Key } from "../../../Web/src/locales/en";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-export type SettingsSection = "general" | "appearance" | "engines" | "usage" | "permissions" | "plugins" | "doctor" | "updates" | "shortcuts" | "phone" | "developer";
+type CoreSection = "general" | "appearance" | "engines" | "permissions" | "plugins" | "doctor" | "updates" | "shortcuts" | "phone" | "developer";
+/** A page of Settings: a core one, or a plugin's (`settings.section` view: "<plugin>/<view id>"). */
+export type SettingsSection = CoreSection | `${string}/${string}`;
 type Section = SettingsSection;
-const SECTIONS: { id: Section; title: string; terms: string }[] = [
+const SECTIONS: { id: CoreSection; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
   { id: "engines", title: "Engines and subagents", terms: "default engines models primary recipient apply all bots reasoning effort thinking antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast component editor" },
-  { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
   { id: "doctor", title: "Doctor", terms: "command-line tools claude codex antigravity install version login sign in check health" },
@@ -42,6 +40,18 @@ const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "phone", title: "Phone", terms: "phone mobile pair pairing qr code scan devices revoke route lan tailscale tunnel 手機 配對 撤銷" },
   { id: "developer", title: "Developer", terms: "developer mode source project feedback not right worktree worktrees git branch" },
 ];
+
+type Page = { id: Section; title: string; terms: string; plugin?: string; view?: string };
+/** The core pages with the plugins' (`settings.section` views) placed after the page each names (the end when it names none here). */
+function withPluginSections(plugins: PluginsView | null): Page[] {
+  const pages: Page[] = [...SECTIONS];
+  for (const entry of plugins?.settingsSections ?? []) {
+    const page: Page = { id: `${entry.plugin}/${entry.id}`, title: entry.title, terms: entry.terms, plugin: entry.plugin, view: entry.id };
+    const at = entry.after ? pages.findIndex((candidate) => candidate.id === entry.after) : -1;
+    pages.splice(at === -1 ? pages.length : at + 1, 0, page);
+  }
+  return pages;
+}
 
 const LANGUAGES: { id: SettingsView["language"]; label: string }[] = [
   { id: null, label: "System default" }, { id: "en", label: "English" }, { id: "zh-Hant", label: "繁體中文" },
@@ -85,8 +95,8 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
   }, [onClose]);
   const sections = useMemo(() => {
     const words = search.trim().toLowerCase();
-    return SECTIONS.filter((entry) => (!words || `${entry.title} ${entry.terms}`.toLowerCase().includes(words)));
-  }, [search]);
+    return withPluginSections(plugins).filter((entry) => (!words || `${entry.title} ${entry.terms}`.toLowerCase().includes(words)));
+  }, [search, plugins]);
   const current = sections.find((entry) => entry.id === section) ?? sections[0];
   return (
     <ShellOverlay><div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -109,7 +119,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {shown && current?.id === "general" && <General client={client} settings={shown} change={change} bot={bot} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} plugins={plugins} onProblem={setProblem} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
             {shown && current?.id === "engines" && <Engines client={client} settings={shown} change={change} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} botCount={bots.length} />}
-            {current?.id === "usage" && <Usage client={client} />}
+            {current?.plugin && <SlotFrame key={current.id} client={client} plugin={current.plugin} view={current.view ?? current.id} title={current.title} fontSize={15} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
             {current?.id === "doctor" && <DoctorSection client={client} />}
@@ -122,75 +132,6 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
         </section>
       </div>
     </div></ShellOverlay>
-  );
-}
-
-/**
- * Settings → Usage (1.x's usage page, Phase 5c): cost and tokens today, the subscriptions' limits as Claude and
- * Codex last reported them (they come with bots' turns only), by bot, and the days before. Read again each minute.
- */
-function Usage({ client }: { client: Client }) {
-  const {usage, now, loading, failed, retry} = useUsageRefresh(client);
-  const tokens = usage?.tokens;
-  const available = usage?.spendingStatus === "available";
-  return (
-    <>
-      {loading && !usage && <p className="settings-note" role="status">Loading usage…</p>}
-      {failed && <div className="settings-note" role="alert">
-        Usage is unavailable.{" "}
-        <button type="button" disabled={loading} onClick={retry}>Retry</button>
-      </div>}
-      {usage && <>
-        <Group title="Usage today" note={available && tokens
-          ? `${usage.day === localDay(now) ? "" : `${usage.day} · `}In ${tokenCount(tokens.input)} · out ${tokenCount(tokens.output)} · cache write ${tokenCount(tokens.cacheWrite)} · cache read ${tokenCount(tokens.cacheRead)}`
-          : undefined}>
-          {available && tokens ? <>
-            <Row label="Cost"><span className="usage-number">{dollars(usage.spent)}</span></Row>
-            <Row label="Tokens"><span className="usage-number">{tokenCount(tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead)}</span></Row>
-          </> : <Row label="Recorded usage is unavailable." />}
-        </Group>
-        <Group title="Subscription limits">
-          <LimitRow name="Claude" limits={usage.claude} now={now} />
-          <LimitRow name="Codex" limits={usage.codex} now={now} />
-          <Row label="Antigravity">
-            <AntigravityQuota quota={usage.antigravity} failed={failed} loading={loading} onRetry={retry} />
-          </Row>
-        </Group>
-        {available && <Group title="By bot">
-          {!usage.byBot.length && <Row label="No bot has used anything today." />}
-          {usage.byBot.map((bot) => <UsageRow key={bot.name} name={bot.name} spent={bot.spent} tokens={bot.tokens} />)}
-        </Group>}
-        {available && usage.history.length > 0 && <Group title="Earlier days">
-          {[...usage.history].reverse().map((day) => <UsageRow key={day.day} name={day.day} spent={day.spent} tokens={day.tokens} />)}
-        </Group>}
-      </>}
-    </>
-  );
-}
-
-/** "2026-10-26": the local day, as the spending record names it. */
-const localDay = (ms: number) => { const date = new Date(ms); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
-
-function UsageRow({ name, spent, tokens }: { name: string; spent: number; tokens: number }) {
-  return (
-    <Row label={name}>
-      <span className="usage-line"><span className="usage-faint">{tokenCount(tokens)} tokens</span><span className="usage-number usage-cost">{dollars(spent)}</span></span>
-    </Row>
-  );
-}
-
-/** One subscription's 5-hour and weekly use, with when each starts over (1.x's LimitRow). */
-function LimitRow({ name, limits, now }: { name: string; limits: Limits; now: number }) {
-  const since = staleSince(limits, now);
-  return (
-    <Row label={name}>
-      <span className="usage-limits" aria-label={`${name} limits`}>
-        {isEmpty(limits) && <span className="usage-faint">no data</span>}
-        {limits.fiveHour && <span>5 hours {percent(limits.fiveHour, now)} · {countdown(limits.fiveHour, now)}</span>}
-        {limits.week && <span className="usage-faint">Week {percent(limits.week, now)} · {resetDay(limits.week, now)}</span>}
-        {since !== null && <span className="usage-stale">{asOf(since, now)}</span>}
-      </span>
-    </Row>
   );
 }
 

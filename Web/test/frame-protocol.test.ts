@@ -37,6 +37,13 @@ describe("the frame protocol", () => {
     expect(parseFrameRequest({ ccb: "approval", id: 9, botId: "B1", command: "git log", folder: "/p", card: 3 })).toBeNull();
   });
 
+  it("reads a resize (how tall the content is), rounded up and capped; a bad height is not a request", () => {
+    expect(parseFrameRequest({ ccb: "resize", height: 120.2 })).toEqual({ ccb: "resize", height: 121 });
+    expect(parseFrameRequest({ ccb: "resize", height: 1e9 })).toEqual({ ccb: "resize", height: 20_000 });
+    for (const height of [-1, NaN, Infinity, "12", null]) expect(parseFrameRequest({ ccb: "resize", height })).toBeNull();
+    expect(parseFrameRequest({ ccb: "resize", height: 5, plugin: "other" })).toBeNull();
+  });
+
   it("parameters must be JSON and not too big", () => {
     expect(frameParams({ a: [1, "b", null] })).toEqual({ ok: true, value: { a: [1, "b", null] } });
     expect(frameParams(undefined)).toEqual({ ok: true, value: null });

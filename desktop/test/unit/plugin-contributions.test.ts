@@ -182,6 +182,25 @@ describe("botling manifests", () => {
     ]);
   });
 
+  it("a view can be a page of Settings (with the words its search finds it by, the core page it follows and the popover link that opens it) or a block in the gear popover", () => {
+    const read = readManifest({ name: "meter", version: "1.0.0", botling: { ui: "ui.js", contributes: { views: [
+      { id: "meter.page", title: "Meter", where: "settings.section", terms: "quota rings", after: "engines", link: "Meter by bot" },
+      { id: "meter.plain", title: "Plain", where: "settings.section" },
+      { id: "meter.rings", title: "Rings", where: "quickSettings" },
+      { id: "meter.odd", title: "Odd", where: "quickSettings", terms: "nope" },
+      { id: "meter.side", title: "Side", where: "rightPanel", after: "engines" },
+    ] } } }, empty);
+    expect(ofKind(read.contributions, "view")).toEqual([
+      { kind: "view", plugin: "meter", id: "meter.page", title: "Meter", where: "settings.section", terms: "quota rings", after: "engines", link: "Meter by bot" },
+      { kind: "view", plugin: "meter", id: "meter.plain", title: "Plain", where: "settings.section" },
+      { kind: "view", plugin: "meter", id: "meter.rings", title: "Rings", where: "quickSettings" },
+    ]);
+    expect(read.problems).toEqual([
+      'View "meter.odd": terms, after and link are only for where "settings.section".',
+      'View "meter.side": terms, after and link are only for where "settings.section".',
+    ]);
+  });
+
   it("status items, menus, hooks, routines and agent folders", () => {
     const read = readManifest({ name: "up", version: "1.0.0", botling: { activation: "startup", contributes: {
       commands: [{ id: "up.report", title: "Report" }],
@@ -219,7 +238,7 @@ describe("botling manifests", () => {
       'Command "other.steal" must start with "mine.".',
       'Command "mine.ok" is declared twice.',
       "contributes.commands.3 is missing id.",
-      'View "mine.v": where "sidebar" must be rightPanel, main, window or mainTab.',
+      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section or quickSettings.',
       'Tile "mine.t": size "9x9" is not a Board size (for example 2x1).',
       'Setting "on" must start with "mine.".',
       'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette.',

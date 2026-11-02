@@ -931,6 +931,10 @@ export const PluginsView = z.strictObject({
   menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200) })).max(200).optional(),
   /** Plugin views that are tabs beside Chat / Board (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
   mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "any"]) })).max(50).optional(),
+  /** Plugin views that are pages of Settings (`where: "settings.section"`): `after` names the core page it follows, `link` the sidebar popover's link that opens it. */
+  settingsSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), terms: z.string().max(1_000), after: z.string().max(40).optional(), link: z.string().max(100).optional() })).max(20).optional(),
+  /** Plugin views that are blocks in the sidebar gear's popover (`where: "quickSettings"`). */
+  quickSettings: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(10).optional(),
 });
 export type PluginsView = z.infer<typeof PluginsView>;
 

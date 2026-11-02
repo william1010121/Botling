@@ -2,9 +2,9 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EventEnvelope, UsageView } from "../../src/contract";
-import type { Client } from "../../src/renderer/client";
-import { SidebarSettings } from "../../src/renderer/SidebarSettings";
+import type { UsageView } from "../../../../Web/host/src/api";
+import { QuickUsage } from "../src/QuickUsage";
+import type { UsageSource } from "../src/usage-session";
 
 const now = new Date(2026, 9, 26, 12).getTime();
 const limits = (): UsageView => ({
@@ -25,31 +25,28 @@ afterEach(async () => {
 });
 
 async function mount(request = vi.fn(async () => limits())) {
-  let listener: ((event: EventEnvelope) => void) | null = null;
+  let listener: (() => void) | null = null;
   const off = vi.fn();
-  const client = { request, onEvent: vi.fn(fn => { listener = fn; return off; }) } as unknown as Client;
-  await act(async () => root.render(createElement(SidebarSettings, {
-    client, settings: null, plugins: null, settingsOpen: false, onOpen() {},
-  })));
-  const toggle = async () => act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Quick settings"]')!.click());
-  const finished = async () => act(async () => listener?.({ event: { type: "turn.finished" } } as EventEnvelope));
+  const source: UsageSource = { view: request, onTurnFinished: vi.fn(fn => { listener = fn; return off; }) };
+  let open = false;
+  // The popover opening and closing: the block is drawn while it is open.
+  const toggle = async () => { open = !open; await act(async () => root.render(open ? createElement(QuickUsage, { source }) : null)); };
+  const finished = async () => act(async () => listener?.());
   const cards = () => [...host.querySelectorAll<HTMLElement>(".quick-usage-card")].filter(card => !card.closest('[aria-label="Antigravity quota"]'));
   return { toggle, finished, cards, request, off };
 }
 
-describe("quota readings in the production Quick settings popup", () => {
+describe("quota readings in the gear popover", () => {
   it("loads on open and shows exactly Claude 5-hour/week and Codex week, independent of spending", async () => {
     const ui = await mount();
     expect(ui.request).not.toHaveBeenCalled();
     await ui.toggle();
-    expect(ui.request).toHaveBeenCalledWith({ type: "usage.view" });
+    expect(ui.request).toHaveBeenCalledOnce();
     expect(ui.cards().map(card => card.getAttribute("aria-label"))).toEqual([
       expect.stringContaining("Claude 5 hours limit, 42% used, in 1m"),
       expect.stringContaining("Claude Week limit, 18% used"),
       expect.stringContaining("Codex Week limit, 31% used"),
     ]);
-    expect(host.textContent).toContain("Develop Botling itself");
-    expect(host.textContent).toContain("Usage by bot");
     expect(host.textContent).not.toContain("99%");
     expect(host.querySelectorAll('[role="status"]')).toHaveLength(0);
     expect(host.textContent).not.toContain("Last-known");
@@ -241,30 +238,6 @@ it("shows loading, failure, retry, then unavailable for Antigravity", async () =
   expect(ui.cards()[0].textContent).toContain("42%");
 });
 
-
-it("repositions the popup when asynchronous quota status changes its height", async () => {
-  let resize!: () => void;
-  const disconnect = vi.fn();
-  vi.stubGlobal("ResizeObserver", class {
-    constructor(callback: () => void) { resize = callback; }
-    observe() {} disconnect = disconnect;
-  });
-  let height = 300;
-  const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    return { top: this.classList.contains("strip-gear") ? 700 : 0, left: 24, right: 48,
-      width: 300, height: this.classList.contains("sidebar-settings-popover") ? height : 24 } as DOMRect;
-  });
-  try {
-    const ui = await mount(); await ui.toggle();
-    const popup = () => host.querySelector<HTMLElement>(".sidebar-settings-popover")!;
-    expect(popup().style.top).toBe("392px");
-    height = 500;
-    await act(async () => resize());
-    expect(popup().style.top).toBe("192px");
-    await ui.toggle();
-    expect(disconnect).toHaveBeenCalledOnce();
-  } finally { rect.mockRestore(); vi.unstubAllGlobals(); }
-});
 
 it("renders only the Gemini quota as used-percent cards, converting what remains", async () => {
   const value = limits();

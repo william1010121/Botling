@@ -14,9 +14,9 @@ export function QuotaCard({ engine, title, window, now, weekly = false, lastKnow
   return <div className="quick-usage-card" role="group" aria-label={`${engine} ${title} limit, ${window ? `${value} used` : unavailable}${detail ? `, ${detail}` : ""}`}>
     <span className="quick-usage-ring" aria-hidden="true">
       <svg viewBox="0 0 41 41" fill="none">
-        <circle cx="20.5" cy="20.5" r="18" stroke="var(--chip)" strokeWidth="5" />
+        <circle cx="20.5" cy="20.5" r="18" stroke="var(--chip)" style={{ strokeWidth: "5" }} />
         {used !== null && <circle cx="20.5" cy="20.5" r="18" pathLength="1" stroke={used >= 0.8 ? "var(--orange)" : "var(--blue)"}
-          strokeWidth="5" strokeLinecap="round" strokeDasharray={`${used} 1`} />}
+          style={{ strokeWidth: "5", strokeLinecap: "round", strokeDasharray: `${used} 1` }} />}
       </svg>
       <span>{value}</span>
     </span>

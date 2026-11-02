@@ -1,0 +1,32 @@
+{
+  "name": "botling.usage",
+  "displayName": "Usage",
+  "version": "1.0.0",
+  "description": "What the bots used: the subscription quota rings in the sidebar gear's popover (Claude, Codex, Antigravity) and Settings → Usage (cost and tokens today, limits, by bot, earlier days). The numbers are read by Botling; this plugin only shows them.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "web": "ui.js",
+    "host": "main.js",
+    "contributes": {
+      "views": [
+        {
+          "id": "botling.usage.quota",
+          "title": "Subscription usage",
+          "where": "quickSettings"
+        },
+        {
+          "id": "botling.usage.settings",
+          "title": "Usage",
+          "where": "settings.section",
+          "after": "engines",
+          "terms": "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity",
+          "link": "Usage by bot"
+        }
+      ]
+    }
+  }
+}

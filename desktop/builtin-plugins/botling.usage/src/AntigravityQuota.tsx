@@ -1,4 +1,4 @@
-import type { AntigravityQuotaView } from "../contract";
+import type { AntigravityQuota as AntigravityQuotaView } from "../../../../Web/host/src/api";
 import { QuotaCard } from "./QuotaCard";
 import { asOf, STALE_AFTER_MS, type LimitWindow } from "./usage-text";
 

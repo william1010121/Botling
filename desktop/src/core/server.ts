@@ -342,6 +342,7 @@ export class Core {
         },
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
         log: (line) => this.log(line),
+        usageView: async () => { await this.usage.refresh(); return usageView(this.usage.view()); },
         workspace: this.workspaceSource(),
         workspaceWatch: (on) => this.watchWorkspace(on),
       },

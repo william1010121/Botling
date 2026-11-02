@@ -17,7 +17,8 @@ export interface FolderView {
   list(path: string): string[];
 }
 
-export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab"] as const;
+/** `settings.section`: a page of Settings (a sandboxed frame in its body); `quickSettings`: a block in the sidebar gear's popover. */
+export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings"] as const;
 /** Which bots' chat headers a `mainTab` view is a tab in (a fixed field, not a when-clause): "project" is a project bot. */
 export const VIEW_ROLES = ["main", "project", "any"] as const;
 export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;
@@ -55,7 +56,8 @@ export type Contribution = { plugin: string } & (
   | { kind: "keybinding"; command: string; key: string }
   /** Without `command` the name goes into the message as words, which the bots' rules read (`/design`). */
   | { kind: "slash"; name: string; about: string; command?: string }
-  | { kind: "view"; id: string; title: string; icon?: string; where: ViewSlot; forRole?: ViewRole }
+  /** `terms`, `after` and `link` are for `settings.section`: the words its search finds it by, the core page it follows, and the popover's link that opens it. */
+  | { kind: "view"; id: string; title: string; icon?: string; where: ViewSlot; forRole?: ViewRole; terms?: string; after?: string; link?: string }
   | { kind: "tile"; id: string; title: string; sizes: string[]; surfaces: TileSurface[]; component?: ComponentRef }
   | { kind: "card"; id: string; title: string; component?: ComponentRef }
   | { kind: "statusItem"; id: string; where: (typeof STATUS_SLOTS)[number] }
@@ -141,14 +143,18 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
     if (f) out.push({ kind: "slash", plugin, name: f.name, about: f.about, ...(f.command !== undefined ? { command: f.command } : {}) });
   });
   for (const key of ["panels", "views"]) list(key).forEach((entry, index) => {
-    const f = fields(entry, `contributes.${key}.${index}`, ["id", "title", "icon?", "where?", "forRole?"]);
+    const f = fields(entry, `contributes.${key}.${index}`, ["id", "title", "icon?", "where?", "forRole?", "terms?", "after?", "link?"]);
     if (!f) return;
     const where = oneOf(VIEW_SLOTS, f.where, "rightPanel");
     if (!where) { problems.push(`View "${f.id}": where "${f.where}" must be ${named(VIEW_SLOTS)}.`); return; }
     if (where !== "mainTab" && f.forRole !== undefined) { problems.push(`View "${f.id}": forRole is only for where "mainTab".`); return; }
     const forRole = where === "mainTab" ? oneOf(VIEW_ROLES, f.forRole, "any") : null;
     if (where === "mainTab" && !forRole) { problems.push(`View "${f.id}": forRole "${f.forRole}" must be ${named(VIEW_ROLES)}.`); return; }
-    if (ownId("View", f.id)) out.push({ kind: "view", plugin, id: f.id, title: f.title, ...(f.icon !== undefined ? { icon: f.icon } : {}), where, ...(forRole ? { forRole } : {}) });
+    if (where !== "settings.section" && (f.terms !== undefined || f.after !== undefined || f.link !== undefined)) { problems.push(`View "${f.id}": terms, after and link are only for where "settings.section".`); return; }
+    if (ownId("View", f.id)) out.push({
+      kind: "view", plugin, id: f.id, title: f.title, ...(f.icon !== undefined ? { icon: f.icon } : {}), where, ...(forRole ? { forRole } : {}),
+      ...(f.terms !== undefined ? { terms: f.terms } : {}), ...(f.after !== undefined ? { after: f.after } : {}), ...(f.link !== undefined ? { link: f.link } : {}),
+    });
   });
   list("tiles").forEach((entry, index) => {
     const f = fields(entry, `contributes.tiles.${index}`, ["id", "title"]);

@@ -31,6 +31,7 @@ function fakeWorld() {
     watching: [] as boolean[],
     approved: [] as string[],
     decorated: [] as string[],
+    usageReads: 0,
   };
   const settings = { language: "en", botLook: "cute", workerLimit: 4 };
   const overrides: Record<string, string> = { settings: "Mod+Shift+P" };
@@ -55,6 +56,7 @@ function fakeWorld() {
     chat: (botId, limit) => (botId === "main" ? { botId: "main", name: "Main bot", unread: 2, messages: [{ id: "L1", role: "bot", text: "hi", date: 1 }].slice(-limit), tasks: [] } : null),
     botId: (botId) => (botId === "main" ? "MAIN-ID" : null),
     decorated: (botId) => { log.decorated.push(botId); },
+    usageView: async () => { log.usageReads += 1; return { day: "2026-11-02", spent: 1.5 } as never; },
     engineCli: (engine) => (engine === "codex" ? { file: "/bin/codex", args: [], env: {} } : null),
     changed: () => {},
     broken: () => {},
@@ -375,6 +377,17 @@ describe("Host API v3 in the core (plan M5)", () => {
     answerLoad!();
     await until(() => plugins.host.running);
     expect(sent.filter((m) => m.method === "event")).toEqual([{ method: "event", params: { name: "chatRead", data: { botId: "main", unread: 5, through: "L9" } } }]);
+  });
+});
+
+describe("usage for plugins", () => {
+  it("answers usage.view with what the core reads (the same as the usage.view command), for any loaded plugin", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "meter");
+    const { ask, log } = await setup(dir);
+    expect(await ask("usage.view", { plugin: "meter" })).toEqual({ day: "2026-11-02", spent: 1.5 });
+    expect(log.usageReads).toBe(1);
+    await expect(ask("usage.view", { plugin: "ghost" })).rejects.toThrow("not running");
   });
 });
 

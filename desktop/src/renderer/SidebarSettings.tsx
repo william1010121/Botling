@@ -6,7 +6,7 @@ import type { DoctorView, PluginsView, SettingsView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import type { SettingsSection } from "./Settings";
 import { Icon } from "./icons";
-import { QuickSettingsUsage } from "./QuickSettingsUsage";
+import { SlotFrame } from "./Plugins";
 
 export function SidebarSettings({ client, settings, plugins, doctor, compact = false, settingsOpen, onOpen }: {
   client: Client; settings: SettingsView | null; plugins: PluginsView | null; compact?: boolean;
@@ -79,7 +79,7 @@ export function SidebarSettings({ client, settings, plugins, doctor, compact = f
       </button>
       {open && <ShellOverlay revealImmediately><div ref={panel} id={id} className="sidebar-settings-popover" role="dialog" aria-label="Quick settings" style={position}>
         <header><strong>Quick settings</strong><button type="button" aria-label="Close quick settings" onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button></header>
-        <QuickSettingsUsage client={client} />
+        {(plugins?.quickSettings ?? []).map((block) => <SlotFrame key={`${block.plugin}/${block.id}`} client={client} plugin={block.plugin} view={block.id} title={block.title} fontSize={14} />)}
         <label className="sidebar-settings-switch">
           <span>Develop Botling itself</span>
           <input type="checkbox" role="switch" aria-label="Develop Botling itself" checked={shown?.developerMode ?? false} disabled={!shown || saving}
@@ -89,7 +89,7 @@ export function SidebarSettings({ client, settings, plugins, doctor, compact = f
         <div className="sidebar-settings-links">
           {doctor?.needsAttention && <button type="button" style={{ color: "var(--error)" }} onClick={() => openSection("doctor")}>Claude Code needs attention<span>Doctor ›</span></button>}
           <button type="button" aria-label="Plugins" onClick={() => openSection("plugins")}><span>Plugins</span><span aria-hidden="true">{plugins ? `${plugins.plugins.filter(plugin => plugin.enabled).length} on` : "›"}</span></button>
-          <button type="button" onClick={() => openSection("usage")}>Usage by bot<span aria-hidden="true">›</span></button>
+          {(plugins?.settingsSections ?? []).filter((page) => page.link).map((page) => <button key={`${page.plugin}/${page.id}`} type="button" onClick={() => openSection(`${page.plugin}/${page.id}`)}>{page.link}<span aria-hidden="true">›</span></button>)}
           <button type="button" onClick={() => openSection("developer")}>Developer settings…<span aria-hidden="true">›</span></button>
           <button type="button" className="all-settings" onClick={() => openSection()}>All settings…<span aria-hidden="true">{shortcutLabel("settings")}</span></button>
         </div>

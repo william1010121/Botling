@@ -2,12 +2,11 @@
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
-import { AntigravityQuota } from '../../src/renderer/AntigravityQuota';
-import { SettingsSheet } from '../../src/renderer/Settings';
-import { settingsView } from '../../src/core/settings';
-import { QuickSettingsUsage } from '../../src/renderer/QuickSettingsUsage';
-import type { Client } from '../../src/renderer/client';
-import type { AntigravityQuotaView } from '../../src/contract';
+import { AntigravityQuota } from '../src/AntigravityQuota';
+import { SettingsUsage } from '../src/SettingsUsage';
+import { QuickUsage } from '../src/QuickUsage';
+import type { UsageSource } from '../src/usage-session';
+import type { AntigravityQuota as AntigravityQuotaView } from '../../../../Web/host/src/api';
 const busy: AntigravityQuotaView = { status:'unavailable', reason:'busy', source:'antigravity_acp' };
 const available: Extract<AntigravityQuotaView, {status:'available'}> = { status:'available', source:'antigravity_acp', seen:123000, buckets:[{group:'Gemini Models', label:'Weekly Limit Remaining', remainingFraction:.91}] };
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -28,16 +27,16 @@ it('labels retained quota with its original read time while busy, without invent
 });
 it('retries busy at a bounded interval, coalesces turn events, stops on success and cleans up on close', async () => {
  vi.useFakeTimers();
- let event: (value:any) => void = () => {};
+ let event: () => void = () => {};
  let resolve: ((value:any) => void) | undefined;
  let pending = false;
  let quota: AntigravityQuotaView = busy;
  const request = vi.fn(() => pending ? new Promise(r => { resolve = r; }) : Promise.resolve({antigravity:quota}));
  const off = vi.fn();
- const client = {request, onEvent:(listener:any) => {event = listener; return off;}} as unknown as Client;
+ const source = {view: request, onTurnFinished: (listener:any) => {event = listener; return off;}} as unknown as UsageSource;
  const host = document.createElement('div'), root = createRoot(host);
  try {
-  await act(async () => root.render(createElement(QuickSettingsUsage, {client})));
+  await act(async () => root.render(createElement(QuickUsage, {source})));
   expect(request).toHaveBeenCalledTimes(1);
   expect(host.textContent).toContain('Retry quota');
   await act(async () => { await vi.advanceTimersByTimeAsync(1999); });
@@ -45,7 +44,7 @@ it('retries busy at a bounded interval, coalesces turn events, stops on success 
   pending = true;
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(request).toHaveBeenCalledTimes(2);
-  await act(async () => { event({event:{type:'turn.finished'}}); event({event:{type:'turn.finished'}}); });
+  await act(async () => { event(); event(); });
   expect(request).toHaveBeenCalledTimes(2);
   quota = available; pending = false;
   await act(async () => { resolve!({antigravity:busy}); });
@@ -69,18 +68,18 @@ it('allows a manual retry when no reading exists', async () => {
 
 it('retains core last-known quota across close/reopen in both surfaces and shares one polling loop', async () => {
  vi.useFakeTimers();
- const listeners = new Set<(event:any) => void>();
+ const listeners = new Set<() => void>();
  let quota: AntigravityQuotaView = {...busy, lastKnown:{seen:available.seen,buckets:available.buckets}};
  const emptyLimits = {fiveHour:null,week:null};
  const usage = () => ({antigravity:quota, claude:emptyLimits,codex:emptyLimits,spendingStatus:'missing',byBot:[],history:[]});
  const usageRequest = vi.fn(async () => usage());
- const client = {request:async(cmd:any) => cmd.type === 'usage.view' ? usageRequest() : {status:'ready',models:[]},
-  onEvent:(listener:any) => {listeners.add(listener);return () => listeners.delete(listener);}} as unknown as Client;
+ const source = {view: usageRequest,
+  onTurnFinished:(listener:any) => {listeners.add(listener);return () => listeners.delete(listener);}} as unknown as UsageSource;
  const quick = document.createElement('div'), full = document.createElement('div');
  const quickRoot = createRoot(quick), fullRoot = createRoot(full);
- const fullElement = () => createElement(SettingsSheet,{client,settings:settingsView({}),bot:null,plugins:null,initialSection:'usage',onClose:()=>{}});
+ const fullElement = () => createElement(SettingsUsage,{source});
  try {
-  await act(async () => {quickRoot.render(createElement(QuickSettingsUsage,{client}));fullRoot.render(fullElement());});
+  await act(async () => {quickRoot.render(createElement(QuickUsage,{source}));fullRoot.render(fullElement());});
   expect(usageRequest).toHaveBeenCalledTimes(1);
   for (const host of [quick,full]) {
    expect(host.textContent).toContain('9%');
@@ -97,13 +96,13 @@ it('retains core last-known quota across close/reopen in both surfaces and share
   expect(full.textContent).toContain('Antigravity is busy');
   expect(full.textContent).toContain('9%');
   quota = {...available,seen:Date.now(),buckets:[{group:'Gemini Models',label:'Weekly Limit Remaining',remainingFraction:.85}]};
-  await act(async () => {for(const listener of listeners) listener({event:{type:'turn.finished'}});});
+  await act(async () => {for(const listener of listeners) listener();});
   expect(usageRequest).toHaveBeenCalledTimes(4);
   expect(full.textContent).toContain('15%');
   expect(full.textContent).not.toContain('Antigravity is busy');
   await act(async () => {await vi.advanceTimersByTimeAsync(10000);});
   expect(usageRequest).toHaveBeenCalledTimes(4);
-  await act(async () => {fullRoot.render(null);quickRoot.render(createElement(QuickSettingsUsage,{client}));});
+  await act(async () => {fullRoot.render(null);quickRoot.render(createElement(QuickUsage,{source}));});
   expect(quick.textContent).toContain('15%');
  } finally {await act(async () => {quickRoot.unmount();fullRoot.unmount();});}
 });
@@ -111,10 +110,10 @@ it('retains core last-known quota across close/reopen in both surfaces and share
 it('bounds repeated manual retries while busy', async () => {
  vi.useFakeTimers();
  const request = vi.fn(async () => ({antigravity:busy}));
- const client = {request,onEvent:() => () => {}} as unknown as Client;
+ const source = {view: request,onTurnFinished:() => () => {}} as unknown as UsageSource;
  const host=document.createElement('div'), root=createRoot(host);
  try {
-  await act(async () => root.render(createElement(QuickSettingsUsage,{client})));
+  await act(async () => root.render(createElement(QuickUsage,{source})));
   await act(async () => {for(let i=0;i<10;i++)host.querySelector('button')!.click();});
   expect(request).toHaveBeenCalledTimes(1);
   await act(async () => {await vi.advanceTimersByTimeAsync(2000);});
