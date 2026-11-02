@@ -20,10 +20,10 @@ afterEach(async () => {
 });
 
 /** A plugin with only a program part (`ccb.host`). */
-function hostPlugin(dir: string, name: string, source: string, ccb: Record<string, unknown> = {}) {
+function hostPlugin(dir: string, name: string, source: string, ccb: Record<string, unknown> = {}, top: Record<string, unknown> = {}) {
   const folder = join(dir, "plugins", name);
   mkdirSync(join(folder, "dist"), { recursive: true });
-  writeFileSync(join(folder, "package.json"), JSON.stringify({ name, version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { host: "dist/host.mjs", ...ccb } }));
+  writeFileSync(join(folder, "package.json"), JSON.stringify({ name, version: "1.0.0", engines: { ccb: "^2.0.0" }, ...top, ccb: { host: "dist/host.mjs", ...ccb } }));
   writeFileSync(join(folder, "dist", "host.mjs"), source);
 }
 
@@ -199,5 +199,33 @@ describe("the plugin host", () => {
     // Turning a plugin off stops its program part.
     await again.call({ type: "plugins.enable", name: "news", enabled: false });
     await until(async () => { try { await again.call({ type: "plugins.command", id: "news.token" }); return false; } catch { return true; } }, { timeout: 10_000 });
+  });
+
+  it("Host API v3 (plan M5): a plugin's message shows as its own, events reach it, it reads the app's settings and asks in the chat", async () => {
+    const dir = tempDir("plugin-host");
+    hostPlugin(dir, "watch", `export function activate(api) {
+      api.events.on("messagePosted", (m) => { if (m.role === "bot") api.notify("posted " + m.botId + " " + m.text); });
+      api.events.on("turnFinished", (t) => api.notify("finished " + t.botId + " " + t.ok));
+      api.commands.register("watch.say", () => api.bots.send("main", "ping from watch").then((r) => typeof r.messageId));
+      api.commands.register("watch.lang", () => api.settings.app("language"));
+      api.commands.register("watch.pick", () => api.ui.quickPick([{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }], { title: "Which?" }));
+      api.commands.register("watch.stop", () => api.bots.interrupt("main").then(() => "stopped", (e) => e.message));
+    }`, {}, { displayName: "Watcher" });
+    const c = core(dir);
+    await until(() => c.call({ type: "plugins.command", id: "watch.lang" }).then((r) => r.result, () => null), { timeout: 15_000 });
+    expect((await c.call({ type: "plugins.command", id: "watch.lang" })).result).toMatch(/^(en|zh-Hant)$/);
+    expect((await c.call({ type: "plugins.command", id: "watch.say" })).result).toBe("string");
+    await until(async () => (await c.chat()).messages.some((m: any) => m.role === "user" && m.text === "ping from watch"));
+    expect((await c.chat()).messages.find((m: any) => m.role === "user" && m.text === "ping from watch").via).toBe("Watcher");
+    await until(async () => (await notices(c)).includes("Watcher: posted main You said: ping from watch"));
+    await until(async () => (await notices(c)).includes("Watcher: finished main true"));
+    expect((await c.call({ type: "plugins.command", id: "watch.stop" })).result).toBe('Stopping bots needs the "bots" permission in package.json.');
+    // The question waits in the main bot's chat; a pick there answers the plugin.
+    const picking = c.call({ type: "plugins.command", id: "watch.pick" });
+    await until(async () => (await c.chat()).messages.some((m: any) => m.role === "notice" && m.text === "Watcher: Which?"));
+    const question = (await c.chat()).messages.find((m: any) => m.role === "notice" && m.text === "Watcher: Which?");
+    expect(question.choices.map((choice: any) => choice.label)).toEqual(["Alpha", "Beta", "Cancel"]);
+    await c.call({ type: "chat.choose", botId: MAIN, messageId: question.id, index: 1 });
+    expect((await picking).result).toBe("b");
   });
 });

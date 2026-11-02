@@ -1906,10 +1906,11 @@ export class Bot {
   /**
    * A message from the user; `replyTo`: a line of the chat it answers (a pick on a question, say).
    * `to`: with two heads, both (the usual) or one by name; `appNote` goes ahead of the words without
-   * showing; `decisionOwner`: a shared decision's answer, for the head that asked it only.
+   * showing; `decisionOwner`: a shared decision's answer, for the head that asked it only; `via`: a
+   * plugin sent it (its title, shown on the line).
    */
-  send(text: string, { replyTo, to, appNote, decisionOwner, files }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[] } = {}): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files });
+  send(text: string, { replyTo, to, appNote, decisionOwner, files, via }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; via?: string } = {}): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, via });
     this.refuseIfClosed();
     const words = text.trim();
     if (!words && !files?.length) throw new ContractError("bad_request", "Nothing to send.");
@@ -1921,6 +1922,7 @@ export class Bot {
     const target = fitted(heads, decisionOwner ?? to ?? resolvePrimary(heads, this.appPrimary()), this.appPrimary());
     const user: ChatRecord = { id: newId(), role: "user", text: words, date: toSwiftDate() };
     if (two) user.to = target;
+    if (via) user.via = via;
     if (kept.length) user.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
     const quoted = replyTo ? this.records.find((record) => record.id === replyTo) : undefined;
     if (quoted) {
@@ -6172,6 +6174,7 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
   if (typeof record.replyPreview === "string") view.replyPreview = record.replyPreview.slice(0, 2_000);
   if (record.engine === "agy" || record.engine === "claude" || record.engine === "codex") view.engine = record.engine;
   if (record.to === "agy" || record.to === "claude" || record.to === "codex") view.to = record.to;
+  if (record.role === "user" && typeof record.via === "string" && record.via) view.via = record.via.slice(0, 200);
   if (Array.isArray(record.seenBy)) {
     const seen = (["claude", "codex", "agy"] as const).filter((engine) => record.seenBy!.includes(engine));
     if (seen.length) view.seenBy = [...seen];

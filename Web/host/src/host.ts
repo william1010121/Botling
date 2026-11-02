@@ -2,13 +2,15 @@
 // It talks to Botling over stdin/stdout, one JSON-RPC message per line (like LSP, without headers).
 // Plugins' own console output goes to stderr so it cannot break the protocol.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
+import { createApi, newLoaded, type BotlingApi, type HostPluginSpec, type Incoming, type JSONValue, type Loaded, type Outgoing, type PluginEventName } from "./api";
+
+export type {
+  AppSettingKey, BotInfo, BotlingApi, BrowserOperation, BrowserScope, CcbHost, HostPluginSpec, Incoming, Keybinding, NewBot, Outgoing, PluginEvents, StatusItem,
+} from "./api";
 
 type Dispose = () => void;
-type JSONValue = unknown;
 
 interface Message {
   id?: number;
@@ -18,79 +20,7 @@ interface Message {
   error?: { message: string };
 }
 
-/** What Botling sends for each plugin with a program part. */
-export interface HostPluginSpec {
-  name: string;
-  version: string;
-  /** Absolute path of the bundled ES module that exports `activate(ccb)`. */
-  main: string;
-  /** Changes whenever the plugin's files change, so a new version is imported fresh. */
-  fingerprint: string;
-  settings: Record<string, JSONValue>;
-  /** A folder the plugin may keep data in. */
-  storageDir: string;
-}
-
-/** "bot" is a bot of its own (made with `bots.create`), not a project's manager. */
-export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean; created?: boolean }
-/** A new bot: its name in the left column, what it is for, and optionally its shape. */
-export interface NewBot { name: string; job: string; avatar?: string }
-export interface Outgoing { bot: BotInfo; text: string }
-export interface Incoming { bot: BotInfo; text: string }
-
-export interface BrowserScope { origin: string; account: string; tab: string }
-export interface BrowserOperation extends BrowserScope { operation: "observe" | "click" | "extract"; target?: string }
-
-/** The `ccb` object a program part's `activate` receives. */
-export interface CcbHost {
-  name: string;
-  browser: {
-    /** Offered only at this exact origin; run receives the user's selected account/tab. */
-    registerTool(tool: { id: string; title: string; origin: string }, run: (scope: BrowserScope) => unknown): Dispose;
-    /** Runs only during a user-invoked tool, on that invocation's exact page scope. */
-    perform(operation: BrowserOperation): Promise<unknown>;
-  };
-  bots: {
-    list(): Promise<BotInfo[]>;
-    /**
-     * Makes a bot of its own (`created: true`), or returns the one this plugin made by that name
-     * (`created: false`). Throws if the name is someone else's or the user removed it. Needs the
-     * "bots" permission.
-     */
-    create(bot: NewBot): Promise<BotInfo>;
-    send(botId: string, text: string): void;
-    onReply(fn: (bot: BotInfo, reply: string) => void): Dispose;
-  };
-  hooks: {
-    /** Return new text, or false to stop the message from being sent. */
-    beforeSend(fn: (message: Outgoing) => Outgoing | string | false | void | Promise<Outgoing | string | false | void>): Dispose;
-    afterReply(fn: (message: Incoming) => Incoming | string | void | Promise<Incoming | string | void>): Dispose;
-  };
-  commands: { register(id: string, run: (...args: unknown[]) => unknown): Dispose };
-  routines: { add(botId: string, cron: string, task: string): Promise<void> };
-  storage: { dir: string; get(key: string): unknown; set(key: string, value: unknown): void };
-  /** Opens `method` to this plugin's own frames (panels) and web part: the only methods they can call. */
-  ui: { expose(method: string, fn: (params: unknown) => unknown): Dispose };
-  /** `ui.expose`'s 1.x name. */
-  web: { handle(method: string, fn: (params: unknown) => unknown): Dispose };
-  settings: { get<T>(key: string): T; onChange(key: string, fn: (value: unknown) => void): Dispose };
-  notify(text: string): void;
-}
-
-type Activate = (ccb: CcbHost) => void | Dispose | Promise<void | Dispose>;
-
-interface Loaded {
-  spec: HostPluginSpec;
-  disposers: Dispose[];
-  beforeSend: ((message: Outgoing) => unknown)[];
-  afterReply: ((message: Incoming) => unknown)[];
-  replyListeners: ((bot: BotInfo, reply: string) => void)[];
-  commands: Map<string, (...args: unknown[]) => unknown>;
-  web: Map<string, (params: unknown) => unknown>;
-  /** The methods in `web` its frames and web part may call (ui.expose); website tools are not. */
-  exposed: Set<string>;
-  settingHandlers: Map<string, ((value: unknown) => void)[]>;
-}
+type Activate = (api: BotlingApi) => void | Dispose | Promise<void | Dispose>;
 
 export class Host {
   private readonly plugins = new Map<string, Loaded>();
@@ -153,6 +83,14 @@ export class Host {
           for (const listener of plugin.replyListeners) this.run(plugin.spec.name, () => listener(params.bot, params.text));
         }
         return null;
+      case "event": {
+        // Something happened in Botling that plugins listen for (`events.on`).
+        const name = params.name as PluginEventName;
+        for (const plugin of this.plugins.values()) {
+          for (const listener of [...(plugin.events.get(name) ?? [])]) this.run(plugin.spec.name, () => listener(params.data));
+        }
+        return null;
+      }
       case "command": {
         const owner = [...this.plugins.values()].find((plugin) => plugin.commands.has(params.id));
         if (!owner) throw new Error(`No command "${params.id}".`);
@@ -184,7 +122,8 @@ export class Host {
       const next = wanted.get(name);
       if (!next || next.fingerprint !== plugin.spec.fingerprint || next.main !== plugin.spec.main) {
         this.unload(name);
-      } else if (JSON.stringify(next.settings) !== JSON.stringify(plugin.spec.settings)) {
+      } else {
+        // Same code: new settings (its own, or Botling's that it reads) are told, not reloaded.
         const before = plugin.spec.settings;
         plugin.spec = next;
         for (const key of new Set([...Object.keys(before), ...Object.keys(next.settings)])) {
@@ -209,21 +148,11 @@ export class Host {
 
   private async load(spec: HostPluginSpec): Promise<void> {
     const activate = await this.importer(spec);
-    const plugin: Loaded = {
-      spec,
-      disposers: [],
-      beforeSend: [],
-      afterReply: [],
-      replyListeners: [],
-      commands: new Map(),
-      web: new Map(),
-      exposed: new Set(),
-      settingHandlers: new Map(),
-    };
+    const plugin = newLoaded(spec);
     this.plugins.set(spec.name, plugin);
     this.current = spec.name;
     try {
-      const result = await activate(this.api(plugin));
+      const result = await activate(createApi(this, plugin));
       if (typeof result === "function") plugin.disposers.push(result);
     } finally {
       this.current = null;
@@ -251,7 +180,13 @@ export class Host {
       afterReply: plugins.reduce((sum, plugin) => sum + plugin.afterReply.length, 0),
       commands: plugins.flatMap((plugin) => [...plugin.commands.keys()]),
       exposed: Object.fromEntries(plugins.map((plugin) => [plugin.spec.name, [...plugin.exposed]])),
+      events: [...new Set(plugins.flatMap((plugin) => [...plugin.events].filter(([, listeners]) => listeners.length).map(([name]) => name)))],
     });
+  }
+
+  /** `announce` soon, once per tick, while `plugin` is still the one loaded. */
+  announceLater(plugin: Loaded): void {
+    queueMicrotask(() => { if (this.plugins.get(plugin.spec.name) === plugin) this.announce(); });
   }
 
   // MARK: Hooks
@@ -320,104 +255,6 @@ export class Host {
   report(plugin: string | null, error: unknown): void {
     this.notify("pluginError", { plugin: plugin ?? this.current, message: errorText(error) });
   }
-
-  private api(plugin: Loaded): CcbHost {
-    const name = plugin.spec.name;
-    const own = (dispose: Dispose): Dispose => {
-      plugin.disposers.push(dispose);
-      return dispose;
-    };
-    const remove = <T>(list: T[], item: T) => own(() => {
-      const at = list.indexOf(item);
-      if (at !== -1) list.splice(at, 1);
-    });
-    const announceLater = () => queueMicrotask(() => { if (this.plugins.get(name) === plugin) this.announce(); });
-    let stored: Record<string, unknown> | null = null;
-    const storageFile = join(plugin.spec.storageDir, "storage.json");
-    const storage = () => {
-      if (stored) return stored;
-      try { stored = JSON.parse(readFileSync(storageFile, "utf8")); } catch { stored = {}; }
-      return stored!;
-    };
-    mkdirSync(plugin.spec.storageDir, { recursive: true });
-    const expose = (method: string, fn: (params: unknown) => unknown): Dispose => {
-      plugin.web.set(method, fn);
-      plugin.exposed.add(method);
-      announceLater();
-      return own(() => {
-        plugin.web.delete(method);
-        plugin.exposed.delete(method);
-        announceLater();
-      });
-    };
-
-    return {
-      name,
-      browser: {
-        registerTool: (tool, run) => {
-          const method = `browser.tool.${tool.id}`;
-          plugin.web.set(method, run as (params: unknown) => unknown);
-          this.notify("browser.register", { ...tool, plugin: name });
-          return own(() => {
-            plugin.web.delete(method);
-            this.notify("browser.unregister", { id: tool.id, plugin: name });
-          });
-        },
-        perform: async operation => this.request("browser.perform", { ...operation, plugin: name }),
-      },
-      bots: {
-        list: async () => (await this.request("bots.list", {})) as BotInfo[],
-        create: async (bot) => (await this.request("bots.create", { plugin: name, name: bot?.name, job: bot?.job, avatar: bot?.avatar })) as BotInfo,
-        send: (botId, text) => this.notify("bots.send", { plugin: name, bot: botId, text }),
-        onReply: (fn) => {
-          plugin.replyListeners.push(fn);
-          return remove(plugin.replyListeners, fn);
-        },
-      },
-      hooks: {
-        beforeSend: (fn) => {
-          plugin.beforeSend.push(fn);
-          announceLater();
-          return remove(plugin.beforeSend, fn);
-        },
-        afterReply: (fn) => {
-          plugin.afterReply.push(fn);
-          announceLater();
-          return remove(plugin.afterReply, fn);
-        },
-      },
-      commands: {
-        register: (id, run) => {
-          plugin.commands.set(id, run);
-          announceLater();
-          return own(() => plugin.commands.delete(id));
-        },
-      },
-      routines: {
-        add: async (botId, cron, task) => { await this.request("routines.add", { plugin: name, bot: botId, cron, task }); },
-      },
-      storage: {
-        dir: plugin.spec.storageDir,
-        get: (key) => storage()[key],
-        set: (key, value) => {
-          storage()[key] = value;
-          writeFileSync(storageFile, JSON.stringify(storage(), null, 2));
-        },
-      },
-      ui: { expose },
-      web: { handle: expose },
-      settings: {
-        get: <T>(key: string) => plugin.spec.settings[key] as T,
-        onChange: (key, fn) => {
-          const list = plugin.settingHandlers.get(key) ?? [];
-          list.push(fn);
-          plugin.settingHandlers.set(key, list);
-          return remove(list, fn);
-        },
-      },
-      notify: (text) => this.notify("notify", { plugin: name, text }),
-    };
-  }
 }
 
 async function importPlugin(spec: HostPluginSpec): Promise<Activate> {
@@ -425,7 +262,7 @@ async function importPlugin(spec: HostPluginSpec): Promise<Activate> {
   const url = `${pathToFileURL(spec.main).href}?v=${encodeURIComponent(spec.fingerprint)}`;
   const module = (await import(url)) as { activate?: Activate; default?: { activate?: Activate } };
   const activate = module.activate ?? module.default?.activate;
-  if (typeof activate !== "function") throw new Error("The program part does not export activate(ccb).");
+  if (typeof activate !== "function") throw new Error("The program part does not export activate(api).");
   return activate;
 }
 

@@ -2,8 +2,10 @@
 // library (registry.ts), sealed secrets (secrets.ts) and the plugin host process (host-client.ts),
 // and what the host may ask of the core. The host is untrusted: it is told only what a plugin needs
 // (bots' names and roles, its own settings and secrets) and may ask only for the few things below,
-// each checked here (a plugin it names must be loaded; creating bots and talking to them on the
-// user's behalf need the "bots" permission). Everything else is refused.
+// each checked here (a plugin it names must be loaded; creating bots, stopping them and talking to
+// them as the user need the "bots" permission — a consistency check, not a sandbox: the host is one
+// process). Everything else is refused. A plugin's message to a bot shows as sent by it unless it
+// asked to send as the user (plugin-platform.md §5, N1).
 //
 // Web parts: since Phase 4a the chat page has an origin of its own (botling-chat://chat, no bridge,
 // nothing shared with the app page but postMessage), so plugins' web parts run in it again as in 1.x:
@@ -14,21 +16,39 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { ContractError, type PluginsView, type WebPluginSpecView } from "../../contract";
+import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } from "../../contract/shortcuts";
 import { commandSurfaces } from "./commands";
+import type { Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
-import { title } from "./manifest";
-import { PluginRegistry } from "./registry";
+import { title, type JSONValue } from "./manifest";
+import { PluginRegistry, type InstalledPlugin } from "./registry";
 import { SealedSecretStore, type Sealer } from "./secrets";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
+/** A question of the app's in the main bot's chat (`ui.quickPick`, `ui.input`). */
+export interface AppQuestion { text: string; choices: { label: string; detail?: string }[]; typed: boolean }
+/** Its answer: a pick, or the user's own words (`typed` only). Ignoring it (no callbacks, by design) answers nothing. */
+export type AppAnswer = { index: number } | { text: string };
+export interface PluginStatusItem { id: string; text: string; icon: string | null; tooltip: string | null; command: string | null }
+
 /** What the core lends the plugins. */
 export interface PluginWorld {
   bots(): BotInfo[];
-  /** A message to a bot as if the user wrote it (`bots.send`). */
-  send(botId: string, text: string): void;
-  /** A line in the main bot's chat. */
-  notice(text: string): void;
+  /** A message to a bot (`bots.send`, `bots.wake`): shown as sent `via` that plugin (its title), or as the user's own (null). Throws why not. */
+  send(botId: string, text: string, via: string | null): { messageId: string };
+  /** Stops every turn a bot has under way, as its stop button does (null: no such bot). */
+  interrupt(botId: string): Promise<boolean | null>;
+  /** A line in the main bot's chat; with `actions`, buttons under it. */
+  notice(text: string, actions?: { label: string; run: () => void }[]): void;
+  /** Asks the user in the main bot's chat. */
+  ask(question: AppQuestion): Promise<AppAnswer>;
+  /** Opens a plugin's panel on the app page. */
+  openPanel(plugin: string, panel: string, title: string): void;
+  /** Botling's own settings plugins may read (`settings.app`). */
+  appSettings(): Record<string, JSONValue>;
+  /** The keys the user chose (settings.json `shortcutBindings`: Botling's shortcuts and plugin commands). */
+  shortcutOverrides(): Overrides;
   /** `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. */
   createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined): BotInfo & { created: boolean };
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
@@ -55,7 +75,30 @@ export interface PluginsOptions {
 
 const str = (max: number) => z.string().max(max);
 const NotifyParams = z.object({ plugin: str(214), text: str(20_000) });
-const SendParams = z.object({ plugin: str(214), bot: str(64), text: z.string().min(1).max(100_000) });
+const NotifyMore = z.object({
+  level: z.enum(["info", "warn", "error"]).optional(),
+  actions: z.array(z.object({ title: str(200).min(1), command: str(200).min(1) })).max(5).optional(),
+});
+const SendParams = z.object({ plugin: str(214), bot: str(64), text: z.string().min(1).max(100_000), as: z.enum(["plugin", "user"]).default("plugin") });
+const BotParams = z.object({ plugin: str(214), bot: str(64) });
+const WakeParams = BotParams.extend({ prompt: z.string().min(1).max(100_000).optional() });
+const PickParams = z.object({
+  plugin: str(214), title: str(400).optional(),
+  items: z.array(z.object({ id: str(200).min(1), label: str(400).min(1), detail: str(1_000).optional() })).min(1).max(20),
+});
+const InputParams = z.object({ plugin: str(214), title: str(400).min(1), placeholder: str(400).optional(), secret: z.boolean().optional() });
+const ViewParams = z.object({ plugin: str(214), id: str(100).min(1), args: z.unknown().optional() });
+const SettingParams = z.object({ plugin: str(214), key: str(200), value: z.union([z.boolean(), z.number(), z.string().max(100_000), z.null()]) });
+const SecretKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
+const SecretGetParams = z.object({ plugin: str(214), key: SecretKey });
+const SecretSetParams = SecretGetParams.extend({ value: z.string().max(20_000).nullable() });
+const KeyParams = z.object({ plugin: str(214), command: str(200), key: str(40).nullable() });
+const StatusParams = z.object({
+  plugin: str(214), id: str(100).min(1),
+  item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
+});
+const EVENT_NAMES = ["messagePosted", "turnFinished", "workerDone"] as const;
+export type PluginEventName = (typeof EVENT_NAMES)[number];
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
 
@@ -65,6 +108,8 @@ export class Plugins {
   readonly secrets: SealedSecretStore;
   private readonly dataRoot: string;
   private started = false;
+  /** What each plugin shows in the status area (`ui.setStatus`), until it unloads. */
+  private readonly status = new Map<string, Map<string, PluginStatusItem>>();
 
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
@@ -76,7 +121,11 @@ export class Plugins {
     this.registry.onBroken = (plugin, problem) => world.broken(plugin, problem);
     this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
     this.registry.onChanged = () => this.sync();
-    this.host.onPluginFailure = (plugin, message, fatal) => { if (plugin) this.registry.recordHostFailure(plugin, message, fatal); };
+    this.host.onPluginFailure = (plugin, message, fatal) => {
+      if (!plugin) return;
+      this.status.delete(plugin);
+      this.registry.recordHostFailure(plugin, message, fatal);
+    };
     this.host.onRegistered = () => this.announce();
     this.host.onNotification = (method, params) => this.notified(method, params);
     this.host.onRequest = (method, params) => this.requested(method, params);
@@ -96,8 +145,20 @@ export class Plugins {
 
   private sync() {
     if (!this.started) return;
-    this.host.update(this.registry.hostSpecs(this.dataRoot));
+    const app = this.options.world.appSettings();
+    this.host.update(this.registry.hostSpecs(this.dataRoot).map((spec) => ({ ...spec, app })));
+    for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
     this.announce();
+  }
+
+  /** Botling's settings changed: plugins reading them (`settings.app`) are told. */
+  appSettingsChanged() {
+    this.sync();
+  }
+
+  /** Something plugins may listen for happened (`events.on`); only sent when one listens. */
+  event(name: PluginEventName, data: unknown) {
+    this.host.event(name, data);
   }
 
   private announce() {
@@ -133,13 +194,30 @@ export class Plugins {
           })),
           commands: (ccb?.contributes?.commands ?? []).slice(0, 100).map((command) => ({ id: command.id.slice(0, 200), title: command.title.slice(0, 200), registered: registered.has(command.id) })),
           panels: plugin.enabled && !plugin.failure && ccb?.web ? (ccb.contributes?.panels ?? []).slice(0, 20).map((panel) => ({ id: panel.id.slice(0, 100), title: panel.title.slice(0, 200) })) : [],
+          ...(this.status.get(plugin.manifest.name)?.size ? { status: [...this.status.get(plugin.manifest.name)!.values()].slice(0, 20) } : {}),
         };
       }),
       broken: Object.entries(this.registry.problems).slice(0, 200).map(([folder, problems]) => ({ folder: folder.slice(0, 214), problems: problems.slice(0, 50).map((problem) => problem.slice(0, 2_000)) })),
       host: { running: this.host.running, problem: this.host.problem?.slice(0, 2_000) ?? null },
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
-      ...commandSurfaces(this.registry.contributions()),
+      ...commandSurfaces(this.contributions()),
     };
+  }
+
+  /**
+   * What enabled plugins contribute, with the keys their program parts set for their own commands
+   * (`keybindings.set`) in place of their manifests'; the user's keys still win (shortcuts.ts `pluginBindings`).
+   */
+  private contributions(): Contribution[] {
+    const set = this.registry.commandKeyOverrides();
+    const list = this.registry.contributions();
+    const on = new Set(list.map((entry) => entry.plugin));
+    const kept = list.filter((entry) => !(entry.kind === "keybinding" && set[entry.plugin] && Object.hasOwn(set[entry.plugin]!, entry.command)));
+    for (const [plugin, keys] of Object.entries(set)) {
+      if (!on.has(plugin)) continue;
+      for (const [command, key] of Object.entries(keys)) if (key) kept.push({ kind: "keybinding", plugin, command, key });
+    }
+    return kept;
   }
 
   private known(name: string) {
@@ -285,21 +363,62 @@ export class Plugins {
     return plugin && plugin.enabled && !plugin.failure && plugin.manifest.ccb?.host ? plugin : null;
   }
 
+  /** A request's params and the loaded plugin it names; throws when either is wrong. */
+  private asked<T extends z.ZodTypeAny>(schema: T, params: unknown): { plugin: InstalledPlugin; data: z.infer<T> } {
+    const parsed = schema.safeParse(params);
+    if (!parsed.success) throw new Error(`Not a request a plugin can make: ${parsed.error.issues[0]?.message ?? "bad params"}.`);
+    const plugin = this.loaded((parsed.data as { plugin?: unknown }).plugin);
+    if (!plugin) throw new Error("That plugin is not running.");
+    return { plugin, data: parsed.data };
+  }
+
+  /** The consistency check of plugin-platform.md §5: what acts as the user needs the capability declared. */
+  private needs(plugin: InstalledPlugin, capability: string, what: string) {
+    if (!plugin.manifest.ccb?.permissions?.includes(capability)) throw new Error(`${what} needs the "${capability}" permission in package.json.`);
+  }
+
+  /** Every key in effect: Botling's shortcuts, then plugins' commands' (those not left without one). */
+  keybindings(): { command: string; key: string; source: "default" | "user" | "plugin" }[] {
+    const overrides = this.options.world.shortcutOverrides();
+    const user = (id: string) => Object.hasOwn(overrides, id);
+    return [
+      ...Object.entries(bindingsFor(overrides)).map(([command, key]) => ({ command, key, source: user(command) ? "user" as const : "default" as const })),
+      ...pluginBindings(commandSurfaces(this.contributions()).keybindings, overrides)
+        .flatMap((binding) => (binding.combo ? [{ command: binding.command, key: binding.combo, source: user(binding.command) ? "user" as const : "plugin" as const }] : [])),
+    ];
+  }
+
   private notified(method: string, params: unknown) {
     const { world } = this.options;
     switch (method) {
       case "notify": {
         const parsed = NotifyParams.safeParse(params);
         const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;
-        if (parsed.success && plugin) world.notice(`${title(plugin.manifest)}: ${parsed.data.text.slice(0, 4_000)}`);
+        if (!parsed.success || !plugin) return;
+        const more = NotifyMore.safeParse(params);
+        const level = more.success && more.data.level && more.data.level !== "info" ? ` (${more.data.level === "warn" ? "warning" : "error"})` : "";
+        // An action runs one of the plugin's own commands, as a frame of its would.
+        const name = plugin.manifest.name;
+        const actions = (more.success ? more.data.actions ?? [] : []).filter((action) => action.command.startsWith(`${name}.`))
+          .map((action) => ({ label: action.title, run: () => { void this.command(action.command, "frame", name).catch(() => {}); } }));
+        world.notice(`${title(plugin.manifest)}${level}: ${parsed.data.text.slice(0, 4_000)}`, actions.length ? actions : undefined);
         return;
       }
-      case "bots.send": {
-        const parsed = SendParams.safeParse(params);
+      case "ui.setStatus": {
+        const parsed = StatusParams.safeParse(params);
         const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;
         if (!parsed.success || !plugin) return;
-        // As 1.x: any loaded plugin may talk to a bot as the user (only bots.create needs "bots").
-        world.send(parsed.data.bot, parsed.data.text);
+        const { id, item } = parsed.data;
+        const items = this.status.get(plugin.manifest.name) ?? new Map<string, PluginStatusItem>();
+        if (item) {
+          if (!items.has(id) && items.size >= 20) return;
+          items.set(id, { id, text: item.text, icon: item.icon ?? null, tooltip: item.tooltip ?? null, command: item.command?.startsWith(`${plugin.manifest.name}.`) ? item.command : null });
+        } else {
+          items.delete(id);
+        }
+        if (items.size) this.status.set(plugin.manifest.name, items);
+        else this.status.delete(plugin.manifest.name);
+        this.announce();
         return;
       }
       case "browser.register":
@@ -316,6 +435,85 @@ export class Plugins {
     switch (method) {
       case "bots.list":
         return world.bots();
+      case "bots.send": {
+        const { plugin, data } = this.asked(SendParams, params);
+        if (data.as === "user") this.needs(plugin, "bots", "Sending as the user");
+        return world.send(data.bot, data.text, data.as === "user" ? null : title(plugin.manifest));
+      }
+      case "bots.wake": {
+        const { plugin, data } = this.asked(WakeParams, params);
+        // A bot wakes when it gets a message; a wake without one waits for the core to have that.
+        if (data.prompt === undefined) throw new Error("bots.wake needs a prompt for now (a bot wakes when it gets a message).");
+        world.send(data.bot, data.prompt, title(plugin.manifest));
+        return null;
+      }
+      case "bots.interrupt": {
+        const { plugin, data } = this.asked(BotParams, params);
+        this.needs(plugin, "bots", "Stopping bots");
+        const stopped = await world.interrupt(data.bot);
+        if (stopped === null) throw new Error("No such bot.");
+        return { stopped };
+      }
+      case "ui.quickPick": {
+        const { plugin, data } = this.asked(PickParams, params);
+        const answer = await world.ask({ text: `${title(plugin.manifest)}: ${data.title ?? "Pick one."}`, choices: [...data.items.map((item) => ({ label: item.label, ...(item.detail ? { detail: item.detail } : {}) })), { label: "Cancel" }], typed: false });
+        return answer && "index" in answer ? data.items[answer.index]?.id ?? null : null;
+      }
+      case "ui.input": {
+        const { plugin, data } = this.asked(InputParams, params);
+        // Words typed in the chat stay in its history: no place for a secret.
+        if (data.secret) throw new Error("A secret cannot be asked for in the chat yet; declare a secret setting instead.");
+        const answer = await world.ask({ text: `${title(plugin.manifest)}: ${data.title}${data.placeholder ? ` (${data.placeholder})` : ""}`, choices: [{ label: "Cancel" }], typed: true });
+        return answer && "text" in answer ? answer.text : null;
+      }
+      case "ui.openView": {
+        const { plugin, data } = this.asked(ViewParams, params);
+        const name = plugin.manifest.name;
+        const panel = plugin.manifest.ccb?.web ? plugin.manifest.ccb.contributes?.panels?.find((candidate) => candidate.id === data.id) : undefined;
+        if (!panel) throw new Error(`Plugin "${name}" has no view "${data.id}".`);
+        world.openPanel(name, panel.id, panel.title.slice(0, 200));
+        return null;
+      }
+      case "settings.update": {
+        const { plugin, data } = this.asked(SettingParams, params);
+        const setting = plugin.manifest.ccb?.contributes?.settings?.[data.key];
+        if (setting?.secret) throw new Error("A secret setting is set with secrets.set.");
+        try {
+          this.setSetting(plugin.manifest.name, data.key, data.value);
+        } catch (error) {
+          throw new Error((error as Error).message);
+        }
+        return null;
+      }
+      case "secrets.get": {
+        const { plugin, data } = this.asked(SecretGetParams, params);
+        return this.secrets.get(plugin.manifest.name, data.key);
+      }
+      case "secrets.set": {
+        const { plugin, data } = this.asked(SecretSetParams, params);
+        await this.registry.setSecret(plugin.manifest.name, data.key, data.value || null);
+        return null;
+      }
+      case "keybindings.list":
+        this.asked(z.object({ plugin: str(214) }), params);
+        return this.keybindings();
+      case "keybindings.set": {
+        const { plugin, data } = this.asked(KeyParams, params);
+        const name = plugin.manifest.name;
+        if (!plugin.manifest.ccb?.contributes?.commands?.some((command) => command.id === data.command) || !data.command.startsWith(`${name}.`)) {
+          throw new Error(`"${data.command}" is not a command of "${name}" (a plugin binds keys to the commands its package.json lists).`);
+        }
+        if (data.key === null) {
+          this.registry.setCommandKey(name, data.command, null);
+          return { ok: true };
+        }
+        const key = legacyKey(data.key);
+        if (!key) throw new Error(`"${data.key}" is not a key (like "Mod+Shift+L": Mod, Ctrl, Cmd or Alt, and one key).`);
+        const conflict = findConflict(data.command, key, this.options.world.shortcutOverrides(), commandSurfaces(this.contributions()).keybindings);
+        if (conflict) return { ok: false, conflict: conflict.id };
+        this.registry.setCommandKey(name, data.command, key);
+        return { ok: true };
+      }
       case "bots.create": {
         const parsed = CreateParams.safeParse(params);
         const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;

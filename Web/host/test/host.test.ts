@@ -1,13 +1,15 @@
 // @vitest-environment node
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { Host, type CcbHost, type HostPluginSpec } from "../src/host";
+import { Host, type BotlingApi, type CcbHost, type HostPluginSpec } from "../src/host";
+
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "ccb-host-"));
@@ -171,6 +173,194 @@ describe("making bots", () => {
     await host.receive({ id: request.id, result: { id: "B1", name: "Morning news", role: "bot", awake: false } });
     await loading;
     expect(made).toEqual({ id: "B1", name: "Morning news", role: "bot", awake: false });
+  });
+});
+
+/** Answers the host's next request named `method` with `result`, and gives back its params. */
+async function answer(host: Host, written: any[], method: string, result: unknown): Promise<any> {
+  for (let tries = 0; tries < 50 && !written.some((m) => m.method === method && !m.answered); tries++) await new Promise((resolve) => setTimeout(resolve, 0));
+  const request = written.find((m) => m.method === method && !m.answered);
+  if (!request) throw new Error(`No ${method} request.`);
+  request.answered = true;
+  await host.receive({ id: request.id, result });
+  return request.params;
+}
+
+describe("Host API v3 (plan M5)", () => {
+  /** One plugin whose api the test drives. */
+  async function loaded(overrides: Partial<HostPluginSpec> = {}) {
+    let api!: BotlingApi;
+    const made = makeHost({ p: (ccb) => { api = ccb; } });
+    await made.host.sync([spec("p", overrides)]);
+    return { ...made, api };
+  }
+
+  it("the old CcbHost and BotlingApi are one object; it knows its plugin", async () => {
+    const { api } = await loaded({ version: "2.1.0", main: "/plugins/p/dist/host.mjs" });
+    const old: CcbHost = api;
+    expect(old.name).toBe("p");
+    expect(api.plugin).toEqual({ name: "p", version: "2.1.0", dir: "/plugins/p/dist", storageDir: join(scratch, "data", "p") });
+    expect(old.web.handle).toBe(api.ui.expose);
+  });
+
+  it("exec runs a shell command with its output and exit code", async () => {
+    const { api } = await loaded();
+    expect(await api.exec("echo out; echo err >&2; exit 3")).toEqual({ stdout: "out\n", stderr: "err\n", code: 3, timedOut: false });
+    expect((await api.exec("pwd")).stdout.trim()).toBe(realpathSync(join(scratch, "data", "p")));
+    expect((await api.exec("echo $GREETING", { env: { GREETING: "hi" } })).stdout).toBe("hi\n");
+  });
+
+  it("exec ends the command's whole group at its time limit, and caps its output", async () => {
+    const { api } = await loaded();
+    const marker = join(scratch, `grandchild-${Date.now()}`);
+    const slow = await api.exec(`(sleep 1; touch ${marker}) & sleep 5`, { timeoutMs: 200 });
+    expect(slow).toMatchObject({ code: null, timedOut: true });
+    await new Promise((resolve) => setTimeout(resolve, 1300));
+    expect(existsSync(marker)).toBe(false);
+    const loud = await api.exec("yes", { maxBytes: 1000 });
+    expect(loud.stdout.length).toBe(1000);
+    expect(loud.code).toBeNull();
+  });
+
+  it("spawn streams a child's output; the plugin's children end when it unloads", async () => {
+    const { host, api } = await loaded();
+    const echo = api.spawn("/bin/sh", ["-c", "read line; echo got $line"]);
+    const out: string[] = [];
+    echo.onStdout((chunk) => out.push(chunk));
+    echo.write("ping\n");
+    expect(await echo.exited).toEqual({ code: 0, signal: null });
+    expect(out.join("")).toBe("got ping\n");
+    const sleeper = api.spawn("sleep", ["30"]);
+    expect(alive(sleeper.pid!)).toBe(true);
+    await host.sync([]);
+    expect((await sleeper.exited).signal).toBe("SIGTERM");
+    const missing = api.spawn(join(scratch, "no-such-program"), []);
+    expect(await missing.exited).toEqual({ code: null, signal: null });
+  });
+
+  it("bots.send shows as the plugin's unless it asks to send as the user; it gives the message id", async () => {
+    const { host, written, api } = await loaded();
+    const sent = api.bots.send("main", "hello");
+    expect(await answer(host, written, "bots.send", { messageId: "M1" })).toEqual({ plugin: "p", bot: "main", text: "hello", as: "plugin" });
+    expect(await sent).toEqual({ messageId: "M1" });
+    const asUser = api.bots.send("main", "hi", { as: "user" });
+    expect((await answer(host, written, "bots.send", { messageId: "M2" })).as).toBe("user");
+    await asUser;
+  });
+
+  it("an old plugin that ignores bots.send's answer is not blamed when it fails", async () => {
+    const { host, written, api } = await loaded();
+    void api.bots.send("nobody", "hello");
+    const request = written.find((m) => m.method === "bots.send");
+    await host.receive({ id: request.id, error: { message: "No such bot." } });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(written.some((m) => m.method === "pluginError")).toBe(false);
+  });
+
+  it("bots.wake and bots.interrupt ask Botling, naming the plugin", async () => {
+    const { host, written, api } = await loaded();
+    const woke = api.bots.wake("B1", "Check the build");
+    expect(await answer(host, written, "bots.wake", null)).toEqual({ plugin: "p", bot: "B1", prompt: "Check the build" });
+    await woke;
+    const stopped = api.bots.interrupt("B1");
+    expect(await answer(host, written, "bots.interrupt", { stopped: true })).toEqual({ plugin: "p", bot: "B1" });
+    await stopped;
+    const refused = api.bots.interrupt("B1");
+    const request = written.filter((m) => m.method === "bots.interrupt").at(-1);
+    await host.receive({ id: request.id, error: { message: 'Stopping bots needs the "bots" capability.' } });
+    await expect(refused).rejects.toThrow(/capability/);
+  });
+
+  it("ui: notify with a level and actions, quickPick, input, openView and setStatus", async () => {
+    const { host, written, api } = await loaded();
+    api.ui.notify("Deploy failed", { level: "error", actions: [{ title: "Retry", command: "p.retry" }] });
+    api.notify("old notice");
+    expect(written.filter((m) => m.method === "notify").map((m) => m.params)).toEqual([
+      { plugin: "p", text: "Deploy failed", level: "error", actions: [{ title: "Retry", command: "p.retry" }] },
+      { plugin: "p", text: "old notice" },
+    ]);
+    const picked = api.ui.quickPick([{ id: "a", label: "A" }, { id: "b", label: "B", detail: "the second" }], { title: "Which?" });
+    expect(await answer(host, written, "ui.quickPick", "b")).toEqual({ plugin: "p", items: [{ id: "a", label: "A" }, { id: "b", label: "B", detail: "the second" }], title: "Which?" });
+    expect(await picked).toBe("b");
+    const typed = api.ui.input({ title: "Name?", placeholder: "a name" });
+    expect(await answer(host, written, "ui.input", null)).toEqual({ plugin: "p", title: "Name?", placeholder: "a name" });
+    expect(await typed).toBeNull();
+    const opened = api.ui.openView("p.board", { tab: 2 });
+    expect(await answer(host, written, "ui.openView", null)).toEqual({ plugin: "p", id: "p.board", args: { tab: 2 } });
+    await opened;
+    api.ui.setStatus("build", { text: "Building", tooltip: "since 10:02" });
+    api.ui.setStatus("build", null);
+    expect(written.filter((m) => m.method === "ui.setStatus").map((m) => m.params)).toEqual([
+      { plugin: "p", id: "build", item: { text: "Building", tooltip: "since 10:02" } },
+      { plugin: "p", id: "build", item: null },
+    ]);
+  });
+
+  it("settings.update asks Botling; settings.app reads Botling's settings, and a change there does not reload the plugin", async () => {
+    let activations = 0;
+    let api!: BotlingApi;
+    const { host, written } = makeHost({ p: (ccb) => { api = ccb; activations++; } });
+    await host.sync([spec("p", { app: { language: "en", botLook: "cute", workerLimit: 4 } })]);
+    expect(api.settings.app("language")).toBe("en");
+    expect(api.settings.app("workerLimit")).toBe(4);
+    await host.sync([spec("p", { app: { language: "zh-Hant", botLook: "cute", workerLimit: 4 } })]);
+    expect(api.settings.app("language")).toBe("zh-Hant");
+    expect(activations).toBe(1);
+    const updated = api.settings.update("p.mode", "fast");
+    expect(await answer(host, written, "settings.update", null)).toEqual({ plugin: "p", key: "p.mode", value: "fast" });
+    await updated;
+  });
+
+  it("secrets.get and secrets.set ask Botling, naming the plugin", async () => {
+    const { host, written, api } = await loaded();
+    const got = api.secrets.get("token");
+    expect(await answer(host, written, "secrets.get", "tok")).toEqual({ plugin: "p", key: "token" });
+    expect(await got).toBe("tok");
+    const set = api.secrets.set("token", null);
+    expect(await answer(host, written, "secrets.set", null)).toEqual({ plugin: "p", key: "token", value: null });
+    await set;
+  });
+
+  it("keybindings.list and keybindings.set ask Botling", async () => {
+    const { host, written, api } = await loaded();
+    const list = api.keybindings.list();
+    await answer(host, written, "keybindings.list", [{ command: "search", key: "Mod+K", source: "default" }]);
+    expect(await list).toEqual([{ command: "search", key: "Mod+K", source: "default" }]);
+    const set = api.keybindings.set("p.open", "cmd+shift+o");
+    expect(await answer(host, written, "keybindings.set", { ok: false, conflict: "search" })).toEqual({ plugin: "p", command: "p.open", key: "cmd+shift+o" });
+    expect(await set).toEqual({ ok: false, conflict: "search" });
+  });
+
+  it("events.on: Botling is told which events are listened to; each reaches its listeners until they are disposed", async () => {
+    const seen: unknown[] = [];
+    let off!: () => void;
+    const { host, written } = makeHost({
+      listener: (ccb) => {
+        off = ccb.events.on("turnFinished", (t) => seen.push(t));
+        ccb.events.on("workerDone", () => { throw new Error("listener broke"); });
+        expect(() => ccb.events.on("nothing" as any, () => {})).toThrow(/No event "nothing"/);
+      },
+    });
+    await host.sync([spec("listener")]);
+    await Promise.resolve();
+    expect(written.filter((m) => m.method === "registered").at(-1)?.params.events).toEqual(["turnFinished", "workerDone"]);
+    await host.receive({ method: "event", params: { name: "turnFinished", data: { botId: "main", ok: true, reply: "done" } } });
+    await host.receive({ method: "event", params: { name: "workerDone", data: { botId: "main", workerId: "w", status: "completed", report: "" } } });
+    expect(seen).toEqual([{ botId: "main", ok: true, reply: "done" }]);
+    expect(written).toContainEqual({ method: "pluginError", params: { plugin: "listener", message: "listener broke" } });
+    off();
+    await Promise.resolve();
+    expect(written.filter((m) => m.method === "registered").at(-1)?.params.events).toEqual(["workerDone"]);
+    await host.receive({ method: "event", params: { name: "turnFinished", data: {} } });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("subscriptions are disposed when the plugin unloads", async () => {
+    const disposed: string[] = [];
+    const { host } = makeHost({ p: (ccb) => { ccb.subscriptions.push(() => disposed.push("a"), () => disposed.push("b")); } });
+    await host.sync([spec("p")]);
+    await host.sync([]);
+    expect(disposed).toEqual(["b", "a"]);
   });
 });
 

@@ -69,6 +69,8 @@ export class PluginHostClient {
   commands: string[] = [];
   /** The methods each plugin exposed to its frames and web part (`ui.expose`), as the host last said. */
   exposed = new Map<string, Set<string>>();
+  /** The events some plugin listens for (`events.on`), as the host last said. */
+  events = new Set<string>();
   problem: string | null = null;
   restarts = 0;
   /** The host asks the core for something (bots.list, routines.add, …). */
@@ -162,6 +164,11 @@ export class PluginHostClient {
   /** Tells plugins listening with `bots.onReply`. */
   replied(bot: unknown, text: string) {
     if (this.running) this.write({ method: "reply", params: { bot, text } });
+  }
+
+  /** Tells plugins listening with `events.on`; nothing is sent while none listens for `name`. */
+  event(name: string, data: unknown) {
+    if (this.running && this.events.has(name)) this.write({ method: "event", params: { name, data } });
   }
 
   command(id: string, args: unknown[] = []): Promise<unknown> {
@@ -280,6 +287,7 @@ export class PluginHostClient {
     this.process = null;
     this.running = false;
     this.loaded.clear();
+    this.events.clear();
     for (const id of [...this.pending.keys()]) this.finish(id, new Error("The plugin host exited."));
     if (this.stopping) return;
     const status = signal ?? code ?? "?";
@@ -347,6 +355,7 @@ export class PluginHostClient {
         this.afterReplyHooks = count(value.afterReply);
         this.commands = Array.isArray(value.commands) ? value.commands.filter((id): id is string => typeof id === "string").slice(0, 500).map((id) => id.slice(0, 200)) : [];
         const exposed = value.exposed && typeof value.exposed === "object" ? Object.entries(value.exposed as Record<string, unknown>).slice(0, 500) : [];
+        this.events = new Set(Array.isArray(value.events) ? value.events.filter((name): name is string => typeof name === "string").slice(0, 50).map((name) => name.slice(0, 100)) : []);
         this.exposed = new Map(exposed.map(([plugin, methods]) => [plugin, new Set(Array.isArray(methods) ? methods.filter((method): method is string => typeof method === "string").slice(0, 500) : [])]));
         this.onRegistered();
         return;

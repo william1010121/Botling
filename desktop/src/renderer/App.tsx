@@ -20,7 +20,7 @@ import { keybindingsOf, menuItems, offered, runsInHost, type PluginMenu } from "
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
-import { PluginsButton } from "./Plugins";
+import { PanelFrame, PluginsButton } from "./Plugins";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
@@ -237,6 +237,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
 
   return (
     <div className="shell" data-ready={view.ready ? "1" : "0"}>
+      {/* A panel a plugin's program part opened (`ui.openView`). */}
+      {!web && view.pluginPanel && (
+        <PanelFrame key={`${view.pluginPanel.plugin}/${view.pluginPanel.panel}`} client={client} plugin={view.pluginPanel.plugin} panel={view.pluginPanel.panel}
+          title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} />
+      )}
       {railCollapsed ? (
         <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}

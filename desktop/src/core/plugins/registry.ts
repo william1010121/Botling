@@ -47,8 +47,12 @@ export interface HostSpec {
   name: string;
   version: string;
   main: string;
+  /** The plugin's folder (`api.plugin.dir`; without it, the main module's folder). */
+  dir?: string;
   fingerprint: string;
   settings: Record<string, JSONValue>;
+  /** Botling's own settings it may read (`settings.app`); the core adds them. */
+  app?: Record<string, JSONValue>;
   storageDir: string;
 }
 
@@ -57,6 +61,8 @@ interface State {
   settings: Record<string, Record<string, JSONValue>>;
   failures: Record<string, { message: string; fingerprint: string }>;
   installed?: Record<string, string>;
+  /** Keys plugins bound to their own commands (`keybindings.set`; null: no key), over their manifests'. */
+  keys?: Record<string, Record<string, string | null>>;
 }
 
 const emptyState = (): State => ({ disabled: [], settings: {}, failures: {}, installed: {} });
@@ -69,6 +75,7 @@ function readState(file: string): State {
     if (value.settings && typeof value.settings === "object") state.settings = value.settings as State["settings"];
     if (value.failures && typeof value.failures === "object") state.failures = value.failures as State["failures"];
     if (value.installed && typeof value.installed === "object") state.installed = value.installed;
+    if (value.keys && typeof value.keys === "object") state.keys = value.keys;
     return state;
   } catch {
     return emptyState();
@@ -149,6 +156,18 @@ export class PluginRegistry {
     (this.state.settings[plugin] ??= {})[key] = value;
     this.saveState();
     this.bump();
+  }
+
+  /** A plugin binds one of its commands to `key` (null: none), in place of its manifest's (`keybindings.set`). */
+  setCommandKey(plugin: string, command: string, key: string | null) {
+    (this.state.keys ??= {})[plugin] = { ...this.state.keys[plugin], [command]: key };
+    this.saveState();
+    this.bump();
+  }
+
+  /** The keys plugins set for their own commands, by plugin then command (null: no key). */
+  commandKeyOverrides(): Record<string, Record<string, string | null>> {
+    return this.state.keys ?? {};
   }
 
   async setSecret(plugin: string, key: string, value: string | null) {
@@ -275,7 +294,7 @@ export class PluginRegistry {
         if (setting.secret) settings[key] = this.secrets.get(plugin.manifest.name, key);
       }
       return [{
-        name: plugin.manifest.name, version: plugin.manifest.version, main: join(plugin.folder, host),
+        name: plugin.manifest.name, version: plugin.manifest.version, main: join(plugin.folder, host), dir: plugin.folder,
         fingerprint: this.fingerprints[plugin.manifest.name] ?? "", settings, storageDir: join(dataRoot, plugin.manifest.name),
       }];
     });

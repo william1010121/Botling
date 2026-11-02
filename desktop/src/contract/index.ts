@@ -354,6 +354,8 @@ export const MessageView = z.strictObject({
   engine: Engine.optional(),
   /** A user line for one head only. */
   to: Engine.optional(),
+  /** A user line a plugin sent (`bots.send`): the plugin's name as the page shows it. */
+  via: z.string().max(200).optional(),
   /** With two heads: the heads this line has reached. */
   seenBy: z.array(Engine).max(3).optional(),
   /** A question shared between the heads: its source question's id. */
@@ -690,6 +692,10 @@ export const PluginView = z.strictObject({
   })).max(100),
   commands: z.array(z.strictObject({ id: z.string().max(200), title: z.string().max(200), registered: z.boolean() })).max(100),
   panels: z.array(z.strictObject({ id: z.string().max(100), title: z.string().max(200) })).max(20),
+  /** What its program part shows in the status area (`ui.setStatus`); `command`: one of its own, run on a click. */
+  status: z.array(z.strictObject({
+    id: z.string().max(100), text: z.string().max(200), icon: z.string().max(100).nullable(), tooltip: z.string().max(1_000).nullable(), command: z.string().max(200).nullable(),
+  })).max(20).optional(),
 });
 export type PluginView = z.infer<typeof PluginView>;
 // ---------------------------------------------------------------------------------------------
@@ -1478,6 +1484,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("catchup.updated"), botId, catchUp: CatchUpView.nullable(), intervalSummaries: z.array(CatchUpView).max(200) }),
   /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
+  /** A plugin's program part opened one of its panels (`ui.openView`). */
+  z.strictObject({ type: z.literal("plugins.open"), plugin: PluginName, panel: z.string().max(100), title: z.string().max(200) }),
   /** The app's settings changed. */
   z.strictObject({ type: z.literal("settings.updated"), settings: SettingsView }),
   z.strictObject({ type: z.literal("doctor.updated"), doctor: DoctorView }),

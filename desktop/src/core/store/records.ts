@@ -80,6 +80,8 @@ export interface ChatRecord {
   reactions?: ReactionRecord[];
   /** A user line for one head only (`AnswerTarget`: "claude", "codex"); absent: both. */
   to?: string;
+  /** A user line a plugin sent (`bots.send`, not as the user): the plugin's title. */
+  via?: string;
   /** In a bot with two heads: the heads this line has reached. */
   seenBy?: string[];
   /** A question shared between the heads: its stable id (the source question's id). */

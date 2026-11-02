@@ -88,6 +88,8 @@ export interface MessageView {
   openable: boolean;
   /** Who said it, shown above the bubble (the group chat). */
   speaker?: string | null;
+  /** Sent by a plugin (its name), not typed by you. */
+  via?: string;
   /** What the bot did on the way to this reply. */
   steps?: StepView[] | null;
   /** Result pages it links to, drawn as 「網頁預覽卡片」 cards under it. */

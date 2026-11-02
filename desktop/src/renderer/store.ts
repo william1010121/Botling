@@ -59,6 +59,8 @@ export interface WorkspaceView {
   spec?: SpecStateView | null;
   /** The core is being replaced by a newer build (a fresh snapshot from the new core clears it). */
   coreSwap?: "draining" | "updating" | null;
+  /** A plugin panel its program part opened (`ui.openView`), until closed. */
+  pluginPanel?: { plugin: string; panel: string; title: string } | null;
 }
 
 /** Only inputs used by the selected chat page; sidebar activity is deliberately excluded. */
@@ -176,6 +178,11 @@ export class WorkspaceStore {
     this.set({ ...this.view, board });
   }
 
+  /** The panel a plugin opened was closed. */
+  closePluginPanel() {
+    this.set({ ...this.view, pluginPanel: null });
+  }
+
   /** Watches one of the shown bot's subagents (null: back to the chat). */
   watch(subagent: SubagentView | null) {
     this.set({ ...this.view, subagent });
@@ -251,6 +258,7 @@ export class WorkspaceStore {
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
+  if (event.type === "plugins.open") return { ...view, pluginPanel: { plugin: event.plugin, panel: event.panel, title: event.title } };
   if (event.type === "doctor.updated") return { ...view, doctor: event.doctor };
   if (event.type === "settings.updated") return { ...view, settings: event.settings };
   if (event.type === "waiting.updated") return { ...view, waiting: event.waiting };

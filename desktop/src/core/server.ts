@@ -416,11 +416,39 @@ export class Core {
       onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
       world: {
         bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
-        send: (botId, text) => {
-          const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
-          try { bot?.send(text); } catch (error) { this.log(`plugin message to ${botId}: ${(error as Error).message}`); }
+        send: (botId, text, via) => {
+          const bot = this.pluginBot(botId);
+          if (!bot) throw new Error("No such bot.");
+          return { messageId: bot.send(text, via ? { via } : {}).messageId };
         },
-        notice: (text) => this.bots.get(MAIN_BOT_ID)?.appNotice(text),
+        interrupt: async (botId) => {
+          const bot = this.pluginBot(botId);
+          if (!bot) return null;
+          // Every turn under way, as the stop button sends them (with two heads, both may work).
+          const stopped = await Promise.all(bot.snapshot().runs.map((run) => bot.stop(run.turnId)));
+          return stopped.some((outcome) => outcome.stopped);
+        },
+        notice: (text, actions) => {
+          this.bots.get(MAIN_BOT_ID)?.appNotice(text, actions?.map((action) => ({ label: action.label })), actions ? (index) => actions[index]?.run() : undefined);
+        },
+        ask: (question) => new Promise((resolve) => {
+          const main = this.bots.get(MAIN_BOT_ID)!;
+          // The last choice is Cancel: null, as the plugin sees it (Plugins' ui.quickPick / ui.input).
+          const id: string = main.appNotice(question.text, question.choices, (index) => resolve({ index }), question.typed ? {
+            onAnswer: (words) => {
+              if (!words) return false;
+              main.settleAppQuestion(id, { answer: words });
+              resolve({ text: words });
+              return true;
+            },
+          } : {});
+        }),
+        openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
+        appSettings: () => {
+          const settings = settingsView(readSettings(Layout.settings(this.options.dataDir)));
+          return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };
+        },
+        shortcutOverrides: () => settingsView(readSettings(Layout.settings(this.options.dataDir))).shortcuts,
         createBot: (plugin, title, name, job, avatar) => {
           const made = this.makeBot(name, job, { avatar, by: `plugin "${title}"`, plugin });
           if (made.kind === "empty") throw new Error("A bot needs a name and a job.");
@@ -1944,6 +1972,35 @@ First write a test that shows this, then fix it.`;
   }
 
   /** How plugins see a bot (`Workspace.info(for:)`): "main", or its id. */
+  /** The bot a plugin names ("main": the main bot), unless it was taken out of the column. */
+  private pluginBot(botId: string): Bot | null {
+    const id = botId === "main" ? MAIN_BOT_ID : botId;
+    return this.removed.has(id) ? null : this.bots.get(id) ?? null;
+  }
+
+  /** The workers seen at work, so each one's end is told once (`workerDone`). */
+  private readonly workersAtWork = new Set<string>();
+
+  /** What plugins listening with `events.on` hear of a core event. */
+  private pluginEvent(event: Event) {
+    if (!("botId" in event)) return;
+    const botId = event.botId === MAIN_BOT_ID ? "main" : event.botId;
+    if (event.type === "message.added" && event.message.role === "user") {
+      this.plugins.event("messagePosted", { botId, role: "user", text: event.message.text, id: event.message.id });
+    } else if (event.type === "turn.finished") {
+      if (event.status === "done" && event.text) this.plugins.event("messagePosted", { botId, role: "bot", text: event.text, id: event.messageId });
+      this.plugins.event("turnFinished", { botId, ok: event.status === "done", reply: event.text });
+    } else if (event.type === "subagent.updated") {
+      // Keyed by the worker and its run: the copy for an agent's owner, and views sent again, are not new ends.
+      const key = `${event.subagent.id}/${event.subagent.execution?.run ?? 0}`;
+      if (event.subagent.status === "running") {
+        if (this.workersAtWork.size < 2_000) this.workersAtWork.add(key);
+      } else if (this.workersAtWork.delete(key)) {
+        this.plugins.event("workerDone", { botId, workerId: event.subagent.id, status: event.subagent.status, report: event.subagent.result ?? "" });
+      }
+    }
+  }
+
   private botInfo(bot: Bot): BotInfo {
     return { id: bot.id === MAIN_BOT_ID ? "main" : bot.id, name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
   }
@@ -2059,6 +2116,7 @@ First write a test that shows this, then fix it.`;
     // A removed bot (still stopping) is heard no more.
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    this.pluginEvent(event);
     // An agent another bot owns: its owner's view of it follows too.
     if (event.type === "subagent.updated") {
       const record = this.agents.byHostBot(event.botId, event.subagent.id);
@@ -2473,6 +2531,7 @@ First write a test that shows this, then fix it.`;
     }
     if (change.key === "defaultPrimaryEngine" || change.key === "defaultEngines") for (const bot of this.bots.values()) bot.appPrimaryChanged();
     if (change.key === "claudeWorkerLimit") for (const bot of this.bots.values()) bot.claudeWorkerLimitChanged();
+    if (change.key === "language" || change.key === "botLook" || change.key === "claudeWorkerLimit") this.plugins.appSettingsChanged();
     const view = this.settingsNow();
     this.event({ type: "settings.updated", settings: view });
     return view;

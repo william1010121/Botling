@@ -253,6 +253,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       attachments: message.attachments?.map((file): FileView => ({ name: file.name, kind: file.kind, url: file.url.startsWith("file:") ? attachmentURL(bot.id, file.url) : file.url })) ?? null,
       replyTo: message.replyTo ?? null,
       replyPreview: message.replyPreview ?? null,
+      ...(message.role === "user" && message.via ? { via: message.via } : {}),
       openable: false,
       steps: steps?.length ? steps.map(step) : null,
       // Stopped or cut off: its words so far stay, and it says so.

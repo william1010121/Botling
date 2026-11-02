@@ -564,6 +564,13 @@ function userBody(message: MessageView): HTMLElement {
     name.textContent = message.speaker;
     body.append(name);
   }
+  // Sent by a plugin, not typed by you (`bots.send`).
+  if (message.via) {
+    const via = document.createElement("div");
+    via.className = "speaker via";
+    via.textContent = t("messages.via", { name: message.via });
+    body.append(via);
+  }
   if (message.replyPreview && message.replyTo) {
     const quote = document.createElement("button");
     quote.className = "quote";

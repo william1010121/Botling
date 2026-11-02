@@ -234,6 +234,7 @@ export const zhHant: Dictionary = {
   "messages.makeComponent": "做成元件",
   "messages.makeComponentTitle": "{label}：Maintainer 會馬上用這則回覆做出來",
   "messages.seenBy": "{names} 已讀",
+  "messages.via": "由外掛 {name} 送出",
   "messages.toHeads": "給 {names}",
   "messages.notSeenBy": "{names} 還沒讀",
   "messages.addReaction": "加入表情回應",
