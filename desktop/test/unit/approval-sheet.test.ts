@@ -43,7 +43,7 @@ describe("chat page actions only ask to run", () => {
     expect(Command.safeParse({ type: "pin.command", botId: BOT, id: PIN, approve: true }).success).toBe(false);
     expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "testRun", command: "x", folder: "/p", approve: true } }).success).toBe(false);
     expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "command", command: "x", folder: "/p", approve: true } }).success).toBe(false);
-    for (const type of ["component.approve", "pin.approve", "spec.approve", "whiteboard.allow"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
+    for (const type of ["component.approve", "pin.approve", "spec.approve"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
   });
 
   it("the sheet's Allow sends the core's command, folder and Detail command, not the page's", () => {

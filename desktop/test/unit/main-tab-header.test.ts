@@ -45,7 +45,7 @@ async function render(botId: string, extra: Partial<WorkspaceView> = {}, whitebo
 
 it("the main bot's header gets the main tab, a project bot's the project tab; nothing else changes", async () => {
   const main = await render(MAIN);
-  expect(main.buttons()).toEqual(["Chat", "Board", "Whiteboard", "Wall"]);
+  expect(main.buttons()).toEqual(["Chat", "Board", "Wall"]);
   const project = await render(PROJECT);
   expect(project.buttons()).toEqual(["Chat", "Board", "Git"]);
   const none = await render(PROJECT, { plugins: { ...plugins, mainTabs: [] } });
@@ -105,10 +105,10 @@ it("picking Chat keeps Chat for the next start; picking the Whiteboard tab again
   expect(requests).toContainEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: MAIN, tab: "botling.whiteboard/botling.whiteboard" } } });
 });
 
-it("with the plugin off the app page's own Whiteboard button is there, as before; a project bot has no whiteboard", async () => {
+it("with the plugin off there is no Whiteboard button (the core has no whiteboard of its own); a project bot has none either", async () => {
   const off = await render(MAIN, { plugins: { ...plugins, mainTabs: [] } }, true);
-  expect(off.buttons()).toEqual(["Chat", "Board", "Whiteboard"]);
-  expect(off.host.querySelector(".board-switch .whiteboard-switch:not(.main-tab-switch)")).not.toBeNull();
+  expect(off.buttons()).toEqual(["Chat", "Board"]);
+  expect(off.host.querySelector(".chat-column")?.className).not.toContain("whiteboard-on");
   const project = await render(PROJECT, { plugins: board }, true);
   expect(project.buttons()).toEqual(["Chat", "Board"]);
 });

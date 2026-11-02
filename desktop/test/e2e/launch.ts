@@ -19,7 +19,7 @@ function startOnChat() {
 
 /** The main bot's whiteboard is its default view: switches to its chat when the whiteboard shows. */
 export async function showChat(page: Page) {
-  if (await page.locator(".chat-column.whiteboard-on").count()) await page.locator(".board-switch").getByRole("button", { name: "Chat", exact: true }).click();
+  if (await page.locator(".chat-column.main-tab-on").count()) await page.locator(".board-switch").getByRole("button", { name: "Chat", exact: true }).click();
 }
 
 export async function launch(options: { whiteboard?: boolean; dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[]; trace?:TraceFixture; onLaunched?:(app:ElectronApplication)=>Promise<void> } = {}): Promise<Launched> {

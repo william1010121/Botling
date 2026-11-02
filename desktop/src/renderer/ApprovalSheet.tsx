@@ -1,7 +1,7 @@
 // The app page's own confirmation for a card's command (plugin-platform.md §5.4, G2): the command, its folder and
 // Detail command as the core has them, and "Allow and run". It lives in this page's React, never in a chat or card
 // frame, so nothing a frame runs can press it; what it sends (`component.approve`, `pin.approve`, `spec.approve`,
-// `whiteboard.allow`, `plugins.approve`) has no route from a frame. Its Allow waits a moment after it opens, so a sheet a frame made
+// `plugins.approve`) has no route from a frame. Its Allow waits a moment after it opens, so a sheet a frame made
 // appear under your pointer is not allowed by the click you were already making.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ApprovalAskView, Command } from "../contract";

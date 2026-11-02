@@ -37,7 +37,7 @@ async function main() {
     const page = await until(() => app.context().pages().find(p => p.url() === 'app://botling/index.html'));
     page.setDefaultTimeout(15_000);
     await page.waitForSelector('.shell[data-ready="1"]');
-    if (await page.locator('.chat-column.whiteboard-on').count()) await page.locator('.board-switch').getByRole('button', { name: 'Chat', exact: true }).click();
+    if (await page.locator('.chat-column.main-tab-on').count()) await page.locator('.board-switch').getByRole('button', { name: 'Chat', exact: true }).click();
     const chat = await until(() => app.context().pages().find(p => p.url().startsWith('botling-chat://chat/chat.html')));
     chat.setDefaultTimeout(15_000);
       const row = chat.locator('.row.bot[data-id]').last();

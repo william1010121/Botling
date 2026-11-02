@@ -34,12 +34,22 @@ import { Icon, isIconName } from "./icons";
 import { SpecFrame } from "./SpecFrame";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
-import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
  * header (the phone's bot list button) and the left column's foot in place of the desktop's add,
  * plugin and settings controls, which the web has no commands for. The desktop passes neither. */
 export interface WebChrome { headerLead?: ReactNode; railFooter: ReactNode }
+
+/** The main view of the main bot: the whiteboard tab unless you last picked Chat or Board (kept for the next start). */
+const CHOICE_KEY = "botling.mainWhiteboard";
+function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => { try { return localStorage.getItem(CHOICE_KEY) !== "0"; } catch { return true; } });
+  const choose = useCallback((next: boolean) => {
+    setOn(next);
+    try { localStorage.setItem(CHOICE_KEY, next ? "1" : "0"); } catch { /* no storage: this session only */ }
+  }, []);
+  return [on, choose];
+}
 
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
@@ -63,7 +73,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const selectTask = useCallback((id: string) => setSelectedTask((current) => (current === id ? null : id)), []);
   const now = useMinuteClock();
-  /** The main bot's main view: its chat, or the whiteboard of every bot (kept for the next start). */
+  /** The main bot's main view: its chat, or the whiteboard plugin's tab (kept for the next start). */
   const [whiteboardOn, setWhiteboardOn] = useWhiteboardChoice();
   /** The Review view of a worktree (or the main checkout), shown in the chat's place. */
   const [reviewing, setReviewing] = useState<{ botId: string; target: ReviewTarget } | null>(null);
@@ -132,12 +142,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
   // A plugin's tab in the main area (plan W2), the one this bot showed last; it takes the whiteboard's place too.
   const tabs = useMemo(() => (bot && !web ? mainTabsFor(view.plugins, bot) : []), [bot, web, view.plugins]);
-  // botling.whiteboard's tab (plan W5) takes the place of this page's own whiteboard while that plugin is on; off, this page's draws it as before.
+  // botling.whiteboard's tab; with that plugin off there is no whiteboard.
   const boardTab = bot?.role === "main" ? tabs.find((candidate) => candidate.plugin === WHITEBOARD_PLUGIN) ?? null : null;
   const remembered = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
-  // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice the page kept for its own whiteboard goes on for the plugin's.
+  // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice is kept for the next start.
   const tab = remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
-  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching && !tab && !boardTab;
   const review = reviewing && bot && reviewing.botId === bot.id && !watching ? reviewing.target : null;
 
   const fail = useCallback((failure: unknown) => {
@@ -343,7 +352,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </aside>
       )}
       <section className="chat-pane">
-        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}${tab ? " main-tab-on" : ""}${review ? " review-on" : ""}`}>
+        <div className={`chat-column${tab ? " main-tab-on" : ""}${review ? " review-on" : ""}`}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.parent ? <SubBotTitle bot={bot} parent={view.bots.find((candidate) => candidate.id === bot.parent) ?? null} onOpenParent={selectBot} /> : bot.name}</span>}
@@ -362,9 +371,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
           <div className="board-switch-bar">
             <div className="board-switch" role="group" aria-label="Chat views">
-              <button type="button" aria-pressed={!view.board && !whiteboard && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
-              <button type="button" aria-pressed={view.board && !whiteboard && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
-              {bot.role === "main" && !web && !boardTab && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => { chooseTab(bot.id, null); setWhiteboardOn(true); }}><Icon name="people" size={13} />Whiteboard</button>}
+              <button type="button" aria-pressed={!view.board && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
+              <button type="button" aria-pressed={view.board && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
               {tabs.map((candidate) => (
                 <button key={tabKey(candidate)} type="button" className={`main-tab-switch${candidate === boardTab ? " whiteboard-switch" : ""}`} data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
                   onClick={() => { setWhiteboardOn(candidate === boardTab); chooseTab(bot.id, candidate); }}>
@@ -384,15 +392,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
           </div>
         )}
-        {whiteboard && bot && (
-          <Whiteboard client={client} bots={view.bots} waiting={view.waiting} components={view.components} look={view.settings?.botLook ?? "original"} now={now}
-            mainMessages={chat?.botId === bot.id ? chat.messages : []} mainBotId={bot.id} pinned={pinned} lang={view.settings?.effectiveLanguage ?? null}
-            statusOf={(candidate) => ({ key: status(candidate), text: statusText(candidate) })}
-            onOpenChat={(botId) => { setWhiteboardOn(false); selectBot(botId); }} onError={fail} />
-        )}
         {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
         {review && bot && <Review client={client} bot={bot} target={review} lang={view.settings?.effectiveLanguage ?? null} onClose={() => setReviewing(null)} />}
-        {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
+        {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />
         {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} shortcutLabel={shortcutLabel("toggleTerminal")} />}
         </div>

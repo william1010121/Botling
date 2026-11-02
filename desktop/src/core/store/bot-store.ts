@@ -134,18 +134,7 @@ export class BotStore {
   /** One subagent's steps and earlier runs, read from its file. */
   readSubagentSteps(id: string): SubagentHistory { return this.subagents.readSteps(id); }
 
-  /** The bot's picture on the main bot's whiteboard (whiteboard.json, 2.0 only), as kept; null: none. */
-  loadWhiteboard(): unknown {
-    return readJSON(this.path("whiteboard.json")) ?? null;
-  }
-
-  /** Keeps the whiteboard picture (null: takes the file away). */
-  saveWhiteboard(value: unknown) {
-    if (value === null) rmSync(this.path("whiteboard.json"), { force: true });
-    else writeFileAtomic(this.path("whiteboard.json"), JSON.stringify(value));
-  }
-
-  /** When its tasks were finished (done-days.json, 2.0 only; `whiteboard-data.ts`), as kept; null: none or unreadable. */
+  /** When its tasks were finished (done-days.json, 2.0 only), as kept; null: none or unreadable. */
   loadDoneLog(): unknown {
     try { return readJSON(this.path("done-days.json")) ?? null; } catch { return null; }
   }

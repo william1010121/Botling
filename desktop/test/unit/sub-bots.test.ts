@@ -233,7 +233,6 @@ describe("a sub bot in the core", () => {
       for (const [id, bot] of bots(core)) vi.spyOn(bot, "relay").mockImplementation(() => { relayed.push(id); return { messageId: "m", turnId: "t" } as any; });
       core.deliverInboxes();
       expect(relayed).toEqual([PROJECT]);
-      expect(core.whiteboard().bots.map((bot) => bot.botId)).not.toContain(SUB);
       expect(core.waiting().items.map((item) => item.botId)).not.toContain(SUB);
       expect(await core.addProject(h.folder)).toEqual({ botId: PROJECT, added: false });
     } finally { await core.shutdown(); }

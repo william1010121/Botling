@@ -93,10 +93,9 @@ describe("a plugin's tag in a reply", () => {
     expect(parseReply(reply, ["deploy-status"])).toEqual(before);
   });
 
-  it("is botling.whiteboard's once that plugin declares <whiteboard>: the core no longer reads it", () => {
+  it("is botling.whiteboard's once that plugin declares <whiteboard>", () => {
     const parsed = parseReply('Done. <whiteboard name="status" size="2x1">{"ok":true}</whiteboard>', ["whiteboard"]);
     expect(parsed).toMatchObject({ body: "Done.", pluginTags: [{ tag: "whiteboard", attributes: { name: "status", size: "2x1" }, body: '{"ok":true}' }] });
-    expect(parsed.whiteboard).toBeUndefined();
   });
 
   it("is held back while it streams, like the core's tags", () => {

@@ -1,12 +1,12 @@
 // Blank bubbles: one rule for every head turn, whatever started it (shared-core spec 2.7). A finished turn with
 // nothing to show is not stored, drawn or sent as a bubble; `turn.finished` still goes out (text ""). Reactions and
-// whiteboards of a reply that says nothing else still apply; they just get no bubble.
+// plugin tags of a reply that says nothing else still apply; they just get no bubble.
 
 export interface TurnContent {
   status: "done" | "failed" | "stopped";
   /** The reply's body with the app's tags and <no-reply/> taken out. */
   body: string;
-  /** The reply only reacts (or sets the whiteboard). */
+  /** The reply only reacts (or only carries a plugin's tag, such as <whiteboard>). */
   reactionsOnly: boolean;
   cards: number; choices: number; displays: number; steps: number; backgroundTasks: number;
   /** Requests the app acts on with the bubble (<component>, <need-folder>, …). */

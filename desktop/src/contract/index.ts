@@ -206,46 +206,11 @@ export const DisplayView = z.strictObject({
 });
 export type DisplayView = z.infer<typeof DisplayView>;
 
-/** A bot's own picture for its whiteboard card: a component drawn as its Board tile would be, 1×1 or 2×1. */
-export const WhiteboardPictureView = DisplayView.extend({ size: z.enum(["1x1", "2x1"]) });
-export type WhiteboardPictureView = z.infer<typeof WhiteboardPictureView>;
-
 /**
  * A card's command waiting for the user's OK, as the core has it (never as a frame said it): what the app
  * page's ApprovalSheet shows before it sends `component.approve` / `pin.approve` / `spec.approve`.
  */
 export type ApprovalAskView = { command: string; folder: string; detail: string | null; card: string };
-/**
- * One bot on the main bot's whiteboard: its memory.md's "Current status", "In progress" and "Decided" as written (`memoryItems`; its "Waiting on you" comes with `waiting.list`), its
- * task cards and the links handed over in its chat (newest first). Only what the bot keeps itself.
- */
-export const WhiteboardBotView = z.strictObject({
-  botId: BotId,
-  currentStatus: z.array(z.string().max(400)).max(20),
-  inProgress: z.array(z.string().max(400)).max(20),
-  decided: z.array(z.string().max(400)).max(20),
-  tasks: z.array(TaskView),
-  results: z.array(z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) })).max(12),
-  /** The picture it gave its card (<whiteboard>), drawn as a Board tile of that size; null: none (the card shows its tasks ring). */
-  picture: WhiteboardPictureView.nullable(),
-  /** Its latest action: the newest entry on its task cards' timelines (a task done, what it does now, what it waits on you for). */
-  latest: z.strictObject({ kind: z.enum(["done", "now", "waiting"]), text: z.string().max(400), at: z.string().max(40) }).nullable().optional(),
-  /** Tasks finished on each of the last 14 days, oldest first (done-days.json, so pruned cards still count); `manual`: closed by you. */
-  doneDays: z.array(z.strictObject({ day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), done: z.number().int().nonnegative(), manual: z.number().int().nonnegative() })).max(14).optional(),
-  /** The bot in one line (its job, else its first "Current status" line, else its folder's name), for the board's tooltip. */
-  description: z.string().max(400).nullable().optional(),
-  /** Its tool approvals waiting for you, oldest first: the tool and what it would run. */
-  approvals: z.array(z.strictObject({ tool: z.string().max(200), text: z.string().max(400), at: z.string().max(40).nullable() })).max(20).optional(),
-});
-export type WhiteboardBotView = z.infer<typeof WhiteboardBotView>;
-export const WhiteboardView = z.strictObject({
-  bots: z.array(WhiteboardBotView).max(500),
-  /** Moves when the board changed; asking again with it (`since`) answers `same` (and no bots) when it has not. */
-  stamp: z.string().max(80).optional(),
-  same: z.boolean().optional(),
-});
-export type WhiteboardView = z.infer<typeof WhiteboardView>;
-
 /** A library component as the page needs it to draw one (`ChatPayload.Component`). */
 export const ComponentInfoView = z.strictObject({
   template: z.string().max(1_000_000),
@@ -1221,10 +1186,6 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("projects.add"), folder: z.string().min(1).max(4_096) }),
   /** What waits on you across the bots (the main bot's right panel). */
   z.strictObject({ type: z.literal("waiting.list") }),
-  /** Every bot's memory sections, tasks and results, for the main bot's whiteboard. */
-  z.strictObject({ type: z.literal("whiteboard.view"), since: z.string().max(80).optional() }),
-  /** Allows the command of a bot's whiteboard picture, as its card showed it (that command, in that folder), and runs it. */
-  z.strictObject({ type: z.literal("whiteboard.allow"), botId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000) }),
   /** Takes one off that list without answering it. */
   z.strictObject({ type: z.literal("waiting.ignore"), botId, text: z.string().min(1).max(400) }),
   /** Every enabled plugin's web part, for the chat page. */
@@ -1250,7 +1211,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1381,8 +1342,6 @@ export interface Results {
   "projects.add": { botId: string; added: boolean };
   "waiting.list": WaitingView;
   "waiting.ignore": WaitingView;
-  "whiteboard.view": WhiteboardView;
-  "whiteboard.allow": { accepted: boolean };
   "settings.set": SettingsView;
   "updates.check": UpdateView;
   "usage.view": UsageView;

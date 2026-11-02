@@ -36,7 +36,7 @@ import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, 
 import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
-  type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView, type WhiteboardView,
+  type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
   type SettingsChange, type SettingsView, type SpecAction, type SubagentRowView, type AgentTargetView,
 } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
@@ -59,7 +59,6 @@ import { Doctor, DoctorModel } from "./doctor";
 import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
-import { botDescription, latestAction } from "./whiteboard-data";
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
 import { WorkspaceWatch, type BotSummary, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
@@ -187,11 +186,8 @@ export class Core {
   private libraryWatch: FolderWatch | null = null;
   /** Bots' memory files, watched (`refreshWaiting` on a change, and every `waitingScanMs`). */
   private memoryWatch: FolderWatch | null = null;
-  /** memory.md files, read again only when they change (what waits on you, the whiteboard). */
+  /** memory.md files, read again only when they change (what waits on you). */
   private readonly memoryFiles = new MemoryFiles();
-  /** The whiteboard as last answered, and a number that moves when it changes (`whiteboardView`). */
-  private whiteboardText = "";
-  private whiteboardStamp = 0;
   /** Plugins' workspace changes (`workspace.onChange`): the watch while some plugin listens, its next check, and its clock. */
   private workspaceWatch: WorkspaceWatch | null = null;
   private workspaceTimer: NodeJS.Timeout | null = null;
@@ -1750,43 +1746,6 @@ First write a test that shows this, then fix it.`;
     return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing, ...(acked.length ? { acked } : {}) };
   }
 
-  /**
-   * The main bot's whiteboard: for every bot but the main bot, its memory.md's "Current status", "In progress" and "Decided" (its "Waiting on you" is in `waiting()`), its task cards and its chat's results. Read when
-   * asked; the page asks every few seconds while the whiteboard is shown.
-   */
-  whiteboard(): WhiteboardView {
-    const out: WhiteboardView["bots"] = [];
-    for (const profile of this.profiles) {
-      if (profile.role === "main" || profile.parent) continue;
-      const bot = this.bots.get(profile.id);
-      if (!bot) continue;
-      const { currentStatus, inProgress, decided } = this.memorySections(profile);
-      const tasks = bot.taskViews().slice(-100);
-      out.push({
-        botId: profile.id, currentStatus, inProgress, decided,
-        tasks, results: this.resultLinks(bot, 12),
-        picture: bot.whiteboardPicture(),
-        latest: latestAction(tasks), doneDays: bot.doneDays(), description: botDescription(profile.job, currentStatus[0], profile.folder), approvals: bot.pendingApprovals(),
-      });
-      // Shown now: a picture whose command the user allowed runs again (at most every 30 s), as a pin "when shown".
-      bot.whiteboardShown();
-    }
-    return { bots: out.slice(0, 500) };
-  }
-
-  /**
-   * The whiteboard for `whiteboard.view`: `stamp` moves only when what it shows changed, and an ask with the
-   * stamp it has (`since`) gets `same` and no bots, so an unchanged board is not sent or compared on the page.
-   * The board is still built on each ask: being asked is what shows it (`whiteboardShown`).
-   */
-  whiteboardView(since?: string): WhiteboardView {
-    const view = this.whiteboard();
-    const text = JSON.stringify(view.bots);
-    if (text !== this.whiteboardText) { this.whiteboardText = text; this.whiteboardStamp++; }
-    const stamp = `${this.epoch}:${this.whiteboardStamp}`;
-    return since === stamp ? { bots: [], stamp, same: true } : { ...view, stamp };
-  }
-
   /** A bot's memory.md sections (empty when its folder has a problem); read and parsed once per change of the file (MemoryFiles). */
   private memorySections(profile: BotProfile): MemorySections {
     const file = join(profile.folder, profile.memoryPath);
@@ -2472,8 +2431,6 @@ First write a test that shows this, then fix it.`;
       }
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();
-      case "whiteboard.view": return this.whiteboardView(cmd.since);
-      case "whiteboard.allow": return this.bot(cmd.botId).whiteboardAllow({ command: cmd.command, folder: cmd.folder });
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);
       case "engineDefaults.applyAll": return this.applyEngineDefaultsToAll();

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { StreamItem } from "../../src/core/agent/stream";
 import { headTurnContent, headTurnEnd, type HeadTurnFacts } from "../../src/core/head-turn";
 import { parseHeadTags } from "../../src/core/heads";
-import { parseReply, saysNoReply, saysNothing } from "../../src/core/reply";
+import { parseReply, saysNoReply, saysNothing, setPluginTags } from "../../src/core/reply";
 import { hasVisibleContent } from "../../src/core/worker-core";
 
 type Result = Extract<StreamItem, { kind: "result" }>;
@@ -71,7 +71,7 @@ function legacySilent(raw: string, status: Status, origin: Origin, sharesChat: b
   const tags = status === "done" ? parseHeadTags(parsed.body) : { body: parsed.body, handoff: null };
   const nothing = saysNothing(raw);
   return status === "done" && !tags.handoff && (
-    (nothing && (parsed.reactions.length > 0 || !!parsed.whiteboard))
+    (nothing && parsed.reactions.length > 0)
     || (origin === "background" && (saysNoReply(raw) || nothing))
     || ((origin === "app" || sharesChat) && nothing && saysNoReply(raw))
     || (origin === "app" && nothing && !parsed.decisionReference && !steps));
@@ -156,11 +156,12 @@ describe("a head turn's bubble (hasVisibleContent)", () => {
     expect(silent("<no-reply/>", "done", "user", true, 2)).toBe(true);
   });
 
-  it("a reply that only reacts or sets the whiteboard: no bubble, even with steps; with words, a bubble", () => {
+  it("a reply that only reacts or only carries a plugin's tag (<whiteboard>, once botling.whiteboard declares it): no bubble, even with steps; with words, a bubble", () => {
     const content = headTurnContent(facts(REPLIES.reaction!, "done", "user", false, 2));
     expect(content.reactionsOnly).toBe(true);
     expect(hasVisibleContent(content)).toBe(false);
-    expect(silent('<whiteboard name="status">{"ok":true}</whiteboard>', "done", "user", false, 0)).toBe(true);
+    setPluginTags(["whiteboard"]);
+    try { expect(silent('<whiteboard name="status">{"ok":true}</whiteboard>', "done", "user", false, 0)).toBe(true); } finally { setPluginTags([]); }
     expect(silent(REPLIES.reactionAndWords!, "done", "user", false, 0)).toBe(false);
   });
 

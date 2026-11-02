@@ -44,7 +44,7 @@ export interface HeadTurnFacts {
 export function headTurnContent(f: HeadTurnFacts): TurnContent {
   const { parsed } = f;
   const nothing = !parsed.body && !parsed.choices?.length && !parsed.displays.length && !parsed.requests.length;
-  const reacts = parsed.reactions.length > 0 || !!parsed.whiteboard;
+  const reacts = parsed.reactions.length > 0 || !!parsed.pluginTags?.length;
   // What the head keeps out of the chat, its steps too: a reply that only reacts; a turn claude started itself that
   // says <no-reply/> or nothing; <no-reply/> to the app's note or, with two heads, to your message.
   const keptOut = f.status === "done" && !f.handoff && (

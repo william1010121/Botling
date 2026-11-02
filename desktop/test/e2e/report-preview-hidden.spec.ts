@@ -16,7 +16,7 @@ test("preview full page stays in the main window; return preserves chat and ordi
     const shell = await until(() => app.context().pages().find(p => p.url() === "app://botling/index.html"));
     const editor = await until(() => app.context().pages().find(p => p.url().includes("nativeHost=1")));
     await shell.locator('.shell[data-ready="1"]').waitFor();
-    if (await shell.locator(".chat-column.whiteboard-on").count()) await shell.getByRole("button", {name:"Chat",exact:true}).click();
+    if (await shell.locator(".chat-column.main-tab-on").count()) await shell.getByRole("button", {name:"Chat",exact:true}).click();
     const component = editor.frameLocator('.page-preview iframe').first();
     await component.getByRole('button', {name:'開啟完整頁面',exact:true}).waitFor();
     await editor.evaluate(() => { (window as any).reportChatMarker = 42; });

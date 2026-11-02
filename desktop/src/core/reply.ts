@@ -6,10 +6,9 @@
 // - <task …/> lines update the chat's task cards (tasks.ts);
 // - <reaction …/> on a line of its own sets the bot's own reaction;
 // - <show> becomes a component display (kept in 1.x's `displays` format; 2.0 does not draw them yet);
-// - <whiteboard> (2.0 only) sets the bot's picture on the main bot's whiteboard, drawn nowhere in the chat;
-// - a tag a plugin declares (`replyTags`, plugins/contributions.ts) comes out where <whiteboard> does and
-//   is handed to that plugin; with none declared nothing here changes. Once botling.whiteboard declares
-//   <whiteboard>, it is that plugin's and the core no longer reads it;
+// - a tag a plugin declares (`replyTags`, plugins/contributions.ts) comes out of the text, drawn nowhere in the
+//   chat, and is handed to that plugin; with none declared nothing here changes (<whiteboard> is
+//   botling.whiteboard's this way);
 // - the other requests (<component>, <plugin>, <install>, <new-bot>, <new-project>, …) are
 //   parsed and taken out of the text, so the chat never shows raw tags; 2.0 acts on none of them yet
 //   and says so (bot.ts).
@@ -53,15 +52,10 @@ export const TASK_STAGES: readonly TaskStage[] = ["built", "reviewed", "installe
 export interface TaskTag { id?: string; expectedUpdatedAt?: number; name?: string; continues?: string; now?: string; next?: string; blocked?: string; state?: TaskState; stage?: TaskStage | "" }
 export interface CompletionSignal { kind: "end" | "block"; evidence: string }
 
-/** The bot's picture on the main bot's whiteboard (`<whiteboard name="x" size="2x1">JSON</whiteboard>`, or `<whiteboard clear/>`). */
-export type WhiteboardTag = { clear: true } | { name: string; data: string; command?: string; size: "1x1" | "2x1" };
-
 /** A tag a plugin declared, as the bot wrote it (`<deploy-status env="prod">{"ok":true}</deploy-status>`). */
 export interface PluginTag { tag: string; attributes: Record<string, string>; body: string }
 
 export interface Parsed {
-  /** The last <whiteboard> tag outside code, if any. */
-  whiteboard?: WhiteboardTag;
   /** Plugins' tags outside code, in order; absent when there are none. */
   pluginTags?: PluginTag[];
   body: string;
@@ -95,7 +89,6 @@ const noReplyTag = () => /<no-reply\s*\/>|<no-reply>\s*<\/no-reply>/g;
 const openQuestionTag = () => /<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/open-question>)/g;
 const projectTag = () => /<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:\/>|>\s*([\s\S]*?)\s*<\/new-project>)/g;
 const showTag = () => /<show((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/show>)/g;
-const whiteboardTag = () => /<whiteboard((?:\s+[A-Za-z-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/whiteboard>)/g;
 /** The tags plugins declare now (set by the core when its plugins change); parseReply reads them by default. */
 let declaredTags: readonly string[] = [];
 const tagName = (tag: string) => /^[a-z][a-z0-9-]{0,39}$/.test(tag);
@@ -244,23 +237,6 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
     replace(hit.index, hit.length, "");
   }
 
-  // <whiteboard>: the last good one counts; every one leaves the text (unless a plugin owns it now).
-  let whiteboard: WhiteboardTag | undefined;
-  if (!own.includes("whiteboard")) for (const hit of hits(whiteboardTag(), mask).reverse()) {
-    const attrs = group(text, hit, 0);
-    const body = group(text, hit, 1);
-    replace(hit.index, hit.length, "");
-    if (whiteboard) continue;
-    const found = attributes(attrs);
-    if (/(?:^|\s)clear(?:\s|$|=)/i.test(attrs) && !found.name) { whiteboard = { clear: true }; continue; }
-    const name = trimAll(found.name ?? "");
-    const data = body ? body : "null";
-    if (!name) continue;
-    if (body) { try { JSON.parse(body); } catch { continue; } }
-    const command = found.command?.trim();
-    whiteboard = { name, data, ...(command ? { command } : {}), size: found.size?.trim() === "2x1" ? "2x1" : "1x1" };
-  }
-
   const reactions: ReactionAction[] = [];
   const quoted = hits(quotedHTMLRegion(), mask);
   const overlapsQuoted = (hit: Hit) => quoted.some((q) => q.index < hit.index + hit.length && hit.index < q.index + q.length);
@@ -359,7 +335,7 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
 
   const { body, places } = placing(text, displays.length);
   displays.forEach((display, i) => { if (places[i] != null) display.at = places[i]!; });
-  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(whiteboard ? { whiteboard } : {}), ...(pluginTags.length ? { pluginTags } : {}) };
+  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(pluginTags.length ? { pluginTags } : {}) };
 }
 
 /** The text without its markers, trimmed, and where each marker was (UTF-16 offsets). */
