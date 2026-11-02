@@ -29,6 +29,9 @@ const paths: Record<string, string> = {
 
 export type IconName = keyof typeof paths;
 
+/** Whether `name` is one of the icons drawn here (a plugin names its tab's icon in its manifest). */
+export const isIconName = (name: string): name is IconName => Object.hasOwn(paths, name);
+
 export function Icon({ name, size = 14, className }: { name: IconName; size?: number; className?: string }) {
   return (
     <svg className={className} width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -30,7 +30,8 @@ describe("core process", () => {
     expect(finished.event).toMatchObject({ turnId, messageId, status: "done", text: "You said: hello there" });
     const deltas = c.of("turn.delta").map((e) => (e.event as { text: string }).text).join("");
     expect(deltas).toBe("You said: hello there");
-    const seqs = c.events.map((e) => e.seq);
+    // Events from before the snapshot (the plugin host of a built-in plugin with a program part starts as the core does) are the snapshot's.
+    const seqs = c.events.map((e) => e.seq).filter((seq) => seq > snapshot.seq);
     expect(seqs).toEqual(seqs.map((_, i) => snapshot.seq + i + 1));
     expect(new Set(c.events.map((e) => e.epoch))).toEqual(new Set([snapshot.epoch]));
     // The routine clock's first look at startup repeats no bot's unchanged routines.

@@ -74,3 +74,41 @@ it("a tab remembered for a bot shows when its chat opens, in the whiteboard's pl
   expect(host.querySelector(".main-tab")).not.toBeNull();
   expect(host.querySelector(".chat-column")?.classList.contains("whiteboard-on")).toBe(false);
 });
+
+// botling.whiteboard's tab (plan W5) takes the place of the app page's own Whiteboard button and page while that plugin is on.
+const board: PluginsView = { ...plugins, mainTabs: [{ plugin: "botling.whiteboard", id: "botling.whiteboard", title: "Whiteboard", icon: "people", forRole: "main" }] };
+
+it("with botling.whiteboard on, its tab is the Whiteboard button (same place, same icon) and the app page's own is gone", async () => {
+  const { host, buttons } = await render(MAIN, { plugins: board }, true);
+  expect(buttons()).toEqual(["Chat", "Board", "Whiteboard"]);
+  const tab = host.querySelector<HTMLButtonElement>('.main-tab-switch[data-tab="botling.whiteboard/botling.whiteboard"]')!;
+  expect(tab.className).toContain("whiteboard-switch");
+  expect(tab.querySelector("svg")).not.toBeNull();
+  // The main bot opens on it unless Chat or Board was picked last (the choice the page kept for its own whiteboard goes on).
+  expect(host.querySelector(".main-tab")?.getAttribute("data-plugin")).toBe("botling.whiteboard");
+  expect(host.querySelector(".whiteboard")).toBeNull();
+  expect(tab.getAttribute("aria-pressed")).toBe("true");
+  expect(host.querySelector(".chat-column")?.className).toContain("main-tab-on");
+});
+
+it("picking Chat keeps Chat for the next start; picking the Whiteboard tab again keeps the tab", async () => {
+  const { host, requests, update } = await render(MAIN, { plugins: board }, true);
+  const chat = [...host.querySelectorAll<HTMLButtonElement>(".board-switch button")].find((button) => button.textContent === "Chat")!;
+  await act(async () => chat.click());
+  expect(localStorage.getItem("botling.mainWhiteboard")).toBe("0");
+  await update({});
+  expect(host.querySelector(".main-tab")).toBeNull();
+  expect(chat.getAttribute("aria-pressed")).toBe("true");
+  const tab = host.querySelector<HTMLButtonElement>(".main-tab-switch.whiteboard-switch")!;
+  await act(async () => tab.click());
+  expect(localStorage.getItem("botling.mainWhiteboard")).toBe("1");
+  expect(requests).toContainEqual({ type: "settings.set", change: { key: "mainTab", value: { botId: MAIN, tab: "botling.whiteboard/botling.whiteboard" } } });
+});
+
+it("with the plugin off the app page's own Whiteboard button is there, as before; a project bot has no whiteboard", async () => {
+  const off = await render(MAIN, { plugins: { ...plugins, mainTabs: [] } }, true);
+  expect(off.buttons()).toEqual(["Chat", "Board", "Whiteboard"]);
+  expect(off.host.querySelector(".board-switch .whiteboard-switch:not(.main-tab-switch)")).not.toBeNull();
+  const project = await render(PROJECT, { plugins: board }, true);
+  expect(project.buttons()).toEqual(["Chat", "Board"]);
+});

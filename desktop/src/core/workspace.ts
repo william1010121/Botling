@@ -31,6 +31,19 @@ export interface BotSummary {
   /** The face's shape, which its avatar is drawn from (`face`). */
   avatar: string;
   pinned: boolean;
+  /** When it last did something (ISO time), if ever. */
+  lastActivity: string | null;
+  /** What it is for (a bot of its own), if it has a job. */
+  job: string | null;
+  /** Its subagents at work, and whether a guest bot answers in its chat now. */
+  subagents: number;
+  guest: boolean;
+  /** Its tool approvals waiting for the user. */
+  approvals: number;
+  /** The app's own words for its state: `key` says which dot to draw. */
+  status: { key: string; text: string };
+  /** The main bot's latest reply as written (cut at 400 characters); null for any other bot. */
+  lastReply: string | null;
 }
 
 /** Its memory.md's sections, as the whiteboard and Waiting on you read them. */

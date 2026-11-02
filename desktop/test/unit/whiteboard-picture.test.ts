@@ -93,6 +93,7 @@ function fakeCore() {
   const answer = (cmd: any): { ok: true; result: unknown } | { ok: false; error: { code: string; message: string } } => {
     switch (cmd.type) {
       case "card.page": return { ok: true, result: { url: `botling-card://page/${"a".repeat(36)}` } };
+      case "plugins.tileImages": return { ok: true, result: { images: JSON.parse(cmd.data)?.image ? { [JSON.parse(cmd.data).image]: "botling-card://image/abc" } : {} } };
       case "plugins.approvalAsk":
         if (cmd.folder !== PICTURE.folder) return { ok: false, error: { code: "bad_request", message: "A plugin's command runs in its bot's folder (/p/site), not /." } };
         return { ok: true, result: { needsApproval: approved.has(cmd.command) ? null : { command: cmd.command, folder: PICTURE.folder, detail: null, card: `Whiteboard: ${cmd.card ?? "?"}` } } };
@@ -144,29 +145,36 @@ describe("botling.whiteboard's frame asks the app page for a tile and an approva
 
   it("a tile: a library component drawn read only as a Board tile, on a card page main serves; its URL goes back to the frame", async () => {
     const { frame, sent } = await page();
-    send(frame.element, { ccb: "tile", id: 1, component: "status", data: { ok: true }, size: "2x1", botId: BOT });
+    send(frame.element, { ccb: "tile", id: 1, component: "status", data: { ok: true, image: "chart.png" }, size: "2x1", botId: BOT });
     await until(() => frame.posted.length === 1);
     expect(frame.posted).toEqual([{ ccb: "reply", id: 1, ok: true, value: `botling-card://page/${"a".repeat(36)}` }]);
-    expect(sent.map((cmd) => cmd.type)).toEqual(["card.page"]);
-    expect(sent[0]).not.toHaveProperty("panel");
+    // The core finds the pictures its data names (the bot's folder); the page puts them into the tile's page. A tile never reads a path itself.
+    expect(sent.map((cmd) => cmd.type)).toEqual(["plugins.tileImages", "card.page"]);
+    expect(sent[0]).toEqual({ type: "plugins.tileImages", name: "botling.whiteboard", botId: BOT, data: '{"ok":true,"image":"chart.png"}' });
     expect(Command.safeParse(sent[0]).success).toBe(true);
-    const html: string = sent[0].html;
+    expect(sent[1]).not.toHaveProperty("panel");
+    expect(Command.safeParse(sent[1]).success).toBe(true);
+    const html: string = sent[1].html;
+    expect(html).toContain("botling-card://image/abc");
     expect(html).toContain("<div id=status-template></div>");
     expect(html).toContain('data-size="2x1" data-surface="board" data-fill');
-    expect(html).toContain('{"ok":true}');
+    expect(html).toContain('"ok":true');
     // Not in the library, no such bot, too much data, a size a card has no room for: refused, nothing served.
     send(frame.element, { ccb: "tile", id: 2, component: "nope", data: null, size: "1x1", botId: BOT });
     send(frame.element, { ccb: "tile", id: 3, component: "status", data: null, size: "1x1", botId: "6A0B0000-0000-4000-8000-0000000000FF" });
     send(frame.element, { ccb: "tile", id: 4, component: "status", data: "x".repeat(TILE_DATA_MAX), size: "1x1", botId: "main" });
     send(frame.element, { ccb: "tile", id: 5, component: "status", data: null, size: "4x4", botId: BOT });
-    await until(() => frame.posted.length === 4);
-    expect(frame.posted.slice(1)).toEqual([
+    send(frame.element, { ccb: "tile", id: 6, component: "status", data: null, size: "2x2", botId: BOT });
+    await until(() => frame.posted.length === 5);
+    expect(frame.posted.slice(1, 4)).toEqual([
       { ccb: "reply", id: 2, ok: false, value: 'No component "nope" in the library.' },
       { ccb: "reply", id: 3, ok: false, value: "No such bot." },
       { ccb: "reply", id: 4, ok: false, value: "The tile's data is too big." },
     ]);
+    // The report's 2x2 is allowed, a bigger one is not a request at all.
+    expect(frame.posted[4]).toMatchObject({ ccb: "reply", id: 6, ok: true });
     expect(broker.refusals.map((refusal) => refusal.reason)).toEqual(["a message that is not a valid ccb call (tile)"]);
-    expect(sent).toHaveLength(1);
+    expect(sent.map((cmd) => cmd.type)).toEqual(["plugins.tileImages", "card.page", "plugins.tileImages", "card.page"]);
   });
 
   it("an approval: the sheet shows the core's command and folder; only its Allow sends plugins.approve; the frame hears { allowed }", async () => {
@@ -317,6 +325,8 @@ describe("a bot's whiteboard picture through the core", () => {
     mkdirSync(folder, { recursive: true });
     const c = new CoreHarness(dir, { FAKE_CLAUDE_INPUT: join(dir, "claude-input.log"), BOTLING_ROUTINE_TICK_MS: "0", BOTLING_PLAIN_SHELL: "1", BOTLING_WAITING_SCAN_MS: "0" });
     harnesses.push(c);
+    // botling.whiteboard is off here: the core's own picture path is the fallback until W6 takes it out.
+    await c.call({ type: "plugins.enable", name: "botling.whiteboard", enabled: false });
     const { botId } = await c.call({ type: "projects.add", folder });
     const say = async (text: string) => {
       const { turnId } = await c.call({ type: "chat.send", botId, text });

@@ -28,7 +28,9 @@ describe("the frame protocol", () => {
     expect(parseFrameRequest({ ccb: "tile", id: 2, component: "status", size: "1x1", botId: "main" })).toEqual({ ccb: "tile", id: 2, component: "status", data: null, size: "1x1", botId: "main" });
     expect(parseFrameRequest({ ccb: "approval", id: 3, botId: "B1", command: "git log", folder: "/p", card: "gitlog" })).toEqual({ ccb: "approval", id: 3, botId: "B1", command: "git log", folder: "/p", card: "gitlog" });
     expect(parseFrameRequest({ ccb: "approval", id: 4, botId: "B1", command: "git log", folder: "/p" })).toEqual({ ccb: "approval", id: 4, botId: "B1", command: "git log", folder: "/p" });
-    expect(parseFrameRequest({ ccb: "tile", id: 5, component: "status", data: null, size: "2x2", botId: "main" })).toBeNull();
+    // The report shows a picture 2x2; nothing bigger.
+    expect(parseFrameRequest({ ccb: "tile", id: 5, component: "status", data: null, size: "2x2", botId: "main" })).toMatchObject({ size: "2x2" });
+    expect(parseFrameRequest({ ccb: "tile", id: 55, component: "status", data: null, size: "4x4", botId: "main" })).toBeNull();
     expect(parseFrameRequest({ ccb: "tile", id: 6, component: "", data: null, size: "1x1", botId: "main" })).toBeNull();
     expect(parseFrameRequest({ ccb: "approval", id: 7, botId: "B1", command: "git log", folder: "/p", approved: true })).toBeNull();
     expect(parseFrameRequest({ ccb: "approval", id: 8, botId: "B1", command: "", folder: "/p" })).toBeNull();

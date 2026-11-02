@@ -3,6 +3,9 @@
 // settings.json (`mainTabs`, SettingsChange "mainTab"), so it shows again when the bot is opened.
 import type { BotView, PluginsView } from "../contract";
 
+/** The first-party plugin whose tab takes the place of this page's own whiteboard (plan W5). */
+export const WHITEBOARD_PLUGIN = "botling.whiteboard";
+
 export type MainTab = NonNullable<PluginsView["mainTabs"]>[number];
 
 /** How a tab is remembered: "<plugin>/<view id>". */

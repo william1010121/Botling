@@ -37,6 +37,7 @@ export const approvalAdapter: ApprovalDriver = {
       appSettings: () => ({}), shortcutOverrides: () => ({}), createBot: () => { throw new Error("no"); }, addRoutine: () => "no-bot",
       commandApproval: (botId, command) => (botId === BOT ? { folder: FOLDER, approved: approved.has(command) } : null),
       approveCommand: (botId, command) => botId === BOT && !!approved.add(command),
+      commandRun: () => null, component: () => null, imageUrls: () => null,
       changed: () => {}, broken: () => {}, log: () => {},
       workspace: { bots: () => [], memory: () => { throw new Error("not here"); }, tasks: () => [], taskHistory: () => [], results: () => [], waiting: () => ({ items: [], doing: {} }), ignoreWaiting: () => {}, pendingApprovals: () => [], face: () => "" },
       workspaceWatch: () => {},

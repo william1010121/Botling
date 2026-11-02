@@ -28,6 +28,7 @@ import { title, type JSONValue } from "./manifest";
 import { PluginRegistry, type InstalledPlugin } from "./registry";
 import { SealedSecretStore, type Sealer } from "./secrets";
 import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../workspace";
+import { PendingTags } from "./pending-tags";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -58,6 +59,16 @@ export interface PluginWorld {
   commandApproval(botId: string, command: string): { folder: string; approved: boolean } | null;
   /** The user allowed `command` in the bot's folder (only ever from the app page's ApprovalSheet); false: no such bot. */
   approveCommand(botId: string, command: string): boolean;
+  /**
+   * A plugin's run `key` of `command` in the bot's folder (`approvals.state`, `approvals.run`), by the core's own command runner (a time limit,
+   * an output cap, the process ledger); `run: false` only reads it. Runs only what the user allowed. null: no such bot.
+   */
+  commandRun(botId: string, key: string, command: string, run: false | { minIntervalMs: number }):
+    { folder: string; approved: boolean; status: "approve" | "idle" | "running" | "done" | "failed"; data: string | null; error: string | null; ranAt: number | null; started: boolean } | null;
+  /** The bot's component library, read only (`workspace.component`); null: no such bot. */
+  component(botId: string, name: string, data: string | undefined, command: string | undefined): { exists: boolean; command: string | null } | null;
+  /** The card-page URLs of the pictures a component's data names for that bot (what a tile needs); null: no such bot. */
+  imageUrls(botId: string, data: string): Record<string, string> | null;
   /** `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. */
   createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined): BotInfo & { created: boolean };
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
@@ -118,6 +129,10 @@ const StatusParams = z.object({
 const EVENT_NAMES = ["messagePosted", "turnFinished", "workerDone"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
+const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
+const StateParams = ApprovalParams.extend({ key: RunKey });
+const RunParams = StateParams.extend({ minIntervalMs: z.number().int().min(0).max(3_600_000).optional() });
+const ComponentParams = BotParams.extend({ name: str(200).min(1), data: z.string().max(300_000).optional(), command: z.string().max(20_000).optional() });
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
 const PluginOnly = z.object({ plugin: str(214) });
@@ -134,6 +149,8 @@ export class Plugins {
   readonly secrets: SealedSecretStore;
   private readonly dataRoot: string;
   private started = false;
+  /** Reply tags whose plugin was not loaded yet, kept until it is (pending-tags.ts). */
+  private readonly held: PendingTags;
   /** What each plugin shows in the status area (`ui.setStatus`), until it unloads. */
   private readonly status = new Map<string, Map<string, PluginStatusItem>>();
   /** Some plugin listens for workspace changes, as the host last said (`workspace.onChange`). */
@@ -144,6 +161,7 @@ export class Plugins {
     this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
+    this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));
     this.host = new PluginHostClient(options.hostScript, options.node, this.dataRoot, (line) => world.log(line), options.timing ?? DEFAULT_TIMING, options.onPid);
     this.registry.onNotice = (text) => world.notice(text);
     this.registry.onBroken = (plugin, problem) => world.broken(plugin, problem);
@@ -159,6 +177,7 @@ export class Plugins {
     this.host.onRegistered = () => {
       this.followWorkspace();
       this.announce();
+      this.replayHeld();
     };
     this.host.onNotification = (method, params) => this.notified(method, params);
     this.host.onRequest = (method, params) => this.requested(method, params);
@@ -430,12 +449,30 @@ export class Plugins {
     return owners;
   }
 
-  /** A bot's reply had tags plugins declared: each goes to its plugin's program part (`replyTags.on`), if it runs. */
+  /**
+   * A bot's reply had tags plugins declared: each goes to its plugin's program part (`replyTags.on`). A tag has left the
+   * reply's text by now, so one whose plugin is not running yet (the host is starting, or restarting after a crash) is
+   * kept on disk and handed over when the plugin loads, the last one for each tag and bot.
+   */
   replyTags(bot: BotInfo, tags: PluginTag[]) {
     const owners = this.replyTagOwners();
     for (const tag of tags) {
       const plugin = owners.get(tag.tag);
-      if (plugin && this.loaded(plugin)) this.host.replyTag(plugin, bot, tag);
+      if (!plugin || !this.loaded(plugin)) continue;
+      if (this.host.runs(plugin) && !this.held.has(plugin)) this.host.replyTag(plugin, bot, tag);
+      else this.held.hold(plugin, bot, tag);
+    }
+    // The host may run it already (only the order mattered above).
+    this.replayHeld();
+  }
+
+  /** Tags held for plugins the host runs now are handed over, in the order they came. */
+  private replayHeld() {
+    for (const plugin of new Set(this.replyTagOwners().values())) {
+      if (!this.held.has(plugin) || !this.loaded(plugin) || !this.host.runs(plugin)) continue;
+      for (const entry of this.held.take(plugin)) {
+        if (this.replyTagOwners().get(entry.tag) === plugin) this.host.replyTag(plugin, entry.bot, { tag: entry.tag, attributes: entry.attributes, body: entry.body });
+      }
     }
   }
 
@@ -473,6 +510,14 @@ export class Plugins {
     if (state.approved) return { needsApproval: null };
     const who = title(plugin.manifest).slice(0, 100);
     return { needsApproval: { command, folder: state.folder, detail: null, card: card ? `${who}: ${card.slice(0, 100)}` : who } };
+  }
+
+  /** The pictures a frame's tile data names, as card-page URLs (`ccb.tile`: the app page puts them into the tile's page). */
+  tileImages(name: string, botId: string, data: string): { images: Record<string, string> } {
+    this.asking(name);
+    const images = this.options.world.imageUrls(botId, data);
+    if (!images) throw new ContractError("not_found", "No such bot.");
+    return { images };
   }
 
   /** "Allow and run" on the ApprovalSheet for a plugin's ask: the command as the sheet showed it, in that bot's folder. */
@@ -650,6 +695,22 @@ export class Plugins {
         const state = world.commandApproval(data.bot, data.command);
         if (!state) throw new Error("No such bot.");
         return state;
+      }
+      case "approvals.state":
+      case "approvals.run": {
+        // A run of a command the user allowed (the plugin's frame asked for that on the app page); the core runs it. Never an unallowed one.
+        const { plugin, data } = this.asked(RunParams, params);
+        // A run is the plugin's own: its key is kept under the plugin's name.
+        const run = world.commandRun(data.bot, `${plugin.manifest.name}/${data.key}`, data.command, method === "approvals.run" ? { minIntervalMs: data.minIntervalMs ?? 0 } : false);
+        if (!run) throw new Error("No such bot.");
+        const { started, ...state } = run;
+        return method === "approvals.run" ? { ...state, started } : state;
+      }
+      case "workspace.component": {
+        const { data } = this.asked(ComponentParams, params);
+        const entry = world.component(data.bot, data.name, data.data, data.command);
+        if (!entry) throw new Error("No such bot.");
+        return entry;
       }
       case "routines.add": {
         const parsed = RoutineParams.safeParse(params);

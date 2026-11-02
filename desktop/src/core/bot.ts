@@ -90,7 +90,7 @@ import type { CatchUpChat } from "./catchup";
 import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
 import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SHOWN_COOLDOWN_MS, spelledTone, MAX_FLOATING, type PinRecord } from "./components/pins";
-import { detailValues } from "./components/commands";
+import { detailValues, type CommandStatus } from "./components/commands";
 import type { Display } from "./reply";
 import { headTurnContent, headTurnEnd } from "./head-turn";
 import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, type WorkerCoreFactory, type WorkerLedgerRecord } from "./worker-core";
@@ -4963,6 +4963,41 @@ export class Bot {
     if (!context || this.readOnly) return false;
     context.commands.approve(command, this.commandFolder);
     return true;
+  }
+
+  /**
+   * A plugin's run of a command for this bot (`approvals.state`, `approvals.run`): run `key` is its own card, and the core's
+   * runner does the work (a time limit, an output cap, the process ledger). `run`: false only reads the state; else
+   * the command runs if the user allowed it in this folder and it is neither running nor was run within `minIntervalMs`.
+   */
+  pluginCommand(key: string, command: string, run: false | { minIntervalMs: number }): { folder: string; approved: boolean; status: CommandStatus; data: string | null; error: string | null; ranAt: number | null; started: boolean } | null {
+    if (this.options.primary) return this.options.primary.pluginCommand(key, command, run);
+    const context = this.context;
+    if (!context) return null;
+    const card = `plugin/${key}/${this.id}`;
+    const folder = this.commandFolder;
+    let started = false;
+    if (run && !this.readOnly && context.commands.isApproved(command, folder)) {
+      const last = context.commands.lastRan(card);
+      const busy = context.commands.runOf(card, command, folder)?.status === "running";
+      if (!busy && (last === null || Date.now() - last >= run.minIntervalMs)) { started = true; void context.commands.run(card, command, folder, true); }
+    }
+    const state = context.commands.state(card, command, null, folder);
+    return { folder, approved: state.status !== "approve", ...state, started };
+  }
+
+  /** The component library as a plugin asks (`workspace.component`): whether there is one by that name, and the command its data comes from. */
+  libraryEntry(name: string, data: string | undefined, command: string | undefined): { exists: boolean; command: string | null } | null {
+    const context = this.context;
+    if (!context) return null;
+    if (!context.library.names.includes(name)) return { exists: false, command: null };
+    return { exists: true, command: displayCommand({ name, data: data ?? "null", ...(command ? { command } : {}) }, "bot", context.library) };
+  }
+
+  /** The pictures a component's data names, as card-page URLs (what a tile of it draws); null: no component context. */
+  imageUrls(data: string): Record<string, string> | null {
+    const context = this.context;
+    return context ? context.images.urls(data) : null;
   }
 
   /** The command its picture's data comes from (kept with it when it was set). */

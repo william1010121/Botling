@@ -61,6 +61,7 @@ import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/im
 import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botDescription, latestAction } from "./whiteboard-data";
 import { botFace } from "./faces";
+import { status, statusText } from "../contract/bot-status";
 import { WorkspaceWatch, type BotSummary, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
@@ -267,6 +268,7 @@ export class Core {
       return [own, ...others, ...(this.plugins?.registry.builtInComponentFolders() ?? [])];
     });
     this.componentStamp = this.components.library.stamp;
+    this.components.commands.onPid = (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid));
     this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); };
     // The plugins (their host starts later, in start()); the world they see is read when they ask.
     const host = options.plugins ?? null;
@@ -323,6 +325,9 @@ export class Core {
           return { ...this.botInfo(bot), created: made.kind === "made" };
         },
         commandApproval: (botId, command) => this.pluginBot(botId)?.commandApproval(command) ?? null,
+        commandRun: (botId, key, command, run) => this.pluginBot(botId)?.pluginCommand(key, command, run) ?? null,
+        component: (botId, name, data, command) => this.pluginBot(botId)?.libraryEntry(name, data, command) ?? null,
+        imageUrls: (botId, data) => this.pluginBot(botId)?.imageUrls(data) ?? null,
         approveCommand: (botId, command) => this.pluginBot(botId)?.approveCommand(command) ?? false,
         addRoutine: (botId, cron, task) => {
           const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
@@ -1824,6 +1829,9 @@ First write a test that shows this, then fix it.`;
       id: this.outId(bot.id), name: profile.name.slice(0, 200), role: profile.role, parent: profile.parent ? this.outId(profile.parent) : null,
       folder: basename(profile.folder.replace(/[\\/]+$/, "")).slice(0, 400), engine: view.heads[0] ?? "claude", busy: view.working, asleep: view.phase === "asleep",
       avatar: profile.avatar.slice(0, 40), pinned: pinned.has(bot.id),
+      lastActivity: view.lastActivity ?? null, job: view.job?.slice(0, 400) ?? null, subagents: view.subagents, guest: !!view.guest, approvals: view.approvals,
+      status: { key: status(view), text: statusText(view) },
+      lastReply: profile.role === "main" ? bot.lines().findLast((line) => line.role === "bot" && line.text.trim())?.text.slice(0, 400) ?? null : null,
     };
   }
 
@@ -2428,6 +2436,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
       case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card);
       case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder);
+      case "plugins.tileImages": return this.plugins.tileImages(cmd.name, cmd.botId, cmd.data);
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
       case "agy.runtime.install": {

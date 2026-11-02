@@ -1,0 +1,45 @@
+{
+  "name": "botling.whiteboard",
+  "displayName": "Whiteboard",
+  "version": "1.0.0",
+  "description": "The main bot's whiteboard: every bot's card (what waits on you, what runs, what is idle), numbers, charts and each bot's report, in a tab beside Chat and Board. A bot may give its card a small picture with <whiteboard>.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "bots"
+    ],
+    "web": "ui.js",
+    "host": "main.js",
+    "contributes": {
+      "views": [
+        {
+          "id": "botling.whiteboard",
+          "title": "Whiteboard",
+          "icon": "people",
+          "where": "mainTab",
+          "forRole": "main"
+        }
+      ],
+      "replyTags": [
+        {
+          "tag": "whiteboard"
+        }
+      ],
+      "promptSections": [
+        {
+          "id": "botling.whiteboard.picture",
+          "text": "  To give your card on the main bot's whiteboard a small picture: add <whiteboard name=\"component name\" size=\"1x1\">JSON</whiteboard> to a reply (or command=\"…\" instead of JSON; size 1x1 or 2x1). The app draws it on your card and shows nothing in the chat; a later one replaces it and <whiteboard clear/> removes it. Pick a component that reads well tiny (a key number, a trend) and send a new one when it changes.",
+          "after": "show",
+          "roles": [
+            "manager",
+            "bot"
+          ]
+        }
+      ]
+    }
+  }
+}

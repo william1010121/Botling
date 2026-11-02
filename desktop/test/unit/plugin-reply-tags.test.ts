@@ -169,6 +169,7 @@ async function setup(dir: string, builtIns: string | null = null) {
     appSettings: () => ({}), shortcutOverrides: () => ({}), createBot: () => { throw new Error("no"); }, addRoutine: () => "added",
     commandApproval: (botId, command) => (botId === "B1" ? { folder: "/p/site", approved: approved.includes(command) } : null),
     approveCommand: (botId, command) => botId === "B1" && !!approved.push(command),
+    commandRun: () => null, component: () => null, imageUrls: () => null,
     changed: () => {}, broken: () => {}, log: () => {},
     workspace: { bots: () => [], memory: () => { throw new Error("not here"); }, tasks: () => [], taskHistory: () => [], results: () => [], waiting: () => ({ items: [], doing: {} }), ignoreWaiting: () => {}, pendingApprovals: () => [], face: () => "" },
     workspaceWatch: () => {},

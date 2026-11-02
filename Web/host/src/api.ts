@@ -45,9 +45,30 @@ export interface BotSummary {
   /** Its face's shape (see `face`). */
   avatar: string;
   pinned: boolean;
+  /** When it last did something (ISO time), if ever. */
+  lastActivity: string | null;
+  /** What it is for (a bot of its own), if it has a job. */
+  job: string | null;
+  /** Its subagents at work, and whether a guest bot answers in its chat now. */
+  subagents: number;
+  guest: boolean;
+  /** Its tool approvals waiting for the user. */
+  approvals: number;
+  /** The app's own words for its state: `key` says which dot to draw (working, waiting, awake, asleep, disconnected, retrying…). */
+  status: { key: string; text: string };
+  /** The main bot's latest reply, as written (cut at 400 characters); null for any other bot. */
+  lastReply: string | null;
 }
 export interface TaskView { id: string; name: string; state: string; [more: string]: unknown }
 export interface WaitingView { items: { botId: string; text: string; messageId: string | null; at?: string }[]; doing: Record<string, string>; acked?: string[] }
+/** A bot's command and the last run a plugin's `key` made of it. `data`: its output as component data (JSON, or a JSON string of the text). */
+export interface CommandRun {
+  folder: string; approved: boolean;
+  status: "approve" | "idle" | "running" | "done" | "failed";
+  data: string | null; error: string | null;
+  /** Epoch ms of the last run's end (or start, while the first runs). */
+  ranAt: number | null;
+}
 export interface WorkspaceChange { stamp: string; botIds: string[]; kinds: WorkspaceKind[] }
 /** The event Botling sends the host when the workspace changed (`workspace.onChange`, not `events.on`). */
 export const WORKSPACE_EVENT = "workspace.changed";
@@ -67,6 +88,11 @@ export interface WorkspaceApi {
   pendingApprovals(botId: string): Promise<{ tool: string; text: string; at: string | null }[]>;
   /** Its face as the app draws it now, as a data URL. */
   face(botId: string, look: "original" | "cute"): Promise<string>;
+  /**
+   * A component of the bot's library: whether there is one by that name, and the command its data comes from (the
+   * one given, else the component's own "Command:" line; null: it needs none). The library is read only.
+   */
+  component(botId: string, name: string, spec?: { data?: string; command?: string }): Promise<{ exists: boolean; command: string | null }>;
   /** Told when anything the methods above answer changed, naming the bots and kinds. */
   onChange(fn: (change: WorkspaceChange) => void): Dispose;
 }
@@ -126,6 +152,14 @@ export interface BotlingApi {
      * Only the user allows one, on the app page (a frame's `ccb.requestApproval`); a plugin never can.
      */
     check(botId: string, command: string): Promise<{ folder: string; approved: boolean }>;
+    /** `check`, and the last run `key` made of that command: "approve" until the user allowed it. */
+    state(botId: string, command: string, key: string): Promise<CommandRun>;
+    /**
+     * Runs an allowed command in the bot's folder, in Botling (a time limit, an output cap, its process group ended with
+     * it), as run `key`; not again while it runs or within `minIntervalMs` (default 0) of the last run. Returns the run's state
+     * now (`started`: this call started one). A command the user did not allow does not run ("approve").
+     */
+    run(botId: string, command: string, key: string, opts?: { minIntervalMs?: number }): Promise<CommandRun & { started: boolean }>;
   };
   settings: {
     get<T>(key: string): T;
@@ -312,6 +346,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       ignoreWaiting: async (botId, text) => { await ask("workspace.ignoreWaiting", { bot: botId, text }); },
       pendingApprovals: async (botId) => (await ask("workspace.pendingApprovals", { bot: botId })) as never,
       face: async (botId, look) => (await ask("workspace.face", { bot: botId, look })) as string,
+      component: async (botId, name, spec) => (await ask("workspace.component", { bot: botId, name, ...(spec?.data !== undefined ? { data: spec.data } : {}), ...(spec?.command !== undefined ? { command: spec.command } : {}) })) as never,
       onChange: (fn) => {
         const list = plugin.events.get(WORKSPACE_EVENT) ?? [];
         list.push(fn as (data: unknown) => void);
@@ -333,6 +368,8 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     },
     approvals: {
       check: async (botId, command) => (await ask("approvals.check", { bot: botId, command })) as { folder: string; approved: boolean },
+      state: async (botId, command, key) => (await ask("approvals.state", { bot: botId, command, key })) as CommandRun,
+      run: async (botId, command, key, opts) => (await ask("approvals.run", { bot: botId, command, key, ...(opts?.minIntervalMs === undefined ? {} : { minIntervalMs: opts.minIntervalMs }) })) as CommandRun & { started: boolean },
     },
     settings: {
       get: <T>(key: string) => plugin.spec.settings[key] as T,

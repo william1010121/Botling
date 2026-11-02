@@ -35,14 +35,16 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
   return {
     call: (name, method, params) => client.request({ type: "plugins.call", name, method, params, from: "frame" }).then((answer) => answer.result, failed),
     command: (name, id, args) => client.request({ type: "plugins.command", id, from: "frame", name, ...(args?.length ? { args } : {}) }),
-    async tile(_plugin, { component, data, size, botId }) {
+    async tile(plugin, { component, data, size, botId }) {
       const info = components()[component];
       if (!info) throw new Error(`No component "${component}" in the library.`);
       if (!knownBot(bots(), botId)) throw new Error("No such bot.");
       const json = JSON.stringify(data ?? null);
       if (json.length > TILE_DATA_MAX) throw new Error("The tile's data is too big.");
+      // The pictures its data names are the core's to find (the bot's folder): a tile never reads a path itself.
+      const { images } = await client.request({ type: "plugins.tileImages", name: plugin, botId, data: json }).catch(failed);
       const { componentPage } = await import("../../../Web/src/components");
-      const page = componentPage(info.template, json, {}, size, "board", true, false);
+      const page = componentPage(info.template, json, images, size, "board", true, false);
       return (await client.request({ type: "card.page", html: page })).url;
     },
     async requestApproval(plugin, { botId, command, folder, card }) {

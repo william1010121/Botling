@@ -25,8 +25,8 @@ export type FrameRequest =
   | { ccb: "tile"; id: number; component: string; data: unknown; size: TileSize; botId: string }
   | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string };
 
-/** The sizes a frame's tile may have (a whiteboard card's picture: 1×1 or 2×1). */
-export const TILE_SIZES = ["1x1", "2x1"] as const;
+/** The sizes a frame's tile may have (a whiteboard card's picture: 1×1 or 2×1; its report shows it 2×2). */
+export const TILE_SIZES = ["1x1", "2x1", "2x2"] as const;
 export type TileSize = (typeof TILE_SIZES)[number];
 
 export interface FrameReply { ccb: "reply"; id: number; ok: boolean; value: unknown }

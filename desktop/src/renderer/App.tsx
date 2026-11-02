@@ -10,6 +10,7 @@ import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { status, statusText } from "../contract/bot-status";
 import { actionForEvent, bindingsFor, commandBindings, commandForEvent } from "../contract/shortcuts";
 import { setShortcutLabels, shortcutLabel } from "./shortcut-labels";
 import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
@@ -21,7 +22,7 @@ import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { MainTabFrame, PanelFrame, PluginsButton, type BuiltinRunner } from "./Plugins";
-import { mainTabsFor, namedBot, shownTab, tabKey, type MainTab } from "./main-tabs";
+import { mainTabsFor, namedBot, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
@@ -29,7 +30,7 @@ import { TaskDetails } from "./TaskDetails";
 import { Worktrees } from "./Worktrees";
 import { Review, type ReviewTarget } from "./Review";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubagentRows, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
-import { Icon } from "./icons";
+import { Icon, isIconName } from "./icons";
 import { SpecFrame } from "./SpecFrame";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
@@ -131,8 +132,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
   // A plugin's tab in the main area (plan W2), the one this bot showed last; it takes the whiteboard's place too.
   const tabs = useMemo(() => (bot && !web ? mainTabsFor(view.plugins, bot) : []), [bot, web, view.plugins]);
-  const tab = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
-  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching && !tab;
+  // botling.whiteboard's tab (plan W5) takes the place of this page's own whiteboard while that plugin is on; off, this page's draws it as before.
+  const boardTab = bot?.role === "main" ? tabs.find((candidate) => candidate.plugin === WHITEBOARD_PLUGIN) ?? null : null;
+  const remembered = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
+  // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice the page kept for its own whiteboard goes on for the plugin's.
+  const tab = remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
+  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching && !tab && !boardTab;
   const review = reviewing && bot && reviewing.botId === bot.id && !watching ? reviewing.target : null;
 
   const fail = useCallback((failure: unknown) => {
@@ -359,10 +364,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <div className="board-switch" role="group" aria-label="Chat views">
               <button type="button" aria-pressed={!view.board && !whiteboard && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
               <button type="button" aria-pressed={view.board && !whiteboard && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
-              {bot.role === "main" && !web && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => { chooseTab(bot.id, null); setWhiteboardOn(true); }}><Icon name="people" size={13} />Whiteboard</button>}
+              {bot.role === "main" && !web && !boardTab && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => { chooseTab(bot.id, null); setWhiteboardOn(true); }}><Icon name="people" size={13} />Whiteboard</button>}
               {tabs.map((candidate) => (
-                <button key={tabKey(candidate)} type="button" className="main-tab-switch" data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
-                  onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, candidate); }}>{candidate.title}</button>
+                <button key={tabKey(candidate)} type="button" className={`main-tab-switch${candidate === boardTab ? " whiteboard-switch" : ""}`} data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
+                  onClick={() => { setWhiteboardOn(candidate === boardTab); chooseTab(bot.id, candidate); }}>
+                  {candidate.icon && isIconName(candidate.icon) && <Icon name={candidate.icon} size={13} />}{candidate.title}
+                </button>
               ))}
             </div>
           </div>
@@ -446,31 +453,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
-}
-
-function status(bot: BotView): string {
-  // An outage first, then Codex waiting to retry, then claude retrying the API (both shown as cut off).
-  if (bot.connection === "disconnected") return "disconnected";
-  if (bot.working && bot.codexRetry && !bot.approvals) return "retrying";
-  if (bot.connection) return "disconnected";
-  if (bot.working) return "working";
-  if (bot.approvals) return "waiting";
-  return bot.phase;
-}
-
-function statusText(bot: BotView): string {
-  // 1.x Workspace+Components.statusText: an outage wins over work; approvals win over retries.
-  if ((bot.phase === "awake" || bot.phase === "asleep") && bot.connection === "disconnected") return "網路中斷";
-  // Codex waiting to try a refused request again (the chat's typing bubble says when).
-  if (bot.working && bot.codexRetry && !bot.approvals) return bot.codexRetry.reason === "rateLimited" ? "Codex rate limited, retrying…" : "Codex reconnecting…";
-  if (bot.phase === "awake" && bot.connection === "retrying" && !bot.approvals) return "網路中斷，重試中…";
-  if (bot.working && bot.approvals) return "Waiting for your answer";
-  if (bot.working) return "Writing…";
-  if (bot.phase === "tidying") return "Tidying its notes…";
-  if (bot.phase === "switching") return "Writing handoff";
-  if (bot.subagents) return `${bot.subagents} subagent${bot.subagents === 1 ? "" : "s"} at work`;
-  if (bot.phase === "awake") return "Awake";
-  return "Asleep";
 }
 
 export function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned, onTogglePin }: {

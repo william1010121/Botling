@@ -27,11 +27,21 @@ export async function buildBuiltinPlugins({ root = here, outdir = join(root, "ou
     const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
     cpSync(source, folder, { recursive: true, filter: (path) => !SOURCES_ONLY.has(relative(source, path).split(sep)[0]) });
     const parts = manifest.ccb ?? {};
-    if (parts.web) await build({ entryPoints: [join(source, "src/web.ts")], bundle: true, format: "esm", target: browser, minify: true, legalComments: "eof", outfile: join(folder, parts.web), nodePaths });
-    if (parts.host) await build({ entryPoints: [join(source, "src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(folder, parts.host), nodePaths });
+    const config = readConfig(source);
+    // build.json may also map imports onto other files (`alias`, from desktop/) and load other file types as text (`loaders`).
+    const alias = Object.fromEntries(Object.entries(config.alias ?? {}).map(([name, target]) => [name, resolve(root, target)]));
+    const shared = { bundle: true, legalComments: "eof", nodePaths, alias, loader: config.loaders ?? {} };
+    if (parts.web) await build({ ...shared, entryPoints: [join(source, "src/web.ts")], format: "esm", target: browser, minify: true, outfile: join(folder, parts.web) });
+    if (parts.host) await build({ ...shared, entryPoints: [join(source, "src/host.ts")], platform: "node", format: "esm", target: "node20", outfile: join(folder, parts.host) });
     copyDeclared(root, source, folder);
   }
   return outdir;
+}
+
+/** A plugin's build.json (none: empty). */
+function readConfig(source) {
+  const file = join(source, "build.json");
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
 }
 
 /** What a plugin's build.json lists under `copy` ([{from, to, only?}]; `only` keeps a folder's files with that ending). */

@@ -112,13 +112,14 @@ function environment(): NodeJS.ProcessEnv {
 }
 
 /** Runs `command` in `folder` with no input, stopping its whole group after `timeoutMs` or once it prints more than `limit` bytes (`execute`). */
-export function execute(command: string, folder: string, timeoutMs = COMMAND_TIMEOUT_MS, limit = OUTPUT_LIMIT): Promise<CommandOutcome> {
+export function execute(command: string, folder: string, timeoutMs = COMMAND_TIMEOUT_MS, limit = OUTPUT_LIMIT, onPid?: (pid: number, alive: boolean) => void): Promise<CommandOutcome> {
   return new Promise((done) => {
     let isFolder = false;
     try { isFolder = statSync(folder).isDirectory(); } catch { /* not there */ }
     if (!isFolder) return done({ error: `The project folder ${folder} is not there.`, ranAt: Date.now() });
     const [file, args] = shell(command);
     const child = spawn(file, args, { cwd: folder, env: environment(), stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+    if (child.pid) onPid?.(child.pid, true);
     let stdout: Buffer[] = [];
     let size = 0;
     let stderr = "";
@@ -146,6 +147,7 @@ export function execute(command: string, folder: string, timeoutMs = COMMAND_TIM
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      if (child.pid) onPid?.(child.pid, false);
       done({ error: `Couldn't start the command: ${error.message}`, ranAt: Date.now() });
     });
     child.once("close", (code, sig) => {
@@ -154,6 +156,7 @@ export function execute(command: string, folder: string, timeoutMs = COMMAND_TIM
       clearTimeout(timer);
       // Whatever it left behind in its group goes too.
       signal("SIGKILL");
+      if (child.pid) onPid?.(child.pid, false);
       const ranAt = Date.now();
       if (overflow) return done({ error: `The command printed more than ${Math.floor(limit / 1000)} KB, so it was stopped.`, ranAt });
       if (timedOut) return done({ error: `The command took longer than ${Math.round(timeoutMs / 1000)} seconds, so it was stopped.${tail(stderr)}`, ranAt, timedOut: true });
@@ -176,7 +179,13 @@ export class ComponentCommands {
   /** A card's run changed (started, finished): its view is drawn again. */
   onChange: (card: string) => void = () => {};
 
-  constructor(readonly approvalsFile: string, private runner: Runner = (command, folder) => execute(command, folder)) {
+  /** A command's process started (`alive`) or ended: the core's process ledger keeps it, so a crash leaves nothing running. */
+  onPid: (pid: number, alive: boolean) => void = () => {};
+
+  private runner: Runner;
+
+  constructor(readonly approvalsFile: string, runner?: Runner) {
+    this.runner = runner ?? ((command, folder) => execute(command, folder, COMMAND_TIMEOUT_MS, OUTPUT_LIMIT, (pid, alive) => this.onPid(pid, alive)));
     let value: unknown = {};
     try { value = JSON.parse(readFileSync(approvalsFile, "utf8")); } catch { /* none yet */ }
     this.approved = value && typeof value === "object" && !Array.isArray(value)

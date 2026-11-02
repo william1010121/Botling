@@ -89,7 +89,7 @@ const ccb = {
     call: (method, params) => ask({ ccb: "call", method: String(method), params: params === undefined ? null : params }),
   },
   call: (method, params) => ccb.host.call(method, params),
-  /** A component of the library as a tile ({ component, data, size: "1x1" | "2x1", botId }): the URL of its page, for an iframe of this page's own. */
+  /** A component of the library as a tile ({ component, data, size: "1x1" | "2x1" | "2x2", botId }): the URL of its page, for an iframe of this page's own. */
   tile: (spec) => ask({ ccb: "tile", component: String(spec?.component ?? ""), data: spec?.data === undefined ? null : spec.data, size: String(spec?.size ?? ""), botId: String(spec?.botId ?? "") }),
   /** Asks the user to allow a bot's command in its folder ({ botId, command, folder, card? }); resolves { allowed }. */
   requestApproval: (req) => ask({ ccb: "approval", botId: String(req?.botId ?? ""), command: String(req?.command ?? ""), folder: String(req?.folder ?? ""), ...(req?.card != null ? { card: String(req.card) } : {}) }),

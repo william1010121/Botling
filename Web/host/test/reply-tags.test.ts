@@ -48,6 +48,41 @@ describe("replyTags and approvals in the host", () => {
     expect(request.params).toEqual({ bot: "B1", command: "git log", plugin: "botling.whiteboard" });
     await host.receive({ id: request.id, result: { folder: "/p/site", approved: false } });
     expect(await checked).toEqual({ folder: "/p/site", approved: false });
-    expect(Object.keys(api.approvals)).toEqual(["check"]);
+    // It can ask what the user allowed and have Botling run an allowed command; nothing in it allows one.
+    expect(Object.keys(api.approvals).sort()).toEqual(["check", "run", "state"]);
+  });
+
+  it("approvals.state and approvals.run name the plugin and the run's key; Botling runs the command, the plugin only asks", async () => {
+    let api!: BotlingApi;
+    const written: any[] = [];
+    const host = new Host((message) => written.push(message), async () => (given: BotlingApi) => { api = given; });
+    await host.sync([spec("botling.whiteboard")]);
+    const state = api.approvals.state("B1", "git log", "picture");
+    const asked = written.find((message) => message.method === "approvals.state");
+    expect(asked.params).toEqual({ bot: "B1", command: "git log", key: "picture", plugin: "botling.whiteboard" });
+    const view = { folder: "/p/site", approved: true, status: "done", data: '{"n":1}', error: null, ranAt: 5 };
+    await host.receive({ id: asked.id, result: view });
+    expect(await state).toEqual(view);
+    const ran = api.approvals.run("B1", "git log", "picture", { minIntervalMs: 30_000 });
+    const run = written.find((message) => message.method === "approvals.run");
+    expect(run.params).toEqual({ bot: "B1", command: "git log", key: "picture", minIntervalMs: 30_000, plugin: "botling.whiteboard" });
+    await host.receive({ id: run.id, result: { ...view, started: true } });
+    expect(await ran).toEqual({ ...view, started: true });
+    void api.approvals.run("B1", "git log", "picture");
+    expect(written.filter((message) => message.method === "approvals.run").at(-1).params).not.toHaveProperty("minIntervalMs");
+  });
+
+  it("workspace.component asks Botling's library, naming the bot", async () => {
+    let api!: BotlingApi;
+    const written: any[] = [];
+    const host = new Host((message) => written.push(message), async () => (given: BotlingApi) => { api = given; });
+    await host.sync([spec("botling.whiteboard")]);
+    const entry = api.workspace.component("B1", "gitlog", { command: "git log" });
+    const request = written.find((message) => message.method === "workspace.component");
+    expect(request.params).toEqual({ bot: "B1", name: "gitlog", command: "git log", plugin: "botling.whiteboard" });
+    await host.receive({ id: request.id, result: { exists: true, command: "git log" } });
+    expect(await entry).toEqual({ exists: true, command: "git log" });
+    void api.workspace.component("B1", "gitlog");
+    expect(written.filter((message) => message.method === "workspace.component").at(-1).params).toEqual({ bot: "B1", name: "gitlog", plugin: "botling.whiteboard" });
   });
 });

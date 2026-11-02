@@ -166,6 +166,11 @@ export class PluginHostClient {
     if (this.running) this.write({ method: "reply", params: { bot, text } });
   }
 
+  /** Whether the host runs `plugin` now (it has loaded it, and a tag or call for it is heard). */
+  runs(plugin: string): boolean {
+    return this.running && this.loaded.has(plugin);
+  }
+
   /** Hands a reply's tag to the plugin that declared it (`replyTags.on`); dropped while the host is not running. */
   replyTag(plugin: string, bot: unknown, tag: { tag: string; attributes: Record<string, string>; body: string }) {
     if (this.running) this.write({ method: "replyTag", params: { plugin, bot, tag: tag.tag, attributes: tag.attributes, body: tag.body } });
