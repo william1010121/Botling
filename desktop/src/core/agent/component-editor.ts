@@ -181,7 +181,7 @@ export interface ComponentEditorHost {
   route(): ComponentEditorRoute | null | undefined;
   /** Carries out an action on the task's Claude process (an EditorTransport). */
   act(action: ComponentEditorAction): void;
-  /** Items a run shows beside its events (its execution, the token-flow dispatch). */
+  /** Items a run shows beside its events (its execution). */
   item(item: CodexItem): void;
   /** The coordinator's session (a run's execution record). */
   ownerSessionId(): string | null;
@@ -241,7 +241,6 @@ export class ComponentEditorAdapter implements WorkerAdapter {
     s.stream.newRun();
     s.approvals.clear();
     s.tools.clear();
-    this.host.item({ kind: "measurementDispatch", workerId: record.id, run: run.run });
     if (s.adopt !== undefined) {
       // Completed before the app restarted: its report is the run's, and nothing goes to Claude again.
       const report = s.adopt;

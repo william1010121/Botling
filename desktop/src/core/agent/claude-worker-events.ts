@@ -40,7 +40,6 @@ export class ClaudeStreamEvents {
       case "rateLimits": return { type: "rateLimits", engine: item.engine, limits: item.limits };
       case "usage": return { type: "usage", tokens: item.tokens, cost: costDelta(this.cost, item.totalCost) };
       case "request": { const { scope: _scope, ...request } = item.request; return { type: "request", request }; }
-      case "measurement": { const { run: _run, ...measurement } = item.measurement; return { type: "measurement", provider: item.provider ?? "claude", measurement }; }
       default: return null;
     }
   }

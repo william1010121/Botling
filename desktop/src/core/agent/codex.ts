@@ -5,7 +5,6 @@ import {inspectClaudeRestart, type ClaudeRestartOutcome} from '../claude-restart
 import { RESTART_NOTE } from '../restart-continuation';
 import { monitorHandback, MONITOR_HANDBACK } from "./monitor-policy";
 import { DEFAULT_SPEC_WRITERS, inSpec, maySpecWrite, shellWritesSpec, SPEC_DENIED } from "../spec-guard";
-import { TokenFlowMeter } from "../token-flow-meter";
 import { codexAutoRiskConfig } from "./auto-risk-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
 // stdio), ported from the Swift app's CodexAgentProcess.swift (checked against codex-cli 0.163.0).
@@ -331,7 +330,7 @@ export interface CodexWire {
   request(method: string, params: Record<string, unknown>, reply: (result: any, error: any) => void): void;
   /** An answer to one of the app-server's requests. */
   write(value: Record<string, unknown>): void;
-  /** Items a run shows beside its events (its runtime, its execution, the token-flow dispatch). */
+  /** Items a run shows beside its events (its runtime, its execution). */
   item(item: CodexItem): void;
 }
 
@@ -414,7 +413,6 @@ export class CodexThreadAdapter implements WorkerAdapter {
   private approvals = new Map<string, WorkerApproval>();
   private changedFiles = new Map<string, string[]>();
   private speed = new CodexRequestTracker();
-  private meter = new TokenFlowMeter();
 
   constructor(private o: CodexWorkerOptions) {}
 
@@ -505,7 +503,6 @@ export class CodexThreadAdapter implements WorkerAdapter {
     const w = this.worker(record);
     Object.assign(w, { run, latest: run, cancelled: false, turnId: null, said: [], messages: [] });
     w.tools.clear();
-    this.o.wire.item({ kind: "measurementDispatch", workerId: record.id, run: run.run });
     if (w.adopt) {
       // Completed before the app restarted: its answer is the run's, and nothing is sent again.
       const { said, turn } = w.adopt;
@@ -551,7 +548,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
     if (this.strictResume && resumed && thread !== w.thread) return this.fail(w, run, "Restart resume returned a different worker thread; no prompt was sent.");
     w.thread = thread;
     run.emit({ type: "session", conversationId: thread });
-    if (!resumed) { this.meter.fresh(thread); w.tokens = noTokens(); }
+    if (!resumed) w.tokens = noTokens();
     else w.tokens = null;
     w.loaded = !resumed;
     const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
@@ -597,7 +594,6 @@ export class CodexThreadAdapter implements WorkerAdapter {
   private learnTurn(w: ThreadWorker, run: RunHandle, id: string) {
     if (w.turnId || w.completedTurns.has(id)) return;
     w.turnId = id;
-    if (w.thread) this.meter.begin(w.thread, id);
     this.o.wire.item({ kind: "subagentExecution", id: w.id, execution: this.execution(w, run) });
     const messages = w.messages;
     w.messages = [];
@@ -851,8 +847,6 @@ export class CodexThreadAdapter implements WorkerAdapter {
     if (!w) return false;
     const run = w.run;
     const supplied = params.turnId ?? (method === "turn/started" ? params.turn?.id : null);
-    // Metadata only; routing below remains authoritative.
-    if ((!w.turnId || !supplied || w.turnId === supplied) && (run || method === "thread/tokenUsage/updated")) this.meter.observe(method, params);
     if (run) for (const { scope: _scope, ...request } of this.speed.observe(w.id, method, params, this.now())) run.emit({ type: "request", request });
     switch (method) {
       case "turn/started": {
@@ -915,8 +909,6 @@ export class CodexThreadAdapter implements WorkerAdapter {
       w.tokens = now;
       if (totalTokens(used) > 0 && Object.values(used).every((count) => count >= 0)) run.emit({ type: "usage", tokens: used, cost: 0 });
     }
-    const snapshot = w.thread ? this.meter.snapshot(w.thread) : null;
-    if (snapshot && (!params.turnId || params.turnId === snapshot.turnId)) run.emit({ type: "measurement", provider: "codex", measurement: snapshot });
   }
 
   private turnCompleted(w: ThreadWorker, turn: any) {
@@ -924,10 +916,6 @@ export class CodexThreadAdapter implements WorkerAdapter {
     const id = turn?.id;
     if (!run || w.cancelled || typeof id !== "string" || w.completedTurns.has(id) || (w.turnId && w.turnId !== id)) return;
     w.completedTurns.add(id);
-    const measured = w.thread ? this.meter.finish(w.thread, id) : null;
-    if (measured) run.emit({ type: "measurement", provider: "codex", measurement: measured });
-    const gap = this.meter.takeMissing();
-    if (gap) run.emit({ type: "measurement", provider: "codex", measurement: gap });
     w.turnId = null;
     if (w.messages.length) {
       // Words a steer could not put into the turn as it ended: they are this run's, in a turn of their own.
@@ -962,7 +950,6 @@ export class CodexSession implements CoordinatorPort {
   private completedTurns = new Set<string>();
   /** The coordinator thread's tokens so far, and when the last turn ended (Phase 5c, 1.x's `tokensTotal`). */
   private tokensTotal: TokenUsage = noTokens();
-  private readonly usageMeter = new TokenFlowMeter();
   private tokensAtTurnStart: TokenUsage = noTokens();
   private inbox: Input[] = [];
   private approvals = new Map<string, Approval>();
@@ -1032,7 +1019,6 @@ export class CodexSession implements CoordinatorPort {
     const options: WorkerCoreOptions = {
       store: new CodexLegacyStore(journal, config.ownerSession ?? ""), port: this, sink: { item: (item) => this.out.push(this.workerItem(item)) },
       adapters: [this.threads, this.editor], ownerSessionId: () => this.config.ownerSession ?? "", log: () => undefined,
-      parentThreadId: () => this.threadId,
       newId: () => { const id = this.nextTask ?? randomUUID().toLowerCase(); this.nextTask = null; return id; },
     };
     // The member's core lists only this conversation's workers (its ledger keeps every conversation's).
@@ -1189,21 +1175,12 @@ export class CodexSession implements CoordinatorPort {
     if (!value || typeof value !== "object") return [];
     const method = typeof value.method === "string" ? value.method : null;
     const params = value.params && typeof value.params === "object" ? value.params : {};
-    // Metadata only; routing and permission decisions below remain authoritative. (Workers' threads: their adapter's.)
-    if (method && typeof params.threadId === "string" && params.threadId === this.threadId) {
-      const suppliedTurn = params.turnId ?? (method === "turn/started" ? params.turn?.id : null);
-      if ((!this.turn?.id || !suppliedTurn || this.turn.id === suppliedTurn) && (this.turn || method === "thread/tokenUsage/updated")) this.usageMeter.observe(method, params);
-    }
     if (method && value.id !== undefined) return [...this.serverRequest(method, value.id, params), ...this.take()];
     if (method) {
       // A worker's thread: its adapter turns it into the core's events.
       if (this.threads.receive(method, params)) return [...this.take(), ...this.pendingChanged()];
       const out=this.notification(method, params);
       out.push(...this.requests(method, params));
-      if(method === "thread/tokenUsage/updated" && params.threadId === this.threadId) {
-        const snapshot=this.usageMeter.snapshot(params.threadId);
-        if(snapshot && (!params.turnId || params.turnId===snapshot.turnId)) out.push(this.item({kind:"measurement",measurement:{...snapshot,workerId:null,run:null,parentThreadId:null}}));
-      }
       return [...out, ...this.take()];
     }
     if (typeof value.id === "number") {
@@ -1263,7 +1240,6 @@ export class CodexSession implements CoordinatorPort {
         const thread = result?.thread?.id;
         if (error || typeof thread !== "string") return [{ kind: "failed", message: message(error) }];
         if(this.config.strictResume && thread!==this.config.resumeThread)return [{kind:"failed",message:"Restart resume returned a different thread. No prompt was sent."}];
-        if (!this.config.resumeThread) this.usageMeter.fresh(thread);
         if (this.config.resumeThread && this.managed) return [this.refreshInstructions(this.config.instructions, thread, { kind: "coordinatorInstructions", thread })];
         return this.coordinatorReady(thread);
       }
@@ -1544,7 +1520,6 @@ export class CodexSession implements CoordinatorPort {
     const turn = this.turn;
     if (!turn || turn.id || this.completedTurns.has(id)) return [];
     turn.id = id;
-    if (this.threadId) { this.usageMeter.begin(this.threadId, id); if (this.report) this.usageMeter.coordination(this.threadId); }
     const out = turn.waitingSteers.map((input) => this.steerCall(input, id));
     turn.waitingSteers = [];
     if (turn.interruptAsked && !turn.interruptSent && this.threadId) {
@@ -1574,11 +1549,7 @@ export class CodexSession implements CoordinatorPort {
     // What this turn used: the thread's tokens since the last turn ended (`tokensAtTurnStart`).
     const used = minusTokens(this.tokensTotal, this.tokensAtTurnStart);
     this.tokensAtTurnStart = this.tokensTotal;
-    const measured = this.threadId && current.id ? this.usageMeter.finish(this.threadId, current.id) : null;
-    if (totalTokens(used) > 0 || measured) out.push(this.item({ kind: "usage", totalCost: 0, tokens: used,
-      ...(measured ? { measurement: { ...measured, workerId: null, run: null, parentThreadId: null } } : {}) }));
-    const gap = this.usageMeter.takeMissing();
-    if (gap) out.push(this.item({ kind: "measurement", measurement: { ...gap, workerId: null, run: null, parentThreadId: null } }));
+    if (totalTokens(used) > 0) out.push(this.item({ kind: "usage", totalCost: 0, tokens: used }));
     const final = current.said.findLast((said) => said.phase !== "commentary")?.text.trim() ?? "";
     switch (finished.status) {
       case "interrupted":

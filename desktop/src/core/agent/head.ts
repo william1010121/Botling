@@ -16,7 +16,6 @@ import { imageMediaType } from "../attachments";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import { claudeEnvironment } from "./runner";
 import { cliStartError, resolveExecutable } from "../process/executable";
-import { ClaudeTokenFlowMeter } from "../token-flow-claude";
 import { parseLine, type StreamItem } from "./stream";
 
 export interface HeadConfig {
@@ -249,7 +248,6 @@ export class ClaudeHead {
     }
   }
 
-  private flowMeter?: ClaudeTokenFlowMeter;
   private speed = new ClaudeRequestTracker();
   private failMonitorPolicy() {
     this.monitorPolicyFailed = true;
@@ -260,8 +258,6 @@ export class ClaudeHead {
   }
 
   private line(line: string) {
-    this.flowMeter ??= new ClaudeTokenFlowMeter(this.config.sessionId);
-    const measurements = this.flowMeter.observe(line);
     let message: any;
     try { message = JSON.parse(line); } catch { /* parseLine handles other input */ }
     if (this.monitorInit && message?.type === "control_response" && message.response?.request_id === this.monitorInit) {
@@ -305,7 +301,6 @@ export class ClaudeHead {
       }
       this.handlers.onItem(item);
     }
-    for (const measurement of measurements) this.handlers.onItem({ kind: "measurement", provider: "claude", measurement });
   }
 
   /** One MCP request for the app's in-process server (`HeadConfig.appMcp`), answered on the control channel. */

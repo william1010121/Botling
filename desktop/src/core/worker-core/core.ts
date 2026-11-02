@@ -68,8 +68,6 @@ export interface WorkerCoreOptions {
   closeReason?(): "quit" | "restart";
   /** Emit `managedPending` items when whether anything is hosted changes (Codex and Antigravity heads use it to stay awake). */
   pendingSignal?: boolean;
-  /** The coordinator's thread, for measurements that name none. */
-  parentThreadId?(): string | null;
   now?(): number;
   newId?(): string;
   /** A process's start time (identity), for `process` events that carry none (default: process/kill-tree). */
@@ -734,7 +732,7 @@ export class WorkerCore implements WorkerHost {
         },
       },
       pipeline: new RunPipeline(
-        { workerId: r.id, run, segment: r.segment, engine: r.engine, conversationId: () => r.conversationId, parentThreadId: () => this.options.parentThreadId?.() ?? null },
+        { workerId: r.id, run, segment: r.segment, engine: r.engine, conversationId: () => r.conversationId },
         (item) => this.emit(item),
         { control: (event) => this.control(r, live, event), ended: (end) => this.ended(r, live, end) },
       ),

@@ -5,15 +5,12 @@
 import { estimateContentTokens, type RequestEvent } from "../token-speed";
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
-import type { MeteredTurn } from "../token-flow-ledger";
 import type { RunEnd } from "../worker-core/events";
 import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../subagents";
 import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
 
 export type StreamItem =
-  | { kind: "measurementDispatch"; workerId: string; run: number; inheritRun?: number }
-  | { kind: "measurement"; provider?: "claude" | "codex"; measurement: Omit<MeteredTurn, "botId" | "head" | "taskId"> }
   | { kind: "scheduleResult"; id: string; result: ScheduleResult; parent: string | null }
   | { kind: "init"; sessionId: string }
   /** A piece of the reply's text (`--include-partial-messages`). */
@@ -66,7 +63,7 @@ export type StreamItem =
    */
   | { kind: "result"; ok: boolean; text: string; error: string; subtype: string; how?: RunEnd["how"]; failedTools?: number }
   /** The session's cost so far (dollars; Codex: 0) and this turn's tokens (Phase 5c, 1.x's `.usage`). */
-  | { kind: "usage"; totalCost: number; tokens: TokenUsage; measurement?: Omit<MeteredTurn, "botId" | "head" | "taskId"> }
+  | { kind: "usage"; totalCost: number; tokens: TokenUsage }
   /** One finished model request (the shared token-speed definition): scope null is the head turn, a string a subagent. */
   | { kind: "request"; request: RequestEvent }
   /** The subscription's limits as the CLI last reported them (`.rateLimits`, `.codexRateLimits`). */

@@ -1,6 +1,6 @@
-// Usage, speed and token-flow measurements of a worker's run, one copy (shared-core spec 2.4). One output counter
-// for every engine, `thread:<conversation>:run<n>` = this run's output so far, so exclusiveOutputTokens and the
-// token-flow provenance (both read `thread:` keys) can attribute every engine's worker tokens.
+// Usage and speed of a worker's run, one copy (shared-core spec 2.4). One output counter for every engine,
+// `thread:<conversation>:run<n>` = this run's output so far, so exclusiveOutputTokens (it reads `thread:` keys)
+// can attribute every engine's worker tokens.
 import type { CodexItem } from "../agent/codex";
 import type { WorkerEvent } from "./events";
 
@@ -25,7 +25,7 @@ export const runCounter = (conversationId: string | null, workerId: string, run:
 export class RunAccounting {
   private output = 0;
 
-  constructor(private ids: { workerId: string; run: number; segment?: number; conversationId(): string | null; parentThreadId(): string | null }) {}
+  constructor(private ids: { workerId: string; run: number; segment?: number; conversationId(): string | null }) {}
 
   /** usage → [usage item (cost = delta), subagentOutput item (this run's output so far)] */
   usage(e: Extract<WorkerEvent, { type: "usage" }>): CodexItem[] {
@@ -40,15 +40,6 @@ export class RunAccounting {
   /** request → request item with scope = workerId */
   request(e: Extract<WorkerEvent, { type: "request" }>): CodexItem {
     return { kind: "request", request: { ...e.request, scope: this.ids.workerId } };
-  }
-
-  /** measurement → measurement item with workerId (prefixed for nested ids), run, parentThreadId */
-  measurement(e: Extract<WorkerEvent, { type: "measurement" }>): CodexItem {
-    const { workerId, parentThreadId, ...rest } = e.measurement;
-    return { kind: "measurement", provider: e.provider, measurement: {
-      ...rest, workerId: workerId ? `${this.ids.workerId}:${workerId}` : this.ids.workerId, run: this.ids.run,
-      parentThreadId: parentThreadId ?? this.ids.parentThreadId(),
-    } };
   }
 
   get outputTokens(): number { return this.output; }

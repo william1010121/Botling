@@ -15,6 +15,6 @@
   "requests": 2,
   "writes": ["initialize", "thread/start", "turn/start", "response", "thread/start", "turn/start", "turn/start"],
   "exit": "unexpected",
-  "workerItems": 21,
+  "workerItems": 17,
   "notes": "One user turn (dispatch: commentary step, app_handoff, final 'dispatched.'), then the worker's thread goes to the worker sink and the coordinator's report turn (background) is still open when the recording ends."
 }

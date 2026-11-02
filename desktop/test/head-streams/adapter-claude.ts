@@ -1,7 +1,7 @@
 // Claude's registration for the head contract suite (replay.ts's header says how one is written): the real ClaudeHead
 // (agent/head.ts) as a coordinator in app-worker mode (the app's tools on the control channel, the native-agent guard),
-// spawned through a ProcessTreeAdapter whose one process is the fixture. parseLine, the speed tracker, the token-flow
-// meter and the monitor-policy handshake (the head holds its first message until the CLI answers it) all run as they
+// spawned through a ProcessTreeAdapter whose one process is the fixture. parseLine, the speed tracker
+// and the monitor-policy handshake (the head holds its first message until the CLI answers it) all run as they
 // do against the CLI.
 //
 // Ids the head picks itself are put back as the CLI would echo them: the monitor-policy handshake's request id

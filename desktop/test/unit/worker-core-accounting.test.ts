@@ -4,7 +4,6 @@ import { costDelta, RunAccounting, runCounter } from "../../src/core/worker-core
 import { deniedNote, ownedWorkerReport, REPORT_LIMIT, REPORT_TAIL, reportPayload, reportTag, withDeniedNote, workerReportText } from "../../src/core/worker-core/report";
 import { ownedWorkerReport as workersOwned, workerReportText as workersText } from "../../src/core/agent/workers";
 import { hasVisibleContent, type TurnContent } from "../../src/core/worker-core/visible";
-import type { AdapterMeasurement } from "../../src/core/worker-core/events";
 
 const tokens = (output: number) => ({ input: 10, output, cacheRead: 0, cacheWrite: 0 });
 
@@ -21,7 +20,7 @@ describe("costDelta", () => {
 });
 
 describe("RunAccounting", () => {
-  const make = (conversation: string | null = "conv-1") => new RunAccounting({ workerId: "task-1", run: 2, conversationId: () => conversation, parentThreadId: () => "coord-thread" });
+  const make = (conversation: string | null = "conv-1") => new RunAccounting({ workerId: "task-1", run: 2, conversationId: () => conversation });
 
   it("usage: the usage item carries the delta; one counter thread:<conversation>:run<n> with the run's output so far", () => {
     const acc = make();
@@ -47,11 +46,6 @@ describe("RunAccounting", () => {
     expect(make().request({ type: "request", request })).toEqual({ kind: "request", request: { ...request, scope: "task-1" } });
   });
 
-  it("measurement: workerId (prefixed for nested ids), run and the coordinator's thread are stamped", () => {
-    const m: AdapterMeasurement = { threadId: "t", turnId: "u", startedAt: 1, endedAt: 2, source: "provider-turn", scope: "exclusive", tokens: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 }, activities: [], complete: true };
-    expect(make().measurement({ type: "measurement", provider: "claude", measurement: m })).toEqual({ kind: "measurement", provider: "claude", measurement: { ...m, workerId: "task-1", run: 2, parentThreadId: "coord-thread" } });
-    expect((make().measurement({ type: "measurement", provider: "codex", measurement: { ...m, workerId: "sub", parentThreadId: "own" } }) as any).measurement).toMatchObject({ workerId: "task-1:sub", parentThreadId: "own" });
-  });
 });
 
 describe("the report format", () => {

@@ -1,7 +1,7 @@
 // The Claude worker adapter (claude-workers.ts `ClaudeWorkerAdapter`) on recorded claude streams, for the contract
 // suite (worker-core-contract.test.ts; replay.ts's header says how a registration is written). Only the process layer
 // is replaced: each worker's real ClaudeHead spawns through a ProcessTreeAdapter whose processes are the recordings,
-// so parseLine, the speed tracker, the token-flow meter, the monitor-policy handshake and the adapter's settle logic
+// so parseLine, the speed tracker, the monitor-policy handshake and the adapter's settle logic
 // all run as they do against the CLI.
 //
 // Two ids differ between a recording and a replay, and are put back as the CLI would echo them: the session id

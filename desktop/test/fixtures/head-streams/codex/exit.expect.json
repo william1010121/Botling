@@ -15,6 +15,6 @@
   "requests": 2,
   "writes": ["initialize", "thread/start", "turn/start", "response", "thread/start", "turn/start"],
   "exit": "unexpected",
-  "workerItems": 14,
+  "workerItems": 12,
   "notes": "The dispatch turn had ended before the app-server died; the worker's run goes with it (worker sink)."
 }

@@ -281,7 +281,7 @@ export class BotView {
     if (this.drop(item)) return;
     this.items.push(item);
     const kind = item.kind;
-    if (["workerReport", "measurementDispatch", "request", "measurement", "init", "controlResponse", "usage", "rateLimits", "command",
+    if (["workerReport", "request", "init", "controlResponse", "usage", "rateLimits", "command",
       "permission", "permissionCancelled", "permissionDenied", "managedPending", "monitorState", "connectionTrouble", "apiRetry", "routinesChanged"].includes(kind)) return;
     if ((item as { parent?: string | null }).parent) return; // a subagent's line
     if (kind === "backgroundTurn") { if (!this.open) this.open = this.turn("background"); return; }

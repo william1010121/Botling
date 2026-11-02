@@ -1,6 +1,6 @@
 // The shared worker core (shared-core spec): one event stream, one pipeline, one state machine and one report format
 // for every engine's app-managed workers. Adapters (S1–S3) and the bot (S4) import from here.
-export type { AdapterMeasurement, Engine, RunEnd, RunHandle, WorkerAdapterKind, WorkerEvent } from "./events";
+export type { Engine, RunEnd, RunHandle, WorkerAdapterKind, WorkerEvent } from "./events";
 export { ReplyText, TextBlocks, type TextBlock } from "./text";
 export { classifyRun, ENGINE_NAMES, INTERRUPTED_REPORT, NO_REPORT, NO_RESULT, STOPPED_REPORT, type RunFacts, type RunStatus, type RunVerdict } from "./classify";
 export { costDelta, RunAccounting, runCounter } from "./accounting";

@@ -33,7 +33,6 @@ import type { CodexItem } from "../../src/core/agent/codex";
 import { parseLine, type StreamItem } from "../../src/core/agent/stream";
 import { processStartTime } from "../../src/core/process/kill-tree";
 import { ClaudeRequestTracker } from "../../src/core/token-speed";
-import { ClaudeTokenFlowMeter } from "../../src/core/token-flow-claude";
 import { AgentRegistry, type AgentHostKind, type HostFacts } from "../../src/core/agent-registry";
 import { backgroundTask } from "../../src/core/background-tasks";
 import type { ChatRecord } from "../../src/core/store/records";
@@ -399,7 +398,7 @@ export async function replay(registration: ReplayRegistration, fixtures: Fixture
   const core = new WorkerCore({
     store, port, sink: { item: (item) => { items.push(item); shown.item(item); } }, adapters: [adapter], projected: (record) => shown.projected(record), ownerSessionId: () => "00000000-0000-4000-8000-0000000000c0",
     log: () => undefined, newId: () => `00000000-0000-4000-8000-${String(0xa00 + ++n).padStart(12, "0")}`, now: () => 1_000,
-    processStartTime: (pid) => (pid >= FAKE_PID ? "replayed" : processStartTime(pid)), parentThreadId: () => "coordinator-thread",
+    processStartTime: (pid) => (pid >= FAKE_PID ? "replayed" : processStartTime(pid)),
     ...(options.maxRunning ? { maxRunning: () => options.maxRunning! } : {}), ...(options.restarted ? { restarted: () => options.restarted! } : {}),
   });
   const workers: string[] = [];
@@ -480,7 +479,6 @@ class ReferenceClaudeAdapter implements WorkerAdapter {
     this.processes.set(record.id, process);
     const cost = { last: 0 };
     const speed = new ClaudeRequestTracker();
-    const meter = new ClaudeTokenFlowMeter(record.conversationId ?? record.id);
     speed.boundary(null, 0);
     run.emit({ type: "process", pid: process.pid });
     process.onLine((line, t) => {
@@ -488,7 +486,6 @@ class ReferenceClaudeAdapter implements WorkerAdapter {
       try { message = JSON.parse(line); } catch { /* parseLine says what it is */ }
       for (const { scope: _scope, ...request } of speed.observe(message, t)) run.emit({ type: "request", request });
       for (const item of parseLine(line)) { const event = this.event(item, cost); if (event) run.emit(event); }
-      for (const measurement of meter.observe(line, t)) run.emit({ type: "measurement", provider: "claude", measurement });
     });
     process.onExit((exit, stderr) => run.emit({ type: "end", end: { how: "exited", finalText: null, error: stderr.trim() || `The worker's process ended before its report (${exit.signal ?? `exit ${exit.code}`}).`, detail: "exit" } }));
     process.write(JSON.stringify({ type: "user", message: { role: "user", content: words } }));

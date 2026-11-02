@@ -4,16 +4,11 @@
 import type { Engine } from "../heads";
 import type { RequestEvent } from "../token-speed";
 import type { RateLimits, TokenUsage } from "../usage";
-import type { MeteredTurn } from "../token-flow-ledger";
 
 export type { Engine };
 
 /** Where a worker physically runs. workers.ts `WorkerHostKind` is an alias of this. */
 export type WorkerAdapterKind = "claude-process" | "codex-thread" | "agy-acp" | "component-editor";
-
-/** A measurement as an adapter sees it: the core stamps workerId / run / parentThreadId. */
-export type AdapterMeasurement = Omit<MeteredTurn, "botId" | "head" | "taskId" | "workerId" | "run" | "parentThreadId">
-  & { workerId?: string | null; parentThreadId?: string | null };
 
 /** One normalized event of one run of one worker. Adapters emit ONLY these (through RunHandle.emit). */
 export type WorkerEvent =
@@ -33,7 +28,6 @@ export type WorkerEvent =
   | { type: "usage"; tokens: TokenUsage; cost: number }
   /** One finished model request (token-speed.ts). The core sets scope = worker id. */
   | { type: "request"; request: Omit<RequestEvent, "scope"> }
-  | { type: "measurement"; provider: "claude" | "codex"; measurement: AdapterMeasurement }
   /** An approval the engine asks. nativeId: the engine's own request id (the core builds worker:<task>:<run>:<nativeId>). */
   | { type: "permission"; nativeId: string; tool: string; summary: string; input: Record<string, unknown>; safetyCheck?: string; noAlways?: boolean }
   | { type: "permissionCancelled"; nativeId: string }

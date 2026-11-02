@@ -73,7 +73,7 @@ const fixturesOf = (engine: string, scenario: string): Fixture[] | null => {
   try { return loadFixtures(engine, scenario); } catch { return null; }
 };
 /** The worker's own items (its steps, ids and counters). */
-const own = (items: CodexItem[], id: string) => items.filter((item: any) => item.parent === id || item.id === id || item.request?.scope === id || item.measurement?.workerId === id || item.workerId === id);
+const own = (items: CodexItem[], id: string) => items.filter((item: any) => item.parent === id || item.id === id || item.request?.scope === id || item.workerId === id);
 const kinds = (items: CodexItem[], kind: string) => items.filter((item) => item.kind === kind) as any[];
 const per = <T>(value: T | T[] | undefined, i: number): T | undefined => (Array.isArray(value) ? value[i] : value);
 const record = (r: ReplayResult, id: string) => r.ledger.find((x) => x.id === id)!;
@@ -182,7 +182,7 @@ describe.each(registrations.map((registration) => [registration.label ?? registr
     });
   }
 
-  contract("C5", "usage and speed: scoped requests, one rising counter, costs that add up, stamped measurements", "usage-speed", async (fixtures) => {
+  contract("C5", "usage and speed: scoped requests, one rising counter, costs that add up", "usage-speed", async (fixtures) => {
     const r = await run(fixtures);
     const [id] = r.workers;
     const e = fixtures[0]!.expect;
@@ -196,11 +196,6 @@ describe.each(registrations.map((registration) => [registration.label ?? registr
     for (const output of outputs) expect(output.counter).toBe(`thread:${rec.conversationId}:run1`);
     for (let i = 1; i < outputs.length; i++) expect(outputs[i].tokens).toBeGreaterThanOrEqual(outputs[i - 1].tokens);
     if (typeof e.cost === "number") expect(kinds(r.items, "usage").reduce((sum, item) => sum + item.totalCost, 0)).toBeCloseTo(e.cost, 9);
-    if (engine !== "agy") {
-      const measurements = kinds(r.items, "measurement");
-      expect(measurements.length).toBeGreaterThan(0);
-      for (const item of measurements) expect(item.measurement.workerId).toBe(id);
-    }
   });
 
   contract("C6", "follow-up: the next run of the same conversation", "failed-tool-then-success", async (fixtures) => {

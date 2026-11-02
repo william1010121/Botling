@@ -311,7 +311,6 @@ describe("Codex workers on the shared core", () => {
       { kind: "subagentOutput", id: task, counter: "thread:w1:run1", tokens: 10 }, { kind: "subagentOutput", id: task, counter: "thread:w1:run1", tokens: 30 },
     ]);
     expect([...first.of("request"), ...second.of("request")].map((r) => r.request.scope)).toEqual([task, task]);
-    expect([...first.of("measurement"), ...second.of("measurement")].every((m) => m.measurement.workerId === task && m.measurement.run === 1)).toBe(true);
   });
 
   it("the app-server going away fails its workers' runs; their reports wait in the journal for the next head", () => {

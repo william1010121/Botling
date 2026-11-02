@@ -214,16 +214,13 @@ describe("a Claude worker's run", () => {
 
 describe("through the shared worker core", () => {
   const request = { id: "r1", sample: { outputTokens: 120, startMs: 0, endMs: 2_000, complete: true } };
-  const measurement = { threadId: "t", turnId: "u", workerId: null, parentThreadId: null, run: null, output: 120 };
 
-  it("forwards its tok/s samples with the worker as scope and its measurements with the worker's id", async () => {
+  it("forwards its tok/s samples with the worker as scope", async () => {
     const h = harness();
     const { task_id } = await h.workers.tool("app_handoff", { instructions: "Measure" }) as any;
     const head = h.heads[0]!;
     h.say(head, { kind: "request", request: { ...request, scope: null } });
-    h.say(head, { kind: "measurement", provider: "claude", measurement });
     expect(h.items).toContainEqual({ kind: "request", request: expect.objectContaining({ id: "r1", scope: task_id }) });
-    expect(h.items).toContainEqual({ kind: "measurement", provider: "claude", measurement: expect.objectContaining({ threadId: "t", workerId: task_id, run: 1, output: 120 }) });
   });
 
   it("counts a run's output as thread:<session>:run<n> and turns the process's running cost into each run's spend", async () => {

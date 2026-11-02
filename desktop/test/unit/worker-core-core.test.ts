@@ -66,7 +66,7 @@ function setup(over: Partial<WorkerCoreOptions> & { adapter?: FakeAdapter; port?
   let n = 0;
   const core = new WorkerCore({
     store, port, sink: { item: (item) => items.push(item) }, adapters: [adapter], ownerSessionId: () => "coord-session", log: (line) => logs.push(line),
-    newId: () => `0000000${ids % 10}-0000-4000-8000-${String(++n).padStart(12, "0")}`, now: () => 1000, processStartTime: () => "start-time", parentThreadId: () => "coord-thread",
+    newId: () => `0000000${ids % 10}-0000-4000-8000-${String(++n).padStart(12, "0")}`, now: () => 1000, processStartTime: () => "start-time",
     ...over,
   });
   ids += 1;
@@ -108,7 +108,7 @@ describe("a run: handoff → events → end → report", () => {
     expect(store.get(task_id)).toMatchObject({ engine: "codex", engineData: { model: "gpt" } });
   });
 
-  it("digests the run once: blocks as steps, scoped tool ids, one counter, scoped speed and measurements", async () => {
+  it("digests the run once: blocks as steps, scoped tool ids, one counter and scoped speed", async () => {
     const { core, adapter, items } = setup();
     const { task_id: id } = await core.handoff("claude-process", { instructions: "Go" });
     items.length = 0;
@@ -566,7 +566,7 @@ describe("RunPipeline facts", () => {
   const pipeline = () => {
     const out: CodexItem[] = [];
     const ends: unknown[] = [];
-    const p = new RunPipeline({ workerId: "w", run: 1, engine: "agy", conversationId: () => null, parentThreadId: () => null }, (item) => out.push(item), { control: () => undefined, ended: (end) => ends.push(end) });
+    const p = new RunPipeline({ workerId: "w", run: 1, engine: "agy", conversationId: () => null }, (item) => out.push(item), { control: () => undefined, ended: (end) => ends.push(end) });
     return { p, out, ends };
   };
 

@@ -1,6 +1,6 @@
 // The switch to the member's worker ledger (shared-core spec 3.5, 3.6, slice S4b): a bot's existing workers in the old
 // journals are imported once into <member store>/worker-ledger.json and show as they did; the old files are kept,
-// unchanged, for a downgrade. And the one worker entry: a worker's speed, measurements and usage reach the app.
+// unchanged, for a downgrade. And the one worker entry: a worker's speed and usage reach the app.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -77,7 +77,7 @@ describe("migration into the member's worker ledger", () => {
 });
 
 describe("the one worker entry", () => {
-  it("a worker's speed, its token-flow measurement and its spend reach the app (Claude workers' were dropped)", async () => {
+  it("a worker's speed and its spend reach the app (Claude workers' were dropped)", async () => {
     const root = tempDir("worker-entry"); roots.push(root);
     const usage = vi.fn();
     const b = bot(root, usage);
@@ -89,8 +89,5 @@ describe("the one worker entry", () => {
     entry({ kind: "usage", totalCost: 0.25, tokens: { input: 1, output: 10, cacheRead: 0, cacheWrite: 0 } });
     // Each usage is its own spend (never read as a running total).
     expect(usage.mock.calls.map((call) => call[1])).toEqual([0.25, 0.25]);
-    const recorded = vi.spyOn(b as any, "recordMeasurement");
-    entry({ kind: "measurement", provider: "claude", measurement: { workerId: DONE, run: 1 } });
-    expect(recorded).toHaveBeenCalledWith({ workerId: DONE, run: 1 }, "claude");
   });
 });

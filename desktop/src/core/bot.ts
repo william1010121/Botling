@@ -103,9 +103,6 @@ import {
 import { specTrace } from "./spec-trace";
 import { codexWorkerDefaults } from "./settings";
 import { PAGE_COMPONENT, previewCards } from "./page-preview";
-import { tokenLedger, type MeteredTurn } from "./token-flow-ledger";
-import { tokenFlowContexts } from "./token-flow-context";
-import { meteredTask } from "./token-flow-task";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import { alwaysAllows } from "./permission-rules";
@@ -514,7 +511,7 @@ export class Bot {
     this.session = { sessionId: randomUUID(), started: false };
     this.alwaysAllowed = (primary ?? this).storeAlwaysAllowed();
     this.unread = primary ? 0 : this.store.loadUnread();
-    this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard), (from,into) => this.measurementTaskMerged(from,into));
+    this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard));
     // Kept from trimming: the ones a task card shows, and the ones another bot owns now (their rows and steps are its to show).
     this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set([
       ...this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }])),
@@ -1263,7 +1260,7 @@ export class Bot {
   /**
    * The one entry for every app-managed worker's items, whatever engine runs it (shared-core spec S4b). Workers are
    * not the head's: their items come whether or not the head is awake (never dropped as an old head's), and only
-   * their own bookkeeping happens here (the book, the step that started one, approvals, usage, speed, measurements),
+   * their own bookkeeping happens here (the book, the step that started one, approvals, usage, speed),
    * never the coordinator's turn. Their state is the ledger's (`projectWorker`).
    */
   private onWorkerOutput(item: CodexItem) {
@@ -1272,8 +1269,6 @@ export class Bot {
       // Each usage's own spend (the core's), never a running total.
       case "usage": if (item.totalCost > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, item.totalCost, item.tokens); return;
       case "request": this.noteRequest(item.request); return;
-      case "measurementDispatch": this.recordMeasurementDispatch(item); return;
-      case "measurement": this.recordMeasurement(item.measurement, item.provider); return;
       case "rateLimits": this.options.rateLimits?.(item.engine, item.limits); return;
       case "connectionLost": if (item.parent) this.cutOffByNetwork.add(item.parent); return;
       case "permissionDenied": this.showDenial(item); return;
@@ -3231,9 +3226,8 @@ export class Bot {
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
     // Workers' own items come through `onWorkerOutput` only.
-    if (item.kind === "workerReport" || item.kind === "measurementDispatch") return;
+    if (item.kind === "workerReport") return;
     if (item.kind === "request") { this.noteRequest(item.request); return; }
-    if (item.kind === "measurement") { this.recordMeasurement(item.measurement, item.provider); return; }
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
     if (item.kind === "connectionTrouble") {
@@ -3278,7 +3272,6 @@ export class Bot {
     }
     if (item.kind === "controlResponse") return;
     if (item.kind === "usage") {
-      if (item.measurement) this.recordMeasurement(item.measurement);
       // Claude's cost is a running total for its process: this turn's is the difference.
       const spent = costDelta(this.sessionCost, item.totalCost);
       if (spent > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, spent, item.tokens);
@@ -3494,42 +3487,6 @@ export class Bot {
     }
   }
 
-  private measurementTaskMerged(from:string,into:string) {
-    if(this.readOnly)return;
-    this.measurementContexts().mergeTask(from,into);
-    tokenLedger(join(this.owner.profile.storeDir,"token-flow-turns.jsonl")).reconcileTasks();
-  }
-  private recordMeasurementDispatch(item: Extract<CodexItem,{kind:"measurementDispatch"}>) {
-    const contexts=this.measurementContexts();
-    if(item.inheritRun!==undefined){
-      const previous=contexts.get(this.engine,item.workerId,item.inheritRun);
-      if(previous)contexts.bind(this.engine,item.workerId,previous,item.run);
-      return;
-    }
-    const turn=this.turn;
-    if(!turn?.open||!turn.sent||turn.head!==this.head)return;
-    const base=this.tasks.base({head:this.engine,userMessage:turn.origin==="user"?turn.userId:null,handoffID:turn.handoffId,reporting:turn.ended});
-    contexts.bind(this.engine,item.workerId,{taskId:base?.id??null,appTurnId:turn.id},item.run);
-  }
-  private measurementContexts() { return tokenFlowContexts(join(this.owner.profile.storeDir, "token-flow-contexts.json")); }
-  private recordMeasurement(measurement: Omit<MeteredTurn, "botId" | "head" | "taskId">, provider?: "claude" | "codex") {
-    if (this.engine !== "claude" && this.engine !== "codex") return;
-    const turn = this.turn?.head === this.head && this.turn?.open && this.turn?.sent ? this.turn : null;
-    const base = turn ? this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null,
-      handoffID: turn.handoffId, reporting: turn.ended }) : undefined;
-    const chain: string[] = [];
-    let worker = measurement.workerId;
-    while (worker && !chain.includes(worker)) { chain.push(worker); worker = this.subagents.get(worker)?.parentID ?? null; }
-    const conflict = new Set(this.peers.flatMap(peer => peer.subagents.list.map(s => s.id)));
-    const binding = chain.map(id => this.measurementContexts().get(this.engine,id,measurement.run)).find(Boolean);
-    // Codex runs require their exact dispatch receipt; bare worker-card membership can belong to a prior run.
-    const taskId = binding?.taskId ?? (measurement.workerId && measurement.run!==null ? null : meteredTask(this.tasks.tasks, this.engine, chain, conflict, base?.id));
-    const appTurnId = measurement.workerId ? binding?.appTurnId : turn?.id;
-    const attribution = taskId ? "task" : appTurnId ? "chat" : "unresolved";
-    tokenLedger(join(this.owner.profile.storeDir, "token-flow-turns.jsonl")).record({ ...measurement,
-      accountingVersion: 2, attribution, ...(appTurnId ? { appTurnId } : {}), botId: this.owner.id, head: provider ?? this.engine, taskId });
-  }
-
   /** The turn's first words or tool claim its task card; a tool makes it real work. */
   private noteWork(turn: Turn, tool: boolean) {
     if (turn.origin !== "user" || !turn.userId) return;
@@ -3550,7 +3507,6 @@ export class Bot {
   private linkSubagent(turn: Turn, subagentId: string) {
     const base = this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null, handoffID: turn.handoffId, reporting: turn.ended });
     if (base) { this.tasks.link(subagentId, base.id, toSwiftDate()); this.saveTasks(); }
-    if (this.engine === "claude") this.measurementContexts().bind(this.engine, subagentId, { taskId: base?.id ?? null, appTurnId: turn.id });
   }
 
   /** Subagent bookkeeping (subagents.json). True when the item was the subagent's own (not the turn's). */
@@ -3769,11 +3725,6 @@ export class Bot {
         runningSubagents: new Set(this.subagents.running.map((subagent) => subagent.id)),
       }, parsed.tasks, toSwiftDate());
       if (touched[0]) this.owner.headTask.set(this.engine, touched[0]);
-      if (touched.length === 1 && this.engine !== "agy" && shownTasks(this.tasks.tasks).some(c => c.id === touched[0])) {
-        const ledger=tokenLedger(join(this.owner.profile.storeDir, "token-flow-turns.jsonl"));
-        // A Codex-owned dispatch can run the existing Claude component-editor role.
-        for (const provider of ["claude","codex"] as const) ledger.linkTurn(this.owner.id, provider, turn.id, touched[0]);
-      }
       this.saveTasks();
     }
     this.emit({

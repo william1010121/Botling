@@ -1,5 +1,5 @@
 // One run of one worker, digested once (shared-core spec 2.6): text blocks become steps, tool calls get the
-// worker-scoped ids, usage/speed/measurements go through RunAccounting, and the events the core keeps state for
+// worker-scoped ids, usage/speed go through RunAccounting, and the events the core keeps state for
 // (session, process, approvals, the end) are handed to it. The bot's items are the shared vocabulary of workers.ts.
 import type { CodexItem } from "../agent/codex";
 import type { Engine } from "../heads";
@@ -18,8 +18,6 @@ export interface PipelineIds {
   segment?: number;
   engine: Engine;
   conversationId(): string | null;
-  /** The coordinator's thread, for measurements that name none. */
-  parentThreadId(): string | null;
 }
 
 export interface PipelineHooks {
@@ -64,7 +62,6 @@ export class RunPipeline {
         return;
       case "usage": for (const item of this.accounting.usage(event)) this.out(item); return;
       case "request": this.out(this.accounting.request(event)); return;
-      case "measurement": this.out(this.accounting.measurement(event)); return;
       case "permissionDenied":
         this.out({ kind: "permissionDenied", toolUseId: this.scoped(event.toolUseId), tool: event.tool, reason: event.reason, confirmed: event.confirmed });
         return;
