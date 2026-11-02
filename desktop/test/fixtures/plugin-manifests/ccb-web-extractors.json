@@ -1,0 +1,15 @@
+{
+  "ccb" : {
+    "permissions" : [
+
+    ]
+  },
+  "description" : "Reads the conversation on a web AI's page (Gemini) into text for the main bot. One script per site; README.md has the contract.",
+  "displayName" : "Web page readers",
+  "engines" : {
+    "ccb" : "^2.0.0"
+  },
+  "license" : "MIT",
+  "name" : "ccb-web-extractors",
+  "version" : "1.0.0"
+}

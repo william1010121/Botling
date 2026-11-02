@@ -11,7 +11,8 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
-import { checkPlugin, loadPlugin, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
+import { checkPlugin, diskFolder, loadPlugin, readManifest, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
+import type { Contribution } from "./contributions";
 import type { SecretStore } from "./secrets";
 import { swiftPrettyJSON } from "../swift-json";
 
@@ -443,6 +444,17 @@ export class PluginRegistry {
   /** Component folders of enabled plugins (`componentFolders`). */
   componentFolders(): string[] {
     return this.plugins.flatMap((plugin) => (plugin.enabled && plugin.manifest.ccb?.contributes?.components ? [join(plugin.folder, plugin.manifest.ccb.contributes.components)] : []));
+  }
+
+  /**
+   * What enabled plugins contribute, read again from each package.json (`readManifest`: `botling`, or
+   * `ccb` as it works today). Nothing acts on it yet; it is the one source later steps move onto.
+   */
+  contributions(): Contribution[] {
+    return this.plugins.flatMap((plugin) => {
+      if (!plugin.enabled || plugin.failure) return [];
+      try { return readManifest(JSON.parse(readFileSync(join(plugin.folder, "package.json"), "utf8")), diskFolder(plugin.folder)).contributions; } catch { return []; }
+    });
   }
 
   /** Checks a folder without adding it (for installs). */

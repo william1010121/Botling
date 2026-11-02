@@ -1,0 +1,12 @@
+{
+  "name": "ccb-components",
+  "displayName": "Component library",
+  "version": "1.37.0",
+  "description": "對話裡的組件（選擇題等）。每個組件一個資料夾：template.html 和 about.md。",
+  "license": "MIT",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "permissions": [],
+    "contributes": { "components": "components" }
+  }
+}

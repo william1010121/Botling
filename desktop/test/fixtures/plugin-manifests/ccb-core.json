@@ -1,0 +1,12 @@
+{
+  "name": "ccb-core",
+  "displayName": "Deck 核心",
+  "version": "1.0.3",
+  "description": "Deck 自己用的 agents：component-editor（Sonnet）改組件樣板。",
+  "license": "MIT",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "permissions": ["claude"],
+    "claude": "claude"
+  }
+}

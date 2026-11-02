@@ -1,8 +1,13 @@
 // A plugin's package.json (npm's format with a `ccb` field, like a VS Code extension) and the check
 // 1.x runs on it (`PluginRegistry.check`, `ccb plugin check` without the browser parts), ported from
 // Plugins.swift: the same problems, worded the same, and the same npm semver ranges for `engines.ccb`.
-import { existsSync, readFileSync } from "node:fs";
+// `readManifest` is the 3.x reading (plugin-platform.md §3.1): the `botling` field or the older `ccb`
+// one, as one shape with its contributions (contributions.ts). Loading still goes by `ccb` alone.
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { insidePlugin, readContributions, type Contribution, type FolderView } from "./contributions";
+
+export type { FolderView } from "./contributions";
 
 export type JSONValue = null | boolean | number | string | JSONValue[] | { [key: string]: JSONValue };
 
@@ -230,6 +235,93 @@ export function checkPlugin(folder: string): string[] {
     }
   }
   return problems;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Manifest v3: `botling` (or `ccb`, read as it works today) into one shape. Nothing loads by it yet.
+
+export interface ManifestRead {
+  /** The field it was read from; null when it has neither. */
+  format: "botling" | "ccb" | null;
+  name: string;
+  version: string;
+  displayName?: string;
+  publisher?: string;
+  /** `engines.botling`, or the older `engines.ccb`. */
+  engine?: string;
+  /** The program part, run in the plugin host (old `ccb.host`). */
+  main?: string;
+  /** The chat page's extension (old `ccb.web`, which is also `ui`). */
+  chat?: string;
+  /** The bundle panel, tile and card frames render with. */
+  ui?: string;
+  styles: string[];
+  /** "lazy": on first use of a contribution; "startup": when the host starts (every old program part). */
+  activation: "lazy" | "startup";
+  /** What it asks to do (old `ccb.permissions`). */
+  capabilities: string[];
+  contributions: Contribution[];
+  problems: string[];
+}
+
+/** Reads a package.json (`botling` wins over `ccb` when it has both); never throws, says what is wrong instead. */
+export function readManifest(value: unknown, folder: FolderView): ManifestRead {
+  const read: ManifestRead = { format: null, name: "", version: "", styles: [], activation: "lazy", capabilities: [], contributions: [], problems: [] };
+  if (!isObject(value)) return { ...read, problems: ["package.json is not a JSON object."] };
+  const problems = read.problems;
+  const text = (object: Record<string, unknown>, key: string, label = key) => {
+    const v = object[key];
+    if (v == null) return undefined;
+    if (typeof v === "string") return v;
+    problems.push(`${label} has the wrong type.`);
+    return undefined;
+  };
+  const texts = (object: Record<string, unknown>, key: string, label: string) => {
+    const v = object[key];
+    if (v == null) return [];
+    if (Array.isArray(v) && v.every((item) => typeof item === "string")) return v as string[];
+    problems.push(`${label} has the wrong type.`);
+    return [];
+  };
+  read.name = text(value, "name") ?? "";
+  read.version = text(value, "version") ?? "";
+  if (!read.name) problems.push("name is missing.");
+  if (!read.version) problems.push("version is missing.");
+  for (const key of ["displayName", "publisher"] as const) { const v = text(value, key); if (v !== undefined) read[key] = v; }
+  const engines = isObject(value.engines) ? value.engines : {};
+  const engine = text(engines, "botling", "engines.botling") ?? text(engines, "ccb", "engines.ccb");
+  if (engine !== undefined) read.engine = engine;
+  const format = value.botling != null ? "botling" : value.ccb != null ? "ccb" : null;
+  if (!format) { problems.push("The botling field is missing."); return read; }
+  read.format = format;
+  const field = value[format];
+  if (!isObject(field)) { problems.push(`${format} has the wrong type.`); return read; }
+  const old = format === "ccb";
+  const main = text(field, old ? "host" : "main", `${format}.${old ? "host" : "main"}`);
+  const web = old ? text(field, "web", "ccb.web") : undefined;
+  const chat = old ? web : text(field, "chat", "botling.chat");
+  const ui = old ? web : text(field, "ui", "botling.ui");
+  Object.assign(read, main !== undefined ? { main } : {}, chat !== undefined ? { chat } : {}, ui !== undefined ? { ui } : {});
+  read.styles = texts(field, "styles", `${format}.styles`);
+  read.capabilities = texts(field, old ? "permissions" : "capabilities", old ? "ccb.permissions" : "botling.capabilities");
+  if (old) read.activation = "startup";
+  else if (field.activation === "startup" || field.activation === "lazy") read.activation = field.activation;
+  else if (field.activation != null) problems.push(`botling.activation must be "lazy" or "startup".`);
+  let claude = text(field, "claude", `${format}.claude`);
+  if (claude !== undefined && !insidePlugin(claude)) { problems.push(`claude "${claude}" must be a relative path inside the plugin folder.`); claude = undefined; }
+  const contributes = readContributions(read.name, field.contributes, claude, !old, folder);
+  read.contributions = contributes.contributions;
+  problems.push(...contributes.problems);
+  return read;
+}
+
+/** A plugin folder on disk, for `readManifest`. */
+export function diskFolder(root: string): FolderView {
+  return {
+    exists: (path) => existsSync(join(root, path)),
+    read: (path) => { try { return readFileSync(join(root, path), "utf8"); } catch { return null; } },
+    list: (path) => { try { return readdirSync(join(root, path)); } catch { return []; } },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------

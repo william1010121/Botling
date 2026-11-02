@@ -1,0 +1,46 @@
+{
+  "name": "ccb-laas",
+  "displayName": "LaTeX 快打",
+  "version": "1.1.1",
+  "description": "在輸入框打 ;a 自動變成 \\alpha（移植自 web-laas / Emacs laas）；離開輸入框時 $…$ 顯示成 SVG 公式（內含 MathJax，Apache-2.0）。",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "scripts": {
+    "build": "npm i --no-save mathjax-full@3.2.2 && npx --yes esbuild@0.25.11 src/web.ts --bundle --format=esm --loader:.laas=text --outfile=dist/web.js"
+  },
+  "ccb": {
+    "permissions": [
+      "composer"
+    ],
+    "web": "dist/web.js",
+    "contributes": {
+      "settings": {
+        "laas.on": {
+          "type": "boolean",
+          "default": true,
+          "title": "開啟 LaTeX 快打"
+        },
+        "laas.everywhere": {
+          "type": "boolean",
+          "default": true,
+          "title": "一般文字也能用 ;a 這類符號（關掉則只在 $…$ 裡）"
+        },
+        "laas.cdlatex": {
+          "type": "boolean",
+          "default": true,
+          "title": "cdlatex 符號（` 開頭、' 修飾、_ ^ 括號）"
+        },
+        "laas.svg": {
+          "type": "boolean",
+          "default": true,
+          "title": "離開輸入框時把 $…$ 顯示成 SVG 公式"
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "mathjax-full": "3.2.2"
+  }
+}

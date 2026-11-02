@@ -1,0 +1,12 @@
+{
+  "name": "ccb-teams",
+  "displayName": "臨時團隊",
+  "version": "1.0.0",
+  "description": "主 bot 可以拉起的臨時團隊。每個團隊是 claude/agents/ 裡的一個 agent 檔。",
+  "license": "MIT",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "permissions": ["claude"],
+    "claude": "claude"
+  }
+}
