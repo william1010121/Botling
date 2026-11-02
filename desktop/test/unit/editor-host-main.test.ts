@@ -37,7 +37,7 @@ it('main relay and layout authenticate the exact shell/editor roots; plugin mess
  ipcMain.emit(EDITOR_CHANNEL.layout,{sender:contents,senderFrame:contents.mainFrame},{stamp,bounds});expect(layout).not.toHaveBeenCalled();
  ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds});expect(layout).toHaveBeenCalledExactlyOnceWith(bounds);
  ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{x:0,y:0,width:5000,height:5000}});expect(layout).toHaveBeenCalledTimes(1);
- f.owner.webContents.send.mockClear();ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'request',id:1,cmd:{type:'accounts.list'}}});expect(f.owner.webContents.send).not.toHaveBeenCalled();
+ f.owner.webContents.send.mockClear();ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'request',id:1,cmd:{type:'updates.restart'}}});expect(f.owner.webContents.send).not.toHaveBeenCalled();
  ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'stop'}});expect(f.owner.webContents.send).toHaveBeenCalledExactlyOnceWith(EDITOR_CHANNEL.shell,{stamp,message:{botling:'stop'}});
 });
 it('shell document reload rotates authentication while retaining the native editor view and load',async()=>{

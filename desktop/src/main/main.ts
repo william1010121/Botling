@@ -34,7 +34,7 @@ import { attachmentFile, attachmentTarget } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import {
-  AccountView, MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
+  MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
   type Command, type EventEnvelope, type ResponseEnvelope, type UpdateView,
 } from "../contract";
 
@@ -305,24 +305,7 @@ function broadcast(event: EventEnvelope) {
   }
 }
 
-// ----------------------------------------------------------------------------------------------
-// Accounts: one persistent partition each. Remote sites get no preload and no IPC.
-
-function accounts(): AccountView[] {
-  const file = join(dataDir, "accounts.json");
-  if (!existsSync(file)) {
-    const initial: AccountView[] = [
-      { id: "work", name: "Work", partition: "persist:account-work" },
-      { id: "personal", name: "Personal", partition: "persist:account-personal" },
-    ];
-    writeFileSync(file, JSON.stringify(initial, null, 2));
-  }
-  return (JSON.parse(readFileSync(file, "utf8")) as unknown[]).map((entry) => AccountView.parse(entry));
-}
-
 const hardened = new WeakSet<Session>();
-/** Account sessions opened this run (only these need their cookies flushed at quit). */
-const openedSessions = new Set<Session>();
 function hardenSession(target: Session) {
   if (hardened.has(target)) return;
   hardened.add(target);
@@ -332,26 +315,6 @@ function hardenSession(target: Session) {
   });
   target.setPermissionCheckHandler(() => false);
   target.on("will-download", (event) => { event.preventDefault(); note("blocked a download"); });
-}
-
-function openSite(accountId: string, url: string): number {
-  const account = accounts().find((candidate) => candidate.id === accountId);
-  if (!account) throw Object.assign(new Error("No such account."), { code: "not_found" });
-  const siteSession = session.fromPartition(account.partition);
-  hardenSession(siteSession);
-  openedSessions.add(siteSession);
-  const window = new BrowserWindow({
-    width: 1000, height: 760, title: `${account.name} — ${new URL(url).host}`,
-    backgroundColor: "#0E0E10", show:false,
-    webPreferences: {
-      session: siteSession, sandbox: true, contextIsolation: true, nodeIntegration: false,
-      nodeIntegrationInSubFrames: false, webSecurity: true, allowRunningInsecureContent: false,
-      // No preload: a website has no Botling API at all.
-    },
-  });
-  window.once("ready-to-show",()=>{if(!hidden)window.show();});
-  void window.loadURL(url);
-  return window.id;
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -607,8 +570,6 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
-    case "accounts.list": return { accounts: accounts() };
-    case "site.open": return { windowId: openSite(cmd.accountId, cmd.url) };
     default: throw new Error(`main does not handle ${cmd.type}`);
   }
 }
@@ -858,12 +819,10 @@ app.on("before-quit", (event) => {
   if (stopping) return;
   stopping = true;
   event.preventDefault();
-  // Cookies are written to disk lazily; make sure each account's are there before exiting.
-  const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
   const terminalShutdown = terminals.closeAll();
   // A plain quit keeps in-flight work: checkpoint it first (bounded), then stop. Failure only means no continuation.
   const armed = core.prepareRestart({ onlyIfBusy: true, timeoutMs: 4_000 }).catch((error) => { note(`quit continuation not saved: ${String(error)}`); core.cancelRestart(); });
-  void Promise.allSettled([terminalShutdown, armed.then(() => core.stop()), ...flushes]).then(async () => {
+  void Promise.allSettled([terminalShutdown, armed.then(() => core.stop())]).then(async () => {
     ipcMain.removeAllListeners(TEST_TRACE_CHANNEL);
     try{await traceWriter?.close();}catch(error){note('Synthetic trace flush failed: '+String(error));}
     app.exit(0);

@@ -25,7 +25,7 @@ it('does not bind a second editor, privileged/plugin shared document, wrong rout
  const boundary=new EditorHostBoundary(),a=shell(),b=editor();boundary.bind(a,b);expect(()=>boundary.bind(a,peer(3,EDITOR_URL))).toThrow(/already bound/);expect(()=>new EditorHostBoundary().bind(a,a)).toThrow();
  for(const url of ['app://botling/index.html','botling-chat://chat/chat.html','botling-chat://user@chat/chat.html?nativeHost=1','botling-chat://chat.evil/chat.html?nativeHost=1'])expect(()=>new EditorHostBoundary().bind(shell(),peer(4,url))).toThrow();
 });
-it.each(['settings.set','accounts.list','updates.restart','plugins.install'])('editor cannot inject core command %s',type=>{
+it.each(['settings.set','updates.restart','plugins.install'])('editor cannot inject core command %s',type=>{
  expect(editorMessageAllowed('up',{botling:'request',id:1,cmd:{type}})).toBe(false);expect(editorMessageAllowed('up',{v:10,id:'forged',cmd:{type}})).toBe(false);
 });
 it('contains no key/composition/recovery replay route, rejects malformed and oversized values',()=>{
@@ -42,7 +42,7 @@ it('narrow bridge is inert before binding and sends no event object, arbitrary c
  const callbacks=new Map<string,Function>(),send=vi.fn(),bridge=editorBridge({on:(channel,fn)=>callbacks.set(channel,fn),send},'editor'),stamp={surfaceId:'surface',documentGeneration:'document'};
  expect(bridge.post(message)).toBe(false);callbacks.get(EDITOR_CHANNEL.bound)!({secretEvent:'not forwarded'},stamp);
  const received=vi.fn();bridge.subscribe(received);expect(received.mock.calls[0][0]).toEqual({stamp,bound:true});expect(bridge.post(message)).toBe(true);expect(send).toHaveBeenCalledExactlyOnceWith(EDITOR_CHANNEL.up,{stamp,message});
- expect(bridge.layout({x:0,y:0,width:10,height:10})).toBe(false);expect(bridge.post({botling:'request',id:2,cmd:{type:'accounts.list'}})).toBe(false);expect(send).toHaveBeenCalledTimes(1);
+ expect(bridge.layout({x:0,y:0,width:10,height:10})).toBe(false);expect(bridge.post({botling:'request',id:2,cmd:{type:'updates.restart'}})).toBe(false);expect(send).toHaveBeenCalledTimes(1);
  callbacks.get(EDITOR_CHANNEL.down)!({}, {stamp:{...stamp,documentGeneration:'old'},message:{botling:'state'}});expect(received).toHaveBeenCalledTimes(1);
  callbacks.get(EDITOR_CHANNEL.unbound)!({},stamp);expect(bridge.current()).toBeNull();expect(bridge.post(message)).toBe(false);expect(send).toHaveBeenCalledTimes(1);expect(received.mock.calls.at(-1)![0]).toEqual({stamp,unbound:true});
 });

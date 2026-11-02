@@ -25,7 +25,7 @@ it('preserves card validation at ID, payload, action name and strict object boun
 });
 it('keeps envelope restrictions and rejects valid unrelated commands',()=>{
  for(const id of [-1,0.5,Number.MAX_SAFE_INTEGER+1,'1',null])expect(editorMessageAllowed('up',{botling:'request',id,cmd:save})).toBe(false);
- for(const cmd of [{type:'accounts.list'},{type:'card.html',botId:'B',messageId:'m',cardId:'c'}]){
+ for(const cmd of [{type:'updates.restart'},{type:'card.html',botId:'B',messageId:'m',cardId:'c'}]){
   expect(Command.safeParse(cmd).success).toBe(true);
   expect(editorMessageAllowed('up',{botling:'request',id:1,cmd})).toBe(false);
  }

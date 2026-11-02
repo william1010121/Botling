@@ -364,8 +364,7 @@ seenBy / decisionId`; the snapshot's `runs` (every turn under way, with its head
   new snapshot on a gap or a new epoch.
 - Commands: `chat.snapshot {botId?}` (every bot + that bot's chat), `chat.send`, `chat.choose`
   (a button on a question: what it does comes from its `action`, never its words), `chat.read`,
-  `turn.stop`, `turn.await`, `card.save`, `card.action`, `card.html` (main only), `accounts.list`,
-  `site.open`. All chat commands name their `botId`.
+  `turn.stop`, `turn.await`, `card.save`, `card.action`, `card.html` (main only). All chat commands name their `botId`.
 - Events: `bot.updated` (phase asleep/awake, working, approvals, unread, problem), `message.added`,
   `message.updated`, `turn.started`, `turn.delta`, `turn.steps`, `turn.finished`, `card.updated`,
   `card.acted`. Chat events name their `botId`.

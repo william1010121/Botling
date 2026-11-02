@@ -56,12 +56,6 @@ describe("contract", () => {
     expect(CARD_SAVE_LIMIT).toBe(262144); // Shared with the Swift app through Web/src/contract.json.
   });
 
-  it("only lets sites open over http(s)", () => {
-    expect(parseInbound({ v: 10, id: "r1", cmd: { type: "site.open", accountId: "work", url: "https://example.com" } }).ok).toBe(true);
-    expect(parseInbound({ v: 10, id: "r1", cmd: { type: "site.open", accountId: "work", url: "file:///etc/passwd" } }).ok).toBe(false);
-    expect(parseInbound({ v: 10, id: "r1", cmd: { type: "site.open", accountId: "work", url: "javascript:alert(1)" } }).ok).toBe(false);
-  });
-
   it("card messages are strict: no smuggled ids", () => {
     expect(CardMessage.safeParse({ ccb: "save", data: "{}" }).success).toBe(true);
     expect(CardMessage.safeParse({ ccb: "save", data: "{}", botId: "b2" }).success).toBe(false);

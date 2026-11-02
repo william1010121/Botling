@@ -660,9 +660,6 @@ export const CatchUpView = z.strictObject({
 });
 export type CatchUpView = z.infer<typeof CatchUpView>;
 
-export const AccountView = z.strictObject({ id, name: z.string().max(80), partition: z.string() });
-export type AccountView = z.infer<typeof AccountView>;
-
 // ---------------------------------------------------------------------------------------------
 // Commands. `target` says who answers it: main answers some itself, the rest go to the core.
 
@@ -1249,16 +1246,13 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.file"), name: PluginName, path: z.string().min(1).max(1_000) }),
   /** Main only: the picture a component's data named, by its token. */
   z.strictObject({ type: z.literal("card.image"), token: z.string().regex(/^[0-9a-f]{40}$/) }),
-  z.strictObject({ type: z.literal("accounts.list") }),
-  /** Main only: opens a website in that account's own persistent session, with no bridge. */
-  z.strictObject({ type: z.literal("site.open"), accountId: id, url: z.url({ protocol: /^https?$/ }).max(2_000) }),
 ]);
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command["type"];
 
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
@@ -1269,7 +1263,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["card.page", "files.pick", "projects.pick", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
 
 /** A link handed over in a chat (`[label](url)`, 1.x's `Chip`). */
 export const ResultView = z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) });
@@ -1440,8 +1434,6 @@ export interface Results {
   "attachment.file": { path: string; type: string };
   "catchup.retry": { started: boolean };
   "catchup.interval": { started: boolean };
-  "accounts.list": { accounts: AccountView[] };
-  "site.open": { windowId: number };
 }
 export type ResultOf<T extends CommandType> = Results[T];
 
