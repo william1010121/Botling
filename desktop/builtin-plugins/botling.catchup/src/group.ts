@@ -96,7 +96,7 @@ export class CatchUpGroup {
     this.tooltip?.remove();
     const context = this.context;
     summaryViewer.onClose = () => context.redraw();
-    summaryViewer.open(this.owner,this.state,this.view,(id)=>context.row(id),id=>context.reveal(id),point,index);
+    summaryViewer.open(this.owner,this.state,this.view,(id)=>context.find(id),id=>context.reveal(id),point,index);
     context.redraw();
     summaryViewer.setRestoreTarget(()=>this.head.querySelector<HTMLElement>(point<0?'[data-action="toggle"]':`[data-cite-point="${point}"][data-cite-index="${index}"]`));
   }
