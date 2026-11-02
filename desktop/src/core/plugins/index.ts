@@ -21,7 +21,8 @@ import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } 
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
 import { viewSurfaces } from "./views";
-import { ofKind, type Contribution } from "./contributions";
+import { CORE_PROMPT_SECTIONS } from "../prompts";
+import { HANDED_TAGS, ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
 import { title, type JSONValue } from "./manifest";
 import { PluginRegistry, type InstalledPlugin } from "./registry";
@@ -410,10 +411,22 @@ export class Plugins {
   // ------------------------------------------------------------------------------------------
   // Reply tags and prompt sections (plugin-extraction.md W3)
 
+  /**
+   * Whether a plugin ships with the app. Only one may take over what the core gives today (a handed tag such as
+   * <whiteboard>, a core prompt section's id): a library plugin of the same name replaces a built-in one, so the
+   * name alone proves nothing.
+   */
+  private shipped(name: string) {
+    return this.registry.plugin(name)?.builtIn === true;
+  }
+
   /** Each tag enabled plugins declare (`replyTags`), with the plugin it goes to: the first by name when two declare it. */
   replyTagOwners(): Map<string, string> {
     const owners = new Map<string, string>();
-    for (const entry of ofKind(this.registry.contributions(), "replyTag")) if (!owners.has(entry.tag)) owners.set(entry.tag, entry.plugin);
+    for (const entry of ofKind(this.registry.contributions(), "replyTag")) {
+      if (HANDED_TAGS[entry.tag] !== undefined && !this.shipped(entry.plugin)) continue;
+      if (!owners.has(entry.tag)) owners.set(entry.tag, entry.plugin);
+    }
     return owners;
   }
 
@@ -426,9 +439,10 @@ export class Plugins {
     }
   }
 
-  /** What enabled plugins add to bots' instructions (`promptSections`), in the plugins' order. */
+  /** What enabled plugins add to bots' instructions (`promptSections`), in the plugins' order; a core section's id only from a built-in plugin. */
   promptSections() {
-    return ofKind(this.registry.contributions(), "promptSection");
+    return ofKind(this.registry.contributions(), "promptSection")
+      .filter((entry) => !CORE_PROMPT_SECTIONS.some((section) => section.id === entry.id) || this.shipped(entry.plugin));
   }
 
   // ------------------------------------------------------------------------------------------
