@@ -97,8 +97,9 @@ import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, type WorkerCore
 import { projectWorker } from "./worker-projection";
 import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
-  routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
+  routineStatus, routineTitle, routinesSpecState, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
+import { specTrace } from "./spec-trace";
 import { codexWorkerDefaults } from "./settings";
 import { PAGE_COMPONENT, previewCards } from "./page-preview";
 import { tokenLedger, type MeteredTurn } from "./token-flow-ledger";
@@ -1538,7 +1539,9 @@ export class Bot {
     const words = task.trim();
     const schedule = CronSchedule.parse(cron);
     if (!schedule || !words || !this.routineFile || this.readOnly || this.profile.problem) return false;
+    const specBefore = this.routinesSpec();
     if (!this.routineFile.load().some((job) => job.schedule.text === schedule.text && job.task === words)) this.routineFile.add(routine(schedule, words));
+    if (specBefore) specTrace("routines", "AddLegacy", { bot: this.id, cron, task: words, before: specBefore, after: this.routinesSpec() });
     this.routinesChanged();
     return true;
   }
@@ -4487,6 +4490,13 @@ export class Bot {
       this.routinesShown = routinesKey(this.routinesView());
       this.routineError = error;
     }
+    const spec = this.routinesSpec();
+    if (spec) specTrace("routines", "Boot", { bot: this.id, after: spec });
+  }
+
+  /** Its routines for spec/models/routines' trace lines (null unless BOTLING_SPEC_TRACE is set). */
+  private routinesSpec() {
+    return routinesSpecState(this.routineFile, this.routineRuns, this.scheduledStore);
   }
 
   /** The store Codex's `app_routines` uses (null for a partner: its primary's). */
@@ -4540,11 +4550,13 @@ export class Bot {
   changeRoutine(args: Record<string, unknown>): ResultOf<"routines.change"> {
     if (this.options.primary) return this.options.primary.changeRoutine(args);
     if (!this.scheduledStore || this.readOnly) throw new ContractError("conflict", this.problem ?? "This bot's routines cannot be changed here.");
+    const specBefore = this.routinesSpec();
     try {
       this.scheduledStore.perform(args);
     } catch (error) {
       throw new ContractError("bad_request", (error as Error).message);
     }
+    if (specBefore) specTrace("routines", String(args.operation).replace(/^./, (c) => c.toUpperCase()), { bot: this.id, args, before: specBefore, after: this.routinesSpec() });
     this.routinesChanged();
     return this.routinesView();
   }
@@ -4579,8 +4591,10 @@ export class Bot {
   checkRoutines(now = Date.now()) {
     if (this.options.primary || this.shuttingDown || this.readOnly || this.problem || this.profile.problem || !this.routineFile) return;
     const before = this.routineError;
+    const specBefore = this.routinesSpec();
     const { jobs, scheduled } = this.loadRoutines();
     let ran = false;
+    let noticed = false;
     for (const job of jobs) {
       if (!this.isDue(job, now)) continue;
       this.routineRuns[job.id] = toSwiftDate(now);
@@ -4601,7 +4615,8 @@ export class Bot {
       }
       ran = true;
     }
-    if (this.routineError && this.routineError !== before) this.notice(`Routines: ${this.routineError}`);
+    if (this.routineError && this.routineError !== before) { this.notice(`Routines: ${this.routineError}`); noticed = true; }
+    if (specBefore) specTrace("routines", "Check", { bot: this.id, now, noticed, before: specBefore, after: this.routinesSpec() });
     // A job the bot wrote into routines.cron (or Codex's app_routines) shows in its chat without waiting for it to run.
     const view = this.routinesView(now);
     if (ran || this.routineError !== before || routinesKey(view) !== this.routinesShown) this.routinesChanged(view);
