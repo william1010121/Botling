@@ -1,0 +1,19 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["done"],
+  "error": [""],
+  "reply": ["^DONE — git failed as expected\\."],
+  "bubble": [true],
+  "steps": [1],
+  "failedSteps": [1],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 1,
+  "usage": 1,
+  "outputTokens": 424,
+  "requests": 1,
+  "writes": ["initialize", "session/new", "session/set_config_option", "session/set_config_option", "session/set_config_option", "session/prompt", "permission:allow", "session/cancel"],
+  "exit": "expected",
+  "notes": "Hand-checked against the stream."
+}

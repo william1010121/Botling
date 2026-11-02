@@ -1,0 +1,19 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["done"],
+  "error": [""],
+  "reply": ["^Removed the build folder\\."],
+  "bubble": [true],
+  "steps": [1],
+  "failedSteps": [0],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 1,
+  "usage": 1,
+  "outputTokens": 48,
+  "requests": 2,
+  "writes": ["control_request:initialize", "user", "control_response:allow"],
+  "exit": "none",
+  "notes": "Hand-checked against the stream."
+}

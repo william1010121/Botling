@@ -1,0 +1,1 @@
+{"engine": "codex", "scenario": "exit", "source": "recorded", "from": "codex/process-exit", "acts": [{"op": "start"}, {"op": "send", "textFrom": "\"method\":\"turn/start\""}], "notes": "The app-server is SIGKILLed while the worker's command runs: the coordinator's dispatch turn had ended; the head's exit is unexpected."}

@@ -1,0 +1,1 @@
+{"engine": "claude", "scenario": "failed-tool", "source": "recorded", "from": "claude/failed-tool-then-success", "acts": [{"op": "start"}, {"op": "send", "textFrom": "^\\{\"type\":\"user\""}], "notes": "Bash git status fails (is_error tool_result), then a normal end with the reply."}

@@ -1,0 +1,19 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["done"],
+  "error": [""],
+  "reply": ["^The file \\[notes\\.txt\\]\\(file:///WORK/notes\\."],
+  "bubble": [true],
+  "steps": [1],
+  "failedSteps": [0],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 1,
+  "usage": 1,
+  "outputTokens": 1095,
+  "requests": 1,
+  "writes": ["initialize", "session/new", "session/set_config_option", "session/set_config_option", "session/set_config_option", "session/prompt", "permission:allow", "session/cancel"],
+  "exit": "expected",
+  "notes": "Hand-checked against the stream."
+}

@@ -1,0 +1,1 @@
+{"engine": "agy", "scenario": "exit", "source": "recorded", "from": "agy/process-exit", "acts": [{"op": "start"}, {"op": "send", "textFrom": "\"method\":\"session/prompt\""}, {"op": "answer", "allow": true, "before": "\"result\":\\{\"outcome\""}], "notes": "SIGKILL while the approved command runs: no session/prompt response."}

@@ -1,0 +1,1 @@
+{"engine": "claude", "scenario": "turn", "source": "recorded", "from": "claude/usage-speed", "acts": [{"op": "start"}, {"op": "send", "textFrom": "^\\{\"type\":\"user\""}], "notes": "A turn with a tool call (Read), two model requests, usage and a normal result. Recorded from the real CLI as a worker process: the same ClaudeHead and stream-json protocol as a head."}

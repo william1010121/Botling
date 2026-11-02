@@ -1,0 +1,19 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["done"],
+  "error": [""],
+  "reply": [""],
+  "bubble": [false],
+  "steps": [0],
+  "failedSteps": [0],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 0,
+  "usage": 1,
+  "outputTokens": 5,
+  "requests": 1,
+  "writes": ["initialize", "thread/start", "turn/start"],
+  "exit": "none",
+  "notes": "D5: your message answered with <no-reply/> only gets no bubble."
+}

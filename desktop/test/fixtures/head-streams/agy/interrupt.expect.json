@@ -1,0 +1,19 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["failed"],
+  "error": ["^Antigravity\\ stopped:\\ cancelled"],
+  "reply": ["^The request was cancelled by the client\\."],
+  "bubble": [true],
+  "steps": [1],
+  "failedSteps": [1],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 1,
+  "usage": 1,
+  "outputTokens": 249,
+  "requests": 1,
+  "writes": ["initialize", "session/new", "session/set_config_option", "session/set_config_option", "session/set_config_option", "session/prompt", "permission:allow", "session/cancel"],
+  "exit": "unexpected",
+  "notes": "ACP writes its own words ('The request was cancelled by the client.') as a chunk; the turn is failed (cancelled). The Bot drains a turn it stopped (bot.ts `draining`), so `bubble` here is the shared rule's answer for a failed turn, not what the chat draws."
+}

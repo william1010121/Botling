@@ -1,0 +1,19 @@
+{
+  "init": true,
+  "turns": 0,
+  "status": [],
+  "error": [],
+  "reply": [],
+  "bubble": [],
+  "steps": [],
+  "failedSteps": [],
+  "background": 0,
+  "openTurn": true,
+  "permissions": 1,
+  "usage": 0,
+  "outputTokens": 0,
+  "requests": 0,
+  "writes": ["initialize", "session/new", "session/set_config_option", "session/set_config_option", "session/set_config_option", "session/prompt", "permission:allow"],
+  "exit": "unexpected",
+  "notes": "No result for the turn under way; the Bot hears an unexpected exit and recovers (restart)."
+}

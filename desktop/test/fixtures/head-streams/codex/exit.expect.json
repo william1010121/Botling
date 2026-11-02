@@ -1,0 +1,20 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["done"],
+  "error": [""],
+  "reply": ["^dispatched"],
+  "bubble": [true],
+  "steps": [1],
+  "failedSteps": [0],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 0,
+  "usage": 1,
+  "outputTokens": 92,
+  "requests": 2,
+  "writes": ["initialize", "thread/start", "turn/start", "response", "thread/start", "turn/start"],
+  "exit": "unexpected",
+  "workerItems": 14,
+  "notes": "The dispatch turn had ended before the app-server died; the worker's run goes with it (worker sink)."
+}

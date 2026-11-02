@@ -1,0 +1,1 @@
+{"engine": "claude", "scenario": "exit", "source": "recorded", "from": "claude/process-exit", "acts": [{"op": "start"}, {"op": "send", "textFrom": "^\\{\"type\":\"user\""}], "notes": "The CLI is SIGKILLed while its Bash call runs: no result line; the head's exit is unexpected."}

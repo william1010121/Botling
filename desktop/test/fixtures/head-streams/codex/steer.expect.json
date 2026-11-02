@@ -1,0 +1,20 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["done"],
+  "error": [""],
+  "reply": ["^first second"],
+  "bubble": [true],
+  "steps": [2],
+  "failedSteps": [0],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 0,
+  "usage": 1,
+  "outputTokens": 213,
+  "requests": 3,
+  "steered": true,
+  "writes": ["initialize", "thread/start", "turn/start", "turn/steer"],
+  "exit": "none",
+  "notes": "turn/steer with the running turn's id: one turn answers both."
+}

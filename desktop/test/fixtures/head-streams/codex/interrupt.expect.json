@@ -1,0 +1,19 @@
+{
+  "init": true,
+  "turns": 1,
+  "status": ["failed"],
+  "error": [""],
+  "reply": [""],
+  "bubble": [true],
+  "steps": [2],
+  "failedSteps": [0],
+  "background": 0,
+  "openTurn": false,
+  "permissions": 0,
+  "usage": 1,
+  "outputTokens": 263,
+  "requests": 1,
+  "writes": ["initialize", "thread/start", "turn/start", "turn/interrupt"],
+  "exit": "none",
+  "notes": "The Bot drains a turn it stopped (bot.ts `draining`), so `bubble` here is the shared rule's answer for a failed turn, not what the chat draws."
+}
