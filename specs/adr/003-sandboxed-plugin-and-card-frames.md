@@ -1,4 +1,4 @@
-# ADR 0003: Zero-Trust Sandbox Frame Broker and Top-Level ApprovalSheet
+# ADR 003: Sandboxed Plugin and Card Frames (Zero-Trust FrameBroker and Top-Level ApprovalSheet)
 
 ## Status
 - **Status**: Accepted
@@ -27,7 +27,7 @@ Allowing untrusted web frames direct or ambient access to host execution capabil
 ---
 
 ## Decision
-We enforce a strict **Zero-Trust Sandbox Model** where untrusted web components are physically isolated, communication is mediated by a validating broker (`FrameBroker`), and all privileged operations require explicit human confirmation through an out-of-frame modal (`ApprovalSheet`):
+We enforce a strict **Zero-Trust Sandbox Model** where untrusted web components are physically isolated, communication is mediated by a validating broker (`FrameBroker`), and all privileged operations require explicit human confirmation through an out-of-frame modal (`ApprovalSheet`), with runtime permission revocation:
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -59,7 +59,9 @@ We enforce a strict **Zero-Trust Sandbox Model** where untrusted web components 
 ┌────────────────────────────────────────────────────────┐
 │              Core Host Execution Gate                  │
 │  - Verifies approved parameters match pending ask      │
-│  - Spawns process / executes action                    │
+│  - Records grant with scope and TTL in memory          │
+│  - Executes command in tracked process group           │
+│  - Revokes grant on scope change, timeout, or user act │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -88,6 +90,14 @@ We enforce a strict **Zero-Trust Sandbox Model** where untrusted web components 
   To protect against accidental clicks or automated trigger exploits, the "Allow and run" button is disabled for an arming delay of `ARM_MS = 350ms` upon appearing.
 - **Exact Parameter Verification**:
   When the user clicks "Allow and run", the top-level app issues `component.approve` (or `pin.approve` / `spec.approve`). The Core validates that the command, directory, and flags match the pending request byte-for-byte before dispatching execution.
+
+### 4. Deterministic Permission Revocation
+- **TTL and Scoped Grants**:
+  Granted permissions are stored in memory with explicit expiration timestamps (TTLs).
+- **Automatic Revocation**:
+  When an operator switches workspaces, closes a session, or initiates an explicit revocation, grants are cleared immediately from the Core permissions table.
+- **Event Notification**:
+  `PermissionRevokedEvent` notifies active frames when previously granted permissions expire or are revoked by the operator.
 
 ---
 

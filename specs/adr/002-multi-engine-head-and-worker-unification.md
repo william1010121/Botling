@@ -1,4 +1,4 @@
-# ADR 0004: Unified Multi-Engine Abstraction (Claude, Codex, Antigravity)
+# ADR 002: Multi-Engine Head and Worker Unification (Claude Code, OpenAI Codex, Google Antigravity ACP)
 
 ## Status
 - **Status**: Accepted

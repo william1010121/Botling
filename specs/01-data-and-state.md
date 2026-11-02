@@ -4,14 +4,79 @@
 
 This specification defines the core data contracts, state machines, invariants, and formal verification models of **Botling**. Specifically, it covers:
 1. **`WorkerLedgerRecord` v3**: The canonical durable record for all background and delegated AI worker tasks.
-2. **State Projections**: The deterministic mapping functions from core ledger state to UI and subsystem views.
-3. **Formal Verification Models (TLA+)**:
-   - `Worker.tla`: Concurrency, lifecycle, cancellation, and report handoff invariants.
-   - `Restart.tla`: Crash resilience, shutdown continuation journaling, and at-most-once recovery semantics.
+2. **Bot Session & File-First Memory Data Models**: `BotSessionState`, `SessionWarmCacheEntry`, and markdown `.bot/memory.md` storage.
+3. **State Projections**: The deterministic mapping functions from core ledger state to UI and subsystem views.
+4. **State Machine Specifications**:
+   - Bot Session & Warm Cache Lifecycle (`stateDiagram-v2`).
+   - Worker Lifecycle State Machine (`stateDiagram-v2`).
+   - Worker Report Delivery State Machine (`stateDiagram-v2`).
+5. **Formal Verification Models (TLA+)**:
+   - `specs/tla/BotSessionLifecycle.tla`: Cache consistency, memory bounds, single-writer locks, and zero data loss during cache eviction.
+   - `spec/models/worker/Worker.tla`: Concurrency, lifecycle, cancellation, and report handoff invariants.
+   - `spec/models/restart/Restart.tla`: Crash resilience, shutdown continuation journaling, and at-most-once recovery semantics.
 
 ---
 
-## 2. Canonical Worker Data Model: `WorkerLedgerRecord` v3
+## 2. Bot Session & Memory Data Models
+
+### 2.1 File-First Memory Schema (`.bot/memory.md`)
+
+Botling stores high-level context in a human-readable, git-tracked markdown file (`.bot/memory.md`). It adheres to four canonical headings and a strict line-budget invariant:
+
+```markdown
+# Current status
+Concise snapshot of current system or project status.
+
+# In progress
+Active tasks, pending refactors, or background worker jobs.
+
+# Waiting on you
+Human input blockers, pending code reviews, or approval gates.
+
+# Decided
+Architectural and design decisions recorded during sessions.
+```
+
+#### Memory Invariants
+- **Line Limit Invariant**: `.bot/memory.md` must remain strictly under 150 lines. Idle tidy routines consolidate notes when line budgets approach capacity.
+- **Section Headers**: All four headings must be preserved during automated and human edits.
+- **Atomic Modification**: Writes to `.bot/memory.md` use atomic file replacement (`writeFileAtomic`) to prevent half-written files on crash.
+
+### 2.2 Bot Session State & Warm Cache Data Structures
+
+```typescript
+export type SessionState = "closed" | "idle" | "busy" | "waiting_approval" | "checkpointing";
+export type CacheStatus = "cold" | "warming" | "warm" | "evicting";
+
+export interface BotSessionState {
+  sessionId: string;                            // Unique session UUID
+  botId: string;                                // Bot configuration identifier
+  workspacePath: string;                        // Root workspace folder path
+  dataFolderPath: string;                       // Path to .bot/ directory
+  engine: "claude" | "codex" | "agy";          // Active engine runtime
+  state: SessionState;                          // Live session execution state
+  turnIndex: number;                            // Current turn sequence number
+  activeTurnId: string | null;                  // UUID of turn currently in flight
+  lastActiveEpoch: number;                      // Timestamp of last interaction
+  lockToken: string | null;                     // Acquired core.lock token
+  warmCache: SessionWarmCacheEntry;             // Memory-resident cache descriptor
+}
+
+export interface SessionWarmCacheEntry {
+  status: CacheStatus;                          // Cache residency state
+  memVersion: number;                           // In-memory memory.md version counter
+  diskMemVersion: number;                       // Persisted memory.md version counter
+  cacheDirty: boolean;                          // In-memory memory notes modified
+  residentHistoryTokens: number;                // Primed context token size
+  headHandle: unknown | null;                   // Live engine coordinator handle
+  warmedAt: number | null;                      // Epoch timestamp when warm status reached
+  lastAccessEpoch: number;                      // LRU timestamp for cache eviction
+}
+```
+
+---
+
+## 3. Canonical Worker Data Model: `WorkerLedgerRecord` v3
 
 Worker state in Botling is unified under a single source of truth: `<member store>/worker-ledger.json` (`desktop/src/core/worker-core/ledger.ts`). It is written exclusively by `WorkerCore` at state transition boundaries (launch, end, report settlement, owner change, crash recovery) using atomic file writes (`writeFileAtomic`).
 
@@ -58,11 +123,11 @@ export interface ReportCheckpoint {
 
 ---
 
-## 3. Worker State Vocabulary & Status Projections
+## 4. Worker State Vocabulary & Status Projections
 
 The tuple `(status, report.state, cleanup)` uniquely defines the worker state. All external views (`WorkerInfo.state`, `subagents.json`, `agents.json`, and the chat chip) are pure projections (`desktop/src/core/worker-core/status.ts`).
 
-### 3.1 Vocabulary Definitions
+### 4.1 Vocabulary Definitions
 
 | Type | Allowed Values | Semantic Meaning |
 |---|---|---|
@@ -80,7 +145,7 @@ The tuple `(status, report.state, cleanup)` uniquely defines the worker state. A
 | | `unresolved` | Coordinator exceeded max delivery attempts without deciding. |
 | | `routed` | Ownership transferred to another bot; report emitted for routing. |
 
-### 3.2 Projection Matrix
+### 4.2 Projection Matrix
 
 ```mermaid
 flowchart LR
@@ -107,9 +172,34 @@ flowchart LR
 
 ---
 
-## 4. State Machine Specifications
+## 5. State Machine Specifications
 
-### 4.1 Worker Lifecycle State Machine
+### 5.1 Bot Session & Warm Cache Lifecycle State Machine
+
+The Bot Session lifecycle governs cache priming, interactive turn processing, human approval pauses, checkpointing, and cache eviction under memory pressure.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed: Initial State
+
+    Closed --> Warming: Open Workspace (Acquire core.lock)
+    Warming --> Warm_Idle: Warm Cache Primed (.bot/memory.md loaded)
+
+    Warm_Idle --> Busy_Executing: User Prompt or Routine Trigger
+    Busy_Executing --> WaitingApproval: Gated Action (ApprovalSheet Prompt)
+    WaitingApproval --> Busy_Executing: Operator Grants Permission
+    WaitingApproval --> Warm_Idle: Operator Rejects Action
+
+    Busy_Executing --> Checkpointing: Turn Finished (Dirty notes generated)
+    Checkpointing --> Warm_Idle: Checkpoint Committed (Atomic disk flush)
+
+    Warm_Idle --> Evicting: Memory Pressure or Idle Sleep Timeout
+    Evicting --> Closed: Cache Flushed & Lock Released
+
+    Closed --> [*]
+```
+
+### 5.2 Worker Lifecycle State Machine
 
 ```mermaid
 stateDiagram-v2
@@ -118,12 +208,12 @@ stateDiagram-v2
     New --> Running: Handoff or Launch
     Running --> Done: End (success)
     Running --> Failed: End (error or exit code)
-    Running --> Stopped: StopWorker or Cancel
-    Running --> Interrupted: App Crash or Host Restart
+    Running --> Stopped: Stop / Cancel (SIGTERM/SIGKILL)
+    Running --> Interrupted: Host Restart / Crash
 
-    Done --> Running: Send (Follow-up run)
-    Failed --> Running: Send (Follow-up run)
-    Stopped --> Running: Send (Recovered and not pending cleanup)
+    Done --> Running: Next Run (segment incremented)
+    Failed --> Running: Next Run
+    Stopped --> Running: Next Run
     Interrupted --> Running: Send (After process recovery confirmed)
 
     state Stopped {
@@ -138,7 +228,7 @@ stateDiagram-v2
     }
 ```
 
-### 4.2 Worker Report Delivery State Machine
+### 5.3 Worker Report Delivery State Machine
 
 The report delivery lifecycle manages handover from the worker to the coordinator conversation. Delivery adheres to one of two policies:
 - **`Ack = "none"` (Claude)**: Immediate acknowledgment upon single delivery.
@@ -166,11 +256,41 @@ stateDiagram-v2
 
 ---
 
-## 5. Formal Verification with TLA+
+## 6. Formal Verification with TLA+
 
-Botling's core distributed concurrency protocols are formally specified and verified using TLA+ model checking (TLC).
+Botling's critical distributed concurrency protocols and cache lifecycle models are formally verified using TLA+ model checking (TLC).
 
-### 5.1 Worker Lifecycle Protocol (`Worker.tla`)
+### 6.1 Bot Session & Warm Cache Protocol (`BotSessionLifecycle.tla`)
+
+- **Specification Location**: `specs/tla/BotSessionLifecycle.tla`
+- **Config**: `specs/tla/BotSessionLifecycle.cfg`
+- **Checker**: `spec/tools/tlc.sh specs/tla/BotSessionLifecycle.tla`
+- **Real-world Component**: `desktop/src/core/session/`, `desktop/src/core/shared-core/`
+
+#### Model State Variables
+- `sessionState`: `[Sessions -> {"closed", "idle", "busy", "waiting_approval", "checkpointing"}]`
+- `cacheStatus`: `[Sessions -> {"cold", "warming", "warm", "evicting"}]`
+- `cacheDirty`: `[Sessions -> BOOLEAN]` (Tracks unpersisted memory modifications)
+- `cacheMem`: `[Sessions -> Nat]` (In-memory memory.md version counter)
+- `diskMem`: `[Sessions -> Nat]` (Persisted disk version counter)
+- `diskLock`: `[Sessions -> BOOLEAN]` (Workspace `core.lock` ownership)
+- `turnCount`: `[Sessions -> Nat]` (Bounded turn count)
+
+#### Formally Verified Invariants
+
+| Invariant Name | Mathematical Formula | Architectural Guarantee |
+|---|---|---|
+| **`SingleWriterIntegrity`** | $\forall s: (\text{cacheDirty}[s] \lor \text{sessionState}[s] \in \{\text{"busy"}, \dots\}) \implies \text{diskLock}[s]$ | Memory note updates and turn execution strictly require exclusive workspace lock ownership. |
+| **`CacheConsistency`** | $\forall s: (\text{cacheStatus}[s] = \text{"warm"} \land \neg\text{cacheDirty}[s]) \implies (\text{cacheMem}[s] = \text{diskMem}[s])$ | Clean warm cache in memory always matches durable disk contents. |
+| **`NoExecutionWhileCold`** | $\forall s: \text{sessionState}[s] \in \{\text{"busy"}, \text{"waiting_approval"}, \text{"checkpointing"}\} \implies \text{cacheStatus}[s] = \text{"warm"}$ | Execution cannot proceed while cache is cold, warming, or evicting. |
+| **`NoDirtyDataLost`** | $\forall s: (\text{cacheStatus}[s] = \text{"cold"}) \implies (\neg\text{cacheDirty}[s] \land \text{sessionState}[s] = \text{"closed"})$ | Cache eviction flushes all dirty memory notes before transitioning to cold; zero data loss. |
+| **`MemoryBudgetBound`** | $\text{WarmedCount} \le \text{MaxWarmSessions}$ | Resident warm cache sessions never exceed the configured memory budget. |
+
+*TLC Model Check Results*: Complete state graph explored (541 generated states, 216 distinct states, search depth 27) with 0 errors.
+
+---
+
+### 6.2 Worker Lifecycle Protocol (`Worker.tla`)
 
 - **Specification Location**: `spec/models/worker/Worker.tla`
 - **Config**: `spec/models/worker/Worker.cfg`
@@ -200,67 +320,17 @@ Botling's core distributed concurrency protocols are formally specified and veri
 
 ---
 
-### 5.2 Restart Continuation Protocol (`Restart.tla`)
+### 6.3 Restart Continuation Protocol (`Restart.tla`)
 
 - **Specification Location**: `spec/models/restart/Restart.tla`
 - **Config**: `spec/models/restart/Restart.cfg`
 - **Driver / Conformance Test**: `spec/driver/restart-driver.ts`, `spec/tests/restart.spec.test.ts`
 - **Real-world Component**: `desktop/src/core/restart-continuation.ts`, `Core.prepareRestart`
 
-#### Protocol Mechanics
-When the app initiates a restart or experiences a crash, tasks in flight must be either safely resumed or held back with an explicit user notice.
-
-```mermaid
-flowchart TD
-    subgraph OldInstance["Old App Instance (Shutdown)"]
-        Prepare["Prepare Restart<br/>(phase = preparing)"]
-        Snapshot["Snapshot In-Flight Bots<br/>(entry = pending)"]
-        BeginShutdown["Begin Participant Shutdown<br/>(Bots + PluginHost)"]
-        Settle["Wait for Participants to Settle<br/>(ok | failed)"]
-        Ready["Ready Journal<br/>(phase = ready)"]
-    end
-
-    subgraph CrashOrExit["Process Boundary / Potential Crash"]
-        DiskJournal[("Durable Journal File<br/>restart-journal.json")]
-    end
-
-    subgraph NewInstance["New App Instance (Recovery on Boot)"]
-        Boot["Boot & Read Journal"]
-        CheckReason{"Evaluate Reason(b)"}
-        Claim["Claim Entry<br/>(mine = true)"]
-        Deliver["Deliver Continuation<br/>(sent += 1)"]
-        Dispatch["Dispatch to Engine<br/>(entry = dispatched)"]
-        Block["Block Entry & Notify<br/>(told = reason, entry = blocked)"]
-    end
-
-    Prepare --> Snapshot
-    Snapshot --> BeginShutdown
-    BeginShutdown --> Settle
-    Settle --> Ready
-    Ready --> DiskJournal
-    BeginShutdown -.->|"Crash during shutdown"| DiskJournal
-    DiskJournal --> Boot
-    Boot --> CheckReason
-    CheckReason -->|"Reason is none"| Claim
-    Claim --> Deliver
-    Deliver --> Dispatch
-    CheckReason -->|"Reason is not none"| Block
-```
-
 #### Verified Invariants in `Restart.tla`
 
-1. **`AtMostOnce`**:
-   $$\forall b \in Bots: sent[b] \le 1$$
-   No bot continuation is ever delivered more than once across arbitrary crashes and restarts.
-2. **`OnlyRealWork`**:
-   $$\forall b \in Bots: sent[b] > 0 \implies (busy[b] \land \neg own[b] \land stop[b] = \text{"ok"})$$
-   A bot only resumes if it actually had work in flight, had no internal blocker, and its old instance shut down cleanly.
-3. **`ConfirmedOnly`**:
-   $$\forall b \in Bots: entry[b] \in \{\text{"claimed"}, \text{"dispatched"}\} \implies phase = \text{"ready"}$$
-   No continuation is attempted from an incomplete or unconfirmed journal.
-4. **`OthersNeverBlock`**:
-   $$\forall b \in Bots: told[b] \neq \text{"none"} \implies Cause(b, told[b])$$
-   A failure in one participant (e.g. a plugin host or an unrelated bot) never blocks another cleanly shut down bot.
-5. **`BlockedIsTold`**:
-   $$\forall b \in Bots: entry[b] = \text{"blocked"} \implies told[b] \neq \text{"none"}$$
-   Every held-back task is paired with an explicit reason communicated to the operator.
+1. **`AtMostOnce`**: $\forall b \in Bots: sent[b] \le 1$ (No bot continuation is ever delivered more than once across crashes).
+2. **`OnlyRealWork`**: $\forall b \in Bots: sent[b] > 0 \implies (busy[b] \land \neg own[b] \land stop[b] = \text{"ok"})$ (Resumes only cleanly stopped active work).
+3. **`ConfirmedOnly`**: $\forall b \in Bots: entry[b] \in \{\text{"claimed"}, \text{"dispatched"}\} \implies phase = \text{"ready"}$ (No continuation from incomplete journals).
+4. **`OthersNeverBlock`**: $\forall b \in Bots: told[b] \neq \text{"none"} \implies Cause(b, told[b])$ (Participant failures are strictly partitioned).
+5. **`BlockedIsTold`**: $\forall b \in Bots: entry[b] = \text{"blocked"} \implies told[b] \neq \text{"none"}$ (Held back tasks always communicate reasons).

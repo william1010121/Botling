@@ -1,4 +1,4 @@
-# ADR 0001: Three-Process Architecture (Main, UtilityProcess, Sandboxed Renderer)
+# ADR 001: Three-Process Electron Topology (Main, Core Daemon UtilityProcess, Sandboxed Renderer)
 
 ## Status
 - **Status**: Accepted
@@ -38,7 +38,7 @@ We decouple Botling into a strict **Three-Process Topology** separating native w
                ▼                               │ (contextIsolation: true)
 ┌───────────────────────────────┐  ┌───────────┴──────────────┐
 │     Core UtilityProcess       │  │      Renderer Shell      │
-│  - Head & Worker Orchestration│  │  - React 18 UI Shell     │
+│  - Head & Worker Orchestration│  │  - React 19 UI Shell     │
 │  - WorkerCore State Machine   │  │  - FrameBroker Router    │
 │  - Ledger v3 (Single Truth)   │  │  - ApprovalSheet Dialog  │
 │  - AppToolsRegistry & MCP Host│  │  - Terminal UI View      │
@@ -64,12 +64,12 @@ We decouple Botling into a strict **Three-Process Topology** separating native w
   - Operates as a headless, dedicated Node.js runtime process isolated from both the UI renderer and the native window manager.
   - Hosts the AI coordinator and worker lifecycle (`Bot`, `WorkerCore`, `HeadSession`, `AppToolsRegistry`).
   - Executes local background tasks: scheduled cron routines (`routines.cron`), git repository indexers, workspace worktree maintenance, and local MCP server adapters.
-  - Manages durable state persistence: atomic commits to `worker-ledger.json` (v3), `bot.json`, and profile configuration.
+  - Manages durable state persistence: atomic commits to `worker-ledger.json` (v3), `bot.json`, `.bot/memory.md`, and profile configuration.
   - Communicates with Electron Main and the Renderer over isolated `MessageChannelMain` MessagePort connections and structured IPC endpoints.
 
 ### 3. Renderer Shell (`desktop/src/renderer/` & Sandboxed Iframes)
 - **Responsibilities**:
-  - Pure presentation layer running React 18 and TypeScript in Chromium.
+  - Pure presentation layer running React 19 and TypeScript in Chromium.
   - Configured with strict defense-in-depth isolation: `contextIsolation: true`, `nodeIntegration: false`, and `sandbox: true`.
   - Interfaces with the desktop host strictly through typed preload APIs (`window.botling`).
   - Houses the top-level security boundaries: `ApprovalSheet.tsx` (the only component authorized to approve privileged shell operations) and `FrameBroker.ts`.
