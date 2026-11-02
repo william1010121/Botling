@@ -234,7 +234,8 @@ export function finishInstall(root: string) {
 
 /** Files whose changes alter what bots are told or allowed to do (repo-relative endings); a build that changes them says so on its card. */
 export const SENSITIVE_PATHS = [
-  "src/core/prompts.ts", "src/core/prompts-codex-text.ts", "src/core/maintainer-text.ts", "src/core/agent/head.ts",
+  "src/core/prompts.ts", "src/core/prompts-codex-text.ts", "src/core/prompts/delegation.ts", "src/core/prompts-agy.ts",
+  "src/core/maintainer-text.ts", "src/core/agent/head.ts",
   "src/core/agent/codex.ts", "src/core/agent/codex-tools.json", "src/core/settings.ts", "src/core/app-swap.ts",
   "src/core/permission-rules.ts", "src/core/store/workspace.ts",
 ];

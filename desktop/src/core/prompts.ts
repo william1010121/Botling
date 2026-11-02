@@ -8,10 +8,10 @@
 // Phase 2b added the Codex head's parts (engine: "codex"): the delegation policy, the local report
 // rules, the Codex wake/tidy/handoff/resume notes and the instructions app-managed workers get.
 // The Maintainer's component-editor rule is not here (2.0 has no Maintainer).
-import { AGY_DELEGATION_POLICY } from "./prompts-agy";
 import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
-import { attachedWorktreePolicy, CODEX_DELEGATION_POLICY, CODEX_NOTE } from "./prompts-codex-text";
+import { CODEX_NOTE } from "./prompts-codex-text";
+import { DELEGATION_CAPS, delegationPolicy } from "./prompts/delegation";
 import type { BotProfile } from "./store/workspace";
 import { displayName, otherHead, type Engine } from "./heads";
 
@@ -111,7 +111,7 @@ export const workerSubBotRule = [
 /** The native line a Claude bot is told about subagents (kept as the Swift goldens have it; replaced below for app workers). */
 export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.";
 /** What a Claude bot is told instead when its subagents are app-managed workers (the default; claude-workers.ts). */
-export const CLAUDE_WORKERS_RULE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to app-managed workers with the app_handoff tool and keep yourself free for the user. A worker is a Claude subagent running as its own session in this folder; the Agent tool is off. Give each one a short name and a clear, self-contained task (subagent_type picks a .claude/agents definition), run independent ones in parallel, say in one sentence what you handed off, then end your turn: do not wait or poll. Its report arrives later as an app message (<app_task_result task_id=\"…\" run=\"…\">); tell the user what came of it. To follow up, use app_send_message with its task_id (joined into its run while it works, or its next run once it reported); to stop one, app_cancel_task. Do it yourself only when it is quicker than explaining it.";
+export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
 const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id.";
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
 
@@ -265,7 +265,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
         // Same length rule Claude and Codex get (the user is like a CEO with very little attention), but specific and first, because Antigravity's own persona is chatty.
         AGY_BREVITY_RULE,
         languageRule(language), profile.job ?? "", profile.instructions ?? "",
-        agyWorkerRuntimeEnabled() ? (tree ? attachedWorktreePolicy(AGY_DELEGATION_POLICY, tree) : AGY_DELEGATION_POLICY) : "Work directly on the user's request within their authorization. Be concise and report concrete results and limitations.",
+        agyWorkerRuntimeEnabled() ? delegationPolicy(DELEGATION_CAPS.agy, { engine: "agy", worktree: tree }) : "Work directly on the user's request within their authorization. Be concise and report concrete results and limitations.",
         heads ? headsRule(heads, "agy") : "",
         profile.role === "main" ? AGY_MAIN_APP_ACTIONS : "",
         agyWorkerRuntimeEnabled() ? (heads ? "Use only the exposed app-managed worker tools for execution. Native subagents are unavailable in coordinator mode; hand work to a peer engine only with the <handoff> protocol above." : "Use only the exposed app-managed worker tools for execution. Native subagents and peer handoff tags are unavailable in coordinator mode.") : "Use the botling MCP tools for files and commands. Native app_handoff workers are unavailable; use the explicit peer handoff protocol below for enabled engines. Native subagents, workflows, global plugins and team/component/plugin commands are unavailable. Do not substitute another engine silently.",
@@ -384,7 +384,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
   if (codex) system += `\n${CODEX_NOTE}\n${codexLocalReportRule(paths.artifacts)}`;
   const rule = heads ? headsRule(heads, engine) : "";
   if (heads) system += `\n${rule}`;
-  if (codex) system += `\n${tree ? attachedWorktreePolicy(CODEX_DELEGATION_POLICY, tree) : CODEX_DELEGATION_POLICY}`;
+  if (codex) system += `\n${delegationPolicy(DELEGATION_CAPS.codex, { engine: "codex", worktree: tree })}`;
   const codexWorkerSystem = codexWorkerInstructions(profile, language, tree);
   if (codex) {
     const inProgress = MEMORY_SECTIONS[1].heading;
