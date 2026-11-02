@@ -23,6 +23,7 @@ import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
 import {directoryDefaults,packagedDataDir} from "./main-environment";
 import { StartupMarks } from "../startup-marks";
 import { checkReport } from "../core/plugins/check-report";
+import { INSPECT_FLAG, inspectReport } from "../core/plugins/inspect-report";
 import { CoreClient } from "./core-client";
 import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
@@ -51,6 +52,18 @@ const checkAt = process.argv.indexOf("--check-plugin");
 if (checkAt >= 0) {
   const report = checkReport(process.argv[checkAt + 1]);
   // Written synchronously, then exit at once: nothing below (data folder, single-instance lock) runs.
+  if (report.stdout) writeSync(1, report.stdout);
+  if (report.stderr) writeSync(2, report.stderr);
+  process.exit(report.code);
+}
+// `--inspect-plugins list | <query> [json]` (ADR-006 M2): the Maintainer's read-only questions about the plugin world, then exit.
+const inspectAt = process.argv.indexOf(INSPECT_FLAG);
+if (inspectAt >= 0) {
+  const report = inspectReport(process.argv.slice(inspectAt + 1), {
+    cwd: process.cwd(),
+    builtIns: app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"),
+    themeCssFile: join(root, "out", "renderer", "styles.css"),
+  });
   if (report.stdout) writeSync(1, report.stdout);
   if (report.stderr) writeSync(2, report.stderr);
   process.exit(report.code);

@@ -16,6 +16,7 @@ import { checkPlugin, diskFolder, loadPlugin, readManifest, title, type JSONValu
 import type { Contribution } from "./contributions";
 import type { SecretStore } from "./secrets";
 import { swiftPrettyJSON } from "../swift-json";
+import { listInspectQueries, runInspect, type InspectContext, type InspectResult } from "./introspect";
 
 /** A plugin's web part as the chat page loads it (`WebPluginSpec`). `styles` are paths in the plugin's folder. */
 export interface WebSpec {
@@ -492,6 +493,16 @@ export class PluginRegistry {
       if (!plugin.enabled || plugin.failure) return [];
       try { return readManifest(JSON.parse(readFileSync(join(plugin.folder, "package.json"), "utf8")), diskFolder(plugin.folder)).contributions; } catch { return []; }
     });
+  }
+
+  /** The read-only queries the Maintainer may ask (ADR-006 M2), with their input schemas. */
+  inspectQueries() {
+    return listInspectQueries();
+  }
+
+  /** Runs one read-only introspection query (introspect.ts): validated input, JSON out, nothing written, no secrets. */
+  inspect(query: string, input: unknown, context: InspectContext = { themeCss: null }): InspectResult {
+    return runInspect(this, query, input, context);
   }
 
   /** Checks a folder without adding it (for installs). */
