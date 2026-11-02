@@ -24,7 +24,7 @@
 // a git URL (npm packages and archives: not yet).
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { Bot } from "./bot";
@@ -82,23 +82,23 @@ const LEGACY_EDITOR_HASHES = new Set([
 
 /**
  * Writes what the app keeps in the library: ccb-components (the component library), ccb-core (the
- * component editor agent, on `model`) and PLUGINS.md. The editor's file follows the app, but only over
- * a file the app wrote itself (or an older app's text): an edited one stays (true is returned; 1.x then
- * asks whether to keep it, 2.0 keeps it and says so in the log).
+ * component editor agent, on `model`) and PLUGINS.md (naming `builtIns`, the built-in plugins' folder). The
+ * editor's file follows the app, but only over a file the app wrote itself (or an older app's text): an edited
+ * one stays (true is returned; 1.x then asks whether to keep it, 2.0 keeps it and says so in the log).
  */
-export function prepareLibrary(root: string, model = "sonnet"): { editedEditor: boolean } {
+export function prepareLibrary(root: string, model = "sonnet", builtIns: string | null = null): { editedEditor: boolean } {
   const library = join(root, "plugins");
   mkdirSync(join(library, "ccb-components", "components"), { recursive: true });
   const components = join(library, "ccb-components", "package.json");
   if (!existsSync(components)) {
     writeFileAtomic(components, builtInManifest("ccb-components", "Component library", "Components shown in the chat (choices and so on). One folder per component: template.html and about.md.", [], { components: "components" }));
   }
-  // The app's own preview card (1.x's `seedDefaults`): written when missing, or over an earlier shipped copy nobody edited.
+  // The preview card is botling.cards' (a built-in plugin) since step M11: a copy an app wrote here (1.x's
+  // `seedDefaults`) that nobody edited goes, so the built-in one shows and follows the app; an edited one stays.
   const preview = join(library, "ccb-components", "components", PAGE_COMPONENT);
-  mkdirSync(preview, { recursive: true });
-  for (const [file, text, older] of [["template.html", PREVIEW_TEMPLATE, OLDER_PREVIEW_TEMPLATES], ["about.md", PREVIEW_ABOUT, []]] as const) {
-    const current = readText(join(preview, file));
-    if (current === null || (older as readonly string[]).includes(current)) writeFileAtomic(join(preview, file), text);
+  if ([PREVIEW_TEMPLATE, ...OLDER_PREVIEW_TEMPLATES].includes(readText(join(preview, "template.html")) ?? "") && readText(join(preview, "about.md")) === PREVIEW_ABOUT) {
+    for (const file of ["template.html", "about.md"]) rmSync(join(preview, file), { force: true });
+    try { if (!readdirSync(preview).length) rmSync(preview, { recursive: true }); } catch { /* gone */ }
   }
   const core = join(library, "ccb-core");
   const editor = join(core, "claude", "agents", "component-editor.md");
@@ -124,7 +124,7 @@ export function prepareLibrary(root: string, model = "sonnet"): { editedEditor: 
     writeFileAtomic(join(core, "package.json"), builtInManifest("ccb-core", "Botling core", "Agents Botling uses itself: component-editor edits component templates (its model is set in Settings).", ["claude"], { claude: "claude" }));
   }
   const guide = join(library, "PLUGINS.md");
-  const text = pluginGuide();
+  const text = builtIns ? pluginGuide(builtIns) : pluginGuide();
   if (readText(guide) !== text) writeFileAtomic(guide, text);
   return { editedEditor: edited };
 }
@@ -713,7 +713,8 @@ export class MaintainerDesk {
     const shown = title(proposal.manifest);
     try {
       const existing = plugins?.registry.plugin(name);
-      if (existing && !existing.installedFrom) {
+      // A built-in plugin may be replaced by one of the same name, as 1.x.
+      if (existing && !existing.builtIn && !existing.installedFrom) {
         main.appNotice(`"${shown}" could not be installed: The plugin library already has its own "${name}"; it won't be replaced by an outside one.`);
         return;
       }

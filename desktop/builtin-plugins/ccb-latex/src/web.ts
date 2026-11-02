@@ -1,4 +1,4 @@
-import type { CcbWeb } from "../../../src/plugins";
+import type { CcbWeb } from "../../../../Web/src/plugins";
 import { closingDollar, mathPlugin, renderMath, renderPlainWithMath } from "./math";
 
 /**

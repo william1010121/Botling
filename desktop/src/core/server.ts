@@ -135,7 +135,8 @@ export interface CoreOptions {
   /** How long the sub-bot hand-off waits for the subagent to end before it stops the turn (tests shorten it). */
   subBotWaitMs?: number;
   /** The plugin host (null: plugins' program parts do not run) and how secrets are sealed. */
-  plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming } | null;
+  /** `builtIns`: the plugins shipped with the app (out/builtin-plugins; none when left out). */
+  plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming; builtIns?: string | null } | null;
   /** Maintainer's `ccb plugin check` command (null: none this time). */
   checkCommand?: string | null;
   /** The component-shot command Maintainer is given (Phase 5a; null: none, it reads the template). */
@@ -239,31 +240,111 @@ export class Core {
       language: () => this.language(),
       changed: (botId) => { const bot = this.bots.get(botId); if (bot) this.event({ type: "catchup.updated", botId, ...this.summaries(bot) }); },
     });
-    // The component library: <data>/plugins/ccb-components/components first, then other plugins' components/.
+    this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
+    const leftovers = this.ledger.endLeftovers();
+    if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
+    this.importOnce();
+    // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
+    // 1.x's key is componentEditorModel (2.0 before Phase 4a read componentEditor: both are honoured).
+    // After the import (1.x's settings and library), before the component library first looks: a preview card
+    // an app wrote there and nobody edited goes, so botling.cards' shows.
+    const editorModel = this.settingsFile()?.componentEditorModel ?? this.settingsFile()?.componentEditor;
+    const { editedEditor } = prepareLibrary(options.dataDir, typeof editorModel === "string" && ["sonnet", "opus", "haiku"].includes(editorModel) ? editorModel : "sonnet", options.plugins?.builtIns ?? null);
+    if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
+    // The component library: <data>/plugins/ccb-components/components first, then other plugins' components/,
+    // then the built-in plugins' (botling.cards: the web preview card), so a copy in the library wins.
     const plugins = join(options.dataDir, "plugins");
     const own = join(plugins, "ccb-components", "components");
     this.components = new ComponentsContext(options.dataDir, () => {
       let others: string[] = [];
       try { others = readdirSync(plugins).filter((name) => name !== "ccb-components" && !name.startsWith(".")).sort().map((name) => join(plugins, name, "components")); } catch { /* none */ }
-      return [own, ...others];
+      return [own, ...others, ...(this.plugins?.registry.builtInComponentFolders() ?? [])];
     });
     this.componentStamp = this.components.library.stamp;
     this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); };
-    this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
-    const leftovers = this.ledger.endLeftovers();
-    if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
-    this.importOnce();
+    // The plugins (their host starts later, in start()); the world they see is read when they ask.
+    const host = options.plugins ?? null;
+    this.plugins = new Plugins({
+      dataDir: options.dataDir,
+      node: host?.node ?? null,
+      hostScript: host?.hostScript ?? "",
+      builtIns: host?.builtIns ?? null,
+      sealer: host?.sealer ?? null,
+      timing: host?.timing,
+      onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
+      world: {
+        bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
+        send: (botId, text, via) => {
+          const bot = this.pluginBot(botId);
+          if (!bot) throw new Error("No such bot.");
+          return { messageId: bot.send(text, via ? { via } : {}).messageId };
+        },
+        interrupt: async (botId) => {
+          const bot = this.pluginBot(botId);
+          if (!bot) return null;
+          // Every turn under way, as the stop button sends them (with two heads, both may work).
+          const stopped = await Promise.all(bot.snapshot().runs.map((run) => bot.stop(run.turnId)));
+          return stopped.some((outcome) => outcome.stopped);
+        },
+        notice: (text, actions) => {
+          this.bots.get(MAIN_BOT_ID)?.appNotice(text, actions?.map((action) => ({ label: action.label })), actions ? (index) => actions[index]?.run() : undefined);
+        },
+        ask: (question) => new Promise((resolve) => {
+          const main = this.bots.get(MAIN_BOT_ID)!;
+          // The last choice is Cancel: null, as the plugin sees it (Plugins' ui.quickPick / ui.input).
+          const id: string = main.appNotice(question.text, question.choices, (index) => resolve({ index }), question.typed ? {
+            onAnswer: (words) => {
+              if (!words) return false;
+              main.settleAppQuestion(id, { answer: words });
+              resolve({ text: words });
+              return true;
+            },
+          } : {});
+        }),
+        openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
+        appSettings: () => {
+          const settings = settingsView(readSettings(Layout.settings(this.options.dataDir)));
+          return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };
+        },
+        shortcutOverrides: () => settingsView(readSettings(Layout.settings(this.options.dataDir))).shortcuts,
+        createBot: (plugin, title, name, job, avatar) => {
+          const made = this.makeBot(name, job, { avatar, by: `plugin "${title}"`, plugin });
+          if (made.kind === "empty") throw new Error("A bot needs a name and a job.");
+          if (made.kind === "taken") throw new Error(`The name "${name}" is taken (by another bot, a project, or the app).`);
+          if (made.kind === "removedByUser") throw new Error(`The user removed the bot "${name}"; it is not made again.`);
+          const bot = this.bots.get(made.botId);
+          if (!bot) throw new Error("The bot could not be started.");
+          return { ...this.botInfo(bot), created: made.kind === "made" };
+        },
+        addRoutine: (botId, cron, task) => {
+          const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
+          if (!bot) return "no-bot";
+          return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
+        },
+        changed: (view) => {
+          this.followClaudeParts();
+          // A built-in plugin turned on or off brings or takes away its cards (botling.cards).
+          if (this.components.library.rescan()) for (const bot of this.bots.values()) bot.componentsChanged();
+          this.componentsTick();
+          const text = JSON.stringify(view);
+          if (text === this.lastPlugins) return;
+          this.lastPlugins = text;
+          this.event({ type: "plugins.updated", plugins: view });
+        },
+        broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
+        log: (line) => this.log(line),
+      },
+    });
+    // The component library has the built-in plugins' cards now (botling.cards' preview card), before any bot
+    // gets its first list (the built-ins).
+    if (this.components.library.rescan()) this.componentStamp = this.components.library.stamp;
+    // What the snapshot shows already is no event (an event comes only when something changes).
+    this.lastPlugins = JSON.stringify(this.plugins.view());
+    this.loadedClaudeParts = JSON.stringify(this.plugins.registry.claudeStamp());
     // Quota files must be imported before their first in-memory reading.
     this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
     const loaded = loadProfiles(options.dataDir);
     if (loaded.problem) this.log(`projects: ${loaded.problem}`);
-    // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
-    // 1.x's key is componentEditorModel (2.0 before Phase 4a read componentEditor: both are honoured).
-    const editorModel = this.settingsFile()?.componentEditorModel ?? this.settingsFile()?.componentEditor;
-    const { editedEditor } = prepareLibrary(options.dataDir, typeof editorModel === "string" && ["sonnet", "opus", "haiku"].includes(editorModel) ? editorModel : "sonnet");
-    if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
-    // The library has the app's own preview card now (seeded just above).
-    if (this.components.library.rescan()) this.componentStamp = this.components.library.stamp;
     try {
       const removed = readJSON(join(options.dataDir, "removed-bots.json"));
       if (Array.isArray(removed)) for (const key of removed) if (typeof key === "string") this.removedPluginBots.add(key);
@@ -406,77 +487,6 @@ export class Core {
       clock: () => ({}),
       log: (line) => this.log(`specs: ${line}`),
     });
-    const host = options.plugins ?? null;
-    this.plugins = new Plugins({
-      dataDir: options.dataDir,
-      node: host?.node ?? null,
-      hostScript: host?.hostScript ?? "",
-      sealer: host?.sealer ?? null,
-      timing: host?.timing,
-      onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
-      world: {
-        bots: () => this.order.filter((id) => !this.isSubBot(id)).map((id) => this.botInfo(this.bots.get(id)!)),
-        send: (botId, text, via) => {
-          const bot = this.pluginBot(botId);
-          if (!bot) throw new Error("No such bot.");
-          return { messageId: bot.send(text, via ? { via } : {}).messageId };
-        },
-        interrupt: async (botId) => {
-          const bot = this.pluginBot(botId);
-          if (!bot) return null;
-          // Every turn under way, as the stop button sends them (with two heads, both may work).
-          const stopped = await Promise.all(bot.snapshot().runs.map((run) => bot.stop(run.turnId)));
-          return stopped.some((outcome) => outcome.stopped);
-        },
-        notice: (text, actions) => {
-          this.bots.get(MAIN_BOT_ID)?.appNotice(text, actions?.map((action) => ({ label: action.label })), actions ? (index) => actions[index]?.run() : undefined);
-        },
-        ask: (question) => new Promise((resolve) => {
-          const main = this.bots.get(MAIN_BOT_ID)!;
-          // The last choice is Cancel: null, as the plugin sees it (Plugins' ui.quickPick / ui.input).
-          const id: string = main.appNotice(question.text, question.choices, (index) => resolve({ index }), question.typed ? {
-            onAnswer: (words) => {
-              if (!words) return false;
-              main.settleAppQuestion(id, { answer: words });
-              resolve({ text: words });
-              return true;
-            },
-          } : {});
-        }),
-        openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
-        appSettings: () => {
-          const settings = settingsView(readSettings(Layout.settings(this.options.dataDir)));
-          return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };
-        },
-        shortcutOverrides: () => settingsView(readSettings(Layout.settings(this.options.dataDir))).shortcuts,
-        createBot: (plugin, title, name, job, avatar) => {
-          const made = this.makeBot(name, job, { avatar, by: `plugin "${title}"`, plugin });
-          if (made.kind === "empty") throw new Error("A bot needs a name and a job.");
-          if (made.kind === "taken") throw new Error(`The name "${name}" is taken (by another bot, a project, or the app).`);
-          if (made.kind === "removedByUser") throw new Error(`The user removed the bot "${name}"; it is not made again.`);
-          const bot = this.bots.get(made.botId);
-          if (!bot) throw new Error("The bot could not be started.");
-          return { ...this.botInfo(bot), created: made.kind === "made" };
-        },
-        addRoutine: (botId, cron, task) => {
-          const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
-          if (!bot) return "no-bot";
-          return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
-        },
-        changed: (view) => {
-          this.followClaudeParts();
-          const text = JSON.stringify(view);
-          if (text === this.lastPlugins) return;
-          this.lastPlugins = text;
-          this.event({ type: "plugins.updated", plugins: view });
-        },
-        broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
-        log: (line) => this.log(line),
-      },
-    });
-    // What the snapshot shows already is no event (an event comes only when something changes).
-    this.lastPlugins = JSON.stringify(this.plugins.view());
-    this.loadedClaudeParts = JSON.stringify(this.plugins.registry.claudeStamp());
     const app = options.app ?? null;
     this.devBuilds = new DevBuilds({
       root: options.dataDir,

@@ -3,18 +3,29 @@
 // asks for runs only when a key, the / menu or that menu offers it now. The chat page is one realm with the
 // plugins' web parts, so this is no wall against them; it keeps it from running any other command.
 import type { PluginsView } from "../contract";
-import type { PluginKeybinding } from "../contract/shortcuts";
+import { legacyKey, type PluginKeybinding } from "../contract/shortcuts";
+import latex from "../../builtin-plugins/ccb-latex/package.json";
+import design from "../../builtin-plugins/botling.design/package.json";
 
-/** The app's own / commands (`SlashCommands.all`): picked, the name goes in as words; the bots' rules say what each means. */
-export const BUILT_IN_SLASH: readonly { name: string; about: string }[] = [{ name: "design", about: "Make a Claude Design and get its claude.ai link" }];
+/**
+ * Without a plugins view (Botling Web: the phone is told nothing of plugins and runs none of them) the chat
+ * page still has two first-party plugins, read from their own manifests: ccb-latex, whose web part Botling Web
+ * bundles (its key runs there), and botling.design's /design. On the desktop the core's view has them.
+ */
+const STANDALONE: PluginsView = {
+  plugins: [{
+    name: latex.name, title: latex.displayName, version: latex.version, description: latex.description, enabled: true, failure: null, installedFrom: null, builtIn: true,
+    permissions: latex.ccb.permissions, parts: ["web"], settings: [], panels: [], commands: latex.ccb.contributes.commands.map(({ id, title }) => ({ id, title, registered: false })),
+  }],
+  broken: [], host: { running: false, problem: null }, secretsProblem: null,
+  keybindings: latex.ccb.contributes.commands.flatMap(({ id, title, key }) => { const combo = legacyKey(key); return combo ? [{ command: id, key: combo, plugin: latex.name, title }] : []; }),
+  slash: design.ccb.contributes.slash.map((entry) => ({ ...entry, plugin: design.name })),
+};
+const viewOf = (plugins: PluginsView | null | undefined): PluginsView => plugins ?? STANDALONE;
 
-/** Keys of the plugins bundled into the chat page (ccb-latex, not in the library): run there, rebound like any other. */
-export const BUNDLED_KEYBINDINGS: readonly PluginKeybinding[] = [{ command: "ccb-latex.insert", key: "Mod+Shift+M", plugin: "ccb-latex", title: "Insert inline formula" }];
-const bundled = (id: string) => BUNDLED_KEYBINDINGS.some((binding) => binding.command === id);
-
-/** Every plugin key, the bundled ones first (a library plugin named like one does not replace it). */
+/** Every plugin key, built-in plugins' first (the core lists them first). */
 export function keybindingsOf(plugins: PluginsView | null | undefined): PluginKeybinding[] {
-  return [...BUNDLED_KEYBINDINGS, ...(plugins?.keybindings ?? []).filter((binding) => !BUNDLED_KEYBINDINGS.some((own) => own.plugin === binding.plugin))];
+  return [...(viewOf(plugins).keybindings ?? [])];
 }
 
 /** A row of the / menu; `command` (a plugin's) runs when picked instead of going into the message. */
@@ -22,15 +33,18 @@ export interface SlashCommand { name: string; about: string; command?: string }
 export type PluginMenu = NonNullable<PluginsView["menus"]>[number]["menu"];
 export type CommandVia = "key" | "slash" | "menu";
 
-/** The / menu's commands: the app's own first, then plugins' by plugin name; a name already taken reads "name (plugin)". */
+/** The / menu's commands: built-in plugins' first (/design), then the others' by plugin name; a name already taken reads "name (plugin)". */
 export function slashMenu(plugins: PluginsView | null | undefined): SlashCommand[] {
-  const out: SlashCommand[] = BUILT_IN_SLASH.map((entry) => ({ ...entry }));
-  const taken = new Set(out.map((entry) => entry.name.toLowerCase()));
-  const contributed = [...(plugins?.slash ?? [])].sort((a, b) => (a.plugin < b.plugin ? -1 : a.plugin > b.plugin ? 1 : 0));
+  const view = viewOf(plugins);
+  const builtIn = new Set(view.plugins.filter((plugin) => plugin.builtIn).map((plugin) => plugin.name));
+  const rank = (plugin: string) => (builtIn.has(plugin) ? 0 : 1);
+  const contributed = [...(view.slash ?? [])].sort((a, b) => rank(a.plugin) - rank(b.plugin) || (a.plugin < b.plugin ? -1 : a.plugin > b.plugin ? 1 : 0));
+  const out: SlashCommand[] = [];
+  const taken = new Set<string>();
   for (const entry of contributed) {
     const name = taken.has(entry.name.toLowerCase()) ? `${entry.name} (${entry.plugin})` : entry.name;
     taken.add(name.toLowerCase());
-    out.push({ name, about: entry.about, command: entry.command });
+    out.push({ name, about: entry.about, ...(entry.command ? { command: entry.command } : {}) });
   }
   return out;
 }
@@ -43,16 +57,15 @@ export function menuItems(plugins: PluginsView | null | undefined, menu: PluginM
 /** Whether `id` is offered `via` a key, the / menu or `menu` now (what the chat page may ask the app page to run). */
 export function offered(plugins: PluginsView | null | undefined, id: string, via: CommandVia, menu?: PluginMenu): boolean {
   if (via === "key") return keybindingsOf(plugins).some((binding) => binding.command === id);
-  if (via === "slash") return (plugins?.slash ?? []).some((entry) => entry.command === id);
+  if (via === "slash") return (viewOf(plugins).slash ?? []).some((entry) => entry.command === id);
   return !!menu && (plugins?.menus ?? []).some((item) => item.menu === menu && item.command === id);
 }
 
 /**
  * Whether `id` runs in the plugin host: its program part registered it, or its plugin has no web part in the
- * chat page that could have. Otherwise the chat page runs it (a web part's `commands.register`, a bundled plugin's).
+ * chat page that could have. Otherwise the chat page runs it (a web part's `commands.register`).
  */
 export function runsInHost(plugins: PluginsView | null | undefined, id: string): boolean {
-  if (bundled(id)) return false;
-  const plugin = plugins?.plugins.find((candidate) => id.startsWith(`${candidate.name}.`));
+  const plugin = viewOf(plugins).plugins.find((candidate) => id.startsWith(`${candidate.name}.`));
   return !plugin || !plugin.parts.includes("web") || plugin.commands.some((command) => command.id === id && command.registered);
 }

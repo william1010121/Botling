@@ -11,8 +11,10 @@ export const desktopRoot = dirname(fileURLToPath(import.meta.url));
 export async function buildRenderer({ root = desktopRoot, outdir = join(root, "out/renderer"), development = false, web: webBuild = false } = {}) {
   outdir = resolve(outdir);
   const web = join(root, "../Web"), nodePaths = [join(root, "node_modules")];
-  const latex = await build({ entryPoints: [join(web, "plugins/ccb-latex/src/web.ts")], bundle: true,
-    format: "esm", target: "chrome130", minify: true, legalComments: "eof", write: false, nodePaths });
+  // Botling Web runs no plugins (the phone is told nothing of them), so its chat page keeps the first-party
+  // ccb-latex bundled in; the desktop's loads it from out/builtin-plugins like any plugin.
+  const latex = webBuild ? (await build({ entryPoints: [join(root, "builtin-plugins/ccb-latex/src/web.ts")], bundle: true,
+    format: "esm", target: "chrome130", minify: true, legalComments: "eof", write: false, nodePaths })).outputFiles[0].text : "";
   const characters = {};
   const art = join(root, "assets/avatars-static");
   for (const character of ["claude", "gpt", "gemini"]) {
@@ -27,7 +29,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     build({ ...browser, entryPoints: [join(root, webBuild ? "mobile/main.tsx" : "src/renderer/main.tsx")], outfile: join(outdir, webBuild ? "web.js" : "renderer.js"),
       jsx: "automatic", define: { "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(characters), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
     build({ ...browser, entryPoints: [join(root, "src/renderer/chat-frame/entry.ts")], outfile: join(outdir, "chat.js"),
-      define: { __LATEX_SOURCE__: JSON.stringify(latex.outputFiles[0].text), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
+      define: { __LATEX_SOURCE__: JSON.stringify(latex), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
   ]);
   // Read every input before publication. A syntax/missing-asset error keeps the last successful build.
   const files = new Map(bundles.flatMap(result => result.outputFiles.map(file => [file.path, file.contents])));
@@ -45,10 +47,12 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   asset(join(root, "src/renderer/chat-frame/chat.html"), "chat.html");
   asset(join(root, "src/renderer/chat-frame/frame.css"), "frame.css");
   asset(join(web, "src/chat.css"), "chat.css", true);
-  const katex = join(root, "node_modules/katex/dist");
-  asset(join(katex, "katex.min.css"), "plugins/ccb-latex/katex.min.css");
-  for (const name of readdirSync(join(katex, "fonts")).filter(name => name.endsWith(".woff2")))
-    asset(join(katex, "fonts", name), `plugins/ccb-latex/fonts/${name}`);
+  if (webBuild) {
+    const katex = join(root, "node_modules/katex/dist");
+    asset(join(katex, "katex.min.css"), "plugins/ccb-latex/katex.min.css");
+    for (const name of readdirSync(join(katex, "fonts")).filter(name => name.endsWith(".woff2")))
+      asset(join(katex, "fonts", name), `plugins/ccb-latex/fonts/${name}`);
+  }
   for (const [file, contents] of files) {
     mkdirSync(dirname(file), { recursive: true });
     const temporary = `${file}.${process.pid}.tmp`;
@@ -72,7 +76,7 @@ export function rendererStamp(root = desktopRoot) {
       }
     }
   };
-  for (const directory of ["src", "../Web/src", "../Web/plugins/ccb-latex/src", "../Web/kit/generated",
+  for (const directory of ["src", "../Web/src", "../Web/kit/generated",
     "assets/avatars-static"]) visit(join(root, directory));
   return rows.sort().join("\n");
 }

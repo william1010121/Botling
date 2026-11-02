@@ -1,7 +1,7 @@
 // The chat frame (app://botling/chat.html): the Swift app's chat page from Web/src, unchanged,
 // fed with state by the app page. On top of it the desktop adds what the page does not have yet:
-// Phase 0's sandboxed cards in their bubbles, a Stop button in the input box, and KaTeX (the
-// ccb-latex plugin, bundled in).
+// Phase 0's sandboxed cards in their bubbles and a Stop button in the input box. KaTeX is the built-in
+// ccb-latex plugin, which arrives with the other plugins' web parts (Botling Web bundles it).
 import { unpackChatAvatars } from "../chat-avatar-wire";
 import { observeTraceEditor } from "./input-trace-chat";
 import { inputTrace } from "../input-trace";
@@ -23,6 +23,7 @@ import { localMediaSource } from "../../contract/attachment-url";
 import { applyPatch } from "../../../../Web/src/patch";
 import type { ChatState } from "../../../../Web/src/types";
 import { keepDraft, keptDrafts, pageDraftStore } from "./draft-keep";
+import latex from "../../../builtin-plugins/ccb-latex/package.json";
 
 declare const __LATEX_SOURCE__: string;
 
@@ -265,22 +266,24 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && document.body.classList.contains("botling-running") && !event.isComposing) toShell({ botling: "stop" });
 });
 
-// LaTeX in messages: the ccb-latex plugin, bundled in (its stylesheet and fonts sit beside chat.html).
-const latex = {
-  name: "ccb-latex",
-  version: "1.0.0",
+/**
+ * Botling Web runs no plugins (the phone is told nothing of them), so its chat page keeps the built-in
+ * ccb-latex bundled in, as its manifest describes it, with its stylesheet and fonts beside chat.html. Its
+ * key (Mod+Shift+M) is the shell's to bind (plugin-commands.ts).
+ */
+const standalone = WEB ? [{
+  name: latex.name,
+  version: latex.version,
   source: __LATEX_SOURCE__,
   styles: [new URL("plugins/ccb-latex/katex.min.css", location.href).toString()],
-  settings: { "ccb-latex.preview": true, "ccb-latex.copyTeX": true },
-  // Its key (Mod+Shift+M) is the shell's to bind (plugin-commands.ts BUNDLED_KEYBINDINGS).
-  commands: [{ id: "ccb-latex.insert", title: "Insert inline formula" }],
-};
+  settings: Object.fromEntries(Object.entries(latex.ccb.contributes.settings).map(([key, setting]) => [key, setting.default])),
+  commands: latex.ccb.contributes.commands.map(({ id, title }) => ({ id, title })),
+}] : [];
 /**
  * Plugins' web parts run here as in 1.x (Phase 4a: this page has an origin of its own, so they reach
- * neither the app page's document nor its bridge). A plugin of the library named like the bundled one
- * does not replace it.
+ * neither the app page's document nor its bridge); since step M11 the built-in ones (ccb-latex) come the same way.
  */
 function setPlugins(specs: { name: string; version: string; source: string; styles: string[]; settings: Record<string, unknown>; commands: { id: string; title: string; key?: string }[] }[]) {
-  return window.ccb.setPlugins([latex, ...specs.filter((spec) => spec.name !== latex.name)]);
+  return window.ccb.setPlugins([...standalone, ...specs.filter((spec) => !standalone.some((own) => own.name === spec.name))]);
 }
 void setPlugins([]);

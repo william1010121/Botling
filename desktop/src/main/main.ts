@@ -301,6 +301,8 @@ function coreEnvironment(): Record<string, string> {
   // The report command every bot builds report pages with, and its guide (outside app.asar so bots can read it).
   env.BOTLING_REPORT_COMMAND ??= `${self} --render-report`;
   env.BOTLING_REPORT_DOCS ??= app.isPackaged ? join(process.resourcesPath, "report", "report-blocks.md") : join(root, "docs", "report-blocks.md");
+  // The plugins shipped with the app (step M11), outside app.asar so bots can read them too.
+  env.BOTLING_BUILTIN_PLUGINS ??= app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins");
   // The fake CLIs are development's (a packaged build ships neither and always runs the real ones).
   if (!app.isPackaged) {
     env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");

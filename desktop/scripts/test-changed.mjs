@@ -28,10 +28,10 @@ const changed = [...new Set([
   // top-level pathspec give whole-repo paths from the root, as diff does (Web/ included).
   ...git("ls-files", "--others", "--exclude-standard", "--full-name", ":/"),
 ].map((path) => (path.startsWith("/") ? path : join(root, path))))].filter(existsSync);
-// What the desktop app is built from: its own sources and tests, and Web/'s chat page, host, plugins and component kit.
+// What the desktop app is built from: its own sources, tests and built-in plugins, and Web/'s chat page, host and component kit.
 const sources = changed.filter((path) => {
   const rel = relative(root, path);
-  return /\.(ts|tsx|mts|mjs|cjs|js)$/.test(rel) && /^(desktop\/(src|test|scripts)\/|desktop\/(build\.mjs|electron-builder\.config\.cjs)$|Web\/(src|host|plugins|kit)\/)/.test(rel);
+  return /\.(ts|tsx|mts|mjs|cjs|js)$/.test(rel) && /^(desktop\/(src|test|scripts|builtin-plugins)\/|desktop\/(build(-builtin-plugins)?\.mjs|electron-builder\.config\.cjs)$|Web\/(src|host|kit)\/)/.test(rel);
 });
 
 if (process.env.BOTLING_TEST_CHANGED_LIST) { // print the selection only (for test/unit/test-changed.test.ts)

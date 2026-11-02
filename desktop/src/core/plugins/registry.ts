@@ -4,9 +4,10 @@
 // 1.5 s, so an edited plugin reloads without a restart. Secret settings are not in plugins.json: they
 // are sealed (secrets.ts).
 //
-// 2.0 differences: no built-in plugins folder (ccb-latex is bundled into the chat page). Since Phase 4a
-// web parts run in the chat page again (it has an origin of its own), with 1.x's "last version that
-// worked" to fall back on when a new one breaks.
+// Built-in plugins (step M11: ccb-latex, botling.cards, botling.design) are read from the app's own folder
+// first, as 1.x's `builtIns` root: read-only, on until you turn them off, and a plugin of the same name in
+// the library replaces one. Since Phase 4a web parts run in the chat page again (it has an origin of its
+// own), with 1.x's "last version that worked" to fall back on when a new one breaks.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, extname, join, normalize, relative, resolve, sep } from "node:path";
@@ -35,6 +36,8 @@ const WEB_FILE_TYPES: Record<string, string> = {
 export interface InstalledPlugin {
   manifest: PluginManifest;
   folder: string;
+  /** Shipped with Botling (read-only, always approved); a plugin of the same name in the library replaces it. */
+  builtIn: boolean;
   enabled: boolean;
   /** Why it was turned off when it broke (until its files change). */
   failure: string | null;
@@ -118,7 +121,8 @@ export class PluginRegistry {
   private lastSent = new Map<string, WebSpec>();
   private scanned = false;
 
-  constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore) {
+  /** `builtIns`: the folder of the plugins shipped with the app (none in some tests). */
+  constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore, readonly builtIns: string | null = null) {
     this.state = readState(stateFile);
     this.rescan();
   }
@@ -414,10 +418,12 @@ export class PluginRegistry {
     const found = new Map<string, InstalledPlugin>();
     const problems: Record<string, string[]> = {};
     const prints: Record<string, string> = {};
-    let folders: string[] = [];
-    try { folders = readdirSync(this.library).filter((name) => !name.startsWith(".")).sort(); } catch { /* no library yet */ }
-    for (const name of folders) {
-      const folder = join(this.library, name);
+    const folders: { name: string; folder: string; builtIn: boolean }[] = [];
+    for (const [root, builtIn] of [[this.builtIns, true], [this.library, false]] as const) {
+      if (!root) continue;
+      try { folders.push(...readdirSync(root).filter((name) => !name.startsWith(".")).sort().map((name) => ({ name, folder: join(root, name), builtIn }))); } catch { /* no library yet */ }
+    }
+    for (const { name, folder, builtIn } of folders) {
       if (!existsSync(join(folder, "package.json"))) continue;
       const loaded = loadPlugin(folder);
       if (loaded.ok) {
@@ -427,8 +433,8 @@ export class PluginRegistry {
         const failed = this.state.failures[manifest.name];
         const failure = failed && failed.fingerprint === print ? failed.message : null;
         found.set(manifest.name, {
-          manifest, folder, failure, enabled: !this.state.disabled.includes(manifest.name) && !failure,
-          installedFrom: this.state.installed?.[manifest.name] ?? null,
+          manifest, folder, builtIn, failure, enabled: !this.state.disabled.includes(manifest.name) && !failure,
+          installedFrom: builtIn ? null : this.state.installed?.[manifest.name] ?? null,
         });
         delete this.reportedProblems[name];
       } else {
@@ -445,7 +451,9 @@ export class PluginRegistry {
         }
       }
     }
-    const sorted = [...found.values()].sort((a, b) => (a.manifest.name < b.manifest.name ? -1 : a.manifest.name > b.manifest.name ? 1 : 0));
+    // Built-in plugins first, then the library's, each by name.
+    const sorted = [...found.values()].sort((a, b) => Number(a.builtIn) !== Number(b.builtIn) ? Number(b.builtIn) - Number(a.builtIn)
+      : a.manifest.name < b.manifest.name ? -1 : a.manifest.name > b.manifest.name ? 1 : 0);
     const changed = force || JSON.stringify(prints) !== JSON.stringify(this.fingerprints) || JSON.stringify(sorted) !== JSON.stringify(this.plugins)
       || JSON.stringify(problems) !== JSON.stringify(this.problems);
     for (const plugin of sorted) {
@@ -463,6 +471,11 @@ export class PluginRegistry {
   /** Component folders of enabled plugins (`componentFolders`). */
   componentFolders(): string[] {
     return this.plugins.flatMap((plugin) => (plugin.enabled && plugin.manifest.ccb?.contributes?.components ? [join(plugin.folder, plugin.manifest.ccb.contributes.components)] : []));
+  }
+
+  /** Component folders of enabled built-in plugins (botling.cards'): the component library reads them after the library's own. */
+  builtInComponentFolders(): string[] {
+    return this.plugins.flatMap((plugin) => (plugin.builtIn && plugin.enabled && plugin.manifest.ccb?.contributes?.components ? [join(plugin.folder, plugin.manifest.ccb.contributes.components)] : []));
   }
 
   /**

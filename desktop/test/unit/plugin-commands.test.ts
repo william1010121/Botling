@@ -50,4 +50,11 @@ describe("command surfaces from the contribution registry", () => {
       menus: [{ menu: "commandPalette", command: "sly.run", plugin: "sly", title: "Run" }],
     });
   });
+
+  it("a / entry without a command goes into the message as words (botling.design's /design)", () => {
+    const manifest = { name: "words", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { contributes: { slash: [{ name: "design", about: "Make a design" }] } } };
+    const surfaces = commandSurfaces(contributions(manifest));
+    expect(surfaces.slash).toEqual([{ name: "design", about: "Make a design", plugin: "words" }]);
+    expect(PluginsView.safeParse({ plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null, ...surfaces }).success).toBe(true);
+  });
 });

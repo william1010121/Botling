@@ -684,6 +684,8 @@ export const PluginView = z.strictObject({
   enabled: z.boolean(),
   failure: z.string().max(2_000).nullable(),
   installedFrom: z.string().max(2_000).nullable(),
+  /** Shipped with Botling (step M11): read-only, can only be turned off. */
+  builtIn: z.boolean().optional(),
   permissions: z.array(z.string().max(40)).max(20),
   parts: z.array(z.enum(["web", "host", "claude", "components"])).max(4),
   settings: z.array(z.strictObject({
@@ -985,7 +987,8 @@ export const PluginsView = z.strictObject({
   secretsProblem: z.string().max(2_000).nullable(),
   /** Plugin commands on keys (default key, shortcuts.ts spelling), in the / menu and in the app's menus, from plugins that are on. */
   keybindings: z.array(z.strictObject({ command: PluginCommandId, key: z.string().max(40), plugin: PluginName, title: z.string().max(200) })).max(500).optional(),
-  slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId, plugin: PluginName })).max(200).optional(),
+  /** Without `command` the name goes into the message as words, for the bot (botling.design's /design). */
+  slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
   menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200) })).max(200).optional(),
 });
 export type PluginsView = z.infer<typeof PluginsView>;

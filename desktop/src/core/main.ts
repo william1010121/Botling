@@ -228,6 +228,8 @@ const checkNode: HostCommand | null = process.env.BOTLING_NODE_PATH ? { command:
 const reportScript = join(__dirname, "..", "report", "report.cjs");
 const reportCommand = process.env.BOTLING_REPORT_COMMAND ? process.env.BOTLING_REPORT_COMMAND : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(reportScript)}` : null;
 const reportDocs = process.env.BOTLING_REPORT_DOCS || join(__dirname, "..", "report", "report-blocks.md");
+// The plugins shipped with the app (step M11): main names them, a headless core reads out/builtin-plugins.
+const builtinPlugins = process.env.BOTLING_BUILTIN_PLUGINS || join(__dirname, "..", "builtin-plugins");
 const checkCommand = process.env.BOTLING_CHECK_COMMAND ? process.env.BOTLING_CHECK_COMMAND : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(checkScript)}` : null;
 
 function groupTiming(text: string | undefined) {
@@ -273,7 +275,7 @@ const core = new Core({
   // The library and memory files are watched; these are the slow looks that catch what a watcher missed.
   componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 60_000),
   waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 60_000),
-  plugins: { node, hostScript, sealer },
+  plugins: { node, hostScript, sealer, builtIns: builtinPlugins },
   checkCommand,
   shotCommand: process.env.BOTLING_SHOT_COMMAND || null,
   reports: reportCommand ? { command: reportCommand, docs: reportDocs } : null,

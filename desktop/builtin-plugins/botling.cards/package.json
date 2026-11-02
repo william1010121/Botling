@@ -1,0 +1,14 @@
+{
+  "name": "botling.cards",
+  "displayName": "Cards",
+  "version": "1.0.0",
+  "description": "The app's own cards in the chat: the web preview card (網頁預覽卡片) shows a one-page HTML result small, with a button to open it full size. A component of the same name in the library replaces it.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "contributes": {
+      "components": "components"
+    }
+  }
+}

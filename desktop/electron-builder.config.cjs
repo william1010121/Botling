@@ -39,9 +39,12 @@ module.exports = {
   directories: { output: env.BOTLING_DIST_DIR || join(__dirname, "dist"), buildResources: join(__dirname, "build") },
   // Everything the app runs is bundled into out/ by build.mjs (main, preload, core, plugin host,
   // renderer, the web AIs' page readers); no node_modules, no source maps, no test fixtures.
-  files: ["package.json", "out/**/*", "!out/**/*.map", "!node_modules/**/*"],
+  // The built-in plugins go beside app.asar instead (below), where bots can read them.
+  files: ["package.json", "out/**/*", "!out/**/*.map", "!out/builtin-plugins/**/*", "!node_modules/**/*"],
   // Ordinary files for the bridge's explicit absolute assets directory, outside app.asar.
-  extraResources: [{ from: "mobile/dist", to: "mobile", filter: ["index.html", "web.js", "styles.css", "web.css", "chat.html", "chat.js", "chat.css", "frame.css", "frame-host.html", "frame-host.js", "manifest.webmanifest", "icon.svg", "plugins/ccb-latex/katex.min.css", "plugins/ccb-latex/fonts/*.woff2"] }, { from: "out/report", to: "report", filter: ["report-blocks.md", "NOTICE", "THIRD_PARTY_LICENSES.txt"] }],
+  extraResources: [{ from: "mobile/dist", to: "mobile", filter: ["index.html", "web.js", "styles.css", "web.css", "chat.html", "chat.js", "chat.css", "frame.css", "frame-host.html", "frame-host.js", "manifest.webmanifest", "icon.svg", "plugins/ccb-latex/katex.min.css", "plugins/ccb-latex/fonts/*.woff2"] }, { from: "out/report", to: "report", filter: ["report-blocks.md", "NOTICE", "THIRD_PARTY_LICENSES.txt"] },
+    // The first-party plugins (ccb-latex, botling.cards, botling.design): read-only, Resources/builtin-plugins.
+    { from: "out/builtin-plugins", to: "builtin-plugins" }],
   asar: true,
   asarUnpack: ["out/main/node_modules/node-pty/**/*"],
   // Electron's zip comes from (and is kept in) this cache, never ~/Library/Caches (the package script sets it).

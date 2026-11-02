@@ -1,0 +1,14 @@
+{
+  "name": "botling.design",
+  "displayName": "Claude Design",
+  "version": "1.0.0",
+  "description": "/design in the input box: the bot makes a Claude Design on claude.ai and replies with its link.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "contributes": {
+      "slash": [{ "name": "design", "about": "Make a Claude Design and get its claude.ai link" }]
+    }
+  }
+}

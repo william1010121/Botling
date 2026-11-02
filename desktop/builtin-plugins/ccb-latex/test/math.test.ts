@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { createMarkdown } from "../../../src/markdown";
+import { createMarkdown } from "../../../../Web/src/markdown";
 import { closingDollar, mathPlugin, renderPlainWithMath } from "../src/math";
 import { formulaAt } from "../src/web";
 

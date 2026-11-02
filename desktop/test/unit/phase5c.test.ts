@@ -6,10 +6,9 @@ import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } fro
 import { dirname, join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { cardData, linkedCards, previewCards, previewFile, previewURL } from "../../src/core/page-preview";
-import { prepareLibrary } from "../../src/core/maintainer";
 import { Command } from "../../src/contract";
 import { draftSpec, replyPages } from "../../src/core/specs";
-import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "../../src/core/components/builtins";
+import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT } from "../../src/core/components/builtins";
 import { parseLine } from "../../src/core/agent/stream";
 import { addSpending, claudeRateLimits, codexRateLimits, codexTokens, freshSpending, type RateLimits, type RateLimitWindow } from "../../src/core/usage";
 import { asOf, countdown, dollars, percent, resetDay, staleSince, tokenCount, type LimitWindow } from "../../src/renderer/usage-text";
@@ -109,28 +108,7 @@ describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(f
     expect(OLDER_PREVIEW_TEMPLATES.slice(1)).toEqual(P.olderTemplates);
   });
 
-  it("seeds the shipped preview, upgrades old shipped templates, and preserves hand edits", () => {
-    const dir = tempDir("5c-seeding");
-    const card = join(dir, "plugins/ccb-components/components/網頁預覽卡片");
-    prepareLibrary(dir);
-    expect(readFileSync(join(card, "template.html"), "utf8")).toBe(PREVIEW_TEMPLATE);
-    for (const old of OLDER_PREVIEW_TEMPLATES) {
-      writeFileSync(join(card, "template.html"), old);
-      prepareLibrary(dir);
-      expect(readFileSync(join(card, "template.html"), "utf8")).toBe(PREVIEW_TEMPLATE);
-    }
-    // Both edits to an old default and a separately migrated plugin template stay byte-for-byte.
-    for (const custom of [OLDER_PREVIEW_TEMPLATES[0] + "<!-- custom -->", PREVIEW_TEMPLATE + "<!-- Maintainer -->"]) {
-      writeFileSync(join(card, "template.html"), custom);
-      prepareLibrary(dir);
-      expect(readFileSync(join(card, "template.html"), "utf8")).toBe(custom);
-    }
-    writeFileSync(join(card, "template.html"), "<p>My card</p>");
-    writeFileSync(join(card, "about.md"), "My own usage");
-    prepareLibrary(dir);
-    expect(readFileSync(join(card, "template.html"), "utf8")).toBe("<p>My card</p>");
-    expect(readFileSync(join(card, "about.md"), "utf8")).toBe("My own usage");
-  });
+  // Since step M11 the card is botling.cards' and the library is no longer seeded (builtin-plugins.test.ts).
 
   it("previews only bot/notice links with the library present, omitting a page already explicitly shown", () => {
     const path = join(root, "p/.bot/artifacts/report.html");

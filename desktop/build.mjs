@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRenderer } from "./build-renderer.mjs";
 import { buildPreloads } from "./build-preloads.mjs";
+import { buildBuiltinPlugins } from "./build-builtin-plugins.mjs";
 import { NOTICES_FILE, thirdPartyNotices } from "./reports/licenses.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,8 @@ await Promise.all([
   // `pair.cjs PAIRING_DIR ORIGIN BOT_ID...`: prints a one-time phone pairing link (src/mobile-bridge/pair-cli.ts).
   build({ ...node, entryPoints: [join(here, "src/mobile-bridge/pair-cli.ts")], outfile: join(out, "mobile-bridge/pair.cjs") }),
   buildRenderer({ root: here }),
+  // The first-party plugins (builtin-plugins/: ccb-latex, botling.cards, botling.design), shipped beside app.asar.
+  buildBuiltinPlugins({ root: here, outdir: join(out, "builtin-plugins") }),
 ]);
 packageAgyHelper(here);
 // The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.

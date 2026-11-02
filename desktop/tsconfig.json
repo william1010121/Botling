@@ -45,6 +45,7 @@
     "src",
     "test",
     "spec-adapters",
+    "builtin-plugins",
     "../spec",
     "*.ts"
   ],

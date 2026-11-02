@@ -11,8 +11,8 @@
 // nothing shared with the app page but postMessage), so plugins' web parts run in it again as in 1.x:
 // composer, markdown and component hooks, commands and `host.call`; their stylesheets are served by the
 // chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
-// web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). ccb-latex stays
-// bundled into the chat page.
+// web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
+// is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
 import { join } from "node:path";
 import { z } from "zod";
 import { ContractError, type PluginsView, type WebPluginSpecView } from "../../contract";
@@ -67,6 +67,8 @@ export interface PluginsOptions {
   node: HostCommand | null;
   /** The bundled plugin host (out/host/host.mjs). */
   hostScript: string;
+  /** The plugins shipped with the app (out/builtin-plugins, or the app's Resources/builtin-plugins). */
+  builtIns?: string | null;
   sealer: Sealer | null;
   timing?: HostTiming;
   /** The plugin host's pid, for the process ledger. */
@@ -114,7 +116,7 @@ export class Plugins {
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
     this.secrets = new SealedSecretStore(join(dataDir, "plugin-secrets.json"), options.sealer);
-    this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets);
+    this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
     this.host = new PluginHostClient(options.hostScript, options.node, this.dataRoot, (line) => world.log(line), options.timing ?? DEFAULT_TIMING, options.onPid);
     this.registry.onNotice = (text) => world.notice(text);
@@ -186,6 +188,7 @@ export class Plugins {
           enabled: plugin.enabled,
           failure: plugin.failure?.slice(0, 2_000) ?? null,
           installedFrom: plugin.installedFrom?.slice(0, 2_000) ?? null,
+          ...(plugin.builtIn ? { builtIn: true } : {}),
           permissions: (ccb?.permissions ?? []).slice(0, 20).map((permission) => permission.slice(0, 40)),
           parts: [...parts, ...(ccb?.contributes?.components ? ["components" as const] : [])],
           settings: this.registry.settingsView(plugin).slice(0, 100).map((setting) => ({

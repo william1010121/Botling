@@ -18,6 +18,7 @@ export const TEST_ONLY = new Set([
   "BOTLING_PLAIN_SHELL", // component commands without the login shell
   // Commands main hands Maintainer: always this build's own, never one from the environment.
   "BOTLING_SHOT_COMMAND", "BOTLING_CHECK_COMMAND", "BOTLING_REPORT_COMMAND", "BOTLING_REPORT_DOCS",
+  "BOTLING_BUILTIN_PLUGINS", // the built-in plugins: always this build's own
   "ELECTRON_RUN_AS_NODE", // has no effect with the fuse off; not passed on either
 ]);
 /** Prefixes of test-only variables: BOTLING_TEST_* (pickers, web sites, sealing key, update feed…) and the fakes' FAKE_*. */

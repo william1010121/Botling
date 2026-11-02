@@ -10,5 +10,5 @@
     "types": [],
     "resolveJsonModule": true
   },
-  "include": ["src", "test", "plugins/*/src", "plugins/*/test"]
+  "include": ["src", "test"]
 }

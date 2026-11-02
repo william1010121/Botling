@@ -219,13 +219,16 @@ describe("plugins' web parts in the chat page", () => {
     library(dir);
     const c = core(dir);
     const { specs } = await c.call({ type: "plugins.web" });
-    expect(specs.map((spec: any) => [spec.name, spec.styles])).toEqual([["glow", ["botling-chat://chat/plugin-files/glow/dist/glow.css"]]]);
+    // The built-in ccb-latex (step M11) comes the same way, first.
+    expect(specs.map((spec: any) => [spec.name, spec.styles])).toEqual([
+      ["ccb-latex", ["botling-chat://chat/plugin-files/ccb-latex/dist/katex.min.css"]], ["glow", ["botling-chat://chat/plugin-files/glow/dist/glow.css"]],
+    ]);
     expect(await c.call({ type: "plugins.file", name: "glow", path: "dist/glow.css" })).toMatchObject({ path: expect.stringContaining("glow.css") });
     await expect(c.call({ type: "plugins.file", name: "glow", path: "dist/web.js" })).rejects.toThrow("not_found");
     await c.call({ type: "plugins.notice", name: "glow", text: "hello" });
     await until(async () => (await c.chat()).messages.some((message: any) => message.text === "glow: hello"));
     await c.call({ type: "plugins.failed", name: "glow", message: "it threw" });
-    expect((await c.call({ type: "plugins.web" })).specs).toEqual([]);
+    expect((await c.call({ type: "plugins.web" })).specs.map((spec: any) => spec.name)).toEqual(["ccb-latex"]);
     expect((await c.call({ type: "plugins.list" })).plugins.find((plugin: any) => plugin.name === "glow")).toMatchObject({ enabled: false, failure: "it threw" });
   });
 });

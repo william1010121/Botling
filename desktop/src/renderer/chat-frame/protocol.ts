@@ -64,7 +64,7 @@ export type ShellMessage =
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }
   /** Where a component frame's page is served (null: refused). */
   | { botling: "page"; id: number; url: string | null }
-  /** Plugins' web parts to run in the page (`ccb.setPlugins`, after the bundled ccb-latex). */
+  /** Plugins' web parts to run in the page (`ccb.setPlugins`), the built-in ones (ccb-latex) among them. */
   | { botling: "plugins"; specs: WebPluginSpecView[] }
   /** A web part's `ccb.host.call` was answered (`ccb.hostReply`). */
   | { botling: "hostReply"; callID: number; ok: boolean; value: unknown }

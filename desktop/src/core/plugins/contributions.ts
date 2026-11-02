@@ -31,7 +31,8 @@ export interface ComponentRef { name: string; dir: string }
 export type Contribution = { plugin: string } & (
   | { kind: "command"; id: string; title: string }
   | { kind: "keybinding"; command: string; key: string }
-  | { kind: "slash"; name: string; about: string; command: string }
+  /** Without `command` the name goes into the message as words, which the bots' rules read (`/design`). */
+  | { kind: "slash"; name: string; about: string; command?: string }
   | { kind: "view"; id: string; title: string; icon?: string; where: ViewSlot }
   | { kind: "tile"; id: string; title: string; sizes: string[]; surfaces: TileSurface[]; component?: ComponentRef }
   | { kind: "card"; id: string; title: string; component?: ComponentRef }
@@ -110,8 +111,8 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
     if (f) out.push({ kind: "keybinding", plugin, command: f.command, key: f.key });
   });
   list("slash").forEach((entry, index) => {
-    const f = fields(entry, `contributes.slash.${index}`, ["name", "about", "command"]);
-    if (f) out.push({ kind: "slash", plugin, name: f.name, about: f.about, command: f.command });
+    const f = fields(entry, `contributes.slash.${index}`, ["name", "about", "command?"]);
+    if (f) out.push({ kind: "slash", plugin, name: f.name, about: f.about, ...(f.command !== undefined ? { command: f.command } : {}) });
   });
   for (const key of ["panels", "views"]) list(key).forEach((entry, index) => {
     const f = fields(entry, `contributes.${key}.${index}`, ["id", "title", "icon?", "where?"]);

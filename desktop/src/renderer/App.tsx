@@ -1171,10 +1171,10 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
           return;
         // Plugins' web parts in the page (`PluginBridge` in 1.x).
         case "pluginLoaded":
-          if (typeof action.name === "string" && action.name !== "ccb-latex") void client.request({ type: "plugins.loaded", name: action.name }).catch(() => {});
+          if (typeof action.name === "string") void client.request({ type: "plugins.loaded", name: action.name }).catch(() => {});
           return;
         case "pluginError":
-          if (typeof action.name === "string" && action.name !== "ccb-latex") {
+          if (typeof action.name === "string") {
             void client.request({ type: "plugins.failed", name: action.name, message: typeof action.message === "string" ? action.message.slice(0, 4_000) : "" }).catch(() => {});
           }
           return;

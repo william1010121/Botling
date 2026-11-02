@@ -132,10 +132,15 @@ describe("routines.updated", () => {
 
 describe("the / menu and menus from the plugin registry (M6)", () => {
   const chat = { botId: "B", messages: [], running: null, live: [], tasks: [] };
+  const pluginView = (name: string, parts: PluginsView["plugins"][number]["parts"], commands: { id: string; registered: boolean }[], builtIn = false) =>
+    ({ name, title: name, version: "1", description: null, enabled: true, failure: null, installedFrom: null, permissions: [], parts, settings: [], panels: [],
+      commands: commands.map((command) => ({ ...command, title: command.id })), ...(builtIn ? { builtIn } : {}) });
   const plugins: PluginsView = {
-    plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null,
+    // botling.design (built in since M11) brings /design, as words.
+    plugins: [pluginView("botling.design", [], [], true)], broken: [], host: { running: true, problem: null }, secretsProblem: null,
     slash: [
       { name: "todo", about: "Open the TODO panel", command: "zeta.open", plugin: "zeta" },
+      { name: "design", about: "Make a Claude Design and get its claude.ai link", plugin: "botling.design" },
       { name: "design", about: "Not the app's", command: "alpha.design", plugin: "alpha" },
       { name: "todo", about: "Another TODO", command: "alpha.todo", plugin: "alpha" },
     ],
@@ -164,18 +169,17 @@ describe("the / menu and menus from the plugin registry (M6)", () => {
     expect(offered(view, "zeta.wake", "menu", "message/context")).toBe(false);
     expect(offered(view, "zeta.other", "slash")).toBe(false);
     expect(offered(null, "zeta.open", "slash")).toBe(false);
-    // The bundled ccb-latex key is offered and runs in the chat page.
+    // Without a plugins view (Botling Web) ccb-latex's key is still offered (its web part is bundled there).
     expect(offered(null, "ccb-latex.insert", "key")).toBe(true);
-    expect(keybindingsOf(view).map((binding) => binding.command)).toEqual(["ccb-latex.insert", "zeta.run"]);
+    expect(keybindingsOf(view).map((binding) => binding.command)).toEqual(["zeta.run"]);
   });
   it("runs a command in the plugin host unless the chat page's web part registered it", () => {
-    const plugin = (name: string, parts: PluginsView["plugins"][number]["parts"], commands: { id: string; registered: boolean }[]) =>
-      ({ name, title: name, version: "1", description: null, enabled: true, failure: null, installedFrom: null, permissions: [], parts, settings: [], panels: [],
-        commands: commands.map((command) => ({ ...command, title: command.id })) });
-    const view = { ...plugins, plugins: [plugin("host", ["host"], []), plugin("both", ["web", "host"], [{ id: "both.a", registered: true }, { id: "both.b", registered: false }])] };
+    const view = { ...plugins, plugins: [pluginView("host", ["host"], []), pluginView("both", ["web", "host"], [{ id: "both.a", registered: true }, { id: "both.b", registered: false }]),
+      pluginView("ccb-latex", ["web"], [{ id: "ccb-latex.insert", registered: false }], true)] };
     expect(runsInHost(view, "host.run")).toBe(true);
     expect(runsInHost(view, "both.a")).toBe(true);
     expect(runsInHost(view, "both.b")).toBe(false);
     expect(runsInHost(view, "ccb-latex.insert")).toBe(false);
+    expect(runsInHost(null, "ccb-latex.insert")).toBe(false);
   });
 });

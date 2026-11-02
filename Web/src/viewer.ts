@@ -1,4 +1,4 @@
-import { mathPlugin } from "../plugins/ccb-latex/src/math";
+import { mathPlugin } from "../../desktop/builtin-plugins/ccb-latex/src/math";
 import { post } from "./bridge";
 import { setLanguage, t } from "./i18n";
 import { installImeGuard } from "./ime";

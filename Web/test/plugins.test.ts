@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { activate as latex } from "../plugins/ccb-latex/src/web";
+import { activate as latex } from "../../desktop/builtin-plugins/ccb-latex/src/web";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
 import { messageElement } from "../src/messages";

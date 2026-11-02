@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { runInNewContext } from "node:vm";
@@ -23,7 +23,7 @@ function fixture() {
   put("desktop/src/renderer/chat-frame/frame.css", '.frame { color: red; }');
   put("Web/src/chat.css", '@import "tokens.css";\n.chat { color: red; }');
   put("Web/src/tokens.css", ':root { --token: red; }');
-  put("Web/plugins/ccb-latex/src/web.ts", 'export const version = "latex-one";');
+  put("desktop/builtin-plugins/ccb-latex/src/web.ts", 'export const version = "latex-one";');
   put("desktop/out/main/main.cjs", 'main must stay running');
   put("desktop/out/core/main.cjs", 'core must stay running');
   put("desktop/out/preload/preload.cjs", 'preload must stay unchanged');
@@ -39,7 +39,15 @@ it("renderer-only publication keeps main/core/preload output and retains success
   expect(production.mode).toBe("production");
   expect(f.read("chat.js")).toContain("chat-one");
   expect(f.read("styles.css")).toContain("--token: red");
-  expect(f.read("plugins/ccb-latex/katex.min.css")).toContain("KaTeX");
+  // The desktop's chat page loads ccb-latex from out/builtin-plugins like any plugin; only Botling Web bundles it.
+  expect(f.read("chat.js")).not.toContain("latex-one");
+  expect(existsSync(join(f.outdir, "plugins"))).toBe(false);
+  const web = join(f.root, "out/web");
+  f.put("desktop/mobile/main.tsx", 'globalThis.shellVersion = "web-one";');
+  for (const name of ["index.html", "web.css", "manifest.webmanifest", "icon.svg", "frame-host.html", "frame-host.js"]) f.put(`desktop/mobile/${name}`, name);
+  await buildRenderer({ ...f, outdir: web, web: true });
+  expect(readFileSync(join(web, "chat.js"), "utf8")).toContain("latex-one");
+  expect(readFileSync(join(web, "plugins/ccb-latex/katex.min.css"), "utf8")).toContain("KaTeX");
   const original = f.read("renderer.js");
   f.put("desktop/src/renderer/main.tsx", "const broken = ;");
   await expect(buildRenderer(f)).rejects.toThrow();
@@ -64,14 +72,12 @@ it("one watcher publishes TS, HTML, token CSS and chat changes, then recovers fr
   f.put("desktop/src/renderer/index.html", '<main>updated html</main>');
   f.put("Web/src/tokens.css", ':root { --token: blue; }');
   f.put("desktop/src/renderer/chat-frame/entry.ts", 'globalThis.chatVersion = "chat-two"; globalThis.latex = __LATEX_SOURCE__;');
-  f.put("Web/plugins/ccb-latex/src/web.ts", 'export const version = "latex-two";');
   await expect.poll(() => f.read("renderer.js")).toContain("shell-two");
   expect(f.read("renderer.js")).toContain("new-directory");
   expect(f.read("index.html")).toContain("updated html");
   expect(f.read("styles.css")).toContain("--token: blue");
   expect(f.read("chat.css")).toContain("--token: blue");
   expect(f.read("chat.js")).toContain("chat-two");
-  expect(f.read("chat.js")).toContain("latex-two");
   const previous = f.read("renderer.js");
   f.put("desktop/src/renderer/main.tsx", "const broken = ;");
   await expect.poll(() => errors.length).toBeGreaterThan(0);
