@@ -295,7 +295,7 @@ function sources(dir: string): string[] {
 describe("every Enter handler in Web/src", () => {
   it("goes through ime.ts (isComposingEnter / isComposingKey / isSendEnter), so no input box sends on a candidate pick", () => {
     const web = join(__dirname, "..");
-    const files = [...sources(join(web, "src")), ...sources(join(web, "plugins"))].filter((file) => !file.endsWith("/src/ime.ts"));
+    const files = [...sources(join(web, "src")), ...sources(join(web, "..", "desktop", "builtin-plugins"))].filter((file) => !file.endsWith("/src/ime.ts"));
     // A check for Return: key === "Enter", key !== 'Enter', a keymap's key: "Enter", keyCode 13, ["Enter", …].includes(…).
     const enterCheck = /key\s*[!=]==?\s*["']Enter["']|\bkey:\s*["']Enter["']|keyCode\s*[!=]==?\s*13\b|\[[^\]]*["']Enter["'][^\]]*\]\.includes/;
     const helper = /\bis(ComposingEnter|ComposingKey|SendEnter)\(/;
