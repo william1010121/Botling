@@ -418,9 +418,9 @@ export class SpecPanel {
       ask.append(el("code", "command-folder", run.folder));
       ask.append(el("pre", "command-full", run.command));
       const actions = el("div", "command-actions");
+      // Asks for the test run again: the app's own sheet allows it.
       const allow = button("primary command-allow", escapeHTML(t("command.allow")), () => {
-        allow.disabled = true;
-        post({ type: "specTestRun", id: state.id, command: run.command, folder: run.folder, approve: true });
+        post({ type: "specTestRun", id: state.id, command: run.command, folder: run.folder });
       });
       actions.append(allow, el("span", "command-note", t("spec.remembered")));
       ask.append(actions);

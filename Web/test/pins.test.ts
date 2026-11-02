@@ -229,12 +229,12 @@ describe("the chips above the input box", () => {
     expect(document.querySelector<HTMLElement>(".pin-dock")!.hidden).toBe(true);
   });
 
-  it("a pinned command not allowed yet asks on the sheet, with the command it showed", () => {
+  it("a pinned command not allowed yet asks the app to run it, with the command it showed (the app's sheet allows)", () => {
     const area = setUp();
     area.update(state({ pins: [pin({ headline: "Needs your OK", display: { name: "提交紀錄", data: "null", command: "git log", folder: "/p", status: "approve" } })] }));
     click(document.querySelector(".pin-chip"));
     click(document.querySelector(".pin-sheet .command-allow"));
-    expect(sent.at(-1)).toEqual({ type: "pinCommand", id: "P1", command: "git log", folder: "/p", approve: true });
+    expect(sent.at(-1)).toEqual({ type: "pinCommand", id: "P1", command: "git log", folder: "/p" });
   });
 
   it("drag a chip onto another to reorder; right-click to unpin", () => {

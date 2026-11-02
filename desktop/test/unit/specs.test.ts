@@ -154,6 +154,31 @@ describe("component specs (Workspace+Specs.swift)", () => {
   });
 });
 
+describe("a spec's test run is allowed only on the app page's ApprovalSheet (G2)", () => {
+  it("Test run answers what the sheet asks; approve from the panel is refused; spec.approve with what the sheet showed runs it", async () => {
+    const dir = tempDir("specs-approve");
+    const c = core(dir, { BOTLING_PLAIN_SHELL: "1" });
+    await say(c, MAIN, `/say Disk is 80% full. <suggest-component name="Disk Usage">how full the disk is</suggest-component>`);
+    const line = await reply(c, "Disk is 80% full.");
+    const chip = await until(async () => (await c.chat()).messages.find((m: any) => m.id === line.id)?.specs?.[0]);
+    const command = `printf '{"used": 80}'`;
+    await c.call({ type: "spec.act", specId: chip.id, action: { kind: "edit", key: "command", value: command } });
+    const spec = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"))[0];
+    expect(spec.command).toBe(command);
+    const folder = spec.folder;
+    expect(await c.call({ type: "spec.act", specId: chip.id, action: { kind: "testRun", command, folder } }))
+      .toEqual({ accepted: false, needsApproval: { command, folder, detail: null, card: "disk-usage" } });
+    await expect(c.call({ type: "spec.act", specId: chip.id, action: { kind: "testRun", command, folder, approve: true } })).rejects.toThrow(/approve/);
+    expect(await c.call({ type: "spec.approve", specId: chip.id, run: "testRun", command: "rm -rf /tmp/x", folder })).toEqual({ accepted: false });
+    expect(await c.call({ type: "spec.approve", specId: chip.id, run: "testRun", command, folder: "/tmp" })).toEqual({ accepted: false });
+    expect(existsSync(join(dir, "approved-commands.json"))).toBe(false);
+    expect(await c.call({ type: "spec.approve", specId: chip.id, run: "testRun", command, folder })).toEqual({ accepted: true });
+    const ran = await until(() => JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"))[0].testRun?.output);
+    expect(ran).toBe(`{"used": 80}`);
+    expect(await c.call({ type: "spec.act", specId: chip.id, action: { kind: "testRun", command, folder } })).toEqual({ accepted: true });
+  });
+});
+
 describe("result pages (Phase 5c, 1.x's PagePreview and makeComponent(from:preview:))", () => {
   it("a reply's links to result pages are preview cards under it; Make into component on one makes a spec from that page", async () => {
     const dir = tempDir("specs-pages");

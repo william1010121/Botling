@@ -368,8 +368,9 @@ describe("messages", () => {
     }), { commits: info });
     document.body.append(row);
     expect([...row.querySelectorAll(".command-full")].map((pre) => pre.textContent)).toEqual(["git log", "git show {hash}"]);
+    // Allow only asks the app to run it: the app page's own sheet allows (G2), so no approve leaves this page.
     row.querySelector<HTMLButtonElement>(".command-allow")!.click();
-    expect(sent).toEqual([{ type: "componentCommand", messageID: "m32", index: 0, command: "git log", folder: "/p", detail: "git show {hash}", approve: true }]);
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "m32", index: 0, command: "git log", folder: "/p", detail: "git show {hash}" }]);
   });
 
   it("draw linked result pages as preview cards that open full-size", () => {
@@ -403,8 +404,11 @@ describe("messages", () => {
     expect(asking.querySelector(".command-folder")?.textContent).toBe("/p/garden");
     expect(asking.querySelector(".command-refresh")).toBeNull();
     asking.querySelector<HTMLButtonElement>(".command-allow")!.click();
-    // With the command and folder it showed, so only what you saw is allowed.
-    expect(sent).toEqual([{ type: "componentCommand", messageID: "c1", index: 0, command: "git diff --stat", folder: "/p/garden", approve: true }]);
+    // A run request with the command and folder it showed; the app page's sheet allows it, never this page.
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c1", index: 0, command: "git diff --stat", folder: "/p/garden" }]);
+    // Cancelled on the sheet, Allow still asks again.
+    asking.querySelector<HTMLButtonElement>(".command-allow")!.click();
+    expect(sent).toHaveLength(2);
     sent.length = 0;
     // Allowed but not run yet: asks for a run once, however often it is drawn.
     const idle = message({ id: "c2", displays: [{ ...display, status: "idle" }] });

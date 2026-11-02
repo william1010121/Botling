@@ -101,7 +101,7 @@ describe("components", () => {
     expect((await line(c, moved)).displays[0]).toMatchObject({ name: "status" });
   });
 
-  it("a command card asks first, runs once allowed (in the bot's folder, as shown), and its Detail command only then", async () => {
+  it("a command card asks first, runs once allowed on the app page's sheet (in the bot's folder, as shown), and its Detail command only then", async () => {
     const dir = tempDir("components");
     writeLibrary(dir);
     const c = core(dir);
@@ -110,13 +110,18 @@ describe("components", () => {
     expect(card).toMatchObject({ command: `printf '{"n":3}'`, folder: join(dir, "main"), status: "approve", detail: "printf 'detail-%s' {hash}", card: `${id}/0` });
     // Nothing runs before the user allows it: a Detail call is refused, a run without approval does nothing.
     expect(await c.call({ type: "component.detail", botId: MAIN, name: "gitlog", folder: card.folder, values: { hash: "abc123" } })).toEqual({ ok: false, value: expect.stringContaining("not allowed yet") });
-    expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder })).toEqual({ accepted: false });
-    // What the card did not show is never allowed: another command, folder or Detail command.
-    expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: "rm -rf /tmp/x", folder: card.folder, approve: true, detail: card.detail })).toEqual({ accepted: false });
-    expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: card.command, folder: "/tmp", approve: true, detail: card.detail })).toEqual({ accepted: false });
-    expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder, approve: true, detail: "printf other" })).toEqual({ accepted: false });
+    // A run asked for (the card's Allow) answers what the app page's ApprovalSheet shows: the core's command, folder and Detail command.
+    expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder }))
+      .toEqual({ accepted: false, needsApproval: { command: card.command, folder: card.folder, detail: card.detail, card: "gitlog" } });
+    expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: "rm -rf /tmp/x", folder: card.folder })).toEqual({ accepted: false });
+    // The chat page cannot allow: a run request carrying approve is not a command at all (G2).
+    await expect(c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder, approve: true, detail: card.detail })).rejects.toThrow(/approve/);
+    // What the sheet did not show is never allowed: another command, folder or Detail command.
+    expect(await c.call({ type: "component.approve", botId: MAIN, messageId: id, index: 0, command: "rm -rf /tmp/x", folder: card.folder, detail: card.detail })).toEqual({ accepted: false });
+    expect(await c.call({ type: "component.approve", botId: MAIN, messageId: id, index: 0, command: card.command, folder: "/tmp", detail: card.detail })).toEqual({ accepted: false });
+    expect(await c.call({ type: "component.approve", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder, detail: "printf other" })).toEqual({ accepted: false });
     expect(existsSync(join(dir, "approved-commands.json"))).toBe(false);
-    expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder, approve: true, detail: card.detail })).toEqual({ accepted: true });
+    expect(await c.call({ type: "component.approve", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder, detail: card.detail })).toEqual({ accepted: true });
     const done = await until(async () => { const d = (await line(c, id)).displays[0]; return d.status === "done" && d; });
     expect(done).toMatchObject({ data: `{"n":3}`, error: null, ranAt: expect.stringMatching(/^\d\d:\d\d$/) });
     expect(JSON.parse(readFileSync(join(dir, "approved-commands.json"), "utf8"))).toEqual({ [join(dir, "main")]: [`printf '{"n":3}'`, "Detail command: printf 'detail-%s' {hash}"] });
@@ -163,7 +168,11 @@ describe("components", () => {
     let pin = (await c.chat()).pins.find((p: any) => p.id === live);
     expect(pin).toMatchObject({ headline: "Needs your OK", chip: { text: "Allow?", tone: "warning" }, display: { status: "approve", command: `printf '{"n":3}'` } });
     expect(await c.call({ type: "pin.shown", botId: MAIN, ids: null })).toEqual({ ran: 0 });
-    expect(await c.call({ type: "pin.command", botId: MAIN, id: live, command: pin.display.command, folder: pin.display.folder, detail: pin.display.detail, approve: true })).toEqual({ accepted: true });
+    expect(await c.call({ type: "pin.command", botId: MAIN, id: live, command: pin.display.command, folder: pin.display.folder }))
+      .toEqual({ accepted: false, needsApproval: { command: pin.display.command, folder: pin.display.folder, detail: pin.display.detail, card: "gitlog" } });
+    await expect(c.call({ type: "pin.command", botId: MAIN, id: live, command: pin.display.command, folder: pin.display.folder, detail: pin.display.detail, approve: true })).rejects.toThrow(/approve/);
+    expect(await c.call({ type: "pin.approve", botId: MAIN, id: live, command: pin.display.command, folder: "/tmp", detail: pin.display.detail })).toEqual({ accepted: false });
+    expect(await c.call({ type: "pin.approve", botId: MAIN, id: live, command: pin.display.command, folder: pin.display.folder, detail: pin.display.detail })).toEqual({ accepted: true });
     pin = await until(async () => { const p = (await c.chat()).pins.find((p: any) => p.id === live); return p.display.status === "done" && p; });
     expect(pin.display.data).toBe(`{"n":3}`);
     expect(JSON.parse(readFileSync(join(dir, "main", "pins.json"), "utf8")).find((p: any) => p.id === live)).toMatchObject({ command: `printf '{"n":3}'`, data: `{"n":3}`, ranAt: expect.any(Number) });

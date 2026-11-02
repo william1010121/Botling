@@ -12,7 +12,7 @@ import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { actionForEvent, bindingsFor } from "../contract/shortcuts";
 import { setShortcutLabels, shortcutLabel } from "./shortcut-labels";
-import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
+import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
@@ -29,6 +29,8 @@ import { Review, type ReviewTarget } from "./Review";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubagentRows, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon } from "./icons";
 import { SpecFrame } from "./SpecFrame";
+import { useApprovalSheet } from "./ApprovalSheet";
+import { asksUser, cardApprove, cardRun } from "./card-approval";
 import { Whiteboard, useWhiteboardChoice } from "./Whiteboard";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -123,6 +125,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
   }, []);
+  // A card's command waiting for your OK (from the chat page or the spec panel): this page's own sheet asks.
+  const approval = useApprovalSheet(client, view.settings?.effectiveLanguage ?? null, fail);
 
   /** A bot's chat again. */
   const selectBot = useCallback((botId: string) => {
@@ -338,13 +342,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         {review && bot && <Review client={client} bot={bot} target={review} lang={view.settings?.effectiveLanguage ?? null} onClose={() => setReviewing(null)} />}
         {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
-        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} />
+        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />
         {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} shortcutLabel={shortcutLabel("toggleTerminal")} />}
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
       {/* The open component spec takes the right panel's place, while its chat is shown (1.x's `openSpec(in:)`). */}
-      {bot && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} />}
+      {bot && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} onAsk={approval.ask} />}
       {bot && !openSpec && (
         <TaskDetails
           onDrawerSettings={() => setBotSettings(true)}
@@ -393,6 +397,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         onCloseSubBot={() => { setClosingSubBot(target); setSubBotMenu(null); }} /> : null; })()}
       {closingSubBot && <CloseSubBotDialog name={closingSubBot.name} onCancel={() => setClosingSubBot(null)} onConfirm={() => closeSubBot(closingSubBot)} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
+      {approval.sheet}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
@@ -609,7 +614,8 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
 }
 
 /** The reused chat page, in a frame. */
-function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void }) {
+function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void;
+  onAsk: (view: ApprovalAskView, approve: import("../contract").Command) => void }) {
   const [report, setReport] = useState<{botId: string; url: string} | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const placeholder = useRef<HTMLDivElement>(null);
@@ -795,7 +801,16 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       bucket.tokens -= 1;
       return true;
     };
-    const flags = (action: Record<string, unknown>, names: string[]) => Object.fromEntries(names.filter((name) => typeof action[name] === "boolean").map((name) => [name, action[name]]));
+    // A card's command (a card, a pinned card, a spec's built card): the page only asks to run it; one not allowed yet
+    // answers what this page's ApprovalSheet asks about (card-approval.ts), and only the sheet allows it.
+    const runCard = (action: Record<string, unknown>, botId: string | null) => {
+      const run = cardRun(action, botId);
+      if (!run) return;
+      void client.request(run).then((result) => {
+        const approve = result.needsApproval && asksUser(action) ? cardApprove(run, result.needsApproval) : null;
+        if (approve) onAsk(result.needsApproval!, approve);
+      }).catch(onError);
+    };
     const pinChange = (id: unknown, change: Extract<import("../contract").Command, { type: "pin.change" }>["change"]) => {
       const chat = store.getView().chat;
       if (chat && typeof id === "string") void client.request({ type: "pin.change", botId: chat.botId, id, change }).catch(onError);
@@ -995,10 +1010,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
         // Components and pins: each becomes a contract command the core checks again (the card, its
         // command, the folder it showed); a frame's calls are paced so one cannot flood the core.
         case "componentCommand":
-          if (chat && typeof action.messageID === "string" && typeof action.index === "number" && typeof action.command === "string" && typeof action.folder === "string") {
-            void client.request({ type: "component.command", botId: chat.botId, messageId: action.messageID, index: action.index, command: action.command, folder: action.folder,
-              ...(typeof action.detail === "string" ? { detail: action.detail } : {}), ...flags(action, ["approve", "force", "live"]) }).catch(onError);
-          }
+          runCard(action, chat?.botId ?? null);
           return;
         case "componentDetail": {
           if (!chat || typeof action.requestID !== "number" || typeof action.name !== "string" || typeof action.folder !== "string") return;
@@ -1048,10 +1060,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "pressSpec" ? "press" : "open" } }).catch(onError);
           return;
         case "specCommand":
-          if (typeof action.id === "string" && typeof action.command === "string" && typeof action.folder === "string") {
-            void client.request({ type: "spec.act", specId: action.id, action: { kind: "command", command: action.command, folder: action.folder,
-              ...(typeof action.detail === "string" ? { detail: action.detail } : {}), ...flags(action, ["approve", "force"]) } }).catch(onError);
-          }
+          runCard(action, chat?.botId ?? null);
           return;
         // "Not right" on a reply (developer mode): main adds the chat frame as you saw it.
         case "feedback": {
@@ -1110,10 +1119,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           }
           return;
         case "pinCommand":
-          if (chat && typeof action.id === "string") {
-            void client.request({ type: "pin.command", botId: chat.botId, id: action.id, ...(typeof action.command === "string" ? { command: action.command } : {}),
-              ...(typeof action.folder === "string" ? { folder: action.folder } : {}), ...(typeof action.detail === "string" ? { detail: action.detail } : {}), ...flags(action, ["approve", "force"]) }).catch(onError);
-          }
+          runCard(action, chat?.botId ?? null);
           return;
         case "pinShown":
           if (chat) void client.request({ type: "pin.shown", botId: chat.botId, ids: Array.isArray(action.ids) ? (action.ids as unknown[]).filter((id): id is string => typeof id === "string").slice(0, 200) : null }).catch(() => {});
@@ -1184,7 +1190,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, onSent, onSelectTask, push, pushPlugins, store, channel]);
+  }, [client, onError, onSent, onSelectTask, onAsk, push, pushPlugins, store, channel]);
 
   const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)} /> : null;
   if (nativeEditor()) return <>{viewer}<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>

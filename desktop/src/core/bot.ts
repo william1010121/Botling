@@ -59,7 +59,7 @@ import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import {
-  ContractError, type RoutineView, type BotView, type SubagentRowView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
+  ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView, type WhiteboardPictureView,
 } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
@@ -4854,8 +4854,11 @@ export class Bot {
     return { saved: true };
   }
 
-  /** A card's command (`runComponentCommand`): Allow (with the command, folder and Detail command it showed), ↻, or its own timer. */
-  componentCommand(messageId: string, index: number, shown: { command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }): ResultOf<"component.command"> {
+  /**
+   * A card's command (`runComponentCommand`): run (with the command and folder it showed), ↻, or its own timer. It never
+   * allows anything (the chat page cannot): one not allowed yet answers what the app page's ApprovalSheet asks about.
+   */
+  componentCommand(messageId: string, index: number, shown: { command: string; folder: string; detail?: string; force?: boolean; live?: boolean }): ResultOf<"component.command"> {
     if (this.options.primary) return this.options.primary.componentCommand(messageId, index, shown);
     const context = this.context;
     const record = this.records.find((candidate) => candidate.id === messageId);
@@ -4864,7 +4867,8 @@ export class Bot {
     const command = displayCommand(display, record.role, context.library);
     const folder = this.commandFolder;
     if (!command || shown.command !== command || resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
-    if (shown.approve && !this.approveCard(command, context.library.detailCommand(display.name), shown.detail ?? null, folder)) return { accepted: false };
+    const needsApproval = this.cardAsk(command, context.library.detailCommand(display.name), folder, display.name);
+    if (needsApproval) return { accepted: false, needsApproval };
     const card = `${record.id}/${index}`;
     if (shown.live) {
       const every = display.refresh ?? context.library.refreshInterval(display.name);
@@ -4875,6 +4879,27 @@ export class Bot {
     if (!context.commands.isApproved(command, folder)) return { accepted: false };
     void context.commands.run(card, command, folder, !!shown.force);
     return { accepted: true };
+  }
+
+  /** "Allow and run" on the app page's ApprovalSheet for a card: what the sheet showed (the card's command, folder and Detail command), then it runs. */
+  componentApprove(messageId: string, index: number, shown: { command: string; folder: string; detail?: string }): ResultOf<"component.approve"> {
+    if (this.options.primary) return this.options.primary.componentApprove(messageId, index, shown);
+    const context = this.context;
+    const record = this.records.find((candidate) => candidate.id === messageId);
+    const display = (record?.displays as Display[] | undefined)?.[index];
+    if (!context || !record || !display) return { accepted: false };
+    const command = displayCommand(display, record.role, context.library);
+    const folder = this.commandFolder;
+    if (!command || shown.command !== command || resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
+    if (!this.approveCard(command, context.library.detailCommand(display.name), shown.detail ?? null, folder)) return { accepted: false };
+    void context.commands.run(`${record.id}/${index}`, command, folder, false);
+    return { accepted: true };
+  }
+
+  /** A card's command and Detail command as the ApprovalSheet shows them; null once both are allowed in that folder. */
+  private cardAsk(command: string, detail: string | null, folder: string, card: string): ApprovalAskView | null {
+    const commands = this.context!.commands;
+    return commands.isApproved(command, folder) && commands.isDetailApproved(detail, folder) ? null : { command, folder, detail, card };
   }
 
   /** Allow on a card: its command and its Detail command as the card showed them; nothing when about.md changed since. */
@@ -5213,20 +5238,34 @@ export class Bot {
     return { changed };
   }
 
-  /** A pinned card's command: Allow (with what it showed) or ↻; only what the user allowed runs (`runPin`). */
-  pinCommand(id: string, shown: { command?: string; folder?: string; detail?: string; approve?: boolean; force?: boolean }): ResultOf<"pin.command"> {
+  /** A pinned card's command: run or ↻; only what the user allowed runs (`runPin`), else it answers what the ApprovalSheet asks about. */
+  pinCommand(id: string, shown: { command?: string; folder?: string; detail?: string; force?: boolean }): ResultOf<"pin.command"> {
     if (this.options.primary) return this.options.primary.pinCommand(id, shown);
     const context = this.context;
     this.syncPinCommands();
     const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === id.toUpperCase());
     if (!context || !pin?.command) return { accepted: false };
     const folder = this.commandFolder;
-    if (shown.approve && (shown.command === undefined || shown.folder === undefined)) return { accepted: false };
     if (shown.command !== undefined && shown.command !== pin.command) return { accepted: false };
     if (shown.folder !== undefined && resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
-    if (shown.approve && !this.approveCard(pin.command, context.library.detailCommand(pin.name), shown.detail ?? null, folder)) return { accepted: false };
-    if (!context.commands.isApproved(pin.command, folder)) return { accepted: false };
+    const needsApproval = this.cardAsk(pin.command, context.library.detailCommand(pin.name), folder, pin.name);
+    if (needsApproval) return { accepted: false, needsApproval };
     void context.commands.run(`pin/${pin.id}`, pin.command, folder, !!shown.force);
+    this.pinsChanged();
+    return { accepted: true };
+  }
+
+  /** "Allow and run" on the app page's ApprovalSheet for a pinned card, as `componentApprove`. */
+  pinApprove(id: string, shown: { command: string; folder: string; detail?: string }): ResultOf<"pin.approve"> {
+    if (this.options.primary) return this.options.primary.pinApprove(id, shown);
+    const context = this.context;
+    this.syncPinCommands();
+    const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === id.toUpperCase());
+    if (!context || !pin?.command) return { accepted: false };
+    const folder = this.commandFolder;
+    if (shown.command !== pin.command || resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
+    if (!this.approveCard(pin.command, context.library.detailCommand(pin.name), shown.detail ?? null, folder)) return { accepted: false };
+    void context.commands.run(`pin/${pin.id}`, pin.command, folder, false);
     this.pinsChanged();
     return { accepted: true };
   }

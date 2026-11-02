@@ -898,8 +898,11 @@ function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
   if (page != null) next.srcdoc = page;
 }
 
-/** Where a card's command requests go instead of a chat card's (a pinned card's). */
-export type CommandSend = (request: { command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }) => void;
+/**
+ * Where a card's command requests go instead of a chat card's (a pinned card's). A request only asks to run: one not
+ * allowed yet is asked about on the app page's own sheet, which this page cannot press (plugin-platform.md §5.4, G2).
+ */
+export type CommandSend = (request: { command: string; folder: string; detail?: string; force?: boolean; live?: boolean }) => void;
 
 /** Cards whose command was asked to run once allowed, so a redraw does not ask again. */
 const requestedRuns = new Set<string>();
@@ -972,7 +975,7 @@ export function commandCard(
   // With the command and folder this card shows: Swift allows and runs only what you saw.
   const shown: { command: string; folder: string; detail?: string } = { command: display.command ?? "", folder: display.folder ?? "" };
   if (display.detail) shown.detail = display.detail;
-  const run = (extra: { approve?: boolean; force?: boolean; live?: boolean }) =>
+  const run = (extra: { force?: boolean; live?: boolean }) =>
     options.send ? options.send({ ...shown, ...extra }) : post({ type: "componentCommand", messageID, index, ...shown, ...extra });
   const hasData = display.data !== "null" && display.data !== "";
   // Runs again by itself every so often while on screen (its about.md's Refresh line).
@@ -1031,10 +1034,8 @@ export function commandCard(
     const allow = document.createElement("button");
     allow.className = "primary command-allow";
     allow.textContent = t("command.allow");
-    allow.addEventListener("click", () => {
-      allow.disabled = true;
-      run({ approve: true });
-    });
+    // Asks the app to run it: the app's own sheet shows the command again and allows it.
+    allow.addEventListener("click", () => run({}));
     const note = document.createElement("span");
     note.className = "command-note";
     note.textContent = t("command.remembered");

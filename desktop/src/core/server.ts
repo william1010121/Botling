@@ -616,10 +616,10 @@ export class Core {
     }
   }
 
-  /** Something done with a spec (its chip under a reply, its panel); false when there is no such spec. */
-  private async specAct(id: string, action: SpecAction): Promise<boolean> {
+  /** Something done with a spec (its chip under a reply, its panel); not accepted when there is no such spec, or a run waits for the user's OK. */
+  private specAct(id: string, action: SpecAction): ResultOf<"spec.act"> {
     const found = this.specs.locate(id.toUpperCase());
-    if (!found) return false;
+    if (!found) return { accepted: false };
     const { chat, spec } = found;
     switch (action.kind) {
       case "press": this.specs.press(spec.id, chat); break;
@@ -627,12 +627,15 @@ export class Core {
       case "edit": this.specs.editValue(spec.id, action.key, action.value, chat); break;
       case "answer": this.specs.answer(spec.id, action.question, action.option, chat); break;
       case "say": this.specs.say(spec.id, action.text, action.request ?? null, chat); break;
-      case "testRun": void this.specs.testRun(spec.id, chat, action.command, action.folder, !!action.approve); break;
-      case "command": void this.specs.runComponent(spec.id, chat, action); break;
+      case "testRun":
+      case "command": {
+        const outcome = action.kind === "testRun" ? this.specs.testRun(spec.id, chat, action.command, action.folder) : this.specs.runComponent(spec.id, chat, action);
+        return typeof outcome === "boolean" ? { accepted: outcome } : { accepted: false, needsApproval: outcome };
+      }
       case "build": this.specs.build(spec.id, chat); break;
       case "cancel": this.specs.cancel(spec.id, chat); break;
     }
-    return true;
+    return { accepted: true };
   }
 
   /**
@@ -2336,6 +2339,7 @@ First write a test that shows this, then fix it.`;
         return bot.read();
       }
       case "component.command": return this.bot(cmd.botId).componentCommand(cmd.messageId, cmd.index, cmd);
+      case "component.approve": return this.bot(cmd.botId).componentApprove(cmd.messageId, cmd.index, cmd);
       case "component.detail": return this.bot(cmd.botId).componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
       case "component.save": return this.bot(cmd.botId).componentSave(cmd.messageId, cmd.index, cmd.data);
       case "component.report": return { sent: this.reportComponent(cmd) };
@@ -2350,7 +2354,11 @@ First write a test that shows this, then fix it.`;
         const spec = this.specs.make(this.bot(cmd.botId), cmd.messageId, cmd.purpose ?? null, cmd.preview ?? null);
         return { specId: spec?.id ?? null };
       }
-      case "spec.act": return { accepted: await this.specAct(cmd.specId, cmd.action) };
+      case "spec.act": return this.specAct(cmd.specId, cmd.action);
+      case "spec.approve": {
+        const found = this.specs.locate(cmd.specId.toUpperCase());
+        return { accepted: !!found && this.specs.approve(found.spec.id, found.chat, cmd.run, cmd) };
+      }
       case "spec.close": this.specs.close(); return {};
       case "engine.models": {
         const bot = this.bot(cmd.botId);
@@ -2368,6 +2376,7 @@ First write a test that shows this, then fix it.`;
       case "pin.change": return this.bot(cmd.botId).pinChange(cmd.id, cmd.change);
       case "pin.arrange": return this.bot(cmd.botId).pinArrange(cmd.places);
       case "pin.command": return this.bot(cmd.botId).pinCommand(cmd.id, cmd);
+      case "pin.approve": return this.bot(cmd.botId).pinApprove(cmd.id, cmd);
       case "pin.shown": {
         const bot = this.bot(cmd.botId);
         if (cmd.visible) {

@@ -584,11 +584,11 @@ export type Action =
   | { type: "addFileData"; name: string; base64: string }
   | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null; problem?: true; pinID?: string }
   | { type: "componentRevert"; name: string }
-  | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
+  | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; force?: boolean; live?: boolean }
   | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number>; card?: string; command?: string }
   | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; spec?: string; refresh: PinRefresh; minutes: number; seconds?: number }
   | { type: "unpin"; id: string }
-  | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
+  | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; force?: boolean; live?: boolean }
   | { type: "pinShown"; ids: string[] | null }
   | { type: "pinsVisible"; ids: string[] }
   | { type: "movePin"; id: string; to: number }
@@ -606,11 +606,11 @@ export type Action =
   | { type: "openSpec"; id: string }
   | { type: "selectTask"; id: string }
   | { type: "pressSpec"; id: string }
-  | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
+  | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; force?: boolean }
   | { type: "specEdit"; id: string; key: string; value: string }
   | { type: "specAnswer"; id: string; question: string; option: number }
   | { type: "specSay"; id: string; text: string; request?: string }
-  | { type: "specTestRun"; id: string; command: string; folder: string; approve?: boolean }
+  | { type: "specTestRun"; id: string; command: string; folder: string }
   | { type: "specBuild"; id: string }
   | { type: "specCancel"; id: string }
   | { type: "specClose" }

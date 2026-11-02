@@ -22,6 +22,7 @@ import type { Client } from "./client";
 import { faceURL } from "./avatars";
 import { Icon } from "./icons";
 import { activeTasks, finishedTasks } from "./RightPanel";
+import { ARM_MS, useApprovalSheet } from "./ApprovalSheet";
 import { dictionaries, type Lang } from "../../../Web/src/i18n";
 import { en, type Key } from "../../../Web/src/locales/en";
 
@@ -406,12 +407,14 @@ export interface WhiteboardProps {
   pinned?: string[];
   /** The app's language, for the board's own words. */
   lang?: Lang | null;
+  /** How long the ApprovalSheet's Allow stays off once it opens (ms); 0 in tests. */
+  approvalArmMs?: number;
 }
 
 /** A tooltip's place and words (the shelf's pills and rows, the ranking, the chart). */
 interface Tip { x: number; y: number; content: ReactNode }
 
-export function Whiteboard({ client, bots, waiting, components, look, now, mainMessages, mainBotId, statusOf, onOpenChat, onError, refreshMs = 5_000, pinned, lang }: WhiteboardProps) {
+export function Whiteboard({ client, bots, waiting, components, look, now, mainMessages, mainBotId, statusOf, onOpenChat, onError, refreshMs = 5_000, pinned, lang, approvalArmMs = ARM_MS }: WhiteboardProps) {
   const data = useWhiteboardData(client, refreshMs);
   const byBot = useMemo(() => new Map((data?.bots ?? []).map((entry) => [entry.botId, entry])), [data]);
   const pins = useMemo(() => new Set(pinned ?? []), [pinned]);
@@ -419,6 +422,9 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
   const [shelfOpen, setShelfOpen] = useShelfOpen();
   const [open, setOpen] = useState<{ botId: string; origin: string } | null>(null);
   const [tip, setTip] = useState<Tip | null>(null);
+  // A picture's command waiting for your OK: the same sheet as a chat card's (ApprovalSheet.tsx).
+  const approval = useApprovalSheet(client, lang, onError, approvalArmMs);
+  const asking = !!approval.sheet;
   const canvas = useRef<HTMLDivElement>(null);
   const waitingLane = useRef<HTMLElement>(null);
   const openBot = open ? bots.find((bot) => bot.id === open.botId) ?? null : null;
@@ -438,11 +444,11 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
     setOpen({ botId: bot.id, origin });
   };
   useEffect(() => {
-    if (!open) return;
+    if (!open || asking) return;
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(null); };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [open]);
+  }, [open, asking]);
   const tipFor = (content: ReactNode) => ({
     onPointerEnter: (event: React.PointerEvent) => setTip({ x: event.clientX, y: event.clientY, content }),
     onPointerMove: (event: React.PointerEvent) => setTip((current) => (current ? { ...current, x: event.clientX, y: event.clientY } : current)),
@@ -540,7 +546,8 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
         {open && openBot && (
           <div className="wb-scrim" onPointerDown={(event) => { if (event.target === event.currentTarget) setOpen(null); }}>
             <Report client={client} components={components} bot={openBot} data={byBot.get(openBot.id)} waiting={waiting} look={look} now={now} origin={open.origin} status={statusOf(openBot)} lang={lang} onNotify={notify}
-              onAllow={(picture) => void client.request({ type: "whiteboard.allow", botId: openBot.id, command: picture.command!, folder: picture.folder! }).catch(onError)}
+              onAllow={(picture) => approval.ask({ command: picture.command!, folder: picture.folder!, detail: null, card: picture.name },
+                { type: "whiteboard.allow", botId: openBot.id, command: picture.command!, folder: picture.folder! })}
               onClose={() => setOpen(null)} onOpenChat={(id) => { setOpen(null); onOpenChat(id); }}
               onOpenResult={(result) => void client.request({ type: "result.open", botId: openBot.id, url: result.url }).catch(onError)} />
           </div>
@@ -550,6 +557,7 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
         <div className="wb-tip" role="tooltip" style={{ left: Math.max(8, Math.min(tip.x + 12, (typeof window === "undefined" ? 1e4 : window.innerWidth) - 268)), top: tip.y + 16 }}>{tip.content}</div>
       )}
       <WhiteboardComposer client={client} mainBotId={mainBotId} onError={onError} />
+      {approval.sheet}
     </div>
   );
 }

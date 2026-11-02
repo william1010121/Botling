@@ -293,6 +293,12 @@ button { font: inherit; color: inherit; }
 .dialog-buttons button { border: 0; border-radius: 6px; padding: 4px 14px; font-size: 13px; cursor: pointer; }
 .dialog-cancel { background: var(--chip); color: var(--text); }
 .dialog-destructive { background: #B3261E; color: #fff; }
+/* ApprovalSheet.tsx: a card's command waiting for your OK, in full. */
+.approval-sheet { width: min(460px, calc(100vw - 32px)); box-sizing: border-box; }
+.approval-sheet p { margin-bottom: 6px; }
+.approval-folder { display: block; margin: 0 0 8px; font: 12px ui-monospace, "SF Mono", Menlo, monospace; color: var(--text); word-break: break-all; }
+.approval-command { margin: 0 0 12px; max-height: 30vh; overflow: auto; padding: 8px 10px; border-radius: 8px; background: var(--chip); color: var(--text); font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+.approval-sheet .approval-note { margin: 0 0 14px; font-size: 12px; color: var(--faint); }
 
 /* The right panel (SidePanels.swift DetailPanel: Theme.side, 20 pt padding, 28 pt between sections). */
 .detail-panel {

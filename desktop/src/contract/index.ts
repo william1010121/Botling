@@ -218,6 +218,12 @@ export type DisplayView = z.infer<typeof DisplayView>;
 /** A bot's own picture for its whiteboard card: a component drawn as its Board tile would be, 1×1 or 2×1. */
 export const WhiteboardPictureView = DisplayView.extend({ size: z.enum(["1x1", "2x1"]) });
 export type WhiteboardPictureView = z.infer<typeof WhiteboardPictureView>;
+
+/**
+ * A card's command waiting for the user's OK, as the core has it (never as a frame said it): what the app
+ * page's ApprovalSheet shows before it sends `component.approve` / `pin.approve` / `spec.approve`.
+ */
+export type ApprovalAskView = { command: string; folder: string; detail: string | null; card: string };
 /**
  * One bot on the main bot's whiteboard: its memory.md's "Current status", "In progress" and "Decided" as written (`memoryItems`; its "Waiting on you" comes with `waiting.list`), its
  * task cards and the links handed over in its chat (newest first). Only what the bot keeps itself.
@@ -417,8 +423,8 @@ export const SpecAction = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("edit"), key: z.string().max(40), value: z.string().max(20_000) }),
   z.strictObject({ kind: z.literal("answer"), question: z.string().max(200), option: z.number().int().nonnegative().max(19) }),
   z.strictObject({ kind: z.literal("say"), text: z.string().max(20_000), request: z.string().max(200).optional() }),
-  z.strictObject({ kind: z.literal("testRun"), command: z.string().max(20_000), folder: z.string().max(4_000), approve: z.boolean().optional() }),
-  z.strictObject({ kind: z.literal("command"), command: z.string().max(20_000), folder: z.string().max(4_000), detail: z.string().max(20_000).optional(), approve: z.boolean().optional(), force: z.boolean().optional() }),
+  z.strictObject({ kind: z.literal("testRun"), command: z.string().max(20_000), folder: z.string().max(4_000) }),
+  z.strictObject({ kind: z.literal("command"), command: z.string().max(20_000), folder: z.string().max(4_000), detail: z.string().max(20_000).optional(), force: z.boolean().optional() }),
   z.strictObject({ kind: z.literal("build") }),
   z.strictObject({ kind: z.literal("cancel") }),
 ]);
@@ -1065,11 +1071,19 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("catchup.retry"), botId, key: z.string().min(1).max(300).optional() }),
   /** Summarizes the interval after one of your lines (the footer's button). */
   z.strictObject({ type: z.literal("catchup.interval"), botId, userMessageId: id }),
-  /** A component card's command: allowed (with the command, folder and Detail command it showed), run again (↻), or by its own timer (`live`). */
+  /**
+   * A component card's command: run (with the command and folder it showed), again (↻), or by its own timer (`live`).
+   * It never allows anything: one not allowed yet answers `needsApproval`, and only the app page's ApprovalSheet sends `component.approve`.
+   */
   z.strictObject({
     type: z.literal("component.command"), botId, messageId: id, index: z.number().int().nonnegative().max(19),
     command: z.string().max(20_000), folder: z.string().max(4_000), detail: z.string().max(20_000).optional(),
-    approve: z.boolean().optional(), force: z.boolean().optional(), live: z.boolean().optional(),
+    force: z.boolean().optional(), live: z.boolean().optional(),
+  }),
+  /** "Allow and run" on the app page's ApprovalSheet (never from the chat page): the command, folder and Detail command the sheet showed. */
+  z.strictObject({
+    type: z.literal("component.approve"), botId, messageId: id, index: z.number().int().nonnegative().max(19),
+    command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), detail: z.string().max(20_000).optional(),
   }),
   /** A component's `ccb.runDetail(values)`: its about.md's Detail command, only once allowed in `folder`. `card`+`command`: `{save: true}`. */
   z.strictObject({
@@ -1091,6 +1105,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("spec.make"), botId, messageId: id, purpose: z.string().max(4_000).optional(), preview: z.number().int().nonnegative().max(2).optional() }),
   /** Something done with a spec (its chip, its panel); the spec is found by its id. */
   z.strictObject({ type: z.literal("spec.act"), specId: id, action: SpecAction }),
+  /** A spec's test run (`testRun`) or its built card (`command`) allowed on the app page's ApprovalSheet, as `component.approve`. */
+  z.strictObject({ type: z.literal("spec.approve"), specId: id, run: z.enum(["testRun", "command"]), command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), detail: z.string().max(20_000).optional() }),
   /** The spec panel folds back to the chip (`closeSpec`), or is made wide (`setSpecPanelWide`). */
   z.strictObject({ type: z.literal("spec.close") }),
   /** The models the local Codex offers (`model/list`, 1.x's `CodexModels`), for the Codex model menu. */
@@ -1130,7 +1146,9 @@ export const Command = z.discriminatedUnion("type", [
   /** Board cards laid out: each one's top-left cell (and size). */
   z.strictObject({ type: z.literal("pin.arrange"), botId, places: z.array(z.strictObject({ id, col: z.number().int().nonnegative().max(1_000), row: z.number().int().nonnegative().max(10_000), size: z.string().max(10).optional() })).max(200) }),
   /** A pinned card's command: Allow (with what it showed) or ↻. */
-  z.strictObject({ type: z.literal("pin.command"), botId, id, command: z.string().max(20_000).optional(), folder: z.string().max(4_000).optional(), detail: z.string().max(20_000).optional(), approve: z.boolean().optional(), force: z.boolean().optional() }),
+  z.strictObject({ type: z.literal("pin.command"), botId, id, command: z.string().max(20_000).optional(), folder: z.string().max(4_000).optional(), detail: z.string().max(20_000).optional(), force: z.boolean().optional() }),
+  /** A pinned card's "Allow and run" on the app page's ApprovalSheet, as `component.approve`. */
+  z.strictObject({ type: z.literal("pin.approve"), botId, id, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), detail: z.string().max(20_000).optional() }),
   /** Pins just shown (a chip opened, the Board; none named: all), or the ones the user can see now (`visible`). */
   z.strictObject({ type: z.literal("pin.shown"), botId, ids: z.array(id).max(200).nullable(), visible: z.boolean().optional() }),
   /** Main only: a component page for a sandboxed frame, served from botling-card://page/<token>. `panel`: a plugin panel (its web part loads as a module). */
@@ -1243,7 +1261,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
-  "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
+  "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
@@ -1341,14 +1359,16 @@ export interface Results {
   "card.html": { html: string };
   "routines.list": { routines: RoutineView[]; error: string | null };
   "routines.change": { routines: RoutineView[]; error: string | null };
-  "component.command": { accepted: boolean };
+  "component.command": { accepted: boolean; needsApproval?: ApprovalAskView };
+  "component.approve": { accepted: boolean };
   "component.detail": { ok: boolean; value: string };
   "component.save": { saved: boolean };
   "component.report": { sent: boolean };
   "chat.feedback": { sent: boolean };
   "component.revert": { reverted: boolean; problem: string | null };
   "spec.make": { specId: string | null };
-  "spec.act": { accepted: boolean };
+  "spec.act": { accepted: boolean; needsApproval?: ApprovalAskView };
+  "spec.approve": { accepted: boolean };
   "spec.close": Record<string, never>;
   "engine.models": ModelDiscovery;
   "codex.models": { models: { id: string; name: string; isDefault: boolean; efforts: string[] | null }[] };
@@ -1356,7 +1376,8 @@ export interface Results {
   "pin.add": { pinned: boolean };
   "pin.change": { changed: boolean };
   "pin.arrange": { changed: boolean };
-  "pin.command": { accepted: boolean };
+  "pin.command": { accepted: boolean; needsApproval?: ApprovalAskView };
+  "pin.approve": { accepted: boolean };
   "pin.shown": { ran: number };
   "card.page": { url: string };
   "card.image": { path: string; type: string };

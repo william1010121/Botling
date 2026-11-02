@@ -167,7 +167,7 @@ describe("make into component, in the chat", () => {
     // Nothing runs on its own.
     expect(sent).toEqual([]);
     click(ask.querySelector(".command-allow"));
-    expect(sent).toEqual([{ type: "specCommand", id: "S1", command: "swift test --parallel", folder: "/Users/me/p", approve: true }]);
+    expect(sent).toEqual([{ type: "specCommand", id: "S1", command: "swift test --parallel", folder: "/Users/me/p" }]);
   });
 
   it("a new version being built keeps the component, saying so", () => {
@@ -290,13 +290,13 @@ describe("the spec workspace in the right panel", () => {
     expect(picture.dataset.url).toBe("file:///tmp/shot/contact-sheet.png");
   });
 
-  it("Test run asks to allow the exact command and folder first", () => {
+  it("Test run asks to allow the exact command and folder first (the app page's sheet allows it)", () => {
     const root = panel(spec({ testRun: { status: "approve", command: "swift test --parallel", folder: "/Users/me/ClaudeCodeBot", output: null, error: null, ranAt: null, matches: null } }));
     const ask = root.querySelector(".spec-test .command-approve")!;
     expect(ask.textContent).toContain("/Users/me/ClaudeCodeBot");
     expect(ask.querySelector(".command-full")?.textContent).toBe("swift test --parallel");
     click(ask.querySelector(".command-allow"));
-    expect(sent).toEqual([{ type: "specTestRun", id: "S1", command: "swift test --parallel", folder: "/Users/me/ClaudeCodeBot", approve: true }]);
+    expect(sent).toEqual([{ type: "specTestRun", id: "S1", command: "swift test --parallel", folder: "/Users/me/ClaudeCodeBot" }]);
   });
 
   it("Test run's output is checked against the fields", () => {

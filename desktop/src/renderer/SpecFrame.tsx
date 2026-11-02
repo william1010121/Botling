@@ -4,11 +4,14 @@
 // its preview's component frames get their pages from main, as the chat's do.
 import { useCallback, useEffect, useRef } from "react";
 import type { Client } from "./client";
-import type { SpecStateView } from "../contract";
+import type { ApprovalAskView, Command, SpecStateView } from "../contract";
+import { cardApprove, type CardRun } from "./card-approval";
 import { specState } from "./payload";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 
-export function SpecFrame({ client, spec, lang, onError }: { client: Client; spec: SpecStateView; lang: string | null; onError: (failure: unknown) => void }) {
+export function SpecFrame({ client, spec, lang, onError, onAsk }: { client: Client; spec: SpecStateView; lang: string | null; onError: (failure: unknown) => void;
+  /** Its test run waits for your OK: the app page's ApprovalSheet asks (the panel cannot allow it). */
+  onAsk: (view: ApprovalAskView, approve: Command) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const ready = useRef(false);
   const latest = useRef(spec);
@@ -66,7 +69,12 @@ export function SpecFrame({ client, spec, lang, onError }: { client: Client; spe
         case "specTestRun": {
           const command = text(action.command, 20_000);
           const folder = text(action.folder, 4_000);
-          if (command !== null && folder !== null) act({ kind: "testRun", command, folder, ...(typeof action.approve === "boolean" ? { approve: action.approve } : {}) });
+          if (command === null || folder === null) return;
+          const run: CardRun = { type: "spec.act", specId: latest.current.id, action: { kind: "testRun", command, folder } };
+          void client.request(run).then((result) => {
+            const approve = result.needsApproval ? cardApprove(run, result.needsApproval) : null;
+            if (approve) onAsk(result.needsApproval!, approve);
+          }).catch(onError);
           return;
         }
         case "specBuild": act({ kind: "build" }); return;
@@ -77,7 +85,7 @@ export function SpecFrame({ client, spec, lang, onError }: { client: Client; spe
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, push]);
+  }, [client, onError, onAsk, push]);
 
   return (
     <aside className={`spec-panel${spec.wide ? " wide" : ""}`} aria-label="Component spec">

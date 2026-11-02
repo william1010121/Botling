@@ -440,7 +440,7 @@ describe("whiteboard page", () => {
     };
     try {
       await act(async () => root.render(createElement(Whiteboard, {
-        client: pictures(), bots: working, waiting: calm, components: { ...components, gitlog: components.status }, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+        client: pictures(), bots: working, waiting: calm, components: { ...components, gitlog: components.status }, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0, approvalArmMs: 0,
         statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
       })));
       const card = host.querySelector(`.lane-running .wb-card[data-bot="${site.id}"]`)!;
@@ -459,8 +459,19 @@ describe("whiteboard page", () => {
       await act(async () => paperCard.click());
       const ask = host.querySelector(".wb-picture-ask")!;
       expect(ask.textContent).toContain("printf x");
+      // Allow opens the app's ApprovalSheet (as a chat card's); only its Allow allows, and Escape closes the sheet, not the report.
       await act(async () => ask.querySelector<HTMLButtonElement>("button")!.click());
+      expect(commands.find((cmd) => cmd.type === "whiteboard.allow")).toBeUndefined();
+      const sheet = document.querySelector(".approval-sheet")!;
+      expect(sheet.querySelector(".approval-folder")?.textContent).toBe("/tmp/paper");
+      expect(sheet.querySelector(".approval-command")?.textContent).toBe("printf x");
+      await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+      expect(document.querySelector(".approval-sheet")).toBeNull();
+      expect(host.querySelector(".wb-picture-ask")).not.toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>(".wb-picture-ask button")!.click());
+      await act(async () => document.querySelector<HTMLButtonElement>(".approval-allow")!.click());
       expect(commands.find((cmd) => cmd.type === "whiteboard.allow")).toEqual({ type: "whiteboard.allow", botId: paper.id, command: "printf x", folder: "/tmp/paper" });
+      expect(document.querySelector(".approval-sheet")).toBeNull();
     } finally {
       data.bots.forEach((entry, index) => { entry.picture = saved[index]!; });
     }

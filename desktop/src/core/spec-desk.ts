@@ -9,7 +9,7 @@ import type { Bot, GuestAnswer } from "./bot";
 import type { Clock } from "./briefing";
 import type { ComponentCommands } from "./components/commands";
 import { BUILT_INS, type ComponentLibrary } from "./components/library";
-import type { ComponentInfoView, DisplayView, SpecChipView, SpecStateView } from "../contract";
+import type { ApprovalAskView, ComponentInfoView, DisplayView, SpecChipView, SpecStateView } from "../contract";
 import type { MaintainerDesk } from "./maintainer";
 import { preview as previewOf } from "./bot";
 import { pageOfCard } from "./page-preview";
@@ -380,42 +380,51 @@ export class SpecDesk {
   // ------------------------------------------------------------------------------------------
   // Test run
 
-  /** Runs the spec's command once to see what it prints (`testRunSpec`), only once the user allowed it. */
-  async testRun(id: string, chat: Bot, shown: string | null, shownFolder: string | null, approve: boolean) {
+  /**
+   * Runs the spec's command once to see what it prints (`testRunSpec`), only once the user allowed it; until then it
+   * answers what the app page's ApprovalSheet asks about (the panel never allows anything itself). False: no such run.
+   */
+  testRun(id: string, chat: Bot, shown: string | null, shownFolder: string | null): ApprovalAskView | boolean {
     const spec = chat.specs.find((candidate) => candidate.id === id);
     const command = spec?.command;
-    if (!spec || command === undefined) return;
+    if (!spec || command === undefined) return false;
     const folder = spec.folder;
-    if (approve && (shown === null || shownFolder === null)) return;
-    if (shown !== null && shown !== command) return;
-    if (shownFolder !== null && resolveFolder(shownFolder) !== resolveFolder(folder)) return;
-    if (approve) this.deps.commands.approve(command, folder);
+    if (shown !== null && shown !== command) return false;
+    if (shownFolder !== null && resolveFolder(shownFolder) !== resolveFolder(folder)) return false;
     this.edit(chat, id, (edited) => { if (edited.testRun?.command !== command) edited.testRun = { command, folder }; });
-    if (!this.deps.commands.isApproved(command, folder)) { this.publish(); return; }
+    if (!this.deps.commands.isApproved(command, folder)) { this.publish(); return { command, folder, detail: null, card: spec.name }; }
     const run = this.deps.commands.run(specCard(spec), command, folder, true);
     this.publish();
-    await run;
-    this.keepTestRun(id, command, chat);
+    void run.then(() => this.keepTestRun(id, command, chat));
+    return true;
   }
 
-  /** The built component's card under the reply: Allow and run, ↻, its first draw (`runSpecComponent`). */
-  async runComponent(id: string, chat: Bot, shown: { command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }) {
+  /** The built component's card under the reply: run, ↻, its first draw (`runSpecComponent`); not allowed yet, what the ApprovalSheet asks about. */
+  runComponent(id: string, chat: Bot, shown: { command: string; folder: string; force?: boolean }): ApprovalAskView | boolean {
     const spec = chat.specs.find((candidate) => candidate.id === id);
     const name = spec?.built;
-    if (!spec || !name) return;
+    if (!spec || !name) return false;
     const command = specCommand(spec, name, this.library);
-    if (!command) return;
+    if (!command) return false;
     const folder = spec.folder;
-    if (shown.command !== command || resolveFolder(shown.folder) !== resolveFolder(folder)) return;
-    if (shown.approve) {
-      const detail = this.library.detailCommand(name);
-      if (detail !== (shown.detail ?? null)) return;
-      this.deps.commands.approve(command, folder);
-      if (detail) this.deps.commands.approve(`Detail command: ${detail}`, folder);
-    }
-    if (!this.deps.commands.isApproved(command, folder)) return;
-    await this.deps.commands.run(specCard(spec), command, folder, !!shown.force);
-    this.keepTestRun(id, command, chat);
+    if (shown.command !== command || resolveFolder(shown.folder) !== resolveFolder(folder)) return false;
+    const detail = this.library.detailCommand(name);
+    if (!this.deps.commands.isApproved(command, folder) || !this.deps.commands.isDetailApproved(detail, folder)) return { command, folder, detail, card: name };
+    void this.deps.commands.run(specCard(spec), command, folder, !!shown.force).then(() => this.keepTestRun(id, command, chat));
+    return true;
+  }
+
+  /** "Allow and run" on the app page's ApprovalSheet for a spec's test run or built card: what the sheet showed, then it runs. */
+  approve(id: string, chat: Bot, run: "testRun" | "command", shown: { command: string; folder: string; detail?: string }): boolean {
+    const spec = chat.specs.find((candidate) => candidate.id === id);
+    if (!spec) return false;
+    const command = run === "testRun" ? spec.command : spec.built ? specCommand(spec, spec.built, this.library) : null;
+    if (!command || shown.command !== command || resolveFolder(shown.folder) !== resolveFolder(spec.folder)) return false;
+    const detail = run === "command" ? this.library.detailCommand(spec.built!) : null;
+    if (detail !== (shown.detail ?? null)) return false;
+    this.deps.commands.approve(command, spec.folder);
+    if (detail) this.deps.commands.approve(`Detail command: ${detail}`, spec.folder);
+    return (run === "testRun" ? this.testRun(id, chat, command, spec.folder) : this.runComponent(id, chat, { command, folder: spec.folder })) === true;
   }
 
   /** A finished test run, kept on the spec: its output, whether it fits the fields, a sample (`keepTestRun`). */
