@@ -11,6 +11,7 @@ import {
   isPass, mentionBody, mentioned, quoteName, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
+import { specTrace } from "./spec-trace";
 import { newId, toSwiftDate, type ChatRecord } from "./store/records";
 
 /** A delivered bot @ (`BotMentionRecord`), kept so the same reply is not delivered again. */
@@ -127,6 +128,11 @@ export class Conversations {
     return lines.length ? lines.join("\n") : null;
   }
 
+  /** A spec trace line (spec/models/callin) in `chatId`, with what its pending list shows then. */
+  private trace(action: string, chatId: string, state: Record<string, unknown>) {
+    specTrace("callin", action, { chat: chatId, ...state, pending: this.callIns(chatId) });
+  }
+
   private settle(chatId: string, entry: PendingCallIn) {
     const entries = this.pending.get(chatId) ?? [];
     if (!entries.includes(entry)) return;
@@ -189,7 +195,10 @@ export class Conversations {
     const wake = this.followUps.get(chat.id);
     if (wake) this.followUps.delete(chat.id);
     const depth = wake && wake.until > Date.now() ? wake.depth : 0;
-    if (!record.text.includes("@")) return;
+    const route = (to: string | null, body: string | null, outcome: string) => {
+      if (this.deps.members().some((member) => member.id === chat.id)) this.trace("BotReply", chat.id, { to, body, msg: record.id, depth, outcome });
+    };
+    if (!record.text.includes("@")) { route(null, null, "none"); return; }
     if (!this.deps.members().some((member) => member.id === chat.id)) return;
     const members = [...this.deps.members(), ...this.subBotsOf(chat.id)];
     const callable = this.callable(chat.id);
@@ -217,18 +226,20 @@ export class Conversations {
       chat.appNotice(`Not sent to ${names.join(", ")} with @: ${names.length === 1 ? "it is" : "they are"} not a bot this chat can call in (another bot's sub bot answers only in that bot's chat).`);
     }
     const recipients = [...new Set(addressed.map((entry) => entry.member.id))];
-    if (!recipients.length && !ambiguous) return;
+    if (!recipients.length && !ambiguous) { route(unreachable[0]?.id ?? null, null, unreachable.length ? "unreachable" : "none"); return; }
     if (recipients.length !== 1 || ambiguous) {
       chat.appNotice("Not sent with @: this reply names more than one bot at the start of a line. Name one bot per reply.");
+      route(null, null, "many");
       return;
     }
     const recipient = addressed[0]!.member;
     const body = addressed.map((entry) => entry.body).filter(Boolean).join("\n");
     const log = this.mentionLog;
     // The same reply heard again: no new @.
-    if (log.records.some((entry) => entry.message === record.id)) return;
+    if (log.records.some((entry) => entry.message === record.id)) { route(recipient.id, body, "seen"); return; }
     if (depth >= MAX_FOLLOW_DEPTH) {
       chat.appNotice(`Not sent to ${recipient.name} with @: bots have already called each other in ${MAX_FOLLOW_DEPTH} times in a row from one message of yours.`);
+      route(recipient.id, body, "dropped");
       return;
     }
     // Since the user's last line: the same words again are a retry, and only so many calls.
@@ -239,20 +250,24 @@ export class Conversations {
       // Still to be answered: that answer covers this one too.
       if (!(this.pending.get(chat.id) ?? []).some((entry) => entry.member.id === recipient.id && entry.body === body)) {
         chat.appNotice(`Not sent to ${recipient.name} with @: it was already asked the same since your last message.`);
-      }
+        route(recipient.id, body, "dropped");
+      } else route(recipient.id, body, "merged");
       return;
     }
     if (recent.length >= BOT_MENTIONS_PER_USER_LINE) {
       chat.appNotice(`Not sent to ${recipient.name} with @: a bot can call others in at most ${BOT_MENTIONS_PER_USER_LINE} times per message of yours.`);
+      route(recipient.id, body, "dropped");
       return;
     }
     try {
       log.add({ message: record.id, sender: chat.id, recipient: recipient.id, body, date: new Date().toISOString() });
     } catch (error) {
       chat.appNotice(`Not sent to ${recipient.name} with @: could not keep a record of it (${(error as Error).message}).`);
+      route(recipient.id, body, "dropped");
       return;
     }
     this.startCallIn(chat, [recipient], record.id, null, { message: record.id, recipient: recipient.id, body, depth: depth + 1 });
+    route(recipient.id, body, "queued");
   }
 
   /** Chats whose bot was just handed a callee's answer: the next reply there is that follow-up (depth, expiry). */
@@ -283,9 +298,10 @@ export class Conversations {
     for (const entry of entries) {
       const member = entry.member;
       const bot = this.deps.bot(member.id);
-      if (!bot) { unheard.push(`${member.name} (it is not running)`); this.settle(chat.id, entry); continue; }
-      if (!this.callable(chat.id).some((candidate) => candidate.id === member.id)) { unheard.push(`${member.name} (it can no longer be called into this chat)`); this.settle(chat.id, entry); continue; }
+      if (!bot) { unheard.push(`${member.name} (it is not running)`); this.settle(chat.id, entry); this.trace("Start", chat.id, { to: member.id, outcome: "unheard" }); continue; }
+      if (!this.callable(chat.id).some((candidate) => candidate.id === member.id)) { unheard.push(`${member.name} (it can no longer be called into this chat)`); this.settle(chat.id, entry); this.trace("Start", chat.id, { to: member.id, outcome: "unheard" }); continue; }
       entry.state = "answering";
+      this.trace("Start", chat.id, { to: member.id, outcome: "answering" });
       const prompt = caller
         ? botCallInPrompt({ member, host, chat: chat.lines(), transcript: before, body: caller.body, speakerName: this.speakerName })
         : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName, mentionNote: this.mentionNote });
@@ -303,8 +319,8 @@ export class Conversations {
         this.speak(chat.id, null, member.id);
       }
       if (member.id === this.deps.mainBotId) this.deps.afterMainTurn();
-      if (answer.kind === "busy") unheard.push(`${member.name} (busy)`);
-      else if (answer.kind === "failed") unheard.push(`${member.name} (${firstLineOf(answer.why)})`);
+      if (answer.kind === "busy") { unheard.push(`${member.name} (busy)`); this.trace("GiveUp", chat.id, { to: member.id, outcome: "unheard" }); }
+      else if (answer.kind === "failed") { unheard.push(`${member.name} (${firstLineOf(answer.why)})`); this.trace("NoAnswer", chat.id, { to: member.id, outcome: "unheard" }); }
       else {
         // You named it, so its tags act as they would in its own chat. Called in by a bot, its answer
         // is only a line: no tags act, nothing in it is dispatched.
@@ -318,6 +334,7 @@ export class Conversations {
           this.followUps.set(chat.id, { depth: caller.depth ?? 1, until: Date.now() + 30 * 60_000 });
           chat.appMessage(botAnswerNote({ callee: member.name, question: caller.body, answer: said }));
         }
+        this.trace("Answer", chat.id, { to: member.id, outcome: "answered", posted: !!posted, followUp: this.followUps.get(chat.id)?.depth ?? 0 });
       }
       this.deps.refreshWaiting();
     }

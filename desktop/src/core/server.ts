@@ -82,6 +82,7 @@ import { DevBuilds, devWorkRoot, readBuild, spawnInstaller } from "./app-swap";
 export type AppOp = "screenshot" | "quit" | "installRelease";
 export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown }
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
+import { specTrace } from "./spec-trace";
 
 export interface CoreOptions {
   quotaRetriever?: import("./quota").QuotaRetriever;
@@ -1995,6 +1996,7 @@ First write a test that shows this, then fix it.`;
       const newest = bot.lines().findLast((line) => line.role === "user");
       if (newest) this.conversations.startCallIn(bot, called, newest.id, null);
     }
+    specTrace("callin", "UserLine", { chat: bot.id, to: called[0]?.id ?? null, pending: this.conversations.callIns(bot.id) });
     return sent;
   }
 
