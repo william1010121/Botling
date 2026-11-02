@@ -349,7 +349,10 @@ export class Core {
     moveSettingsToPlugins(Layout.settings(options.dataDir), (plugin, key, value) => this.plugins.registry.set(plugin, key, value));
     // The component library has the built-in plugins' cards now (botling.cards' preview card), before any bot
     // gets its first list (the built-ins).
-    if (this.components.library.rescan()) this.componentStamp = this.components.library.stamp;
+    // (Its first finding is not a "catalog change", so rescan() says false; the stamp moved all the same, and
+    // left behind it would make start() announce what the snapshot shows already, with a seq a client may hold.)
+    this.components.library.rescan();
+    this.componentStamp = this.components.library.stamp;
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.lastPlugins = JSON.stringify(this.plugins.view());
     this.loadedClaudeParts = JSON.stringify(this.plugins.registry.claudeStamp());
