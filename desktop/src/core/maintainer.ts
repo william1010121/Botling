@@ -26,7 +26,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Bot } from "./bot";
 import type { ComponentLibrary } from "./components/library";
 import { COMPONENT_LIMIT, safeName } from "./components/library";
@@ -34,6 +34,7 @@ import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "./comp
 import { PAGE_COMPONENT } from "./specs";
 import { writeFileAtomic } from "./durable/atomic";
 import { componentEditorAgent, pluginGuide } from "./maintainer-text";
+import { GUIDE_FOLDER, pluginGuideFiles } from "./plugin-guide-text";
 import { checkPlugin, ENGINE_RANGE, PERMISSIONS, title, type PluginManifest } from "./plugins/manifest";
 import type { Plugins } from "./plugins";
 import { swiftPrettyJSON } from "./swift-json";
@@ -82,7 +83,8 @@ const LEGACY_EDITOR_HASHES = new Set([
 
 /**
  * Writes what the app keeps in the library: ccb-components (the component library), ccb-core (the
- * component editor agent, on `model`) and PLUGINS.md (naming `builtIns`, the built-in plugins' folder). The
+ * component editor agent, on `model`) and PLUGINS.md (naming `builtIns`, the built-in plugins' folder; a small index,
+ * with its reference files and templates in plugins-guide/). The
  * editor's file follows the app, but only over a file the app wrote itself (or an older app's text): an edited
  * one stays (true is returned; 1.x then asks whether to keep it, 2.0 keeps it and says so in the log).
  */
@@ -126,6 +128,11 @@ export function prepareLibrary(root: string, model = "sonnet", builtIns: string 
   const guide = join(library, "PLUGINS.md");
   const text = builtIns ? pluginGuide(builtIns) : pluginGuide();
   if (readText(guide) !== text) writeFileAtomic(guide, text);
+  // The index's on-demand files (references, templates): the app's own, rewritten when the app's text changes.
+  for (const [path, content] of Object.entries(pluginGuideFiles())) {
+    const file = join(library, GUIDE_FOLDER, path);
+    if (readText(file) !== content) { mkdirSync(dirname(file), { recursive: true }); writeFileAtomic(file, content); }
+  }
   return { editedEditor: edited };
 }
 
