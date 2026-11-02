@@ -2,7 +2,7 @@
 
 Before: the developer-mode briefing (`core/app-swap.ts`) only told the agent to run `git worktree add`
 itself. Nothing tracked those worktrees, cleaned them up, or knew where an agent was working.
-Now the app makes, tracks and removes them (`core/worktrees.ts`), and tells the engine session where to run.
+Now the app makes, tracks and removes them (`builtin-plugins/botling.git/src/worktrees.ts`), and tells the engine session where to run.
 
 ## Data model
 
@@ -45,7 +45,7 @@ Never inside the project folder: creating files there would touch the main check
 4. **Discard**: removes worktree and branch. With uncommitted changes or unmerged commits it refuses
    (`dirty`/`unmerged`) until called with `force`, which the UI only does after the user confirms a dialog naming
    what will be lost. Record becomes `abandoned`.
-5. Review (`core/review.ts`): see "Review" below. Commit and Open PR: see the end of that section.
+5. Review (`builtin-plugins/botling.git/src/review.ts`): see "Review" below. Commit and Open PR: see the end of that section.
 
 Safety: the main checkout is changed only by the ff-merge in step 3; nothing is removed except by `git worktree remove`
 on a path that is recorded and listed by `git worktree list`; every refusal says what happened ("nothing was merged").
@@ -98,12 +98,12 @@ main checkout of a git repository. `worktreeRoot` overrides the folder.
 ## Review view, Commit and Open PR (UI)
 
 The Worktrees section has **Review changes** (the project's working tree against HEAD, read only) and, per worktree,
-**Review**. The view (`renderer/Review.tsx`) takes the chat's place: files with A/M/D/R and +/-, a unified or split diff
+**Review**. The view (`builtin-plugins/botling.git/src/ReviewView.tsx`, a `mainTab` view) takes the chat's place: files with A/M/D/R and +/-, a unified or split diff
 loaded one file at a time, scope (against the base / uncommitted / one turn). A click on a line number comments on it;
 **Send to agent** sends every pending comment as one `chat.send` to the bot that owns the worktree (place, quoted
 code, comment; `renderer/review-comments.ts`).
 
-**Commit** and **Open PR** exist for app-made worktrees only (`core/publish.ts`), never the main checkout:
+**Commit** and **Open PR** exist for app-made worktrees only (`builtin-plugins/botling.git/src/publish.ts`), never the main checkout:
 
 - Commit: `git add -A` then `git commit -m <message>` in the worktree; hooks and signing run as the user configured.
 - Open PR: refuses with uncommitted changes, with no commits beyond the base, with no remote, and with no `gh` (each

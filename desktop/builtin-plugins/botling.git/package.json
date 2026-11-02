@@ -1,0 +1,59 @@
+{
+  "name": "botling.git",
+  "displayName": "Git",
+  "version": "1.0.0",
+  "description": "App-managed git worktrees for a project's work (a branch and folder the agent works in, merged or discarded when you say so), the Review of their changes (diffs, comments sent to the agent, per-turn changes) and committing and opening a pull request from it.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "exec",
+      "files",
+      "bots",
+      "sessions"
+    ],
+    "web": "ui.js",
+    "host": "main.js",
+    "contributes": {
+      "views": [
+        {
+          "id": "botling.git.worktrees",
+          "title": "Worktrees",
+          "where": "rightPanel.section",
+          "forRole": "bots"
+        },
+        {
+          "id": "botling.git.review",
+          "title": "Review",
+          "icon": "git",
+          "where": "mainTab",
+          "forRole": "bots"
+        },
+        {
+          "id": "botling.git.settings",
+          "title": "Worktrees",
+          "where": "settings.section",
+          "after": "developer",
+          "terms": "worktree worktrees git branch folder app-managed developer"
+        }
+      ],
+      "settings": {
+        "botling.git.enabled": {
+          "type": "boolean",
+          "default": true,
+          "title": "App-managed worktrees",
+          "hidden": true
+        },
+        "botling.git.root": {
+          "type": "string",
+          "default": "",
+          "title": "Worktree folder",
+          "hidden": true
+        }
+      }
+    }
+  }
+}

@@ -1,10 +1,10 @@
-// The Review view (core/review.ts): the files a worktree (or the project's working tree) changed, each as
+// The Review view (review.ts): the files a worktree (or the project's working tree) changed, each as
 // a unified or split diff with syntax colours, loaded one file at a time; a click on a line adds a comment,
 // and "Send to agent" sends every pending comment to the bot that owns the worktree as one chat message.
-// It takes the chat's place in the chat column, like the whiteboard.
+// It is a tab in the chat header's place (botling.git's `mainTab` view), like the whiteboard.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BotView, ReviewDiffView, ReviewFilesView, ReviewScope } from "../contract";
-import { Client, RequestFailed } from "./client";
+import type { ReviewDiffView, ReviewFilesView, ReviewScope } from "./types";
+import { RequestFailed, type Client } from "./client";
 import { languageOf, tokenize } from "./highlight";
 import { formatReviewComments, type ReviewComment } from "./review-comments";
 import { reviewWords, type ReviewWords } from "./review-text";
@@ -41,7 +41,7 @@ export function splitRows(lines: Line[]): { left: Line | null; right: Line | nul
   return rows;
 }
 
-export function Review({ client, bot, target, lang, onClose }: { client: Client; bot: BotView; target: ReviewTarget; lang: string | null; onClose: () => void }) {
+export function Review({ client, bot, target, lang, onClose }: { client: Client; bot: { id: string; name: string }; target: ReviewTarget; lang: string | null; onClose: () => void }) {
   const words = reviewWords(lang);
   const isWorktree = target.worktreeId !== null;
   const [scope, setScope] = useState<ReviewScope>(isWorktree ? "branch" : "uncommitted");

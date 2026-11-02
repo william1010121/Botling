@@ -21,14 +21,12 @@ import { keybindingsOf, menuItems, offered, runsInHost, type PluginMenu } from "
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
-import { MainTabFrame, PanelFrame, PluginsButton, type BuiltinRunner } from "./Plugins";
-import { mainTabsFor, namedBot, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
+import { mainTabsFor, namedBot, rightPanelSectionsFor, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
-import { Worktrees } from "./Worktrees";
-import { Review, type ReviewTarget } from "./Review";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubagentRows, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { SpecFrame } from "./SpecFrame";
@@ -75,8 +73,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const now = useMinuteClock();
   /** The main bot's main view: its chat, or the whiteboard plugin's tab (kept for the next start). */
   const [whiteboardOn, setWhiteboardOn] = useWhiteboardChoice();
-  /** The Review view of a worktree (or the main checkout), shown in the chat's place. */
-  const [reviewing, setReviewing] = useState<{ botId: string; target: ReviewTarget } | null>(null);
   const collapsed = view.settings?.rightPanelCollapsed ?? false;
   const toggleRight = useCallback(() => {
     void client.request({ type: "settings.set", change: { key: "rightPanelCollapsed", value: !(store.getView().settings?.rightPanelCollapsed ?? false) } }).catch(() => {});
@@ -147,7 +143,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const remembered = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
   // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice is kept for the next start.
   const tab = remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
-  const review = reviewing && bot && reviewing.botId === bot.id && !watching ? reviewing.target : null;
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -247,6 +242,18 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (!botId) { setError(`No bot "${command.botId.slice(0, 80)}".`); return; }
     if (command.id === "botling.openResult") {
       void client.request({ type: "result.open", botId, url: command.url }).catch(fail);
+      return;
+    }
+    if (command.id === "botling.openLink") {
+      void client.request({ type: "link.open", source: "user", botId, url: command.url }).catch(fail);
+      return;
+    }
+    if (command.id === "botling.openTab") {
+      const tab = mainTabsFor(store.getView().plugins, { role: store.getView().bots.find((candidate) => candidate.id === botId)?.role ?? "bot", parent: store.getView().bots.find((candidate) => candidate.id === botId)?.parent })
+        .find((candidate) => candidate.plugin === command.plugin && candidate.id === command.view);
+      if (!tab) { fail(new Error(`No tab "${command.view.slice(0, 80)}".`)); return; }
+      selectBot(botId);
+      chooseTab(botId, tab);
       return;
     }
     const shown = store.getView().chat?.botId;
@@ -352,7 +359,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </aside>
       )}
       <section className="chat-pane">
-        <div className={`chat-column${tab ? " main-tab-on" : ""}${review ? " review-on" : ""}`}>
+        <div className={`chat-column${tab ? " main-tab-on" : ""}`}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.parent ? <SubBotTitle bot={bot} parent={view.bots.find((candidate) => candidate.id === bot.parent) ?? null} onOpenParent={selectBot} /> : bot.name}</span>}
@@ -392,8 +399,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
           </div>
         )}
-        {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
-        {review && bot && <Review client={client} bot={bot} target={review} lang={view.settings?.effectiveLanguage ?? null} onClose={() => setReviewing(null)} />}
+        {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />
         {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} shortcutLabel={shortcutLabel("toggleTerminal")} />}
@@ -431,7 +437,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           onSettings={openBotSettings}
           showingSettings={botSettings}
           settingsPage={botSettings ? <BotSettings client={client} bot={bot} /> : undefined}
-          worktrees={bot.role === "main" ? undefined : <Worktrees client={client} bot={bot} lang={view.settings?.effectiveLanguage ?? null} onReview={(target) => setReviewing({ botId: bot.id, target })} />}
+          pluginSections={rightPanelSectionsFor(view.plugins, bot).map((block) => <SlotFrame key={`${bot.id}/${block.plugin}/${block.id}`} client={client} plugin={block.plugin} view={block.id} title={block.title} fontSize={13} botId={bot.id} onBuiltin={runBuiltin} />)}
           onCloseSettings={() => setBotSettings(false)}
           onExpand={toggleRight}
         />

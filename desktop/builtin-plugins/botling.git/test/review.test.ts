@@ -3,10 +3,9 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { MAX_LINES, TurnLog, headCommit, mergeBase, parseNameStatus, parseNumstat, parseUnifiedDiff, reviewDiff, reviewFiles, safeRelative, snapshotTree } from "../../src/core/review";
-import { WorktreeDesk } from "../../src/core/worktree-desk";
-import { ReviewDiffView, ReviewFilesView } from "../../src/contract";
-import type { BotProfile } from "../../src/core/store/workspace";
+import { MAX_LINES, TurnLog, headCommit, mergeBase, parseNameStatus, parseNumstat, parseUnifiedDiff, reviewDiff, reviewFiles, safeRelative, snapshotTree } from "../src/review";
+import { WorktreeDesk } from "../src/desk";
+import type { SessionBot } from "../../../../Web/host/src/api";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -189,8 +188,8 @@ describe("turn log", () => {
 describe("worktree desk review", () => {
   function setup() {
     const { dir, folder } = repo();
-    const profile: BotProfile = { id: "ID1", name: "P", role: "manager", avatar: "hexagon", folder, memoryPath: ".bot/memory.md", storeDir: join(dir, "store"), tools: [], job: null, problem: null };
-    const desk = new WorktreeDesk({ dataDir: join(dir, "data"), settings: () => ({ enabled: true, root: join(dir, "wt") }), devWork: () => null, isDeveloper: () => false, moved: () => {} });
+    const profile: SessionBot = { id: "ID1", name: "P", role: "manager", parent: null, folder, memoryPath: ".bot/memory.md", storeDir: join(dir, "store"), problem: null, workRoot: null };
+    const desk = new WorktreeDesk({ dataDir: join(dir, "data"), settings: () => ({ enabled: true, root: join(dir, "wt") }), moved: () => {} });
     return { dir, folder, profile, desk };
   }
 
@@ -204,12 +203,12 @@ describe("worktree desk review", () => {
     git(wt.path, "add", "."); git(wt.path, "commit", "-m", "c1");
     writeFileSync(join(wt.path, "later.txt"), "x\n");
 
-    const branch = ReviewFilesView.parse(await desk.reviewFiles(profile, wt.id, "branch"));
+    const branch = (await desk.reviewFiles(profile, wt.id, "branch"));
     expect(branch).toMatchObject({ ok: true, base: "main" });
     expect(branch.files.map((f) => f.path)).toEqual(["keep.txt", "later.txt"]);
     const uncommitted = await desk.reviewFiles(profile, wt.id, "uncommitted");
     expect(uncommitted.files.map((f) => f.path)).toEqual(["later.txt"]);
-    const diff = ReviewDiffView.parse(await desk.reviewDiff(profile, wt.id, branch.from, branch.to, "keep.txt", undefined, false));
+    const diff = (await desk.reviewDiff(profile, wt.id, branch.from, branch.to, "keep.txt", undefined, false));
     expect(diff).toMatchObject({ ok: true, additions: 1 });
 
     const main = await desk.reviewFiles(profile, null, "uncommitted");
@@ -224,7 +223,7 @@ describe("worktree desk review", () => {
     const wt = (await desk.view(profile)).items[0];
     const files = await desk.reviewFiles(profile, wt.id, "branch");
     expect(await desk.reviewDiff(profile, wt.id, files.from, files.to, "../x", undefined, false)).toMatchObject({ ok: false });
-    const off = new WorktreeDesk({ dataDir: join(dir, "data"), settings: () => ({ enabled: false, root: null }), devWork: () => null, isDeveloper: () => false, moved: () => {} });
+    const off = new WorktreeDesk({ dataDir: join(dir, "data"), settings: () => ({ enabled: false, root: null }), moved: () => {} });
     expect(await off.reviewFiles(profile, null, "branch")).toMatchObject({ ok: false });
   });
 

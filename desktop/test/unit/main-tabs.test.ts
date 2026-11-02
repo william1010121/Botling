@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { SettingsChange, type PluginsView } from "../../src/contract";
 import { applySetting, settingsView } from "../../src/core/settings";
-import { mainTabsFor, namedBot, shownTab, tabKey } from "../../src/renderer/main-tabs";
+import { mainTabsFor, namedBot, rightPanelSectionsFor, shownTab, tabKey } from "../../src/renderer/main-tabs";
 
 const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 const PROJECT = "B0000000-0000-4000-8000-000000000001";
@@ -14,16 +14,27 @@ const plugins = {
     { plugin: "board", id: "board.wall", title: "Wall", icon: "people", forRole: "main" },
     { plugin: "git", id: "git.log", title: "Git", forRole: "project" },
     { plugin: "notes", id: "notes.page", title: "Notes", forRole: "any" },
+    { plugin: "trees", id: "trees.review", title: "Review", forRole: "bots" },
+  ],
+  rightPanelSections: [
+    { plugin: "trees", id: "trees.block", title: "Worktrees", forRole: "bots" },
+    { plugin: "board", id: "board.side", title: "Side", forRole: "main" },
   ],
 } satisfies PluginsView;
 
 describe("main-area tabs", () => {
   it("a bot's header offers the tabs for its role: the main bot main and any, a project bot (or its sub bot) project and any, a bot of its own any", () => {
     expect(mainTabsFor(plugins, { role: "main" }).map(tabKey)).toEqual(["board/board.wall", "notes/notes.page"]);
-    expect(mainTabsFor(plugins, { role: "manager" }).map(tabKey)).toEqual(["git/git.log", "notes/notes.page"]);
-    expect(mainTabsFor(plugins, { role: "bot", parent: PROJECT }).map(tabKey)).toEqual(["git/git.log", "notes/notes.page"]);
-    expect(mainTabsFor(plugins, { role: "bot" }).map(tabKey)).toEqual(["notes/notes.page"]);
+    expect(mainTabsFor(plugins, { role: "manager" }).map(tabKey)).toEqual(["git/git.log", "notes/notes.page", "trees/trees.review"]);
+    expect(mainTabsFor(plugins, { role: "bot", parent: PROJECT }).map(tabKey)).toEqual(["git/git.log", "notes/notes.page", "trees/trees.review"]);
+    expect(mainTabsFor(plugins, { role: "bot" }).map(tabKey)).toEqual(["notes/notes.page", "trees/trees.review"]);
     expect(mainTabsFor(null, { role: "main" })).toEqual([]);
+  });
+
+  it("a right panel block follows the same roles: \"bots\" is every bot but the main bot", () => {
+    expect(rightPanelSectionsFor(plugins, { role: "main" }).map((block) => block.id)).toEqual(["board.side"]);
+    for (const bot of [{ role: "manager" as const }, { role: "bot" as const }, { role: "bot" as const, parent: PROJECT }]) expect(rightPanelSectionsFor(plugins, bot).map((block) => block.id)).toEqual(["trees.block"]);
+    expect(rightPanelSectionsFor(null, { role: "manager" })).toEqual([]);
   });
 
   it("shows the tab remembered for the bot while it is offered; otherwise none (Chat or Board)", () => {

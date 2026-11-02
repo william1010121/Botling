@@ -107,8 +107,14 @@ export function ownsCommand(plugin: string, id: string): boolean {
 }
 
 /** Botling's own commands a plugin frame may run (plugin-extraction.md §4.3); the page around it runs them. */
-export const BUILTIN_COMMANDS = ["botling.openChat", "botling.openResult"] as const;
-export type BuiltinCommand = { id: "botling.openChat"; botId: string } | { id: "botling.openResult"; botId: string; url: string };
+export const BUILTIN_COMMANDS = ["botling.openChat", "botling.openResult", "botling.openLink", "botling.openTab"] as const;
+export type BuiltinCommand =
+  | { id: "botling.openChat"; botId: string }
+  | { id: "botling.openResult"; botId: string; url: string }
+  /** A link the user chose to open (a pull request), as a click on it in the chat would. */
+  | { id: "botling.openLink"; botId: string; url: string }
+  /** A bot's main-area tab (a plugin's `mainTab` view): the bot, the plugin and the view's id. */
+  | { id: "botling.openTab"; botId: string; plugin: string; view: string };
 
 /** One of Botling's own commands with the arguments it needs (openChat: a bot; openResult: a bot and one of its links), or null. */
 export function builtinCommand(id: string, args: string[] = []): BuiltinCommand | null {
@@ -116,6 +122,8 @@ export function builtinCommand(id: string, args: string[] = []): BuiltinCommand 
   if (!botId) return null;
   if (id === "botling.openChat" && args.length === 1) return { id, botId };
   if (id === "botling.openResult" && args.length === 2 && args[1]) return { id, botId, url: args[1] };
+  if (id === "botling.openLink" && args.length === 2 && args[1]) return { id, botId, url: args[1] };
+  if (id === "botling.openTab" && args.length === 3 && args[1] && args[2]) return { id, botId, plugin: args[1], view: args[2] };
   return null;
 }
 

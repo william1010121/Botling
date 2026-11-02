@@ -143,7 +143,7 @@ export interface FrameServices { components?: Record<string, ComponentInfoView>;
  * A plugin view's sandboxed frame: its page made from the web part, its calls to its own program part, its commands,
  * its tiles and approval asks (answered here; only this page's ApprovalSheet allows).
  */
-function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner, services: FrameServices = {}, fit?: PanelFit) {
+function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner, services: FrameServices = {}, fit?: PanelFit, context?: Record<string, string>) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -158,7 +158,7 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
   useEffect(() => {
     let live = true;
     client.request({ type: "plugins.panel", name: plugin, panel })
-      .then((part) => client.request({ type: "card.page", html: panelPage(plugin, panel, part.source, part.settings, fit), panel: true }))
+      .then((part) => client.request({ type: "card.page", html: panelPage(plugin, panel, part.source, part.settings, fit, context), panel: true }))
       .then((page) => { if (live) setUrl(page.url); }, (failure) => { if (live) setProblem(why(failure)); });
     return () => { live = false; };
   }, [client, plugin, panel]);
@@ -202,8 +202,8 @@ export function PanelFrame({ client, plugin, panel, title, onClose, onBuiltin, .
 }
 
 /** A plugin's main-area tab (`where: "mainTab"`, plan W2): the same frame, in the chat's place. */
-export function MainTabFrame({ client, plugin, view, title, onBuiltin, ...services }: { client: Client; plugin: string; view: string; title: string; onBuiltin: BuiltinRunner } & FrameServices) {
-  const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin, services);
+export function MainTabFrame({ client, plugin, view, title, onBuiltin, botId, ...services }: { client: Client; plugin: string; view: string; title: string; onBuiltin: BuiltinRunner; botId?: string } & FrameServices) {
+  const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin, services, undefined, botId ? { botId } : undefined);
   return (
     <div className="main-tab" role="region" aria-label={title} data-plugin={plugin}>
       {problem && <p className="plugins-problem">{problem}</p>}
@@ -217,8 +217,8 @@ export function MainTabFrame({ client, plugin, view, title, onBuiltin, ...servic
  * A plugin's block inside the app page's own surface (`settings.section`, `quickSettings`): the same sandboxed frame,
  * as tall as its content (the frame says so) and without a border or background, so it reads as part of the page.
  */
-export function SlotFrame({ client, plugin, view, title, fontSize, ...services }: { client: Client; plugin: string; view: string; title: string; fontSize: number } & FrameServices) {
-  const { frame, url, problem, note, height } = usePluginFrame(client, plugin, view, undefined, services, { fontSize });
+export function SlotFrame({ client, plugin, view, title, fontSize, onBuiltin, botId, ...services }: { client: Client; plugin: string; view: string; title: string; fontSize: number; onBuiltin?: BuiltinRunner; botId?: string } & FrameServices) {
+  const { frame, url, problem, note, height } = usePluginFrame(client, plugin, view, onBuiltin, services, { fontSize }, botId ? { botId } : undefined);
   return (
     <div className="plugin-slot" data-plugin={plugin} data-view={view}>
       {problem && <p className="plugins-problem">{problem}</p>}

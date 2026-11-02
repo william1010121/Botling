@@ -2,11 +2,10 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it } from "vitest";
-import { Worktrees } from "../../src/renderer/Worktrees";
-import { SettingsSheet } from "../../src/renderer/Settings";
-import { settingsView } from "../../src/core/settings";
-import { worktreeLine, worktreeWords } from "../../src/renderer/worktree-text";
-import type { Client } from "../../src/renderer/client";
+import { Worktrees } from "../src/WorktreesView";
+import { SettingsBlock } from "../src/views";
+import { worktreeLine, worktreeWords } from "../src/worktree-text";
+import type { Client } from "../src/client";
 
 const item = { id: "w1", branch: "bot/feat", path: "/w/feat", base: "main", task: null, owner: null, status: "active" as const, createdAt: "2026-01-01T00:00:00Z", changedFiles: 2, ahead: 1, missing: false };
 const bot = { id: "B1", role: "manager" } as any;
@@ -86,17 +85,23 @@ it("shows Traditional Chinese labels", async () => {
   expect(host.textContent).toContain("新增工作樹");
 });
 
-it("Settings has the worktree toggle and folder under Developer", async () => {
+it("Settings → Worktrees has the toggle and the folder (the Developer page's two settings), saved through the program part", async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   const host = document.createElement("div"); document.body.append(host); hosts.push(host);
   const root = createRoot(host);
-  const changes: any[] = [];
-  const client = { request: async (cmd: any) => { if (cmd.type === "settings.set") { changes.push(cmd.change); return settingsView({}); } return { models: [] }; } } as unknown as Client;
-  await act(async () => root.render(createElement(SettingsSheet, { client, settings: settingsView({}), bot: null, plugins: null, initialSection: "developer", onClose() {} })));
+  const calls: any[] = [];
+  const ccb = { call: async (method: string, params?: any) => {
+    calls.push([method, params]);
+    if (method === "lang") return "en";
+    if (method === "settings") return { enabled: true, root: "" };
+    if (method === "settings.set") return { enabled: params.enabled ?? true, root: params.root ?? "" };
+    return null;
+  }, command() {}, panels: { register: () => () => {} } };
+  await act(async () => root.render(createElement(SettingsBlock, { ccb })));
   const toggle = host.querySelector<HTMLInputElement>('[aria-label="App-managed worktrees"]')!;
   expect(toggle.checked).toBe(true);
   await act(async () => toggle.click());
-  expect(changes).toEqual([{ key: "worktrees", value: false }]);
-  expect(host.querySelector('[aria-label="Worktree folder"]')).not.toBeNull();
+  expect(calls.filter(([method]) => method === "settings.set")).toEqual([["settings.set", { enabled: false }]]);
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Worktree folder"]')!.disabled).toBe(true);
   await act(async () => root.unmount());
 });

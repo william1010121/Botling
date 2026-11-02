@@ -75,8 +75,6 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     pinnedBots: [...new Set(readSettingsList(raw.pinnedBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
     developerMode: bool(raw.developerMode, false),
     developerProject: typeof raw.developerProjectID === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw.developerProjectID) ? raw.developerProjectID.toUpperCase() : null,
-    worktrees: bool(raw.worktreesEnabled, true),
-    worktreeRoot: text(raw.worktreeRootChoice),
     updateCheck: bool(raw.updateCheckEnabled, true),
     shortcuts: normalizeOverrides(raw.shortcutBindings),
     mainTabs: mainTabs(raw.mainTabs),
@@ -87,23 +85,32 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
  * Settings that became a built-in plugin's, by their settings.json key: what that plugin calls it, and
  * the most it may be (they were whole numbers from 0, and 0 turned a limit off).
  */
-const MOVED_TO_PLUGINS: Record<string, { plugin: string; key: string; max: number }> = {
-  pasteCollapseChars: { plugin: "botling.chat-extras", key: "botling.chat-extras.pasteCollapseChars", max: 1_000_000 },
-  pasteCollapseLines: { plugin: "botling.chat-extras", key: "botling.chat-extras.pasteCollapseLines", max: 100_000 },
+const MOVED_TO_PLUGINS: Record<string, { plugin: string; key: string } & ({ type: "number"; max: number } | { type: "boolean" } | { type: "string" })> = {
+  pasteCollapseChars: { plugin: "botling.chat-extras", key: "botling.chat-extras.pasteCollapseChars", type: "number", max: 1_000_000 },
+  pasteCollapseLines: { plugin: "botling.chat-extras", key: "botling.chat-extras.pasteCollapseLines", type: "number", max: 100_000 },
+  worktreesEnabled: { plugin: "botling.git", key: "botling.git.enabled", type: "boolean" },
+  worktreeRootChoice: { plugin: "botling.git", key: "botling.git.root", type: "string" },
 };
 
 /**
  * On start: each of those still in settings.json goes to its plugin's settings (`set`, plugins.json)
  * and then out of settings.json, so it moves once. A bad value is dropped (the plugin's default).
  */
-export function moveSettingsToPlugins(file: string, set: (plugin: string, key: string, value: number) => void): void {
+export function moveSettingsToPlugins(file: string, set: (plugin: string, key: string, value: number | boolean | string) => void): void {
   const raw = readSettings(file);
   const moved = Object.keys(MOVED_TO_PLUGINS).filter((key) => key in raw);
   if (!moved.length) return;
   for (const name of moved) {
-    const { plugin, key, max } = MOVED_TO_PLUGINS[name];
-    const value = int(raw[name]);
-    if (value !== null && value >= 0) set(plugin, key, Math.min(value, max));
+    const entry = MOVED_TO_PLUGINS[name];
+    if (entry.type === "boolean") {
+      if (typeof raw[name] === "boolean") set(entry.plugin, entry.key, raw[name]);
+    } else if (entry.type === "string") {
+      const value = text(raw[name]);
+      if (value !== null) set(entry.plugin, entry.key, value.trim());
+    } else {
+      const value = int(raw[name]);
+      if (value !== null && value >= 0) set(entry.plugin, entry.key, Math.min(value, entry.max));
+    }
   }
   // plugins.json first: stopped in between, they move again next time.
   writeSettings(file, Object.fromEntries(Object.entries(raw).filter(([key]) => !moved.includes(key))));
@@ -147,10 +154,6 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "railCollapsed": set("railCollapsed", change.value); break;
     // 1.x keeps the project when developer mode goes off (`setDeveloperMode(_:project:)`).
     case "developerMode": set("developerMode", change.value); break;
-    case "worktrees": set("worktreesEnabled", change.value); break;
-    case "worktreeRoot": set("worktreeRootChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
-    case "worktrees": set("worktreesEnabled", change.value); break;
-    case "worktreeRoot": set("worktreeRootChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
     case "updateCheck": set("updateCheckEnabled", change.value); break;
     case "shortcuts": { const kept = normalizeOverrides(change.value); set("shortcutBindings", Object.keys(kept).length ? kept : null); break; }
     case "mainTab": {

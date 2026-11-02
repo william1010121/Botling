@@ -15,7 +15,8 @@ const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").
  */
 export interface PanelFit { fontSize: number }
 
-export function panelPage(plugin: string, panel: string, source: string, settings: Record<string, unknown>, fit?: PanelFit): string {
+/** `context`: what the page around it is about (the bot a block of its right panel or a tab of its header belongs to), as `ccb.context`. */
+export function panelPage(plugin: string, panel: string, source: string, settings: Record<string, unknown>, fit?: PanelFit, context: Record<string, string> = {}): string {
   const look = fit
     ? `html, body { margin: 0; background: transparent; color: #EDEDF0; font: ${Math.round(fit.fontSize)}px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   * { box-sizing: border-box; }
@@ -37,6 +38,7 @@ export function panelPage(plugin: string, panel: string, source: string, setting
 const NAME = ${json(plugin)}, PANEL = ${json(panel)}, SOURCE = ${json(source)};
 let SETTINGS = ${json(settings)};
 const FIT = ${json(!!fit)};
+const CONTEXT = Object.freeze(${json(context)});
 const root = document.getElementById("panel-root");
 const post = (message) => parent.postMessage(message, "*");
 const waiting = new Map();
@@ -82,6 +84,7 @@ function fail(error) {
 }
 const ccb = {
   name: NAME,
+  context: CONTEXT,
   panels: { register(id, render) { panels.set(String(id), render); if (String(id) === PANEL) draw(); return () => panels.delete(String(id)); } },
   settings: {
     get: (key) => SETTINGS[key],

@@ -30,8 +30,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.git, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.git", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
@@ -57,11 +57,11 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.git", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
-    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.usage", "botling.whiteboard", "aaa"]);
+    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.usage", "botling.whiteboard", "aaa"]);
     expect(registry(library).plugin("ccb-latex")!.enabled).toBe(false);
     plugins.setEnabled("ccb-latex", true);
     // Maintainer copies a built-in plugin into the library to change it: that copy is the one that runs.
@@ -193,5 +193,21 @@ describe("the / menu and keys with built-in plugins", () => {
     expect(slashMenu(null)).toEqual(slashMenu(view()));
     expect(keybindingsOf(null)).toEqual(keybindingsOf(view()));
     expect(runsInHost(null, "ccb-latex.insert")).toBe(false);
+  });
+});
+
+describe("botling.git", () => {
+  it("brings the Worktrees block (right panel), the Review tab and a Worktrees page of Settings, and may decide where sessions start", async () => {
+    const { viewSurfaces } = await import("../../src/core/plugins/views");
+    const plugins = registry(join(tempDir("builtin-git"), "plugins"));
+    const git = plugins.plugin("botling.git")!;
+    expect(git.builtIn).toBe(true);
+    expect(git.manifest.ccb?.permissions).toEqual(["exec", "files", "bots", "sessions"]);
+    const surfaces = viewSurfaces(plugins.contributions(), (name) => !!plugins.webPart(name));
+    expect(surfaces.rightPanelSections).toEqual([{ plugin: "botling.git", id: "botling.git.worktrees", title: "Worktrees", forRole: "bots" }]);
+    expect(surfaces.mainTabs).toContainEqual({ plugin: "botling.git", id: "botling.git.review", title: "Review", icon: "git", forRole: "bots" });
+    expect(surfaces.settingsSections).toContainEqual(expect.objectContaining({ plugin: "botling.git", id: "botling.git.settings", after: "developer" }));
+    expect(plugins.setting("botling.git", "botling.git.enabled")).toBe(true);
+    expect(plugins.setting("botling.git", "botling.git.root")).toBe("");
   });
 });

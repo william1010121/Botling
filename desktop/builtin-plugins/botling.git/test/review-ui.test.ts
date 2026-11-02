@@ -2,12 +2,12 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it } from "vitest";
-import { Review, splitRows } from "../../src/renderer/Review";
-import { Worktrees } from "../../src/renderer/Worktrees";
-import { languageOf, tokenize } from "../../src/renderer/highlight";
-import { formatReviewComments } from "../../src/renderer/review-comments";
-import { reviewWords } from "../../src/renderer/review-text";
-import type { Client } from "../../src/renderer/client";
+import { Review, splitRows } from "../src/ReviewView";
+import { Worktrees } from "../src/WorktreesView";
+import { languageOf, tokenize } from "../src/highlight";
+import { formatReviewComments } from "../src/review-comments";
+import { reviewWords } from "../src/review-text";
+import type { Client } from "../src/client";
 
 const hosts: HTMLElement[] = [];
 afterEach(() => { for (const host of hosts.splice(0)) host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; });

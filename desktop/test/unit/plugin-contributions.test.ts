@@ -177,8 +177,8 @@ describe("botling manifests", () => {
       { kind: "view", plugin: "board", id: "board.any", title: "Any", where: "mainTab", forRole: "any" },
     ]);
     expect(read.problems).toEqual([
-      'View "board.odd": forRole "everyone" must be main, project or any.',
-      'View "board.side": forRole is only for where "mainTab".',
+      'View "board.odd": forRole "everyone" must be main, project, bots or any.',
+      'View "board.side": forRole is only for where "mainTab" or "rightPanel.section".',
     ]);
   });
 
@@ -238,7 +238,7 @@ describe("botling manifests", () => {
       'Command "other.steal" must start with "mine.".',
       'Command "mine.ok" is declared twice.',
       "contributes.commands.3 is missing id.",
-      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section or quickSettings.',
+      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings or rightPanel.section.',
       'Tile "mine.t": size "9x9" is not a Board size (for example 2x1).',
       'Setting "on" must start with "mine.".',
       'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette.',

@@ -71,6 +71,11 @@ describe("the frame protocol", () => {
   it("Botling's own commands a frame may run: openChat(botId) and openResult(botId, url), nothing else", () => {
     expect(builtinCommand("botling.openChat", ["B1"])).toEqual({ id: "botling.openChat", botId: "B1" });
     expect(builtinCommand("botling.openResult", ["B1", "https://example.com/a"])).toEqual({ id: "botling.openResult", botId: "B1", url: "https://example.com/a" });
+    expect(builtinCommand("botling.openLink", ["B1", "https://github.com/o/r/pull/1"])).toEqual({ id: "botling.openLink", botId: "B1", url: "https://github.com/o/r/pull/1" });
+    expect(builtinCommand("botling.openLink", ["B1"])).toBeNull();
+    expect(builtinCommand("botling.openTab", ["B1", "botling.git", "botling.git.review"])).toEqual({ id: "botling.openTab", botId: "B1", plugin: "botling.git", view: "botling.git.review" });
+    expect(builtinCommand("botling.openTab", ["B1", "botling.git"])).toBeNull();
+    expect(builtinCommand("botling.openTab", ["B1", "", "v"])).toBeNull();
     expect(builtinCommand("botling.openChat", [])).toBeNull();
     expect(builtinCommand("botling.openChat", ["B1", "extra"])).toBeNull();
     expect(builtinCommand("botling.openResult", ["B1"])).toBeNull();

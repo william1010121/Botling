@@ -77,7 +77,6 @@ import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
-import { WorktreeDesk } from "./worktree-desk";
 import { DevBuilds, devWorkRoot, readBuild, spawnInstaller } from "./app-swap";
 
 /** What the core asks of main (app-swap.ts); planBuild and installBuild carry a build's path. */
@@ -181,7 +180,6 @@ export class Core {
   private componentStamp = 0;
   /** Developer mode's builds and screenshots (1.x's Workspace+Developer.swift). */
   readonly devBuilds: DevBuilds;
-  readonly worktrees: WorktreeDesk;
   /** The plugin and component library, watched (`scanComponents` on a change, and every `componentScanMs`). */
   private libraryWatch: FolderWatch | null = null;
   /** Bots' memory files, watched (`refreshWaiting` on a change, and every `waitingScanMs`). */
@@ -342,6 +340,12 @@ export class Core {
         },
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
         log: (line) => this.log(line),
+        sessionMoved: (botId, reason) => this.bots.get(botId)?.restartBeforeNextMessage(reason),
+        sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !this.removed.has(profile.id)).map((profile) => ({
+          id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,
+          memoryPath: profile.memoryPath, storeDir: profile.storeDir, problem: profile.problem,
+          workRoot: this.developerProject()?.id === profile.id ? devWorkRoot() : null,
+        })),
         usageView: async () => { await this.usage.refresh(); return usageView(this.usage.view()); },
         workspace: this.workspaceSource(),
         workspaceWatch: (on) => this.watchWorkspace(on),
@@ -379,14 +383,6 @@ export class Core {
       catch (error) { this.log(`agents.json migration: ${(error as Error).message}`); }
     }
     this.agents.onChange((record, previous) => this.agentChanged(record, previous));
-    this.worktrees = new WorktreeDesk({
-      dataDir: options.dataDir,
-      settings: () => { const view = settingsView(readSettings(Layout.settings(options.dataDir))); return { enabled: view.worktrees, root: view.worktreeRoot }; },
-      devWork: () => devWorkRoot(),
-      isDeveloper: (botId) => this.developerProject()?.id === botId,
-      // The folder its session starts in changed: an awake one starts again before its next message.
-      moved: (botId, reason) => this.bots.get(botId)?.restartBeforeNextMessage(reason),
-    });
     this.newBot = (profile) => {
       const bot = build(profile);
       this.bots.set(profile.id, bot);
@@ -404,7 +400,7 @@ export class Core {
           editorStarted: (pid) => { if (pid > 0) this.ledger.record(pid); },
         }) : null,
         claimWaitMs: options.claimWaitMs,
-        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === MAINTAINER_ID ? null : this.worktrees.sessionFolder(profile)),
+        prompts: (engine, heads) => this.prompts(profile, engine, heads, profile.role === "main" || profile.id === MAINTAINER_ID ? null : this.plugins.sessionFolder(profile.id)?.cwd ?? profile.folder),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
         tidyTimeoutMs: options.tidyTimeoutMs,
         quitTidyMs: options.quitTidyMs,
@@ -419,11 +415,12 @@ export class Core {
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
           : profile.id !== MAINTAINER_ID
-            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.worktrees.current(profile) !== null) : "", this.worktrees.note(profile), this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
+            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.plugins.sessionFolder(profile.id) !== null) : "", this.plugins.sessionFolder(profile.id)?.note ?? "", this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
             : undefined,
+        // A plugin may decide where a project's or bot's session starts (an app-made worktree: botling.git); the main bot and Maintainer never move.
         worktree: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => {
-          const cwd = this.worktrees.sessionFolder(profile);
-          return cwd === profile.folder ? null : { cwd, addDirs: this.worktrees.extraDirs(profile) };
+          const folder = this.plugins.sessionFolder(profile.id);
+          return folder && folder.cwd !== profile.folder ? { cwd: folder.cwd, addDirs: folder.addDirs } : null;
         },
         addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.parent && !other.problem).map((other) => join(other.folder, ".bot"))
           // Maintainer: the folders you let it read (<need-folder>).
@@ -2108,6 +2105,8 @@ First write a test that shows this, then fix it.`;
     const botId = event.botId === MAIN_BOT_ID ? "main" : event.botId;
     if (event.type === "message.added" && event.message.role === "user") {
       this.plugins.event("messagePosted", { botId, role: "user", text: event.message.text, id: event.message.id });
+    } else if (event.type === "turn.started") {
+      this.plugins.event("turnStarted", { botId, turnId: event.turnId });
     } else if (event.type === "turn.finished") {
       if (event.status === "done" && event.text) this.plugins.event("messagePosted", { botId, role: "bot", text: event.text, id: event.messageId });
       this.plugins.event("turnFinished", { botId, ok: event.status === "done", reply: event.text });
@@ -2252,11 +2251,6 @@ First write a test that shows this, then fix it.`;
       const report = this.reportTurns.get(event.turnId);
       if (report) { this.reportTurns.delete(event.turnId); this.agents.reportDelivered(report.agentId, report.run); }
     }
-    // A turn began: remember what its worktree looked like, so the review can show what the turn changed.
-    if (event.type === "turn.started" && !this.removed.has(event.botId)) {
-      const bot = this.bots.get(event.botId);
-      if (bot) void this.worktrees.turnStarted(bot.profile, event.turnId);
-    }
     // A question copied into the main bot's chat was settled in its own: so is the copy.
     if (event.type === "message.updated" && (this.copies.size || event.message.ignoredAt)) this.closeCopiesOf(event.botId, event.message.id);
     // A question asked or answered, a bot added: what waits on you may have changed.
@@ -2349,13 +2343,6 @@ First write a test that shows this, then fix it.`;
     return { accepted: true };
   }
 
-  /** A project's or bot's own profile: Maintainer has no worktrees. */
-  private worktreeProfile(id: string) {
-    const bot = this.bots.get(id);
-    if (!bot || id === MAINTAINER_ID || this.removed.has(id)) throw new ContractError("not_found", "No such project.");
-    return bot.profile;
-  }
-
   private bot(id: string): Bot {
     const bot = this.bots.get(id);
     if (!bot) throw new ContractError("not_found", "No such bot.");
@@ -2443,17 +2430,6 @@ First write a test that shows this, then fix it.`;
         return this.mobileOr().pair(cmd.botIds, cmd.route);
       }
       case "mobile.revoke": return this.mobileOr().revoke(cmd.deviceId);
-      case "worktrees.list": return this.worktrees.view(this.worktreeProfile(cmd.botId));
-      case "worktrees.create": return this.worktrees.create(this.worktreeProfile(cmd.botId), cmd.name, cmd.base);
-      case "worktrees.use": return this.worktrees.use(this.worktreeProfile(cmd.botId), cmd.worktreeId);
-      case "worktrees.merge": return this.worktrees.merge(this.worktreeProfile(cmd.botId), cmd.worktreeId);
-      case "worktrees.discard": return this.worktrees.discard(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.force === true);
-      case "worktrees.terminal": return this.worktrees.terminal(this.worktreeProfile(cmd.botId), cmd.worktreeId);
-      case "worktrees.commit": return this.worktrees.commit(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.message);
-      case "pr.draft": return this.worktrees.prDraft(this.worktreeProfile(cmd.botId), cmd.worktreeId);
-      case "pr.create": return this.worktrees.prCreate(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.title, cmd.body);
-      case "review.files": return this.worktrees.reviewFiles(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.scope, cmd.turn);
-      case "review.diff": return this.worktrees.reviewDiff(this.worktreeProfile(cmd.botId), cmd.worktreeId, cmd.from, cmd.to, cmd.path, cmd.oldPath, cmd.force === true);
       case "bot.configure": {
         const { type: _type, botId, ...change } = cmd;
         return this.bot(botId).configure(change);

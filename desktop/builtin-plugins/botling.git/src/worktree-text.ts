@@ -1,5 +1,5 @@
 // The Worktrees control's words, English and Traditional Chinese (the app's two UI languages).
-import type { WorktreesView } from "../contract";
+import type { WorktreesView } from "./types";
 
 type Item = WorktreesView["items"][number];
 type Words = {

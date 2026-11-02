@@ -129,3 +129,10 @@ it("a fit page sizes to its content and tells the page; an ordinary panel page d
   expect(panel).toContain("const FIT = false");
   expect(panel).toContain("#panel-root { padding: 12px;");
 });
+
+it("a page is told which bot it is about (ccb.context), and has none otherwise", () => {
+  const page = panelPage("botling.git", "botling.git.worktrees", "export const activate = () => {}", {}, { fontSize: 13 }, { botId: "B1" });
+  expect(page).toContain('const CONTEXT = Object.freeze({"botId":"B1"});');
+  expect(page).toContain("context: CONTEXT,");
+  expect(panelPage("meter", "meter.rings", "export const activate = () => {}", {})).toContain("const CONTEXT = Object.freeze({});");
+});

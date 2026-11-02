@@ -68,6 +68,7 @@ export const PERMISSIONS: Record<string, string> = {
   exec: "run programs on your computer",
   bots: "talk to bots on your behalf and make new ones",
   claude: "give the bots new tools",
+  sessions: "decide the folder a bot's session works in (built-in plugins only)",
 };
 const PERMISSION_NAMES = Object.keys(PERMISSIONS);
 

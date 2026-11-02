@@ -702,10 +702,6 @@ export const SettingsView = z.strictObject({
   /** Developer mode (1.x's `developerMode`): the project that is Botling's own source gets what you flag as "not right". Phase 5a. */
   developerMode: z.boolean(),
   developerProject: BotId.nullable(),
-  /** App-managed git worktrees (2.2): the Worktrees control in a project's chat header, and agents starting in the worktree it makes. */
-  worktrees: z.boolean(),
-  /** Where worktrees are made (null: the work drive for the developer project, else under the data folder). */
-  worktreeRoot: z.string().max(4096).nullable(),
   /** Phase 5b (2.0 only): main looks at GitHub Releases for a newer Botling 2 (once a day; off by default). */
   updateCheck: z.boolean(),
   /** Keyboard shortcuts the user rebound (id to binding, see shortcuts.ts); an id left out has its default. */
@@ -739,8 +735,6 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("rightPanelCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("developerMode"), value: z.boolean() }),
   z.strictObject({ key: z.literal("developerProject"), value: BotId.nullable() }),
-  z.strictObject({ key: z.literal("worktrees"), value: z.boolean() }),
-  z.strictObject({ key: z.literal("worktreeRoot"), value: z.string().max(4096).nullable() }),
   z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
@@ -809,32 +803,6 @@ export const UsageView = z.strictObject({
 });
 export type UsageView = z.infer<typeof UsageView>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
-/** One worktree as the Worktrees control lists it (core/worktrees.ts). */
-export const WorktreeItem = z.strictObject({
-  id: z.string().max(64), branch: z.string().max(300), path: z.string().max(4096), base: z.string().max(300),
-  task: z.string().max(200).nullable(), owner: z.string().max(200).nullable(),
-  status: z.enum(["active", "merged", "abandoned"]), createdAt: z.string().max(64),
-  changedFiles: z.number().int().nonnegative(), ahead: z.number().int().nonnegative(), missing: z.boolean(),
-  /** The pull request opened from the app for this branch. */
-  pr: z.string().max(2_000).nullable().optional(),
-});
-export const WorktreesView = z.strictObject({
-  /** The Worktrees setting. */
-  enabled: z.boolean(),
-  /** This project is the main checkout of a git repository with a commit, so worktrees can be made. */
-  available: z.boolean(),
-  /** The one its agent works in (null: the project folder). */
-  current: z.string().max(64).nullable(),
-  /** Where the next one is made. */
-  root: z.string().max(4096),
-  items: z.array(WorktreeItem).max(100),
-});
-export type WorktreesView = z.infer<typeof WorktreesView>;
-/** What an action did; a refusal carries a sentence to show as it is. `confirm`: asking again with `force` would lose work. */
-export const WorktreeAction = z.strictObject({
-  ok: z.boolean(), message: z.string().max(2_000), files: z.array(z.string().max(1_000)).max(50).optional(), confirm: z.boolean().optional(),
-});
-export type WorktreeAction = z.infer<typeof WorktreeAction>;
 
 /** The phone connection (mobile-bridge/desk.ts): off until the bridge is configured, then its routes in the order a phone
  * tries them and the paired phones. A pairing link is a secret shown once, so it is only in `MobilePairView`. */
@@ -847,48 +815,6 @@ export type MobileDeskView = z.infer<typeof MobileDeskView>;
 export const MobilePairView = z.strictObject({ url: z.string().max(600), expiresAt: z.number(), route: MobileRouteView });
 export type MobilePairView = z.infer<typeof MobilePairView>;
 
-/** The pull request form's start (title and body from the commits) and what opening one did (core/publish.ts). */
-export const PrDraftView = z.strictObject({
-  ok: z.boolean(), message: z.string().max(2_000),
-  title: z.string().max(500), body: z.string().max(20_000), base: z.string().max(300), branch: z.string().max(300), commits: z.number().int().nonnegative(),
-  /** A pull request already open for the branch. */
-  url: z.string().max(2_000).nullable(),
-});
-export type PrDraftView = z.infer<typeof PrDraftView>;
-export const PrCreateView = z.strictObject({ ok: z.boolean(), message: z.string().max(2_000), url: z.string().max(2_000).nullable(), existing: z.boolean() });
-export type PrCreateView = z.infer<typeof PrCreateView>;
-
-/** Review of a checkout's changes (core/review.ts): the files, and one file's diff. */
-export const ReviewScope = z.enum(["branch", "uncommitted", "turn"]);
-export type ReviewScope = z.infer<typeof ReviewScope>;
-const reviewRev = z.string().regex(/^([0-9a-f]{40,64})?$/);
-export const ReviewFilesView = z.strictObject({
-  ok: z.boolean(), message: z.string().max(2_000),
-  scope: ReviewScope,
-  /** What the files are compared from and to (commits or trees; "" is the empty tree): pass both back to `review.diff`. */
-  from: reviewRev, to: reviewRev,
-  /** The branch the changes are counted from, for a title ("main"). */
-  base: z.string().max(300),
-  files: z.array(z.strictObject({
-    path: z.string().max(4096), oldPath: z.string().max(4096).optional(), status: z.enum(["A", "M", "D", "R"]),
-    additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative(), binary: z.boolean(),
-  })).max(1000),
-  additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative(), capped: z.boolean(),
-  /** The agent turns recorded in this worktree, oldest first; `turn` is the one the files are of. */
-  turns: z.array(z.strictObject({ id: z.string().max(64), at: z.string().max(64) })).max(30),
-  turn: z.string().max(64).nullable(),
-});
-export type ReviewFilesView = z.infer<typeof ReviewFilesView>;
-export const ReviewDiffView = z.strictObject({
-  ok: z.boolean(), message: z.string().max(2_000),
-  path: z.string().max(4096), binary: z.boolean(), additions: z.number().int().nonnegative(), deletions: z.number().int().nonnegative(),
-  tooLarge: z.boolean(), truncated: z.boolean(),
-  hunks: z.array(z.strictObject({
-    header: z.string().max(2_200),
-    lines: z.array(z.strictObject({ t: z.enum(["ctx", "add", "del"]), o: z.number().int().optional(), n: z.number().int().optional(), text: z.string().max(2_100) })).max(20_000),
-  })).max(20_000),
-});
-export type ReviewDiffView = z.infer<typeof ReviewDiffView>;
 
 export const BotSettingsView = z.strictObject({
   botId: id,
@@ -930,9 +856,11 @@ export const PluginsView = z.strictObject({
   slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
   menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200) })).max(200).optional(),
   /** Plugin views that are tabs beside Chat / Board (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
-  mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "any"]) })).max(50).optional(),
+  mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "bots", "any"]) })).max(50).optional(),
   /** Plugin views that are pages of Settings (`where: "settings.section"`): `after` names the core page it follows, `link` the sidebar popover's link that opens it. */
   settingsSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), terms: z.string().max(1_000), after: z.string().max(40).optional(), link: z.string().max(100).optional() })).max(20).optional(),
+  /** Plugin views that are blocks in a bot's right panel overview, under its tasks (`where: "rightPanel.section"`), for the bots its `forRole` names. */
+  rightPanelSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), forRole: z.enum(["main", "project", "bots", "any"]) })).max(20).optional(),
   /** Plugin views that are blocks in the sidebar gear's popover (`where: "quickSettings"`). */
   quickSettings: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(10).optional(),
 });
@@ -1158,19 +1086,6 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("mobile.view") }),
   z.strictObject({ type: z.literal("mobile.pair"), botIds: z.array(botId).min(1).max(50), route: z.number().int().min(0).max(5).optional() }),
   z.strictObject({ type: z.literal("mobile.revoke"), deviceId: z.string().max(64) }),
-  /** App-managed git worktrees of a project (core/worktrees.ts). */
-  z.strictObject({ type: z.literal("worktrees.list"), botId }),
-  z.strictObject({ type: z.literal("worktrees.create"), botId, name: z.string().trim().min(1).max(80), base: z.string().trim().min(1).max(200).optional() }),
-  z.strictObject({ type: z.literal("worktrees.use"), botId, worktreeId: z.string().max(64).nullable() }),
-  z.strictObject({ type: z.literal("worktrees.merge"), botId, worktreeId: z.string().max(64) }),
-  z.strictObject({ type: z.literal("worktrees.discard"), botId, worktreeId: z.string().max(64), force: z.boolean().optional() }),
-  z.strictObject({ type: z.literal("worktrees.terminal"), botId, worktreeId: z.string().max(64) }),
-  z.strictObject({ type: z.literal("worktrees.commit"), botId, worktreeId: z.string().max(64), message: z.string().max(10_000) }),
-  z.strictObject({ type: z.literal("pr.draft"), botId, worktreeId: z.string().max(64) }),
-  z.strictObject({ type: z.literal("pr.create"), botId, worktreeId: z.string().max(64), title: z.string().max(500), body: z.string().max(20_000) }),
-  /** Review of a worktree's changes (`worktreeId` null: the project's main checkout, against HEAD). */
-  z.strictObject({ type: z.literal("review.files"), botId, worktreeId: z.string().max(64).nullable(), scope: ReviewScope, turn: z.string().max(64).optional() }),
-  z.strictObject({ type: z.literal("review.diff"), botId, worktreeId: z.string().max(64).nullable(), from: reviewRev, to: reviewRev.min(40), path: z.string().min(1).max(4096), oldPath: z.string().max(4096).optional(), force: z.boolean().optional() }),
   /** "Restart bot": each head starts again in the same session before the bot's next message, told the app's current instructions (asleep: the next wake). */
   z.strictObject({ type: z.literal("bot.restart"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
@@ -1215,7 +1130,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1361,17 +1276,6 @@ export interface Results {
   "mobile.view": MobileDeskView;
   "mobile.pair": MobilePairView;
   "mobile.revoke": MobileDeskView;
-  "worktrees.list": WorktreesView;
-  "worktrees.create": WorktreeAction;
-  "worktrees.use": WorktreeAction;
-  "worktrees.merge": WorktreeAction;
-  "worktrees.discard": WorktreeAction;
-  "worktrees.terminal": WorktreeAction;
-  "worktrees.commit": WorktreeAction;
-  "pr.draft": PrDraftView;
-  "pr.create": PrCreateView;
-  "review.files": ReviewFilesView;
-  "review.diff": ReviewDiffView;
   "bot.configure": BotSettingsView;
   "bot.restart": { restart: "next-message" | "asleep" };
   "engineDefaults.applyAll": { applied: number; failed: { botId: string; name: string; reason: string }[] };

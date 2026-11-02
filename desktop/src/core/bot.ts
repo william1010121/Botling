@@ -216,7 +216,7 @@ export interface BotOptions {
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
   addDirs?: () => string[];
-  /** App-managed worktree (core/worktree-desk.ts): where its session starts instead of the project folder, and what else it may use there. */
+  /** App-managed worktree (a plugin's `sessions.folder`, plugins/session-folders.ts): where its session starts instead of the project folder, and what else it may use there. */
   worktree?: () => { cwd: string; addDirs: string[] } | null;
   /** Another bot answering in its chat right now (a call-in's speaker). */
   guest?: () => string | null;

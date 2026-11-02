@@ -26,6 +26,8 @@ export interface Keybinding { command: string; key: string; source: "default" | 
 
 export interface PluginEvents {
   messagePosted: { botId: string; role: "user" | "bot"; text: string; id: string };
+  /** A turn began in a bot's session (`turnId` is the app's id for it). */
+  turnStarted: { botId: string; turnId: string };
   turnFinished: { botId: string; ok: boolean; reply: string };
   workerDone: { botId: string; workerId: string; status: string; report: string };
   /** You read a chat up to its newest line (`through`); `unread`: how many of its lines were unread before. */
@@ -34,7 +36,7 @@ export interface PluginEvents {
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnFinished", "workerDone", "chatRead"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -141,6 +143,33 @@ export interface UsageApi {
   view(): Promise<UsageView>;
 }
 
+// ── Sessions (plugin-extraction.md §3.2 #2): which folder a bot's session starts in, for built-in plugins ──
+/** Where a bot's session starts (`cwd`, absolute), what else it may use there (`addDirs`) and the words it hears at each wake (`note`, appended after the app's briefing). */
+export interface SessionFolder { cwd: string; addDirs?: string[]; note?: string }
+export interface SessionBot {
+  id: string; name: string; role: "manager" | "bot"; parent: string | null;
+  /** Its working folder (absolute) and its memory.md, relative to it. */
+  folder: string; memoryPath: string;
+  /** Where its chat files are. */
+  storeDir: string;
+  /** Why it cannot run (its folder is gone), or null. */
+  problem: string | null;
+  /** Botling's own source's project: where development work goes (the work drive), else null. */
+  workRoot: string | null;
+}
+export interface SessionsApi {
+  /**
+   * Says where `botId`'s session starts (null: its own folder again). Botling keeps the answer and uses it at once whenever a
+   * turn starts, even before this plugin has loaded after a restart; an awake bot starts again before its next message
+   * (`reason.told` is what it hears, `reason.shown` what the chat shows). Needs the "sessions" permission; built-in plugins only.
+   */
+  setFolder(botId: string, folder: SessionFolder | null, reason?: { told: string; shown: string }): Promise<void>;
+  /** The whole picture, to say when the plugin loads: bots missing from it go back to their own folders. */
+  syncFolders(folders: Record<string, SessionFolder>): Promise<void>;
+  /** The bots whose sessions this plugin may place: every one but the main bot and Maintainer, with where their folders and chat files are. */
+  bots(): Promise<SessionBot[]>;
+}
+
 export interface BotlingApi {
   /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
   readonly plugin: { name: string; version: string; dir: string; storageDir: string; appDataDir?: string };
@@ -190,6 +219,7 @@ export interface BotlingApi {
   routines: { add(botId: string, cron: string, task: string): Promise<void> };
   workspace: WorkspaceApi;
   usage: UsageApi;
+  sessions: SessionsApi;
   /** The tags this plugin declared in its manifest (`replyTags`), from bots' replies. */
   replyTags: { on(tag: string, fn: (tag: ReplyTag) => void): Dispose };
   approvals: {
@@ -398,6 +428,11 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       add: async (botId, cron, task) => { await ask("routines.add", { bot: botId, cron, task }); },
     },
     usage: { view: async () => (await ask("usage.view")) as UsageView },
+    sessions: {
+      setFolder: async (botId, folder, reason) => { await ask("sessions.folder", { bot: botId, folder, ...(reason ? { reason } : {}) }); },
+      syncFolders: async (folders) => { await ask("sessions.folders", { folders }); },
+      bots: async () => (await ask("sessions.bots")) as SessionBot[],
+    },
     workspace: {
       bots: async () => (await ask("workspace.bots")) as BotSummary[],
       memory: async (botId) => (await ask("workspace.memory", { bot: botId })) as never,

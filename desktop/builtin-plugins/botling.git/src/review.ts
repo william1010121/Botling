@@ -10,7 +10,7 @@ import { execFile } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { writeFileAtomic } from "./durable/atomic";
+import { writeFileAtomic } from "../../../src/core/durable/atomic";
 
 export type ReviewStatus = "A" | "M" | "D" | "R";
 export interface ReviewFile {

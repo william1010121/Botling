@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { WorktreeDesk } from "../../src/core/worktree-desk";
-import type { BotProfile } from "../../src/core/store/workspace";
+import { WorktreeDesk } from "../src/desk";
+import type { SessionBot } from "../../../../Web/host/src/api";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -15,10 +15,10 @@ function setup(settings = { enabled: true, root: null as string | null }, develo
   const folder = join(dir, "repo"); mkdirSync(folder);
   git(folder, "init", "-b", "main"); git(folder, "config", "user.name", "T"); git(folder, "config", "user.email", "t@example.invalid");
   writeFileSync(join(folder, "a"), "a"); git(folder, "add", "."); git(folder, "commit", "-m", "a");
-  const profile: BotProfile = { id: "ID1", name: "P", role: "manager", avatar: "hexagon", folder, memoryPath: ".bot/memory.md", storeDir: join(dir, "store"), tools: [], job: null, problem: null };
+  const profile: SessionBot = { id: "ID1", name: "P", role: "manager", parent: null, folder, memoryPath: ".bot/memory.md", storeDir: join(dir, "store"), problem: null, workRoot: developer ? join(dir, "work-drive") : null };
   const moved: string[] = [], opened: string[] = [];
   const desk = new WorktreeDesk({
-    dataDir: join(dir, "data"), settings: () => settings, devWork: () => join(dir, "work-drive"), isDeveloper: () => developer,
+    dataDir: join(dir, "data"), settings: () => settings,
     moved: (id) => moved.push(id), openTerminal: async (path) => { opened.push(path); },
   });
   return { dir, profile, desk, moved, opened };
@@ -49,12 +49,24 @@ describe("worktree desk", () => {
     expect(desk.sessionFolder(profile)).toBe(profile.folder);
   });
 
-  it("is inert when the setting is off or the bot is the main bot", async () => {
+  it("is inert when the setting is off or the bot is a sub bot or cannot run", async () => {
     const off = setup({ enabled: false, root: null });
     expect(await off.desk.create(off.profile, "x")).toMatchObject({ ok: false });
     expect(await off.desk.view(off.profile)).toMatchObject({ enabled: false, available: false });
     const on = setup();
-    expect(await on.desk.view({ ...on.profile, role: "main" })).toMatchObject({ available: false });
+    expect(await on.desk.view({ ...on.profile, parent: "ID0" })).toMatchObject({ available: false });
+    expect(await on.desk.view({ ...on.profile, problem: "gone" })).toMatchObject({ available: false });
+  });
+
+  it("the wake note and the session folder are the same bytes the core gave before the move", async () => {
+    const { desk, profile } = setup();
+    await desk.create(profile, "Fix it");
+    const folder = desk.sessionFolder(profile);
+    const expected = `(App: Worktree. The app made a git worktree for this work and your working directory is in it: branch bot/fix-it, folder ${folder}, made from main. You are already inside that worktree (${folder}): use relative paths, do not cd to the project folder and do not edit its files. Edit, build, test and commit here. Do not run git worktree yourself and do not change the main checkout at ${profile.folder}: when the work is committed, say so; the user merges or discards the worktree from the app. Your memory and inbox stay in the project folder: memory is ${join(profile.folder, ".bot/memory.md")}; read and write that file, not a .bot folder under your working directory.)`;
+    expect(desk.note(profile)).toBe(expected);
+    expect(desk.assignment(profile)).toEqual({ cwd: folder, addDirs: [join(profile.folder, ".bot")], note: expected });
+    await desk.use(profile, null);
+    expect(desk.assignment(profile)).toBeNull();
   });
 
   it("asks before discarding work, and opens a terminal only on a worktree that is there", async () => {

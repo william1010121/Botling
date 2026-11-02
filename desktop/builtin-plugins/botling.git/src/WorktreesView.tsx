@@ -1,17 +1,17 @@
-// The Worktrees control in a project's right panel (core/worktrees.ts, docs/worktrees.md): its active
+// The Worktrees control in a project's right panel (worktrees.ts, docs/worktrees.md): its active
 // worktrees with branch, changes and unmerged commits, and New worktree / Work here / Open in terminal /
 // Merge into base / Discard. The core does the git; this shows what it says. Discarding work that would be
 // lost asks first, in place. Hidden when the project is not a git repository or the setting is off.
 import { useCallback, useEffect, useState } from "react";
-import type { BotView, WorktreeAction, WorktreesView } from "../contract";
-import { Client, RequestFailed } from "./client";
+import type { WorktreeAction, WorktreesView } from "./types";
+import { RequestFailed, type Client } from "./client";
 import { worktreeLine, worktreeWords } from "./worktree-text";
 import { reviewWords } from "./review-text";
-import type { ReviewTarget } from "./Review";
+import type { ReviewTarget } from "./ReviewView";
 
 const POLL_MS = 10_000;
 
-export function Worktrees({ client, bot, lang, onReview }: { client: Client; bot: BotView; lang: string | null; onReview?: (target: ReviewTarget) => void }) {
+export function Worktrees({ client, bot, lang, onReview }: { client: Client; bot: { id: string }; lang: string | null; onReview?: (target: ReviewTarget) => void }) {
   const words = worktreeWords(lang);
   const look = reviewWords(lang);
   const [view, setView] = useState<WorktreesView | null>(null);

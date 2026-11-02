@@ -1,5 +1,5 @@
 // The Review view's words, English and Traditional Chinese (the app's two UI languages).
-import type { ReviewFilesView } from "../contract";
+import type { ReviewFilesView } from "./types";
 
 type File = ReviewFilesView["files"][number];
 export type ReviewWords = {

@@ -32,6 +32,7 @@ import { PluginRegistry, type InstalledPlugin } from "./registry";
 import { SealedSecretStore, type Sealer } from "./secrets";
 import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../workspace";
 import { PendingTags } from "./pending-tags";
+import { SessionFolders, cleanFolder, type SessionFolder } from "./session-folders";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -46,6 +47,19 @@ export interface PluginChat { botId: string; name: string; unread: number; messa
 export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; tasks?: string[]; data?: JSONValue }
 /** How Botling starts an engine's CLI here (`engines.cli`), for a plugin's one-shot model call. */
 export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
+
+/** A bot as a plugin that places sessions sees it: where its project is, where its chat files are, and where development work for it goes. */
+export interface SessionBot {
+  id: string; name: string; role: "manager" | "bot"; parent: string | null;
+  /** Its working folder (absolute) and its memory.md, relative to it. */
+  folder: string; memoryPath: string;
+  /** Where its chat files are (a plugin keeps its per-bot files beside them). */
+  storeDir: string;
+  /** Why it cannot run (its folder is gone), or null. */
+  problem: string | null;
+  /** Botling's own source's project: where development work goes (the work drive), else null. */
+  workRoot: string | null;
+}
 
 /** What the core lends the plugins. */
 export interface PluginWorld {
@@ -90,6 +104,10 @@ export interface PluginWorld {
   usageView?(): Promise<unknown>;
   /** An engine's CLI as Botling starts it (null: not here). */
   engineCli?(engine: "claude" | "codex"): EngineCli | null;
+  /** A bot's session folder changed (a plugin's `sessions.folder`, or the plugin went): an awake one starts again before its next message. */
+  sessionMoved?(botId: string, reason: { told: string; shown: string }): void;
+  /** The bots whose sessions a plugin may place (every one but the main bot and Maintainer), for `sessions.bots`. Absent: none. */
+  sessionBots?(): SessionBot[];
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
   addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
   /** The library changed: the app shows it. */
@@ -145,7 +163,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnFinished", "workerDone", "chatRead"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -171,6 +189,11 @@ const DecorateParams = BotParams.extend({
     data: z.unknown().optional(),
   })).max(200),
 });
+const FolderParams = BotParams.extend({
+  folder: z.unknown().nullable(),
+  reason: z.object({ told: str(2_000), shown: str(400) }).optional(),
+});
+const FoldersParams = z.object({ plugin: str(214), folders: z.record(str(64), z.unknown()) });
 const EngineParams = z.object({ plugin: str(214), engine: z.enum(["claude", "codex"]) });
 /** How much one plugin may draw in one chat (`chat.decorate`), as JSON. */
 const DECORATION_BYTES = 1_000_000;
@@ -183,6 +206,10 @@ export class Plugins {
   private started = false;
   /** Reply tags whose plugin was not loaded yet, kept until it is (pending-tags.ts). */
   private readonly held: PendingTags;
+  /** The folders built-in plugins assigned to bots' sessions (`sessions.folder`), kept on disk (session-folders.ts). */
+  private readonly folders: SessionFolders;
+  /** What each bot's session was last told about its folder (a signature of folder, extra folders and note; absent: its own). */
+  private readonly foldersTold = new Map<string, string>();
   /** What each plugin shows in the status area (`ui.setStatus`), until it unloads. */
   private readonly status = new Map<string, Map<string, PluginStatusItem>>();
   /** Some plugin listens for workspace changes, as the host last said (`workspace.onChange`). */
@@ -196,6 +223,8 @@ export class Plugins {
     this.registry = new PluginRegistry(join(dataDir, "plugins"), join(dataDir, "plugins.json"), this.secrets, options.builtIns ?? null);
     this.dataRoot = join(dataDir, "plugin-data");
     this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));
+    this.folders = new SessionFolders(join(dataDir, "plugin-session-folders.json"));
+    for (const botId of this.folders.plugins().flatMap((name) => this.folders.bots(name))) { const now = this.folderSignature(botId); if (now) this.foldersTold.set(botId, now); }
     this.host = new PluginHostClient(options.hostScript, options.node, this.dataRoot, (line) => world.log(line), options.timing ?? DEFAULT_TIMING, options.onPid);
     this.registry.onNotice = (text) => world.notice(text);
     this.registry.onBroken = (plugin, problem) => world.broken(plugin, problem);
@@ -239,7 +268,49 @@ export class Plugins {
     this.host.update(this.registry.hostSpecs(this.dataRoot).map((spec) => ({ ...spec, app })));
     for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
     this.dropDecorations();
+    this.foldersChanged();
     this.announce();
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // The folder a bot's session starts in (`sessions.folder`, plugin-extraction.md §3.2 #2)
+
+  /** The plugins that may decide a session's folder now: shipped with the app, on, and with the "sessions" permission. */
+  private folderProviders(): string[] {
+    return this.folders.plugins().filter((name) => {
+      const plugin = this.registry.plugin(name);
+      return !!plugin && plugin.enabled && plugin.builtIn && !!plugin.manifest.ccb?.permissions?.includes("sessions");
+    });
+  }
+
+  /**
+   * Where this bot's session starts, from what a plugin assigned (the first provider by name that has something for it):
+   * answered from memory, never by asking the host, so a turn does not wait on it. null: the bot's own folder.
+   */
+  sessionFolder(botId: string): (SessionFolder & { plugin: string }) | null {
+    for (const name of this.folderProviders()) {
+      const folder = this.folders.get(name, botId);
+      if (folder) return { ...folder, plugin: name };
+    }
+    return null;
+  }
+
+  private folderSignature(botId: string): string | null {
+    const folder = this.sessionFolder(botId);
+    return folder ? JSON.stringify([folder.cwd, folder.addDirs, folder.note]) : null;
+  }
+
+  /** A bot's folder may have changed (a push, or a plugin turned off): an awake bot starts again before its next message, once. */
+  private foldersChanged(botIds?: string[], reason?: { told: string; shown: string }) {
+    const ids = botIds ?? [...new Set([...this.foldersTold.keys(), ...this.folders.plugins().flatMap((name) => this.folders.bots(name))])];
+    for (const botId of ids) {
+      const now = this.folderSignature(botId);
+      if ((this.foldersTold.get(botId) ?? null) === now) continue;
+      if (now === null) this.foldersTold.delete(botId); else this.foldersTold.set(botId, now);
+      this.options.world.sessionMoved?.(botId, reason ?? (now === null
+        ? { told: "your working folder is the project folder again", shown: "Back in the project folder." }
+        : { told: "your working folder changed; see the note at your wake", shown: "Working folder changed." }));
+    }
   }
 
   /** Message decorations of plugins no longer running (or whose web part no longer runs) go. */
@@ -783,6 +854,37 @@ export class Plugins {
         this.asked(PluginOnly, params);
         if (!world.usageView) throw new Error("Usage is not available here.");
         return world.usageView();
+      }
+      case "sessions.folder": {
+        // A built-in plugin says where a bot's session starts (null: its own folder again); bots restart for it.
+        const { plugin, data } = this.asked(FolderParams, params);
+        this.needs(plugin, "sessions", "Deciding a session's folder");
+        if (!this.shipped(plugin.manifest.name)) throw new Error("Only a plugin shipped with Botling may decide a session's folder.");
+        const folder = data.folder === null ? null : cleanFolder(data.folder);
+        if (data.folder !== null && !folder) throw new Error("A folder needs an absolute `cwd`.");
+        if (!world.botId?.(data.bot)) throw new Error("No such bot.");
+        const botId = world.botId(data.bot)!;
+        if (this.folders.set(plugin.manifest.name, botId, folder)) this.foldersChanged([botId], data.reason);
+        return null;
+      }
+      case "sessions.folders": {
+        // The plugin's whole picture, when it loads: what it no longer holds goes back to the bot's own folder.
+        const { plugin, data } = this.asked(FoldersParams, params);
+        this.needs(plugin, "sessions", "Deciding a session's folder");
+        if (!this.shipped(plugin.manifest.name)) throw new Error("Only a plugin shipped with Botling may decide a session's folder.");
+        const next: Record<string, SessionFolder> = {};
+        for (const [bot, raw] of Object.entries(data.folders)) {
+          const id = world.botId?.(bot), folder = cleanFolder(raw);
+          if (id && folder) next[id] = folder;
+        }
+        const changed = this.folders.replace(plugin.manifest.name, next);
+        if (changed.length) this.foldersChanged(changed);
+        return null;
+      }
+      case "sessions.bots": {
+        const { plugin } = this.asked(PluginOnly, params);
+        this.needs(plugin, "sessions", "Reading the bots' folders");
+        return world.sessionBots?.() ?? [];
       }
       case "workspace.bots":
         this.asked(PluginOnly, params);

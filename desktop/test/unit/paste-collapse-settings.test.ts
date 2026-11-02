@@ -9,7 +9,7 @@ import { tempDir } from "../helpers";
 const moved = (raw: Record<string, unknown>) => {
   const file = join(tempDir("paste-settings"), "settings.json");
   writeSettings(file, raw);
-  const set: [string, string, number][] = [];
+  const set: [string, string, number | boolean | string][] = [];
   moveSettingsToPlugins(file, (plugin, key, value) => set.push([plugin, key, value]));
   return { set, after: readSettings(file) };
 };
@@ -33,5 +33,14 @@ describe("paste collapse settings", () => {
   it("are no longer Botling's own settings", () => {
     expect(settingsView({ pasteCollapseChars: 5 })).not.toHaveProperty("pasteCollapseChars");
     for (const key of ["pasteCollapseChars", "pasteCollapseLines"]) expect(SettingsChange.safeParse({ key, value: 0 }).success).toBe(false);
+  });
+});
+
+describe("worktree settings", () => {
+  it("move to botling.git once: the toggle (false kept) and the folder (trimmed; blank dropped)", () => {
+    const first = moved({ worktreesEnabled: false, worktreeRootChoice: " /w/trees ", language: "en" });
+    expect(first.set).toEqual([["botling.git", "botling.git.enabled", false], ["botling.git", "botling.git.root", "/w/trees"]]);
+    expect(first.after).toEqual({ language: "en" });
+    expect(moved({ worktreesEnabled: "yes", worktreeRootChoice: "  " }).set).toEqual([]);
   });
 });

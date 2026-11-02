@@ -17,10 +17,10 @@ export interface FolderView {
   list(path: string): string[];
 }
 
-/** `settings.section`: a page of Settings (a sandboxed frame in its body); `quickSettings`: a block in the sidebar gear's popover. */
-export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings"] as const;
-/** Which bots' chat headers a `mainTab` view is a tab in (a fixed field, not a when-clause): "project" is a project bot. */
-export const VIEW_ROLES = ["main", "project", "any"] as const;
+/** `settings.section`: a page of Settings (a sandboxed frame in its body); `quickSettings`: a block in the sidebar gear's popover; `rightPanel.section`: a block in a bot's right panel overview, under its tasks (its `forRole` says whose). */
+export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings", "rightPanel.section"] as const;
+/** Which bots a `mainTab` view is a tab for, or a `rightPanel.section` view a block of (a fixed field, not a when-clause): "project" is a project bot. */
+export const VIEW_ROLES = ["main", "project", "bots", "any"] as const;
 export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;
 export const STATUS_SLOTS = ["chatHeader", "botRow"] as const;
 export const MENU_SLOTS = ["message/context", "bot/context", "composer/plus", "commandPalette"] as const;
@@ -147,9 +147,10 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
     if (!f) return;
     const where = oneOf(VIEW_SLOTS, f.where, "rightPanel");
     if (!where) { problems.push(`View "${f.id}": where "${f.where}" must be ${named(VIEW_SLOTS)}.`); return; }
-    if (where !== "mainTab" && f.forRole !== undefined) { problems.push(`View "${f.id}": forRole is only for where "mainTab".`); return; }
-    const forRole = where === "mainTab" ? oneOf(VIEW_ROLES, f.forRole, "any") : null;
-    if (where === "mainTab" && !forRole) { problems.push(`View "${f.id}": forRole "${f.forRole}" must be ${named(VIEW_ROLES)}.`); return; }
+    const rolled = where === "mainTab" || where === "rightPanel.section";
+    if (!rolled && f.forRole !== undefined) { problems.push(`View "${f.id}": forRole is only for where "mainTab" or "rightPanel.section".`); return; }
+    const forRole = rolled ? oneOf(VIEW_ROLES, f.forRole, "any") : null;
+    if (rolled && !forRole) { problems.push(`View "${f.id}": forRole "${f.forRole}" must be ${named(VIEW_ROLES)}.`); return; }
     if (where !== "settings.section" && (f.terms !== undefined || f.after !== undefined || f.link !== undefined)) { problems.push(`View "${f.id}": terms, after and link are only for where "settings.section".`); return; }
     if (ownId("View", f.id)) out.push({
       kind: "view", plugin, id: f.id, title: f.title, ...(f.icon !== undefined ? { icon: f.icon } : {}), where, ...(forRole ? { forRole } : {}),

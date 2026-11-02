@@ -1,11 +1,11 @@
-// The app side of app-managed worktrees (core/worktrees.ts): one manager per bot, where they go, the
-// folder a session starts in, what the agent is told, and the Worktrees control's actions as the
-// contract has them. The server wires it; settings and the developer project are read through deps.
+// The program side of app-managed worktrees (worktrees.ts): one manager per bot, where they go, the folder a session
+// starts in, what the agent is told, and the Worktrees control's and the Review's actions. The plugin's host part
+// wires it; settings and the bots' folders are read through deps.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { PrCreateView, PrDraftView, ReviewDiffView, ReviewFilesView, ReviewScope, WorktreeAction, WorktreesView } from "../contract";
-import type { BotProfile } from "./store/workspace";
+import type { SessionBot as BotProfile } from "../../../../Web/host/src/api";
+import type { PrCreateView, PrDraftView, ReviewDiffView, ReviewFilesView, ReviewScope, WorktreeAction, WorktreesView } from "./types";
 import { commitAll, existingPr, openPr, prefill } from "./publish";
 import { ReviewError, TurnLog, headCommit, mergeBase, reviewDiff, reviewFiles, snapshotTree } from "./review";
 import { WorktreeManager, type WorktreeRecord, type WorktreeResult } from "./worktrees";
@@ -14,9 +14,6 @@ export interface WorktreeDeskDeps {
   dataDir: string;
   /** The Worktrees setting and its folder override. */
   settings: () => { enabled: boolean; root: string | null };
-  /** The work drive's folder, and whether this bot is Botling's own source's project (flat folders there). */
-  devWork: () => string | null;
-  isDeveloper: (botId: string) => boolean;
   /** Called when the folder a bot's session starts in changed (or its worktree was merged or discarded). */
   moved: (botId: string, reason: { told: string; shown: string }) => void;
   platform?: NodeJS.Platform;
@@ -39,8 +36,8 @@ export class WorktreeDesk {
   root(profile: BotProfile): string {
     const { root } = this.deps.settings();
     if (root) return root;
-    const work = this.deps.isDeveloper(profile.id) ? this.deps.devWork() : null;
-    return work ?? join(this.deps.dataDir, "worktrees", profile.id);
+    // Botling's own source's project (flat folders on the work drive) has `workRoot`.
+    return profile.workRoot ?? join(this.deps.dataDir, "worktrees", profile.id);
   }
 
   manager(profile: BotProfile): WorktreeManager {
@@ -59,12 +56,18 @@ export class WorktreeDesk {
   }
 
   /** The main bot has no worktrees of its own. */
-  private eligible(profile: BotProfile) { return profile.role !== "main" && !profile.parent && !profile.problem; }
+  private eligible(profile: BotProfile) { return !profile.parent && !profile.problem; }
 
   /** The folder this bot's session starts in: its current worktree, or its project folder. */
   sessionFolder(profile: BotProfile): string {
     if (!this.deps.settings().enabled || !this.eligible(profile)) return profile.folder;
     return this.manager(profile).sessionFolder()?.path ?? profile.folder;
+  }
+
+  /** What a plugin tells the core about this bot's session: the worktree it works in, null for the project folder. */
+  assignment(profile: BotProfile): { cwd: string; addDirs: string[]; note: string } | null {
+    const cwd = this.sessionFolder(profile);
+    return cwd === profile.folder ? null : { cwd, addDirs: this.extraDirs(profile), note: this.note(profile) };
   }
 
   /** More folders the session may use: the project's `.bot` (memory, inbox) when it starts in a worktree. */

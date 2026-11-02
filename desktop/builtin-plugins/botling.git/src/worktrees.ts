@@ -13,7 +13,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { writeFileAtomic } from "./durable/atomic";
+import { writeFileAtomic } from "../../../src/core/durable/atomic";
 
 export type WorktreeStatus = "active" | "merged" | "abandoned";
 

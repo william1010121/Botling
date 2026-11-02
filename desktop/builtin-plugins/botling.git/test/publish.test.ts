@@ -3,10 +3,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { commitAll, openPr, prefill, remoteOf } from "../../src/core/publish";
-import { WorktreeDesk } from "../../src/core/worktree-desk";
-import { PrCreateView, PrDraftView, WorktreesView } from "../../src/contract";
-import type { BotProfile } from "../../src/core/store/workspace";
+import { commitAll, openPr, prefill, remoteOf } from "../src/publish";
+import { WorktreeDesk } from "../src/desk";
+import type { SessionBot } from "../../../../Web/host/src/api";
 
 const posix = process.platform !== "win32";   // the fake gh is a shell script
 const dirs: string[] = [];
@@ -151,8 +150,8 @@ describe.skipIf(!posix)("worktree desk commit and PR", () => {
     const { dir, repo, bare } = setup();
     git(repo, "checkout", "-q", "main"); git(repo, "branch", "-D", "bot/fix-login");
     const fake = fakeGh(dir, options);
-    const profile: BotProfile = { id: "ID1", name: "P", role: "manager", avatar: "hexagon", folder: repo, memoryPath: ".bot/memory.md", storeDir: join(dir, "store"), tools: [], job: null, problem: null };
-    const desk = new WorktreeDesk({ dataDir: join(dir, "data"), settings: () => ({ enabled: true, root: join(dir, "wt") }), devWork: () => null, isDeveloper: () => false, moved: () => {}, gh: fake.gh });
+    const profile: SessionBot = { id: "ID1", name: "P", role: "manager", parent: null, folder: repo, memoryPath: ".bot/memory.md", storeDir: join(dir, "store"), problem: null, workRoot: null };
+    const desk = new WorktreeDesk({ dataDir: join(dir, "data"), settings: () => ({ enabled: true, root: join(dir, "wt") }), moved: () => {}, gh: fake.gh });
     return { dir, repo, bare, profile, desk, fake };
   }
 
@@ -165,14 +164,14 @@ describe.skipIf(!posix)("worktree desk commit and PR", () => {
     expect(await desk.commit(profile, wt.id, "Fix the login")).toEqual({ ok: true, message: expect.stringMatching(/^Committed 1 file as [0-9a-f]+\.$/) });
     expect(git(wt.path, "log", "-1", "--format=%s")).toBe("Fix the login");
 
-    const draft = PrDraftView.parse(await desk.prDraft(profile, wt.id));
+    const draft = (await desk.prDraft(profile, wt.id));
     expect(draft).toMatchObject({ ok: true, title: "Fix the login", base: "main", branch: "bot/fix-login", commits: 1, url: null });
-    const made = PrCreateView.parse(await desk.prCreate(profile, wt.id, draft.title, "Why: because"));
+    const made = (await desk.prCreate(profile, wt.id, draft.title, "Why: because"));
     expect(made).toMatchObject({ ok: true, url: "https://github.com/o/r/pull/7", existing: false });
     expect(git(bare, "branch", "--list", "bot/fix-login")).toContain("bot/fix-login");
     expect(fake.log().find((l) => l.startsWith("pr create"))).toContain("--title Fix the login");
 
-    const view = WorktreesView.parse(await desk.view(profile));
+    const view = (await desk.view(profile));
     expect(view.items[0].pr).toBe("https://github.com/o/r/pull/7");
     expect((await desk.prDraft(profile, wt.id)).url).toBe("https://github.com/o/r/pull/7");
     expect(git(repo, "status", "--porcelain")).toBe("");   // the main checkout was not touched
