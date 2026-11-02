@@ -550,6 +550,11 @@ export class MaintainerDesk {
     return true;
   }
 
+  /** Takes a component off a bot's list (the library copy stays); false when it was not on it (Undo, ADR-006 M4). */
+  unlistComponent(name: string, bot: Bot): boolean {
+    return this.takeComponent(name, bot);
+  }
+
   private takeComponent(name: string, bot: Bot): boolean {
     const list = bot.components;
     if (!list?.includes(name)) return false;

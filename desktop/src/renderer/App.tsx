@@ -1095,6 +1095,11 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         case "openSpec":
           if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "pressSpec" ? "press" : "open" } }).catch(onError);
           return;
+        // Undo / Restore of a component made from a chip (ADR-006 M4): off the bot's list and back; the library copy stays.
+        case "undoSpec":
+        case "restoreSpec":
+          if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "undoSpec" ? "undo" : "restore" } }).catch(onError);
+          return;
         case "specCommand":
           runCard(action, chat?.botId ?? null);
           return;

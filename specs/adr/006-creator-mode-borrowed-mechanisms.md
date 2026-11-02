@@ -5,6 +5,7 @@
 - **Decided Date**: 2026-11-03
 - **Deciders**: Project Lead & Botling Architecture Team
 - **Related**: ADR-003 (sandboxed frames, ApprovalSheet), ADR-005 (plugin architecture)
+- **Implementation (2026-11-03, branch `bot/creator-mode-phase1-2`)**: landed M1, M2, M3, M4 (phases 1 and 2). Not started: M5, M6, role-template retention. Per-mechanism status lines below.
 
 ---
 
@@ -42,31 +43,37 @@ flowchart LR
 Adopt six mechanisms. None relaxes the sandbox, `ApprovalSheet`, or the Ledger.
 
 ### M1. Progressive creator skills (split `PLUGINS.md`)
+- **Status**: Landed. `PLUGINS.md` is an index (`desktop/src/core/plugin-guide-text.ts`); references and templates are written to `plugins-guide/` in the library. Token saving still unmeasured (size only: 18,058 → 2,817 bytes for the first-turn file).
 - **Context**: DSH's first layer is a 3.9 KB index with `references/` and `templates/` loaded on demand, deliberately below an 8,192-character tool-result trim limit. Botling's Maintainer reads one ~18 KB guide in full every time.
 - **Decision**: Split the guide in `maintainer-text.ts` into a small index plus on-demand reference and template files.
 - **Consequences**: Less first-turn context and fewer guesses about slots. The token saving is an inference — **not yet measured**; measure before/after with a real plugin-creation run. Cost: small (docs and tests). Risk: index drift from references; keep a test that every referenced file exists.
 
 ### M2. Read-only runtime introspection tools
+- **Status**: Landed (final tool list: `slots`, `installedPlugins`, `checkIssues`, `shortcutConflicts`, `themeVariables`). Registered in `plugins/introspect.ts` and reached through `PluginRegistry.inspect`; the Maintainer calls it as `--inspect-plugins` next to `--check-plugin`. The headless-core script variant of the command is not wired.
 - **Context**: DSH exposes `cordis_inspect_list` / `cordis_inspect_query` (read-only) instead of stuffing runtime facts into the system prompt, which protects the request-prefix KV cache.
 - **Decision**: Give the Maintainer read-only query tools over live Botling state: available slots, outstanding check issues, shortcut conflicts, theme variables, installed plugins. Registered through the explicit registry (ADR-005); no write path, no shell.
 - **Consequences**: Fewer wrong-slot guesses; the prompt stays stable. Adds a query surface that must be schema-validated and must not leak secrets (`secrets.ts` data excluded). Cost: small–medium.
 
 ### M3. Structured repair guidance (`nextStep`)
+- **Status**: Landed. Stable codes and `nextStep` in `manifest.ts` (`CHECK_NEXT_STEPS`, locked by test); `--check-plugin` prints `→ next [CODE]: …` under each `✗` line.
 - **Context**: DSH's plugin manager attaches a `nextStep` to every non-success result.
 - **Decision**: `check-plugin` and the plugin registry return a status code plus an explicit next action for each failure, as a string mapping.
 - **Consequences**: Cheaper, more reliable auto-repair loops, and the same codes can drive UI hints. Cost: minimal. Must keep codes stable (tested), since the Maintainer's behaviour will depend on them.
 
 ### M4. Suggestion cards with anti-nag rules and Undo/Restore
+- **Status**: Landed in `spec-desk.ts` (`suggestion-rules.ts`), because `botling.component-studio` is not extracted yet; moves with it. Undo takes the component off the bots' lists and Restore puts it back from the library copy (nothing deleted); reverting a later change is still the component's own Revert (git).
 - **Context**: DSH's experimental `creation-recommendations` proposes a `create_personalized_page` card; a background Creator is dispatched only after the user clicks. Its skill states anti-nag rules: check the official plugin catalog first, never card a one-off table, at most one card per turn. Cards support Undo/Restore.
 - **Decision**: Converge the proposal rules in `botling.component-studio` (`<suggest-component>`): look up existing plugins first, no card for one-shot output, at most one card per turn, and Undo/Restore on created components. Building stays Maintainer-only; background sub-agents never install directly.
 - **Consequences**: Less interruption, reversible creation. Needs per-turn state and a restore path (relies on Git tags/`lastGood`). Cost: medium; naturally lands with the Studio extraction (ADR-005).
 
 ### M5. Plugins-page creation entry
+- **Status**: Not started.
 - **Context**: DSH has a "let the agent create a plugin" menu and sample guidance.
 - **Decision**: Add a "Ask Maintainer to build" button with starter templates in `Plugins.tsx`.
 - **Consequences**: Discoverability with low risk; it only routes to the existing Maintainer flow. Cost: small (UI). Exact UI placement is **to be confirmed with the project lead** (open item in the research).
 
 ### M6. Pre-install static gate
+- **Status**: Not started.
 - **Context**: DSH runs `validateGeneratedBundle` (path and build checks) before installing.
 - **Decision**: Extend `checkPlugin` in `manifest.ts` to reject out-of-bounds links/paths and oversized icon assets before install.
 - **Consequences**: Cheap defence in depth ahead of the screenshot check; it complements, not replaces, the sandbox. Cost: small.

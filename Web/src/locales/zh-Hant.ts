@@ -210,6 +210,10 @@ export const zhHant: Dictionary = {
   "specChip.showing": "正顯示在右側面板",
   "specChip.openInPanel": "在右側面板開啟",
   "specChip.edit": "編輯規格",
+  "specChip.undo": "復原",
+  "specChip.undoTitle": "從機器人的清單移除；元件仍留在元件庫，可按「還原」放回",
+  "specChip.restore": "還原",
+  "specChip.restoreTitle": "把元件放回機器人的清單",
   "specChip.editTitle": "在右側面板修改；按「建置」會做出新版本",
   "specChip.newVersion": "建置新版本中 · {name}",
   // components.ts: a card that runs a command

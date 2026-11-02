@@ -375,9 +375,24 @@ function specChips(message: MessageView, components: Record<string, ComponentInf
     chip.title = filling ? t("specChip.fillingTitle", { bot: filling }) : spec.suggested ? t("specChip.suggestedTitle") : building ? t("specChip.buildingTitle") : spec.open ? t("specChip.showing") : t("specChip.openInPanel");
     chip.addEventListener("click", () => post({ type: "pressSpec", id: spec.id }));
     strip.append(chip);
-    if (spec.status === "done") strip.append(editSpecButton(spec));
+    if (spec.undo === "restore") strip.append(undoSpecButton(spec));
+    else if (spec.status === "done") strip.append(editSpecButton(spec), ...(spec.undo === "undo" ? [undoSpecButton(spec)] : []));
   }
   return strip;
+}
+
+/** Undo (take the component off the bot's list) or Restore (put it back); the library copy and its versions stay. */
+function undoSpecButton(spec: SpecChipView): HTMLButtonElement {
+  const restore = spec.undo === "restore";
+  const button = document.createElement("button");
+  button.className = "spec-edit spec-undo";
+  button.textContent = t(restore ? "specChip.restore" : "specChip.undo");
+  button.title = t(restore ? "specChip.restoreTitle" : "specChip.undoTitle");
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    post({ type: restore ? "restoreSpec" : "undoSpec", id: spec.id });
+  });
+  return button;
 }
 
 function editSpecButton(spec: SpecChipView): HTMLButtonElement {
@@ -413,7 +428,7 @@ function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>
   label.className = "spec-built-name";
   label.innerHTML = spec.status === "building" ? `<span class="spinner" aria-hidden="true"></span><span></span>` : `${cubeIcon}<span></span>`;
   label.querySelector("span:not(.spinner)")!.textContent = spec.status === "building" ? t("specChip.newVersion", { name }) : `${t("specChip.component")} · ${name}`;
-  head.append(label, editSpecButton(spec));
+  head.append(label, editSpecButton(spec), ...(spec.status === "done" && spec.undo === "undo" ? [undoSpecButton(spec)] : []));
   // Pinned, a bot-filled one is made live on the Board (Maintainer gives it a command).
   if (spec.status === "done") head.append(specPinButton(spec));
   box.append(head, card);

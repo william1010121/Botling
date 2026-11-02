@@ -19,6 +19,7 @@ import {
   type SpecChange, LINE_BREAKS,
 } from "./specs";
 import { safeName } from "./components/library";
+import { judgeSuggestion } from "./suggestion-rules";
 import { toSwiftDate, type ChatRecord } from "./store/records";
 import type { Display } from "./reply";
 
@@ -175,13 +176,32 @@ export class SpecDesk {
     else this.open(id, chat);
   }
 
-  /** A bot's `<suggest-component>` (`suggestComponent`): a chip under its reply, nothing more. One per reply. */
+  /**
+   * A bot's `<suggest-component>` (`suggestComponent`): a chip under its reply, nothing more. One per reply, and (ADR-006 M4,
+   * suggestion-rules.ts) none for one-shot output, at most one per turn, a library component that already does it offered
+   * instead of a new build, and never again what the user took back.
+   */
   suggest(name: string, draft: string, bot: Bot) {
-    const record = bot.lines().findLast((line) => line.role === "bot");
+    const lines = bot.lines();
+    const record = lines.findLast((line) => line.role === "bot");
     if (!record || bot.specs.some((spec) => spec.messageID === record.id)) return;
-    const spec = draftSpec(record, this.name(bot), bot.profile.folder, this.library, toSwiftDate());
+    const turn = new Set(lines.slice(lines.findLastIndex((line) => line.role === "user") + 1).map((line) => line.id));
     const named = safeName(name);
-    if (spec.existing === undefined && named) {
+    const verdict = judgeSuggestion({
+      name: named, draft, libraryNames: this.library.names, botNames: bot.components,
+      suggestionsThisTurn: bot.specs.filter((spec) => spec.suggestedBy !== undefined && spec.messageID !== undefined && turn.has(spec.messageID)).length,
+      undoneNames: bot.specs.filter((spec) => spec.undone === true).map((spec) => spec.name),
+    });
+    if (!verdict.allow) {
+      this.deps.log(`suggest-component "${name}" dropped: ${verdict.reason}`);
+      return;
+    }
+    const spec = draftSpec(record, this.name(bot), bot.profile.folder, this.library, toSwiftDate());
+    if (verdict.existing !== undefined) {
+      // The library has it: the chip offers to put it on the bot's list; Maintainer builds nothing.
+      spec.existing = verdict.existing;
+      spec.name = verdict.existing;
+    } else if (spec.existing === undefined && named) {
       spec.name = named;
       if (spec.similar === named) delete spec.similar;
     }
@@ -190,6 +210,65 @@ export class SpecDesk {
     if (spec.about) spec.purpose = spec.about;
     spec.suggestedBy = this.name(bot);
     bot.editSpecs((specs) => { specs.push(spec); });
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Undo / Restore (ADR-006 M4)
+
+  /**
+   * Undo for a component made (or added) from a chip: it comes off the bots' lists it was put on. Nothing is deleted: the
+   * library copy and its git tags stay (deleting from the library is Maintainer's, and only when the user asks), so Restore
+   * needs no rebuild. A change made later is undone by the component's own Revert (git, `library.revert`).
+   */
+  undo(id: string, chat: Bot) {
+    const spec = this.spec(chat, id);
+    if (!spec || spec.status !== "done" || spec.built === undefined || spec.undone === true) return;
+    const name = spec.built;
+    const removed: string[] = [];
+    for (const botName of spec.bots) {
+      const holder = this.deps.maintainer.holder(botName);
+      if (holder && this.deps.maintainer.unlistComponent(name, holder)) {
+        removed.push(this.name(holder));
+        holder.queueNote(`(App: The user took the component "${name}" off your list.)`);
+      }
+    }
+    this.edit(chat, id, (edited) => {
+      edited.undone = true;
+      edited.undoneBots = removed;
+      edited.conversation.push({ kind: "event", text: removed.length ? `Undone: ${name} taken off ${removed.join(", ")}'s list (kept in the library; Restore puts it back)` : `Undone: ${name} was on no list (kept in the library)` });
+    });
+    chat.appNotice(`${name} taken off ${removed.length ? removed.join(", ") + "'s list" : "the list"}. Restore puts it back.`);
+    if (this.openId === id) this.close();
+    if (spec.messageID) chat.refreshLine(spec.messageID);
+  }
+
+  /** Restore: the component goes back on the lists Undo took it from, from the copy the library kept. */
+  restore(id: string, chat: Bot) {
+    const spec = this.spec(chat, id);
+    if (!spec || spec.undone !== true || spec.built === undefined) return;
+    const name = spec.built;
+    if (!this.library.names.includes(name)) {
+      chat.appNotice(`Couldn't restore ${name}: it is no longer in the library.`);
+      return;
+    }
+    const wanted = Array.isArray(spec.undoneBots) ? (spec.undoneBots as string[]) : [];
+    const back: string[] = [];
+    const full: string[] = [];
+    for (const botName of wanted) {
+      const holder = this.deps.maintainer.holder(botName);
+      if (!holder) continue;
+      if (this.deps.maintainer.giveComponent(name, holder)) {
+        back.push(this.name(holder));
+        holder.queueNote(`(App: The user added the component "${name}" back to your list.)`);
+      } else if (holder.components !== null) full.push(this.name(holder));
+    }
+    this.edit(chat, id, (edited) => {
+      if (!full.length) { delete edited.undone; delete edited.undoneBots; }
+      edited.bots = back.length ? back : edited.bots;
+      edited.conversation.push({ kind: "event", text: `Restored: ${name} back on ${back.join(", ") || "no list"}${full.length ? `; not on ${full.join(", ")} (list full)` : ""}` });
+    });
+    chat.appNotice(`${name} restored to ${back.join(", ") || "the library"}.${full.length ? ` Not added to ${full.join(", ")}: its list is full (20 components); take one off first.` : ""}`);
+    if (spec.messageID) chat.refreshLine(spec.messageID);
   }
 
   // ------------------------------------------------------------------------------------------
@@ -615,7 +694,9 @@ export class SpecDesk {
     const out: { specs?: SpecChipView[]; component?: string } = {};
     const chips = chat.specs.filter((spec) => spec.messageID === record.id).map((spec): SpecChipView => {
       const chip: SpecChipView = { id: spec.id, name: spec.name.slice(0, 200), status: spec.status, suggested: spec.suggestedBy !== undefined && spec.status === "draft" && spec.built === undefined, open: spec.id === this.openId, component: null, display: null, filling: null };
-      const shown = this.display(spec);
+      const shown = spec.undone === true ? null : this.display(spec);
+      if (spec.undone === true) chip.undo = "restore";
+      else if (spec.status === "done" && spec.built !== undefined) chip.undo = "undo";
       if (shown) { chip.component = shown.name; chip.display = shown; }
       else if (isFilling(spec) && spec.built && this.library.names.includes(spec.built)) { chip.component = spec.built; chip.filling = spec.filledBy ?? null; }
       return chip;

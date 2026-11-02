@@ -154,6 +154,44 @@ describe("component specs (Workspace+Specs.swift)", () => {
   });
 });
 
+describe("anti-nag rules and Undo/Restore (ADR-006 M4)", () => {
+  it("a one-shot suggestion gets no chip; one for a component the bot lacks offers the library's; Undo takes it off the list and Restore puts it back", async () => {
+    const dir = tempDir("specs-m4");
+    component(dir, "disk-usage", "Shows how full the disk is.\n");
+    const c = core(dir);
+    await say(c, MAIN, `/say A table. <suggest-component name="Invoices">a one-off table of this week's invoices</suggest-component>`);
+    const oneShot = await reply(c, "A table.");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await c.chat()).messages.find((m: any) => m.id === oneShot.id)?.specs ?? []).toHaveLength(0);
+
+    // Take disk-usage off the main bot's list (it starts with the whole library), then suggest it.
+    const before = JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8"));
+    writeFileSync(join(dir, "main", "bot.json"), JSON.stringify({ ...before, components: [] }));
+    await c.kill("SIGTERM");
+    const again = core(dir);
+    await say(again, MAIN, `/say Disk is 80% full. <suggest-component name="disk-usage">how full the disk is, from df -h</suggest-component>`);
+    const line = await reply(again, "Disk is 80% full.");
+    const chip = await until(async () => (await again.chat()).messages.find((m: any) => m.id === line.id)?.specs?.[0]);
+    expect(chip).toMatchObject({ name: "disk-usage", status: "draft", suggested: true });
+    // The library has it: Build it only puts it on the list; Maintainer is never asked to build.
+    await again.call({ type: "spec.act", specId: chip.id, action: { kind: "build" } });
+    const done = await until(async () => { const found = (await again.chat()).messages.find((m: any) => m.id === line.id)?.specs?.[0]; return found?.status === "done" ? found : null; });
+    expect(done.undo).toBe("undo");
+    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).toContain("disk-usage");
+    expect((await again.chat(MAINTAINER)).messages.some((m: any) => m.role === "relay")).toBe(false);
+
+    await again.call({ type: "spec.act", specId: chip.id, action: { kind: "undo" } });
+    const undone = await until(async () => { const found = (await again.chat()).messages.find((m: any) => m.id === line.id)?.specs?.[0]; return found?.undo === "restore" ? found : null; });
+    expect(undone.component ?? null).toBeNull();
+    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).not.toContain("disk-usage");
+    expect(existsSync(join(dir, "plugins", "ccb-components", "components", "disk-usage", "template.html"))).toBe(true);
+
+    await again.call({ type: "spec.act", specId: chip.id, action: { kind: "restore" } });
+    await until(async () => (await again.chat()).messages.find((m: any) => m.id === line.id)?.specs?.[0]?.undo === "undo");
+    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).toContain("disk-usage");
+  });
+});
+
 describe("a spec's test run is allowed only on the app page's ApprovalSheet (G2)", () => {
   it("Test run answers what the sheet asks; approve from the panel is refused; spec.approve with what the sheet showed runs it", async () => {
     const dir = tempDir("specs-approve");
