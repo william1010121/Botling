@@ -7,3 +7,4 @@ dist/
 spec/node_modules
 spec/traces/*.out/
 spec/**/states/
+specs/screens/
