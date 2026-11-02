@@ -24,8 +24,10 @@ import { applyPatch } from "../../../../Web/src/patch";
 import type { ChatState } from "../../../../Web/src/types";
 import { keepDraft, keptDrafts, pageDraftStore } from "./draft-keep";
 import latex from "../../../builtin-plugins/ccb-latex/package.json";
+import chatExtras from "../../../builtin-plugins/botling.chat-extras/package.json";
 
 declare const __LATEX_SOURCE__: string;
+declare const __CHAT_EXTRAS_SOURCE__: string;
 
 setSummaryCountable(isSummaryReply);
 observeTraceEditor();
@@ -268,16 +270,25 @@ document.addEventListener("keydown", (event) => {
 
 /**
  * Botling Web runs no plugins (the phone is told nothing of them), so its chat page keeps the built-in
- * ccb-latex bundled in, as its manifest describes it, with its stylesheet and fonts beside chat.html. Its
- * key (Mod+Shift+M) is the shell's to bind (plugin-commands.ts).
+ * web parts bundled in, as their manifests describe them, with their stylesheets (and ccb-latex's fonts)
+ * beside chat.html, and their settings' defaults. ccb-latex's key (Mod+Shift+M) is the shell's to bind
+ * (plugin-commands.ts).
  */
+const defaults = (settings: Record<string, { default: unknown }>) => Object.fromEntries(Object.entries(settings).map(([key, setting]) => [key, setting.default]));
 const standalone = WEB ? [{
   name: latex.name,
   version: latex.version,
   source: __LATEX_SOURCE__,
   styles: [new URL("plugins/ccb-latex/katex.min.css", location.href).toString()],
-  settings: Object.fromEntries(Object.entries(latex.ccb.contributes.settings).map(([key, setting]) => [key, setting.default])),
+  settings: defaults(latex.ccb.contributes.settings),
   commands: latex.ccb.contributes.commands.map(({ id, title }) => ({ id, title })),
+}, {
+  name: chatExtras.name,
+  version: chatExtras.version,
+  source: __CHAT_EXTRAS_SOURCE__,
+  styles: [new URL("plugins/botling.chat-extras/chat-extras.css", location.href).toString()],
+  settings: defaults(chatExtras.ccb.contributes.settings),
+  commands: [],
 }] : [];
 /**
  * Plugins' web parts run here as in 1.x (Phase 4a: this page has an origin of its own, so they reach

@@ -126,10 +126,12 @@ class Chat {
         insert: (text) => composer.insert(text),
         addExtension: (extension) => composer.addExtension(extension),
         showPopover: (content) => composer.showPopover(content),
+        chips: { add: (chip) => composer.addChip(chip), list: () => composer.chipsHere() },
       },
       redraw: () => this.redraw(),
     });
     composer.onKey = (event) => this.plugins.handleKey(event);
+    composer.onPaste = (event) => this.plugins.handlePaste(event);
     onCatchUpToggle(() => {
       if (this.last) this.catchUp.update(this.last, (id) => this.drawn.get(id)?.element ?? null);
     });

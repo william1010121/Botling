@@ -1,5 +1,7 @@
-import { t } from "./i18n";
-import { escapeHTML } from "./util";
+import type { ChipHandle } from "../../../../Web/src/composer";
+import type { CcbWeb } from "../../../../Web/src/plugins";
+import { escapeHTML } from "../../../../Web/src/util";
+import { t } from "./words";
 
 /** A paste over either limit becomes a chip instead of text in the box; 0 turns that limit off. */
 export const PASTE_CHARS = 1000;
@@ -7,10 +9,10 @@ export const PASTE_LINES = 15;
 
 export interface PasteLimits { chars: number; lines: number }
 
-/** The limits the app sent (Settings), the defaults where absent or not a number. */
-export function pasteLimits(state: { pasteCollapseChars?: number | null; pasteCollapseLines?: number | null }): PasteLimits {
-  const pick = (value: number | null | undefined, fallback: number) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback);
-  return { chars: pick(state.pasteCollapseChars, PASTE_CHARS), lines: pick(state.pasteCollapseLines, PASTE_LINES) };
+/** The limits from the plugin's settings, the defaults where absent or not a whole number from 0. */
+export function pasteLimits(chars: unknown, lines: unknown): PasteLimits {
+  const pick = (value: unknown, fallback: number) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : fallback);
+  return { chars: pick(chars, PASTE_CHARS), lines: pick(lines, PASTE_LINES) };
 }
 
 /** Lines as an editor counts them: a final line break does not start another. */
@@ -104,4 +106,48 @@ export function openPasteDialog(pasted: string): void {
   veil.addEventListener("mousedown", (event) => { if (event.target === veil) close(); });
   document.addEventListener("keydown", onKey, true);
   document.body.append(veil);
+}
+
+/**
+ * A paste over the limits stays out of the editor: a chip above the box, one per chat (another paste
+ * joins it), that opens a preview; sending puts it after your words in the tag `splitPasted` reads.
+ */
+export function collapsePastes(ccb: CcbWeb): void {
+  const pastes = new Map<ChipHandle, { text: string; open: boolean }>();
+  ccb.composer.onPaste((text) => {
+    const limits = pasteLimits(ccb.settings.get("botling.chat-extras.pasteCollapseChars"), ccb.settings.get("botling.chat-extras.pasteCollapseLines"));
+    if (!shouldCollapse(text, limits)) return false;
+    const here = ccb.composer.chips.list().find((handle) => pastes.has(handle));
+    if (here) {
+      pastes.get(here)!.text += `\n${text}`;
+      here.update();
+      return true;
+    }
+    const paste = { text, open: false };
+    const handle: ChipHandle = ccb.composer.chips.add({
+      render: () => {
+        const chip = pasteChip(paste.text, () => { paste.open = !paste.open; handle.update(); });
+        chip.setAttribute("aria-expanded", String(paste.open));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "paste-remove";
+        remove.setAttribute("aria-label", t("paste.remove"));
+        remove.innerHTML = CROSS;
+        remove.addEventListener("click", () => { handle.remove(); ccb.composer.view.focus(); });
+        const both = document.createDocumentFragment();
+        both.append(chip, remove);
+        return both;
+      },
+      preview: () => {
+        if (!paste.open) return null;
+        // Expand: back into the editor at the caret; the chip goes.
+        const expand = () => { handle.remove(); ccb.composer.insert(paste.text); };
+        return pastePanel(paste.text, [copyAction(paste.text), { label: t("paste.expand"), run: expand }], () => { paste.open = false; handle.update(); });
+      },
+      serialize: () => withPasted("", paste.text),
+      onRemove: () => { pastes.delete(handle); },
+    });
+    pastes.set(handle, paste);
+    return true;
+  });
 }

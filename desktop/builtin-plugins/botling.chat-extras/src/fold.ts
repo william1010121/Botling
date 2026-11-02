@@ -1,5 +1,5 @@
-import { t } from "./i18n";
-import { escapeHTML } from "./util";
+import { t } from "./words";
+import { escapeHTML } from "../../../../Web/src/util";
 
 /** A long message of yours is folded to this many lines (the CSS max-height says the same). */
 export const FOLD_AFTER = 10;
@@ -28,7 +28,7 @@ export function resetUserFolds(): void { opened.clear(); }
 
 const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
 
-/** The bubble folded to its first lines with a fade, and the control under it that opens and folds it. */
+/** The bubble folded to its first lines with a fade, in its place, and the control under it that opens and folds it. */
 export function userFold(id: string, bubble: HTMLElement): HTMLElement {
   const fold = document.createElement("div");
   fold.className = "user-fold";
@@ -39,7 +39,7 @@ export function userFold(id: string, bubble: HTMLElement): HTMLElement {
     const open = opened.has(id);
     bubble.classList.toggle("collapsed", !open);
     toggle.setAttribute("aria-expanded", String(open));
-    toggle.innerHTML = `<span>${escapeHTML(t(open ? "messages.showLess" : "messages.showMore"))}</span>${chevron}`;
+    toggle.innerHTML = `<span>${escapeHTML(t(open ? "fold.showLess" : "fold.showMore"))}</span>${chevron}`;
   };
   toggle.addEventListener("click", () => {
     if (opened.has(id)) opened.delete(id);
@@ -47,6 +47,7 @@ export function userFold(id: string, bubble: HTMLElement): HTMLElement {
     draw();
   });
   draw();
+  bubble.replaceWith(fold);
   fold.append(bubble, toggle);
   return fold;
 }

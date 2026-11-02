@@ -1,4 +1,3 @@
-import { groupImages } from "./image-gallery";
 import { findMessageRow } from "./message-navigation";
 import { artifactCard } from "./artifacts";
 import { summaryCountable } from "./summary-countable";
@@ -14,8 +13,6 @@ import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
 import { taskCardChips } from "./task-cards";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
-import { openPasteDialog, pasteChip, splitPasted } from "./paste-collapse";
-import { isLongUserText, settleUserFold, userFold } from "./long-message";
 import { escapeHTML } from "./util";
 import { characterAvatar } from "./animated-avatar";
 
@@ -25,6 +22,8 @@ export const extensions = {
   components: new Map<string, { plugin: string; render: ComponentRender }>(),
   /** Called with each drawn message, so a plugin can change it (LaTeX in your own messages). */
   afterRender: [] as { plugin: string; handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void }[],
+  /** What your own message's bubble shows, from its text (a long paste taken out of it). */
+  userText: [] as { plugin: string; handler: (text: string) => string }[],
   /** Right-column pages from plugins, by "plugin/id". */
   panels: new Map<string, { plugin: string; render: (root: HTMLElement) => void | (() => void) }>(),
   /** Runs a plugin's code, unloading the plugin if it throws. */
@@ -580,26 +579,12 @@ function userBody(message: MessageView): HTMLElement {
     body.append(quote);
   }
   if (message.attachments?.length) body.append(attachmentStrip(message.attachments));
-  const { text, pasted } = splitPasted(message.text);
+  const text = extensions.userText.reduce((shown, { plugin, handler }) => extensions.guard(plugin, () => handler(shown)) ?? shown, message.text);
   if (text) {
     const bubble = document.createElement("div");
     bubble.className = "bubble user-bubble";
     bubble.innerHTML = escapeHTML(text).replace(/\n/g, "<br>");
-    if (isLongUserText(text)) {
-      // A long one shows its first lines; the control under it, centered, opens and folds it.
-      const fold = userFold(message.id, bubble);
-      body.append(fold);
-      requestAnimationFrame(() => { if (fold.isConnected) settleUserFold(fold); });
-    } else {
-      body.append(bubble);
-    }
-  }
-  // A long paste folded away when it was sent: the chip under the bubble opens it in a dialog.
-  if (pasted !== null) {
-    const strip = document.createElement("div");
-    strip.className = "attachments";
-    strip.append(pasteChip(pasted, () => openPasteDialog(pasted)));
-    body.append(strip);
+    body.append(bubble);
   }
   return body;
 }
@@ -620,7 +605,6 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     const text = document.createElement("div");
     text.className = "markdown";
     text.innerHTML = renderMarkdown(piece);
-    groupImages(text);
     bubble.append(text);
   };
   // A component in it spans the reply edge to edge, and the reply the whole message column: the

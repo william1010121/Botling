@@ -38,10 +38,12 @@ beforeEach(() => {
       insert: (text) => composer.insert(text),
       addExtension: (extension) => composer.addExtension(extension),
       showPopover: (content) => composer.showPopover(content),
+      chips: { add: (chip) => composer.addChip(chip), list: () => composer.chipsHere() },
     },
     redraw: () => { redraws += 1; },
   });
   composer.onKey = (event) => host.handleKey(event);
+  composer.onPaste = (event) => host.handlePaste(event);
 });
 
 describe("plugin host", () => {

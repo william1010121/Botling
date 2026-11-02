@@ -1,16 +1,19 @@
-/// <reference types="node" />
+// @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
-import { groupImages, stageReserve } from "../src/image-gallery";
-import { renderMarkdown, setMediaSource } from "../src/markdown";
-import { messageElement } from "../src/messages";
-import { closeLightbox, handleMediaClicks } from "../src/lightbox";
-import type { MessageView } from "../src/types";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { closeLightbox, handleMediaClicks } from "../../../../Web/src/lightbox";
+import { renderMarkdown, setMediaSource } from "../../../../Web/src/markdown";
+import { messageElement } from "../../../../Web/src/messages";
+import type { MessageView } from "../../../../Web/src/types";
+import { groupImages, stageReserve } from "../src/gallery";
+import { chatPage } from "./chat-page";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 handleMediaClicks(document);
-afterEach(() => { closeLightbox(); document.body.innerHTML = ""; setMediaSource(url => url); });
+let close: () => void;
+beforeEach(async () => ({ close } = await chatPage()));
+afterEach(() => { close(); closeLightbox(); document.body.innerHTML = ""; setMediaSource(url => url); });
 const a = '![First](file:///tmp/a.png)', b = '![Second](file:///tmp/b.png)';
 function draw(text: string, extra: Partial<MessageView> = {}) {
   const row = messageElement({ id: "m", role: "bot", text, stamp: null, avatar: null, choices: null, chosen: null,
@@ -31,6 +34,12 @@ it('groups blank lines and hard breaks, retaining every original and alt; naviga
   expect(visible(row)[0].src).toContain('http://localhost/media?url=');
   visible(row)[0].click();
   expect(document.querySelector('.lightbox-caption')?.textContent).toBe('Second');
+});
+it('with the plugin off, pictures in a row stay as they are', () => {
+  close();
+  const row = draw(`${a}\n\n${b}`);
+  expect(row.querySelector('.image-gallery')).toBeNull();
+  expect(visible(row)).toHaveLength(2);
 });
 it('leaves a single image exactly unchanged', () => {
   const root = document.createElement('div'); root.innerHTML = renderMarkdown(a);
@@ -96,7 +105,8 @@ it('touch swipes navigate once and suppress their synthetic preview click', () =
 
 // A wide diagram once sat in a fixed 320px grey frame: big bands above and below, and the pager
 // centred on the frame instead of on the image's edge.
-const css = readFileSync(join(__dirname, "../src/chat.css"), "utf8");
+// The gallery's rules are the plugin's; a focused image's are the chat page's.
+const css = [join(__dirname, "../src/chat-extras.css"), join(__dirname, "../../../../Web/src/chat.css")].map((file) => readFileSync(file, "utf8")).join("\n");
 const rule = (selector: string) => {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return css.match(new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`))?.[1] ?? "";

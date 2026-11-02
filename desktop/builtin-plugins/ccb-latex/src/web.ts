@@ -11,8 +11,10 @@ export function activate(ccb: CcbWeb): () => void {
 
   ccb.messages.afterRender((element, message) => {
     if (message.role !== "user") return;
+    // What the bubble shows, which can be less than the message (botling.chat-extras keeps a long paste out of it).
     const bubble = element.querySelector<HTMLElement>(".user-bubble");
-    if (bubble && /[$\\]/.test(message.text)) bubble.innerHTML = renderPlainWithMath(message.text);
+    const text = bubble ? [...bubble.childNodes].map((node) => (node.nodeName === "BR" ? "\n" : node.textContent ?? "")).join("") : "";
+    if (bubble && /[$\\]/.test(text)) bubble.innerHTML = renderPlainWithMath(text);
   });
 
   // The preview: shown while the caret is inside a formula in the input box.

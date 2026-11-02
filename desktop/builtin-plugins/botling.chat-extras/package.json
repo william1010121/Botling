@@ -1,0 +1,19 @@
+{
+  "name": "botling.chat-extras",
+  "displayName": "Chat extras",
+  "version": "1.0.0",
+  "description": "Pictures in a row become one gallery, a long message of yours folds to its first lines, and a long paste waits as a chip above the input box.",
+  "license": "GPL-3.0-or-later",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "permissions": ["composer", "messages"],
+    "web": "dist/web.js",
+    "styles": ["dist/chat-extras.css"],
+    "contributes": {
+      "settings": {
+        "botling.chat-extras.pasteCollapseChars": { "type": "number", "default": 1000, "title": "Collapse pastes over (characters; 0 turns it off)" },
+        "botling.chat-extras.pasteCollapseLines": { "type": "number", "default": 15, "title": "Collapse pastes over (lines; 0 turns it off)" }
+      }
+    }
+  }
+}

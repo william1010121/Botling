@@ -31,7 +31,7 @@ import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
-import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { answerLabel } from "./attachments";
 import {
@@ -345,6 +345,8 @@ export class Core {
         workspaceWatch: (on) => this.watchWorkspace(on),
       },
     });
+    // Settings that are a built-in plugin's now (the paste limits: botling.chat-extras) move to its settings once.
+    moveSettingsToPlugins(Layout.settings(options.dataDir), (plugin, key, value) => this.plugins.registry.set(plugin, key, value));
     // The component library has the built-in plugins' cards now (botling.cards' preview card), before any bot
     // gets its first list (the built-ins).
     if (this.components.library.rescan()) this.componentStamp = this.components.library.stamp;

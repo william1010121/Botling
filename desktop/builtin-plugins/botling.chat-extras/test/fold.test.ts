@@ -1,8 +1,10 @@
+// @vitest-environment jsdom
 import { readFileSync } from "node:fs";
-import { beforeEach, describe, expect, it } from "vitest";
-import { FOLD_AFTER, isLongUserText, resetUserFolds, settleUserFold, visualLines } from "../src/long-message";
-import { messageElement } from "../src/messages";
-import type { MessageView } from "../src/types";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { messageElement } from "../../../../Web/src/messages";
+import type { MessageView } from "../../../../Web/src/types";
+import { FOLD_AFTER, isLongUserText, resetUserFolds, settleUserFold, visualLines } from "../src/fold";
+import { chatPage } from "./chat-page";
 
 const message = (extra: Partial<MessageView> = {}): MessageView => ({
   id: "long-1", role: "user", text: "Short.", stamp: null, avatar: null,
@@ -11,7 +13,9 @@ const message = (extra: Partial<MessageView> = {}): MessageView => ({
   ...extra,
 });
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");
-beforeEach(resetUserFolds);
+let close: () => void;
+beforeEach(async () => { resetUserFolds(); ({ close } = await chatPage()); });
+afterEach(() => close());
 
 describe("visualLines", () => {
   it("counts line breaks, and long lines as the lines they wrap to", () => {
@@ -108,11 +112,17 @@ describe("other messages", () => {
     const row = messageElement(message({ role: "bot", text: lines(30) }), {});
     expect(row.querySelector(".user-fold, .user-fold-toggle")).toBeNull();
   });
+  it("with the plugin off, a long message of yours is drawn whole", () => {
+    close();
+    const row = messageElement(message({ text: lines(30) }), {});
+    expect(row.querySelector(".user-fold, .user-fold-toggle, .collapsed")).toBeNull();
+    expect(row.querySelector(".user-body > .user-bubble")).not.toBeNull();
+  });
 });
 
 // jsdom cannot lay out; these rules carry the look.
 it("folds to about ten lines with a fade, the toggle centered in the existing fold style", () => {
-  const css = readFileSync(`${__dirname}/../src/chat.css`, "utf8");
+  const css = readFileSync(`${__dirname}/../src/chat-extras.css`, "utf8");
   const rule = (selector: string) => css.split(`${selector} {`)[1]?.split("}")[0] ?? "";
   expect(rule(".user-fold")).toMatch(/align-items: center/);
   expect(rule(".user-bubble.collapsed")).toMatch(/max-height: calc\(1\.65em \* 10/);

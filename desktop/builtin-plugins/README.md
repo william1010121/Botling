@@ -11,6 +11,7 @@ one, which is how Maintainer changes a built-in plugin: it copies the folder int
 |---|---|
 | `ccb-latex` | KaTeX in messages and the input box (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`), Mod+Shift+M. Botling Web (the phone, which runs no plugins) bundles its web part into the chat page instead. |
 | `botling.cards` | The web preview card (`網頁預覽卡片`). A component of the same name in the library (`ccb-components`) still wins. |
+| `botling.chat-extras` | Pictures in a row of a reply become one gallery, a long message of yours folds to its first lines (Show more), and a long paste waits as a chip above the input box (its limits are this plugin's settings; the ones Botling's own settings had move here once). Botling Web bundles its web part, as ccb-latex's. |
 | `botling.design` | `/design` in the / menu, put into the message as words; the bots' rules say what it means. |
 
 The `choices` card is not here: the chat draws a reply's `<choices>` as buttons by itself, and a `choices`

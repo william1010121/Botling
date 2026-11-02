@@ -1,0 +1,63 @@
+/* botling.chat-extras: image groups, the fold of a long message of yours, a long paste as a chip.
+   The chat page's own colours (--chip, --muted, --user-bubble…) are set by the page. */
+
+/* A long message of yours, folded to its first ten lines with a fade; the fold control centered under it. */
+.user-fold { display: flex; flex-direction: column; align-items: center; max-width: 100%; min-width: 0; }
+.user-fold > .user-bubble { align-self: stretch; }
+.user-bubble.collapsed { position: relative; max-height: calc(1.65em * 10 + 20px); overflow: hidden; }
+.user-bubble.collapsed::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: calc(1.65em * 2);
+  background: linear-gradient(to bottom, transparent, var(--user-bubble)); pointer-events: none;
+}
+.user-fold > .fold { align-self: center; margin-top: 2px; }
+.user-fold-toggle[aria-expanded="false"] svg { transform: none; }
+
+/* A long paste kept out of the box: the chip (box and sent message), its preview above the box, the dialog. */
+.paste-chip {
+  display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--chip); color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+}
+.paste-chip svg { color: var(--muted); flex-shrink: 0; }
+.paste-chip:hover { border-color: #3A3A42; }
+.paste-chip[aria-expanded="true"] { border-color: var(--blue); }
+.paste-chip-count { color: var(--muted); font-size: 12px; }
+.attachments > .paste-chip { height: 36px; border: none; }
+.attachments > .paste-chip:hover { background: #34343C; }
+.paste-remove, .paste-x {
+  display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  border: none; background: transparent; color: var(--muted); cursor: pointer;
+}
+.paste-remove { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 10px; }
+.paste-x { width: 22px; height: 22px; border-radius: 6px; }
+.paste-remove:hover, .paste-x:hover { background: #34343C; color: var(--text); }
+.paste-panel {
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bubble); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.paste-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.paste-title { font-size: 13px; font-weight: 600; }
+.paste-stats { font-size: 12px; color: var(--muted); }
+.paste-gap { flex: 1; }
+.paste-action { height: 28px; padding: 0 10px; border: none; border-radius: 8px; background: var(--chip); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.paste-action:hover { background: #34343C; }
+.paste-body {
+  margin: 0; padding: 12px 14px; height: 210px; overflow: auto; white-space: pre;
+  font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text);
+}
+.paste-veil { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(14, 14, 16, 0.62); }
+.paste-dialog { width: min(560px, calc(100vw - 32px)); height: min(400px, calc(100vh - 32px)); }
+.paste-dialog .paste-body { flex: 1; height: auto; }
+
+/* Consecutive images keep their original preview targets inside one bounded gallery. */
+.image-gallery { display: grid; width: 480px; max-width: 100%; min-width: 0; gap: 8px; margin: 8px 0; container-type: inline-size; --gallery-cap: 320px; }
+/* The frame is the image itself, left-aligned like a lone inline image; the reserve keeps the pager still. */
+.image-gallery-stage { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; min-height: var(--image-reserve, 0px); touch-action: pan-y; }
+.image-gallery.captioned .image-gallery-stage { min-height: calc(var(--image-reserve, 0px) + 26px); }
+.image-gallery-stage img.media { max-width: 100%; max-height: var(--gallery-cap); margin: 0; }
+.image-gallery-stage img[hidden] { display: none; }
+.image-gallery-caption { font-size: 12px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; max-width: 100%; }
+.image-gallery-controls { display: flex; align-items: center; justify-content: flex-start; gap: 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.image-gallery-controls button { width: 36px; height: 32px; border: 1px solid var(--border); border-radius: 8px; background: transparent; color: var(--text); cursor: pointer; }
+.image-gallery-controls button[aria-disabled="true"] { opacity: .35; cursor: default; }
+.image-gallery:focus-visible, .image-gallery-controls button:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+@media (max-width: 480px) { .image-gallery { --gallery-cap: 240px; } }

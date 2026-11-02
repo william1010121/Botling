@@ -151,9 +151,6 @@ export const zhHant: Dictionary = {
   "artifact.kind": "Artifact",
   "artifact.openLabel": "在瀏覽器開啟 {title}",
   // lightbox.ts
-  "gallery.label": "圖片集",
-  "gallery.previous": "上一張圖片",
-  "gallery.next": "下一張圖片",
   "lightbox.picture": "圖片",
   "lightbox.openInPreview": "用「預覽程式」開啟",
   "lightbox.showInFinder": "在 Finder 中顯示",
@@ -177,14 +174,6 @@ export const zhHant: Dictionary = {
   "composer.inLibrary": "共用元件庫裡的{kind}",
   "composer.cancelReply": "取消回覆",
   "composer.removeFile": "移除 {name}",
-  // paste-collapse.ts: a long paste kept as a chip
-  "paste.title": "貼上的文字",
-  "paste.lines": "{lines} 行",
-  "paste.stats": "{lines} 行 · {chars} 字",
-  "paste.copy": "複製",
-  "paste.expand": "展開到輸入框",
-  "paste.close": "關閉",
-  "paste.remove": "移除貼上的文字",
   // composer.ts, more
   "composer.answerWith": "回答者",
   "composer.answerHint": "{keys} · 或輸入 @codex",
@@ -243,8 +232,6 @@ export const zhHant: Dictionary = {
   "messages.more": "更多",
   "messages.interrupted": "已中斷",
   "messages.fold": "收合",
-  "messages.showMore": "顯示更多",
-  "messages.showLess": "收合",
   "messages.answered": "已回答",
   "messages.answeredLabel": "已回答：{label}。顯示選項",
   "messages.working": "處理中",

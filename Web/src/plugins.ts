@@ -3,6 +3,7 @@ import * as state from "@codemirror/state";
 import * as view from "@codemirror/view";
 import type MarkdownIt from "markdown-it";
 import { post } from "./bridge";
+import type { ChipHandle, ComposerChip } from "./composer";
 import { ownsCommand } from "./frame-protocol";
 import { md, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
@@ -41,6 +42,8 @@ export interface ChatHooks {
     insert(text: string): void;
     addExtension(extension: state.Extension): Dispose;
     showPopover(content: HTMLElement | string): Dispose;
+    /** Chips above the box in the chat open now (`list`: every plugin's). */
+    chips: { add(chip: ComposerChip): ChipHandle; list(): ChipHandle[] };
   };
   /** Draw every message again (after a renderer changed). */
   redraw(): void;
@@ -50,9 +53,15 @@ export interface ChatHooks {
 export interface CcbWeb {
   name: string;
   codemirror: { state: typeof state; view: typeof view; commands: typeof commands };
-  composer: ChatHooks["composer"] & { onKeyDown(handler: (event: KeyboardEvent) => boolean | void): Dispose };
+  composer: ChatHooks["composer"] & {
+    onKeyDown(handler: (event: KeyboardEvent) => boolean | void): Dispose;
+    /** A paste of text, before the box takes it; return true to take it yourself. */
+    onPaste(handler: (text: string, event: ClipboardEvent) => boolean | void): Dispose;
+  };
   messages: {
     use(plugin: (md: MarkdownIt) => void): void;
+    /** What the bubble of your own message shows, from its text (each handler gets what the one before left; empty: no bubble). */
+    userText(handler: (text: string) => string): Dispose;
     afterRender(handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void): Dispose;
   };
   components: { register(name: string, render: ComponentRender): Dispose };
@@ -85,6 +94,7 @@ export class PluginHost {
   private readonly markdownPlugins: { plugin: string; use: (md: MarkdownIt) => void }[] = [];
   private readonly commandRuns = new Map<string, () => void>();
   private readonly keyHandlers: { plugin: string; handler: (event: KeyboardEvent) => boolean | void }[] = [];
+  private readonly pasteHandlers: { plugin: string; handler: (text: string, event: ClipboardEvent) => boolean | void }[] = [];
   private markdownChanged = false;
   /** Called when a plugin registers a panel (the panel page waits for its own). */
   onPanels: (() => void) | null = null;
@@ -223,6 +233,15 @@ export class PluginHost {
     return false;
   }
 
+  /** A paste of text offered to plugins before the input box takes it. */
+  handlePaste(event: ClipboardEvent): boolean {
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    for (const { plugin, handler } of this.pasteHandlers) {
+      if (this.guard(plugin, () => handler(text, event)) === true) return true;
+    }
+    return false;
+  }
+
   private updateSettings(name: string, before: Record<string, unknown>, after: Record<string, unknown>): void {
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
       if (JSON.stringify(before[key]) === JSON.stringify(after[key])) continue;
@@ -241,6 +260,8 @@ export class PluginHost {
       const at = list.indexOf(item);
       if (at !== -1) list.splice(at, 1);
     };
+    const chips = new Set<ChipHandle>();
+    own(() => { for (const handle of [...chips]) handle.remove(); });
     // The plugin is named here, not by the caller (the page is one realm: the core checks again).
     const call = (method: string, params?: unknown) => new Promise<unknown>((resolve, reject) => {
       const callID = this.nextCall++;
@@ -259,12 +280,37 @@ export class PluginHost {
           this.keyHandlers.push(item);
           return own(remove(this.keyHandlers, item));
         },
+        onPaste: (handler) => {
+          const item = { plugin: name, handler };
+          this.pasteHandlers.push(item);
+          return own(remove(this.pasteHandlers, item));
+        },
+        // Its chips go when it does; `list` gives it only its own.
+        chips: {
+          add: (chip) => {
+            const handle: ChipHandle = this.hooks.composer.chips.add({
+              render: () => this.guard(name, () => chip.render()) ?? document.createTextNode(""),
+              preview: () => this.guard(name, () => chip.preview?.() ?? null) ?? null,
+              serialize: () => this.guard(name, () => chip.serialize()) ?? "",
+              onRemove: () => { chips.delete(handle); this.guard(name, () => chip.onRemove?.()); },
+            });
+            chips.add(handle);
+            return handle;
+          },
+          list: () => this.hooks.composer.chips.list().filter((handle) => chips.has(handle)),
+        },
       },
       messages: {
         use: (plugin) => {
           plugin(md);
           this.markdownPlugins.push({ plugin: name, use: plugin });
           this.markdownChanged = true;
+        },
+        userText: (handler) => {
+          const item = { plugin: name, handler };
+          extensions.userText.push(item);
+          this.markdownChanged = true;
+          return own(remove(extensions.userText, item));
         },
         afterRender: (handler) => {
           const item = { plugin: name, handler };

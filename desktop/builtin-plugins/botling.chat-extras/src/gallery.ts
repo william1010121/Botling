@@ -1,4 +1,4 @@
-import { t } from "./i18n";
+import { t } from "./words";
 
 const isImage = (node: Node): node is HTMLImageElement =>
   node instanceof HTMLImageElement && node.matches('img.media[role="button"]');

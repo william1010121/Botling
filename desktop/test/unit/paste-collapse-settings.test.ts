@@ -1,20 +1,37 @@
+// The paste limits are botling.chat-extras' settings now (core-shrink-2 N1): what settings.json held moves
+// to the plugin once, on start, and the Settings page's own command no longer takes them.
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SettingsChange } from "../../src/contract";
-import { applySetting, settingsView } from "../../src/core/settings";
+import { moveSettingsToPlugins, readSettings, settingsView, writeSettings } from "../../src/core/settings";
+import { tempDir } from "../helpers";
+
+const moved = (raw: Record<string, unknown>) => {
+  const file = join(tempDir("paste-settings"), "settings.json");
+  writeSettings(file, raw);
+  const set: [string, string, number][] = [];
+  moveSettingsToPlugins(file, (plugin, key, value) => set.push([plugin, key, value]));
+  return { set, after: readSettings(file) };
+};
 
 describe("paste collapse settings", () => {
-  it("default to 1000 characters and 15 lines, and ignore bad values", () => {
-    expect(settingsView({})).toMatchObject({ pasteCollapseChars: 1000, pasteCollapseLines: 15 });
-    expect(settingsView({ pasteCollapseChars: -5, pasteCollapseLines: "9" })).toMatchObject({ pasteCollapseChars: 1000, pasteCollapseLines: 15 });
+  it("move to botling.chat-extras, 0 kept, and leave settings.json", () => {
+    const { set, after } = moved({ pasteCollapseChars: 0, pasteCollapseLines: 40, languageChoice: "en" });
+    expect(set).toEqual([
+      ["botling.chat-extras", "botling.chat-extras.pasteCollapseChars", 0],
+      ["botling.chat-extras", "botling.chat-extras.pasteCollapseLines", 40],
+    ]);
+    expect(after).toEqual({ languageChoice: "en" });
   });
-  it("keep 0, which turns a limit off", () => {
-    const raw = applySetting(applySetting({}, { key: "pasteCollapseChars", value: 0 }), { key: "pasteCollapseLines", value: 40 });
-    expect(settingsView(raw)).toMatchObject({ pasteCollapseChars: 0, pasteCollapseLines: 40 });
+  it("move once; a bad value is dropped and the plugin's default stays; a big one is capped", () => {
+    expect(moved({ languageChoice: "en" }).set).toEqual([]);
+    const { set, after } = moved({ pasteCollapseChars: -5, pasteCollapseLines: "9" });
+    expect(set).toEqual([]);
+    expect(after).toEqual({});
+    expect(moved({ pasteCollapseChars: 5e9 }).set).toEqual([["botling.chat-extras", "botling.chat-extras.pasteCollapseChars", 1_000_000]]);
   });
-  it("only bounded whole numbers cross the command boundary", () => {
-    for (const key of ["pasteCollapseChars", "pasteCollapseLines"]) {
-      expect(SettingsChange.safeParse({ key, value: 0 }).success).toBe(true);
-      for (const value of [-1, 1.5, "5", NaN, null]) expect(SettingsChange.safeParse({ key, value }).success).toBe(false);
-    }
+  it("are no longer Botling's own settings", () => {
+    expect(settingsView({ pasteCollapseChars: 5 })).not.toHaveProperty("pasteCollapseChars");
+    for (const key of ["pasteCollapseChars", "pasteCollapseLines"]) expect(SettingsChange.safeParse({ key, value: 0 }).success).toBe(false);
   });
 });

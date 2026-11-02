@@ -2,7 +2,8 @@
 // out/builtin-plugins/ and shipped beside app.asar. The registry reads them before the library, as 1.x's
 // `builtIns` root: listed first, on until you turn them off, never pending, and a library plugin of the same
 // name replaces one. ccb-latex goes through the ordinary web-part path, botling.cards brings the web preview
-// card, and botling.design keeps /design in the / menu as words.
+// card, botling.design keeps /design in the / menu as words, and botling.chat-extras brings image groups, the
+// fold of a long message and paste chips to the chat page.
 import { beforeAll, describe, expect, it } from "vitest";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,6 +13,7 @@ import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { commandSurfaces } from "../../src/core/plugins/commands";
 import { prepareLibrary } from "../../src/core/maintainer";
+import { moveSettingsToPlugins, readSettings, writeSettings } from "../../src/core/settings";
 import { pluginGuide } from "../../src/core/maintainer-text";
 import { ComponentLibrary } from "../../src/core/components/library";
 import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "../../src/core/components/builtins";
@@ -28,8 +30,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.cards and botling.design, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.design", "ccb-latex"]);
+  it("are ccb-latex, botling.cards, botling.chat-extras and botling.design, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.chat-extras", "botling.design", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
@@ -54,11 +56,11 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.cards", true, true], ["botling.design", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.cards", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
-    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["aaa"]);
+    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.chat-extras", "aaa"]);
     expect(registry(library).plugin("ccb-latex")!.enabled).toBe(false);
     plugins.setEnabled("ccb-latex", true);
     // Maintainer copies a built-in plugin into the library to change it: that copy is the one that runs.
@@ -66,6 +68,21 @@ describe("the registry with built-in plugins", () => {
     const replaced = registry(library);
     expect(replaced.plugin("ccb-latex")).toMatchObject({ builtIn: false, folder: join(library, "ccb-latex") });
     expect(replaced.plugins.filter((plugin) => plugin.manifest.name === "ccb-latex")).toHaveLength(1);
+  });
+
+  it("runs botling.chat-extras' web part with its stylesheet, and the paste limits settings.json had", () => {
+    const dir = tempDir("builtin-chat-extras");
+    const plugins = registry(join(dir, "plugins"));
+    const extras = () => registry(join(dir, "plugins")).webSpecs().find((spec) => spec.name === "botling.chat-extras")!;
+    expect(extras()).toMatchObject({ styles: ["dist/chat-extras.css"], settings: { "botling.chat-extras.pasteCollapseChars": 1000, "botling.chat-extras.pasteCollapseLines": 15 } });
+    expect(extras().source).toContain("activate");
+    expect(plugins.webFile("botling.chat-extras", "dist/chat-extras.css")?.type).toBe("text/css; charset=utf-8");
+    expect(readFileSync(join(built, "botling.chat-extras", "dist", "chat-extras.css"), "utf8")).toContain(".image-gallery");
+    const file = join(dir, "settings.json");
+    writeSettings(file, { pasteCollapseChars: 0, pasteCollapseLines: 40 });
+    moveSettingsToPlugins(file, (plugin, key, value) => plugins.set(plugin, key, value));
+    expect(extras().settings).toEqual({ "botling.chat-extras.pasteCollapseChars": 0, "botling.chat-extras.pasteCollapseLines": 40 });
+    expect(readSettings(file)).toEqual({});
   });
 
   it("runs ccb-latex's web part in the chat page by the library's path: its stylesheet, the fonts beside it, its Mod+Shift+M", () => {

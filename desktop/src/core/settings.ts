@@ -41,8 +41,6 @@ export function writeSettings(file: string, settings: RawSettings) {
 const oneOf = <T extends string>(list: readonly T[], value: unknown): T | null => (typeof value === "string" && (list as readonly string[]).includes(value) ? value as T : null);
 const bool = (value: unknown, fallback: boolean) => (typeof value === "boolean" ? value : fallback);
 const int = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null);
-/** A whole number from 0 to `max` (0 turns a limit off), `fallback` when missing or invalid. */
-const count = (value: unknown, fallback: number, max: number) => { const n = int(value); return n !== null && n >= 0 ? Math.min(n, max) : fallback; };
 const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
 
 /** Codex workers' own choices (`CodexWorkerDefaults`): a tolerant read, an unknown effort is none. */
@@ -64,8 +62,6 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
     messageColumnWidth: messageWidth(raw.messageColumnWidth),
-    pasteCollapseChars: count(raw.pasteCollapseChars, 1000, 1_000_000),
-    pasteCollapseLines: count(raw.pasteCollapseLines, 15, 100_000),
     catchUpEnabled: bool(raw.catchUpEnabledChoice, true),
     intervalSummaryEnabled: bool(raw.intervalSummaryEnabledChoice, false),
     thresholdsCustomized: typeof raw.summaryThresholdsCustomizedChoice === "boolean" ? raw.summaryThresholdsCustomizedChoice : catchUpThreshold !== THRESHOLD || intervalThreshold !== THRESHOLD,
@@ -100,6 +96,32 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
   };
 }
 
+/**
+ * Settings that became a built-in plugin's, by their settings.json key: what that plugin calls it, and
+ * the most it may be (they were whole numbers from 0, and 0 turned a limit off).
+ */
+const MOVED_TO_PLUGINS: Record<string, { plugin: string; key: string; max: number }> = {
+  pasteCollapseChars: { plugin: "botling.chat-extras", key: "botling.chat-extras.pasteCollapseChars", max: 1_000_000 },
+  pasteCollapseLines: { plugin: "botling.chat-extras", key: "botling.chat-extras.pasteCollapseLines", max: 100_000 },
+};
+
+/**
+ * On start: each of those still in settings.json goes to its plugin's settings (`set`, plugins.json)
+ * and then out of settings.json, so it moves once. A bad value is dropped (the plugin's default).
+ */
+export function moveSettingsToPlugins(file: string, set: (plugin: string, key: string, value: number) => void): void {
+  const raw = readSettings(file);
+  const moved = Object.keys(MOVED_TO_PLUGINS).filter((key) => key in raw);
+  if (!moved.length) return;
+  for (const name of moved) {
+    const { plugin, key, max } = MOVED_TO_PLUGINS[name];
+    const value = int(raw[name]);
+    if (value !== null && value >= 0) set(plugin, key, Math.min(value, max));
+  }
+  // plugins.json first: stopped in between, they move again next time.
+  writeSettings(file, Object.fromEntries(Object.entries(raw).filter(([key]) => !moved.includes(key))));
+}
+
 /** settings.json's `mainTabs`: each bot's plugin tab (bot ids upper case), what cannot be used left out. */
 function mainTabs(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -118,8 +140,6 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "botLook": set("botLookChoice", change.value); break;
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
     case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
-    case "pasteCollapseChars": set("pasteCollapseChars", count(change.value, 1000, 1_000_000)); break;
-    case "pasteCollapseLines": set("pasteCollapseLines", count(change.value, 15, 100_000)); break;
     case "catchUpEnabled": set("catchUpEnabledChoice", change.value); break;
     case "intervalSummaryEnabled": set("intervalSummaryEnabledChoice", change.value); break;
     case "thresholdsCustomized":

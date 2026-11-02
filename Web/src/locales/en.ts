@@ -154,9 +154,6 @@ export const en = {
   "artifact.kind": "Artifact",
   "artifact.openLabel": "Open {title} in the browser",
   // lightbox.ts
-  "gallery.label": "Image gallery",
-  "gallery.previous": "Previous image",
-  "gallery.next": "Next image",
   "lightbox.picture": "Picture",
   "lightbox.openInPreview": "Open in Preview",
   "lightbox.showInFinder": "Show in Finder",
@@ -180,14 +177,6 @@ export const en = {
   "composer.inLibrary": "{kind} in the shared library",
   "composer.cancelReply": "Cancel reply",
   "composer.removeFile": "Remove {name}",
-  // paste-collapse.ts: a long paste kept as a chip
-  "paste.title": "Pasted text",
-  "paste.lines": "{lines} lines",
-  "paste.stats": "{lines} lines · {chars} chars",
-  "paste.copy": "Copy",
-  "paste.expand": "Expand into input",
-  "paste.close": "Close",
-  "paste.remove": "Remove pasted text",
   // composer.ts, more
   "composer.answerWith": "Answer with",
   "composer.answerHint": "{keys} · or type @codex",
@@ -246,8 +235,6 @@ export const en = {
   "messages.more": "More",
   "messages.interrupted": "Interrupted",
   "messages.fold": "Fold",
-  "messages.showMore": "Show more",
-  "messages.showLess": "Show less",
   "messages.answered": "Answered",
   "messages.answeredLabel": "Answered: {label}. Show the options",
   "messages.working": "Working",

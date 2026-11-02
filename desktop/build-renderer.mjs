@@ -25,9 +25,10 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   outdir = resolve(outdir);
   const web = join(root, "../Web"), nodePaths = [join(root, "node_modules")];
   // Botling Web runs no plugins (the phone is told nothing of them), so its chat page keeps the first-party
-  // ccb-latex bundled in; the desktop's loads it from out/builtin-plugins like any plugin.
-  const latex = webBuild ? (await build({ entryPoints: [join(root, "builtin-plugins/ccb-latex/src/web.ts")], bundle: true,
+  // web parts (ccb-latex, botling.chat-extras) bundled in; the desktop's loads them from out/builtin-plugins like any plugin.
+  const webPart = async (name) => webBuild ? (await build({ entryPoints: [join(root, `builtin-plugins/${name}/src/web.ts`)], bundle: true,
     format: "esm", target: "chrome130", minify: true, legalComments: "eof", write: false, nodePaths })).outputFiles[0].text : "";
+  const [latex, chatExtras] = await Promise.all([webPart("ccb-latex"), webPart("botling.chat-extras")]);
   const characters = readCharacters(root);
   const browser = { bundle: true, format: "iife", target: "chrome130", minify: !development,
     sourcemap: "linked", legalComments: "eof", write: false, nodePaths };
@@ -35,7 +36,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     build({ ...browser, entryPoints: [join(root, webBuild ? "mobile/main.tsx" : "src/renderer/main.tsx")], outfile: join(outdir, webBuild ? "web.js" : "renderer.js"),
       jsx: "automatic", define: { "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"), __CHARACTERS__: JSON.stringify(characters), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
     build({ ...browser, entryPoints: [join(root, "src/renderer/chat-frame/entry.ts")], outfile: join(outdir, "chat.js"),
-      define: { __LATEX_SOURCE__: JSON.stringify(latex), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
+      define: { __LATEX_SOURCE__: JSON.stringify(latex), __CHAT_EXTRAS_SOURCE__: JSON.stringify(chatExtras), __BOTLING_WEB__: JSON.stringify(webBuild) } }),
   ]);
   // Read every input before publication. A syntax/missing-asset error keeps the last successful build.
   const files = new Map(bundles.flatMap(result => result.outputFiles.map(file => [file.path, file.contents])));
@@ -58,6 +59,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
     asset(join(katex, "katex.min.css"), "plugins/ccb-latex/katex.min.css");
     for (const name of readdirSync(join(katex, "fonts")).filter(name => name.endsWith(".woff2")))
       asset(join(katex, "fonts", name), `plugins/ccb-latex/fonts/${name}`);
+    asset(join(root, "builtin-plugins/botling.chat-extras/src/chat-extras.css"), "plugins/botling.chat-extras/chat-extras.css");
   }
   for (const [file, contents] of files) {
     mkdirSync(dirname(file), { recursive: true });

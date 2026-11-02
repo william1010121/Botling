@@ -1,0 +1,5 @@
+{
+  "copy": [
+    { "from": "builtin-plugins/botling.chat-extras/src/chat-extras.css", "to": "dist/chat-extras.css" }
+  ]
+}
