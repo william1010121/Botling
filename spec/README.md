@@ -27,6 +27,7 @@ Keep adapters thin (translation only); every change to them is reviewed.
 | `routines` | routines scheduling (`desktop/src/core/routines.ts`) |
 | `datalock` | one core per data folder, `core.lock` (`desktop/src/core/store/data-dir-lock.ts`) |
 | `workspace` | plugins' workspace change watch, `workspace.onChange` (`desktop/src/core/workspace.ts`, `core/plugins/index.ts`, `Web/host/src/api.ts`) |
+| `approval` | a plugin frame's ask to run a bot's command: only the app page's ApprovalSheet allows (`desktop/src/renderer/plugin-frame-host.ts`, `ApprovalSheet.tsx`, `desktop/src/core/plugins/index.ts`) |
 
 ## Rules for a model
 
