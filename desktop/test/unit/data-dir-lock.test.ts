@@ -4,11 +4,11 @@
 // bot's chat lost Nov 1-2). The Chromium single-instance lock did not stop it: the data folder was
 // renamed and replaced under a running app, and the lock files went with the old folder.
 import { afterEach, describe, expect, it } from "vitest";
-import { cpSync, existsSync, readFileSync, renameSync, rmSync, statSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CoreHarness, MAIN } from "../core-harness";
 import { tempDir, until } from "../helpers";
-import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_FILE, processStartTime, readLockHolder } from "../../src/core/store/data-dir-lock";
+import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_DIR, processStartTime, readLockHolder } from "../../src/core/store/data-dir-lock";
 
 const running: CoreHarness[] = [];
 afterEach(async () => { for (const core of running.splice(0)) await core.kill(); });
@@ -47,7 +47,7 @@ describe("a second core on the same data folder", () => {
     // core's lock file: the new core waits for the old one to let go.
     renameSync(dir, `${dir}.moved`);
     cpSync(`${dir}.moved`, dir, { recursive: true });
-    expect(existsSync(join(dir, LOCK_FILE))).toBe(true);
+    expect(existsSync(join(dir, LOCK_DIR))).toBe(true);
     const fresh = start(dir);
     await fresh.chat(MAIN);
     expect((await exitCode(old)).code).toBe(CORE_EXIT_DATA_DIR_IN_USE);
@@ -66,15 +66,15 @@ describe("a second core on the same data folder", () => {
     expect(readLockHolder(dir)).toMatchObject({ pid: next.child.pid, version: "9.9.9", app: "/Applications/Botling 2.app" });
   }, 40_000);
 
-  it("a lock left by a core that is gone is taken over", async () => {
+  it("a lock left by a core that is gone is taken over, even a lock file from 7be956c7's builds", async () => {
     const dir = tempDir("data-lock-stale");
-    writeFileSync(join(dir, LOCK_FILE), JSON.stringify({ pid: 2 ** 22 + 12345, boot: "gone", at: Date.now(), machineBoot: Date.now() }));
+    writeFileSync(join(dir, LOCK_DIR), JSON.stringify({ pid: 2 ** 22 + 12345, boot: "gone", at: Date.now(), machineBoot: Date.now() }));
     const core = start(dir);
     await core.chat(MAIN);
-    expect(JSON.parse(readFileSync(join(dir, LOCK_FILE), "utf8")).pid).toBe(core.child.pid);
+    expect(readLockHolder(dir)?.pid).toBe(core.child.pid);
     await core.kill();
     // A clean exit gives the folder back.
-    expect(existsSync(join(dir, LOCK_FILE))).toBe(false);
+    expect(existsSync(join(dir, LOCK_DIR))).toBe(false);
   }, 40_000);
 });
 
@@ -101,7 +101,7 @@ describe("DataDirLock", () => {
 
   it("a holder that is not running, or ran before this machine started, is stale", () => {
     const dir = tempDir("lock-unit-stale");
-    writeFileSync(join(dir, LOCK_FILE), JSON.stringify({ pid: 999, boot: "x", at: 1, machineBoot: 1_000_000 }));
+    writeFileSync(join(dir, LOCK_DIR), JSON.stringify({ pid: 999, boot: "x", at: 1, machineBoot: 1_000_000 }));
     expect(lockIn(dir, 111, "a").claim()).toEqual({ ok: true });
     // pid 111 is "alive" again after a restart of the machine, but it is some other process now.
     expect(lockIn(dir, 222, "b", 2_000_000).claim()).toEqual({ ok: true });
@@ -111,14 +111,14 @@ describe("DataDirLock", () => {
     const dir = tempDir("lock-unit-owner");
     const a = lockIn(dir, 111, "a");
     a.claim();
-    rmSync(join(dir, LOCK_FILE));
+    rmSync(join(dir, LOCK_DIR), { recursive: true });
     const b = lockIn(dir, 222, "b");
     expect(b.claim()).toEqual({ ok: true });
     expect(a.owns()).toBe(false);
     a.release();
-    expect(existsSync(join(dir, LOCK_FILE))).toBe(true);
+    expect(existsSync(join(dir, LOCK_DIR))).toBe(true);
     b.release();
-    expect(existsSync(join(dir, LOCK_FILE))).toBe(false);
+    expect(existsSync(join(dir, LOCK_DIR))).toBe(false);
   });
 
   it("a folder put in place of the claimed one is not owned, even with no lock file in it", () => {
@@ -127,18 +127,18 @@ describe("DataDirLock", () => {
     a.claim();
     renameSync(dir, `${dir}.moved`);
     cpSync(`${dir}.moved`, dir, { recursive: true });
-    rmSync(join(dir, LOCK_FILE));
+    rmSync(join(dir, LOCK_DIR), { recursive: true });
     expect(a.owns()).toBe(false);
-    expect(existsSync(join(dir, LOCK_FILE))).toBe(false);
+    expect(existsSync(join(dir, LOCK_DIR))).toBe(false);
   });
 
   it("a missing lock file is claimed back by its last holder", () => {
     const dir = tempDir("lock-unit-missing");
     const a = lockIn(dir, 111, "a");
     a.claim();
-    rmSync(join(dir, LOCK_FILE));
+    rmSync(join(dir, LOCK_DIR), { recursive: true });
     expect(a.owns()).toBe(true);
-    expect(existsSync(join(dir, LOCK_FILE))).toBe(true);
+    expect(existsSync(join(dir, LOCK_DIR))).toBe(true);
   });
 
   it("a pid now used by a process that started after the lock was written is stale (pid reuse)", () => {
@@ -172,13 +172,39 @@ describe("DataDirLock", () => {
     expect(a.owns()).toBe(false);
   });
 
+  it("a lock file from 7be956c7's builds whose holder runs is respected", () => {
+    const dir = tempDir("lock-unit-legacy");
+    writeFileSync(join(dir, LOCK_DIR), JSON.stringify({ pid: 111, boot: "old", at: 1, machineBoot: 1_000_000 }));
+    const refused = lockIn(dir, 222, "b").claim();
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.holder).toMatchObject({ pid: 111, boot: "old" });
+    alive.delete(111);
+    try {
+      expect(lockIn(dir, 222, "b").claim()).toEqual({ ok: true });
+      expect(readLockHolder(dir)?.boot).toBe("b");
+    } finally {
+      alive.add(111);
+    }
+  });
+
+  it("something else left in an empty lock (Finder's .DS_Store) does not keep the folder locked", () => {
+    const dir = tempDir("lock-unit-stray");
+    const a = lockIn(dir, 111, "a");
+    a.claim();
+    a.release();
+    mkdirSync(join(dir, LOCK_DIR));
+    writeFileSync(join(dir, LOCK_DIR, ".DS_Store"), "");
+    expect(lockIn(dir, 222, "b").claim()).toEqual({ ok: true });
+    expect(readLockHolder(dir)?.boot).toBe("b");
+  });
+
   it("release gives the folder back to the next core", () => {
     const dir = tempDir("lock-unit-release");
     const a = lockIn(dir, 111, "a");
     a.claim();
     expect(lockIn(dir, 222, "b").claim().ok).toBe(false);
     a.release();
-    expect(existsSync(join(dir, LOCK_FILE))).toBe(false);
+    expect(existsSync(join(dir, LOCK_DIR))).toBe(false);
     expect(lockIn(dir, 222, "b").claim()).toEqual({ ok: true });
   });
 
@@ -186,7 +212,8 @@ describe("DataDirLock", () => {
     const dir = tempDir("lock-unit-record");
     new DataDirLock(dir, { pid: 111, boot: "a", version: "2.3.3", app: "/Applications/Botling 2.app" }).claim();
     expect(readLockHolder(dir)).toMatchObject({ pid: 111, boot: "a", version: "2.3.3", app: "/Applications/Botling 2.app" });
-    expect(readdirSync(dir)).toEqual([LOCK_FILE]);
+    expect(readdirSync(dir)).toEqual([LOCK_DIR]);
+    expect(readdirSync(join(dir, LOCK_DIR))).toEqual([expect.stringMatching(/^111\.[0-9a-f]{8}\.json$/)]);
   });
 
   it("knows when this process started", () => {

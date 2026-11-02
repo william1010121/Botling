@@ -6,22 +6,27 @@
 // profile, and when the data folder is renamed and replaced under a running app (an updater
 // rollback, a data move) the lock goes with the old folder and a second app starts beside the first.
 //
-// The lock is a file inside the folder itself, so it follows the folder through a rename or a
-// symlink. It is written whole to a temp file and linked into place (link fails when the name is
-// taken), so nobody ever reads half of one. It holds {pid, boot, at, started, machineBoot, version,
-// app}. It is stale when its holder is not running, ran before this machine last started, or its pid
-// now belongs to a process that started after the lock was written (pid reuse). The holder checks it
-// every few seconds (`owns`): when the folder at this path is no longer the one it claimed (renamed
-// aside and replaced), or the file names another core, this core is no longer the folder's owner and
-// must stop writing at once.
+// The lock lives inside the folder itself, so it follows the folder through a rename or a symlink.
+// core.lock is a directory holding one record, `<pid>.<random>.json`: {pid, boot, at, started,
+// machineBoot, version, app}. A core makes its record in a temp directory and renames that into place,
+// which the system refuses while core.lock holds a record, so nobody ever reads half of one. A record is
+// stale when its holder is not running, ran before this machine last started, or its pid now belongs to
+// a process that started after the record was written (pid reuse). A stale record is broken by removing
+// it by its own name, so a core can only ever remove the record it judged, never a fresh one another
+// core just put there (7be956c7 moved the whole lock aside and put it back when it was not the stale
+// one; while it was aside a third core took the folder). The model is spec/models/datalock.
+// The holder checks it every few seconds (`owns`): when the folder at this path is no longer the one it
+// claimed (renamed aside and replaced), or the record names another core, this core is no longer the
+// folder's owner and must stop writing at once.
 import { execFileSync } from "node:child_process";
-import { linkSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { uptime } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { BOOT_ID } from "../durable/atomic";
 
-export const LOCK_FILE = "core.lock";
+/** The lock: a directory holding the holder's record (a plain file in 7be956c7's builds, still honoured). */
+export const LOCK_DIR = "core.lock";
 /** The core's exit code when another core owns its data folder; main does not restart it then. */
 export const CORE_EXIT_DATA_DIR_IN_USE = 75;
 /** How often a running core makes sure it still owns its folder. */
@@ -30,7 +35,7 @@ export const LOCK_CHECK_MS = 3_000;
 export interface LockHolder {
   pid: number;
   boot: string;
-  /** When the lock was written (ms). */
+  /** When the record was written (ms). */
   at: number;
   /** When the holder process started (ms, approximate). */
   started?: number;
@@ -65,9 +70,24 @@ export function processStartTime(pid: number): number | null {
   }
 }
 
+/** A record found in core.lock: its name in the directory (null: 7be956c7's lock file), and its holder (null: unreadable). */
+interface Found { name: string | null; holder: LockHolder | null }
+
 /** Reads the holder named in `<dir>/core.lock`, or null when there is none (or it does not parse). */
 export function readLockHolder(dir: string): LockHolder | null {
-  return readHolderFile(join(dir, LOCK_FILE));
+  return findRecord(join(dir, LOCK_DIR))?.holder ?? null;
+}
+
+/** The record in this lock, or null when there is none. Anything else in it (a .DS_Store) counts as an unreadable one. */
+function findRecord(lock: string): Found | null {
+  let names: string[];
+  try {
+    names = readdirSync(lock);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOTDIR" ? { name: null, holder: readHolderFile(lock) } : null;
+  }
+  const name = names.find((n) => n.endsWith(".json")) ?? names[0];
+  return name === undefined ? null : { name, holder: readHolderFile(join(lock, name)) };
 }
 
 function readHolderFile(file: string): LockHolder | null {
@@ -93,6 +113,9 @@ const SAME_BOOT_MS = 120_000;
  */
 const STARTED_AFTER_MS = 60_000;
 
+/** The steps of the protocol, as spec/models/datalock names them. */
+export type LockStep = "Try" | "Ident" | "Look" | "Break" | "Check" | "Leave";
+
 export interface DataDirLockOptions {
   pid?: number;
   boot?: string;
@@ -102,10 +125,12 @@ export interface DataDirLockOptions {
   alive?: (pid: number) => boolean;
   startTime?: (pid: number) => number | null;
   machineBoot?: () => number;
+  /** Called after each step (the conformance test lets other cores act, or this one die, between two). */
+  onStep?: (step: LockStep) => void;
 }
 
 export class DataDirLock {
-  readonly file: string;
+  readonly lock: string;
   private readonly pid: number;
   private readonly boot: string;
   private readonly started: number;
@@ -114,11 +139,14 @@ export class DataDirLock {
   private readonly alive: (pid: number) => boolean;
   private readonly startTime: (pid: number) => number | null;
   private readonly machineBoot: () => number;
+  private readonly onStep: ((step: LockStep) => void) | undefined;
   /** The folder this core claimed (device and inode): another folder at the same path is not ours. */
   private claimed: string | null = null;
+  /** The name of this core's record in core.lock. */
+  private record: string | null = null;
 
   constructor(readonly dir: string, options: DataDirLockOptions = {}) {
-    this.file = join(dir, LOCK_FILE);
+    this.lock = join(dir, LOCK_DIR);
     this.pid = options.pid ?? process.pid;
     this.boot = options.boot ?? BOOT_ID;
     this.started = options.started ?? Math.round(Date.now() - process.uptime() * 1000);
@@ -127,85 +155,100 @@ export class DataDirLock {
     this.alive = options.alive ?? pidAlive;
     this.startTime = options.startTime ?? processStartTime;
     this.machineBoot = options.machineBoot ?? machineBootTime;
+    this.onStep = options.onStep;
   }
 
   /** Takes the folder, or says who has it. A stale lock is broken; the holder claiming again is fine. */
   claim(): Claim {
     mkdirSync(this.dir, { recursive: true });
     for (let attempt = 0; attempt < 5; attempt++) {
-      if (this.link()) {
+      const taken = this.take();
+      this.onStep?.("Try");
+      if (taken) {
+        this.record = taken;
         this.claimed = this.identity();
+        this.onStep?.("Ident");
         return { ok: true };
       }
-      const holder = this.holder();
-      if (holder && holder.boot === this.boot) { this.claimed ??= this.identity(); return { ok: true }; }
-      if (holder && !this.stale(holder)) return { ok: false, holder };
-      this.breakLock(holder);
+      const found = findRecord(this.lock);
+      const again = found?.holder?.boot === this.boot;
+      const held = !again && found?.holder && !this.stale(found.holder) ? found.holder : null;
+      if (again) { this.record = found!.name; this.claimed ??= this.identity(); }
+      this.onStep?.("Look");
+      if (again) return { ok: true };
+      if (held) return { ok: false, holder: held };
+      this.breakLock(found);
+      this.onStep?.("Break");
     }
-    const holder = this.holder();
-    return holder ? { ok: false, holder } : { ok: false, holder: { pid: 0, boot: "unknown", at: 0 } };
+    return { ok: false, holder: { pid: 0, boot: "unknown", at: 0 } };
   }
 
   /**
    * Whether this core still owns the folder. A different folder at this path (the one it claimed was
-   * moved aside), or a lock file naming another core, means this one must stop. A lock file that is
-   * merely gone from the same folder is claimed back.
+   * moved aside), or a record naming another core, means this one must stop. A lock that is merely
+   * gone from the same folder is claimed back.
    */
   owns(): boolean {
-    if (this.claimed && this.identity() !== this.claimed) return false;
-    const holder = this.holder();
-    if (holder) return holder.boot === this.boot;
+    const moved = this.claimed !== null && this.identity() !== this.claimed;
+    const found = moved ? null : findRecord(this.lock);
+    this.onStep?.("Check");
+    if (moved) return false;
+    if (found?.holder) return found.holder.boot === this.boot;
     return this.claim().ok;
   }
 
-  /** Gives the folder back on exit; another core's lock is left alone. */
+  /** Gives the folder back on exit: this core's own record goes, by its name; another core's stays. */
   release(): void {
-    if (this.holder()?.boot !== this.boot) return;
-    try { unlinkSync(this.file); } catch { /* gone already */ }
+    if (this.record) {
+      try { unlinkSync(join(this.lock, this.record)); } catch { /* gone already */ }
+      try { rmdirSync(this.lock); } catch { /* gone, or another core's record is in it */ }
+    }
+    this.onStep?.("Leave");
   }
 
-  /** Writes this core's record whole and links it in as the lock: false when the name is taken. */
-  private link(): boolean {
-    const temp = join(this.dir, `.${LOCK_FILE}.${this.pid}.${randomBytes(4).toString("hex")}.tmp`);
+  /**
+   * Makes this core's record in a temp directory and renames that in as the lock: the record's name, or
+   * null when the lock is held (the system refuses to rename onto a directory that is not empty).
+   */
+  private take(): string | null {
+    const id = `${this.pid}.${randomBytes(4).toString("hex")}`;
+    const temp = join(this.dir, `.${LOCK_DIR}.${id}.tmp`);
     const holder: LockHolder = {
       pid: this.pid, boot: this.boot, at: Date.now(), started: this.started, machineBoot: Math.round(this.machineBoot()),
       ...(this.version ? { version: this.version } : {}), ...(this.app ? { app: this.app } : {}),
     };
-    writeFileSync(temp, JSON.stringify(holder), { mode: 0o600, flag: "wx" });
+    mkdirSync(temp);
     try {
-      linkSync(temp, this.file);
-      return true;
+      writeFileSync(join(temp, `${id}.json`), JSON.stringify(holder), { mode: 0o600, flag: "wx" });
+      renameSync(temp, this.lock);
+      return `${id}.json`;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === "EEXIST") return false;
-      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "ENOSYS") throw error;
-      // No hard links on this volume (FAT, exFAT): create the name exclusively and write into it.
-      try { writeFileSync(this.file, JSON.stringify(holder), { mode: 0o600, flag: "wx" }); return true; }
-      catch (fallback) { if ((fallback as NodeJS.ErrnoException).code === "EEXIST") return false; throw fallback; }
+      // A record is in it (ENOTEMPTY, EEXIST on some systems; EPERM on Windows), or it is 7be956c7's lock file (ENOTDIR).
+      if (code === "ENOTEMPTY" || code === "EEXIST" || code === "EPERM" || code === "ENOTDIR") return null;
+      throw error;
     } finally {
-      try { unlinkSync(temp); } catch { /* gone already */ }
+      rmSync(temp, { recursive: true, force: true });
     }
   }
 
   /**
-   * Breaks the stale lock held by `judged` (null: unreadable). It is moved aside first and checked: if
-   * another core broke it and took the folder in the meantime, that core's fresh lock is put back.
+   * Breaks the lock whose record was judged stale (null: none was in it) by removing that record by its
+   * name, then the directory if it is empty. A record another core put in place since has another name,
+   * and a directory with a record in it is not removed, so only the judged one can go.
    */
-  private breakLock(judged: LockHolder | null): void {
-    const aside = join(this.dir, `.${LOCK_FILE}.${this.pid}.${randomBytes(4).toString("hex")}.stale`);
-    try { renameSync(this.file, aside); } catch { return; /* someone else broke it */ }
-    const moved = readHolderFile(aside);
-    const same = judged === null ? moved === null : moved?.boot === judged.boot;
-    if (!same) { try { linkSync(aside, this.file); } catch { /* the folder is taken again; claim() sees who has it */ } }
-    try { unlinkSync(aside); } catch { /* gone already */ }
+  private breakLock(found: Found | null): void {
+    if (found && found.name === null) {
+      // 7be956c7's lock file (unlink cannot remove a directory, so a lock made since stays).
+      try { unlinkSync(this.lock); } catch { /* broken already */ }
+      return;
+    }
+    if (found?.name) { try { unlinkSync(join(this.lock, found.name)); } catch { /* broken already */ } }
+    try { rmdirSync(this.lock); } catch { /* gone, or another core's record is in it */ }
   }
 
   private identity(): string | null {
     try { const stat = statSync(this.dir); return `${stat.dev}:${stat.ino}`; } catch { return null; }
-  }
-
-  private holder(): LockHolder | null {
-    return readLockHolder(this.dir);
   }
 
   private stale(holder: LockHolder): boolean {

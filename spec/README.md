@@ -25,6 +25,7 @@ Keep adapters thin (translation only); every change to them is reviewed.
 | `worker` | worker lifecycle and report delivery (`desktop/src/core/worker-core/`) |
 | `callin` | @ routing and call-ins between bots (`desktop/src/core/conversations.ts`) |
 | `routines` | routines scheduling (`desktop/src/core/routines.ts`) |
+| `datalock` | one core per data folder, `core.lock` (`desktop/src/core/store/data-dir-lock.ts`) |
 
 ## Rules for a model
 
