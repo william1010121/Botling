@@ -216,3 +216,5 @@ flowchart TD
 2. **Deterministic Process Containment**: Every spawned child process belongs to a tracked process group registered in the `ProcessLedger`. Orphan processes are prevented across crashes and hard shutdowns.
 3. **Single Source of State Truth**: `WorkerLedger` v3 (`worker-ledger.json`) is the definitive ledger for worker states, runs, and report delivery. UI states are purely stateless projections.
 4. **Out-of-Band Security Approvals**: Sandboxed cards and untrusted plugins can never approve their own privilege escalations; approvals must traverse the secure `ApprovalSheet` modal gate.
+
+> **Plugin architecture & creator mode**: how the core is slimmed into first-party plugins with revocable registrations (without adopting the Cordis IoC framework) is recorded in [ADR-005](adr/005-plugin-architecture-and-core-slimming.md); the mechanisms borrowed from DeepSeek Harness creator mode (progressive skills, read-only introspection, `nextStep` repair guidance, suggestion cards) are in [ADR-006](adr/006-creator-mode-borrowed-mechanisms.md).
