@@ -3,6 +3,7 @@ import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
 import { ProjectFiles } from "./project-files";
 import { RestartJournal } from './restart-continuation';
+import { specTrace } from './spec-trace';
 import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
 import type { AgyConfig } from "./agent/agy";
@@ -2555,6 +2556,7 @@ First write a test that shows this, then fix it.`;
     participants.push(() => this.plugins.shutdown());
     const results = await Promise.allSettled(participants.map(stop => Promise.resolve().then(stop)));
     const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+    if (this.restarting) results.forEach((result, i) => specTrace("restart", "Settle", { part: bots[i]?.[0] ?? "plugins", ok: result.status === "fulfilled" }));
     // Each bot's continuation rests on its own shutdown: one that failed is held back (with why), the others resume.
     // Another participant's failure (a plugin host, a different bot) is no reason to drop their work.
     if (this.restarting) {

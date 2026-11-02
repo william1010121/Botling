@@ -3,6 +3,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./durable/atomic";
+import { specTrace } from "./spec-trace";
 import type { SwapEntry, SwapQueued } from "./hot-swap";
 import type { WorkerRecord } from "./agent/codex";
 
@@ -54,6 +55,12 @@ function validEntry(e: RestartEntry): boolean {
       && Number.isSafeInteger(w.run) && w.run >= 1 && typeof w.wasActive === "boolean" && typeof w.reportPending === "boolean"));
 }
 
+/** One step of the restart spec (spec/models/restart): the journal as written, and the step's own details. */
+function traced(action: string, value: RestartIntent | null, details: Record<string, unknown> = {}) {
+  specTrace("restart", action, { ...details, phase: value?.phase ?? "none",
+    entries: value?.entries.map(e => ({ bot: e.botId, state: e.state, blocked: e.blocked ?? null })) ?? [] });
+}
+
 /** A claim is durable before provider I/O. A crash after claim requires reconciliation, never retry. */
 export class RestartJournal {
   private readonly file: string;
@@ -77,16 +84,19 @@ export class RestartJournal {
     if (prior?.entries.some(e => e.state === "pending" || e.state === "claimed")) {
       throw Error("An earlier restart requires reconciliation.");
     }
-    this.save({ v: 1, id: randomUUID(), phase: "preparing", at: Date.now(), entries: entries.map(e => ({ ...e, state: "pending" })) });
+    const value: RestartIntent = { v: 1, id: randomUUID(), phase: "preparing", at: Date.now(), entries: entries.map(e => ({ ...e, state: "pending" })) };
+    this.save(value);
+    traced("Prepare", value);
   }
 
-  cancel() { rmSync(this.file, { force: true }); }
+  cancel() { rmSync(this.file, { force: true }); traced("Cancel", null); }
 
   checkpoint(entries: RestartEntry[]) {
     const value = this.read();
     if (!value || value.phase !== "preparing") throw Error("Missing restart preparation");
     value.entries = entries.map(e => ({ ...e, state: "pending" }));
     this.save(value);
+    traced("BeginShutdown", value);
   }
 
   /** Shutdown is over. `failed`: bots whose own shutdown failed (by id, with why); their entries are held back, the rest resume. */
@@ -100,10 +110,12 @@ export class RestartJournal {
     value.phase = "ready";
     value.at = Date.now();
     this.save(value);
+    traced("Ready", value);
   }
 
   recover(deliver: (entry: RestartEntry) => void, notice: (entry: RestartEntry, reason: string) => void, now = Date.now()) {
     const value = this.read();
+    traced("Boot", value);
     if (!value) return;
     const stale = typeof value.at === "number" && now - value.at > RESTART_MAX_AGE_MS;
     for (const entry of value.entries) {
@@ -113,20 +125,28 @@ export class RestartJournal {
       if (reason) {
         entry.state = "blocked";
         this.save(value);
+        traced("Block", value, { bot: entry.botId });
         notice(entry, reason);
+        traced("Notice", value, { bot: entry.botId, reason });
         continue;
       }
       entry.state = "claimed";
       this.save(value);
+      traced("Claim", value, { bot: entry.botId });
       try {
         deliver(entry);
+        traced("Deliver", value, { bot: entry.botId, ok: true });
         entry.state = "dispatched";
         this.save(value);
+        traced("Dispatch", value, { bot: entry.botId });
       } catch (error) {
+        traced("Deliver", value, { bot: entry.botId, ok: false });
         entry.blocked = String(error);
         entry.state = "blocked";
         this.save(value);
+        traced("Block", value, { bot: entry.botId });
         notice(entry, entry.blocked);
+        traced("Notice", value, { bot: entry.botId, reason: entry.blocked });
       }
     }
   }
