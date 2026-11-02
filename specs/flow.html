@@ -1,0 +1,1432 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Botling Wireflow & UI State Machine Explorer</title>
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #111827;
+      --surface-elevated: #1f2937;
+      --surface-hover: #283548;
+      --border: #374151;
+      --border-light: #4b5563;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dim: #6b7280;
+      --primary: #3b82f6;
+      --primary-glow: rgba(59, 130, 246, 0.25);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.2);
+      --warning: #f59e0b;
+      --warning-glow: rgba(245, 158, 11, 0.2);
+      --danger: #ef4444;
+      --danger-glow: rgba(239, 68, 68, 0.35);
+      --purple: #8b5cf6;
+      --purple-glow: rgba(139, 92, 246, 0.25);
+      --lane-bg: rgba(17, 24, 39, 0.7);
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      overflow-x: hidden;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Header & Navigation Bar */
+    header {
+      background: rgba(17, 24, 39, 0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-badge {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      color: #fff;
+      font-weight: 700;
+      font-size: 14px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      letter-spacing: 0.5px;
+      box-shadow: 0 2px 10px rgba(59, 130, 246, 0.4);
+    }
+    .brand h1 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-weight: normal;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .search-box {
+      position: relative;
+    }
+    .search-box input {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 12px 7px 32px;
+      border-radius: 8px;
+      font-size: 13px;
+      width: 220px;
+      transition: all 0.2s;
+    }
+    .search-box input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary-glow);
+      width: 260px;
+    }
+    .search-box svg {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+    }
+
+    .btn-group {
+      display: inline-flex;
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2px;
+    }
+    .btn-group button {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 6px 12px;
+      font-size: 13px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .btn-group button:hover {
+      color: var(--text);
+    }
+    .btn-group button.active {
+      background: var(--primary);
+      color: #fff;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+    }
+
+    .btn-action {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s;
+    }
+    .btn-action:hover {
+      background: var(--surface-hover);
+      border-color: var(--border-light);
+    }
+
+    /* Stats bar */
+    .stats-bar {
+      background: #0f1523;
+      border-bottom: 1px solid rgba(55, 65, 81, 0.5);
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+    .stat-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot.green { background: var(--success); box-shadow: 0 0 6px var(--success-glow); }
+    .dot.amber { background: var(--warning); box-shadow: 0 0 6px var(--warning-glow); }
+    .dot.gray { background: var(--text-dim); }
+    .dot.red { background: var(--danger); box-shadow: 0 0 6px var(--danger-glow); }
+
+    /* Canvas & Swimlanes Container */
+    .viewport {
+      flex: 1;
+      padding: 24px;
+      overflow-x: auto;
+      position: relative;
+    }
+
+    .swimlanes-wrapper {
+      min-width: 1280px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+      position: relative;
+    }
+
+    /* Swimlane row */
+    .swimlane {
+      background: var(--lane-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      position: relative;
+      transition: border-color 0.2s;
+    }
+    .swimlane:hover {
+      border-color: var(--border-light);
+    }
+
+    .lane-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px dashed var(--border);
+    }
+    .lane-title-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .lane-tag {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+    }
+    .lane-tag.coordinator { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+    .lane-tag.board { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .lane-tag.worker { background: rgba(139, 92, 246, 0.2); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.4); }
+    .lane-tag.error { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); }
+
+    .lane-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .lane-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* State Cards Grid within lane */
+    .states-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 20px;
+      position: relative;
+    }
+
+    /* State Card Component */
+    .state-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+      cursor: pointer;
+      position: relative;
+      transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    }
+    .state-card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      border-color: var(--primary);
+    }
+
+    /* Error States have prominent red border and subtle pulse */
+    .state-card.is-error {
+      border: 2px solid var(--danger);
+      box-shadow: 0 4px 16px var(--danger-glow);
+    }
+    .state-card.is-error:hover {
+      border-color: #ff5555;
+      box-shadow: 0 8px 28px rgba(239, 68, 68, 0.5);
+    }
+
+    /* Sandboxed Mobile States have purple border */
+    .state-card.is-sandbox {
+      border: 1.5px solid var(--purple);
+      box-shadow: 0 4px 16px var(--purple-glow);
+    }
+
+    .card-top {
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(55, 65, 81, 0.6);
+      background: rgba(31, 41, 55, 0.5);
+    }
+
+    .id-badge {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+    }
+    .id-badge.s { background: #1e3a8a; color: #93c5fd; border: 1px solid #3b82f6; }
+    .id-badge.e { background: #7f1d1d; color: #fca5a5; border: 1px solid #ef4444; }
+    .id-badge.m { background: #4c1d95; color: #d8b4fe; border: 1px solid #8b5cf6; }
+
+    .status-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .status-badge.implemented { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .status-badge.designed { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .status-badge.backlog { background: rgba(107, 114, 128, 0.2); color: #9ca3af; border: 1px solid rgba(107, 114, 128, 0.4); }
+
+    .card-body {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .state-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .state-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    /* Screen Preview Container */
+    .screen-preview {
+      width: 100%;
+      height: 200px;
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .screen-preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: top left;
+      display: block;
+      transition: transform 0.2s;
+    }
+    .screen-preview:hover img {
+      transform: scale(1.02);
+    }
+
+    /* Live tag */
+    .screen-tag {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      padding: 3px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      color: #10b981;
+      font-weight: 600;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Fallback Wireframe Placeholder */
+    .wireframe-fallback {
+      width: 100%;
+      height: 100%;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: linear-gradient(135deg, #0e1526, #141e34);
+      text-align: center;
+      position: relative;
+    }
+    .wireframe-fallback svg {
+      width: 48px;
+      height: 48px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+    .fallback-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .fallback-note {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    /* Card Transitions Footer */
+    .card-footer {
+      padding: 10px 14px;
+      background: rgba(17, 24, 39, 0.9);
+      border-top: 1px solid rgba(55, 65, 81, 0.5);
+      font-size: 11px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .transition-pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .trans-pill {
+      background: rgba(31, 41, 55, 0.8);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .trans-pill strong {
+      color: var(--primary);
+    }
+    .trans-pill.to-err strong {
+      color: var(--danger);
+    }
+
+    /* SVG Overlay Layer for Transition Arrows */
+    #arrows-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .arrow-path {
+      fill: none;
+      stroke: var(--border-light);
+      stroke-width: 2;
+      stroke-dasharray: 4 2;
+      transition: stroke 0.2s, stroke-width 0.2s;
+    }
+    .arrow-path.highlight {
+      stroke: var(--primary);
+      stroke-width: 3;
+      stroke-dasharray: none;
+    }
+    .arrow-path.danger-flow {
+      stroke: var(--danger);
+    }
+
+    /* Matrix Table View */
+    .matrix-view {
+      display: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-top: 12px;
+    }
+    .matrix-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .matrix-table th, .matrix-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .matrix-table th {
+      background: var(--surface-elevated);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .matrix-table tr:hover td {
+      background: var(--surface-hover);
+    }
+
+    /* Inspector Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal-content {
+      background: var(--surface);
+      border: 1px solid var(--border-light);
+      border-radius: 14px;
+      max-width: 1000px;
+      width: 100%;
+      max-height: 92vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface-elevated);
+    }
+    .modal-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .btn-close {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 20px;
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    .btn-close:hover {
+      background: var(--surface-hover);
+      color: #fff;
+    }
+
+    .modal-body {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .modal-img-wrap {
+      width: 100%;
+      background: #000;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      text-align: center;
+    }
+    .modal-img-wrap img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 0 auto;
+    }
+
+    .modal-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .meta-box {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 13px;
+    }
+    .meta-box h4 {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .meta-box pre {
+      background: #0b0f19;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #60a5fa;
+      overflow-x: auto;
+    }
+
+    /* Footer */
+    footer {
+      background: #080c14;
+      border-top: 1px solid var(--border);
+      padding: 16px 24px;
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    footer a { color: var(--primary); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation & Controls Header -->
+  <header>
+    <div class="brand">
+      <div class="logo-badge">Botling Wireflow</div>
+      <div>
+        <h1>架構規格互動式流程圖 <span class="subtitle">specs/flow.html</span></h1>
+      </div>
+    </div>
+
+    <div class="controls">
+      <!-- Search Input -->
+      <div class="search-box">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="searchInput" placeholder="搜尋狀態 ID、標題或關鍵字..." oninput="handleSearch(this.value)">
+      </div>
+
+      <!-- Status Filters -->
+      <div class="btn-group" id="statusFilterGroup">
+        <button class="active" onclick="filterStatus('all')">全部 (10)</button>
+        <button onclick="filterStatus('implemented')">已實作 (8)</button>
+        <button onclick="filterStatus('designed')">已設計 (1)</button>
+        <button onclick="filterStatus('backlog')">未做 (1)</button>
+      </div>
+
+      <!-- View Switcher -->
+      <div class="btn-group">
+        <button class="active" id="btnFlowView" onclick="switchView('flow')">泳道流程圖</button>
+        <button id="btnMatrixView" onclick="switchView('matrix')">狀態矩陣表</button>
+      </div>
+
+      <!-- Refresh Screenshots Button -->
+      <button class="btn-action" onclick="refreshScreenshots()" title="重新載入 Playwright 截圖">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        重載截圖
+      </button>
+    </div>
+  </header>
+
+  <!-- Statistics & Invariant Strip -->
+  <div class="stats-bar">
+    <div class="stat-item"><span class="dot green"></span> <strong>已實作: 8 個狀態</strong> (80%)</div>
+    <div class="stat-item"><span class="dot amber"></span> <strong>已設計: 1 個狀態</strong> (10%)</div>
+    <div class="stat-item"><span class="dot gray"></span> <strong>未做 / 規劃中: 1 個狀態</strong> (10%)</div>
+    <div class="stat-item"><span class="dot red"></span> <strong>異常熔斷防護: 3 個邊界 (E1~E3)</strong></div>
+    <div class="stat-item" style="margin-left: auto;">
+      <span>截圖管線: <code>desktop/e2e/wireflow-screenshots.spec.ts</code></span>
+    </div>
+  </div>
+
+  <!-- Main Viewport -->
+  <main class="viewport">
+    
+    <!-- Flow View: Interactive Swimlanes -->
+    <div class="swimlanes-wrapper" id="flowView">
+      
+      <!-- Lane 1: Coordinator Chat Interface -->
+      <section class="swimlane" data-lane="coordinator">
+        <div class="lane-header">
+          <div class="lane-title-group">
+            <span class="lane-tag coordinator">Coordinator</span>
+            <h2 class="lane-name">對話協調主介面 (Coordinator Chat Column)</h2>
+            <span class="lane-desc">主對話視窗、串流輸出、CodeMirror 編輯器與歷史紀錄展示</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-dim);">3 States</span>
+        </div>
+
+        <div class="states-grid">
+          
+          <!-- S1: Welcome & Idle -->
+          <article class="state-card" id="card-S1" data-id="S1" data-status="implemented" onclick="openInspector('S1')">
+            <div class="card-top">
+              <span class="id-badge s">S1</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">初始歡迎與輸入待命 (Welcome & Idle)</h3>
+              <p class="state-desc">應用程式啟動後的初始待命對話狀態。展示歡迎計數沙箱卡片與已就緒的空白訊息輸入框。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/S1.png" alt="S1 Screenshot" onerror="handleImgError(this, 'S1')">
+                <div class="wireframe-fallback" id="fallback-S1">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                  <div class="fallback-title">S1 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S2</strong> [發送訊息 Enter]</span>
+                <span class="trans-pill">➔ <strong>S4</strong> [點擊白板 Board]</span>
+                <span class="trans-pill">➔ <strong>S5</strong> [點擊快速設定]</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- S2: Streaming Turn -->
+          <article class="state-card" id="card-S2" data-id="S2" data-status="implemented" onclick="openInspector('S2')">
+            <div class="card-top">
+              <span class="id-badge s">S2</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">任務執行與訊息串流 (Active Streaming)</h3>
+              <p class="state-desc">使用者送出 Prompt 後，長駐 Head 程序串流輸出回覆。狀態條顯示 Writing…，輸入框可響應 Escape 中斷。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/S2.png" alt="S2 Screenshot" onerror="handleImgError(this, 'S2')">
+                <div class="wireframe-fallback" id="fallback-S2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path></svg>
+                  <div class="fallback-title">S2 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S3</strong> [串流完成 turnCompleted]</span>
+                <span class="trans-pill to-err">➔ <strong>E1</strong> [程序中斷/SIGKILL]</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- S3: Turn Completed -->
+          <article class="state-card" id="card-S3" data-id="S3" data-status="implemented" onclick="openInspector('S3')">
+            <div class="card-top">
+              <span class="id-badge s">S3</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">對話完成與成果展示 (Completed Turn)</h3>
+              <p class="state-desc">回覆完成沉澱。展示 Markdown 格式化成果、程式碼區塊或產出物連結，輸入框重新恢復待命狀態。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/S3.png" alt="S3 Screenshot" onerror="handleImgError(this, 'S3')">
+                <div class="wireframe-fallback" id="fallback-S3">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                  <div class="fallback-title">S3 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S1</strong> [開新對話/重置]</span>
+                <span class="trans-pill">➔ <strong>S6</strong> [派發子代理任務]</span>
+                <span class="trans-pill">➔ <strong>M1</strong> [載入沙箱卡片]</span>
+              </div>
+            </div>
+          </article>
+
+        </div>
+      </section>
+
+      <!-- Lane 2: Whiteboard & Settings -->
+      <section class="swimlane" data-lane="board">
+        <div class="lane-header">
+          <div class="lane-title-group">
+            <span class="lane-tag board">Board & Settings</span>
+            <h2 class="lane-name">白板磁貼與系統配置 (Whiteboard & Settings)</h2>
+            <span class="lane-desc">平鋪式資訊卡片網格（1x1, 2x1, 2x2, 4x2）與系統快速配置對話面板</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-dim);">2 States</span>
+        </div>
+
+        <div class="states-grid">
+          
+          <!-- S4: Whiteboard Grid -->
+          <article class="state-card" id="card-S4" data-id="S4" data-status="implemented" onclick="openInspector('S4')">
+            <div class="card-top">
+              <span class="id-badge s">S4</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">白板多維卡片工作區 (Whiteboard Tiles)</h3>
+              <p class="state-desc">點擊頂部 Board/Whiteboard 切換鍵進入。展示元件卡片平鋪磁貼視圖，保持居中且無需手動圖釘釘選。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/S4.png" alt="S4 Screenshot" onerror="handleImgError(this, 'S4')">
+                <div class="wireframe-fallback" id="fallback-S4">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                  <div class="fallback-title">S4 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S1</strong> [點擊切換 Chat]</span>
+                <span class="trans-pill">➔ <strong>M1</strong> [點開卡片詳情]</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- S5: Sidebar Settings -->
+          <article class="state-card" id="card-S5" data-id="S5" data-status="implemented" onclick="openInspector('S5')">
+            <div class="card-top">
+              <span class="id-badge s">S5</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">側邊欄快速設定面板 (Sidebar Settings)</h3>
+              <p class="state-desc">點擊側邊欄齒輪圖示呼出。提供 AI 模型選擇、Token 消耗用量統計、沙箱權限授予與工作區路徑配置。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/S5.png" alt="S5 Screenshot" onerror="handleImgError(this, 'S5')">
+                <div class="wireframe-fallback" id="fallback-S5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                  <div class="fallback-title">S5 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S1</strong> [儲存並關閉設定]</span>
+              </div>
+            </div>
+          </article>
+
+        </div>
+      </section>
+
+      <!-- Lane 3: Worker Core & Sandbox -->
+      <section class="swimlane" data-lane="worker">
+        <div class="lane-header">
+          <div class="lane-title-group">
+            <span class="lane-tag worker">Worker & Sandbox</span>
+            <h2 class="lane-name">子代理與安全沙箱 (Worker Core & Sandbox Isolation)</h2>
+            <span class="lane-desc">非同步任務排程、持久化帳本記錄與安全隔離的 Iframe 元件渲染環境</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-dim);">2 States</span>
+        </div>
+
+        <div class="states-grid">
+          
+          <!-- S6: Worker Ledger -->
+          <article class="state-card" id="card-S6" data-id="S6" data-status="implemented" onclick="openInspector('S6')">
+            <div class="card-top">
+              <span class="id-badge s">S6</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">子代理任務帳本 (Worker Ledger State)</h3>
+              <p class="state-desc">Coordinator 派發非同步 subagent 執行。狀態投影為 running 晶片，帳本原子寫入 worker-ledger.json。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/S6.png" alt="S6 Screenshot" onerror="handleImgError(this, 'S6')">
+                <div class="wireframe-fallback" id="fallback-S6">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                  <div class="fallback-title">S6 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S3</strong> [報告遞交完成]</span>
+                <span class="trans-pill to-err">➔ <strong>E2</strong> [審批超時 tries>=2]</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- M1: Sandbox Iframe -->
+          <article class="state-card is-sandbox" id="card-M1" data-id="M1" data-status="implemented" onclick="openInspector('M1')">
+            <div class="card-top">
+              <span class="id-badge m">M1</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">沙箱 Iframe 元件視圖 (Sandboxed Card Frame)</h3>
+              <p class="state-desc">硬化隔離的卡片/元件 iframe 環境。透過 FrameBroker 與 postMessage 嚴格限制跨域通訊與本機檔案存取。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/M1.png" alt="M1 Screenshot" onerror="handleImgError(this, 'M1')">
+                <div class="wireframe-fallback" id="fallback-M1">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+                  <div class="fallback-title">M1 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S3</strong> [關閉卡片/返回對話]</span>
+              </div>
+            </div>
+          </article>
+
+        </div>
+      </section>
+
+      <!-- Lane 4: Errors & Circuit Breakers -->
+      <section class="swimlane" data-lane="error">
+        <div class="lane-header">
+          <div class="lane-title-group">
+            <span class="lane-tag error">Exception & Circuit Breakers</span>
+            <h2 class="lane-name">異常處置與熔斷機制 (Errors & Circuit Breakers)</h2>
+            <span class="lane-desc">程序意外中斷、審批逾時熔斷與外部服務連線異常復原通道</span>
+          </div>
+          <span style="font-size: 12px; color: var(--text-dim);">3 States</span>
+        </div>
+
+        <div class="states-grid">
+          
+          <!-- E1: Engine Crash -->
+          <article class="state-card is-error" id="card-E1" data-id="E1" data-status="implemented" onclick="openInspector('E1')">
+            <div class="card-top">
+              <span class="id-badge e">E1</span>
+              <span class="status-badge implemented"><span class="dot green"></span> 已實作</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">引擎異常崩潰狀態 (Engine Crash / Stopped)</h3>
+              <p class="state-desc">底層 Head 程序意外收到 SIGKILL 或異常退出。介面呈現紅色警告標註，觸發原子復原狀態機並防止 PIDs 誤殺。</p>
+              <div class="screen-preview">
+                <span class="screen-tag">● Playwright</span>
+                <img src="screens/E1.png" alt="E1 Screenshot" onerror="handleImgError(this, 'E1')">
+                <div class="wireframe-fallback" id="fallback-E1">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"></polygon><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                  <div class="fallback-title">E1 線框示意圖</div>
+                  <div class="fallback-note">尚未捕捉截圖：執行 Playwright 測試即可自動生成</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S1</strong> [重啟引擎 restartHead]</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- E2: Unresolved Checkpoint Timeout -->
+          <article class="state-card is-error" id="card-E2" data-id="E2" data-status="designed" onclick="openInspector('E2')">
+            <div class="card-top">
+              <span class="id-badge e">E2</span>
+              <span class="status-badge designed"><span class="dot amber"></span> 已設計</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">審批超時與未決閘門 (Unresolved Checkpoint)</h3>
+              <p class="state-desc">在 Checkpoint 審批模式下超過重試上限（tries &ge; 2），rep 狀態自動轉為 unresolved，UI 渲染熔斷防護卡片。</p>
+              <div class="screen-preview">
+                <span class="screen-tag" style="color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">● 線框佔位</span>
+                <img src="screens/E2.png" alt="E2 Screenshot" onerror="handleImgError(this, 'E2')">
+                <div class="wireframe-fallback" id="fallback-E2" style="display: flex;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: #f59e0b;"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  <div class="fallback-title">E2 審批超時熔斷線框圖</div>
+                  <div class="fallback-note">規格已收錄於 specs/01-data-and-state.md</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S1</strong> [操作員手動審批重置]</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- E3: Network Circuit Breaker -->
+          <article class="state-card is-error" id="card-E3" data-id="E3" data-status="backlog" onclick="openInspector('E3')">
+            <div class="card-top">
+              <span class="id-badge e">E3</span>
+              <span class="status-badge backlog"><span class="dot gray"></span> 未做</span>
+            </div>
+            <div class="card-body">
+              <h3 class="state-title">網絡隔離與斷線熔斷 (Network Breaker)</h3>
+              <p class="state-desc">外部模型 API 發生連線中斷或 TLS 交握超時，系統啟動指數退避重試計時器並在前端給出離線提示。</p>
+              <div class="screen-preview">
+                <span class="screen-tag" style="color: #9ca3af; border-color: rgba(107, 114, 128, 0.4);">● 線框佔位</span>
+                <img src="screens/E3.png" alt="E3 Screenshot" onerror="handleImgError(this, 'E3')">
+                <div class="wireframe-fallback" id="fallback-E3" style="display: flex;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: #9ca3af;"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+                  <div class="fallback-title">E3 網絡斷線熔斷線框圖</div>
+                  <div class="fallback-note">排入後續網絡強化規劃</div>
+                </div>
+              </div>
+            </div>
+            <div class="card-footer">
+              <div class="transition-pill-list">
+                <span class="trans-pill">➔ <strong>S1</strong> [網絡重新連線]</span>
+              </div>
+            </div>
+          </article>
+
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Matrix View: State Matrix Table -->
+    <div class="matrix-view" id="matrixView">
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th style="width: 80px;">狀態 ID</th>
+            <th style="width: 130px;">所屬泳道</th>
+            <th style="width: 110px;">實作狀態</th>
+            <th style="width: 220px;">狀態名稱</th>
+            <th>行為語意與進入條件</th>
+            <th style="width: 140px;">截圖關聯</th>
+            <th style="width: 120px;">形式化模型</th>
+          </tr>
+        </thead>
+        <tbody id="matrixTableBody">
+          <!-- Populated by JavaScript -->
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+
+  <!-- State Inspector Modal -->
+  <div class="modal-backdrop" id="inspectorModal" onclick="closeInspectorOnBackdrop(event)">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="id-badge s" id="modalIdBadge">S1</span>
+          <h2 id="modalTitle" style="font-size: 16px; color: #fff;">狀態檢視器</h2>
+          <span class="status-badge implemented" id="modalStatusBadge">已實作</span>
+        </div>
+        <button class="btn-close" onclick="closeInspector()" title="關閉">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-img-wrap">
+          <img id="modalImg" src="" alt="High-res preview">
+        </div>
+        <div class="modal-grid">
+          <div class="meta-box">
+            <h4>狀態描述與核心責任</h4>
+            <p id="modalDesc" style="color: var(--text-muted);"></p>
+          </div>
+          <div class="meta-box">
+            <h4>Playwright 驗證與自動捕捉命令</h4>
+            <pre id="modalTestCmd">npx playwright test e2e/wireflow-screenshots.spec.ts -c e2e</pre>
+          </div>
+          <div class="meta-box">
+            <h4>前置條件 (Pre-conditions)</h4>
+            <p id="modalPreCond" style="color: var(--text-muted);"></p>
+          </div>
+          <div class="meta-box">
+            <h4>轉換動作 (State Transitions)</h4>
+            <div id="modalTransitions" style="display: flex; flex-direction: column; gap: 6px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer Information -->
+  <footer>
+    <div>
+      <strong>Botling Architecture Specification Suite</strong> &bull; 
+      <a href="00-overview.md">00-overview.md</a> &bull; 
+      <a href="01-data-and-state.md">01-data-and-state.md</a> &bull; 
+      <a href="02-flows.md">02-flows.md</a>
+    </div>
+    <div>
+      自動化管線: <code>Playwright + Wireflow Pipeline (specs/screens/*.png in .gitignore)</code>
+    </div>
+  </footer>
+
+  <script>
+    // State Registry Database
+    const STATE_DATA = {
+      S1: {
+        id: "S1",
+        name: "初始歡迎與輸入待命 (Welcome & Idle)",
+        lane: "Coordinator",
+        laneKey: "coordinator",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "應用程式啟動後的初始對話待命狀態。展示歡迎計數沙箱卡片與已就緒的空白訊息輸入框。",
+        preCond: "Electron 主程序就緒且核心完成本地儲存庫載入。",
+        img: "screens/S1.png",
+        tla: "Worker.tla (Init)",
+        transitions: [
+          { to: "S2", action: "發送訊息 (Enter / say)", label: "使用者送出 Prompt" },
+          { to: "S4", action: "切換白板 (click Board)", label: "切換為多卡片平鋪視圖" },
+          { to: "S5", action: "開啟設定 (click Quick Settings)", label: "開啟側邊欄快速設定" }
+        ]
+      },
+      S2: {
+        id: "S2",
+        name: "任務執行與訊息串流 (Active Streaming)",
+        lane: "Coordinator",
+        laneKey: "coordinator",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "使用者送出 Prompt 後，長駐 Head 程序串流輸出回覆。狀態條顯示 Writing…，輸入框可響應 Escape 中斷。",
+        preCond: "S1 待命狀態送出訊息或觸發新回合對話。",
+        img: "screens/S2.png",
+        tla: "Worker.tla (Running)",
+        transitions: [
+          { to: "S3", action: "串流完成 (turnCompleted)", label: "核心完成回覆生成" },
+          { to: "E1", action: "程序中斷 (Escape / SIGKILL)", label: "使用者強制中斷或程序意外終止" }
+        ]
+      },
+      S3: {
+        id: "S3",
+        name: "對話完成與成果展示 (Completed Turn)",
+        lane: "Coordinator",
+        laneKey: "coordinator",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "回覆完成沉澱。展示 Markdown 格式化成果、程式碼區塊或產出物連結，輸入框重新恢復待命狀態。",
+        preCond: "S2 串流產生結束並將訊息沉澱至 projects/chat.json。",
+        img: "screens/S3.png",
+        tla: "Worker.tla (Done)",
+        transitions: [
+          { to: "S1", action: "開新對話 (newChat)", label: "清空對話或切換主題" },
+          { to: "S6", action: "派發子代理 (dispatchWorker)", label: "呼叫非同步背景子代理任務" },
+          { to: "M1", action: "載入沙箱卡片 (renderCard)", label: "展開或點擊元件卡片" }
+        ]
+      },
+      S4: {
+        id: "S4",
+        name: "白板多維卡片工作區 (Whiteboard Tiles)",
+        lane: "Board & Settings",
+        laneKey: "board",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "點擊頂部 Board/Whiteboard 切換鍵進入。展示元件卡片平鋪磁貼視圖，保持居中且無需手動圖釘釘選。",
+        preCond: "主視窗處於 Shell 介面，使用者點擊 Board 頁籤。",
+        img: "screens/S4.png",
+        tla: "BoardNavigation.spec",
+        transitions: [
+          { to: "S1", action: "切換對話 (click Chat)", label: "返回對話主視圖" },
+          { to: "M1", action: "點開卡片 (openCard)", label: "沙箱檢視個別卡片" }
+        ]
+      },
+      S5: {
+        id: "S5",
+        name: "側邊欄快速設定面板 (Sidebar Settings)",
+        lane: "Board & Settings",
+        laneKey: "board",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "點擊側邊欄齒輪圖示呼出。提供 AI 模型選擇、Token 消耗用量統計、沙箱權限授予與工作區路徑配置。",
+        preCond: "點擊側邊欄 Quick Settings 齒輪按鈕。",
+        img: "screens/S5.png",
+        tla: "SettingsView.ts",
+        transitions: [
+          { to: "S1", action: "關閉面板 (closeSettings)", label: "套用設定並返回主介面" }
+        ]
+      },
+      S6: {
+        id: "S6",
+        name: "子代理任務帳本 (Worker Ledger State)",
+        lane: "Worker & Sandbox",
+        laneKey: "worker",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "Coordinator 派發非同步 subagent 執行。狀態投影為 running 晶片，帳本原子寫入 worker-ledger.json。",
+        preCond: "Coordinator 呼叫 launch(WorkerLedgerRecord)。",
+        img: "screens/S6.png",
+        tla: "Worker.tla (DispatchReport)",
+        transitions: [
+          { to: "S3", action: "報告交付 (deliverReport)", label: "子代理回報執行成果" },
+          { to: "E2", action: "審批超時 (tries >= 2)", label: "超過重試次數轉為 unresolved" }
+        ]
+      },
+      M1: {
+        id: "M1",
+        name: "沙箱 Iframe 元件視圖 (Sandboxed Card Frame)",
+        lane: "Worker & Sandbox",
+        laneKey: "worker",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "硬化隔離的卡片/元件 iframe 環境。透過 FrameBroker 與 postMessage 嚴格限制跨域通訊與本機檔案存取。",
+        preCond: "對話或白板中觸發沙箱元件卡片載入。",
+        img: "screens/M1.png",
+        tla: "FrameBroker.spec",
+        transitions: [
+          { to: "S3", action: "返回對話 (dismissCard)", label: "收合卡片返回對話視圖" }
+        ]
+      },
+      E1: {
+        id: "E1",
+        name: "引擎異常崩潰狀態 (Engine Crash / Stopped)",
+        lane: "Exception & Circuit Breakers",
+        laneKey: "error",
+        status: "implemented",
+        statusText: "已實作",
+        desc: "底層 Head 程序意外收到 SIGKILL 或異常退出。介面呈現紅色警告標註，觸發原子復原狀態機並防止 PIDs 誤殺。",
+        preCond: "子程序退出代碼 != 0 或被操作員 Escape 終止。",
+        img: "screens/E1.png",
+        tla: "Restart.tla (CrashRecovery)",
+        transitions: [
+          { to: "S1", action: "重啟引擎 (restartHead)", label: "自動或手動重新啟動 Agent" }
+        ]
+      },
+      E2: {
+        id: "E2",
+        name: "審批超時與未決閘門 (Unresolved Checkpoint)",
+        lane: "Exception & Circuit Breakers",
+        laneKey: "error",
+        status: "designed",
+        statusText: "已設計",
+        desc: "在 Checkpoint 審批模式下超過重試上限（tries >= 2），rep 狀態自動轉為 unresolved，UI 渲染熔斷防護卡片。",
+        preCond: "Coordinator 在 checkpoint 交付嘗試兩次後仍未審批。",
+        img: "screens/E2.png",
+        tla: "Worker.tla (BoundedDelivery)",
+        transitions: [
+          { to: "S1", action: "人工干預 (operatorReset)", label: "操作員手動審查並覆寫狀態" }
+        ]
+      },
+      E3: {
+        id: "E3",
+        name: "網絡隔離與斷線熔斷 (Network Breaker)",
+        lane: "Exception & Circuit Breakers",
+        laneKey: "error",
+        status: "backlog",
+        statusText: "未做",
+        desc: "外部模型 API 發生連線中斷或 TLS 交握超時，系統啟動指數退避重試計時器並在前端給出離線提示。",
+        preCond: "外部 HTTP/WS 連線失敗且退避重試次數耗盡。",
+        img: "screens/E3.png",
+        tla: "NetworkBreaker.tla (Draft)",
+        transitions: [
+          { to: "S1", action: "網絡重連 (reconnect)", label: "網絡恢復後重新連線" }
+        ]
+      }
+    };
+
+    // Handle Image Loading Failure with Wireframe Fallback
+    function handleImgError(imgEl, id) {
+      imgEl.style.display = "none";
+      const tag = imgEl.parentElement.querySelector(".screen-tag");
+      if (tag) {
+        tag.textContent = "● 線框佔位";
+        tag.style.color = "#9ca3af";
+        tag.style.borderColor = "rgba(107, 114, 128, 0.4)";
+      }
+      const fallback = document.getElementById("fallback-" + id);
+      if (fallback) {
+        fallback.style.display = "flex";
+      }
+    }
+
+    // Refresh Screenshots
+    function refreshScreenshots() {
+      const timestamp = Date.now();
+      document.querySelectorAll(".screen-preview img").forEach(img => {
+        const baseSrc = img.src.split("?")[0];
+        img.src = baseSrc + "?t=" + timestamp;
+        img.style.display = "block";
+      });
+      // Reset fallbacks
+      document.querySelectorAll(".wireframe-fallback").forEach(fb => {
+        const id = fb.id.replace("fallback-", "");
+        if (id !== "E2" && id !== "E3") {
+          fb.style.display = "none";
+        }
+      });
+    }
+
+    // Filter by Status
+    function filterStatus(status) {
+      document.querySelectorAll("#statusFilterGroup button").forEach(b => b.classList.remove("active"));
+      event.target.classList.add("active");
+
+      document.querySelectorAll(".state-card").forEach(card => {
+        if (status === "all" || card.dataset.status === status) {
+          card.style.display = "flex";
+        } else {
+          card.style.display = "none";
+        }
+      });
+    }
+
+    // Filter by Search Keyword
+    function handleSearch(keyword) {
+      const kw = keyword.toLowerCase().trim();
+      document.querySelectorAll(".state-card").forEach(card => {
+        const id = card.dataset.id.toLowerCase();
+        const text = card.textContent.toLowerCase();
+        if (!kw || id.includes(kw) || text.includes(kw)) {
+          card.style.display = "flex";
+        } else {
+          card.style.display = "none";
+        }
+      });
+    }
+
+    // Switch View Mode
+    function switchView(mode) {
+      const flowView = document.getElementById("flowView");
+      const matrixView = document.getElementById("matrixView");
+      const btnFlow = document.getElementById("btnFlowView");
+      const btnMatrix = document.getElementById("btnMatrixView");
+
+      if (mode === "flow") {
+        flowView.style.display = "flex";
+        matrixView.style.display = "none";
+        btnFlow.classList.add("active");
+        btnMatrix.classList.remove("active");
+      } else {
+        flowView.style.display = "none";
+        matrixView.style.display = "block";
+        btnFlow.classList.remove("active");
+        btnMatrix.classList.add("active");
+        renderMatrixTable();
+      }
+    }
+
+    // Render Matrix Table
+    function renderMatrixTable() {
+      const tbody = document.getElementById("matrixTableBody");
+      tbody.innerHTML = "";
+
+      Object.values(STATE_DATA).forEach(item => {
+        const tr = document.createElement("tr");
+        const statusClass = item.status;
+        const idClass = item.id.startsWith("E") ? "e" : (item.id.startsWith("M") ? "m" : "s");
+
+        tr.innerHTML = `
+          <td><span class="id-badge ${idClass}">${item.id}</span></td>
+          <td><span style="font-weight: 600; color: #fff;">${item.lane}</span></td>
+          <td><span class="status-badge ${statusClass}">${item.statusText}</span></td>
+          <td><strong>${item.name}</strong></td>
+          <td style="color: var(--text-muted);">${item.desc}</td>
+          <td><code>specs/screens/${item.id}.png</code></td>
+          <td><code style="color: #60a5fa;">${item.tla}</code></td>
+        `;
+        tr.style.cursor = "pointer";
+        tr.onclick = () => openInspector(item.id);
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Inspector Modal
+    function openInspector(id) {
+      const item = STATE_DATA[id];
+      if (!item) return;
+
+      const modal = document.getElementById("inspectorModal");
+      const badge = document.getElementById("modalIdBadge");
+      badge.textContent = item.id;
+      badge.className = "id-badge " + (item.id.startsWith("E") ? "e" : (item.id.startsWith("M") ? "m" : "s"));
+
+      document.getElementById("modalTitle").textContent = item.name;
+      
+      const statusBadge = document.getElementById("modalStatusBadge");
+      statusBadge.textContent = item.statusText;
+      statusBadge.className = "status-badge " + item.status;
+
+      document.getElementById("modalDesc").textContent = item.desc;
+      document.getElementById("modalPreCond").textContent = item.preCond;
+
+      const modalImg = document.getElementById("modalImg");
+      modalImg.src = item.img + "?t=" + Date.now();
+      modalImg.onerror = () => {
+        modalImg.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='800' height='400' viewBox='0 0 800 400'><rect width='800' height='400' fill='%23111827'/><text x='400' y='200' fill='%236b7280' font-family='sans-serif' font-size='20' text-anchor='middle'>線框佔位：尚未捕捉實時截圖</text></svg>";
+      };
+
+      const transContainer = document.getElementById("modalTransitions");
+      transContainer.innerHTML = "";
+      item.transitions.forEach(t => {
+        const row = document.createElement("div");
+        row.className = "trans-pill";
+        row.style.display = "flex";
+        row.style.justifyContent = "space-between";
+        row.style.padding = "6px 10px";
+        row.innerHTML = `<span>➔ <strong>${t.to}</strong> [${t.action}]</span> <span style="color: var(--text-dim);">${t.label}</span>`;
+        transContainer.appendChild(row);
+      });
+
+      modal.style.display = "flex";
+    }
+
+    function closeInspector() {
+      document.getElementById("inspectorModal").style.display = "none";
+    }
+
+    function closeInspectorOnBackdrop(event) {
+      if (event.target.id === "inspectorModal") {
+        closeInspector();
+      }
+    }
+
+    // Escape key closes modal
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeInspector();
+    });
+  </script>
+</body>
+</html>
