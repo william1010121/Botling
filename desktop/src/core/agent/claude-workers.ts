@@ -454,6 +454,8 @@ export class ClaudeWorkers implements WorkerHost {
   listWorkers(): WorkerInfo[] { return this.core.listWorkers(); }
   sendToWorker(id: string, words: string): WorkerSendResult | Promise<WorkerSendResult> { return this.core.sendToWorker(id, words); }
   stopWorker(id: string): Promise<boolean> { return this.core.stopWorker(id); }
+  /** settings.json's `claudeWorkerLimit` changed: a raised limit lets waiting workers start now. */
+  slotsChanged(): void { this.core.slotsChanged(); }
   /** workers.ts `setWorkerOwner`: a report still waiting for the coordinator goes to the owner instead. */
   setWorkerOwner(id: string, owner: WorkerOwner | null): WorkerOwnerResult { return this.core.setWorkerOwner(id, owner); }
   /** An approval card's answer (`worker:<task>:<run>:<claude's request id>`). */

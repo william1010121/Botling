@@ -1753,6 +1753,11 @@ export class Bot {
     };
   }
 
+  /** Settings' Claude worker limit changed: the next worker starts under it (it is read each time); waiting ones may start now. */
+  claudeWorkerLimitChanged(): void {
+    for (const bot of this.members) bot.claudeWorkerHost?.slotsChanged();
+  }
+
   /** The app's default primary changed: a bot that follows it tells the composer. */
   appPrimaryChanged(): void {
     if (!this.options.primary && !this.headsSettings.answerWith && hasTwo(this.headsSettings)) this.headsChanged();

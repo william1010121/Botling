@@ -2463,6 +2463,7 @@ First write a test that shows this, then fix it.`;
       for (const bot of this.bots.values()) bot.applyEngineDefaults({ codexWorkers: codexWorkersJSON(workers) });
     }
     if (change.key === "defaultPrimaryEngine" || change.key === "defaultEngines") for (const bot of this.bots.values()) bot.appPrimaryChanged();
+    if (change.key === "claudeWorkerLimit") for (const bot of this.bots.values()) bot.claudeWorkerLimitChanged();
     const view = this.settingsNow();
     this.event({ type: "settings.updated", settings: view });
     return view;

@@ -4,6 +4,7 @@ import { ModelPicker, SummaryModelPicker, useModelDiscovery } from "./ModelPicke
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
 import { worktreeWords } from "./worktree-text";
+import { workerLimitWords } from "./worker-limit-text";
 import { PhoneSettings } from "./PhoneSettings";
 import { postToChat } from "./editor-surface";
 import { UpdateActions } from "./Updates";
@@ -47,6 +48,8 @@ const LANGUAGES: { id: SettingsView["language"]; label: string }[] = [
 const MODELS = [{ id: "haiku", label: "Haiku" }, { id: "sonnet", label: "Sonnet" }, { id: "opus", label: "Opus" }] as const;
 const EFFORTS = [{ id: "low", label: "Low" }, { id: "medium", label: "Medium" }, { id: "high", label: "High" }, { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" }] as const;
 const STALL = [5, 10, 15, 30, 60, 0];
+/** settings.json `claudeWorkerLimit`: 1–16 Claude workers of one bot at work at once. */
+const WORKER_LIMITS = Array.from({ length: 16 }, (_, i) => i + 1);
 type CodexModelOption = { id: string; name: string; isDefault: boolean };
 
 /** The models the local Codex lists (`codex.models`, asked of `codex app-server` once per run); empty until it answers. */
@@ -638,6 +641,7 @@ function EngineDefaults({ client, settings, change, botId, botCount }: { client:
 function Engines({ client, settings, change, codexModels, modelBotId, botCount }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; codexModels: CodexModelOption[]; modelBotId: string | null; botCount: number }) {
   const workers = settings.codexWorkers;
   const following = settings.codexWorkersFollow;
+  const limit = workerLimitWords(settings.effectiveLanguage);
   return (
     <>
       <EngineDefaults client={client} settings={settings} change={change} botId={modelBotId} botCount={botCount} />
@@ -648,12 +652,17 @@ function Engines({ client, settings, change, codexModels, modelBotId, botCount }
         <Toggle label="Codex: bypass approvals and sandbox" hint="Disables Codex approval prompts, auto review and its filesystem/network sandbox for sessions and Codex workers. Commands run with the app user's OS access." checked={settings.codexBypassPermissions} onChange={(value) => change({ key: "codexBypassPermissions", value })} />
       </Group>
       <AntigravityPermissions client={client} settings={settings} change={change} />
-      <Group title="Claude subagents" note="Takes effect when a bot next wakes.">
+      <Group title="Claude subagents" note="Model and cache take effect when a bot next wakes; the worker limit, for the next worker that starts.">
         <Row label="Model">
           <SelectSetting label="Subagents' model" blank="Same as bot" options={MODELS} value={settings.subagentModel}
             onChange={(value) => change({ key: "subagentModel", value: value as SettingsView["subagentModel"] })} />
         </Row>
         <Toggle label="Keep subagents' prompt cache for 1 hour" checked={settings.subagentHourCache} onChange={(value) => change({ key: "subagentHourCache", value })} />
+        <Row label={limit.label} hint={limit.hint}>
+          <select aria-label={limit.label} value={settings.claudeWorkerLimit} onChange={(event) => change({ key: "claudeWorkerLimit", value: Number(event.target.value) })}>
+            {WORKER_LIMITS.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </Row>
       </Group>
       <Group title="Codex workers" note="Takes effect when a Codex head next wakes.">
         <p className="settings-hint">In effect: {following ? "as ~/.codex/config.toml says" : `${workers.model ?? "same as bot"} · ${EFFORTS.find((effort) => effort.id === workers.effort)?.label ?? "default effort"} · ${workers.fast ? "Fast" : "Standard"}`}</p>

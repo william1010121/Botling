@@ -76,6 +76,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     defaultSummaryPrompt: DEFAULT_WRITING_PROMPT,
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
+    claudeWorkerLimit: claudeWorkerLimit(raw),
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false),
     codexBypassPermissions: bool(raw.codexBypassPermissions, false),
     agyBypassPermissions: bool(raw.agyBypassPermissions, false),
@@ -132,6 +133,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "agyBypassPermissions": set("agyBypassPermissions", change.value); break;
     case "codexBypassPermissions": set("codexBypassPermissions", change.value); break;
     case "subagentHourCache": set("subagentHourCacheChoice", change.value); break;
+    case "claudeWorkerLimit": set("claudeWorkerLimit", change.value === null ? null : claudeWorkerLimit({ claudeWorkerLimit: change.value })); break;
     case "codexWorkersFollow": set("codexWorkersFollow", change.value); break;
     case "codexWorkers": {
       const value = { ...(change.value.model ? { model: change.value.model } : {}), ...(change.value.effort ? { effort: change.value.effort } : {}), ...(typeof change.value.fast === "boolean" ? { fast: change.value.fast } : {}) };

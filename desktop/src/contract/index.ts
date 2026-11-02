@@ -719,6 +719,8 @@ export const SettingsView = z.strictObject({
   codexBypassPermissions: z.boolean().default(false),
   agyBypassPermissions: z.boolean().default(false),
   agyPermissionSessions: z.array(z.object({sessionId:z.string(), mode:z.enum(["default","yolo"]), state:z.enum(["negotiating","ready","active","stopped","error"]), message:z.string()})).default([]),
+  /** How many Claude workers of one bot may be at work at once (settings.json `claudeWorkerLimit`); more wait for a slot. */
+  claudeWorkerLimit: z.number().int().min(1).max(16).default(4),
   codexWorkersFollow: z.boolean(),
   codexWorkers: z.strictObject({ model: z.string().max(200).nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }),
   componentEditorModel: BotModel,
@@ -768,6 +770,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("summaryPrompt"), value: z.string().max(20_000).nullable() }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
   z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("claudeWorkerLimit"), value: z.number().int().min(1).max(16).nullable() }),
   z.strictObject({ key: z.literal("claudeBypassPermissions"), value: z.boolean() }),
   z.strictObject({ key: z.literal("codexBypassPermissions"), value: z.boolean() }),
   z.strictObject({ key: z.literal("agyBypassPermissions"), value: z.boolean() }),

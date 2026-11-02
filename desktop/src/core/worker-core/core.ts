@@ -654,6 +654,8 @@ export class WorkerCore implements WorkerHost {
   private launch(r: WorkerLedgerRecord, words: string, fresh: boolean, sameRun: boolean, step: string): Maybe<string | null> {
     const adapter = this.adapterOf(r)!;
     const before = structuredClone(r);
+    // Those already waiting go first if the limit was raised since (settings.json is read each time).
+    this.startWaiting();
     // Counted before this worker is at work itself.
     const wait = (adapter.needsSlot?.(r) ?? true) && this.busy >= this.limit;
     if (sameRun) r.segment = (r.segment ?? 0) + 1;
@@ -879,6 +881,9 @@ export class WorkerCore implements WorkerHost {
     if (!(stopped instanceof Promise)) return settle(stopped.cleaned);
     return stopped.then((result) => result.cleaned, () => false).then(settle);
   }
+
+  /** The limit may have changed (Settings): waiting workers start if there is room now; none at work is stopped. */
+  slotsChanged(): void { this.startWaiting(); }
 
   /** Workers waiting for a slot start, oldest first, while there is room. */
   private startWaiting() {
