@@ -122,12 +122,13 @@ export class RestartJournal {
       if (entry.state === "dispatched" || entry.state === "blocked") continue;
       const reason = entry.blocked || (stale ? "The restart checkpoint is too old to resume safely; nothing was restarted." : value.phase !== "ready" ? "Shutdown did not confirm the restart checkpoint."
         : entry.state === "claimed" ? "Continuation delivery is uncertain after a crash." : null);
+      // Told before it is marked: a crash in between tells it again, never not at all.
       if (reason) {
+        notice(entry, reason);
+        traced("Notice", value, { bot: entry.botId, reason });
         entry.state = "blocked";
         this.save(value);
         traced("Block", value, { bot: entry.botId });
-        notice(entry, reason);
-        traced("Notice", value, { bot: entry.botId, reason });
         continue;
       }
       entry.state = "claimed";
@@ -142,11 +143,11 @@ export class RestartJournal {
       } catch (error) {
         traced("Deliver", value, { bot: entry.botId, ok: false });
         entry.blocked = String(error);
+        notice(entry, entry.blocked);
+        traced("Notice", value, { bot: entry.botId, reason: entry.blocked });
         entry.state = "blocked";
         this.save(value);
         traced("Block", value, { bot: entry.botId });
-        notice(entry, entry.blocked);
-        traced("Notice", value, { bot: entry.botId, reason: entry.blocked });
       }
     }
   }

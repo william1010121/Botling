@@ -127,12 +127,8 @@ function replay(lines: RestartTraceStep[]) {
   });
 }
 
-// Real bug: recover() marks an entry blocked on disk before it calls notice(), so a crash in between leaves the
-// bot held back and never told (nor its session identity retained); the model tells first. Until it is fixed:
-const fixed = it.fails;
-
 describe("restart continuation", () => {
-  fixed(`conforms to the model along ${WALKS} random walks`, async () => {
+  it(`conforms to the model along ${WALKS} random walks`, async () => {
     const counts = new Map<string, number>();
     for (let seed = 1; seed <= WALKS; seed++) {
       const seen = await walk(seed, restartDriver({ bots: c.bots, plugins: c.plugins, dataDir: scratch("walk") }));
@@ -144,7 +140,7 @@ describe("restart continuation", () => {
     }
   });
 
-  fixed("every step the app traces is one the model allows", async () => {
+  it("every step the app traces is one the model allows", async () => {
     let lines = 0;
     for (let seed = 1; seed <= 60; seed++) {
       const dir = scratch("trace");
@@ -171,7 +167,7 @@ describe("restart continuation", () => {
     expect(driver.observe()).toMatchObject({ phase: "ready", entry: { b1: "dispatched" }, sent: { b1: 1 }, told: { b1: "none" } });
   });
 
-  fixed("a crash right after recovery holds a bot back still leaves it told why", async () => {
+  it("a crash right after recovery holds a bot back still leaves it told why", async () => {
     const driver = restartDriver({ bots: c.bots, plugins: c.plugins, dataDir: scratch("told") });
     driver.start("b1", true);
     driver.prepare();
