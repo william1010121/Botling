@@ -525,6 +525,22 @@ export class ScheduledRoutineStore {
   }
 }
 
+/**
+ * A bot's routines as spec/models/routines sees them, for its trace lines (spec-trace.ts): routines.cron's
+ * jobs with when each last ran (bot.json routineRuns), and the scheduled jobs (null: the file cannot be
+ * read). Built only while BOTLING_SPEC_TRACE is set; dates stay Swift dates.
+ */
+export function routinesSpecState(cron: RoutineFile | null, runs: Record<string, number>, store: ScheduledRoutineStore | null) {
+  if (!process.env.BOTLING_SPEC_TRACE) return null;
+  let scheduled: Pick<ScheduledRoutine, "id" | "task" | "kind" | "state" | "at" | "baseline" | "lastClaim" | "requestID">[] | null;
+  try {
+    scheduled = (store?.load() ?? []).map(({ id, task, kind, state, at, baseline, lastClaim, requestID }) => ({ id, task, kind, state, at, baseline, lastClaim, requestID }));
+  } catch {
+    scheduled = null;
+  }
+  return { legacy: (cron?.load() ?? []).map((job) => ({ id: job.id, task: job.task, enabled: job.enabled, run: runs[job.id] ?? null })), scheduled };
+}
+
 /** `at`: ISO-8601 with seconds and Z or an explicit offset (a zone alone does not resolve ambiguous local times). */
 function parseAt(value: unknown, required: boolean): number | undefined {
   if (value === undefined || value === null) {
