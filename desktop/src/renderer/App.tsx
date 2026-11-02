@@ -20,7 +20,8 @@ import { keybindingsOf, menuItems, offered, runsInHost, type PluginMenu } from "
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
-import { PanelFrame, PluginsButton } from "./Plugins";
+import { MainTabFrame, PanelFrame, PluginsButton, type BuiltinRunner } from "./Plugins";
+import { mainTabsFor, namedBot, shownTab, tabKey, type MainTab } from "./main-tabs";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
@@ -128,7 +129,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
-  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching;
+  // A plugin's tab in the main area (plan W2), the one this bot showed last; it takes the whiteboard's place too.
+  const tabs = useMemo(() => (bot && !web ? mainTabsFor(view.plugins, bot) : []), [bot, web, view.plugins]);
+  const tab = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
+  const whiteboard = !web && whiteboardOn && bot?.role === "main" && !watching && !tab;
   const review = reviewing && bot && reviewing.botId === bot.id && !watching ? reviewing.target : null;
 
   const fail = useCallback((failure: unknown) => {
@@ -217,6 +221,27 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "bots.remove", botId: target.id }).catch(fail);
   }, [client, fail]);
 
+  /** Shows a plugin tab for a bot, or none (Chat or Board), and keeps it for next time. */
+  const chooseTab = useCallback((botId: string, next: MainTab | null) => {
+    const key = next ? tabKey(next) : null;
+    if ((store.getView().settings?.mainTabs?.[botId] ?? null) === key) return;
+    void client.request({ type: "settings.set", change: { key: "mainTab", value: { botId, tab: key } } }).catch(fail);
+  }, [client, store, fail]);
+  // Botling's own commands a plugin frame may run: a bot's chat (its Chat tab), one of a bot's results.
+  const runBuiltin = useCallback<BuiltinRunner>((_plugin, command) => {
+    const botId = namedBot(store.getView().bots, command.botId);
+    if (!botId) { setError(`No bot "${command.botId.slice(0, 80)}".`); return; }
+    if (command.id === "botling.openResult") {
+      void client.request({ type: "result.open", botId, url: command.url }).catch(fail);
+      return;
+    }
+    const shown = store.getView().chat?.botId;
+    if (shown) chooseTab(shown, null);
+    chooseTab(botId, null);
+    setWhiteboardOn(false);
+    selectBot(botId);
+  }, [client, store, fail, chooseTab, setWhiteboardOn, selectBot]);
+
   // A result opens in the browser or with its own app; main checks it is one of this chat's links.
   const openResult = useCallback((result: ResultView) => {
     if (!chat) return;
@@ -240,7 +265,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (
         <PanelFrame key={`${view.pluginPanel.plugin}/${view.pluginPanel.panel}`} client={client} plugin={view.pluginPanel.plugin} panel={view.pluginPanel.panel}
-          title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} />
+          title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} onBuiltin={runBuiltin} />
       )}
       {railCollapsed ? (
         <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
@@ -313,7 +338,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </aside>
       )}
       <section className="chat-pane">
-        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}${review ? " review-on" : ""}`}>
+        <div className={`chat-column${whiteboard ? " whiteboard-on" : ""}${tab ? " main-tab-on" : ""}${review ? " review-on" : ""}`}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.parent ? <SubBotTitle bot={bot} parent={view.bots.find((candidate) => candidate.id === bot.parent) ?? null} onOpenParent={selectBot} /> : bot.name}</span>}
@@ -332,9 +357,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
           <div className="board-switch-bar">
             <div className="board-switch" role="group" aria-label="Chat views">
-              <button type="button" aria-pressed={!view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
-              <button type="button" aria-pressed={view.board && !whiteboard} onClick={() => { setWhiteboardOn(false); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
-              {bot.role === "main" && !web && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => { setWhiteboardOn(true); }}><Icon name="people" size={13} />Whiteboard</button>}
+              <button type="button" aria-pressed={!view.board && !whiteboard && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
+              <button type="button" aria-pressed={view.board && !whiteboard && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>
+              {bot.role === "main" && !web && <button type="button" className="whiteboard-switch" aria-pressed={whiteboard} onClick={() => { chooseTab(bot.id, null); setWhiteboardOn(true); }}><Icon name="people" size={13} />Whiteboard</button>}
+              {tabs.map((candidate) => (
+                <button key={tabKey(candidate)} type="button" className="main-tab-switch" data-tab={tabKey(candidate)} aria-pressed={tab === candidate}
+                  onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, candidate); }}>{candidate.title}</button>
+              ))}
             </div>
           </div>
         )}
@@ -354,6 +383,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             statusOf={(candidate) => ({ key: status(candidate), text: statusText(candidate) })}
             onOpenChat={(botId) => { setWhiteboardOn(false); selectBot(botId); }} onError={fail} />
         )}
+        {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} onBuiltin={runBuiltin} />}
         {review && bot && <Review client={client} bot={bot} target={review} lang={view.settings?.effectiveLanguage ?? null} onClose={() => setReviewing(null)} />}
         {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />

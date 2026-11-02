@@ -6,9 +6,10 @@
 //
 // A plugin's frame speaks the frame protocol (Web/src/frame-protocol.ts): `registerPluginFrame` turns
 // its calls into `plugins.call` with the plugin the page registered it for (`from: "frame"`), runs
-// only that plugin's own commands, and answers each call. The core checks the method is one the
+// only that plugin's own commands (with their few string arguments) and Botling's own openChat /
+// openResult, which the page runs itself, and answers each call. The core checks the method is one the
 // plugin exposed (ui.expose).
-import { frameParams, frameReply, ownsCommand, parseFrameRequest } from "../../../Web/src/frame-protocol";
+import { BUILTIN_COMMANDS, builtinCommand, frameParams, frameReply, ownsCommand, parseFrameRequest, type BuiltinCommand } from "../../../Web/src/frame-protocol";
 
 export interface FrameTarget {
   frame: HTMLIFrameElement;
@@ -88,7 +89,9 @@ export class FrameBroker {
 /** What a plugin frame's requests become: contract commands for the frame's own plugin. */
 export interface PluginFrameHost {
   call(plugin: string, method: string, params: unknown): Promise<unknown>;
-  command(plugin: string, id: string): Promise<unknown>;
+  command(plugin: string, id: string, args?: string[]): Promise<unknown>;
+  /** Botling's own command (botling.openChat / openResult), run by the page; none: refused. */
+  builtin?(plugin: string, command: BuiltinCommand): void;
 }
 
 export interface PluginFrame {
@@ -120,11 +123,20 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
           host.call(plugin, message.method, params.value).then((value) => reply(message.id, true, value), (failure) => reply(message.id, false, why(failure)));
           return;
         }
-        case "command":
+        case "command": {
+          if ((BUILTIN_COMMANDS as readonly string[]).includes(message.id)) {
+            const command = builtinCommand(message.id, message.args);
+            if (!host.builtin) { broker.refuse(`Botling's command "${message.id}" (this page runs none)`, target); return; }
+            if (!command) { broker.refuse(`Botling's command "${message.id}" with the wrong arguments`, target); return; }
+            if (!broker.allow(target)) { broker.refuse("too many calls", target); return; }
+            host.builtin(plugin, command);
+            return;
+          }
           if (!ownsCommand(plugin, message.id)) { broker.refuse(`a command of another plugin ("${message.id}")`, target); return; }
           if (!broker.allow(target)) { broker.refuse("too many calls", target); return; }
-          host.command(plugin, message.id).catch((failure) => onNotice?.(why(failure)));
+          host.command(plugin, message.id, message.args).catch((failure) => onNotice?.(why(failure)));
           return;
+        }
         case "notify":
           onNotice?.(message.text.slice(0, 400));
           return;

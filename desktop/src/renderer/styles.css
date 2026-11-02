@@ -660,6 +660,10 @@ button { font: inherit; color: inherit; }
   --tip-bg: #1C1C1F; --tip-text: #EDEDF0; --tip-muted: #A0A0A8; --shadow: rgba(0, 0, 0, 0.12); --scrim: rgba(245, 245, 247, 0.7); --pill-text: #6B3E00;
 }
 .chat-column.whiteboard-on #chat-frame { display: none; }
+/* A plugin's main-area tab (plan W2): its frame in the chat's place, the chat page kept loaded under it. */
+.chat-column.main-tab-on #chat-frame { display: none; }
+.main-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.main-tab-frame { flex: 1; width: 100%; border: 0; border-top: 1px solid var(--line); background: transparent; }
 .whiteboard { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .wb-canvas { flex: 1; min-height: 0; position: relative; overflow: hidden; border-top: 1px solid var(--line);
   background-color: var(--ground); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 14px 14px; }

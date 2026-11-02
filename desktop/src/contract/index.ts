@@ -766,6 +766,8 @@ export const SettingsView = z.strictObject({
   updateCheck: z.boolean(),
   /** Keyboard shortcuts the user rebound (id to binding, see shortcuts.ts); an id left out has its default. */
   shortcuts: z.record(z.string().max(200), z.string().max(40)).default({}),
+  /** The plugin tab each bot's main area last showed ("<plugin>/<view id>", PluginsView `mainTabs`); a bot left out shows Chat or Board. */
+  mainTabs: z.record(BotId, z.string().max(320)).optional(),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -807,6 +809,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
+  /** The plugin tab a bot's main area shows (null: none, Chat or Board). */
+  z.strictObject({ key: z.literal("mainTab"), value: z.strictObject({ botId: BotId, tab: z.string().min(1).max(320).nullable() }) }),
   /** All rebound shortcuts at once (an empty object: every default). */
   z.strictObject({ key: z.literal("shortcuts"), value: z.record(z.string().max(200), z.string().max(40)) }),
 ]);
@@ -990,6 +994,8 @@ export const PluginsView = z.strictObject({
   /** Without `command` the name goes into the message as words, for the bot (botling.design's /design). */
   slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
   menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200) })).max(200).optional(),
+  /** Plugin views that are tabs beside Chat / Board (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
+  mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "any"]) })).max(50).optional(),
 });
 export type PluginsView = z.infer<typeof PluginsView>;
 

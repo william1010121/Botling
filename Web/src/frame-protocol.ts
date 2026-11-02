@@ -3,14 +3,15 @@
 // (`event.source`), which the page around it registered. The page answers a call with a reply.
 //
 //   frame → page   { ccb: "call", id, method, params }   a method its own program part exposes (ui.expose)
-//                  { ccb: "command", id }                 one of its own plugin's commands ("<plugin>.…")
+//                  { ccb: "command", id, args? }          one of its own plugin's commands ("<plugin>.…"), or
+//                                                         Botling's own openChat / openResult (`builtinCommand`)
 //                  { ccb: "notify", text }                a line for the user
 //                  { ccb: "error", message }              its code failed
 //   page → frame   { ccb: "reply", id, ok, value }        the call's answer, or why it failed
 
 export type FrameRequest =
   | { ccb: "call"; id: number; method: string; params: unknown }
-  | { ccb: "command"; id: string }
+  | { ccb: "command"; id: string; args?: string[] }
   | { ccb: "notify"; text: string }
   | { ccb: "error"; message: string };
 
@@ -19,11 +20,14 @@ export interface FrameReply { ccb: "reply"; id: number; ok: boolean; value: unkn
 export const METHOD_MAX = 200;
 export const PARAMS_MAX = 1_000_000;
 const COMMAND_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
+/** A command's arguments: a few strings (a bot's id, a link). */
+const ARGS_MAX = 4;
+const ARG_MAX = 4_000;
 
 /** The keys each request may have: one more (a plugin, a bot) and it is not a request at all. */
 const KEYS: Record<FrameRequest["ccb"], string[]> = {
   call: ["ccb", "id", "method", "params"],
-  command: ["ccb", "id"],
+  command: ["ccb", "id", "args"],
   notify: ["ccb", "text"],
   error: ["ccb", "message"],
 };
@@ -39,8 +43,12 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
     case "call":
       if (!Number.isSafeInteger(message.id) || typeof message.method !== "string" || !message.method || message.method.length > METHOD_MAX) return null;
       return { ccb: "call", id: message.id as number, method: message.method, params: message.params ?? null };
-    case "command":
-      return typeof message.id === "string" && COMMAND_ID.test(message.id) ? { ccb: "command", id: message.id } : null;
+    case "command": {
+      if (typeof message.id !== "string" || !COMMAND_ID.test(message.id)) return null;
+      const args = message.args ?? [];
+      if (!Array.isArray(args) || args.length > ARGS_MAX || args.some((arg) => typeof arg !== "string" || arg.length > ARG_MAX)) return null;
+      return args.length ? { ccb: "command", id: message.id, args } : { ccb: "command", id: message.id };
+    }
     case "notify":
       return typeof message.text === "string" ? { ccb: "notify", text: message.text } : null;
     default:
@@ -64,6 +72,19 @@ export function frameParams(params: unknown): { ok: true; value: unknown } | { o
 /** Whether command `id` is one of `plugin`'s own (`<plugin>.<something>`). */
 export function ownsCommand(plugin: string, id: string): boolean {
   return id.length > plugin.length + 1 && id.startsWith(`${plugin}.`);
+}
+
+/** Botling's own commands a plugin frame may run (plugin-extraction.md §4.3); the page around it runs them. */
+export const BUILTIN_COMMANDS = ["botling.openChat", "botling.openResult"] as const;
+export type BuiltinCommand = { id: "botling.openChat"; botId: string } | { id: "botling.openResult"; botId: string; url: string };
+
+/** One of Botling's own commands with the arguments it needs (openChat: a bot; openResult: a bot and one of its links), or null. */
+export function builtinCommand(id: string, args: string[] = []): BuiltinCommand | null {
+  const botId = args[0];
+  if (!botId) return null;
+  if (id === "botling.openChat" && args.length === 1) return { id, botId };
+  if (id === "botling.openResult" && args.length === 2 && args[1]) return { id, botId, url: args[1] };
+  return null;
 }
 
 /** The frame whose window sent a message, found by the window itself (never by what the message says). */

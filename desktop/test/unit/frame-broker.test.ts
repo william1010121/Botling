@@ -19,13 +19,15 @@ function send(from: HTMLIFrameElement | Window | null, data: unknown, origin = "
   window.dispatchEvent(new MessageEvent("message", { data, origin, source: source as MessageEventSource | null }));
 }
 
-function host(): PluginFrameHost & { calls: unknown[][]; commands: unknown[][] } {
+function host(): PluginFrameHost & { calls: unknown[][]; commands: unknown[][]; builtins: unknown[][] } {
   const calls: unknown[][] = [];
   const commands: unknown[][] = [];
+  const builtins: unknown[][] = [];
   return {
-    calls, commands,
+    calls, commands, builtins,
     call: async (plugin, method, params) => { calls.push([plugin, method, params]); return `${plugin}:${method}`; },
-    command: async (plugin, id) => { commands.push([plugin, id]); return null; },
+    command: async (plugin, id, args) => { commands.push(args?.length ? [plugin, id, args] : [plugin, id]); return null; },
+    builtin: (plugin, command) => { builtins.push([plugin, command]); },
   };
 }
 
@@ -139,5 +141,33 @@ describe("the frame broker", () => {
     send(charts.element, { ccb: "call", id: 1, method: "count" });
     await settle();
     expect(rpc.calls).toEqual([]);
+  });
+});
+
+describe("Botling's own commands from a plugin frame (plan W2)", () => {
+  it("openChat and openResult go to the page, with what they need; another id or wrong arguments are refused", async () => {
+    const frames = broker();
+    const rpc = host();
+    const board = frame();
+    registerPluginFrame(frames, rpc, { frame: board.element, plugin: "board" });
+    send(board.element, { ccb: "command", id: "botling.openChat", args: ["B1"] });
+    send(board.element, { ccb: "command", id: "botling.openResult", args: ["B1", "https://example.com/r"] });
+    send(board.element, { ccb: "command", id: "botling.openResult", args: ["B1"] });
+    send(board.element, { ccb: "command", id: "botling.settings" });
+    send(board.element, { ccb: "command", id: "board.refresh", args: ["fast"] });
+    await settle();
+    expect(rpc.builtins).toEqual([["board", { id: "botling.openChat", botId: "B1" }], ["board", { id: "botling.openResult", botId: "B1", url: "https://example.com/r" }]]);
+    expect(rpc.commands).toEqual([["board", "board.refresh", ["fast"]]]);
+    expect(frames.refusals.map((refusal) => refusal.reason)).toEqual(['Botling\'s command "botling.openResult" with the wrong arguments', 'a command of another plugin ("botling.settings")']);
+  });
+
+  it("a page that runs none refuses them", async () => {
+    const frames = broker();
+    const { builtin: _, ...rpc } = host();
+    const board = frame();
+    registerPluginFrame(frames, rpc, { frame: board.element, plugin: "board" });
+    send(board.element, { ccb: "command", id: "botling.openChat", args: ["B1"] });
+    await settle();
+    expect(frames.refusals.map((refusal) => refusal.reason)).toEqual(['Botling\'s command "botling.openChat" (this page runs none)']);
   });
 });

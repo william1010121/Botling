@@ -19,7 +19,8 @@ import { z } from "zod";
 import { ContractError, type PluginsView, type WebPluginSpecView } from "../../contract";
 import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } from "../../contract/shortcuts";
 import { commandSurfaces } from "./commands";
-import type { Contribution } from "./contributions";
+import { viewSurfaces } from "./views";
+import { ofKind, type Contribution } from "./contributions";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
 import { title, type JSONValue } from "./manifest";
 import { PluginRegistry, type InstalledPlugin } from "./registry";
@@ -240,6 +241,7 @@ export class Plugins {
       host: { running: this.host.running, problem: this.host.problem?.slice(0, 2_000) ?? null },
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
       ...commandSurfaces(this.contributions()),
+      ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name)),
     };
   }
 
@@ -350,14 +352,15 @@ export class Plugins {
     return file;
   }
 
-  /** A panel's web part and settings, for its sandboxed frame. */
+  /** A panel's (or another view's: a main-area tab) web part and settings, for its sandboxed frame. */
   panel(name: string, id: string) {
-    const entry = this.registry.panels().find((candidate) => candidate.plugin.manifest.name === name && candidate.panel.id === id);
+    const entry = this.registry.panels().find((candidate) => candidate.plugin.manifest.name === name && candidate.panel.id === id)
+      ?? ofKind(this.registry.contributions(), "view").find((view) => view.plugin === name && view.id === id);
     const part = entry ? this.registry.webPart(name) : null;
     if (!entry || !part) throw new ContractError("not_found", `No panel "${id}" of plugin "${name}".`);
     const settings: Record<string, boolean | number | string | null> = {};
     for (const [key, value] of Object.entries(part.settings)) settings[key] = value === null || typeof value !== "object" ? value : null;
-    return { title: entry.panel.title.slice(0, 200), source: part.source, settings };
+    return { title: ("panel" in entry ? entry.panel.title : entry.title).slice(0, 200), source: part.source, settings };
   }
 
   /**

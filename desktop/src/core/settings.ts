@@ -96,7 +96,16 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     worktreeRoot: text(raw.worktreeRootChoice),
     updateCheck: bool(raw.updateCheckEnabled, true),
     shortcuts: normalizeOverrides(raw.shortcutBindings),
+    mainTabs: mainTabs(raw.mainTabs),
   };
+}
+
+/** settings.json's `mainTabs`: each bot's plugin tab (bot ids upper case), what cannot be used left out. */
+function mainTabs(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter((entry): entry is [string, string] => /^[0-9A-Fa-f-]{36}$/.test(entry[0]) && typeof entry[1] === "string" && entry[1].length > 0 && entry[1].length <= 320);
+  return Object.fromEntries(entries.slice(-500).map(([id, tab]) => [id.toUpperCase(), tab]));
 }
 
 /** One change from the Settings page, as 1.x's setters make it (`Workspace+Settings`, `+CatchUp`). */
@@ -154,6 +163,13 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "worktreeRoot": set("worktreeRootChoice", change.value && change.value.trim() ? change.value.trim() : null); break;
     case "updateCheck": set("updateCheckEnabled", change.value); break;
     case "shortcuts": { const kept = normalizeOverrides(change.value); set("shortcutBindings", Object.keys(kept).length ? kept : null); break; }
+    case "mainTab": {
+      const tabs = { ...mainTabs(raw.mainTabs) };
+      if (change.value.tab) tabs[change.value.botId.toUpperCase()] = change.value.tab;
+      else delete tabs[change.value.botId.toUpperCase()];
+      set("mainTabs", Object.keys(tabs).length ? tabs : null);
+      break;
+    }
     case "developerProject": if (change.value) set("developerProjectID", change.value.toUpperCase()); break;
     // 1.x keeps the list (an empty one too) once anything was pinned.
     case "pinnedBots": set("pinnedBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;

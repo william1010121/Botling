@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import type { PluginView, PluginsView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
+import type { BuiltinCommand } from "../../../Web/src/frame-protocol";
 import { panelPage } from "./panel-page";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -130,12 +131,19 @@ function SecretField({ setting, onSecret }: { setting: PluginView["settings"][nu
 let brokerForPanels: FrameBroker | null = null;
 const panelFrames = () => (brokerForPanels ??= new FrameBroker(window, { ignore: () => true, name: "panel broker" }));
 
-/** A plugin's panel: its web part in a sandboxed frame; its `host.call`s go to its own program part. */
-export function PanelFrame({ client, plugin, panel, title, onClose }: { client: Client; plugin: string; panel: string; title: string; onClose: () => void }) {
+/** Runs Botling's own commands a plugin frame asks for (botling.openChat / openResult); without it they are refused. */
+export type BuiltinRunner = (plugin: string, command: BuiltinCommand) => void;
+
+/** A plugin view's sandboxed frame: its page made from the web part, its calls to its own program part, its commands. */
+function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Read through a ref, so a new handler does not register the frame again.
+  const builtin = useRef(onBuiltin);
+  builtin.current = onBuiltin;
+  const runsBuiltins = !!onBuiltin;
   useEffect(() => {
     let live = true;
     client.request({ type: "plugins.panel", name: plugin, panel })
@@ -148,14 +156,21 @@ export function PanelFrame({ client, plugin, panel, title, onClose }: { client: 
     if (!url || !element) return;
     return registerPluginFrame(panelFrames(), {
       call: (name, method, params) => client.request({ type: "plugins.call", name, method, params, from: "frame" }).then((answer) => answer.result, (failure) => { throw new Error(why(failure)); }),
-      command: (name, id) => client.request({ type: "plugins.command", id, from: "frame", name }),
+      command: (name, id, args) => client.request({ type: "plugins.command", id, from: "frame", name, ...(args?.length ? { args } : {}) }),
+      ...(runsBuiltins ? { builtin: (name: string, command: BuiltinCommand) => builtin.current?.(name, command) } : {}),
     }, {
       frame: element,
       plugin,
       onNotice: (text) => setNote(text),
       onError: (message) => setNote(`The panel failed: ${message}`),
     });
-  }, [client, plugin, url]);
+  }, [client, plugin, url, runsBuiltins]);
+  return { frame, url, problem, note };
+}
+
+/** A plugin's panel: its web part in a sandboxed frame; its `host.call`s go to its own program part. */
+export function PanelFrame({ client, plugin, panel, title, onClose, onBuiltin }: { client: Client; plugin: string; panel: string; title: string; onClose: () => void; onBuiltin?: BuiltinRunner }) {
+  const { frame, url, problem, note } = usePluginFrame(client, plugin, panel, onBuiltin);
   return (
     <div className="plugin-panel" role="dialog" aria-label={title}>
       <div className="plugins-head">
@@ -165,6 +180,18 @@ export function PanelFrame({ client, plugin, panel, title, onClose }: { client: 
       {problem && <p className="plugins-problem">{problem}</p>}
       {note && <p className="plugins-result" role="status">{note}</p>}
       {url && <iframe ref={frame} className="plugin-panel-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={url} title={title} />}
+    </div>
+  );
+}
+
+/** A plugin's main-area tab (`where: "mainTab"`, plan W2): the same frame, in the chat's place. */
+export function MainTabFrame({ client, plugin, view, title, onBuiltin }: { client: Client; plugin: string; view: string; title: string; onBuiltin: BuiltinRunner }) {
+  const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin);
+  return (
+    <div className="main-tab" role="region" aria-label={title} data-plugin={plugin}>
+      {problem && <p className="plugins-problem">{problem}</p>}
+      {note && <p className="plugins-result" role="status">{note}</p>}
+      {url && <iframe ref={frame} className="main-tab-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={url} title={title} />}
     </div>
   );
 }

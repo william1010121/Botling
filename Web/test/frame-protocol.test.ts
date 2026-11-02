@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { frameOf, frameParams, ownsCommand, parseFrameRequest } from "../src/frame-protocol";
+import { builtinCommand, frameOf, frameParams, ownsCommand, parseFrameRequest } from "../src/frame-protocol";
 
 describe("the frame protocol", () => {
   it("reads the four requests a plugin frame may send", () => {
@@ -37,6 +37,25 @@ describe("the frame protocol", () => {
     expect(ownsCommand("charts", "chartsx.refresh")).toBe(false);
     expect(ownsCommand("charts", "other.run")).toBe(false);
     expect(ownsCommand("charts", "charts")).toBe(false);
+  });
+
+  it("a command may carry a few string arguments (plan W2)", () => {
+    expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: ["B1", "x"] })).toEqual({ ccb: "command", id: "charts.open", args: ["B1", "x"] });
+    expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: [] })).toEqual({ ccb: "command", id: "charts.open" });
+    expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: [1] })).toBeNull();
+    expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: ["a", "b", "c", "d", "e"] })).toBeNull();
+    expect(parseFrameRequest({ ccb: "command", id: "charts.open", args: ["x".repeat(4_001)] })).toBeNull();
+  });
+
+  it("Botling's own commands a frame may run: openChat(botId) and openResult(botId, url), nothing else", () => {
+    expect(builtinCommand("botling.openChat", ["B1"])).toEqual({ id: "botling.openChat", botId: "B1" });
+    expect(builtinCommand("botling.openResult", ["B1", "https://example.com/a"])).toEqual({ id: "botling.openResult", botId: "B1", url: "https://example.com/a" });
+    expect(builtinCommand("botling.openChat", [])).toBeNull();
+    expect(builtinCommand("botling.openChat", ["B1", "extra"])).toBeNull();
+    expect(builtinCommand("botling.openResult", ["B1"])).toBeNull();
+    expect(builtinCommand("botling.openChat", [""])).toBeNull();
+    expect(builtinCommand("botling.settings", [])).toBeNull();
+    expect(builtinCommand("charts.open", ["B1"])).toBeNull();
   });
 
   it("finds the frame a message came from by its window", () => {

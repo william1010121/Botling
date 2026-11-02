@@ -1,8 +1,9 @@
 // The page a plugin panel runs in (1.x: `chat.html?panel=plugin/id`, the plugin's web part in the
 // chat page). 2.0 runs the web part in its own sandboxed frame instead: botling-card://page/<token>
 // (opaque origin, no network, no storage, no bridge), served by main under PANEL_CSP. The page gets a
-// small `ccb`: panels.register, settings, notify, commands, host.call or call (to what its own program
-// part exposes, through the app page's frame broker and the core; Web/src/frame-protocol.ts). What
+// small `ccb`: panels.register, settings, notify, commands (and `command(id, ...args)`, Botling's
+// openChat / openResult too), host.call or call (to what its own program part exposes, through the app
+// page's frame broker and the core; Web/src/frame-protocol.ts). What
 // only the chat page could lend (the input box, markdown, components) does nothing here.
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").replace(new RegExp("\u2028", "g"), "\\u2028").replace(new RegExp("\u2029", "g"), "\\u2029");
 
@@ -66,8 +67,14 @@ const ccb = {
   notify: (text) => post({ ccb: "notify", text: String(text).slice(0, 4000) }),
   commands: {
     register(id, run) { commands.set(String(id), run); return () => commands.delete(String(id)); },
-    execute(id) { const run = commands.get(String(id)); if (run) { try { run(); } catch (error) { fail(error); } } else post({ ccb: "command", id: String(id) }); },
+    // Its own (registered here, or in its program part), or Botling's openChat(botId) / openResult(botId, url).
+    execute(id, ...args) {
+      const run = commands.get(String(id));
+      if (run) { try { run(...args); } catch (error) { fail(error); } }
+      else post(args.length ? { ccb: "command", id: String(id), args: args.map(String) } : { ccb: "command", id: String(id) });
+    },
   },
+  command: (id, ...args) => ccb.commands.execute(id, ...args),
   host: {
     call(method, params) {
       return new Promise((resolve, reject) => {

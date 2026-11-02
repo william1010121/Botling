@@ -163,6 +163,25 @@ describe("botling manifests", () => {
     expect(ofKind(read.contributions, "view").map((view) => view.where)).toEqual(["main", "window"]);
   });
 
+  it("a view can be a tab in the chat header's main area, for the main bot, project bots or any (plan W2)", () => {
+    const read = readManifest({ name: "board", version: "1.0.0", botling: { ui: "ui.js", contributes: { views: [
+      { id: "board.wall", title: "Wall", where: "mainTab", forRole: "main", icon: "people" },
+      { id: "board.git", title: "Git", where: "mainTab", forRole: "project" },
+      { id: "board.any", title: "Any", where: "mainTab" },
+      { id: "board.odd", title: "Odd", where: "mainTab", forRole: "everyone" },
+      { id: "board.side", title: "Side", where: "rightPanel", forRole: "main" },
+    ] } } }, empty);
+    expect(ofKind(read.contributions, "view")).toEqual([
+      { kind: "view", plugin: "board", id: "board.wall", title: "Wall", icon: "people", where: "mainTab", forRole: "main" },
+      { kind: "view", plugin: "board", id: "board.git", title: "Git", where: "mainTab", forRole: "project" },
+      { kind: "view", plugin: "board", id: "board.any", title: "Any", where: "mainTab", forRole: "any" },
+    ]);
+    expect(read.problems).toEqual([
+      'View "board.odd": forRole "everyone" must be main, project or any.',
+      'View "board.side": forRole is only for where "mainTab".',
+    ]);
+  });
+
   it("status items, menus, hooks, routines and agent folders", () => {
     const read = readManifest({ name: "up", version: "1.0.0", botling: { activation: "startup", contributes: {
       commands: [{ id: "up.report", title: "Report" }],
@@ -200,7 +219,7 @@ describe("botling manifests", () => {
       'Command "other.steal" must start with "mine.".',
       'Command "mine.ok" is declared twice.',
       "contributes.commands.3 is missing id.",
-      'View "mine.v": where "sidebar" must be rightPanel, main or window.',
+      'View "mine.v": where "sidebar" must be rightPanel, main, window or mainTab.',
       'Tile "mine.t": size "9x9" is not a Board size (for example 2x1).',
       'Setting "on" must start with "mine.".',
       'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette.',

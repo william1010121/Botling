@@ -334,3 +334,19 @@ describe("workspace for plugins (plan W1)", () => {
     expect(plugins.watchingWorkspace).toBe(false);
   });
 });
+
+describe("main-area tabs (plan W2)", () => {
+  it("a plugin's mainTab views are tabs, with their roles, while it is on and has a web part to draw them; the tab's frame gets that web part", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "board", { web: "dist/web.js", contributes: { views: [{ id: "board.wall", title: "Wall", where: "mainTab", forRole: "main", icon: "people" }, { id: "board.side", title: "Side" }] } });
+    plugin(dir, "headless", { contributes: { views: [{ id: "headless.tab", title: "Tab", where: "mainTab" }] } });
+    const { plugins } = await setup(dir);
+    expect(plugins.view().mainTabs).toEqual([{ plugin: "board", id: "board.wall", title: "Wall", icon: "people", forRole: "main" }]);
+    expect(plugins.panel("board", "board.wall")).toEqual({ title: "Wall", source: "export function activate() {}", settings: {} });
+    expect(() => plugins.panel("headless", "headless.tab")).toThrow(/No panel/);
+    plugins.setEnabled("board", false);
+    expect(plugins.view().mainTabs).toEqual([]);
+    expect(() => plugins.panel("board", "board.wall")).toThrow(/No panel/);
+  });
+});
+
