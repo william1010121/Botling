@@ -1,0 +1,71 @@
+[
+ {
+  "name": "app_handoff",
+  "description": "Start an app-managed worker: a Claude subagent that runs as its own session in this bot's folder and reports back to you. Use it wherever you would use the Agent tool (which is off here): give a short name and complete, self-contained instructions; subagent_type picks a .claude/agents definition, model overrides the worker's model (haiku, sonnet, opus). Returns task_id and run at once; the worker's report arrives later as an app message (<app_task_result>). Finish your turn instead of waiting or polling.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "instructions": {
+     "type": "string"
+    },
+    "subagent_type": {
+     "type": "string"
+    },
+    "model": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "instructions"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_send_message",
+  "description": "Send words to one of your workers by task_id: joined into its run while it works, or the start of its next run (same session, same task) once it has reported. Its next report comes as an app message.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    },
+    "message": {
+     "type": "string"
+    },
+    "run": {
+     "type": "integer",
+     "minimum": 1
+    }
+   },
+   "required": [
+    "task_id",
+    "message"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_cancel_task",
+  "description": "Stop one of your workers by task_id. Its work so far stays; no report is made.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    },
+    "run": {
+     "type": "integer",
+     "minimum": 1
+    }
+   },
+   "required": [
+    "task_id"
+   ],
+   "additionalProperties": false
+  }
+ }
+]

@@ -1,0 +1,140 @@
+[
+ {
+  "name": "app_task_checkpoint",
+  "description": "Resolve this task/run report with concrete acceptance evidence or a specific blocker. Does not grant authorization.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    },
+    "run": {
+     "type": "integer",
+     "minimum": 1
+    },
+    "outcome": {
+     "type": "string",
+     "enum": [
+      "complete",
+      "waiting_user",
+      "waiting_dependency",
+      "blocked"
+     ]
+    },
+    "evidence": {
+     "type": "string"
+    },
+    "dependency_task_id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "task_id",
+    "run",
+    "outcome",
+    "evidence"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_reconcile_report",
+  "description": "Needs no user approval card. Acknowledge an uncertain report as received, or retry only its delivery. Never replays the worker task.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    },
+    "run": {
+     "type": "integer",
+     "minimum": 1
+    },
+    "action": {
+     "type": "string",
+     "enum": [
+      "acknowledge",
+      "retry"
+     ]
+    }
+   },
+   "required": [
+    "task_id",
+    "run",
+    "action"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_handoff",
+  "description": "Assign an authorized task to an app-managed agy or Codex worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "instructions": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "engine": {
+     "type": "string",
+     "enum": [
+      "agy"
+     ]
+    }
+   },
+   "required": [
+    "instructions"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_send_message",
+  "description": "Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    },
+    "run": {
+     "type": "integer",
+     "minimum": 1
+    },
+    "message": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "task_id",
+    "run",
+    "message"
+   ],
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "app_cancel_task",
+  "description": "Stop one app-managed worker and its active tools.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "task_id": {
+     "type": "string"
+    },
+    "run": {
+     "type": "integer",
+     "minimum": 1
+    }
+   },
+   "required": [
+    "task_id",
+    "run"
+   ],
+   "additionalProperties": false
+  }
+ }
+]
