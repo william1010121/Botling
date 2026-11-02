@@ -177,8 +177,17 @@ export class Plugins {
     return this.view();
   }
 
-  /** A command a program part registered (`Workspace.runCommand`); a failure is said in the main bot's chat too. */
-  async command(id: string): Promise<unknown> {
+  /**
+   * A command a program part registered (`Workspace.runCommand`); a failure is said in the main bot's
+   * chat too. A frame runs only its own plugin's commands; the chat page only those of plugins whose web
+   * part runs there (the page is one realm, so a web part could name any of those). The app page's own
+   * buttons (no `from`) run any.
+   */
+  async command(id: string, from?: "frame" | "chat", name?: string): Promise<unknown> {
+    if (from === "frame" && !(name && id.startsWith(`${name}.`))) throw new ContractError("forbidden", `A frame of "${name ?? "?"}" may not run "${id}".`);
+    if (from === "chat" && !this.registry.plugins.some((plugin) => plugin.enabled && !plugin.failure && plugin.manifest.ccb?.web && id.startsWith(`${plugin.manifest.name}.`))) {
+      throw new ContractError("forbidden", `The chat page may not run "${id}" (no web part of its plugin runs there).`);
+    }
     if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     try {
       return await this.host.command(id);
@@ -232,12 +241,17 @@ export class Plugins {
     return { title: entry.panel.title.slice(0, 200), source: part.source, settings };
   }
 
-  /** A panel's `ccb.host.call` to its own plugin's program part. */
-  async call(name: string, method: string, params: unknown): Promise<unknown> {
+  /**
+   * A frame's or the chat page's `ccb.call` to its own plugin's program part (G3): only a method the
+   * program part exposed (`ui.expose`, or `web.handle`), never a website tool or anything else in the
+   * host. A frame's plugin is the one the page bound it to; the chat page's is only what its web part
+   * claims (one realm), so the plugin must at least have a web part there.
+   */
+  async call(name: string, method: string, params: unknown, from: "frame" | "chat"): Promise<unknown> {
     const plugin = this.known(name);
     if (!plugin.enabled || plugin.failure || !plugin.manifest.ccb?.web) throw new ContractError("conflict", `Plugin "${name}" is not on.`);
     try {
-      return await this.host.webCall(name, method, params);
+      return await this.host.webCall(name, method, params, from);
     } catch (error) {
       throw new ContractError("conflict", (error as Error).message);
     }

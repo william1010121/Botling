@@ -662,6 +662,8 @@ export type AccountView = z.infer<typeof AccountView>;
 
 const botId = BotId;
 const PluginName = z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/);
+/** Who asks a plugin: one of its sandboxed frames (panel, tile, card) or the chat page (its web part). */
+const PluginCaller = z.enum(["frame", "chat"]);
 const SettingKey = z.string().min(1).max(200);
 const SettingValue = z.union([z.boolean(), z.number(), z.string().max(10_000), z.null()]);
 
@@ -1141,12 +1143,19 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.setting"), name: PluginName, key: SettingKey, value: SettingValue }),
   /** A plugin's secret setting: sealed in the core, never sent back (null or "": taken out). */
   z.strictObject({ type: z.literal("plugins.secret"), name: PluginName, key: SettingKey, value: z.string().max(10_000).nullable() }),
-  /** Runs a command a plugin's program part registered. */
-  z.strictObject({ type: z.literal("plugins.command"), id: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
+  /**
+   * Runs a command a plugin's program part registered. `from` says who asks when it is not the app page
+   * itself: a plugin's frame (only its own plugin's commands; `name` is the plugin the page bound the frame
+   * to) or the chat page (only commands of plugins whose web part runs there).
+   */
+  z.strictObject({ type: z.literal("plugins.command"), id: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), from: PluginCaller.optional(), name: PluginName.optional() }),
   /** A plugin panel's web part (module text) and its settings, for its sandboxed frame. */
   z.strictObject({ type: z.literal("plugins.panel"), name: PluginName, panel: z.string().min(1).max(100) }),
-  /** A panel's `ccb.host.call(method, params)` to its own plugin's program part (the plugin comes from the frame). */
-  z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown() }),
+  /**
+   * A frame's or the chat page's `ccb.call(method, params)` to its own plugin's program part: only a
+   * method that plugin exposed (`ui.expose`). For a frame the plugin is the one the page bound it to.
+   */
+  z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown(), from: PluginCaller }),
   /** The app's settings (settings.json), with every default filled in. */
   z.strictObject({ type: z.literal("settings.get") }),
   z.strictObject({ type: z.literal("agy.runtime.check") }),

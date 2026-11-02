@@ -119,9 +119,39 @@ describe("the plugin host", () => {
     const c = core(dir);
     await until(async () => (await c.call({ type: "plugins.web" })).specs.some((spec: any) => spec.name === "slow"), { timeout: 15_000 });
     expect((await pluginsView(c)).host.running).toBe(false);
-    expect(await c.call({ type: "plugins.call", name: "slow", method: "shout", params: { text: "hello" } })).toEqual({ result: "HELLO" });
+    expect(await c.call({ type: "plugins.call", name: "slow", method: "shout", params: { text: "hello" }, from: "chat" })).toEqual({ result: "HELLO" });
     // A method it does not handle still fails, at once once it is loaded.
-    await expect(c.call({ type: "plugins.call", name: "slow", method: "whisper", params: null })).rejects.toThrow(/does not handle/);
+    await expect(c.call({ type: "plugins.call", name: "slow", method: "whisper", params: null, from: "chat" })).rejects.toThrow(/does not handle/);
+  });
+
+  it("frames and the chat page call only what a plugin exposes, and run only commands they may (plan M2, G3)", async () => {
+    const dir = tempDir("plugin-host");
+    hostPlugin(dir, "teller", `export function activate(ccb) {
+        ccb.ui.expose("balance", () => 42);
+        ccb.browser.registerTool({ id: "peek", title: "Peek", origin: "https://bank.test" }, () => "page");
+        ccb.commands.register("teller.run", () => "ran");
+      }`, { web: "dist/web.js" });
+    writeFileSync(join(dir, "plugins", "teller", "dist", "web.js"), "export function activate() {}");
+    // No web part: nothing in the chat page or a frame speaks for it.
+    hostPlugin(dir, "vault", `export function activate(ccb) {
+        ccb.web.handle("open", () => "opened");
+        ccb.commands.register("vault.open", () => "opened");
+      }`);
+    const c = core(dir);
+    await until(() => c.call({ type: "plugins.command", id: "vault.open" }).then(() => true, () => false), { timeout: 15_000 });
+    expect(await c.call({ type: "plugins.call", name: "teller", method: "balance", params: null, from: "frame" })).toEqual({ result: 42 });
+    expect(await c.call({ type: "plugins.call", name: "teller", method: "balance", params: null, from: "chat" })).toEqual({ result: 42 });
+    // A website tool lives in the same table in the host, but it was never exposed.
+    await expect(c.call({ type: "plugins.call", name: "teller", method: "browser.tool.peek", params: null, from: "frame" })).rejects.toThrow(/does not handle/);
+    await expect(c.call({ type: "plugins.call", name: "vault", method: "open", params: null, from: "chat" })).rejects.toThrow(/not on/);
+    // A frame runs its own plugin's commands only; the chat page only those of plugins it runs.
+    expect(await c.call({ type: "plugins.command", id: "teller.run", from: "frame", name: "teller" })).toEqual({ result: "ran" });
+    await expect(c.call({ type: "plugins.command", id: "vault.open", from: "frame", name: "teller" })).rejects.toThrow(/forbidden/);
+    await expect(c.call({ type: "plugins.command", id: "teller.run", from: "frame" })).rejects.toThrow(/forbidden|bad_request/);
+    expect(await c.call({ type: "plugins.command", id: "teller.run", from: "chat" })).toEqual({ result: "ran" });
+    await expect(c.call({ type: "plugins.command", id: "vault.open", from: "chat" })).rejects.toThrow(/forbidden/);
+    // The app page itself (the Plugins page's buttons) still runs any.
+    expect(await c.call({ type: "plugins.command", id: "vault.open" })).toEqual({ result: "opened" });
   });
 
   it("secrets: sealed on disk, given only to the program part, never shown; bots.create needs the bots permission; bots.send is open to any plugin (as 1.x)", async () => {

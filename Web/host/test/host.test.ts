@@ -123,6 +123,27 @@ describe("plugin host (in process)", () => {
     expect(JSON.parse(readFileSync(join(scratch, "data/tool/storage.json"), "utf8"))).toEqual({ count: 2 });
   });
 
+  it("ui.expose (and web.handle, its old name) open a method to frames and the chat page; nothing else is answered for them", async () => {
+    const { host, written } = makeHost({
+      tool: (ccb) => {
+        ccb.ui.expose("count", (params) => (params as { n: number }).n + 1);
+        ccb.web.handle("echo", (params) => ({ got: params }));
+        ccb.browser.registerTool({ id: "details", title: "Details", origin: "https://fixture.test" }, () => "page text");
+      },
+    });
+    await host.sync([spec("tool")]);
+    const announced = written.filter((m) => m.method === "registered").at(-1);
+    expect(announced?.params.exposed).toEqual({ tool: ["count", "echo"] });
+    await host.receive({ id: 1, method: "web", params: { plugin: "tool", method: "count", params: { n: 2 }, from: "frame" } });
+    await host.receive({ id: 2, method: "web", params: { plugin: "tool", method: "echo", params: 7, from: "chat" } });
+    await host.receive({ id: 3, method: "web", params: { plugin: "tool", method: "browser.tool.details", params: null, from: "frame" } });
+    expect(written.find((m) => m.id === 1)?.result).toBe(3);
+    expect(written.find((m) => m.id === 2)?.result).toEqual({ got: 7 });
+    expect(written.find((m) => m.id === 3)?.error?.message).toBe('Plugin "tool" does not expose "browser.tool.details".');
+    await host.sync([]);
+    expect(written.filter((m) => m.method === "registered").at(-1)?.params.exposed).toEqual({});
+  });
+
   it("asks Botling for bots and routines, and answers when Botling replies", async () => {
     let list: unknown;
     const { host, written } = makeHost({

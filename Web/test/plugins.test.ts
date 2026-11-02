@@ -157,6 +157,21 @@ describe("plugin host calls from the page", () => {
     host.execute("other.run");
     expect(sent).toContainEqual({ type: "command", id: "other.run" });
   });
+
+  it("ccb.call is host.call under the plan's name, bound to the plugin that calls", async () => {
+    await host.sync([spec("asker")], async () => (ccb) => { void ccb.call("count", { n: 1 }); });
+    expect(sent.find((action) => action.type === "hostCall")).toMatchObject({ plugin: "asker", method: "count", params: { n: 1 } });
+  });
+
+  it("a web part runs only its own plugin's commands, as a panel does", async () => {
+    let ran = 0;
+    await host.sync([spec("other"), spec("asker")], async (s) => (ccb) => {
+      if (s.name === "other") ccb.commands.register("other.local", () => { ran++; });
+      else { ccb.commands.execute("other.local"); ccb.commands.execute("other.run"); ccb.commands.execute("asker.run"); }
+    });
+    expect(ran).toBe(0);
+    expect(sent.filter((action) => action.type === "command")).toEqual([{ type: "command", id: "asker.run" }]);
+  });
 });
 
 describe("panels", () => {

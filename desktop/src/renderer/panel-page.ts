@@ -1,9 +1,9 @@
 // The page a plugin panel runs in (1.x: `chat.html?panel=plugin/id`, the plugin's web part in the
 // chat page). 2.0 runs the web part in its own sandboxed frame instead: botling-card://page/<token>
 // (opaque origin, no network, no storage, no bridge), served by main under PANEL_CSP. The page gets a
-// small `ccb`: panels.register, settings, notify, commands, host.call (to its own program part, through
-// the app page and the core). What only the chat page could lend (the input box, markdown, components)
-// does nothing here.
+// small `ccb`: panels.register, settings, notify, commands, host.call or call (to what its own program
+// part exposes, through the app page's frame broker and the core; Web/src/frame-protocol.ts). What
+// only the chat page could lend (the input box, markdown, components) does nothing here.
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").replace(new RegExp("\u2028", "g"), "\\u2028").replace(new RegExp("\u2029", "g"), "\\u2029");
 
 export function panelPage(plugin: string, panel: string, source: string, settings: Record<string, unknown>): string {
@@ -77,6 +77,7 @@ const ccb = {
       });
     },
   },
+  call: (method, params) => ccb.host.call(method, params),
   // Only the chat page can lend these; in a panel frame they do nothing.
   composer: { element: null, view: null, getText: () => "", insert() {}, addExtension: nothing, showPopover: nothing, onKeyDown: nothing },
   messages: { use() {}, afterRender: nothing },

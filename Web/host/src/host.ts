@@ -69,6 +69,9 @@ export interface CcbHost {
   commands: { register(id: string, run: (...args: unknown[]) => unknown): Dispose };
   routines: { add(botId: string, cron: string, task: string): Promise<void> };
   storage: { dir: string; get(key: string): unknown; set(key: string, value: unknown): void };
+  /** Opens `method` to this plugin's own frames (panels) and web part: the only methods they can call. */
+  ui: { expose(method: string, fn: (params: unknown) => unknown): Dispose };
+  /** `ui.expose`'s 1.x name. */
   web: { handle(method: string, fn: (params: unknown) => unknown): Dispose };
   settings: { get<T>(key: string): T; onChange(key: string, fn: (value: unknown) => void): Dispose };
   notify(text: string): void;
@@ -84,6 +87,8 @@ interface Loaded {
   replyListeners: ((bot: BotInfo, reply: string) => void)[];
   commands: Map<string, (...args: unknown[]) => unknown>;
   web: Map<string, (params: unknown) => unknown>;
+  /** The methods in `web` its frames and web part may call (ui.expose); website tools are not. */
+  exposed: Set<string>;
   settingHandlers: Map<string, ((value: unknown) => void)[]>;
 }
 
@@ -157,6 +162,8 @@ export class Host {
         const plugin = this.plugins.get(params.plugin);
         const handler = plugin?.web.get(params.method);
         if (!plugin || !handler) throw new Error(`Plugin "${params.plugin}" does not handle "${params.method}".`);
+        // A frame's or the chat page's call (`from`): only what the plugin exposed.
+        if (params.from !== undefined && !plugin.exposed.has(params.method)) throw new Error(`Plugin "${params.plugin}" does not expose "${params.method}".`);
         return this.runAsync(plugin.spec.name, () => handler(params.params));
       }
       case "shutdown":
@@ -210,6 +217,7 @@ export class Host {
       replyListeners: [],
       commands: new Map(),
       web: new Map(),
+      exposed: new Set(),
       settingHandlers: new Map(),
     };
     this.plugins.set(spec.name, plugin);
@@ -235,13 +243,14 @@ export class Host {
     return this.plugins.has(name);
   }
 
-  /** Tells Botling which hooks and commands exist, so it only asks when someone is listening. */
+  /** Tells Botling which hooks, commands and exposed methods exist, so it only asks when someone is listening. */
   private announce(): void {
     const plugins = [...this.plugins.values()];
     this.notify("registered", {
       beforeSend: plugins.reduce((sum, plugin) => sum + plugin.beforeSend.length, 0),
       afterReply: plugins.reduce((sum, plugin) => sum + plugin.afterReply.length, 0),
       commands: plugins.flatMap((plugin) => [...plugin.commands.keys()]),
+      exposed: Object.fromEntries(plugins.map((plugin) => [plugin.spec.name, [...plugin.exposed]])),
     });
   }
 
@@ -331,6 +340,16 @@ export class Host {
       return stored!;
     };
     mkdirSync(plugin.spec.storageDir, { recursive: true });
+    const expose = (method: string, fn: (params: unknown) => unknown): Dispose => {
+      plugin.web.set(method, fn);
+      plugin.exposed.add(method);
+      announceLater();
+      return own(() => {
+        plugin.web.delete(method);
+        plugin.exposed.delete(method);
+        announceLater();
+      });
+    };
 
     return {
       name,
@@ -385,12 +404,8 @@ export class Host {
           writeFileSync(storageFile, JSON.stringify(storage(), null, 2));
         },
       },
-      web: {
-        handle: (method, fn) => {
-          plugin.web.set(method, fn);
-          return own(() => plugin.web.delete(method));
-        },
-      },
+      ui: { expose },
+      web: { handle: expose },
       settings: {
         get: <T>(key: string) => plugin.spec.settings[key] as T,
         onChange: (key, fn) => {

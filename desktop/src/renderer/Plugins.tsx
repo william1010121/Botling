@@ -2,9 +2,10 @@ import { ShellOverlay } from "./ShellOverlay";
 // The plugin library (1.x: Settings → Plugins): each plugin on or off, its settings (a secret is only
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PluginView, PluginsView } from "../contract";
 import { Client, RequestFailed } from "./client";
+import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import { panelPage } from "./panel-page";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -124,6 +125,10 @@ function SecretField({ setting, onSecret }: { setting: PluginView["settings"][nu
   );
 }
 
+// The app page's plugin frames. Its other frames (the chat page) have listeners of their own.
+let brokerForPanels: FrameBroker | null = null;
+const panelFrames = () => (brokerForPanels ??= new FrameBroker(window, { ignore: () => true, name: "panel broker" }));
+
 /** A plugin's panel: its web part in a sandboxed frame; its `host.call`s go to its own program part. */
 export function PanelFrame({ client, plugin, panel, title, onClose }: { client: Client; plugin: string; panel: string; title: string; onClose: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -137,43 +142,19 @@ export function PanelFrame({ client, plugin, panel, title, onClose }: { client: 
       .then((page) => { if (live) setUrl(page.url); }, (failure) => { if (live) setProblem(why(failure)); });
     return () => { live = false; };
   }, [client, plugin, panel]);
-  const tokens = useRef({ left: 20, at: Date.now() });
-  const paced = useCallback(() => {
-    const now = Date.now();
-    const bucket = tokens.current;
-    bucket.left = Math.min(20, bucket.left + ((now - bucket.at) / 1000) * 10);
-    bucket.at = now;
-    if (bucket.left < 1) return false;
-    bucket.left -= 1;
-    return true;
-  }, []);
   useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      // Only this panel's own frame; who it is comes from the frame, never the message.
-      const target = frame.current?.contentWindow;
-      if (!target || event.source !== target) return;
-      const message = event.data as { ccb?: unknown; id?: unknown; method?: unknown; params?: unknown; text?: unknown; message?: unknown } | null;
-      if (!message || typeof message !== "object") return;
-      const reply = (id: number, ok: boolean, value: unknown) => target.postMessage({ ccb: "reply", id, ok, value }, "*");
-      if (message.ccb === "call" && typeof message.id === "number" && typeof message.method === "string") {
-        const id = message.id;
-        if (!paced()) { reply(id, false, "Too many calls; wait a moment."); return; }
-        let params: unknown = null;
-        try { params = JSON.parse(JSON.stringify(message.params ?? null)); } catch { reply(id, false, "Its parameters are not JSON."); return; }
-        if (JSON.stringify(params).length > 1_000_000) { reply(id, false, "Its parameters are too big."); return; }
-        client.request({ type: "plugins.call", name: plugin, method: message.method.slice(0, 200), params })
-          .then((answer) => reply(id, true, answer.result), (failure) => reply(id, false, why(failure)));
-      } else if (message.ccb === "command" && typeof message.id === "string" && message.id.startsWith(`${plugin}.`) && paced()) {
-        void client.request({ type: "plugins.command", id: message.id.slice(0, 200) }).catch((failure) => setNote(why(failure)));
-      } else if (message.ccb === "notify" && typeof message.text === "string") {
-        setNote(message.text.slice(0, 400));
-      } else if (message.ccb === "error" && typeof message.message === "string") {
-        setNote(`The panel failed: ${message.message.slice(0, 400)}`);
-      }
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [client, plugin, paced]);
+    const element = frame.current;
+    if (!url || !element) return;
+    return registerPluginFrame(panelFrames(), {
+      call: (name, method, params) => client.request({ type: "plugins.call", name, method, params, from: "frame" }).then((answer) => answer.result, (failure) => { throw new Error(why(failure)); }),
+      command: (name, id) => client.request({ type: "plugins.command", id, from: "frame", name }),
+    }, {
+      frame: element,
+      plugin,
+      onNotice: (text) => setNote(text),
+      onError: (message) => setNote(`The panel failed: ${message}`),
+    });
+  }, [client, plugin, url]);
   return (
     <div className="plugin-panel" role="dialog" aria-label={title}>
       <div className="plugins-head">

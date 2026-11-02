@@ -8,6 +8,7 @@ import { acceptPictures } from "./pictures";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { onScreen, whenShownAgain } from "./visible";
 import { escapeHTML } from "./util";
+import { frameOf } from "./frame-protocol";
 import { kitV1 } from "../kit/generated/kit-v1";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
@@ -616,13 +617,12 @@ function keepReading(frame: HTMLElement, before: DOMRect, height: number): void 
   scroller.scrollTop += delta;
 }
 
-// Frames are found by their window when they speak, so a message sent before the frame's own
-// load event is not lost.
+// Frames are found by their window when they speak (frame-protocol.ts), so a message sent before the
+// frame's own load event is not lost. A library component is no plugin's: it has no call or command.
 window.addEventListener("message", (event) => {
   const message = event.data as { ccb?: string; height?: number; index?: number; text?: string; images?: unknown; url?: string; label?: string; scope?: unknown; commit?: unknown; spec?: unknown; id?: unknown; values?: unknown };
   if (!message?.ccb) return;
-  const frame = [...document.querySelectorAll<ComponentFrame>("iframe.component-frame")]
-    .find((candidate) => candidate.contentWindow === event.source);
+  const frame = frameOf(document.querySelectorAll<ComponentFrame>("iframe.component-frame"), event.source);
   if (!frame) return;
   if (message.ccb === "size" && typeof message.height === "number" && message.height > 0) {
     const before = frame.getBoundingClientRect();

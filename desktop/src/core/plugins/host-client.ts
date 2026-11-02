@@ -67,6 +67,8 @@ export class PluginHostClient {
   beforeSendHooks = 0;
   afterReplyHooks = 0;
   commands: string[] = [];
+  /** The methods each plugin exposed to its frames and web part (`ui.expose`), as the host last said. */
+  exposed = new Map<string, Set<string>>();
   problem: string | null = null;
   restarts = 0;
   /** The host asks the core for something (bots.list, routines.add, …). */
@@ -167,14 +169,15 @@ export class PluginHostClient {
   }
 
   /**
-   * A web part's `host.call` to its own program part. The chat page loads web parts as soon as it
-   * opens, often before the host has started and loaded the program parts (slower on a busy
-   * computer): a call for a plugin the host is meant to run waits for that load (at most the load's
-   * own limit) instead of failing.
+   * A frame's or web part's `call` to its own program part: only a method it exposed. The chat page
+   * loads web parts as soon as it opens, often before the host has started and loaded the program
+   * parts (slower on a busy computer): a call for a plugin the host is meant to run waits for that
+   * load (at most the load's own limit) instead of failing.
    */
-  async webCall(plugin: string, method: string, params: unknown): Promise<unknown> {
+  async webCall(plugin: string, method: string, params: unknown, from: "frame" | "chat"): Promise<unknown> {
     await this.whenLoaded(plugin, this.timing.load);
-    return this.request("web", { plugin, method, params }, plugin, this.timing.call);
+    if (this.running && this.loaded.has(plugin) && !this.exposed.get(plugin)?.has(method)) throw new Error(`Plugin "${plugin}" does not handle "${method}".`);
+    return this.request("web", { plugin, method, params, from }, plugin, this.timing.call);
   }
 
   /** Resolves once the host runs `plugin`, it is no longer meant to, or `timeout` ms went by. */
@@ -343,6 +346,8 @@ export class PluginHostClient {
         this.beforeSendHooks = count(value.beforeSend);
         this.afterReplyHooks = count(value.afterReply);
         this.commands = Array.isArray(value.commands) ? value.commands.filter((id): id is string => typeof id === "string").slice(0, 500).map((id) => id.slice(0, 200)) : [];
+        const exposed = value.exposed && typeof value.exposed === "object" ? Object.entries(value.exposed as Record<string, unknown>).slice(0, 500) : [];
+        this.exposed = new Map(exposed.map(([plugin, methods]) => [plugin, new Set(Array.isArray(methods) ? methods.filter((method): method is string => typeof method === "string").slice(0, 500) : [])]));
         this.onRegistered();
         return;
       }

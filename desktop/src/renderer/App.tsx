@@ -1151,8 +1151,9 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
             void client.request({ type: "plugins.notice", name: action.name, text: action.text.slice(0, 4_000) }).catch(() => {});
           }
           return;
+        // A web part's command or call: the core takes it only for plugins whose web part runs in the page.
         case "command":
-          if (typeof action.id === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(action.id)) void client.request({ type: "plugins.command", id: action.id }).catch(onError);
+          if (typeof action.id === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(action.id)) void client.request({ type: "plugins.command", id: action.id, from: "chat" }).catch(onError);
           return;
         case "hostCall": {
           if (typeof action.plugin !== "string" || typeof action.method !== "string" || typeof action.callID !== "number") return;
@@ -1162,7 +1163,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
             postToChat(reply);
           };
           if (!paced(`host:${action.plugin}`)) { answer(false, "Too many calls: wait a moment."); return; }
-          client.request({ type: "plugins.call", name: action.plugin, method: action.method.slice(0, 200), params: action.params ?? null })
+          client.request({ type: "plugins.call", name: action.plugin, method: action.method.slice(0, 200), params: action.params ?? null, from: "chat" })
             .then((result) => answer(true, result.result), (failure) => answer(false, failure instanceof RequestFailed ? failure.error.message : String(failure)));
           return;
         }

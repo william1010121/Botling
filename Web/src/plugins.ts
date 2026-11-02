@@ -3,6 +3,7 @@ import * as state from "@codemirror/state";
 import * as view from "@codemirror/view";
 import type MarkdownIt from "markdown-it";
 import { post } from "./bridge";
+import { ownsCommand } from "./frame-protocol";
 import { md, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
 
@@ -60,6 +61,9 @@ export interface CcbWeb {
   commands: { register(id: string, run: () => void): Dispose; execute(id: string): void };
   settings: { get<T>(key: string): T; onChange(key: string, handler: (value: unknown) => void): Dispose };
   notify(text: string): void;
+  /** Calls what this plugin's own program part exposes (`ui.expose`, or `web.handle`). */
+  call(method: string, params?: unknown): Promise<unknown>;
+  /** `call`'s 1.x name. */
   host: { call(method: string, params?: unknown): Promise<unknown> };
 }
 
@@ -241,6 +245,12 @@ export class PluginHost {
       const at = list.indexOf(item);
       if (at !== -1) list.splice(at, 1);
     };
+    // The plugin is named here, not by the caller (the page is one realm: the core checks again).
+    const call = (method: string, params?: unknown) => new Promise<unknown>((resolve, reject) => {
+      const callID = this.nextCall++;
+      this.hostCalls.set(callID, { resolve, reject });
+      post({ type: "hostCall", plugin: name, method, params: params ?? null, callID });
+    });
     return {
       name,
       codemirror: { state, view, commands },
@@ -287,7 +297,8 @@ export class PluginHost {
           this.commandRuns.set(id, run);
           return own(() => this.commandRuns.delete(id));
         },
-        execute: (id) => this.execute(id),
+        // Only its own, as in a panel (frame-protocol.ts): who runs it is this plugin.
+        execute: (id) => { if (ownsCommand(name, id)) this.execute(id); else console.warn(`[plugins] ${name} may not run "${id}"`); },
       },
       settings: {
         get: <T>(key: string) => this.loaded.get(name)?.spec.settings[key] as T,
@@ -300,13 +311,8 @@ export class PluginHost {
         },
       },
       notify: (text) => post({ type: "pluginNotice", name, text }),
-      host: {
-        call: (method, params) => new Promise((resolve, reject) => {
-          const callID = this.nextCall++;
-          this.hostCalls.set(callID, { resolve, reject });
-          post({ type: "hostCall", plugin: name, method, params: params ?? null, callID });
-        }),
-      },
+      call,
+      host: { call },
     };
   }
 }
