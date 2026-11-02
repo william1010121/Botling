@@ -123,21 +123,20 @@ describe("callin conformance", () => {
     expect(done).toHaveLength(actions.length);
   });
 
-  // NoAnswer is left out until a failed call-in turn leaves its notice (the it.fails below).
   it.each(SEEDS)("random walk, seed %i", async (seed) => {
     // One body on even seeds, so the same words come again more often.
-    const { s } = await walk(randomly(seed, ["NoAnswer"]), 40, seed % 2 ? BODIES : [BODIES[0]!]);
+    const { s } = await walk(randomly(seed), 40, seed % 2 ? BODIES : [BODIES[0]!]);
     for (const e of s.ev) reached.add(e.st);
   });
 
-  it("the random walks reach every outcome of an @ but a failed turn's", () => {
+  it("the random walks reach every outcome of an @", () => {
     expect([...reached]).toEqual(expect.arrayContaining(["answered", "dropped", "merged", "seen", "unheard", "unreachable"]));
   });
 });
 
 describe("callin real bugs", () => {
-  // A failed guest turn calls onReply("") (finishTurn), which groupTurn takes for an empty reply: no line, no notice.
-  it.fails("a call-in whose turn fails leaves a notice", async () => {
+  // Was: a failed guest turn calls onReply("") (finishTurn), which groupTurn took for an empty reply: no line, no notice.
+  it("a call-in whose turn fails leaves a notice", async () => {
     const { driver } = await walk(fixed([{ name: "UserLine", c: "A", t: "B" }]), 1);
     await driver.noAnswer("A");
     expect(driver.view().pending.A).toEqual([]);
@@ -197,10 +196,14 @@ function replay(ref: CallinReference, lines: Line[], nameOf: (id: string) => str
     if (!found) return `line ${i + 1}: ${line.action} ${JSON.stringify(state)} after ${JSON.stringify({ ...s, ev: s.ev.map((e) => `${e.by} ${e.chat}>${e.to} ${e.st} d${e.depth}`) })}`;
     if (action.name === "BotReply" && found.ev.length > s.ev.length) msgs.set(state.msg!, found.ev.at(-1)!.msg);
     s = found;
-    // A callee's turn begins as soon as it is free, unless the chat's next call-in line says it gave up.
+    // Unless the chat's next call-in line says the callee gave up, its turn began at once (it waits 0 ms here),
+    // so its own turns had all ended by then.
     for (const chat of ref.config.top) {
       const next = lines.slice(i + 1).find((later) => later.action !== "UserLine" && later.action !== "BotReply" && nameOf(later.state.chat) === chat);
-      if (next?.action !== "GiveUp") s = ref.step(s, { name: "Take", c: chat }) ?? s;
+      if (s.phase[chat] !== "wait" || next?.action === "GiveUp") continue;
+      let free = s;
+      for (let at = ref.step(free, { name: "OwnEnd", b: ref.callee(s, chat) }); at; at = ref.step(at, { name: "OwnEnd", b: ref.callee(s, chat) })) free = at;
+      s = ref.step(free, { name: "Take", c: chat }) ?? s;
     }
     if (ref.invariants(s).length) return `line ${i + 1}: breaks ${ref.invariants(s).join(", ")}`;
   }
@@ -231,9 +234,9 @@ describe("callin trace check", () => {
   it.each(SEEDS.slice(0, 8))("every line the app traces is a step of the model, seed %i", async (seed) => {
     const dir = temp("spec-callin-trace-");
     process.env.BOTLING_SPEC_TRACE = dir;
-    const { driver, ref } = await walk(randomly(seed, ["NoAnswer"]), 30);
+    const { driver, ref, done } = await walk(randomly(seed), 30);
     const lines: Line[] = readFileSync(join(dir, "callin.jsonl"), "utf8").trim().split("\n").map((text) => JSON.parse(text));
     expect(lines.length).toBeGreaterThan(0);
-    expect(replay(ref, lines, (id) => driver.nameOf(id))).toBeNull();
+    expect(replay(ref, lines, (id) => driver.nameOf(id)), done.join(" ")).toBeNull();
   });
 });

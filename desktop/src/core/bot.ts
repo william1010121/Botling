@@ -945,7 +945,8 @@ export class Bot {
           }
           settle({ kind: "failed", why: "No answer in time." });
         }, answerWithinMs);
-        turn.onReply = (reply) => settle({ kind: "reply", text: reply, steps: turn.steps.slice(-500), engine });
+        // A failed or stopped turn hands "" here (finishTurn): not a reply; turn.done says what happened.
+        turn.onReply = (reply) => { if (reply) settle({ kind: "reply", text: reply, steps: turn.steps.slice(-500), engine }); };
         void turn.done.then((status) => settle(status === "done" ? { kind: "reply", text: turn.reply.text, steps: turn.steps.slice(-500), engine } : { kind: "failed", why: status === "failed" ? "It could not answer." : "It was stopped." }));
         this.begin(turn);
       });
