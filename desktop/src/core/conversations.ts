@@ -8,7 +8,7 @@ import type { Bot, GuestAnswer } from "./bot";
 import { writeFileAtomic } from "./durable/atomic";
 import {
   BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botCallInPrompt, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
-  isPass, mentionBody, mentioned, transcriptBefore, type Member,
+  isPass, mentionBody, mentioned, quoteName, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
 import { newId, toSwiftDate, type ChatRecord } from "./store/records";
@@ -62,8 +62,8 @@ export interface ConversationsDeps {
   handle: (bot: Bot, requests: BotRequest[]) => void;
   /** After the main bot's turn: what it wrote into inboxes goes out (`deliverInboxes`). */
   afterMainTurn: () => void;
-  /** Who is answering in a chat changed (the typing bubble under its own name). */
-  speaking: (chatId: string) => void;
+  /** A bot's row changed with the call-ins: who answers or waits in its chat, or whether it answers in another. */
+  speaking: (botId: string) => void;
   refreshWaiting: () => void;
   /** What a bot is told of components your words name with / (`components.mentionNote(for:)`). */
   mentionNote?: (text: string) => string | null;
@@ -74,6 +74,12 @@ export interface ConversationsDeps {
 /** A bot @ (`BotMention`): the reply that did it, whom it named, the words for it. */
 interface BotMention { message: string; recipient: string; body: string; depth?: number }
 
+/** A call-in not answered yet: whom, since when (ms), the words a bot's @ gave it, and whether its turn has come. */
+interface PendingCallIn { member: Member; since: number; body: string | null; state: "queued" | "answering" }
+
+/** `HH:mm` in local time, as the chat shows it. */
+const clock = (ms: number) => { const date = new Date(ms); return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`; };
+
 /** How many bot-to-bot hops one user line may start: the asker's follow-up reply may still @ once more, no further. */
 const MAX_FOLLOW_DEPTH = 2;
 
@@ -82,6 +88,8 @@ export class Conversations {
   /** Who answers in a chat right now (`callInSpeakers`, `groupSpeakers`), by the chat's id. */
   readonly speakers = new Map<string, string>();
   private queues = new Map<string, Promise<void>>();
+  /** Call-ins started and not answered yet, by the chat's id, in turn order. */
+  private pending = new Map<string, PendingCallIn[]>();
 
   constructor(private readonly deps: ConversationsDeps) {
     this.mentionLog = new BotMentionLog(join(deps.dataDir, "bot-mentions.json"));
@@ -99,6 +107,33 @@ export class Conversations {
 
   /** Who a member id is (`speakerName(for:)`). */
   speakerName = (id: string): string | null => [...this.deps.members(), ...(this.deps.subBots?.() ?? [])].find((member) => member.id === id)?.name ?? null;
+
+  /** The call-ins in `chatId` not answered yet: who, and whether answering or waiting their turn. */
+  callIns(chatId: string): { id: string; state: "queued" | "answering" }[] {
+    return (this.pending.get(chatId) ?? []).map((entry) => ({ id: entry.member.id, state: entry.state }));
+  }
+
+  /** The chat `botId` is answering a call-in in now (null: none). */
+  answeringIn(botId: string): string | null {
+    for (const [chatId, entries] of this.pending) if (entries.some((entry) => entry.state === "answering" && entry.member.id === botId)) return chatId;
+    return null;
+  }
+
+  /** For the chat's own bot, with its next turn: its @s still being answered or waiting (status only). */
+  callInStatus(chatId: string): string | null {
+    const lines = (this.pending.get(chatId) ?? []).filter((entry) => entry.body !== null).map((entry) => entry.state === "answering"
+      ? `(App: ${quoteName(entry.member.name)} is still answering your @ from ${clock(entry.since)}.)`
+      : `(App: ${quoteName(entry.member.name)} is queued to answer your @ from ${clock(entry.since)}, after another call-in.)`);
+    return lines.length ? lines.join("\n") : null;
+  }
+
+  private settle(chatId: string, entry: PendingCallIn) {
+    const entries = this.pending.get(chatId) ?? [];
+    if (!entries.includes(entry)) return;
+    const left = entries.filter((other) => other !== entry);
+    if (left.length) this.pending.set(chatId, left); else this.pending.delete(chatId);
+    this.deps.speaking(chatId);
+  }
 
   /** `chatId`'s own sub bots. */
   private subBotsOf(chatId: string): Member[] {
@@ -155,20 +190,31 @@ export class Conversations {
     if (wake) this.followUps.delete(chat.id);
     const depth = wake && wake.until > Date.now() ? wake.depth : 0;
     if (!record.text.includes("@")) return;
-    if (depth >= MAX_FOLLOW_DEPTH) return;
     if (!this.deps.members().some((member) => member.id === chat.id)) return;
     const members = [...this.deps.members(), ...this.subBotsOf(chat.id)];
     const callable = this.callable(chat.id);
+    // Other bots' sub bots: not callable here, only named so the @ is not lost without a word.
+    const elsewhere = (this.deps.subBots?.() ?? []).filter((sub) => sub.parent !== chat.id).map(({ id, name }) => ({ id, name }));
     const addressed: { member: Member; body: string }[] = [];
+    const unreachable: Member[] = [];
     let ambiguous = false;
     for (const candidate of botMentionCandidates(record.text)) {
       // Every bot, itself among them, so "@itself …" is not read as a shorter name.
       const named = mentioned(candidate, members);
       const first = named[0];
-      if (!first || !candidate.toLowerCase().startsWith("@" + first.name.toLowerCase())) continue;
+      if (!first || !candidate.toLowerCase().startsWith("@" + first.name.toLowerCase())) {
+        const other = mentioned(candidate, elsewhere)[0];
+        if (other && candidate.toLowerCase().startsWith("@" + other.name.toLowerCase())) unreachable.push(other);
+        continue;
+      }
       if (named.filter((member) => member.name.toLowerCase() === first.name.toLowerCase()).length > 1) { ambiguous = true; continue; }
-      if (!callable.some((member) => member.id === first.id)) continue;
+      if (first.id === chat.id) continue;
+      if (!callable.some((member) => member.id === first.id)) { unreachable.push(first); continue; }
       addressed.push({ member: first, body: mentionBody(candidate, first.name) });
+    }
+    if (unreachable.length) {
+      const names = [...new Set(unreachable.map((member) => member.name))];
+      chat.appNotice(`Not sent to ${names.join(", ")} with @: ${names.length === 1 ? "it is" : "they are"} not a bot this chat can call in (another bot's sub bot answers only in that bot's chat).`);
     }
     const recipients = [...new Set(addressed.map((entry) => entry.member.id))];
     if (!recipients.length && !ambiguous) return;
@@ -179,12 +225,23 @@ export class Conversations {
     const recipient = addressed[0]!.member;
     const body = addressed.map((entry) => entry.body).filter(Boolean).join("\n");
     const log = this.mentionLog;
+    // The same reply heard again: no new @.
     if (log.records.some((entry) => entry.message === record.id)) return;
+    if (depth >= MAX_FOLLOW_DEPTH) {
+      chat.appNotice(`Not sent to ${recipient.name} with @: bots have already called each other in ${MAX_FOLLOW_DEPTH} times in a row from one message of yours.`);
+      return;
+    }
     // Since the user's last line: the same words again are a retry, and only so many calls.
     const lastUser = chat.lines().findLast((line) => line.role === "user");
     const since = lastUser ? new Date(Date.UTC(2001, 0, 1) + lastUser.date * 1000).getTime() : 0;
     const recent = log.records.filter((entry) => entry.sender === chat.id && Date.parse(entry.date) > since);
-    if (recent.some((entry) => entry.recipient === recipient.id && entry.body === body)) return;
+    if (recent.some((entry) => entry.recipient === recipient.id && entry.body === body)) {
+      // Still to be answered: that answer covers this one too.
+      if (!(this.pending.get(chat.id) ?? []).some((entry) => entry.member.id === recipient.id && entry.body === body)) {
+        chat.appNotice(`Not sent to ${recipient.name} with @: it was already asked the same since your last message.`);
+      }
+      return;
+    }
     if (recent.length >= BOT_MENTIONS_PER_USER_LINE) {
       chat.appNotice(`Not sent to ${recipient.name} with @: a bot can call others in at most ${BOT_MENTIONS_PER_USER_LINE} times per message of yours.`);
       return;
@@ -203,7 +260,12 @@ export class Conversations {
 
   /** Queues the called bots' turns after any still running for this chat, so they never talk over each other (`startCallIn`). */
   startCallIn(chat: Bot, members: Member[], newest: string | null, ask: string | null, caller?: BotMention) {
-    this.enqueue(chat.id, () => this.runCallIn(chat, members, newest, ask, caller));
+    const entries: PendingCallIn[] = members.map((member) => ({ member, since: Date.now(), body: caller?.body ?? null, state: "queued" }));
+    this.pending.set(chat.id, [...(this.pending.get(chat.id) ?? []), ...entries]);
+    this.deps.speaking(chat.id);
+    this.enqueue(chat.id, async () => {
+      try { await this.runCallIn(chat, entries, newest, ask, caller); } finally { for (const entry of entries) this.settle(chat.id, entry); }
+    });
   }
 
   /** Runs `work` after what is queued for `key` (a chat). */
@@ -214,24 +276,31 @@ export class Conversations {
     void next.then(() => { if (this.queues.get(key) === next) this.queues.delete(key); });
   }
 
-  private async runCallIn(chat: Bot, members: Member[], newest: string | null, ask: string | null, caller?: BotMention) {
+  private async runCallIn(chat: Bot, entries: PendingCallIn[], newest: string | null, ask: string | null, caller?: BotMention) {
     const before = transcriptBefore(newest, chat.lines());
     const unheard: string[] = [];
     const host = this.speakerName(chat.id) ?? chat.profile.name;
-    for (const member of members) {
+    for (const entry of entries) {
+      const member = entry.member;
       const bot = this.deps.bot(member.id);
-      if (!bot || !this.callable(chat.id).some((candidate) => candidate.id === member.id)) continue;
+      if (!bot) { unheard.push(`${member.name} (it is not running)`); this.settle(chat.id, entry); continue; }
+      if (!this.callable(chat.id).some((candidate) => candidate.id === member.id)) { unheard.push(`${member.name} (it can no longer be called into this chat)`); this.settle(chat.id, entry); continue; }
+      entry.state = "answering";
       const prompt = caller
         ? botCallInPrompt({ member, host, chat: chat.lines(), transcript: before, body: caller.body, speakerName: this.speakerName })
         : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName, mentionNote: this.mentionNote });
-      this.speak(chat.id, member.id);
+      this.speak(chat.id, member.id, member.id);
       const askedAt = toSwiftDate();
       const asked = ask ?? (caller ? `@${member.name} ${caller.body}` : (newest ? chat.lines().find((line) => line.id === newest)?.text : undefined) ?? "");
       let answer: GuestAnswer;
       try {
-        answer = await bot.groupTurn(prompt, this.timing.busyNamed, this.timing.answerNamed);
+        answer = await bot.groupTurn(prompt, this.timing.busyNamed, this.timing.answerNamed, { callIn: chat.id });
+      } catch (error) {
+        answer = { kind: "failed", why: (error as Error).message || "Its turn could not start." };
       } finally {
-        this.speak(chat.id, null);
+        // Answered or not, it is no longer pending (before the answer is handed back, which takes a turn).
+        this.settle(chat.id, entry);
+        this.speak(chat.id, null, member.id);
       }
       if (member.id === this.deps.mainBotId) this.deps.afterMainTurn();
       if (answer.kind === "busy") unheard.push(`${member.name} (busy)`);
@@ -255,11 +324,12 @@ export class Conversations {
     if (unheard.length) chat.appNotice(`Did not answer this time: ${unheard.join(", ")}.`);
   }
 
-  /** Who answers in `chatId` now (null: nobody). */
-  speak(chatId: string, memberId: string | null) {
+  /** Who answers in `chatId` now (null: nobody); `guest`, the bot that starts or stops answering there, is drawn again too. */
+  speak(chatId: string, memberId: string | null, guest?: string) {
     if (memberId) this.speakers.set(chatId, memberId);
     else this.speakers.delete(chatId);
     this.deps.speaking(chatId);
+    if (guest) this.deps.speaking(guest);
   }
 
   /**

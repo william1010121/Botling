@@ -65,6 +65,8 @@ class Chat {
   private typing = new Map<string, HTMLElement>();
   private thinkTimer: ReturnType<typeof setInterval> | null = null;
   private workerWaiting: HTMLElement | null = null;
+  /** Call-ins still out: who answers here or waits its turn, or where this bot answers. */
+  private callInRows: HTMLElement[] = [];
   private botID: string | null = null;
   private subagentID: string | null = null;
   /** The loaded prefix grows only when reading back; incoming state keeps the same boundary. */
@@ -150,6 +152,7 @@ class Chat {
     this.typing.clear();
     if (this.thinkTimer) { clearInterval(this.thinkTimer); this.thinkTimer = null; }
     this.workerWaiting = null;
+    this.callInRows = [];
   }
 
   setState(state: ChatState, redrawing = false): void {
@@ -369,6 +372,23 @@ class Chat {
       this.workerWaiting?.remove();
       this.workerWaiting = null;
     }
+    // Call-ins still out, by name, after the typing bubble: the chat's own bot at work never hides them.
+    const calls = state.subagent ? [] : [
+      ...(state.callIns ?? []).map((call) => t(call.state === "answering" ? "messages.callInAnswering" : "messages.callInQueued", { name: call.name })),
+      ...(state.answeringIn ? [t("messages.answeringCallIn", { name: state.answeringIn })] : []),
+    ];
+    for (const row of this.callInRows.splice(calls.length)) row.remove();
+    calls.forEach((text, index) => {
+      let row = this.callInRows[index];
+      if (!row) {
+        row = document.createElement("div");
+        row.className = "call-in-status";
+        row.setAttribute("role", "status");
+        this.callInRows.push(row);
+      }
+      row.textContent = text;
+    });
+    for (const row of this.callInRows) if (row.parentElement !== this.list || row !== this.list.lastElementChild) this.list.append(row);
 
     this.showSubagentHeader(state);
     showMainSpeed(state, this.list);
@@ -378,6 +398,7 @@ class Chat {
     // Live activity belongs at the latest end, not after an older window.
     for (const row of this.typing.values()) row.style.display = this.historyLatest.hidden ? "" : "none";
     if (this.workerWaiting) this.workerWaiting.style.display = this.historyLatest.hidden ? "" : "none";
+    for (const row of this.callInRows) row.style.display = this.historyLatest.hidden ? "" : "none";
     // Something you just sent always shows, even if you had scrolled up.
     if (switched || sentNow) {
       this.stuck = true;

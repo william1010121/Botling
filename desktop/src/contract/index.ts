@@ -561,6 +561,10 @@ export const BotView = z.strictObject({
   subagentRows: z.array(SubagentRowView).max(100),
   /** Another bot answering in its chat right now (called in with @), for the typing bubble. */
   guest: BotId.nullable().optional(),
+  /** The bots called into its chat and not answered yet, in turn order: answering now, or queued behind another call-in. */
+  callIns: z.array(z.strictObject({ id: BotId, state: z.enum(["answering", "queued"]) })).max(100).optional(),
+  /** The chat it is answering a call-in in right now (null: none). */
+  answeringIn: BotId.nullable().optional(),
   /** Its tasks running or waiting on you ("3 tasks" beside its name; 1.x's `openTaskCount`). */
   openTasks: z.number().int().nonnegative().optional(),
   /** When its chat's newest line was said (ISO-8601; null: no lines): the column lists chats newest first (`lastActivity`). Phase 5a. */

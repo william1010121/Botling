@@ -221,6 +221,12 @@ export interface BotOptions {
   worktree?: () => { cwd: string; addDirs: string[] } | null;
   /** Another bot answering in its chat right now (a call-in's speaker). */
   guest?: () => string | null;
+  /** The call-ins in its chat not answered yet, answering or waiting their turn. */
+  callIns?: () => { id: string; state: "queued" | "answering" }[];
+  /** The chat it is answering a call-in in now (null: none). */
+  answeringIn?: () => string | null;
+  /** Its @s still being answered or waiting, said with its next turn (status only; null: none). */
+  callInNote?: () => string | null;
   /** What a line shows besides itself: the specs made from it, the component it already is (Phase 5a). */
   lineExtras?: (bot: Bot, record: ChatRecord) => { specs?: SpecChipView[]; component?: string };
   /** Its specs changed (the spec panel follows). */
@@ -279,6 +285,8 @@ interface Turn {
   onReply?: (text: string) => void;
   /** Its turn in another chat (a group, or a chat it was called into): hidden here like the tidy, but it may ask for tools. */
   guest?: boolean;
+  /** Called into this chat (its id) with @: hidden here, but its own chat and row show it at work. */
+  callIn?: string;
 }
 
 /** What a bot said for its turn in another chat (1.x's `GroupAnswer`). */
@@ -906,8 +914,8 @@ export class Bot {
    * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
    * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
    */
-  async groupTurn(text: string, waitForMs: number, answerWithinMs: number): Promise<GuestAnswer> {
-    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs);
+  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn }: { callIn?: string } = {}): Promise<GuestAnswer> {
+    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn });
     const deadline = Date.now() + waitForMs;
     while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
       if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
@@ -923,12 +931,14 @@ export class Bot {
       return await new Promise<GuestAnswer>((resolve) => {
         const turn = this.newTurn("tidy", text, null);
         turn.guest = true;
+        if (callIn) turn.callIn = callIn;
         let settled = false;
         const settle = (answer: GuestAnswer) => { if (!settled) { settled = true; clearTimeout(timer); resolve(answer); } };
         const timer = setTimeout(() => {
           if (turn.open) {
             turn.open = false;
             if (this.turn === turn) this.turn = null;
+            if (turn.callIn) this.updated();
             turn.resolve("stopped");
             // Its reply, when it comes, belongs to nobody now.
             if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
@@ -1650,9 +1660,9 @@ export class Bot {
     return this.head?.running ? "awake" : "asleep";
   }
 
-  /** A turn the user waits for is under way. */
+  /** A turn the user waits for is under way: its own, or its answer to a call-in in another chat. */
   private get working(): boolean {
-    return !!this.turn && this.turn.origin !== "tidy";
+    return !!this.turn && (this.turn.origin !== "tidy" || !!this.turn.callIn);
   }
 
   view(): BotView {
@@ -1677,6 +1687,8 @@ export class Bot {
       ...(this.profile.parent ? { parent: this.profile.parent } : {}),
       subagentRows: this.subagentRows(),
       guest: this.options.guest?.() ?? null,
+      callIns: this.options.callIns?.() ?? [],
+      answeringIn: this.options.answeringIn?.() ?? null,
       openTasks: shownTasks(this.owner.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length,
       components: this.components,
       lastActivity: this.records.length ? iso(this.records.at(-1)!.date) : null,
@@ -2728,7 +2740,7 @@ export class Bot {
     if (turn.origin !== "tidy") {
       this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
       this.updated();
-    }
+    } else if (turn.callIn) this.updated();
     // Handing the turn to the agent starts its process (ps for the process ledger, locks, fsyncs, the
     // recent-chat briefing): synchronous work that took seconds on a busy machine. A message you send is
     // accepted once its line is saved, so chat.send must answer first; deliver re-checks the turn.
@@ -2956,6 +2968,9 @@ export class Bot {
       return [this.wakeLine(turn, () => recent), this.wakeNote(), this.componentNote(), this.takeInterruptedNote(), this.engine === "claude" ? recent : "", words].filter(Boolean).join("\n\n");
     }
     if (turn.origin === "tidy") return words;
+    // Its @s still being answered or waiting their turn: status only, so a slow answer is not taken for a lost one.
+    const callIns = this.options.callInNote?.();
+    if (callIns) words = `${callIns}\n\n${words}`;
     if (this.queuedNote && !brief) {
       words = `${this.queuedNote}\n\n${words}`;
       this.queuedNote = null;
@@ -3638,6 +3653,7 @@ export class Bot {
     if (this.turn === turn) this.turn = null;
     this.clearCodexRetry();
     if (turn.origin === "tidy") {
+      if (turn.callIn) this.updated();
       turn.onReply?.(status === "done" ? turn.reply.text : "");
       this.finished.set(turn.id, status);
       turn.resolve(status);

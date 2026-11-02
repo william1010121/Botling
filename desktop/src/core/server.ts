@@ -346,6 +346,9 @@ export class Core {
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
+        callIns: () => this.conversations?.callIns(profile.id) ?? [],
+        answeringIn: () => this.conversations?.answeringIn(profile.id) ?? null,
+        callInNote: () => this.conversations?.callInStatus(profile.id) ?? null,
         agents: this.agentPort(profile),
       });
       return bot;
@@ -373,7 +376,7 @@ export class Core {
         if (left.length) bot.appNotice(`Botling 2.0 cannot do this yet, so nothing happened: ${[...new Set(left.map(unsupportedRequest))].join("; ")}.`);
       },
       afterMainTurn: () => this.deliverInboxes(),
-      speaking: (chatId) => this.bots.get(chatId)?.refresh(),
+      speaking: (botId) => this.bots.get(botId)?.refresh(),
       refreshWaiting: () => this.refreshWaiting(),
       log: (line) => this.log(line),
       timing: options.groupTiming,

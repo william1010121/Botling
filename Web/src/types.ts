@@ -439,6 +439,10 @@ export interface ChatState {
   working: boolean;
   /** No coordinator turn is active; worker cards continue independently. */
   waitingForWorkers?: boolean;
+  /** Bots called in here and not answered yet: answering now, or queued behind another call-in (shown beside the typing bubble). */
+  callIns?: { name: string; state: "answering" | "queued" }[];
+  /** This bot is answering a call-in in that bot's chat right now. */
+  answeringIn?: string | null;
   /** Codex waits to try a refused request again (rateLimited: HTTP 429): attempt of max, and when it goes (ms; null: not known). */
   retrying?: { attempt: number; max: number; reason: "rateLimited" | "connection"; retryAt: number | null } | null;
   /** The bot's face for the typing bubble. */
