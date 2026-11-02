@@ -14,7 +14,7 @@ const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/
 export default defineConfig({
   cacheDir: ".cache/vite",
   test: {
-    include: ["test/unit/**/*.test.ts", "test/live/**/*.test.ts"],
+    include: ["test/unit/**/*.test.ts", "test/live/**/*.test.ts", "../spec/tests/**/*.test.ts"],
     exclude: [
       "**/node_modules/**",
       ...(process.platform === "darwin" ? [] : macOnly),

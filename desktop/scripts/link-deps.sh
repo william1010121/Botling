@@ -47,4 +47,7 @@ link() { # link <path> <target>
 link "$desktop/node_modules" "$target/node_modules"
 # Web/ takes its packages from desktop/node_modules (see build.mjs), through its own link.
 [ -d "$web" ] && { [ -L "$web/node_modules" ] || [ ! -e "$web/node_modules" ]; } && link "$web/node_modules" ../desktop/node_modules
+# spec/tests import vitest and the app the same way.
+spec="$desktop/../spec"
+[ -d "$spec" ] && { [ -L "$spec/node_modules" ] || [ ! -e "$spec/node_modules" ]; } && link "$spec/node_modules" ../desktop/node_modules
 exit 0

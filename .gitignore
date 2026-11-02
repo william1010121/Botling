@@ -4,3 +4,6 @@ Web/dist/
 *.xcodeproj/
 .DS_Store
 dist/
+spec/node_modules
+spec/traces/*.out/
+spec/**/states/

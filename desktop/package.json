@@ -20,6 +20,7 @@
     "perf": "node scripts/perf/bench.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:changed": "node scripts/test-changed.mjs",
+    "test:spec": "node build.mjs && vitest run ../spec/tests",
     "link-deps": "sh scripts/link-deps.sh",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node build.mjs && vitest run test/unit",
