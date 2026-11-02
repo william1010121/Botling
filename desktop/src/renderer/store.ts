@@ -235,6 +235,8 @@ export class WorkspaceStore {
     }
     if (envelope.seq <= this.seq) return; // Already in the snapshot.
     this.seq = envelope.seq;
+    // A plugin's push to its frames (the frames hear it through `Client.onEvent`): nothing in the view changes.
+    if (envelope.event.type === "plugins.emit") return;
     // A bot it has not seen (a project just added): the snapshot has it in its place in the list.
     const event = envelope.event;
     if (event.type === "bot.updated" && !this.view.bots.some((bot) => bot.id === event.bot.id)) {
@@ -255,6 +257,7 @@ export class WorkspaceStore {
 }
 
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
+  if (event.type === "plugins.emit") return view;
   if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
   if (event.type === "plugins.open") return { ...view, pluginPanel: { plugin: event.plugin, panel: event.panel, title: event.title } };

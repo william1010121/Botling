@@ -1,0 +1,40 @@
+{
+  "name": "botling.terminal",
+  "displayName": "Terminal",
+  "version": "1.0.0",
+  "description": "A shell in the bot's project folder under the chat: the Terminal button in the chat header (Mod+J) shows tabs of real shells, one list per bot, kept running while the panel is hidden.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "exec"
+    ],
+    "web": "ui.js",
+    "host": "main.js",
+    "contributes": {
+      "commands": [
+        {
+          "id": "botling.terminal.toggle",
+          "title": "Toggle terminal"
+        }
+      ],
+      "keybindings": [
+        {
+          "command": "botling.terminal.toggle",
+          "key": "Mod+J"
+        }
+      ],
+      "views": [
+        {
+          "id": "botling.terminal.panel",
+          "title": "Terminal",
+          "where": "bottomPanel",
+          "toggle": "botling.terminal.toggle"
+        }
+      ]
+    }
+  }
+}

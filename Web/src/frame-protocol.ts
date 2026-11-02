@@ -17,7 +17,12 @@
 //                                                         frame can ask, never allow (`ccb.requestApproval`)
 //                  { ccb: "resize", height }              how tall its content is (px), for a frame the page sizes to its content
 //                                                         (a block in Settings or a popover; `panelPage` with `fit`)
+//                  { ccb: "ready" }                       its web part is up (not a request: the page then tells it what it is in)
+//                  { ccb: "panel", visible }              a `bottomPanel` view asks to be shown or hidden (the page lays it out)
+//                  { ccb: "key", key, code, …modifiers }  a key combination it did not use (a modifier held), for the page's shortcuts
 //   page → frame   { ccb: "reply", id, ok, value }        the call's answer, or why it failed
+//                  { ccb: "event", name, data }           something its program part pushed (`ui.emit`), or the page's own
+//                                                         ("visible": a `bottomPanel` is shown or hidden; "toggle": its toggle command ran)
 
 export type FrameRequest =
   | { ccb: "call"; id: number; method: string; params: unknown }
@@ -25,6 +30,8 @@ export type FrameRequest =
   | { ccb: "notify"; text: string }
   | { ccb: "error"; message: string }
   | { ccb: "resize"; height: number }
+  | { ccb: "panel"; visible: boolean }
+  | { ccb: "key"; key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }
   | { ccb: "tile"; id: number; component: string; data: unknown; size: TileSize; botId: string }
   | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string };
 
@@ -33,6 +40,11 @@ export const TILE_SIZES = ["1x1", "2x1", "2x2"] as const;
 export type TileSize = (typeof TILE_SIZES)[number];
 
 export interface FrameReply { ccb: "reply"; id: number; ok: boolean; value: unknown }
+/** A push to a frame: from its plugin's program part (`ui.emit`) or the page around it. */
+export interface FrameEvent { ccb: "event"; name: string; data: unknown }
+export function frameEvent(name: string, data: unknown): FrameEvent {
+  return { ccb: "event", name, data };
+}
 
 export const METHOD_MAX = 200;
 /** The tallest a frame may ask to be (px). */
@@ -50,6 +62,8 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   notify: ["ccb", "text"],
   error: ["ccb", "message"],
   resize: ["ccb", "height"],
+  panel: ["ccb", "visible"],
+  key: ["ccb", "key", "code", "metaKey", "ctrlKey", "altKey", "shiftKey"],
   tile: ["ccb", "id", "component", "data", "size", "botId"],
   approval: ["ccb", "id", "botId", "command", "folder", "card"],
 };
@@ -81,6 +95,12 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
       if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.command, 20_000) || !text(message.folder, 4_000)) return null;
       if (message.card !== undefined && !text(message.card, 200)) return null;
       return { ccb: "approval", id: message.id as number, botId: message.botId, command: message.command, folder: message.folder, ...(message.card !== undefined ? { card: message.card as string } : {}) };
+    case "panel":
+      return typeof message.visible === "boolean" ? { ccb: "panel", visible: message.visible } : null;
+    case "key":
+      if (!text(message.key, 32) || !text(message.code, 32)) return null;
+      if (![message.metaKey, message.ctrlKey, message.altKey, message.shiftKey].every((flag) => typeof flag === "boolean")) return null;
+      return { ccb: "key", key: message.key as string, code: message.code as string, metaKey: message.metaKey as boolean, ctrlKey: message.ctrlKey as boolean, altKey: message.altKey as boolean, shiftKey: message.shiftKey as boolean };
     case "resize":
       return typeof message.height === "number" && Number.isFinite(message.height) && message.height >= 0 ? { ccb: "resize", height: Math.min(RESIZE_MAX, Math.ceil(message.height)) } : null;
     default:

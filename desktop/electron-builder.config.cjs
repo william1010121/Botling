@@ -46,7 +46,6 @@ module.exports = {
     // The first-party plugins (ccb-latex, botling.cards, botling.chat-extras, botling.design): read-only, Resources/builtin-plugins.
     { from: "out/builtin-plugins", to: "builtin-plugins" }],
   asar: true,
-  asarUnpack: ["out/main/node_modules/node-pty/**/*"],
   // Electron's zip comes from (and is kept in) this cache, never ~/Library/Caches (the package script sets it).
   electronDownload: { cache: env.ELECTRON_CACHE || env.electron_config_cache || join(__dirname, ".cache", "electron") },
   npmRebuild: false,

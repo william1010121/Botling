@@ -861,6 +861,8 @@ export const PluginsView = z.strictObject({
   settingsSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), terms: z.string().max(1_000), after: z.string().max(40).optional(), link: z.string().max(100).optional() })).max(20).optional(),
   /** Plugin views that are blocks in a bot's right panel overview, under its tasks (`where: "rightPanel.section"`), for the bots its `forRole` names. */
   rightPanelSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), forRole: z.enum(["main", "project", "bots", "any"]) })).max(20).optional(),
+  /** Panels under the chat (`bottomPanel` views): one frame per bot, a toggle in the chat header; `toggle`: the plugin's command the page runs itself to show or hide it. */
+  bottomPanels: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), toggle: PluginCommandId.optional() })).max(5).optional(),
   /** Plugin views that are blocks in the sidebar gear's popover (`where: "quickSettings"`). */
   quickSettings: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(10).optional(),
 });
@@ -1324,6 +1326,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.decorations"), botId, decorations: z.array(ChatDecoration).max(1_000) }),
   /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
+  /** A plugin's program part pushed something to its frames (`ui.emit`), those of the bot `forBot` only when it names one. Not part of any snapshot. */
+  z.strictObject({ type: z.literal("plugins.emit"), plugin: PluginName, name: z.string().min(1).max(100), forBot: z.string().max(128).optional(), data: z.unknown() }),
   /** A plugin's program part opened one of its panels (`ui.openView`). */
   z.strictObject({ type: z.literal("plugins.open"), plugin: PluginName, panel: z.string().max(100), title: z.string().max(200) }),
   /** The app's settings changed. */

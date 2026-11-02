@@ -182,6 +182,25 @@ describe("botling manifests", () => {
     ]);
   });
 
+  it("a view can be a panel under the chat (bottomPanel), with a toggle command of its own plugin; toggle and forRole are for nothing else", () => {
+    const read = readManifest({ name: "botling.terminal", version: "1.0.0", botling: { ui: "ui.js", contributes: { views: [
+      { id: "botling.terminal.panel", title: "Terminal", where: "bottomPanel", toggle: "botling.terminal.toggle" },
+      { id: "botling.terminal.bare", title: "Bare", where: "bottomPanel" },
+      { id: "botling.terminal.steal", title: "Steal", where: "bottomPanel", toggle: "other.toggle" },
+      { id: "botling.terminal.odd", title: "Odd", where: "mainTab", toggle: "botling.terminal.toggle" },
+      { id: "botling.terminal.role", title: "Role", where: "bottomPanel", forRole: "main" },
+    ] } } }, empty);
+    expect(ofKind(read.contributions, "view")).toEqual([
+      { kind: "view", plugin: "botling.terminal", id: "botling.terminal.panel", title: "Terminal", where: "bottomPanel", toggle: "botling.terminal.toggle" },
+      { kind: "view", plugin: "botling.terminal", id: "botling.terminal.bare", title: "Bare", where: "bottomPanel" },
+    ]);
+    expect(read.problems).toEqual([
+      'View "botling.terminal.steal": toggle "other.toggle" must be a command of this plugin ("botling.terminal.…").',
+      'View "botling.terminal.odd": toggle is only for where "bottomPanel".',
+      'View "botling.terminal.role": forRole is only for where "mainTab" or "rightPanel.section".',
+    ]);
+  });
+
   it("a view can be a page of Settings (with the words its search finds it by, the core page it follows and the popover link that opens it) or a block in the gear popover", () => {
     const read = readManifest({ name: "meter", version: "1.0.0", botling: { ui: "ui.js", contributes: { views: [
       { id: "meter.page", title: "Meter", where: "settings.section", terms: "quota rings", after: "engines", link: "Meter by bot" },
@@ -238,7 +257,7 @@ describe("botling manifests", () => {
       'Command "other.steal" must start with "mine.".',
       'Command "mine.ok" is declared twice.',
       "contributes.commands.3 is missing id.",
-      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings or rightPanel.section.',
+      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section or bottomPanel.',
       'Tile "mine.t": size "9x9" is not a Board size (for example 2x1).',
       'Setting "on" must start with "mine.".',
       'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette.',

@@ -384,7 +384,6 @@ export const zhHant: Dictionary = {
   "shortcuts.action.settings": "開啟設定",
   "shortcuts.action.toggleSidebar": "顯示或隱藏左側欄",
   "shortcuts.action.toggleRightPanel": "顯示或隱藏右側面板",
-  "shortcuts.action.toggleTerminal": "顯示或隱藏終端機（空白時自動開啟 shell）",
   "shortcuts.action.reload": "重新載入視窗",
   "shortcuts.action.forceReload": "重新載入視窗（忽略快取）",
   "shortcuts.action.reloadChat": "重新載入聊天頁面",

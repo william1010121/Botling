@@ -222,7 +222,7 @@ describe("plugins' web parts in the chat page", () => {
     // The built-in ones with a web part (step M11) come the same way, first.
     expect(specs.map((spec: any) => [spec.name, spec.styles])).toEqual([
       ["botling.catchup", ["botling-chat://chat/plugin-files/botling.catchup/catchup.css"]],
-      ["botling.chat-extras", ["botling-chat://chat/plugin-files/botling.chat-extras/dist/chat-extras.css"]], ["botling.git", []], ["botling.usage", []], ["botling.whiteboard", []],
+      ["botling.chat-extras", ["botling-chat://chat/plugin-files/botling.chat-extras/dist/chat-extras.css"]], ["botling.git", []], ["botling.terminal", []], ["botling.usage", []], ["botling.whiteboard", []],
       ["ccb-latex", ["botling-chat://chat/plugin-files/ccb-latex/dist/katex.min.css"]], ["glow", ["botling-chat://chat/plugin-files/glow/dist/glow.css"]],
     ]);
     expect(await c.call({ type: "plugins.file", name: "glow", path: "dist/glow.css" })).toMatchObject({ path: expect.stringContaining("glow.css") });
@@ -230,7 +230,7 @@ describe("plugins' web parts in the chat page", () => {
     await c.call({ type: "plugins.notice", name: "glow", text: "hello" });
     await until(async () => (await c.chat()).messages.some((message: any) => message.text === "glow: hello"));
     await c.call({ type: "plugins.failed", name: "glow", message: "it threw" });
-    expect((await c.call({ type: "plugins.web" })).specs.map((spec: any) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+    expect((await c.call({ type: "plugins.web" })).specs.map((spec: any) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     expect((await c.call({ type: "plugins.list" })).plugins.find((plugin: any) => plugin.name === "glow")).toMatchObject({ enabled: false, failure: "it threw" });
   });
 });

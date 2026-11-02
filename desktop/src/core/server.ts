@@ -31,7 +31,7 @@ import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
-import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { answerLabel } from "./attachments";
 import {
@@ -295,6 +295,9 @@ export class Core {
           } : {});
         }),
         openPanel: (plugin, panel, title) => this.event({ type: "plugins.open", plugin, panel, title }),
+        // Straight to the app page, not through `event()`: no plugin, workspace or phone listener has anything to do with it.
+        frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? MAIN_BOT_ID : botId } : {}), data } }),
+        botFolder: (botId) => this.pluginBot(botId)?.profile.folder ?? null,
         appSettings: () => {
           const settings = settingsView(readSettings(Layout.settings(this.options.dataDir)));
           return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };
@@ -382,6 +385,7 @@ export class Core {
     });
     // Settings that are a built-in plugin's now (the paste limits: botling.chat-extras) move to its settings once.
     moveSettingsToPlugins(Layout.settings(options.dataDir), (plugin, key, value) => this.plugins.registry.set(plugin, key, value));
+    moveShortcutsToPlugins(Layout.settings(options.dataDir));
     // The component library has the built-in plugins' cards now (botling.cards' preview card), before any bot
     // gets its first list (the built-ins).
     // (Its first finding is not a "catalog change", so rescan() says false; the stamp moved all the same, and
@@ -1609,6 +1613,7 @@ First write a test that shows this, then fix it.`;
     }
     for (const copy of main.openCopies(id)) main.settleAppQuestion(copy.id, { answer: "No longer needed" });
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
+    this.plugins.event("botRemoved", { botId: id });
     this.briefAwakeMainBot();
     this.refreshWaiting();
     if (!quiet) main.appNotice(profile.role === "bot"

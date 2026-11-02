@@ -1,0 +1,25 @@
+{
+  "alias": {
+    "react": "builtin-plugins/botling.terminal/src/react.ts",
+    "react/jsx-runtime": "builtin-plugins/botling.terminal/src/jsx-runtime.ts",
+    "preact": "../Web/kit/vendor/preact.module.js",
+    "preact/hooks": "../Web/kit/vendor/hooks.module.js"
+  },
+  "loaders": {
+    ".css": "text"
+  },
+  "nativeModules": [
+    "node-pty"
+  ],
+  "copy": [
+    {
+      "from": "builtin-plugins/botling.terminal/src/assets",
+      "to": "licenses",
+      "only": ".txt"
+    },
+    {
+      "from": "builtin-plugins/botling.terminal/src/assets/MesloLGS-NF-Regular.ttf",
+      "to": "assets/MesloLGS-NF-Regular.ttf"
+    }
+  ]
+}

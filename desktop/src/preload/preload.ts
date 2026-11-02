@@ -11,18 +11,6 @@ ipcRenderer.on("botling:message", (_event, message: unknown) => {
 
 contextBridge.exposeInMainWorld("botling", Object.freeze({
   protocol: 2,
-  ...(process.isMainFrame ? { terminal: Object.freeze({
-    request: (request: unknown) => ipcRenderer.invoke('botling:terminal', request),
-    subscribe: (listener: (event: unknown) => void) => {
-      const handler = (_event: unknown, value: unknown) => listener(value);
-      ipcRenderer.on('botling:terminal:event', handler);
-      return () => ipcRenderer.removeListener('botling:terminal:event', handler);
-    },
-    onToggle: (listener: () => void) => {
-      const handler = () => listener(); ipcRenderer.on('botling:terminal:toggle', handler);
-      return () => ipcRenderer.removeListener('botling:terminal:toggle', handler);
-    },
-  }) } : {}),
   ...(process.isMainFrame ? { shortcuts: Object.freeze({
     /** Settings > Shortcuts is recording a key: main takes the menu's accelerators off meanwhile. */
     suspend: (on: boolean) => ipcRenderer.send('botling:shortcuts:suspend', on === true),

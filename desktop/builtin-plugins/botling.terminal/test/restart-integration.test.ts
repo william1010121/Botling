@@ -1,9 +1,9 @@
 import { expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { BotTerminals } from '../../src/main/terminal';
-import { CoreHarness, MAIN } from '../core-harness';
-import { tempDir, until } from '../helpers';
+import { BotTerminals } from '../src/terminals';
+import { CoreHarness, MAIN } from '../../../test/core-harness';
+import { tempDir, until } from '../../../test/helpers';
 
 it('durably checkpoints agent work while terminal shutdown joins cleanup without replaying commands', async () => {
   const dir = tempDir('terminal-restart-combined');
@@ -21,8 +21,8 @@ it('durably checkpoints agent work while terminal shutdown joins cleanup without
     const first = start();
     await first.call({ type: 'chat.send', botId: MAIN, text: '/slow' });
     await until(() => first.of('turn.delta').length, { what: 'agent starts' });
-    const tab = terminal.open(1, MAIN, dir);
-    terminal.input(1, MAIN, tab.sessionId, 'TERMINAL_COMMAND_MUST_NOT_REPLAY\r');
+    const tab = terminal.open(MAIN, dir);
+    terminal.input(MAIN, tab.sessionId, 'TERMINAL_COMMAND_MUST_NOT_REPLAY\r');
     first.post({ botling: 'prepareRestart', id: 918 });
     expect(await until(() => first.responses.get(918 as unknown as string), { what: 'durable checkpoint' })).toMatchObject({ ok: true });
     const checkpoint = readFileSync(join(dir, 'restart-continuation.json'), 'utf8');
@@ -30,8 +30,8 @@ it('durably checkpoints agent work while terminal shutdown joins cleanup without
     expect(checkpoint).not.toContain(tab.sessionId);
     await Promise.allSettled([terminal.closeAll(), first.kill('SIGTERM')]);
     expect(processes.map(p => [p.killed, p.disposed])).toEqual([[true, 2]]);
-    expect(terminal.list(1, MAIN)).toEqual([]);
-    expect(() => terminal.open(1, MAIN, dir)).toThrow('shutting down');
+    expect(terminal.list(MAIN)).toEqual([]);
+    expect(() => terminal.open(MAIN, dir)).toThrow('shutting down');
     const second = start();
     await until(() => second.of('turn.finished').length, { what: 'simulated provider continuation' });
     const input = readFileSync(join(dir, 'input.log'), 'utf8');

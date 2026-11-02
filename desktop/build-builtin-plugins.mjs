@@ -3,10 +3,11 @@
 // which electron-builder copies beside app.asar (Resources/builtin-plugins: read-only, and readable by
 // bots, so Maintainer can copy one into the library to change it). A plugin's src/web.ts and src/host.ts
 // are bundled to where its package.json names them, what its build.json lists under `copy` goes beside
-// them (`from` relative to desktop/), and the rest of the folder (package.json, components/, claude/…)
+// them (`from` relative to desktop/), `nativeModules` (node modules with a native part, e.g. node-pty) stay outside the bundle and are
+// staged beside it in the plugin's own node_modules, and the rest of the folder (package.json, components/, claude/…)
 // is copied as it is; src/, test/ and build.json stay behind.
 import { build } from "esbuild";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,10 +33,35 @@ export async function buildBuiltinPlugins({ root = here, outdir = join(root, "ou
     const alias = Object.fromEntries(Object.entries(config.alias ?? {}).map(([name, target]) => [name, resolve(root, target)]));
     const shared = { bundle: true, legalComments: "eof", nodePaths, alias, loader: config.loaders ?? {} };
     if (parts.web) await build({ ...shared, entryPoints: [join(source, "src/web.ts")], format: "esm", target: browser, minify: true, outfile: join(folder, parts.web) });
-    if (parts.host) await build({ ...shared, entryPoints: [join(source, "src/host.ts")], platform: "node", format: "esm", target: "node20", outfile: join(folder, parts.host) });
+    const native = config.nativeModules ?? [];
+    if (parts.host) await build({ ...shared, entryPoints: [join(source, "src/host.ts")], platform: "node", format: "esm", target: "node20", external: native, outfile: join(folder, parts.host) });
+    for (const module of native) stageNativeModule(root, module, folder);
     copyDeclared(root, source, folder);
   }
   return outdir;
+}
+
+/**
+ * A node module with a native part, staged as `<plugin>/node_modules/<name>`: its package.json, licence, lib and compiled files only.
+ * Native paths stay intact, and npm's missing executable bit on a prebuilt `spawn-helper` is restored in our own output, never in the
+ * shared dependency cache.
+ */
+export function stageNativeModule(root, name, pluginFolder) {
+  const source = join(root, "node_modules", name);
+  const target = join(pluginFolder, "node_modules", name);
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(target, { recursive: true });
+  for (const entry of ["package.json", "LICENSE", "lib", "prebuilds", "build/Release"]) {
+    if (existsSync(join(source, entry))) cpSync(join(source, entry), join(target, entry), { recursive: true });
+  }
+  const helpers = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const file = join(directory, entry.name);
+      if (entry.isDirectory()) helpers(file);
+      else if (entry.name === "spawn-helper") chmodSync(file, 0o755);
+    }
+  };
+  helpers(target);
 }
 
 /** A plugin's build.json (none: empty). */

@@ -1,4 +1,4 @@
-import { TerminalPanels } from './TerminalPanel';
+import { BottomPanels, TOGGLE_BOTTOM_PANEL, bottomPanelToggledBy } from './BottomPanels';
 // The app page: React chrome around the reused chat page. The left column lists the bots (as the
 // Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
 // (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
@@ -11,8 +11,8 @@ import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface"
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { status, statusText } from "../contract/bot-status";
-import { actionForEvent, bindingsFor, commandBindings, commandForEvent } from "../contract/shortcuts";
-import { setShortcutLabels, shortcutLabel } from "./shortcut-labels";
+import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
+import { setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
 import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
@@ -52,7 +52,7 @@ function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const [error, setError] = useState<string | null>(null);
-  const [terminalControls, setTerminalControls] = useState<HTMLSpanElement | null>(null);
+  const [bottomControls, setBottomControls] = useState<HTMLSpanElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
@@ -103,7 +103,15 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
   const pluginKeys = useMemo(() => commandBindings(keybindingsOf(view.plugins), view.settings?.shortcuts), [view.plugins, view.settings?.shortcuts]);
-  const runCommand = useCallback((id: string, args: string[] = []) => runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure))), [client, store]);
+  const runCommand = useCallback((id: string, args: string[] = []) => {
+    // A bottom panel's toggle command is the page's own to run: it shows or hides the panel of the bot on screen.
+    if (bottomPanelToggledBy(store.getView().plugins, id)) { window.dispatchEvent(new CustomEvent(TOGGLE_BOTTOM_PANEL, { detail: id })); return; }
+    runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure)));
+  }, [client, store]);
+  // A key a panel's frame did not use (a modifier held) goes through the page's shortcuts as if pressed here.
+  const forwardKey = useCallback((key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }));
+  }, []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       switch (actionForEvent(event, shortcutBindings)) {
@@ -367,7 +375,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => ({ claude: "Claude", codex: "Codex", agy: "Antigravity" }[head])).join(" & ")}</span>
           )}
           {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
-          {!web && <span className="terminal-controls" ref={setTerminalControls} />}
+          {!web && <span className="bottom-controls" ref={setBottomControls} />}
           {bot && chat && !web && (
             <span className="chat-actions">
               <RoutinesButton client={client} botId={bot.id} />
@@ -402,7 +410,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />
-        {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} shortcutLabel={shortcutLabel("toggleTerminal")} />}
+        {!web && <BottomPanels client={client} panels={view.plugins?.bottomPanels ?? []} toggleHost={bottomControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)}
+          shortcutFor={(command) => (command && pluginKeys[command] ? formatCombo(pluginKeys[command]!, shellPlatform()) : "")} onBuiltin={runBuiltin} onKey={forwardKey} components={view.components} bots={view.bots} ask={approval.ask} />}
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>

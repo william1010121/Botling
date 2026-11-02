@@ -6,7 +6,9 @@
 // page's frame broker and the core; Web/src/frame-protocol.ts), tile (a library component's card page it
 // may put in a frame of its own) and requestApproval (asks the user, on the app page's ApprovalSheet, to
 // allow a bot's command). What only the chat page could lend (the input box, markdown, components) does
-// nothing here.
+// nothing here. It also hears what the page pushes (`ccb.on(name, fn)`: its program part's `ui.emit`, and for a `bottomPanel`
+// view "visible" and "toggle"), may ask to be shown or hidden (`ccb.panel.setVisible`) and may hand the page a key
+// combination it did not use (`ccb.forwardKey(event)`, for the page's shortcuts).
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").replace(new RegExp("\u2028", "g"), "\\u2028").replace(new RegExp("\u2029", "g"), "\\u2029");
 
 /**
@@ -44,6 +46,7 @@ const post = (message) => parent.postMessage(message, "*");
 const waiting = new Map();
 let next = 0;
 const settingHandlers = new Map();
+const pushHandlers = new Map();
 const panels = new Map();
 const commands = new Map();
 let dispose = null;
@@ -55,6 +58,8 @@ addEventListener("message", (event) => {
     const { resolve, reject } = waiting.get(message.id);
     waiting.delete(message.id);
     if (message.ok) resolve(message.value); else reject(new Error(String(message.value)));
+  } else if (message.ccb === "event" && typeof message.name === "string") {
+    for (const handler of [...(pushHandlers.get(message.name) || [])]) { try { handler(message.data); } catch (error) { fail(error); } }
   }
 });
 const nothing = () => () => {};
@@ -105,6 +110,15 @@ const ccb = {
     call: (method, params) => ask({ ccb: "call", method: String(method), params: params === undefined ? null : params }),
   },
   call: (method, params) => ccb.host.call(method, params),
+  /** Hears event "name" the page pushes (the program part's ui.emit; "visible" and "toggle" for a bottomPanel view). */
+  on(name, handler) { const list = pushHandlers.get(String(name)) || []; list.push(handler); pushHandlers.set(String(name), list); return () => list.splice(list.indexOf(handler), 1); },
+  /** A bottomPanel view: asks the page to show or hide it. */
+  panel: { setVisible: (visible) => post({ ccb: "panel", visible: !!visible }) },
+  /** A key combination this frame did not use (a modifier held), handed to the page so its shortcuts work from here too. */
+  forwardKey(event) {
+    if (!event || !(event.metaKey || event.ctrlKey || event.altKey)) return;
+    post({ ccb: "key", key: String(event.key).slice(0, 32), code: String(event.code).slice(0, 32), metaKey: !!event.metaKey, ctrlKey: !!event.ctrlKey, altKey: !!event.altKey, shiftKey: !!event.shiftKey });
+  },
   /** A component of the library as a tile ({ component, data, size: "1x1" | "2x1" | "2x2", botId }): the URL of its page, for an iframe of this page's own. */
   tile: (spec) => ask({ ccb: "tile", component: String(spec?.component ?? ""), data: spec?.data === undefined ? null : spec.data, size: String(spec?.size ?? ""), botId: String(spec?.botId ?? "") }),
   /** Asks the user to allow a bot's command in its folder ({ botId, command, folder, card? }); resolves { allowed }. */

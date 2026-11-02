@@ -132,6 +132,42 @@ describe("the frame broker", () => {
     expect(charts.posted).toContainEqual({ ccb: "reply", id: 21, ok: false, value: "Too many calls; wait a moment." });
   });
 
+  it("hears a bottom panel's ask to be shown or hidden, its ready, and a key it did not use; only with those listeners", async () => {
+    const frames = broker();
+    const rpc = host();
+    const panel = frame();
+    const ready = vi.fn(), shown = vi.fn(), keys = vi.fn();
+    registerPluginFrame(frames, rpc, { frame: panel.element, plugin: "botling.terminal", onReady: ready, onPanel: shown, onKey: keys });
+    send(panel.element, { ccb: "ready" });
+    send(panel.element, { ccb: "panel", visible: false });
+    const key = { ccb: "key", key: "j", code: "KeyJ", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
+    send(panel.element, key);
+    send(panel.element, { ccb: "panel", visible: "yes" });
+    await settle();
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(shown).toHaveBeenCalledExactlyOnceWith(false);
+    expect(keys).toHaveBeenCalledExactlyOnceWith({ ccb: "key", key: "j", code: "KeyJ", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false });
+    expect(frames.refusals.map((entry) => entry.reason)).toEqual([expect.stringContaining("not a valid ccb call")]);
+    // A plain frame that sends them is not refused, and nothing happens.
+    const plain = frame();
+    registerPluginFrame(frames, rpc, { frame: plain.element, plugin: "charts" });
+    send(plain.element, { ccb: "panel", visible: true });
+    await settle();
+    expect(shown).toHaveBeenCalledTimes(1);
+  });
+
+  it("a frame registered with a higher rate (a terminal's keys) may call more than 20 times at once", async () => {
+    const frames = broker();
+    const rpc = host();
+    const streaming = frame(), plain = frame();
+    registerPluginFrame(frames, rpc, { frame: streaming.element, plugin: "botling.terminal", rate: { burst: 400, perSecond: 400 } });
+    registerPluginFrame(frames, rpc, { frame: plain.element, plugin: "charts" });
+    for (let id = 1; id <= 100; id++) { send(streaming.element, { ccb: "call", id, method: "terminal" }); send(plain.element, { ccb: "call", id, method: "count" }); }
+    await settle();
+    expect(rpc.calls.filter(([plugin]) => plugin === "botling.terminal")).toHaveLength(100);
+    expect(rpc.calls.filter(([plugin]) => plugin === "charts")).toHaveLength(20);
+  });
+
   it("a frame taken away is not heard any more", async () => {
     const frames = broker();
     const rpc = host();

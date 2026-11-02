@@ -9,7 +9,6 @@ export interface AppMenuActions {reloadChat?:(shell:WebContents)=>Promise<boolea
 export function appMenuTemplate(platform:NodeJS.Platform=process.platform,actions:AppMenuActions={},bindings:Bindings=bindingsFor({}),suspended=false):MenuItemConstructorOptions[]{
  const {reloadChat}=actions,acc=(id:keyof Bindings)=>suspended?{}:{accelerator:toAccelerator(bindings[id])};
  const view:MenuItemConstructorOptions={label:'View',submenu:[
-  {label:'Toggle Terminal',...acc('toggleTerminal'),click:(_item,window)=>shell(window)?.send('botling:terminal:toggle')},
   {label:'Reload',...acc('reload'),click:(_item,window)=>shell(window)?.reload()},
   {label:'Force Reload',...acc('forceReload'),click:(_item,window)=>shell(window)?.reloadIgnoringCache()},
   ...(reloadChat?[{label:'Reload Chat Page',...acc('reloadChat'),click:(_item,window)=>{const contents=shell(window);if(contents)void reloadChat(contents);}} satisfies MenuItemConstructorOptions]:[]),

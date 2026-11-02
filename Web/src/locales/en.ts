@@ -385,7 +385,6 @@ export const en = {
   "shortcuts.action.settings": "Open Settings",
   "shortcuts.action.toggleSidebar": "Show or hide the left column",
   "shortcuts.action.toggleRightPanel": "Show or hide the right panel",
-  "shortcuts.action.toggleTerminal": "Show or hide the terminal (opens a shell when it is empty)",
   "shortcuts.action.reload": "Reload the window",
   "shortcuts.action.forceReload": "Reload the window, ignoring the cache",
   "shortcuts.action.reloadChat": "Reload the chat page",

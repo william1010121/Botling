@@ -6,7 +6,7 @@
 import type { PluginsView } from "../../contract";
 import { ofKind, type Contribution } from "./contributions";
 
-export type ViewSurfaces = Required<Pick<PluginsView, "mainTabs" | "settingsSections" | "quickSettings" | "rightPanelSections">>;
+export type ViewSurfaces = Required<Pick<PluginsView, "mainTabs" | "settingsSections" | "quickSettings" | "rightPanelSections" | "bottomPanels">>;
 
 export function viewSurfaces(list: Contribution[], drawn: (plugin: string) => boolean): ViewSurfaces {
   const views = ofKind(list, "view").filter((view) => drawn(view.plugin) && view.id.length <= 100);
@@ -22,5 +22,7 @@ export function viewSurfaces(list: Contribution[], drawn: (plugin: string) => bo
       .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200) })),
     rightPanelSections: views.filter((view) => view.where === "rightPanel.section").slice(0, 20)
       .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), forRole: view.forRole ?? "any" })),
+    bottomPanels: views.filter((view) => view.where === "bottomPanel").slice(0, 5)
+      .map((view) => ({ plugin: view.plugin, id: view.id, title: view.title.slice(0, 200), ...(view.toggle ? { toggle: view.toggle.slice(0, 200) } : {}) })),
   };
 }

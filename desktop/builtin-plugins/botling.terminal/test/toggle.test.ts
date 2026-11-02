@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { terminalToggleAction } from '../../src/renderer/terminal-toggle';
+import { terminalToggleAction } from '../src/toggle';
 
 describe('Cmd+J on the terminal panel', () => {
   const base = { botExists: true, visible: false, shells: undefined as number | undefined };

@@ -255,6 +255,22 @@ describe("Host API v3 (plan M5)", () => {
     ]);
   });
 
+  it("ui.emit pushes to the plugin's frames (to one bot's, when it names one) and bots.folder asks for a bot's working folder", async () => {
+    const { host, written, api } = await loaded();
+    api.ui.emit("terminal", { type: "data", data: "ls" }, { botId: "B1" });
+    api.ui.emit("all", [1]);
+    api.ui.emit("none", undefined);
+    expect(written.filter((m) => m.method === "ui.emit").map((m) => m.params)).toEqual([
+      { plugin: "p", name: "terminal", data: { type: "data", data: "ls" }, botId: "B1" },
+      { plugin: "p", name: "all", data: [1] },
+      { plugin: "p", name: "none", data: null },
+    ]);
+    const folder = api.bots.folder("B1");
+    expect(await answer(host, written, "bots.folder", "/p/site")).toEqual({ plugin: "p", bot: "B1" });
+    expect(await folder).toBe("/p/site");
+    expect(() => api.events.on("botRemoved", () => {})).not.toThrow();
+  });
+
   it("settings.update asks Botling; settings.app reads Botling's settings, and a change there does not reload the plugin", async () => {
     let activations = 0;
     let api!: BotlingApi;
