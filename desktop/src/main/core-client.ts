@@ -5,6 +5,7 @@ import { MessageChannelMain, utilityProcess, type UtilityProcess } from "electro
 import { PluginChildren } from "./plugin-children";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { CORE_EXIT_DATA_DIR_IN_USE } from "../core/store/data-dir-lock";
 
 export type AppOp = "screenshot" | "quit" | "installRelease";
 const APP_OPS = new Set<string>(["screenshot", "quit", "installRelease"]);
@@ -28,6 +29,8 @@ export interface CoreClientOptions {
   audit: (entry: string) => void;
   /** Startup milestones: "core.spawn" (the process is up) and "core.ready" (its first message). Each call may repeat. */
   milestone?: (name: "core.spawn" | "core.ready") => void;
+  /** The core found another Botling core on its data folder and exited: it is not restarted. */
+  dataDirInUse?: () => void;
   /** Seals or opens a plugin secret (safeStorage); throws when it cannot. */
   seal?: (op: "seal" | "open", text: string) => string;
   /** The plugin host's utility-process entry (out/host/host-utility.mjs); main never runs another file for it. */
@@ -163,6 +166,13 @@ export class CoreClient {
       }
       this.pending.clear();
       if (this.quitting) return;
+      if (code === CORE_EXIT_DATA_DIR_IN_USE) {
+        // Another Botling owns the data folder: starting this core again would only be refused again
+        // (or, worse, race the other one for the folder).
+        this.options.audit("core exited: another Botling core owns the data folder; not restarting");
+        this.options.dataDirInUse?.();
+        return;
+      }
       this.options.audit(`core exited with ${code}; restarting`);
       const delay = Math.min(250 * 2 ** this.restarts++, 10_000);
       setTimeout(() => this.start(), delay);

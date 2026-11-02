@@ -27,6 +27,7 @@ import {directoryDefaults,packagedDataDir} from "./main-environment";
 import { StartupMarks } from "../startup-marks";
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
+import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
@@ -171,6 +172,18 @@ const core: CoreClient = new CoreClient({
   },
   audit: note,
   milestone: (name) => startup.mark(name),
+  // Another Botling owns this data folder (its core holds core/core.lock): this app is the extra one.
+  // It quits rather than run a window on nobody's data; the other one keeps the folder.
+  dataDirInUse: () => {
+    const holder = readLockHolder(join(dataDir, "core"));
+    const from = holder?.app ? ` from ${holder.app}` : "";
+    const version = holder?.version ? ` (version ${holder.version})` : "";
+    note(`another Botling core owns the data folder (pid ${holder?.pid ?? "?"}${from}${version}); quitting`);
+    if (!shotMode && process.env.BOTLING_QUIET !== "1") {
+      dialog.showErrorBox("Botling is already running", `Botling is already running${from}${version}, using ${dataDir}.\n\nThis copy will quit without changing anything; use the one that is already open.`);
+    }
+    app.quit();
+  },
   app: async (op): Promise<{ ok: boolean; file?: string; error?: string }> => {
     if (op === "quit") {
       // An install of a developer build: the script outside the app waits for it to quit.
@@ -272,6 +285,9 @@ function coreEnvironment(): Record<string, string> {
   // The core adds its own milestone (its bots loaded) to main's startup log.
   if (!shotMode) env.BOTLING_STARTUP_LOG = join(profileDir, "logs", "startup.log");
   env.BOTLING_APP_DATA_DIR = dataDir;
+  // Written into the data folder's lock (core/store/data-dir-lock.ts): a second Botling names this one.
+  env.BOTLING_APP_VERSION = app.getVersion();
+  env.BOTLING_APP_PATH = app.isPackaged ? (installedApp.endsWith(".app") ? installedApp : process.execPath) : root;
   delete env.BOTLING_APP_LOCAL_DATA_DIR;
   if (app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app")) env.BOTLING_APP_BUNDLE = installedApp;
   else delete env.BOTLING_APP_BUNDLE;

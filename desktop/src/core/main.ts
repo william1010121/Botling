@@ -7,6 +7,8 @@ import { startConfiguredMobile } from '../mobile-bridge/start';
 import { retrieveQuota } from "./quota";
 import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
+import { writeSync } from "node:fs";
+import { CORE_EXIT_DATA_DIR_IN_USE, DataDirLock, LOCK_CHECK_MS } from "./store/data-dir-lock";
 import { createInterface } from "node:readline";
 import { Core, type AppAnswer, type AppOp } from "./server";
 import { Doctor } from "./doctor";
@@ -117,6 +119,35 @@ const emit: (message: Outbound) => void = parentPort
   ? (message) => parentPort.postMessage(message)
   : (message) => process.stdout.write(JSON.stringify(message) + "\n");
 const log = (line: string) => process.stderr.write(`[core] ${line}\n`);
+
+// One core per data folder (store/data-dir-lock.ts), taken before any store is read. Another core
+// that owns it: this one exits untouched, and main does not restart it. A core that finds its folder
+// owned by another one later (the folder was swapped out under it) stops at once, writing nothing more.
+const dataLock = new DataDirLock(dataDir, { version: process.env.BOTLING_APP_VERSION, app: process.env.BOTLING_APP_PATH });
+{
+  // A core that is still on its way out (the app restarting, an install, a core swapped out under it)
+  // lets go within moments: wait that long before saying the folder is taken.
+  const checkMs = number(process.env.BOTLING_DATA_LOCK_CHECK_MS, LOCK_CHECK_MS);
+  const waitUntil = Date.now() + number(process.env.BOTLING_DATA_LOCK_WAIT_MS, Math.max(10_000, 2 * checkMs + 1_000));
+  let claim = dataLock.claim();
+  while (!claim.ok && Date.now() < waitUntil) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+    claim = dataLock.claim();
+  }
+  if (!claim.ok) {
+    const { pid, version, app } = claim.holder;
+    writeSync(2, `[core] another Botling core (pid ${pid}${version ? `, version ${version}` : ""}${app ? `, from ${app}` : ""}) already uses this data folder (${dataDir}); not starting a second one\n`);
+    process.exit(CORE_EXIT_DATA_DIR_IN_USE);
+  }
+  // However this core ends (a clean quit, a failed shutdown, an uncaught error), the folder is given
+  // back; a crash or kill leaves a stale lock the next core breaks.
+  process.on("exit", () => dataLock.release());
+  setInterval(() => {
+    if (dataLock.owns()) return;
+    writeSync(2, `[core] another Botling core now owns this data folder (${dataDir}); stopping without writing\n`);
+    process.exit(CORE_EXIT_DATA_DIR_IN_USE);
+  }, checkMs).unref();
+}
 
 /** Catch-up summaries: the real Claude (`claude -p`) or Codex (`codex exec`) CLI by the chosen engine, or the fake Codex's `exec`. */
 function summarizer() {
