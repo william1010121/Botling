@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { alive, tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
+import { saveProjectRow } from "../../src/core/projects";
 
 const harnesses: CoreHarness[] = [];
 function core(dir: string, env: Record<string, string> = {}) {
@@ -227,5 +228,34 @@ describe("the plugin host", () => {
     expect(question.choices.map((choice: any) => choice.label)).toEqual(["Alpha", "Beta", "Cancel"]);
     await c.call({ type: "chat.choose", botId: MAIN, messageId: question.id, index: 1 });
     expect((await picking).result).toBe("b");
+  });
+
+  it("workspace (plan W1): a plugin reads what the whiteboard reads and hears when a bot's memory changes", async () => {
+    const dir = tempDir("plugin-host");
+    const PROJECT = "B0000000-0000-4000-8000-000000000A11";
+    const folder = join(tempDir("plugin-host-proj"), "Site");
+    mkdirSync(join(folder, ".bot"), { recursive: true });
+    writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\n- The theme is live.\n");
+    saveProjectRow(dir, { id: PROJECT, name: "Site", folder, avatar: "triangle" });
+    hostPlugin(dir, "board", `export function activate(api) {
+      api.workspace.onChange((change) => {
+        if (change.kinds.includes("memory")) api.workspace.memory(change.botIds.find((id) => id !== "main")).then((m) => api.notify("memory " + change.botIds.join(",") + " " + m.currentStatus.join("|")));
+      });
+      api.commands.register("board.read", async () => {
+        const bots = await api.workspace.bots();
+        const site = bots.find((bot) => bot.name === "Site");
+        const memory = await api.workspace.memory(site.id);
+        const days = await api.workspace.taskHistory(site.id, 7);
+        const face = await api.workspace.face("main", "original");
+        return { roles: bots.map((bot) => bot.id === "main" ? "main" : bot.role), folder: site.folder, status: memory.currentStatus, days: days.length, face: face.startsWith("data:image/svg+xml;base64,") };
+      });
+    }`, {}, { displayName: "Board" });
+    const c = core(dir, { BOTLING_WAITING_SCAN_MS: "200" });
+    const read = await until(() => c.call({ type: "plugins.command", id: "board.read" }).then((r) => r.result, () => null), { timeout: 15_000 });
+    expect(read).toMatchObject({ folder: "Site", status: ["The theme is live."], days: 7, face: true });
+    expect(read.roles).toContain("main");
+    expect(read.roles).toContain("manager");
+    writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\n- The theme is back up.\n");
+    await until(async () => (await notices(c)).includes(`Board: memory ${PROJECT} The theme is back up.`), { timeout: 15_000 });
   });
 });

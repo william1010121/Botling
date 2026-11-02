@@ -4,10 +4,11 @@
 
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { createApi, newLoaded, type BotlingApi, type HostPluginSpec, type Incoming, type JSONValue, type Loaded, type Outgoing, type PluginEventName } from "./api";
+import { createApi, newLoaded, type BotlingApi, type HostPluginSpec, type Incoming, type JSONValue, type Loaded, type Outgoing, type PluginEventName, type WORKSPACE_EVENT } from "./api";
 
 export type {
-  AppSettingKey, BotInfo, BotlingApi, BrowserOperation, BrowserScope, CcbHost, HostPluginSpec, Incoming, Keybinding, NewBot, Outgoing, PluginEvents, StatusItem,
+  AppSettingKey, BotInfo, BotlingApi, BotSummary, BrowserOperation, BrowserScope, CcbHost, HostPluginSpec, Incoming, Keybinding, NewBot, Outgoing, PluginEvents, StatusItem,
+  WorkspaceApi, WorkspaceChange, WorkspaceKind,
 } from "./api";
 
 type Dispose = () => void;
@@ -85,7 +86,7 @@ export class Host {
         return null;
       case "event": {
         // Something happened in Botling that plugins listen for (`events.on`).
-        const name = params.name as PluginEventName;
+        const name = params.name as PluginEventName | typeof WORKSPACE_EVENT;
         for (const plugin of this.plugins.values()) {
           for (const listener of [...(plugin.events.get(name) ?? [])]) this.run(plugin.spec.name, () => listener(params.data));
         }
@@ -187,6 +188,11 @@ export class Host {
   /** `announce` soon, once per tick, while `plugin` is still the one loaded. */
   announceLater(plugin: Loaded): void {
     queueMicrotask(() => { if (this.plugins.get(plugin.spec.name) === plugin) this.announce(); });
+  }
+
+  /** `announce` now, while `plugin` is still the one loaded. */
+  announceNow(plugin: Loaded): void {
+    if (this.plugins.get(plugin.spec.name) === plugin) this.announce();
   }
 
   // MARK: Hooks

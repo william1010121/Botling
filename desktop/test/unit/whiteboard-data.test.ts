@@ -1,5 +1,5 @@
-// The whiteboard's derived data (core/whiteboard-data.ts): the done log that outlives tasks.json's
-// pruning, a bot's latest action, its one-line description and an approval's command; and, through
+// The whiteboard's derived data (core/whiteboard-data.ts): a bot's latest action, its one-line
+// description and an approval's command (its done log is task-history.test.ts); and, through
 // the core, `whiteboard.view` carrying them and `waiting` carrying when a question was asked.
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -8,7 +8,7 @@ import { tempDir } from "../helpers";
 import { CoreHarness } from "../core-harness";
 import { saveProjectRow } from "../../src/core/projects";
 import { WhiteboardView, type TaskView } from "../../src/contract";
-import { DONE_DAYS, approvalSummary, botDescription, dayKey, doneDays, latestAction, readDoneLog, recordDone, type DoneLog } from "../../src/core/whiteboard-data";
+import { approvalSummary, botDescription, latestAction } from "../../src/core/whiteboard-data";
 import { permissionText } from "../../src/core/bot";
 import { toSwiftDate } from "../../src/core/store/records";
 import type { TaskCard } from "../../src/core/tasks";
@@ -18,51 +18,6 @@ const hoursAgo = (hours: number) => NOW - hours * 3_600_000;
 const daysAgo = (days: number, hour = 10) => { const date = new Date(NOW); date.setDate(date.getDate() - days); date.setHours(hour, 0, 0, 0); return date.getTime(); };
 const card = (id: string, state: TaskCard["state"], at: number, extra: Partial<TaskCard> = {}): TaskCard => ({
   id, name: `Task ${id}`, state, createdAt: toSwiftDate(at - 3_600_000), updatedAt: toSwiftDate(at), messageIDs: ["m"], kept: true, declared: true, ...extra,
-});
-
-describe("done log", () => {
-  it("logs a task when it becomes done, by its done time; one closed by you is counted apart", () => {
-    const log: DoneLog = {};
-    const cards = [
-      card("a", "done", daysAgo(0), { history: [{ kind: "start", at: toSwiftDate(daysAgo(1)) }, { kind: "done", at: toSwiftDate(daysAgo(1, 15)) }], updatedAt: toSwiftDate(daysAgo(0)) }),
-      card("b", "done", daysAgo(0), { manuallyCompletedAt: toSwiftDate(daysAgo(0, 9)) }),
-      card("c", "running", daysAgo(0)),
-      card("d", "stopped", daysAgo(0)),
-      card("e", "done", daysAgo(2), { declared: false }), // Not shown on the board: not counted.
-    ];
-    expect(recordDone(log, cards, NOW)).toBe(true);
-    expect(Object.keys(log).sort()).toEqual(["a", "b"]);
-    expect(log.a).toEqual({ at: daysAgo(1, 15), manual: false });
-    expect(log.b).toEqual({ at: daysAgo(0, 9), manual: true });
-    expect(recordDone(log, cards, NOW)).toBe(false); // Nothing new: nothing to write.
-    const days = doneDays(log, NOW);
-    expect(days).toHaveLength(DONE_DAYS);
-    expect(days.at(-1)).toEqual({ day: dayKey(NOW), done: 1, manual: 1 });
-    expect(days.at(-2)).toEqual({ day: dayKey(daysAgo(1)), done: 1, manual: 0 });
-  });
-
-  it("keeps a finished task after tasks.json drops its card, forgets it after 14 days, and drops one opened again", () => {
-    const log: DoneLog = {};
-    recordDone(log, [card("old", "done", daysAgo(13)), card("older", "done", daysAgo(14)), card("again", "done", daysAgo(3))], NOW);
-    expect(Object.keys(log).sort()).toEqual(["again", "old"]);
-    // The cards are pruned: the log still counts them.
-    recordDone(log, [], NOW);
-    expect(doneDays(log, NOW).reduce((sum, day) => sum + day.done, 0)).toBe(2);
-    // Opened again: no longer done; done again later, logged at the new time.
-    recordDone(log, [card("again", "running", daysAgo(0))], NOW);
-    expect(log.again).toBeUndefined();
-    recordDone(log, [card("again", "done", hoursAgo(1), { history: [{ kind: "done", at: toSwiftDate(hoursAgo(1)) }] })], NOW);
-    expect(log.again).toEqual({ at: hoursAgo(1), manual: false });
-    // A day later than 14 days: gone.
-    recordDone(log, [], daysAgo(-1));
-    expect(log.old).toBeUndefined();
-  });
-
-  it("reads back what it wrote and ignores what it cannot read", () => {
-    expect(readDoneLog({ v: 1, tasks: { a: { at: 5, manual: true }, b: { at: "x" }, c: null } })).toEqual({ a: { at: 5, manual: true } });
-    expect(readDoneLog(null)).toEqual({});
-    expect(readDoneLog([1])).toEqual({});
-  });
 });
 
 describe("latest action", () => {
@@ -143,27 +98,6 @@ describe("whiteboard.view: the board's new data", () => {
 });
 
 // Regressions from review (dc2a1c9): each failed before its fix.
-describe("done log: review regressions", () => {
-  it("does not add (then prune) a done card older than 14 days, so an unchanged read reports no change", () => {
-    const log: DoneLog = {};
-    const old = [card("old", "done", daysAgo(20), { history: [{ kind: "done", at: toSwiftDate(daysAgo(20)) }] })];
-    expect(recordDone(log, old, NOW)).toBe(false);
-    expect(recordDone(log, old, NOW)).toBe(false);
-    expect(log).toEqual({});
-  });
-
-  it("follows a done card closed by you afterwards: the entry becomes manual, at the close", () => {
-    const log: DoneLog = {};
-    const built = card("u", "done", daysAgo(2), { stage: "built", history: [{ kind: "done", at: toSwiftDate(daysAgo(2)) }] });
-    recordDone(log, [built], NOW);
-    expect(log.u).toEqual({ at: daysAgo(2), manual: false });
-    const closed = { ...built, manuallyCompletedAt: toSwiftDate(daysAgo(0, 9)), history: [...built.history!, { kind: "complete" as const, at: toSwiftDate(daysAgo(0, 9)) }] };
-    expect(recordDone(log, [closed], NOW)).toBe(true);
-    expect(log.u).toEqual({ at: daysAgo(0, 9), manual: true });
-    expect(recordDone(log, [closed], NOW)).toBe(false);
-  });
-});
-
 describe("done log in the bot: review regressions", () => {
   const makeBot = async (tasks: unknown[]) => {
     const { Bot } = await import("../../src/core/bot");

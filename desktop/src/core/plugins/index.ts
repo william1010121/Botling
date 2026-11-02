@@ -5,7 +5,8 @@
 // each checked here (a plugin it names must be loaded; creating bots, stopping them and talking to
 // them as the user need the "bots" permission — a consistency check, not a sandbox: the host is one
 // process). Everything else is refused. A plugin's message to a bot shows as sent by it unless it
-// asked to send as the user (plugin-platform.md §5, N1).
+// asked to send as the user (plugin-platform.md §5, N1). Any plugin may read the workspace (`workspace.*`,
+// what the whiteboard shows: bots, memory, tasks, results, what waits on you); none may answer for you.
 //
 // Web parts: since Phase 4a the chat page has an origin of its own (botling-chat://chat, no bridge,
 // nothing shared with the app page but postMessage), so plugins' web parts run in it again as in 1.x:
@@ -23,6 +24,7 @@ import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } f
 import { title, type JSONValue } from "./manifest";
 import { PluginRegistry, type InstalledPlugin } from "./registry";
 import { SealedSecretStore, type Sealer } from "./secrets";
+import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../workspace";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -58,6 +60,13 @@ export interface PluginWorld {
   /** A plugin broke: Maintainer is asked to fix it. */
   broken(plugin: string, problem: string): void;
   log(line: string): void;
+  /** What plugins may read of the workspace (`workspace.*`, read only but for setting aside what waits on you). */
+  workspace: WorkspaceSource;
+  /**
+   * Some plugin listens for workspace changes (true) or none does any more. Said as soon as the host says so,
+   * before anything the host sends after it is answered: what is there then is what a listener may have read.
+   */
+  workspaceWatch(on: boolean): void;
 }
 
 export interface PluginsOptions {
@@ -103,6 +112,13 @@ const EVENT_NAMES = ["messagePosted", "turnFinished", "workerDone"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
+const PluginOnly = z.object({ plugin: str(214) });
+const Limit = (most: number, fallback: number) => z.number().int().optional().transform((value) => Math.min(most, Math.max(1, value ?? fallback)));
+const TasksParams = BotParams.extend({ limit: Limit(100, 100) });
+const HistoryParams = BotParams.extend({ days: Limit(14, 14) });
+const ResultsParams = BotParams.extend({ limit: Limit(100, 12) });
+const IgnoreParams = BotParams.extend({ text: z.string().min(1).max(400) });
+const FaceParams = BotParams.extend({ look: z.enum(["original", "cute"]) });
 
 export class Plugins {
   readonly registry: PluginRegistry;
@@ -112,6 +128,8 @@ export class Plugins {
   private started = false;
   /** What each plugin shows in the status area (`ui.setStatus`), until it unloads. */
   private readonly status = new Map<string, Map<string, PluginStatusItem>>();
+  /** Some plugin listens for workspace changes, as the host last said (`workspace.onChange`). */
+  watchingWorkspace = false;
 
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
@@ -124,11 +142,16 @@ export class Plugins {
     this.registry.onUpdated = (plugin, from) => world.notice(`Plugin "${title(plugin.manifest)}" updated: ${from} → ${plugin.manifest.version}`);
     this.registry.onChanged = () => this.sync();
     this.host.onPluginFailure = (plugin, message, fatal) => {
+      // The host may have died: nobody listens until it says so again.
+      this.followWorkspace();
       if (!plugin) return;
       this.status.delete(plugin);
       this.registry.recordHostFailure(plugin, message, fatal);
     };
-    this.host.onRegistered = () => this.announce();
+    this.host.onRegistered = () => {
+      this.followWorkspace();
+      this.announce();
+    };
     this.host.onNotification = (method, params) => this.notified(method, params);
     this.host.onRequest = (method, params) => this.requested(method, params);
   }
@@ -165,6 +188,19 @@ export class Plugins {
 
   private announce() {
     this.options.world.changed(this.view());
+  }
+
+  /** Whether some plugin listens for workspace changes now; the world is told when that changes. */
+  private followWorkspace() {
+    const on = this.host.running && this.host.events.has(WORKSPACE_EVENT);
+    if (on === this.watchingWorkspace) return;
+    this.watchingWorkspace = on;
+    this.options.world.workspaceWatch(on);
+  }
+
+  /** The workspace changed: plugins listening hear it (`workspace.onChange`); nothing is sent while none does. */
+  workspaceChanged(change: WorkspaceChange) {
+    this.host.event(WORKSPACE_EVENT, change);
   }
 
   async shutdown() {
@@ -532,6 +568,38 @@ export class Plugins {
         if (outcome === "no-bot") throw new Error("No such bot.");
         if (outcome === "bad-schedule") throw new Error("Invalid schedule (it must be the 5 crontab fields).");
         return null;
+      }
+      case "workspace.bots":
+        this.asked(PluginOnly, params);
+        return world.workspace.bots();
+      case "workspace.memory":
+        return world.workspace.memory(this.asked(BotParams, params).data.bot);
+      case "workspace.tasks": {
+        const { data } = this.asked(TasksParams, params);
+        return world.workspace.tasks(data.bot, data.limit);
+      }
+      case "workspace.taskHistory": {
+        const { data } = this.asked(HistoryParams, params);
+        return world.workspace.taskHistory(data.bot, data.days);
+      }
+      case "workspace.results": {
+        const { data } = this.asked(ResultsParams, params);
+        return world.workspace.results(data.bot, data.limit);
+      }
+      case "workspace.waiting":
+        this.asked(PluginOnly, params);
+        return world.workspace.waiting();
+      case "workspace.ignoreWaiting": {
+        // "I know", as the app's own button: not an answer, and nothing a bot is told.
+        const { data } = this.asked(IgnoreParams, params);
+        world.workspace.ignoreWaiting(data.bot, data.text);
+        return null;
+      }
+      case "workspace.pendingApprovals":
+        return world.workspace.pendingApprovals(this.asked(BotParams, params).data.bot);
+      case "workspace.face": {
+        const { data } = this.asked(FaceParams, params);
+        return world.workspace.face(data.bot, data.look);
       }
       case "browser.perform":
         throw new Error("No active browser tool invocation.");

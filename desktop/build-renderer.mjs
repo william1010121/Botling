@@ -6,6 +6,19 @@ import { fileURLToPath } from "node:url";
 import { inlineTokens } from "../Web/kit/build.mjs";
 
 export const desktopRoot = dirname(fileURLToPath(import.meta.url));
+/** The bot look "Cute"'s pictures (base64 PNG by character and expression): bundled into the page, and
+ * beside the core for plugins' `workspace.face` (core/faces.ts). A missing one draws the original look. */
+export function readCharacters(root = desktopRoot) {
+  const characters = {};
+  const art = join(root, "assets/avatars-static");
+  for (const character of ["claude", "gpt", "gemini"]) {
+    characters[character] = {};
+    for (const expression of ["idle", "working", "thinking", "sleepy"]) {
+      try { characters[character][expression] = readFileSync(join(art, character, `${expression}.png`)).toString("base64"); } catch { /* original look */ }
+    }
+  }
+  return characters;
+}
 /** `web: true` builds Botling Web (desktop/mobile/): the same renderer and chat page, with
  * desktop/mobile/main.tsx as the shell's entry (web.js) and __BOTLING_WEB__ set for both pages. */
 export async function buildRenderer({ root = desktopRoot, outdir = join(root, "out/renderer"), development = false, web: webBuild = false } = {}) {
@@ -15,14 +28,7 @@ export async function buildRenderer({ root = desktopRoot, outdir = join(root, "o
   // ccb-latex bundled in; the desktop's loads it from out/builtin-plugins like any plugin.
   const latex = webBuild ? (await build({ entryPoints: [join(root, "builtin-plugins/ccb-latex/src/web.ts")], bundle: true,
     format: "esm", target: "chrome130", minify: true, legalComments: "eof", write: false, nodePaths })).outputFiles[0].text : "";
-  const characters = {};
-  const art = join(root, "assets/avatars-static");
-  for (const character of ["claude", "gpt", "gemini"]) {
-    characters[character] = {};
-    for (const expression of ["idle", "working", "thinking", "sleepy"]) {
-      try { characters[character][expression] = readFileSync(join(art, character, `${expression}.png`)).toString("base64"); } catch { /* original look */ }
-    }
-  }
+  const characters = readCharacters(root);
   const browser = { bundle: true, format: "iife", target: "chrome130", minify: !development,
     sourcemap: "linked", legalComments: "eof", write: false, nodePaths };
   const bundles = await Promise.all([

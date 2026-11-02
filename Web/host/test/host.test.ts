@@ -364,6 +364,66 @@ describe("Host API v3 (plan M5)", () => {
   });
 });
 
+describe("workspace (plan W1)", () => {
+  async function loaded() {
+    let api!: BotlingApi;
+    const made = makeHost({ p: (ccb) => { api = ccb; } });
+    await made.host.sync([spec("p")]);
+    return { ...made, api };
+  }
+
+  it("each read asks Botling, naming the plugin, with what it was given", async () => {
+    const { host, written, api } = await loaded();
+    const cases: [Promise<unknown>, string, Record<string, unknown>, unknown][] = [
+      [api.workspace.bots(), "workspace.bots", {}, [{ id: "main" }]],
+      [api.workspace.memory("B1"), "workspace.memory", { bot: "B1" }, { currentStatus: [], inProgress: [], decided: [], waitingOnYou: [] }],
+      [api.workspace.tasks("B1", { limit: 5 }), "workspace.tasks", { bot: "B1", limit: 5 }, []],
+      [api.workspace.tasks("B1"), "workspace.tasks", { bot: "B1" }, []],
+      [api.workspace.taskHistory("B1", 7), "workspace.taskHistory", { bot: "B1", days: 7 }, [{ day: "2026-11-02", done: 1, manual: 0 }]],
+      [api.workspace.results("B1", { limit: 2 }), "workspace.results", { bot: "B1", limit: 2 }, [{ label: "Site", url: "https://x" }]],
+      [api.workspace.waiting(), "workspace.waiting", {}, { items: [], doing: {} }],
+      [api.workspace.ignoreWaiting("B1", "Pick one"), "workspace.ignoreWaiting", { bot: "B1", text: "Pick one" }, null],
+      [api.workspace.pendingApprovals("B1"), "workspace.pendingApprovals", { bot: "B1" }, []],
+      [api.workspace.face("B1", "cute"), "workspace.face", { bot: "B1", look: "cute" }, "data:image/svg+xml;base64,AA"],
+    ];
+    for (const [promise, method, params, result] of cases) {
+      expect(await answer(host, written, method, result)).toEqual({ ...params, plugin: "p" });
+      expect(await promise).toEqual(method === "workspace.ignoreWaiting" ? undefined : result);
+    }
+  });
+
+  it("onChange: Botling is told at once (before any read that follows it), and each change reaches the listeners until disposed", async () => {
+    const seen: unknown[] = [];
+    let off!: () => void;
+    const { host, written } = makeHost({
+      board: (ccb) => {
+        off = ccb.workspace.onChange((change) => seen.push(change));
+        void ccb.workspace.bots();
+      },
+    });
+    await host.sync([spec("board")]);
+    // Said before the read it made right after listening: what it reads is at least as new as the watch's start.
+    const said = written.findIndex((m) => m.method === "registered" && m.params.events.includes("workspace.changed"));
+    const read = written.findIndex((m) => m.method === "workspace.bots");
+    expect(said).toBeGreaterThanOrEqual(0);
+    expect(said).toBeLessThan(read);
+    // `events.on` does not take the workspace's own event.
+    const change = { stamp: "e:1", botIds: ["B1"], kinds: ["tasks"] };
+    await host.receive({ method: "event", params: { name: "workspace.changed", data: change } });
+    expect(seen).toEqual([change]);
+    off();
+    await Promise.resolve();
+    expect(written.filter((m) => m.method === "registered").at(-1)?.params.events).toEqual([]);
+    await host.receive({ method: "event", params: { name: "workspace.changed", data: change } });
+    expect(seen).toHaveLength(1);
+  });
+
+  it("events.on does not hear the workspace's changes (they are onChange's)", async () => {
+    const { api } = await loaded();
+    expect(() => api.events.on("workspace.changed" as any, () => {})).toThrow(/No event/);
+  });
+});
+
 describe("plugin host (the real Node process)", () => {
   const script = join(scratch, "host.mjs");
   let child: ChildProcessWithoutNullStreams | null = null;

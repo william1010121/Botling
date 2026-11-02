@@ -85,7 +85,8 @@ import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, r
 import type { SubagentHistory } from "./store/subagent-store";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
 import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
-import { approvalSummary, doneDays, doneLogFile, readDoneLog, recordDone, type DoneDay, type DoneLog } from "./whiteboard-data";
+import { approvalSummary } from "./whiteboard-data";
+import { doneLogFile, readDoneLog, recordDone, taskHistory, type DoneDay, type DoneLog } from "./task-history";
 import type { CatchUpChat } from "./catchup";
 import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
@@ -1583,10 +1584,10 @@ export class Bot {
     return this.doneLog;
   }
 
-  /** Tasks finished on each of the last 14 days, oldest first (the whiteboard's chart). */
-  doneDays(now = Date.now()): DoneDay[] {
-    if (this.options.primary) return this.options.primary.doneDays(now);
-    return doneDays(this.keepDoneLog(now), now);
+  /** Tasks finished on each of the last `days` days (at most 14, the whiteboard's chart), oldest first (`workspace.taskHistory`). */
+  doneDays(now = Date.now(), days = 14): DoneDay[] {
+    if (this.options.primary) return this.options.primary.doneDays(now, days);
+    return taskHistory(this.keepDoneLog(now), now, days);
   }
 
   /** Its tool approvals waiting for you: the tool, what it would run, when it asked (oldest first). */

@@ -17,6 +17,8 @@ function plugin(dir: string, name: string, ccb: Record<string, unknown> = {}) {
   if (ccb.web) writeFileSync(join(folder, "dist", "web.js"), "export function activate() {}");
 }
 
+const known = (botId: string) => { if (botId !== "main") throw new Error("No such bot."); };
+
 /** A world that records what it was asked, with answers the test sets. */
 function fakeWorld() {
   const log = {
@@ -25,6 +27,8 @@ function fakeWorld() {
     questions: [] as { question: AppQuestion; answer: (answer: AppAnswer) => void }[],
     panels: [] as string[][],
     stopped: [] as string[],
+    ignored: [] as string[][],
+    watching: [] as boolean[],
   };
   const settings = { language: "en", botLook: "cute", workerLimit: 4 };
   const overrides: Record<string, string> = { settings: "Mod+Shift+P" };
@@ -46,6 +50,18 @@ function fakeWorld() {
     changed: () => {},
     broken: () => {},
     log: () => {},
+    workspace: {
+      bots: () => [{ id: "main", name: "Main bot", role: "main", parent: null, folder: "Main", engine: "claude", busy: false, asleep: false, avatar: "circle", pinned: false }],
+      memory: (botId) => { known(botId); return { currentStatus: ["Up"], inProgress: [], decided: [], waitingOnYou: [] }; },
+      tasks: (botId, limit) => { known(botId); return Array.from({ length: limit }, (_, index) => ({ id: `t${index}` }) as never); },
+      taskHistory: (botId, days) => { known(botId); return Array.from({ length: days }, (_, index) => ({ day: `d${index}`, done: index, manual: 0 })); },
+      results: (botId, limit) => { known(botId); return Array.from({ length: limit }, (_, index) => ({ label: `r${index}`, url: `https://x/${index}` })); },
+      waiting: () => ({ items: [], doing: {} }),
+      ignoreWaiting: (botId, text) => { known(botId); log.ignored.push([botId, text]); },
+      pendingApprovals: (botId) => { known(botId); return [{ tool: "Bash", text: "ls", at: null }]; },
+      face: (botId, look) => { known(botId); return `data:image/svg+xml;base64,${look}`; },
+    },
+    workspaceWatch: (on) => { log.watching.push(on); },
   };
   return { world, log, settings, overrides };
 }
@@ -264,5 +280,57 @@ describe("Host API v3 in the core (plan M5)", () => {
     plugins.event("turnFinished", { botId: "main", ok: true, reply: "b" });
     plugins.event("workerDone", { botId: "main", workerId: "w", status: "completed", report: "" });
     expect(sent.filter((m) => m.method === "event")).toEqual([{ method: "event", params: { name: "turnFinished", data: { botId: "main", ok: true, reply: "b" } } }]);
+  });
+});
+
+describe("workspace for plugins (plan W1)", () => {
+  it("answers each read from the core's workspace, with limits kept in range", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "board");
+    const { ask } = await setup(dir);
+    expect(await ask("workspace.bots", { plugin: "board" })).toEqual([expect.objectContaining({ id: "main", folder: "Main", engine: "claude" })]);
+    expect(await ask("workspace.memory", { plugin: "board", bot: "main" })).toEqual({ currentStatus: ["Up"], inProgress: [], decided: [], waitingOnYou: [] });
+    expect(await ask("workspace.tasks", { plugin: "board", bot: "main" })).toHaveLength(100);
+    expect(await ask("workspace.tasks", { plugin: "board", bot: "main", limit: 3 })).toHaveLength(3);
+    expect(await ask("workspace.tasks", { plugin: "board", bot: "main", limit: 5000 })).toHaveLength(100);
+    expect(await ask("workspace.taskHistory", { plugin: "board", bot: "main", days: 7 })).toHaveLength(7);
+    expect(await ask("workspace.taskHistory", { plugin: "board", bot: "main", days: 99 })).toHaveLength(14);
+    expect(await ask("workspace.results", { plugin: "board", bot: "main" })).toHaveLength(12);
+    expect(await ask("workspace.results", { plugin: "board", bot: "main", limit: 2 })).toEqual([{ label: "r0", url: "https://x/0" }, { label: "r1", url: "https://x/1" }]);
+    expect(await ask("workspace.waiting", { plugin: "board" })).toEqual({ items: [], doing: {} });
+    expect(await ask("workspace.pendingApprovals", { plugin: "board", bot: "main" })).toEqual([{ tool: "Bash", text: "ls", at: null }]);
+    expect(await ask("workspace.face", { plugin: "board", bot: "main", look: "cute" })).toBe("data:image/svg+xml;base64,cute");
+    await expect(ask("workspace.face", { plugin: "board", bot: "main", look: "scary" })).rejects.toThrow(/Not a request/);
+    await expect(ask("workspace.memory", { plugin: "board", bot: "B9" })).rejects.toThrow("No such bot.");
+    await expect(ask("workspace.bots", { plugin: "ghost" })).rejects.toThrow("not running");
+  });
+
+  it("ignoreWaiting sets an item aside, as the app's own I-know does (not an answer)", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "board");
+    const { ask, log } = await setup(dir);
+    expect(await ask("workspace.ignoreWaiting", { plugin: "board", bot: "main", text: "Pick a domain" })).toBeNull();
+    await expect(ask("workspace.ignoreWaiting", { plugin: "board", bot: "main", text: "" })).rejects.toThrow(/Not a request/);
+    expect(log.ignored).toEqual([["main", "Pick a domain"]]);
+  });
+
+  it("watches only while some plugin listens, says so the moment the host does, and tells the host each change", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "board");
+    const { plugins, sent, tell, log } = await setup(dir);
+    expect(log.watching).toEqual([]);
+    plugins.workspaceChanged({ stamp: "e:1", botIds: ["main"], kinds: ["tasks"] });
+    tell("registered", { beforeSend: 0, afterReply: 0, commands: [], exposed: {}, events: ["workspace.changed"] });
+    await until(() => log.watching.length === 1);
+    expect(log.watching).toEqual([true]);
+    expect(plugins.watchingWorkspace).toBe(true);
+    plugins.workspaceChanged({ stamp: "e:2", botIds: ["main"], kinds: ["memory"] });
+    expect(sent.filter((m) => m.method === "event")).toEqual([{ method: "event", params: { name: "workspace.changed", data: { stamp: "e:2", botIds: ["main"], kinds: ["memory"] } } }]);
+    // The same again changes nothing; nobody listening any more stops it.
+    tell("registered", { beforeSend: 0, afterReply: 0, commands: [], exposed: {}, events: ["workspace.changed", "turnFinished"] });
+    tell("registered", { beforeSend: 0, afterReply: 0, commands: [], exposed: {}, events: [] });
+    await until(() => log.watching.length === 2);
+    expect(log.watching).toEqual([true, false]);
+    expect(plugins.watchingWorkspace).toBe(false);
   });
 });

@@ -110,14 +110,17 @@ export function mood(asleep: boolean, working: boolean, waiting: boolean): Mood 
   return "normal";
 }
 
+/** The pictures by character and expression (base64 PNG): bundled into the page; the core reads its own (core/faces.ts). */
+export type Characters = Record<string, Record<string, string>>;
+
 /** The character of a head with the bot's face as a hat (null `shape`: no hat), as an SVG data URL. */
-export function characterURL(engine: string, moodNow: Mood = "normal", shape: string | null = null): string {
+export function characterURL(engine: string, moodNow: Mood = "normal", shape: string | null = null, characters: Characters = typeof __CHARACTERS__ === "object" ? __CHARACTERS__ : {}): string {
   const key = `chibi/${engine}/${moodNow}/${shape ?? ""}`;
   const cached = cache.get(key);
   if (cached) return cached;
   // Antigravity is the engine ID; Gemini is the supplied character asset name.
   const character = engine === "codex" ? "gpt" : engine === "agy" || engine === "gemini" ? "gemini" : "claude";
-  const art = (typeof __CHARACTERS__ === "object" ? __CHARACTERS__ : {})[character]?.[EXPRESSION[moodNow]];
+  const art = characters[character]?.[EXPRESSION[moodNow]];
   if (!art) return avatarURL(shape ?? "circle", moodNow === "sleep" ? "closed" : "open");
   // Room at the top for the hat without cropping hair (as Chibi.svg: y 18, height 46).
   const y = shape ? 18 : 0;
@@ -130,7 +133,7 @@ export function characterURL(engine: string, moodNow: Mood = "normal", shape: st
 }
 
 /** A bot's face in the look the settings name. */
-export function faceURL(bot: { avatar: string; heads?: string[] }, look: Look, state: { asleep?: boolean; working?: boolean; waiting?: boolean; engine?: string } = {}): string {
+export function faceURL(bot: { avatar: string; heads?: string[] }, look: Look, state: { asleep?: boolean; working?: boolean; waiting?: boolean; engine?: string } = {}, characters?: Characters): string {
   if (look !== "cute") return avatarURL(bot.avatar, state.asleep ? "closed" : "open");
-  return characterURL(state.engine ?? bot.heads?.[0] ?? "claude", mood(!!state.asleep, !!state.working, !!state.waiting), bot.avatar);
+  return characterURL(state.engine ?? bot.heads?.[0] ?? "claude", mood(!!state.asleep, !!state.working, !!state.waiting), bot.avatar, characters);
 }

@@ -35,6 +35,43 @@ export interface PluginEvents {
 export type PluginEventName = keyof PluginEvents;
 export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnFinished", "workerDone"];
 
+// ── The workspace (plugin-extraction.md §4.3): what the whiteboard reads, for any plugin, read only ──
+export type WorkspaceKind = "bots" | "tasks" | "memory" | "waiting" | "results";
+/** A bot as `workspace.bots` gives it (the main bot's id is "main"). */
+export interface BotSummary {
+  id: string; name: string; role: "main" | "manager" | "bot"; parent: string | null;
+  /** Its folder's name. */
+  folder: string;
+  engine: "claude" | "codex" | "agy"; busy: boolean; asleep: boolean;
+  /** Its face's shape (see `face`). */
+  avatar: string;
+  pinned: boolean;
+}
+export interface TaskView { id: string; name: string; state: string; [more: string]: unknown }
+export interface WaitingView { items: { botId: string; text: string; messageId: string | null; at?: string }[]; doing: Record<string, string>; acked?: string[] }
+export interface WorkspaceChange { stamp: string; botIds: string[]; kinds: WorkspaceKind[] }
+/** The event Botling sends the host when the workspace changed (`workspace.onChange`, not `events.on`). */
+export const WORKSPACE_EVENT = "workspace.changed";
+export interface WorkspaceApi {
+  bots(): Promise<BotSummary[]>;
+  memory(botId: string): Promise<{ currentStatus: string[]; inProgress: string[]; decided: string[]; waitingOnYou: string[] }>;
+  /** Its task cards, newest last (at most 100, the default). */
+  tasks(botId: string, opts?: { limit?: number }): Promise<TaskView[]>;
+  /** Tasks finished on each of the last `days` days (at most 14), oldest first; `manual`: closed by the user. */
+  taskHistory(botId: string, days: number): Promise<{ day: string; done: number; manual: number }[]>;
+  /** The links handed over in its chat, newest first (12 by default, at most 100). */
+  results(botId: string, opts?: { limit?: number }): Promise<{ label: string; url: string }[]>;
+  waiting(): Promise<WaitingView>;
+  /** "I know" for an item waiting on you, as the app's own button: not an answer. */
+  ignoreWaiting(botId: string, text: string): Promise<void>;
+  /** Its tool approvals waiting for the user; answering is the user's, in the chat. */
+  pendingApprovals(botId: string): Promise<{ tool: string; text: string; at: string | null }[]>;
+  /** Its face as the app draws it now, as a data URL. */
+  face(botId: string, look: "original" | "cute"): Promise<string>;
+  /** Told when anything the methods above answer changed, naming the bots and kinds. */
+  onChange(fn: (change: WorkspaceChange) => void): Dispose;
+}
+
 export interface BotlingApi {
   readonly plugin: { name: string; version: string; dir: string; storageDir: string };
   /** Disposed when the plugin unloads (push what `activate` set up). */
@@ -81,6 +118,7 @@ export interface BotlingApi {
     set(command: string, key: string | null): Promise<{ ok: true } | { ok: false; conflict: string }>;
   };
   routines: { add(botId: string, cron: string, task: string): Promise<void> };
+  workspace: WorkspaceApi;
   settings: {
     get<T>(key: string): T;
     /** One of this plugin's own settings (a secret one is set with `secrets.set`). */
@@ -152,7 +190,8 @@ export interface Loaded {
   /** The methods in `web` its frames and web part may call (ui.expose); website tools are not. */
   exposed: Set<string>;
   settingHandlers: Map<string, ((value: unknown) => void)[]>;
-  events: Map<PluginEventName, ((data: unknown) => void)[]>;
+  /** `events.on`'s listeners, and `workspace.onChange`'s under WORKSPACE_EVENT. */
+  events: Map<PluginEventName | typeof WORKSPACE_EVENT, ((data: unknown) => void)[]>;
   children: Children;
 }
 
@@ -169,6 +208,8 @@ export interface HostSide {
   notify(method: string, params: JSONValue): void;
   /** Tells Botling again what is registered (soon, once, if the plugin is still loaded). */
   announceLater(plugin: Loaded): void;
+  /** The same now, before anything the plugin sends next (if it is still loaded). */
+  announceNow(plugin: Loaded): void;
 }
 
 /** A request whose promise a plugin may ignore (2.x `bots.send` returned nothing): no unhandled rejection then. */
@@ -189,6 +230,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
   });
   const announceLater = () => host.announceLater(plugin);
   const ask = (method: string, params: Record<string, JSONValue> = {}) => host.request(method, { ...params, plugin: name });
+  const limit = (opts: { limit?: number } | undefined) => (opts?.limit === undefined ? {} : { limit: opts.limit });
   let stored: Record<string, unknown> | null = null;
   const storageFile = join(plugin.spec.storageDir, "storage.json");
   const storage = () => {
@@ -256,6 +298,27 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     },
     routines: {
       add: async (botId, cron, task) => { await ask("routines.add", { bot: botId, cron, task }); },
+    },
+    workspace: {
+      bots: async () => (await ask("workspace.bots")) as BotSummary[],
+      memory: async (botId) => (await ask("workspace.memory", { bot: botId })) as never,
+      tasks: async (botId, opts) => (await ask("workspace.tasks", { bot: botId, ...limit(opts) })) as TaskView[],
+      taskHistory: async (botId, days) => (await ask("workspace.taskHistory", { bot: botId, days })) as never,
+      results: async (botId, opts) => (await ask("workspace.results", { bot: botId, ...limit(opts) })) as never,
+      waiting: async () => (await ask("workspace.waiting")) as WaitingView,
+      ignoreWaiting: async (botId, text) => { await ask("workspace.ignoreWaiting", { bot: botId, text }); },
+      pendingApprovals: async (botId) => (await ask("workspace.pendingApprovals", { bot: botId })) as never,
+      face: async (botId, look) => (await ask("workspace.face", { bot: botId, look })) as string,
+      onChange: (fn) => {
+        const list = plugin.events.get(WORKSPACE_EVENT) ?? [];
+        list.push(fn as (data: unknown) => void);
+        plugin.events.set(WORKSPACE_EVENT, list);
+        // Botling starts watching when told, so it is told before any read this plugin makes next:
+        // what that read gives is then never older than the watch's start (spec/models/workspace).
+        host.announceNow(plugin);
+        const off = remove(list, fn as (data: unknown) => void);
+        return own(() => { off(); announceLater(); });
+      },
     },
     settings: {
       get: <T>(key: string) => plugin.spec.settings[key] as T,

@@ -11,7 +11,7 @@ import { build } from "esbuild";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildRenderer } from "./build-renderer.mjs";
+import { buildRenderer, readCharacters } from "./build-renderer.mjs";
 import { buildPreloads } from "./build-preloads.mjs";
 import { buildBuiltinPlugins } from "./build-builtin-plugins.mjs";
 import { NOTICES_FILE, thirdPartyNotices } from "./reports/licenses.mjs";
@@ -57,6 +57,8 @@ await Promise.all([
   buildBuiltinPlugins({ root: here, outdir: join(out, "builtin-plugins") }),
 ]);
 packageAgyHelper(here);
+// The bots' Cute pictures beside the core, for plugins' `workspace.face` (src/core/faces.ts).
+writeFileSync(join(out, "core", "characters.json"), JSON.stringify(readCharacters(here)));
 // The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.
 // Its bundled packages' licences go next to it (THIRD_PARTY_LICENSES.txt, from the build's metafile).
 const report = await build({ ...node, entryPoints: [join(here, "reports/cli-main.ts")], outfile: join(out, "report/report.cjs"), minify: true, metafile: true, jsx: "automatic", loader: { ".css": "text" }, define: { "process.env.NODE_ENV": '"production"' }, tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } });

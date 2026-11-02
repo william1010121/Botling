@@ -26,6 +26,7 @@ Keep adapters thin (translation only); every change to them is reviewed.
 | `callin` | @ routing and call-ins between bots (`desktop/src/core/conversations.ts`) |
 | `routines` | routines scheduling (`desktop/src/core/routines.ts`) |
 | `datalock` | one core per data folder, `core.lock` (`desktop/src/core/store/data-dir-lock.ts`) |
+| `workspace` | plugins' workspace change watch, `workspace.onChange` (`desktop/src/core/workspace.ts`, `core/plugins/index.ts`, `Web/host/src/api.ts`) |
 
 ## Rules for a model
 

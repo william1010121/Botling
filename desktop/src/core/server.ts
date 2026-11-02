@@ -60,6 +60,8 @@ import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botDescription, latestAction } from "./whiteboard-data";
+import { botFace } from "./faces";
+import { WorkspaceWatch, type BotSummary, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
@@ -191,6 +193,10 @@ export class Core {
   /** The whiteboard as last answered, and a number that moves when it changes (`whiteboardView`). */
   private whiteboardText = "";
   private whiteboardStamp = 0;
+  /** Plugins' workspace changes (`workspace.onChange`): the watch while some plugin listens, its next check, and its clock. */
+  private workspaceWatch: WorkspaceWatch | null = null;
+  private workspaceTimer: NodeJS.Timeout | null = null;
+  private workspaceClock: NodeJS.Timeout | null = null;
   private pinClock: NodeJS.Timeout | null = null;
   /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
   private visiblePins: { botId: string; ids: string[] } | null = null;
@@ -333,6 +339,8 @@ export class Core {
         },
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
         log: (line) => this.log(line),
+        workspace: this.workspaceSource(),
+        workspaceWatch: (on) => this.watchWorkspace(on),
       },
     });
     // The component library has the built-in plugins' cards now (botling.cards' preview card), before any bot
@@ -1740,14 +1748,11 @@ First write a test that shows this, then fix it.`;
       if (profile.role === "main" || profile.parent) continue;
       const bot = this.bots.get(profile.id);
       if (!bot) continue;
-      // Read and parsed once per change of the file (MemoryFiles), not on every ask.
-      const file = join(profile.folder, profile.memoryPath);
-      const items = (section: "currentStatus" | "inProgress" | "decided") => (profile.problem ? [] : this.memoryFiles.items(file, section).slice(0, 20).map((item) => item.slice(0, 400)));
-      const currentStatus = items("currentStatus");
+      const { currentStatus, inProgress, decided } = this.memorySections(profile);
       const tasks = bot.taskViews().slice(-100);
       out.push({
-        botId: profile.id, currentStatus, inProgress: items("inProgress"), decided: items("decided"),
-        tasks, results: bot.results().slice(0, 12).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) })),
+        botId: profile.id, currentStatus, inProgress, decided,
+        tasks, results: this.resultLinks(bot, 12),
         picture: bot.whiteboardPicture(),
         latest: latestAction(tasks), doneDays: bot.doneDays(), description: botDescription(profile.job, currentStatus[0], profile.folder), approvals: bot.pendingApprovals(),
       });
@@ -1770,8 +1775,139 @@ First write a test that shows this, then fix it.`;
     return since === stamp ? { bots: [], stamp, same: true } : { ...view, stamp };
   }
 
+  /** A bot's memory.md sections (empty when its folder has a problem); read and parsed once per change of the file (MemoryFiles). */
+  private memorySections(profile: BotProfile): MemorySections {
+    const file = join(profile.folder, profile.memoryPath);
+    const items = (section: keyof MemorySections) => (profile.problem ? [] : this.memoryFiles.items(file, section).slice(0, 20).map((item) => item.slice(0, 400)));
+    return { currentStatus: items("currentStatus"), inProgress: items("inProgress"), decided: items("decided"), waitingOnYou: items("waitingOnYou") };
+  }
+
+  /** The links handed over in a bot's chat, newest first. */
+  private resultLinks(bot: Bot, limit: number): ResultLink[] {
+    return bot.results().slice(0, limit).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) }));
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // The workspace for plugins (`api.workspace`, plugin-extraction.md §4.3): what the whiteboard reads,
+  // one method each, read only. The main bot is "main" to plugins, as in `bots.list`.
+
+  private outId(id: string) {
+    return id === MAIN_BOT_ID ? "main" : id;
+  }
+
+  /** The bot a plugin names, with its profile; throws when there is none. */
+  private workspaceBot(botId: string): { bot: Bot; profile: BotProfile } {
+    const bot = this.pluginBot(botId);
+    const profile = bot ? this.profiles.find((candidate) => candidate.id === bot.id) : undefined;
+    if (!bot || !profile) throw new Error("No such bot.");
+    return { bot, profile };
+  }
+
+  /** Every bot (sub bots too), in the left column's order. */
+  private workspaceBots(): { bot: Bot; profile: BotProfile }[] {
+    return this.profiles.flatMap((profile) => {
+      const bot = this.removed.has(profile.id) ? undefined : this.bots.get(profile.id);
+      return bot ? [{ bot, profile }] : [];
+    });
+  }
+
+  private botSummary(bot: Bot, profile: BotProfile, pinned: Set<string>): BotSummary {
+    const view = bot.view();
+    return {
+      id: this.outId(bot.id), name: profile.name.slice(0, 200), role: profile.role, parent: profile.parent ? this.outId(profile.parent) : null,
+      folder: basename(profile.folder.replace(/[\\/]+$/, "")).slice(0, 400), engine: view.heads[0] ?? "claude", busy: view.working, asleep: view.phase === "asleep",
+      avatar: profile.avatar.slice(0, 40), pinned: pinned.has(bot.id),
+    };
+  }
+
+  /** What waits on you with plugins' bot ids. */
+  private workspaceWaiting(): WaitingView {
+    const view = this.waiting();
+    const main = `${MAIN_BOT_ID}-`;
+    return {
+      items: view.items.map((item) => ({ ...item, botId: this.outId(item.botId) })),
+      doing: Object.fromEntries(Object.entries(view.doing).map(([id, text]) => [this.outId(id), text])),
+      ...(view.acked ? { acked: view.acked.map((key) => (key.startsWith(main) ? `main-${key.slice(main.length)}` : key)) } : {}),
+    };
+  }
+
+  private workspaceSource(): WorkspaceSource {
+    return {
+      bots: () => {
+        const pinned = new Set(settingsView(readSettings(Layout.settings(this.options.dataDir))).pinnedBots);
+        return this.workspaceBots().map(({ bot, profile }) => this.botSummary(bot, profile, pinned));
+      },
+      memory: (botId) => this.memorySections(this.workspaceBot(botId).profile),
+      tasks: (botId, limit) => this.workspaceBot(botId).bot.taskViews().slice(-limit),
+      taskHistory: (botId, days) => this.workspaceBot(botId).bot.doneDays(Date.now(), days),
+      results: (botId, limit) => this.resultLinks(this.workspaceBot(botId).bot, limit),
+      waiting: () => this.workspaceWaiting(),
+      ignoreWaiting: (botId, text) => { this.ignoreWaiting(this.workspaceBot(botId).bot.id, text); },
+      pendingApprovals: (botId) => this.workspaceBot(botId).bot.pendingApprovals(),
+      face: (botId, look) => {
+        const { bot } = this.workspaceBot(botId);
+        const view = bot.view();
+        const waiting = view.approvals > 0 || this.waiting().items.some((item) => item.botId === bot.id);
+        return botFace(view, look, { asleep: view.phase === "asleep", working: view.working, waiting });
+      },
+    };
+  }
+
+  /** What each workspace method would answer, by bot and kind: what a change is noticed by. */
+  private workspaceDigest(): WorkspaceDigest {
+    const pinned = new Set(settingsView(readSettings(Layout.settings(this.options.dataDir))).pinnedBots);
+    const waiting = this.workspaceWaiting();
+    const out: WorkspaceDigest = {};
+    for (const { bot, profile } of this.workspaceBots()) {
+      const id = this.outId(bot.id);
+      out[id] = {
+        bots: JSON.stringify(this.botSummary(bot, profile, pinned)),
+        tasks: JSON.stringify([bot.taskViews().slice(-100), bot.doneDays()]),
+        memory: JSON.stringify(this.memorySections(profile)),
+        waiting: JSON.stringify([waiting.items.filter((item) => item.botId === id), waiting.doing[id] ?? null, bot.pendingApprovals()]),
+        results: JSON.stringify(this.resultLinks(bot, 100)),
+      };
+    }
+    return out;
+  }
+
+  /**
+   * Some plugin listens for workspace changes, or none does any more (Plugins, as soon as the host says so).
+   * Listening: what is there now is the start; a change is looked for soon after any event, and every 5 s.
+   */
+  private watchWorkspace(on: boolean) {
+    if (!on) {
+      this.workspaceWatch?.stop();
+      if (this.workspaceTimer) { clearTimeout(this.workspaceTimer); this.workspaceTimer = null; }
+      if (this.workspaceClock) { clearInterval(this.workspaceClock); this.workspaceClock = null; }
+      return;
+    }
+    this.workspaceWatch ??= new WorkspaceWatch(this.epoch);
+    try { this.workspaceWatch.start(this.workspaceDigest()); } catch (error) { this.log(`workspace: ${(error as Error).message}`); return; }
+    if (!this.workspaceClock) {
+      this.workspaceClock = setInterval(() => this.checkWorkspace(), 5_000);
+      this.workspaceClock.unref?.();
+    }
+  }
+
+  /** Looks for a workspace change within a second (once, however many events come meanwhile). */
+  private checkWorkspaceSoon() {
+    if (!this.workspaceWatch?.watching || this.workspaceTimer) return;
+    this.workspaceTimer = setTimeout(() => { this.workspaceTimer = null; this.checkWorkspace(); }, 1_000);
+    this.workspaceTimer.unref?.();
+  }
+
+  private checkWorkspace() {
+    if (!this.workspaceWatch?.watching) return;
+    let change;
+    try { change = this.workspaceWatch.check(this.workspaceDigest()); } catch (error) { this.log(`workspace: ${(error as Error).message}`); return; }
+    if (change) this.plugins.workspaceChanged(change);
+  }
+
   /** Tells the windows when what waits on you changed (1.x's `refreshWaiting`, after anything that may change it). */
   refreshWaiting() {
+    // A memory file changed, maybe: plugins watching the workspace look again.
+    this.checkWorkspaceSoon();
     // Bots added or removed since: their memory files watched (or no longer).
     if (this.memoryWatch) { this.memoryWatch.sync(); this.memoryFiles.keepOnly(this.memoryTargets().map((target) => target.path)); }
     let view: WaitingView;
@@ -2127,6 +2263,7 @@ First write a test that shows this, then fix it.`;
     if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
     this.pluginEvent(event);
+    this.checkWorkspaceSoon();
     // An agent another bot owns: its owner's view of it follows too.
     if (event.type === "subagent.updated") {
       const record = this.agents.byHostBot(event.botId, event.subagent.id);
@@ -2624,6 +2761,7 @@ First write a test that shows this, then fix it.`;
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     this.memoryWatch?.stop(); this.memoryWatch = null;
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
+    this.watchWorkspace(false);
     // (Optional: a core made without its constructor, as tests make one, has neither.)
     this.agentStatus?.close();
     try { this.agents?.flush(); } catch (error) { this.log(`agents.json: ${(error as Error).message}`); }
