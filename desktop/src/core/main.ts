@@ -205,7 +205,7 @@ function hostNode(): HostCommand | null {
 const portSealer = parentPort ? new PortSealer((message) => parentPort.postMessage(message)) : null;
 
 /**
- * Developer mode's and updates' requests of main (app-swap.ts): a picture of the window, quitting for
+ * Developer mode's and updates' requests of main (self-update.ts): a picture of the window, quitting for
  * a build's install, or installing the newer release (main restarts on it).
  * `{botling: "app"}` out, `{botling: "appDone"}` back. Only under Electron, where main is there to answer.
  */
@@ -339,12 +339,12 @@ if (parentPort) {
       if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}), ...(answer.plan !== undefined ? { plan: answer.plan } : {}) });
     }
     else if (data && typeof data === "object" && data.botling === "release") {
-      // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (app-swap.ts).
+      // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (self-update.ts).
       const release = data as { version?: unknown; name?: unknown; url?: unknown; current?: unknown; unavailable?: unknown };
       const text = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : "");
       if (typeof release.version === "string" && typeof release.url === "string" && release.url.startsWith("https://github.com/")) {
         try {
-          core.devBuilds.announceRelease({
+          core.releases.announce({
             version: text(release.version, 100), name: text(release.name, 400) || text(release.version, 100), url: text(release.url, 2_000),
             current: text(release.current, 100), unavailable: typeof release.unavailable === "string" ? release.unavailable.slice(0, 500) : null,
           });

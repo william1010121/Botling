@@ -77,9 +77,9 @@ import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
-import { DevBuilds, devWorkRoot, readBuild, spawnInstaller } from "./app-swap";
+import { ReleaseNotices, confirmHealthy, devWorkRoot, spawnInstaller } from "./self-update";
 
-/** What the core asks of main (app-swap.ts); planBuild and installBuild carry a build's path. */
+/** What the core asks of main (self-update.ts, plugins/app-seam.ts). */
 export type AppOp = "screenshot" | "quit" | "installRelease";
 export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown }
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
@@ -146,7 +146,7 @@ export interface CoreOptions {
   /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
   firstSnapshotDelayMs?: number;
   /**
-   * The app around the core, for developer mode's <install-build> and <app-screenshot/> (app-swap.ts):
+   * The app around the core, for the developer tools (botling.dev, plugins/app-seam.ts) and release notices (self-update.ts):
    * main's pid and data folder, the app bundle it runs from (null: not a bundle), and what main does on
    * request: a picture of its window, or quitting so the install script can swap the build. Null: no app.
    */
@@ -178,8 +178,8 @@ export class Core {
   private watchClock: NodeJS.Timeout | null = null;
   private readonly components: ComponentsContext;
   private componentStamp = 0;
-  /** Developer mode's builds and screenshots (1.x's Workspace+Developer.swift). */
-  readonly devBuilds: DevBuilds;
+  /** Newer signed releases, announced in the main bot's chat in developer mode (the developer tools are botling.dev). */
+  readonly releases: ReleaseNotices;
   /** The plugin and component library, watched (`scanComponents` on a change, and every `componentScanMs`). */
   private libraryWatch: FolderWatch | null = null;
   /** Bots' memory files, watched (`refreshWaiting` on a change, and every `waitingScanMs`). */
@@ -340,6 +340,35 @@ export class Core {
         },
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
         log: (line) => this.log(line),
+        app: {
+          state: () => ({
+            pid: options.app?.pid ?? null, dataDir: options.dataDir, appDataDir: options.app?.dataDir ?? null, bundle: options.app?.bundle ?? null,
+            developerMode: settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
+            developer: (() => { const bot = this.developerProject(); return bot ? { id: bot.id, name: bot.profile.name, folder: bot.profile.folder } : null; })(),
+          }),
+          installAndRestart: (command, log) => {
+            // Running work resumes on the new build (restart-continuation.ts); a failed checkpoint stops the install.
+            this.prepareRestart();
+            try { spawnInstaller(command, log); } catch (error) { this.cancelRestart(); throw error; }
+            // Bots write their notes as the app quits; the script waits for that.
+            void options.app?.request("quit");
+          },
+          captureWindow: async () => {
+            if (!options.app) return null;
+            try { const answer = await options.app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }
+          },
+          card: (text, choices, source) => new Promise((resolve) => {
+            const main = this.bots.get(MAIN_BOT_ID)!;
+            main.appNotice(text, choices, choices ? (index) => resolve(index) : undefined, source ? { sourceID: source } : {});
+            if (!choices) resolve(null);
+          }),
+          tell: (botId, kind, text, files) => {
+            const bot = this.pluginBot(botId);
+            if (!bot) return false;
+            if (kind === "note") bot.queueNote(text); else bot.relay(text, files.length ? { files } : {});
+            return true;
+          },
+        },
         sessionMoved: (botId, reason) => this.bots.get(botId)?.restartBeforeNextMessage(reason),
         sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !this.removed.has(profile.id)).map((profile) => ({
           id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,
@@ -415,7 +444,7 @@ export class Core {
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
           // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
           : profile.id !== MAINTAINER_ID
-            ? () => [profile.role === "manager" ? this.devBuilds.briefing(bot, this.plugins.sessionFolder(profile.id) !== null) : "", this.plugins.sessionFolder(profile.id)?.note ?? "", this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
+            ? () => [profile.role === "manager" ? this.developerBriefing(profile.id) : "", this.plugins.sessionFolder(profile.id)?.note ?? "", this.subBotNote(profile), this.ownedAgentsNote(profile)].filter(Boolean).join("\n\n")
             : undefined,
         // A plugin may decide where a project's or bot's session starts (an app-made worktree: botling.git); the main bot and Maintainer never move.
         worktree: profile.role === "main" || profile.id === MAINTAINER_ID ? undefined : () => {
@@ -502,29 +531,11 @@ export class Core {
       log: (line) => this.log(`specs: ${line}`),
     });
     const app = options.app ?? null;
-    this.devBuilds = new DevBuilds({
+    this.releases = new ReleaseNotices({
       root: options.dataDir,
-      // Read each time: a hot install changes the bundle on disk under a running core.
-      runningBuild: () => (app?.bundle ? readBuild(app.bundle) : null),
-      developer: () => this.developerProject(),
       developerMode: () => settingsView(readSettings(Layout.settings(options.dataDir))).developerMode,
       mainBot: () => this.bots.get(MAIN_BOT_ID)!,
-      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
-      appPid: app?.pid ?? null,
-      appDataDir: app?.dataDir ?? null,
-      devWork: () => devWorkRoot(),
-      launchInstaller: (command, log) => {
-        // Running work resumes on the new build (restart-continuation.ts); a failed checkpoint stops the install.
-        this.prepareRestart();
-        try { spawnInstaller(command, log); } catch (error) { this.cancelRestart(); throw error; }
-        // Bots write their notes as the app quits; the script waits for that.
-        void app?.request("quit");
-      },
       installRelease: app ? () => app.request("installRelease") : undefined,
-      captureWindow: async () => {
-        if (!app) return null;
-        try { const answer = await app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }
-      },
       log: (line) => this.log(line),
     });
     // The registry against the bots' subagent lists (A1.3), once everything is built; its notices wait for `activate`.
@@ -554,7 +565,8 @@ export class Core {
     try { this.reconcileAgents(true); } catch (error) { this.log(`agents reconcile: ${(error as Error).message}`); }
     const options = this.options;
     // How an install of a developer build went (`checkSelfUpdate`).
-    try { this.devBuilds.check(); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
+    // The new build says it came up (the install script waits for that); botling.dev tells the bot that asked.
+    try { confirmHealthy(options.dataDir); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
     // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
@@ -726,6 +738,12 @@ export class Core {
     }
     const date = now ?? Date.now();
     for (const bot of waiting) bot.networkRestored(date);
+  }
+
+  /** What the developer project's manager is told on top of a manager's usual instructions (`developerBriefing`; botling.dev wrote it). */
+  private developerBriefing(botId: string): string {
+    if (this.developerProject()?.id !== botId) return "";
+    return this.plugins.devBriefing(botId, this.plugins.sessionFolder(botId) !== null);
   }
 
   /** The project that is Botling's own source, while developer mode is on (`developerProject`). */
@@ -1947,10 +1965,6 @@ First write a test that shows this, then fix it.`;
       // A bot's <suggest-component>: a chip under its reply; Maintainer's <component-spec>: into that spec (`Workspace.handle`).
       else if (request.kind === "suggestComponent") later.push(() => this.specs.suggest(request.name, request.draft, this.bots.get(bot.id) ?? bot));
       else if (request.kind === "componentSpec") { if (bot.id === MAINTAINER_ID) later.push(() => this.specs.applyUpdate(request.id, request.json, bot.lines().findLast((line) => line.role === "bot")?.text ?? "")); }
-      // Developer mode (`proposeBuild`, `sendScreenshot`): a project's manager (the desk checks it is the developer
-      // project); from the main bot they do nothing, as in 1.x.
-      else if (request.kind === "installBuild") { if (bot.profile.role === "manager") later.push(() => this.devBuilds.propose(request.path, request.note, bot)); }
-      else if (request.kind === "appScreenshot") { if (bot.profile.role === "manager") later.push(() => this.devBuilds.screenshot(bot)); }
       else rest.push(request);
     }
     if (later.length) setImmediate(() => { for (const act of later) { try { act(); } catch (error) { this.log(`request: ${(error as Error).message}`); } } });
@@ -2596,13 +2610,11 @@ First write a test that shows this, then fix it.`;
     const next = applySetting(before, change);
     writeSettings(file, next);
     if (change.key === "agyBypassPermissions" && before.agyBypassPermissions !== change.value) changeAgyPermissions(change.value);
-    // Turning developer mode on again gives builds a fresh start after failures (`setDeveloperMode`).
-    if (change.key === "developerMode" && change.value === true) this.devBuilds.developerModeOn();
-    // The developer project's manager hears about it at once if awake, else at its next wake (`setDeveloperMode`).
+    // botling.dev gives builds a fresh start after failures when developer mode is turned on again, and tells the developer
+    // project's manager at once if awake, else at its next wake (`setDeveloperMode`).
     const developerNow = this.developerProject();
-    if (developerNow && developerNow.id !== developerBefore?.id) developerNow.queueNote(this.devBuilds.briefing(developerNow));
-    if (developerBefore && developerBefore.id !== developerNow?.id) {
-      developerBefore.queueNote("(App: Developer mode is off for this project now: you can no longer install builds of Botling or take screenshots of it.)");
+    if ((change.key === "developerMode" && change.value === true) || developerNow?.id !== developerBefore?.id) {
+      this.plugins.event("developerChanged", { before: developerBefore?.id ?? null, now: developerNow?.id ?? null, turnedOn: change.key === "developerMode" && change.value === true });
     }
     // The engine defaults go to every bot at once (`setSubagentModelDefault`, `setCodexWorkerDefaults`).
     const model = settingsView(next).subagentModel;

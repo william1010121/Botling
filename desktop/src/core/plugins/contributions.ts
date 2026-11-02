@@ -42,7 +42,7 @@ export const CORE_REPLY_TAGS = [
   "app-screenshot", "open-question", "new-project", "decision-ref", "end", "block", "handoff",
 ] as const;
 /** Core tags on their way to the first-party plugin that will own them (plugin-extraction.md §4.2): only that plugin may declare one. */
-export const HANDED_TAGS: Readonly<Record<string, string>> = { whiteboard: "botling.whiteboard" };
+export const HANDED_TAGS: Readonly<Record<string, string>> = { whiteboard: "botling.whiteboard", "install-build": "botling.dev", "app-screenshot": "botling.dev" };
 const PLUGIN_TAG = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/;
 export type ViewSlot = (typeof VIEW_SLOTS)[number];
 export type ViewRole = (typeof VIEW_ROLES)[number];

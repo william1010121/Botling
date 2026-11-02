@@ -38,7 +38,7 @@ export interface CoreClientOptions {
   /** The core's process ledger (`<data>/core/children.json`): plugins' process groups are kept there too. */
   ledgerFile?: string;
   /**
-   * The core's asks of the app (core/app-swap.ts): a picture of the main window, quitting for a developer
+   * The core's asks of the app (botling.dev and core/self-update.ts): a picture of the main window, quitting for a developer
    * build's install, or installing the newer release.
    */
   app?: (op: AppOp, args: Record<string, string>) => Promise<{ ok: boolean; file?: string; error?: string }>;
@@ -70,7 +70,7 @@ export class CoreClient {
     });
   }
 
-  /** A newer release main found: the core posts the update notice in the main bot's chat (core/app-swap.ts). */
+  /** A newer release main found: the core posts the update notice in the main bot's chat (botling.dev and core/self-update.ts). */
   announceRelease(release: { version: string; name: string; url: string; current: string; unavailable: string | null }) {
     this.child?.postMessage({ botling: "release", ...release });
   }

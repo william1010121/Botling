@@ -5,11 +5,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, lstatSync, readFileSync, readdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tempDir } from "../helpers";
+import { tempDir } from "../../../test/helpers";
+import { DevBuilds, type DeskBot } from "../src/desk";
 import {
-  DevBuilds, FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, devWorkRoot, externalVolume, failures, installOutcome, prepareInstall, readBuild, sensitiveChanges, setFailures,
-  type BuildInfo, type DeskBot,
-} from "../../src/core/app-swap";
+  FAILURE_LIMIT, INSTALL_SCRIPT, buildLabel, devWorkRoot, failures, installOutcome, prepareInstall, readBuild, sensitiveChanges, setFailures,
+  type BuildInfo,
+} from "../src/swap";
 
 const BUNDLE_ID = "io.github.william1010121.Botling2";
 
@@ -47,7 +48,7 @@ function desk(root: string, over: Partial<ConstructorParameters<typeof DevBuilds
   const running = readBuild(fakeApp(join(root, "Applications"), "Botling 2", { BotlingGitCommit: "aaaaaaa1111" }));
   const launched: string[][] = [];
   const builds = new DevBuilds({
-    root: join(root, "core"), runningBuild: () => running, developer: () => dev, developerMode: () => true, mainBot: () => main,
+    root: join(root, "core"), runningBuild: () => running, developer: () => dev, mainBot: () => main,
     bot: (id) => [main, dev, other].find((bot) => bot.id === id) ?? null,
     appPid: 4242, appDataDir: join(root, "data"),
     launchInstaller: (command) => { launched.push(command); },
@@ -160,7 +161,8 @@ describe("<install-build>", () => {
     builds.check(8_000);
     expect(main.notices).toHaveLength(0);
     vi.advanceTimersByTime(8_000);
-    expect(existsSync(join(root, "core", "self-update", "healthy"))).toBe(true);
+    // The `healthy` marker the script waits for is the core's (core/self-update.ts), not the plugin's.
+    expect(existsSync(join(root, "core", "self-update", "healthy"))).toBe(false);
     expect(installOutcome(join(root, "core"))).toBeNull();
     expect(failures(join(root, "core"))).toBe(0);
     expect(main.notices.at(-1)!.text).toBe("Botling restarted on 2.0.1 (bbbbbbb) (was 2.0.1 (aaaaaaa)), installed for botling.");
@@ -252,62 +254,6 @@ describe("developer work", () => {
     const local = away.builds.briefing(away.dev);
     expect(local).toContain(`git worktree add ${join(root, "repo", ".bot", "worktrees")}/<short-task>`);
     expect(local).toContain("cd desktop && npm run dist:dir; it is written to desktop/dist/mac-arm64/Botling 2.app");
-  });
-});
-
-describe("a newer release", () => {
-  const release = { version: "2.0.2", name: "Botling 2.0.2", url: "https://github.com/william1010121/Botling/releases/tag/v2.0.2", current: "2.0.1", unavailable: null };
-
-  it("is an update notice in the main bot's chat; Install and restart installs it, once per version and run", async () => {
-    const root = tempDir("self-update");
-    const asks: string[] = [];
-    let answer: { ok: boolean; error?: string } = { ok: false, error: "No compatible macOS ZIP in this release" };
-    const { builds, main } = desk(root, { installRelease: async () => { asks.push("install"); return answer; } });
-    builds.announceRelease(release);
-    const card = main.notices.at(-1)!;
-    expect(card.text).toContain("**Botling 2.0.2** is available (running 2.0.1).");
-    expect(card.text).toContain("[Botling 2.0.2](https://github.com/william1010121/Botling/releases/tag/v2.0.2)");
-    expect(card.choices!.map((choice) => choice.label)).toEqual(["Install and restart", "Not now"]);
-    expect(asks).toEqual([]);
-    builds.announceRelease(release);
-    expect(main.notices).toHaveLength(1);
-    card.onPick!(0);
-    await vi.waitFor(() => expect(main.notices.at(-1)!.text).toBe("Couldn't install Botling 2.0.2: No compatible macOS ZIP in this release"));
-    expect(asks).toEqual(["install"]);
-    // A failed install may be offered again.
-    answer = { ok: true };
-    builds.announceRelease(release);
-    main.notices.at(-1)!.onPick!(0);
-    await vi.waitFor(() => expect(asks).toEqual(["install", "install"]));
-    expect(main.notices.at(-1)!.choices).toBeDefined();
-  });
-
-  it("shows in the main bot's chat only while developer mode is on; otherwise the sidebar entry is the way to update", () => {
-    const root = tempDir("self-update");
-    let developerMode = false;
-    const { builds, main } = desk(root, { developerMode: () => developerMode, installRelease: async () => ({ ok: true }) });
-    expect(builds.announceRelease(release)).toBeNull();
-    expect(main.notices).toHaveLength(0);
-    // Not remembered as announced or declined: turning developer mode on shows it at the next check.
-    developerMode = true;
-    expect(builds.announceRelease(release)).not.toBeNull();
-    expect(main.notices).toHaveLength(1);
-    developerMode = false;
-    expect(builds.announceRelease({ ...release, version: "2.0.3" })).toBeNull();
-    expect(main.notices).toHaveLength(1);
-  });
-
-  it("Not now is remembered for that version; one that cannot be installed here says why, with no button", () => {
-    const root = tempDir("self-update");
-    const { builds, main } = desk(root, { installRelease: async () => ({ ok: true }) });
-    builds.announceRelease(release);
-    main.notices.at(-1)!.onPick!(1);
-    const again = desk(root, { installRelease: async () => ({ ok: true }) });
-    expect(again.builds.announceRelease(release)).toBeNull();
-    expect(again.main.notices).toHaveLength(0);
-    expect(again.builds.announceRelease({ ...release, version: "2.0.3", unavailable: "Update trust is not configured" })).not.toBeNull();
-    expect(again.main.notices.at(-1)!.text).toMatch(/It can't be installed from here: Update trust is not configured$/);
-    expect(again.main.notices.at(-1)!.choices).toBeUndefined();
   });
 });
 

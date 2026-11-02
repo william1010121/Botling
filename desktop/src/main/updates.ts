@@ -2,7 +2,7 @@
 // electron-builder writes (latest.yml, latest-mac.yml, latest-linux.yml, signed by the platform's own
 // certificate), the same way on macOS, Windows and Linux (AppImage). A Linux .deb cannot update itself, so
 // there it only says a newer version exists and opens the release page. Developer builds are a different
-// path (core/app-swap.ts).
+// path (botling.dev and core/self-update.ts).
 import type { ReleaseView, UpdateView } from "../contract";
 
 export const REPOSITORY = "william1010121/Botling";

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { botPrompts, codexWorkerInstructions } from "../../src/core/prompts";
-import { DevBuilds } from "../../src/core/app-swap";
+import { DevBuilds } from "../../builtin-plugins/botling.dev/src/desk";
 import { desktop } from "../helpers";
 
 const FOLDER = "/p/repo", TREE = "/w/repo-fix";

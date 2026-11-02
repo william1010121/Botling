@@ -32,8 +32,6 @@ export type BotRequest =
   /** The owner stops an agent it owns (`<agent-stop to="agent id"/>`). */
   | { kind: "agentStop"; to: string }
   | { kind: "newProject"; folder: string; task: string }
-  | { kind: "installBuild"; path: string; note: string }
-  | { kind: "appScreenshot" }
   | { kind: "openQuestion"; from: string }
   | { kind: "giveComponent"; bot: string; name: string }
   | { kind: "takeComponent"; bot: string; name: string }
@@ -78,12 +76,10 @@ const agentMessageTag = () => /<agent-message\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')
 const agentStopTag = () => /<agent-stop\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*\/?>(?:\s*<\/agent-stop>)?/g;
 const folderTag = () => /<need-folder>\s*([\s\S]*?)\s*<\/need-folder>/g;
 const installTag = () => /<install>\s*([\s\S]*?)\s*<\/install>/g;
-const buildTag = () => /<install-build\s+path\s*=\s*"([^"]+)"\s*(?:\/>|>\s*([\s\S]*?)\s*<\/install-build>)/g;
 const listTag = () => /<(give|take)-component\s+bot\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/\1-component>/g;
 const suggestTag = () => /<suggest-component\s+name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*([\s\S]*?)\s*<\/suggest-component>)/g;
 const specTag = () => /<component-spec\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/component-spec>/g;
 const declinedTag = () => /<component-declined\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*([\s\S]*?)\s*<\/component-declined>)/g;
-const screenshotTag = () => /<app-screenshot\s*\/?>(?:\s*<\/app-screenshot>)?/g;
 const taskTag = () => /<task((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*\/?>(?:[ \t]*<\/task>)?/g;
 const noReplyTag = () => /<no-reply\s*\/>|<no-reply>\s*<\/no-reply>/g;
 const openQuestionTag = () => /<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/open-question>)/g;
@@ -281,13 +277,9 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   const projects: BotRequest[] = [];
   take(projectTag, ([folder, task]) => projects.unshift({ kind: "newProject", folder: trimWS(folder!), task: task! }));
   requests.push(...projects);
-  take(buildTag, ([path, note]) => requests.push({ kind: "installBuild", path: trimWS(path!), note: note! }), true);
   take(noReplyTag, () => {});
   const tasks: TaskTag[] = [];
   take(taskTag, ([attrs]) => tasks.unshift(taskTagFrom(attributes(attrs!))));
-  let screenshot = false;
-  take(screenshotTag, () => { screenshot = true; });
-  if (screenshot) requests.push({ kind: "appScreenshot" });
   take(folderTag, ([path]) => requests.push({ kind: "folder", path: path! }));
   const openQuestions: BotRequest[] = [];
   take(openQuestionTag, ([a, b]) => { const from = trimWS(a || b!); if (from) openQuestions.unshift({ kind: "openQuestion", from }); });
@@ -370,8 +362,6 @@ export function unsupportedRequest(request: BotRequest): string {
     case "agentMessage": return `a message to the agent "${request.to}"`;
     case "agentStop": return `stopping the agent "${request.to}"`;
     case "newProject": return `a new project (${request.folder})`;
-    case "installBuild": return "installing a build";
-    case "appScreenshot": return "a screenshot of the app";
     case "openQuestion": return `showing ${request.from}'s open question`;
     case "giveComponent": case "takeComponent": return `changing ${request.bot}'s components`;
     case "suggestComponent": return `making a component ("${request.name}")`;

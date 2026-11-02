@@ -32,11 +32,13 @@ export interface PluginEvents {
   workerDone: { botId: string; workerId: string; status: string; report: string };
   /** You read a chat up to its newest line (`through`); `unread`: how many of its lines were unread before. */
   chatRead: { botId: string; unread: number; through: string | null };
+  /** The developer project (Settings → Developer) or developer mode changed: `before`/`now` are the project bot's ids (null: none); `turnedOn`: developer mode was just turned on. */
+  developerChanged: { before: string | null; now: string | null; turnedOn: boolean };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -170,6 +172,37 @@ export interface SessionsApi {
   bots(): Promise<SessionBot[]>;
 }
 
+// ── The app (plugin-extraction.md §3.2 #6): install a build and restart, a picture of the window; built-in plugins only ──
+/** The app as the developer tools see it. */
+export interface AppState {
+  /** Main's pid (null: no app around). */
+  pid: number | null;
+  /** The core's data folder, and the app's own. */
+  dataDir: string;
+  appDataDir: string | null;
+  /** The app bundle running now (null: not running from a bundle, as in development). */
+  bundle: string | null;
+  developerMode: boolean;
+  /** The project that is Botling's own source while developer mode is on. */
+  developer: { id: string; name: string; folder: string } | null;
+}
+export interface AppApi {
+  state(): Promise<AppState>;
+  /**
+   * Starts `command` (the install script `<dataDir>/self-update/install.sh` with its twelve words) detached and quits the app for it, after
+   * Botling checkpointed the work under way so it resumes on the new build. Throws when it cannot start; nothing quits then.
+   */
+  installAndRestart(command: string[], log: string): Promise<void>;
+  /** A PNG of the app's window (null: none). */
+  captureWindow(): Promise<string | null>;
+  /** A card in the main bot's chat (`source`: the bot it is about). With `choices` it resolves with the index picked, and waits for it (null: none). */
+  card(text: string, opts?: { choices?: { label: string; recommended?: boolean }[]; source?: string }): Promise<number | null>;
+  /** A relay line (`relay`, optionally with files) in a bot's chat, or a note it hears at its next wake or turn (`note`). */
+  tell(botId: string, kind: "relay" | "note", text: string, files?: string[]): Promise<void>;
+  /** What the developer project's manager hears at each wake (`worktree`: when its session is in an app worktree); null: nothing. Botling keeps it, so a wake never waits for the plugin. */
+  briefing(briefing: { bot: string; plain: string; worktree: string } | null): Promise<void>;
+}
+
 export interface BotlingApi {
   /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
   readonly plugin: { name: string; version: string; dir: string; storageDir: string; appDataDir?: string };
@@ -220,6 +253,8 @@ export interface BotlingApi {
   workspace: WorkspaceApi;
   usage: UsageApi;
   sessions: SessionsApi;
+  /** The app around Botling; needs the "app" permission, built-in plugins only. */
+  app: AppApi;
   /** The tags this plugin declared in its manifest (`replyTags`), from bots' replies. */
   replyTags: { on(tag: string, fn: (tag: ReplyTag) => void): Dispose };
   approvals: {
@@ -428,6 +463,14 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       add: async (botId, cron, task) => { await ask("routines.add", { bot: botId, cron, task }); },
     },
     usage: { view: async () => (await ask("usage.view")) as UsageView },
+    app: {
+      state: async () => (await ask("app.state")) as AppState,
+      installAndRestart: async (command, log) => { await ask("app.installAndRestart", { command, log }); },
+      captureWindow: async () => (await ask("app.captureWindow")) as string | null,
+      card: async (text, opts = {}) => ((await ask("app.card", { text, ...(opts.choices ? { choices: opts.choices } : {}), ...(opts.source ? { source: opts.source } : {}) })) as { index: number } | null)?.index ?? null,
+      tell: async (bot, kind, text, files) => { await ask("app.tell", { bot, kind, text, ...(files?.length ? { files } : {}) }); },
+      briefing: async (briefing) => { await ask("app.briefing", { briefing }); },
+    },
     sessions: {
       setFolder: async (botId, folder, reason) => { await ask("sessions.folder", { bot: botId, folder, ...(reason ? { reason } : {}) }); },
       syncFolders: async (folders) => { await ask("sessions.folders", { folders }); },

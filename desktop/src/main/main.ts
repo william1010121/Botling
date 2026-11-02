@@ -191,7 +191,7 @@ const core: CoreClient = new CoreClient({
       return { ok: true };
     }
     if (op === "installRelease") return withInstallRequest(async () => {
-      // The user picked Install and restart on the update notice in the main bot's chat (core/app-swap.ts):
+      // The user picked Install and restart on the update notice in the main bot's chat (botling.dev and core/self-update.ts):
       // download the newer release unless it is already, then restart on it.
       try {
         await installRelease();
@@ -260,7 +260,7 @@ async function restartWithContinuation() {
   catch (error) { core.cancelRestart(); throw error; }
 }
 /**
- * A newer release goes to the main bot's chat as an update notice, in developer mode only (core/app-swap.ts, once per version and
+ * A newer release goes to the main bot's chat as an update notice, in developer mode only (botling.dev and core/self-update.ts, once per version and
  * run); installing it waits for the user's pick there. Everyone else has the sidebar's update entry. Checked at start and every 6 hours, as Settings has it.
  */
 function announce(view: UpdateView): UpdateView {
@@ -278,7 +278,7 @@ function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   env.BOTLING_DATA_DIR = join(dataDir, "core");
-  // Developer mode's builds (core/app-swap.ts): main's pid (the install script waits for it to quit), the
+  // Developer mode's builds (botling.dev and core/self-update.ts): main's pid (the install script waits for it to quit), the
   // data folder the new build opens with, and the bundle this is (macOS app bundles only).
   env.BOTLING_MAIN_PID = String(process.pid);
   // The core adds its own milestone (its bots loaded) to main's startup log.

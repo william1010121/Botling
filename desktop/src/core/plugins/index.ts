@@ -33,6 +33,7 @@ import { SealedSecretStore, type Sealer } from "./secrets";
 import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../workspace";
 import { PendingTags } from "./pending-tags";
 import { SessionFolders, cleanFolder, type SessionFolder } from "./session-folders";
+import { AppBriefingParams, AppCardParams, AppInstallParams, AppTellParams, BriefingBook, installCommandOK, type AppWorld } from "./app-seam";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -108,6 +109,8 @@ export interface PluginWorld {
   sessionMoved?(botId: string, reason: { told: string; shown: string }): void;
   /** The bots whose sessions a plugin may place (every one but the main bot and Maintainer), for `sessions.bots`. Absent: none. */
   sessionBots?(): SessionBot[];
+  /** The app around the core for botling.dev (`app.*`, built-in plugins only). Absent: a world without an app (tests, spec adapters). */
+  app?: AppWorld;
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
   addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
   /** The library changed: the app shows it. */
@@ -163,7 +166,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -208,6 +211,8 @@ export class Plugins {
   private readonly held: PendingTags;
   /** The folders built-in plugins assigned to bots' sessions (`sessions.folder`), kept on disk (session-folders.ts). */
   private readonly folders: SessionFolders;
+  /** The developer briefing botling.dev pushed (app-seam.ts), kept on disk. */
+  private readonly briefings: BriefingBook;
   /** What each bot's session was last told about its folder (a signature of folder, extra folders and note; absent: its own). */
   private readonly foldersTold = new Map<string, string>();
   /** What each plugin shows in the status area (`ui.setStatus`), until it unloads. */
@@ -224,6 +229,7 @@ export class Plugins {
     this.dataRoot = join(dataDir, "plugin-data");
     this.held = new PendingTags(join(dataDir, "plugin-pending-tags.json"));
     this.folders = new SessionFolders(join(dataDir, "plugin-session-folders.json"));
+    this.briefings = new BriefingBook(join(dataDir, "plugin-dev-briefing.json"));
     for (const botId of this.folders.plugins().flatMap((name) => this.folders.bots(name))) { const now = this.folderSignature(botId); if (now) this.foldersTold.set(botId, now); }
     this.host = new PluginHostClient(options.hostScript, options.node, this.dataRoot, (line) => world.log(line), options.timing ?? DEFAULT_TIMING, options.onPid);
     this.registry.onNotice = (text) => world.notice(text);
@@ -612,6 +618,34 @@ export class Plugins {
   }
 
   // ------------------------------------------------------------------------------------------
+  // The app seam (app-seam.ts, plugin-extraction.md §3.2 #6): built-in plugins only
+
+  /** A plugin shipped with the app, running, with the "app" permission. */
+  private appPlugin(plugin: InstalledPlugin): AppWorld {
+    this.needs(plugin, "app", "Asking the app");
+    if (!this.shipped(plugin.manifest.name)) throw new Error("Only a plugin shipped with Botling may ask the app.");
+    const app = this.options.world.app;
+    if (!app) throw new Error("There is no app around the core here.");
+    return app;
+  }
+
+  /**
+   * What the developer project's manager hears at each wake on top of its usual instructions (`worktree`: its session is in an
+   * app worktree): the text the on, shipped plugin with the "app" permission pushed for exactly that bot, else "".
+   */
+  devBriefing(botId: string, worktree: boolean): string {
+    for (const name of this.briefingPlugins()) {
+      const kept = this.briefings.get(name);
+      if (kept?.bot === botId) return worktree ? kept.worktree : kept.plain;
+    }
+    return "";
+  }
+
+  private briefingPlugins(): string[] {
+    return this.registry.plugins.filter((plugin) => plugin.enabled && !plugin.failure && plugin.builtIn && !!plugin.manifest.ccb?.permissions?.includes("app")).map((plugin) => plugin.manifest.name).sort();
+  }
+
+  // ------------------------------------------------------------------------------------------
   // Approvals a plugin's frame asks for (plugin-extraction.md W4, `ccb.requestApproval`)
 
   /** A plugin on now (enabled, not failed) that may ask: it has a frame of its own (a web part). */
@@ -885,6 +919,38 @@ export class Plugins {
         const { plugin } = this.asked(PluginOnly, params);
         this.needs(plugin, "sessions", "Reading the bots' folders");
         return world.sessionBots?.() ?? [];
+      }
+      case "app.state": {
+        const { plugin } = this.asked(PluginOnly, params);
+        return this.appPlugin(plugin).state();
+      }
+      case "app.captureWindow": {
+        const { plugin } = this.asked(PluginOnly, params);
+        return this.appPlugin(plugin).captureWindow();
+      }
+      case "app.installAndRestart": {
+        const { plugin, data } = this.asked(AppInstallParams, params);
+        const app = this.appPlugin(plugin);
+        const state = app.state();
+        if (!installCommandOK(data.command, state.dataDir)) throw new Error("That is not the install script of this Botling.");
+        app.installAndRestart(data.command, data.log);
+        return null;
+      }
+      case "app.card": {
+        const { plugin, data } = this.asked(AppCardParams, params);
+        const index = await this.appPlugin(plugin).card(data.text, data.choices, data.source);
+        return index === null ? null : { index };
+      }
+      case "app.tell": {
+        const { plugin, data } = this.asked(AppTellParams, params);
+        if (!this.appPlugin(plugin).tell(data.bot, data.kind, data.text, data.files ?? [])) throw new Error("No such bot.");
+        return null;
+      }
+      case "app.briefing": {
+        const { plugin, data } = this.asked(AppBriefingParams, params);
+        this.appPlugin(plugin);
+        this.briefings.set(plugin.manifest.name, data.briefing);
+        return null;
       }
       case "workspace.bots":
         this.asked(PluginOnly, params);

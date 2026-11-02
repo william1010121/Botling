@@ -165,7 +165,7 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
 /**
  * Developer mode (1.x's Settings → Developer): one project is Botling's own source and gets what you flag as
  * "not right" in any chat, with the chat around it; its manager may install builds it made (you confirm on a card in
- * the main bot's chat) and see the app's window (core/app-swap.ts).
+ * the main bot's chat) and see the app's window (botling.dev and core/self-update.ts).
  */
 /**
  * Settings → Shortcuts: every key the app handles, grouped, with its action and current key, then the keys plugins

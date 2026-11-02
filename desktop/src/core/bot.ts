@@ -5826,10 +5826,10 @@ export function preview(record: ChatRecord): string {
 }
 
 /** Tags held back while still being written, and those that end with their opening `>` (attributes only). */
-const BLOCK_TAGS = ["choices", "show", "component", "new-bot", "sub-bot", "new-project", "plugin", "install-build", "install", "need-folder",
+const BLOCK_TAGS = ["choices", "show", "component", "new-bot", "sub-bot", "new-project", "plugin", "install", "need-folder",
   "give-component", "take-component", "suggest-component", "component-spec", "component-declined", "open-question", "no-reply",
-  "task", "reaction", "decision-ref", "app-screenshot", "end", "block", "agent-message", "agent-stop"];
-const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-question", "app-screenshot", "agent-stop"]);
+  "task", "reaction", "decision-ref", "end", "block", "agent-message", "agent-stop"];
+const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-question", "agent-stop"]);
 
 /**
  * The reply so far as the chat shows it while it streams: the app's complete tags taken out, and

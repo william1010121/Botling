@@ -1,0 +1,28 @@
+{
+  "name": "botling.dev",
+  "displayName": "Developer tools",
+  "version": "1.0.0",
+  "description": "For the project that is Botling's own source (Settings → Developer): its manager may install a build it made (<install-build>, you confirm on a card, a build that does not come up is rolled back by itself) and see the app's window (<app-screenshot/>), and hears how in its instructions.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "app",
+      "files"
+    ],
+    "host": "main.js",
+    "contributes": {
+      "replyTags": [
+        {
+          "tag": "install-build"
+        },
+        {
+          "tag": "app-screenshot"
+        }
+      ]
+    }
+  }
+}

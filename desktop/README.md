@@ -72,7 +72,7 @@ and resumed after the restart (`core/restart-continuation.ts`).
   signed build (a development or trial build) cannot update itself: install the next one by hand.
 - Windows builds are unsigned for now: the first install shows SmartScreen's warning; updates work.
 - A Linux `.deb` cannot update itself: Settings shows that a newer version exists and opens its release page. The AppImage updates itself.
-- A developer build made by a bot (`<install-build>`) is installed by `core/app-swap.ts`: a small script waits for the app to quit, swaps the
+- A developer build made by a bot (`<install-build>`) is installed by `builtin-plugins/botling.dev` (the script and its state) and `core/self-update.ts` (the `healthy` handshake): a small script waits for the app to quit, swaps the
   bundle, opens the new one, and puts the old one back if it has not come up after 90 seconds. That path is macOS only.
 - `scripts/release-check.mjs` checks the version, the lockfile, the profile and the tag agree, and with `--artifacts <dir> --platform mac|win|linux`
   that the installers and the feed are all there and the feed's checksums match.
