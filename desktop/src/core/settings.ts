@@ -13,6 +13,7 @@ import { messageWidth } from "../contract/message-width";
 import { normalizeOverrides } from "../contract/shortcuts";
 import { savedLanguage } from "./prompts";
 import { changeEngineDefaults, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
+import { specWriters } from "./spec-guard";
 
 export const LANGUAGES = ["en", "zh-Hant"] as const;
 export const BOT_MODELS = ["haiku", "sonnet", "opus"] as const;
@@ -168,7 +169,9 @@ export function launchSettings(raw: RawSettings) {
   return { subagentHourCache: settingsView(raw).subagentHourCache, defaultPrimaryEngine: engineDefaultsFor(raw).primary, autoMode: bool(raw.autoApprove, true),
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false), codexBypassPermissions: bool(raw.codexBypassPermissions, false), agyBypassPermissions: bool(raw.agyBypassPermissions, false),
     // Hidden (debugging only): "native" gives Claude heads their own Agent tool back instead of app-managed workers.
-    claudeWorkers: claudeWorkersMode(raw), claudeWorkerLimit: claudeWorkerLimit(raw) };
+    claudeWorkers: claudeWorkersMode(raw), claudeWorkerLimit: claudeWorkerLimit(raw),
+    // Which models' app-managed workers may write spec/ (spec-guard.ts); bot heads are not restricted.
+    specWriters: specWriters(raw) };
 }
 
 /** settings.json's `claudeWorkerLimit`: how many Claude workers of one bot may be at work at once (1–16; default 4); more wait for a slot. */

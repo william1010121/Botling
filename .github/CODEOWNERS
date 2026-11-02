@@ -1,0 +1,4 @@
+# spec/ (protocol models, reference machines, conformance tests) and the adapters that bind them to the app are
+# changed only by the strong model and people: every change is reviewed by the owner (AGENTS.md, "Spec program").
+/spec/ @william1010121
+/desktop/spec-adapters/ @william1010121

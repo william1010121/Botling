@@ -24,6 +24,7 @@ import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
+import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 
 /** What the adapter needs of a worker's process (ClaudeHead; a fake in tests). */
@@ -126,6 +127,8 @@ export interface ClaudeWorkersOptions {
   settleMs?: number;
   /** How many workers may be at work in their own processes at once (settings.json `claudeWorkerLimit`); more wait for a slot. */
   maxRunning?(): number;
+  /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). */
+  specWriters?(): readonly string[];
   home?: string;
   /** The core's log lines (a run's verdict, a failed delivery). */
   log?(line: string): void;
@@ -164,7 +167,7 @@ interface Proc {
 }
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
-export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home">;
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters">;
 
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
@@ -232,6 +235,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
       model: this.model(r, base), monitorWorker: true, appMcp: null, agentGuard: CLAUDE_WORKER_GUARD,
+      specGuard: { writers: this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       systemPrompt: [CLAUDE_WORKER_POLICY, def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
       ...(def?.tools ? { tools: def.tools } : {}),

@@ -19,6 +19,7 @@ import { AgyWorkers, agyWorkerHost } from "./agy-workers";
 import type { WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 import type { CodexItem } from "./codex";
 import { AGY_LOCAL_TOOLS, AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
+import { DEFAULT_SPEC_WRITERS, maySpecWrite } from "../spec-guard";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 
 export const ACP_VERSION = "1.4.3";
@@ -437,7 +438,8 @@ export class AgyAcpHead {
     if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.wiring.sink ?? this.handlers.onItem,
       (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
       (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h,this.tree)), this.wiring.core);
-    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item), this.config.addDirs);
+    this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item), this.config.addDirs,
+      () => this.config.worker === true && !maySpecWrite(this.config.model, this.config.specWriters ?? DEFAULT_SPEC_WRITERS));
     return this.bridge.start().then(server => [server]);
   }
   send(text: string, uuid: string, images: string[] = []) {
