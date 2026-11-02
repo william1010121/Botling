@@ -29,7 +29,7 @@ export const SHOT_JS = (protocolVersion: number) => `(() => {
   let next = 0, ready = false, state = null;
   const waiting = new Map();
   window.botling.subscribe((message) => { const done = waiting.get(message && message.id); if (done) { waiting.delete(message.id); done(message); } });
-  const push = () => { if (ready && state) frame.contentWindow.postMessage({ botling: "state", state, extras: { botId: state.botID, running: false, cards: {}, states: {} } }, chat); };
+  const push = () => { if (ready && state) frame.contentWindow.postMessage({ botling: "state", state, extras: { botId: state.botID, running: false, states: {} } }, chat); };
   window.addEventListener("message", (event) => {
     if (event.source !== frame.contentWindow || event.origin !== chat) return;
     const message = event.data;

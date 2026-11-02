@@ -1,12 +1,12 @@
-// Botling Web has no botling-card:// scheme (Electron main serves component and card pages there).
+// Botling Web has no botling-card:// scheme (Electron main serves component pages there).
 // A data:/blob:/srcdoc page would inherit the chat page's CSP (no inline script), so the web draws
 // each page in a small host page the bridge serves, `/mobile/frame-host.html`:
 //  - its response CSP has `sandbox allow-scripts` (an opaque origin even if someone frames or opens it
 //    elsewhere: no cookies, storage, bridge or app page), no network, no frames, no forms;
 //  - its only script takes one page from its parent (postMessage) and writes it into itself;
-//  - the page starts with the desktop's own CSP (cardPage/CARD_CSP, COMPONENT_CSP), which narrows it more.
+//  - the page starts with the desktop's own CSP (COMPONENT_CSP), which narrows it more.
 // The frame keeps sandbox="allow-scripts". Nothing is uploaded or stored; no command is sent.
-import { cardPage, COMPONENT_CSP, PANEL_CSP } from "../main/card-page";
+import { COMPONENT_CSP, PANEL_CSP } from "../main/card-page";
 
 export const FRAME_HOST = "frame-host.html";
 
@@ -16,13 +16,6 @@ export function componentHostPage(html: string, panel = false): string {
   const head = /<head(?:\s[^>]*)?>/i.exec(html);
   return head ? html.slice(0, head.index + head[0].length) + meta + html.slice(head.index + head[0].length) : meta + html;
 }
-
-/** A Phase 0 card's page (main's cardPage, CARD_CSP). */
-export const cardHostPage = (html: string) => cardPage(html);
-
-/** A Phase 0 card's frame on the desktop (main serves it). */
-export const desktopCardURL = (botId: string, messageId: string, cardId: string) =>
-  `botling-card://card/${encodeURIComponent(botId)}/${encodeURIComponent(messageId)}/${encodeURIComponent(cardId)}`;
 
 const latest = new WeakMap<HTMLIFrameElement, string>();
 /** Loads the host into a sandboxed frame and hands it its page once loaded (only the latest page). */

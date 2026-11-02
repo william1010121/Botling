@@ -44,7 +44,7 @@ Channels are fixed in `src/editor-host-wire.ts`: `botling:editor:bound`, `:unbou
 
 ## Protocol contract for input worker
 
-No edits were made to the input-owned `chat-frame/protocol.ts`. The additional wire module owns transport only. Up payloads retain existing action/link provenance, `card.save`/`card.action` requests, stop, message width and component-page requests. Arbitrary core commands are rejected. `hostObservation` may carry `{chatId, intentEpoch, revision}` as metadata; it cannot change ownership or text. Up is capped at 1 MiB; down at 16 MiB. Cycles/invalid packets are refused.
+No edits were made to the input-owned `chat-frame/protocol.ts`. The additional wire module owns transport only. Up payloads retain existing action/link provenance, stop, message width and component-page requests. Arbitrary core commands are rejected. `hostObservation` may carry `{chatId, intentEpoch, revision}` as metadata; it cannot change ownership or text. Up is capped at 1 MiB; down at 16 MiB. Cycles/invalid packets are refused.
 
 Down retains state, plugins, card/business replies, width, spec and task observations. `focus`, `recoverFocus`, key events, edit replay and composition transport are absent/refused. Explicit native focus/initial-owner selection stays main-owned and is **not implemented by this transport**. Any future explicit focus operation needs the existing real user-intent/cancellation semantics and separate owner integration; no delayed event may become an editing commit.
 

@@ -33,7 +33,7 @@ it("the actual bot coordinator constructor explicitly retains monitor eligibilit
   const dir = tempDir("monitor-coordinator"), profile = mainProfile(dir);
   mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine: "claude" }));
-  const bot = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")),
+  const bot = new Bot({ profile, deferStartup: true, ledger: new ProcessLedger(join(dir, "ledger.json")),
     headConfig: () => ({ ...base, monitorWorker: undefined }), prompts: () => botPrompts({ profile, engine: "claude" }),
     emit() {}, log() {}, approvalTimeoutMs: 60000, idleMs: 60000, interruptGraceMs: 1 });
   try {

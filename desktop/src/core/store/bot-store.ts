@@ -54,10 +54,6 @@ export class BotStore {
     return join(this.directory, name);
   }
 
-  get hasChat(): boolean {
-    return existsSync(this.path("chat.json"));
-  }
-
   /**
    * The chat lines. Lines 1.x would not decode are left out of what 2.0 shows; `dropped` counts
    * them, and a store with dropped lines is not written back until the chat changes.

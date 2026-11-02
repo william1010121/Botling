@@ -8,7 +8,7 @@
 // - nil optionals not at all (the key is left out).
 // Swift's decoder ignores keys it does not know, and fails the *whole* file if one element has a
 // wrong type. So 2.0 keeps every key it does not understand as it was, writes 1.x-typed values
-// for the keys 1.x knows, and adds its own keys (`turnID`, `state`, `cards`, `error`) beside them.
+// for the keys 1.x knows, and adds its own keys (`turnID`, `state`, `error`) beside them.
 import { randomUUID } from "node:crypto";
 
 /** 2001-01-01T00:00:00Z in ms: Swift's reference date. */
@@ -51,9 +51,6 @@ export interface StepRecord {
 /** `MessageReaction`: an emoji on a line, and who put it there ("user", "head:claude"). */
 export interface ReactionRecord { emoji: string; actor: string }
 
-/** A Phase 0 card (2.0 only; 1.x draws components by name from its library instead). */
-export interface CardRecord { id: string; html: string; data: string | null }
-
 /** `ChatMessage` in Models.swift, plus 2.0's own keys. Unknown keys are kept as they were. */
 export interface ChatRecord {
   id: string;
@@ -94,7 +91,6 @@ export interface ChatRecord {
   // ---- 2.0 only (1.x ignores these) ----
   turnID?: string;
   state?: "streaming" | "done" | "stopped" | "failed";
-  cards?: CardRecord[];
   error?: string;
   /** An agent move's notice or relay (`<move id>:<who>`): posted once per move (core/agent-relay.ts). */
   moveNotice?: string;

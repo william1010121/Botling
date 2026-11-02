@@ -27,7 +27,7 @@ function fixture(pin: Record<string, unknown>, records: unknown[] = []) {
   const commands = new ComponentCommands(join(root, "approved.json"), async (command) => { calls.push(command); return { data: '"ok"', ranAt: Date.now() }; });
   const components = new ComponentsContext(root, () => [lib], commands);
   const profile = mainProfile(root);
-  const bot = new Bot({ profile, engine: "claude", deferStartup: true, welcome: false, components,
+  const bot = new Bot({ profile, engine: "claude", deferStartup: true, components,
     headConfig() { throw Error("no CLI"); }, prompts() { throw Error("no turn"); },
     ledger: new ProcessLedger(join(root, "ledger.json")), emit: () => {}, log: vi.fn(),
     approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });

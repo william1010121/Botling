@@ -1,19 +1,17 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
+import type { BotView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
 import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
 import { menuItems, slashMenu } from "./plugin-commands";
 
-/** What the chat frame needs besides the page's own state: Phase 0 cards and turn states. */
+/** What the chat frame needs besides the page's own state: turn states. */
 export interface FrameExtras {
   botId: string;
   running: boolean;
-  /** Each message's cards (sandboxed frames the desktop draws into its bubble). */
-  cards: Record<string, CardView[]>;
   /** Each message's turn state, for `data-state` on its row. */
   states: Record<string, string>;
 }
@@ -211,10 +209,10 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
   const activeHead = activeRun?.head ?? chat.messages.find((message) => message.id === activeRun?.messageId)?.engine;
   const two = (chat.heads?.engines.length ?? bot.heads?.length ?? 1) > 1;
   const engines = chat.heads?.engines ?? bot.heads ?? ["claude"];
-  const extras: FrameExtras = { botId: bot.id, running: runs.length > 0, cards: {}, states: {} };
+  const extras: FrameExtras = { botId: bot.id, running: runs.length > 0, states: {} };
   // A running reply shows once it has words; before that the typing bubble shows its steps.
   const runningIds = new Set(runs.map((run) => run.messageId));
-  const shown = chat.messages.filter((message) => !(runningIds.has(message.id) && !message.text && !message.cards?.length));
+  const shown = chat.messages.filter((message) => !(runningIds.has(message.id) && !message.text));
   const runningShown = !!running && shown.some((message) => message.id === running.messageId);
   const chips = taskChips(chat.tasks ?? [], chat.messages, !!running, now);
   // ChatPayload.shownBackgroundTasks/backgroundRowIndex: one row at the latest bot reply/notice, with
@@ -227,7 +225,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
   if (backgroundRow) background.push(...routineChips(chat.routines ?? [], backgroundRow, now));
   const lastYours = shown.findLastIndex((message) => message.role === "user");
   const messages: WebMessage[] = shown.map((message, index) => {
-    if (message.cards?.length) extras.cards[message.id] = message.cards;
     if (message.state) extras.states[message.id] = message.state;
     const run = runs.find((candidate) => candidate.messageId === message.id);
     const choices: WebChoice[] | null = message.choices?.map((choice) => ({ label: choice.label, detail: choice.detail, recommended: choice.recommended, action: choice.action })) ?? null;
@@ -346,7 +343,7 @@ function clock(iso: string | null): string | null {
  */
 export function subagentState(bot: BotView, subagent: SubagentView): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
-  const extras: FrameExtras = { botId: bot.id, running: false, cards: {}, states: {} };
+  const extras: FrameExtras = { botId: bot.id, running: false, states: {} };
   const line = (id: string, role: "user" | "bot" | "error", text: string, steps: WebStep[], time: string | null = null): WebMessage => ({
     id: `${subagent.id}-${id}`, role, text, stamp: null, avatar: role === "bot" ? face : null, choices: null, chosen: null, answer: null, open: false,
     attachments: null, replyTo: null, replyPreview: null, openable: false, speaker: role === "user" ? bot.name : null,

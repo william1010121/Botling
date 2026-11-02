@@ -109,7 +109,7 @@ describe("Claude editor transport ownership", () => {
     const { head, task, processes, items } = transport();
     const root = tempDir("editor-approved-rule");
     const profile = maintainerProfile(root, "maintain");
-    const bot = new Bot({ profile, engine: "codex", deferStartup: true, welcome: false,
+    const bot = new Bot({ profile, engine: "codex", deferStartup: true,
       approvalTimeoutMs: 60_000, idleMs: 60_000, interruptGraceMs: 10,
       headConfig() { throw new Error("No other CLI may launch"); }, prompts: () => botPrompts({ profile, engine: "codex" }),
       ledger: new ProcessLedger(join(root, "ledger.json")), emit() {}, log() {} });

@@ -4,8 +4,8 @@ import {EDITOR_URL,EDITOR_ARGUMENT,EDITOR_CHANNEL,editorMessageAllowed,editorPre
 import {editorBridge} from '../../src/preload/editor-bridge';
 const peer=(id:number,url:string):EditorContents=>({id,mainFrame:{url},isDestroyed:()=>false});
 const shell=()=>peer(1,'app://botling/index.html'),editor=()=>peer(2,EDITOR_URL);
-const message={botling:'request',id:1,cmd:{type:'card.save',botId:'6A0B0000-0000-4000-8000-000000000002',messageId:'0B07E11C-0000-4000-8000-00000000C0DE',cardId:'c-counter',data:'{"count":1}'}};
-it('routes existing card saves and state only between the registered independent root documents',()=>{
+const message={botling:'messageWidth',value:640};
+it('routes editor messages and state only between the registered independent root documents',()=>{
  const boundary=new EditorHostBoundary(),a=shell(),b=editor(),stamp=boundary.bind(a,b);
  expect(boundary.route('up',{sender:b,senderFrame:b.mainFrame},{stamp,message})?.recipient).toBe(a);
  expect(boundary.route('down',{sender:a,senderFrame:a.mainFrame},{stamp,message:{botling:'state',state:{},extras:{}}})?.recipient).toBe(b);
@@ -82,7 +82,7 @@ it('delivers decoded snapshot metadata only to the authenticated shell bridge, w
 
 it('routes state deltas only down the authenticated pair and rejects stale stamps or upward injection',()=>{
  const boundary=new EditorHostBoundary(),a=shell(),b=editor(),stamp=boundary.bind(a,b);
- const delta={botling:'stateDelta',botID:'B',baseRevision:1,revision:2,patch:{order:['m'],changed:[]},extras:{botId:'B',running:false,cards:{},states:{}}};
+ const delta={botling:'stateDelta',botID:'B',baseRevision:1,revision:2,patch:{order:['m'],changed:[]},extras:{botId:'B',running:false,states:{}}};
  const shellEvent={sender:a,senderFrame:a.mainFrame};
  expect(boundary.route('down',shellEvent,{stamp,message:delta})?.recipient).toBe(b);
  expect(boundary.route('up',{sender:b,senderFrame:b.mainFrame},{stamp,message:delta})).toBeNull();

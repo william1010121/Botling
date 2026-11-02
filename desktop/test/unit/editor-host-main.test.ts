@@ -28,9 +28,9 @@ it('creates only a sandboxed separate native root with narrow preload, no focus/
  expect((f.view as any).options.webPreferences).toMatchObject({preload:'/Volumes/My-SSD/synthetic/desktop/out/preload/editor-host.cjs',sandbox:true,contextIsolation:true,nodeIntegration:false,nodeIntegrationInSubFrames:false,nodeIntegrationInWorker:false,webSecurity:true,additionalArguments:['--botling-editor-host=1']});
  expect(nativeEditorNavigation(contents,{isMainFrame:true,url:EDITOR_URL})).toBe(true);await f.ready;
  expect(f.owner.show).not.toHaveBeenCalled();expect(f.owner.focus).not.toHaveBeenCalled();expect(nativeEditorNavigation(contents,{isMainFrame:true,url:EDITOR_URL})).toBe(false);
- expect(nativeEditorNavigation(contents,{isMainFrame:false,url:'botling-card://card/synthetic',frame:{parent:root} as any,initiator:root})).toBe(true);
+ expect(nativeEditorNavigation(contents,{isMainFrame:false,url:'botling-card://page/synthetic',frame:{parent:root} as any,initiator:root})).toBe(true);
  expect(nativeEditorNavigation(contents,{isMainFrame:false,url:'botling-card://preview/synthetic',frame:{parent:{parent:root,url:'botling-card://page/synthetic'}} as any})).toBe(true);
- for(const url of ['app://botling/index.html','https://example.invalid','file:///synthetic','botling-chat://chat/chat.html'])expect(nativeEditorNavigation(contents,{isMainFrame:false,url,frame:{parent:root} as any,initiator:root})).toBe(false);
+ for(const url of ['app://botling/index.html','https://example.invalid','file:///synthetic','botling-chat://chat/chat.html','botling-card://card/synthetic'])expect(nativeEditorNavigation(contents,{isMainFrame:false,url,frame:{parent:root} as any,initiator:root})).toBe(false);
 });
 it('main relay and layout authenticate the exact shell/editor roots; plugin messages cannot move or privilege the view',async()=>{
  const f=fixture(),stamp=await f.ready,contents=f.view.webContents,bounds={x:200,y:60,width:600,height:600},layout=(f.view as any).setBounds;layout.mockClear();

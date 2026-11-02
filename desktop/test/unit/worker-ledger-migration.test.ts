@@ -23,7 +23,7 @@ const CUT = "22222222-2222-4222-8222-222222222222";
 const SESSION = "33333333-3333-4333-8333-333333333333";
 
 function bot(root: string, usage = vi.fn()) {
-  const made = new Bot({ profile: mainProfile(root), engine: "claude", deferStartup: true, welcome: false,
+  const made = new Bot({ profile: mainProfile(root), engine: "claude", deferStartup: true,
     headConfig() { throw Error("No CLI in migration tests"); }, prompts() { throw Error("No turn"); },
     ledger: new ProcessLedger(join(root, "ledger.json")), emit: () => undefined, log: vi.fn(), usage,
     approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });

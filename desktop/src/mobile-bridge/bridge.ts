@@ -63,7 +63,7 @@ export const webChatCSP = (origin: string) => [
   "media-src 'self' data: blob:", `frame-src ${origin}/mobile/frame-host.html`, "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'", "frame-ancestors 'self'",
 ].join('; ');
 /** The frame host: always an opaque origin (`sandbox`, even opened or framed elsewhere), inline script for
- * the component it is handed (which adds the desktop's COMPONENT_CSP/CARD_CSP), and no network, frames or forms. */
+ * the component it is handed (which adds the desktop's COMPONENT_CSP), and no network, frames or forms. */
 export const frameHostCSP = (origin: string) => [
   'sandbox allow-scripts', "default-src 'none'", `script-src ${origin}/mobile/frame-host.js 'unsafe-inline' blob:`, "style-src 'unsafe-inline'",
   'img-src data: blob:', 'font-src data:', 'media-src data: blob:', "connect-src 'none'", "frame-src 'none'", "child-src 'none'", "worker-src 'none'",

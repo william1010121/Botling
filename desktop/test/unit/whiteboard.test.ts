@@ -502,7 +502,7 @@ describe("whiteboard page", () => {
     const dir = tempDir("whiteboard-app");
     const profile = mainProfile(dir);
     mkdirSync(profile.storeDir, { recursive: true });
-    const owner = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });
+    const owner = new Bot({ profile, deferStartup: true, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });
     const snapshot = (): ResultOf<"chat.snapshot"> => ({ epoch: "test", seq: 0, bots: [owner.view(), site], imported: null, chat: owner.snapshot(), components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null } });
     const store = new WorkspaceStore(async () => snapshot());
     await store.resync();

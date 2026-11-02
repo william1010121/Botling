@@ -29,7 +29,7 @@ import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
-import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } from "./card-page";
+import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { attachmentFile, attachmentTarget } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
@@ -93,7 +93,6 @@ if (!shotMode) startup.setFile(join(profileDir, "logs", "startup.log"));
 if (process.env.BOTLING_MOCK_KEYCHAIN === "1") app.commandLine.appendSwitch("use-mock-keychain");
 
 const APP_ORIGIN = "app://botling";
-const CARD_PREFIX = "botling-card://card/";
 /** Component pages (Web/src's `componentPage`) the chat page hands over for its sandboxed frames. */
 const PAGE_PREFIX = "botling-card://page/";
 /** Result pages for preview cards (Phase 5c; core/page-preview.ts). */
@@ -617,8 +616,8 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     }
     if (!isApp) return; // A website's own frames are the website's business.
     // In the app, a frame may show the chat page (only as the app page's own child, put there by
-    // it) or a card (put there by the app page or the chat page). A card that navigates itself (to
-    // anything) is refused: it would otherwise take over another card's identity.
+    // it) or a component page (put there by the app page or the chat page). A page that navigates
+    // itself (to anything) is refused: it would otherwise take over another page's identity.
     const mainFrame = contents.mainFrame;
     const initiator = details.initiator;
     const chatFrame = (frame: Electron.WebFrameMain | null | undefined) =>
@@ -627,7 +626,7 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     let allowed = false;
     if (details.url === CHAT_URL || details.url.startsWith(`${CHAT_URL}?`)) {
       allowed = (!hasNativeEditorHost(contents)||details.url===`${CHAT_URL}?spec=1`) && parent === mainFrame && (!initiator || initiator === mainFrame);
-    } else if (details.url.startsWith(CARD_PREFIX) || details.url.startsWith(PAGE_PREFIX)) {
+    } else if (details.url.startsWith(PAGE_PREFIX)) {
       allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
       // A tile a plugin's panel asked for (`ccb.tile`), inside that panel.
       if (!allowed) allowed = tileNavigation(details.url, parent ? { url: parent.url, childOfApp: parent.parent === mainFrame } : null, !initiator || initiator === parent,
@@ -765,13 +764,7 @@ function serveApp() {
         return new Response("Not found", { status: 404 });
       }
     }
-    const [botId, messageId, cardId] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-    if (url.host !== "card" || !botId || !messageId || !cardId) return new Response("Not found", { status: 404 });
-    const response = await core.request({ type: "card.html", botId, messageId, cardId });
-    if (!response.ok) return new Response("Not found", { status: 404 });
-    return new Response(cardPage((response.result as { html: string }).html), {
-      headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": CARD_CSP, "X-Content-Type-Options": "nosniff" },
-    });
+    return new Response("Not found", { status: 404 });
   });
 }
 

@@ -1,6 +1,6 @@
 // The chat frame (app://botling/chat.html): the Swift app's chat page from Web/src, unchanged,
 // fed with state by the app page. On top of it the desktop adds what the page does not have yet:
-// Phase 0's sandboxed cards in their bubbles and a Stop button in the input box. KaTeX is the built-in
+// a Stop button in the input box. KaTeX is the built-in
 // ccb-latex plugin, which arrives with the other plugins' web parts (Botling Web bundles it).
 import { unpackChatAvatars } from "../chat-avatar-wire";
 import { observeTraceEditor } from "./input-trace-chat";
@@ -13,10 +13,8 @@ import { isSummaryReply } from "../../contract/summary";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
-import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
-import { WEB, type FrameMessage } from "./protocol";
-import { cardHostPage, desktopCardURL, showInHost } from "../web-pages";
+import { WEB } from "./protocol";
 import { toShell, fromShell, nativeChat, installNativeShellCommands, setShortcutBindings } from "./transport";
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
@@ -49,53 +47,11 @@ if (nativeChat) {
 }
 const column = installMessageWidth((value) => toShell({ botling: "messageWidth", value }), (active) => toShell({ botling: "messageWidthDrag", active }));
 
-// ---------------------------------------------------------------------------------------------
-// Card requests go to the app page, which owns the contract client.
-
-let nextRequest = 0;
-const waiting = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
-function request(cmd: Extract<FrameMessage, { botling: "request" }>["cmd"]): Promise<void> {
-  const id = ++nextRequest;
-  return new Promise((resolve, reject) => {
-    waiting.set(id, { resolve, reject });
-    if (!toShell({ botling: "request", id, cmd })) { waiting.delete(id); reject(new Error("Editor disconnected")); }
-  });
-}
-
-const broker = new CardBroker({
-  save: (target, data) => request({ type: "card.save", botId: target.botId, messageId: target.messageId, cardId: target.cardId, data }),
-  action: (target, name, value) => request({ type: "card.action", botId: target.botId, messageId: target.messageId, cardId: target.cardId, name, value }),
-});
-// For end-to-end tests and diagnostics: what the broker refused and accepted.
-(window as unknown as { __botlingBroker: CardBroker }).__botlingBroker = broker;
-
-interface DrawnCard { element: HTMLElement; target: CardTarget; unregister: () => void; data: string | null; loaded: boolean }
-const cards = new Map<string, DrawnCard>();
-
-function cardElement(botId: string, messageId: string, cardId: string, html: string): DrawnCard {
-  const element = document.createElement("div");
-  element.className = "card";
-  element.dataset.card = cardId;
-  const frame = document.createElement("iframe");
-  frame.setAttribute("sandbox", "allow-scripts");
-  frame.setAttribute("referrerpolicy", "no-referrer");
-  frame.title = "Card";
-  frame.style.height = "80px";
-  if (WEB) showInHost(frame, cardHostPage(html));
-  else frame.src = desktopCardURL(botId, messageId, cardId);
-  element.append(frame);
-  const target: CardTarget = { botId, messageId, cardId, frame, onSize: (height) => { frame.style.height = `${Math.max(40, Math.min(height, 900))}px`; } };
-  const drawn: DrawnCard = { element, target, unregister: broker.register(target), data: null, loaded: false };
-  // A frame loads again when its element moves (the page redrew the message): send its data again.
-  frame.addEventListener("load", () => { drawn.loaded = true; broker.sendData(target, drawn.data); });
-  return drawn;
-}
-
 let lastExtras: FrameExtras | null = null;
 let decorateQueued = false;
 /**
  * The page redraws rows by itself too (a plugin loading, the language changing): whenever its
- * list of rows changes, the cards and states go back on.
+ * list of rows changes, the states go back on.
  */
 function watchRows() {
   const list = document.getElementById("messages");
@@ -108,7 +64,7 @@ function watchRows() {
 }
 watchRows();
 
-/** Puts each message's cards in its bubble, and its turn state on its row. */
+/** Puts each message's turn state on its row. */
 function decorate(extras: FrameExtras) {
   lastExtras = extras;
   const list = document.getElementById("messages");
@@ -118,32 +74,6 @@ function decorate(extras: FrameExtras) {
     const state = extras.states[row.dataset.id!];
     if (state) row.dataset.state = state;
     else delete row.dataset.state;
-  }
-  const keep = new Set<string>();
-  for (const [messageId, list_] of Object.entries(extras.cards)) {
-    const row = list.querySelector<HTMLElement>(`.row[data-id="${CSS.escape(messageId)}"]`);
-    const host = row?.querySelector<HTMLElement>(".bot-bubble, .notice-bubble");
-    if (!host) continue;
-    for (const card of list_) {
-      const key = `${extras.botId}/${messageId}/${card.id}`;
-      keep.add(key);
-      let drawn = cards.get(key);
-      if (!drawn) {
-        drawn = cardElement(extras.botId, messageId, card.id, card.html);
-        cards.set(key, drawn);
-      }
-      if (drawn.element.parentElement !== host) host.append(drawn.element);
-      if (drawn.data !== card.data) {
-        drawn.data = card.data;
-        if (drawn.loaded) broker.sendData(drawn.target, card.data);
-      }
-    }
-  }
-  for (const [key, drawn] of cards) {
-    if (keep.has(key)) continue;
-    drawn.unregister();
-    drawn.element.remove();
-    cards.delete(key);
   }
 }
 
@@ -216,12 +146,6 @@ fromShell(message => {
     if (document.documentElement.dataset.chat === message.botID) window.ccb.taskOutput(message.messageID, message.taskID, message.text);
   } else if (message.botling === "detailReply") {
     window.ccb.detailReply(message.requestID, message.ok, message.value);
-  } else if (message.botling === "response") {
-    const entry = waiting.get(message.id);
-    if (!entry) return;
-    waiting.delete(message.id);
-    if (message.ok) entry.resolve();
-    else entry.reject(new Error(message.error ?? "refused"));
   }
 });
 
@@ -252,10 +176,7 @@ function keepTyped(early: { text: string; cursor: number }) {
 const takeFocusBack = nativeChat ? () => false : installInputRecovery(composerView, toShell);
 
 nativeChat?.subscribe(packet => {
-  if ("unbound" in packet) {
-    for (const entry of waiting.values()) entry.reject(new Error("Editor disconnected"));
-    waiting.clear();
-  } else if ("bound" in packet) {
+  if ("bound" in packet) {
     // Web/src may have announced ready before main could authenticate the two loaded roots.
     // Rebind only refreshes business state; the live editor, history and composition stay intact.
     toShell({ botling: "action", action: { type: "ready" } });

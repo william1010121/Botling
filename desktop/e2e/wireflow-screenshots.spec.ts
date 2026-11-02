@@ -55,7 +55,7 @@ test.describe("Wireflow Automated Screenshot Pipeline & Verification", () => {
     }
   });
 
-  test("Capture S1, S2, E1, M1: Chat states (初始、串流、中斷與沙箱卡片)", async () => {
+  test("Capture S1, S2, E1: Chat states (初始、串流與中斷)", async () => {
     test.setTimeout(60_000);
     const { app } = await launch({ waitForState: false, env: { FAKE_CLAUDE_MODE: "slow" } });
     try {
@@ -65,20 +65,11 @@ test.describe("Wireflow Automated Screenshot Pipeline & Verification", () => {
 
       const editor = await until(() => app.context().pages().find(p => p.url().includes("nativeHost=1")), { what: "native editor page" });
       await editor.locator('html[data-chat]').waitFor({ state: 'attached' });
-      await until(async () => (await editor.locator(".row[data-id]").count()) > 0, { what: "chat rows ready" });
+      await editor.locator(".composer").waitFor();
 
       // S1: Welcome and Idle State
       await captureWindow(app, "S1.png");
       expect(existsSync(join(screensDir, "S1.png"))).toBe(true);
-
-      // M1: Sandboxed counter card in chat
-      const cardEl = editor.locator('[data-card="c-counter"]');
-      if (await cardEl.count() > 0) {
-        await cardEl.first().screenshot({ path: join(screensDir, "M1.png") });
-      } else {
-        await captureWindow(app, "M1.png");
-      }
-      expect(existsSync(join(screensDir, "M1.png"))).toBe(true);
 
       // S2: Active Streaming Turn State
       const cm = editor.locator('.cm-content');
@@ -136,7 +127,7 @@ test.describe("Wireflow Automated Screenshot Pipeline & Verification", () => {
     const html = readFileSync(flowHtmlPath, "utf8");
 
     // All required State IDs are covered
-    const requiredStates = ["S1", "S2", "S3", "S4", "S5", "S6", "M1", "E1", "E2", "E3"];
+    const requiredStates = ["S1", "S2", "S3", "S4", "S5", "S6", "E1", "E2", "E3"];
     for (const id of requiredStates) {
       expect(html).toContain(`data-id="${id}"`);
     }
@@ -156,7 +147,7 @@ test.describe("Wireflow Automated Screenshot Pipeline & Verification", () => {
     }
 
     // Verify all 8 captured screenshots exist and have valid PNG signatures
-    const captured = ["S1.png", "S2.png", "S3.png", "S4.png", "S5.png", "S6.png", "E1.png", "M1.png"];
+    const captured = ["S1.png", "S2.png", "S3.png", "S4.png", "S5.png", "S6.png", "E1.png"];
     const pngMagic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     for (const file of captured) {
       const p = join(screensDir, file);

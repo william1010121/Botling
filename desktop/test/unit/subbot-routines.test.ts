@@ -39,7 +39,7 @@ function make(root: string, profile: BotProfile, events: any[], routineRuns?: Re
   mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine: "claude", heads: { engines: ["claude"], answerWith: "claude" }, ...(routineRuns ? { routineRuns } : {}) }));
   const bot = new Bot({
-    profile, deferStartup: true, welcome: false, ledger: { record() {}, forget() {} } as any,
+    profile, deferStartup: true, ledger: { record() {}, forget() {} } as any,
     headConfig(_p, c) { return { ...c, command: "/never-spawn", cwd: profile.folder, allowedTools: [] }; },
     codexConfig(_p, c) { return { command: "/never-spawn", cwd: profile.folder, threads: new CodexThreads(join(root, "threads")), sessionId: c.sessionId, resume: c.resume, model: c.codexModel, effort: c.effort, instructions: c.systemPrompt, workerInstructions: null }; },
     prompts: (engine, heads) => botPrompts({ profile, engine, heads }),

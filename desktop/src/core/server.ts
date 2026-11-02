@@ -409,7 +409,6 @@ export class Core {
         approvalTimeoutMs: options.approvalTimeoutMs ?? 10 * 60_000,
         idleMs: options.idleMs ?? 50 * 60_000,
         interruptGraceMs: options.interruptGraceMs ?? 2_000,
-        welcome: profile.id === MAIN_BOT_ID && !this.imported,
         projectBriefing: profile.role === "main" ? () => this.projectBriefing() : undefined,
         // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
         wakeNote: profile.role === "main" ? () => this.projectBriefing()
@@ -2606,9 +2605,6 @@ First write a test that shows this, then fix it.`;
       case "catchup.interval": return { started: this.catchUps.interval(this.bot(cmd.botId).catchUpChat(), cmd.userMessageId) };
       case "turn.stop": return this.bot(cmd.botId).stop(cmd.turnId);
       case "turn.await": return this.bot(cmd.botId).await(cmd.turnId, signal);
-      case "card.save": return this.bot(cmd.botId).cardSave(cmd.messageId, cmd.cardId, cmd.data);
-      case "card.action": return this.bot(cmd.botId).cardAction(cmd.messageId, cmd.cardId, cmd.name, cmd.value);
-      case "card.html": return { html: this.bot(cmd.botId).card(cmd.messageId, cmd.cardId).html } satisfies ResultOf<"card.html">;
       case "routines.list": return this.bot(cmd.botId).routinesView();
       case "routines.change": {
         const { type: _type, botId: _bot, requestId, ...rest } = cmd;

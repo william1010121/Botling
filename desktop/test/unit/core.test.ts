@@ -7,7 +7,6 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { alive, pidsIn, sleep, tempDir, until } from "../helpers";
 import { CoreHarness, MAIN } from "../core-harness";
 
-const WELCOME = "0B07E11C-0000-4000-8000-00000000C0DE";
 
 const harnesses: CoreHarness[] = [];
 const core = (dataDir: string, env?: Record<string, string>) => {
@@ -25,7 +24,7 @@ describe("core process", () => {
     const c = core(tempDir("core"));
     const snapshot = await c.call({ type: "chat.snapshot" });
     expect(snapshot.bots.map((bot: { id: string }) => bot.id)).toEqual([MAIN, "DEC0DE00-0000-4000-8000-00000000DEC0"]);
-    expect(snapshot.chat.messages[0].cards[0].id).toBe("c-counter");
+    expect(snapshot.chat.messages).toEqual([]);
     const { turnId, messageId } = await c.call({ type: "chat.send", botId: MAIN, text: "hello there" });
     const finished = await until(() => c.of("turn.finished")[0], { what: "turn.finished" });
     expect(finished.event).toMatchObject({ turnId, messageId, status: "done", text: "You said: hello there" });
@@ -121,18 +120,6 @@ describe("core process", () => {
     await sleep(200);
     expect(c.of("turn.delta").length).toBeGreaterThan(before); // Still streaming.
     await c.call({ type: "turn.stop", botId: MAIN, turnId });
-  });
-
-  it("card saves are checked by the core: unknown card, non-JSON and null are refused", async () => {
-    const c = core(tempDir("core"));
-    await c.call({ type: "chat.snapshot" });
-    const card = { botId: MAIN, messageId: WELCOME };
-    await expect(c.call({ type: "card.save", ...card, cardId: "c-nope", data: "{}" })).rejects.toThrow(/not_found/);
-    await expect(c.call({ type: "card.save", ...card, cardId: "c-counter", data: "not json" })).rejects.toThrow(/bad_request/);
-    await expect(c.call({ type: "card.save", ...card, cardId: "c-counter", data: "null" })).rejects.toThrow(/bad_request/);
-    await expect(c.call({ type: "card.action", ...card, cardId: "c-counter", name: "runShell", value: "ls" })).rejects.toThrow(/forbidden/);
-    expect(await c.call({ type: "card.save", ...card, cardId: "c-counter", data: '{"count":2}' })).toEqual({ saved: true });
-    expect(c.of("card.updated")[0]!.event).toMatchObject({ cardId: "c-counter", data: '{"count":2}' });
   });
 
   it("after a core crash mid-reply: the reply is marked interrupted (not re-sent) and the orphaned CLI tree is ended", async () => {

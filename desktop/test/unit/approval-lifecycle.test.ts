@@ -19,7 +19,7 @@ function harness(approvalTimeoutMs = 60_000) {
   mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine: "codex", heads: { engines: ["codex"], answerWith: "codex" } }));
   const events: any[] = [];
-  const bot = new Bot({ profile, deferStartup: true, welcome: false,
+  const bot = new Bot({ profile, deferStartup: true,
     ledger: new ProcessLedger(join(dir, "ledger.json")),
     headConfig() { throw new Error("No CLI needed for protocol replay"); },
     prompts: () => botPrompts({ profile, engine: "codex" }),

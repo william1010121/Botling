@@ -39,7 +39,7 @@ function bot(owner:'agy'|'codex'|'claude',folder=workspace()){
  const profile=mainProfile(folder);mkdirSync(profile.storeDir,{recursive:true});
  if(!existsSync(join(profile.storeDir,'bot.json')))writeFileSync(join(profile.storeDir,'bot.json'),JSON.stringify({engine:owner,heads:{engines:['claude','codex','agy'],answerWith:owner}}));
  const events:any[]=[];
- const b=new Bot({profile,deferStartup:true,welcome:false,ledger:{record(){},forget(){}} as any,headConfig(_p,c){return {...c,command:'/never-spawned',cwd:folder,allowedTools:[]};},
+ const b=new Bot({profile,deferStartup:true,ledger:{record(){},forget(){}} as any,headConfig(_p,c){return {...c,command:'/never-spawned',cwd:folder,allowedTools:[]};},
   agyConfig(_p,c){return {...c,transport:'acp',acpHome:join(profile.storeDir,'agy'),command:'/never-spawned'};},
   codexConfig(_p,c){return {command:'/never-spawned',cwd:folder,threads:new CodexThreads(join(profile.storeDir,'codex')),sessionId:c.sessionId,resume:c.resume,instructions:c.systemPrompt,workerInstructions:c.workerInstructions};},
   prompts:(engine,heads)=>botPrompts({profile,engine,heads}),emit:e=>events.push(e),log(){},idleMs:600_000,approvalTimeoutMs:10_000,interruptGraceMs:10});bots.push(b);return {b,folder,events};

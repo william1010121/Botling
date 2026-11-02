@@ -59,7 +59,7 @@ import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import {
-  ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
+  ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView, type WhiteboardPictureView,
 } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
@@ -77,7 +77,6 @@ import {
   applyingReaction, archiveAll, archiveLine, characterCount, characterPrefix, compareReactions, reactionIntro, reactionUpdate, recentChat,
   REACTION_PALETTE, reportNote, seenReactions, type SeenReactions,
 } from "./briefing";
-import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
 import { masked, parseReply, pluginTagNames, unsupportedRequest, type BotRequest, type PluginTag, type WhiteboardTag } from "./reply";
@@ -191,8 +190,6 @@ export interface BotOptions {
   tidyTimeoutMs?: number;
   /** On quit, how long an awake bot may tidy (0: not at all; unset or Infinity: as long as it takes, as in 1.x). */
   quitTidyMs?: number;
-  /** Give a new, empty chat the welcome lines (the main bot of a fresh install). */
-  welcome?: boolean;
   /** Candidate startup must not modify external project notes until its update commits. */
   deferStartup?: boolean;
   /** The main bot's routines get the project list (`Workspace.projectBriefing`). */
@@ -641,7 +638,7 @@ export class Bot {
     if (this.partners.has(other)) return this.partners.get(other)!;
     if (other === this.engine) return null;
     if (onDemand ? onDemand !== other : !this.headsSettings.engines.includes(other)) return null;
-    const partner = new Bot({ ...this.options, primary: this, engine: other, welcome: false });
+    const partner = new Bot({ ...this.options, primary: this, engine: other });
     this.partners.set(other, partner);
     // The shared chat holds the partner's lines too: the same records, so a change shows in both.
     const mine = new Map(this.records.map((record, index) => [record.id, index]));
@@ -760,10 +757,6 @@ export class Bot {
         else record.answer = NO_LONGER_NEEDED;
         changed = true;
       }
-    }
-    if (!records.length && this.options.welcome && !this.store.hasChat) {
-      records = welcomeMessages();
-      changed = true;
     }
     this.records = records;
     if (changed) this.persist();
@@ -2469,13 +2462,10 @@ export class Bot {
     if (parsed.whiteboard) this.owner.setWhiteboard(parsed.whiteboard);
     if (parsed.pluginTags) this.options.pluginTags?.(this.owner, parsed.pluginTags);
     const record: ChatRecord = { id: newId(), role: "bot", text: "", date: toSwiftDate(), state: "done", engine: this.engine };
-    let text = parsed.body;
-    const extracted = extractCards(text);
-    if (extracted) { text = extracted.text; record.cards = extracted.cards; }
-    record.text = text;
+    record.text = parsed.body;
     if (parsed.choices) record.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
     if (parsed.displays.length) record.displays = parsed.displays;
-    if (record.text || record.choices || record.displays || record.cards) {
+    if (record.text || record.choices || record.displays) {
       this.add(record);
       this.bumpUnread();
     }
@@ -3672,10 +3662,7 @@ export class Bot {
     turn.record = record;
     this.keepTasks(turn, record);
     let text = tags.body;
-    let cards: CardView[] | null = null;
     if (status === "done") {
-      const extracted = extractCards(text);
-      if (extracted) { text = extracted.text; cards = extracted.cards; record.cards = cards; }
       if (parsed.choices) record.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
       if (parsed.displays.length) {
         record.displays = parsed.displays;
@@ -3729,7 +3716,7 @@ export class Bot {
     }
     this.emit({
       type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: record.text,
-      ...(error ? { error: error.slice(0, 2_000) } : {}), ...(cards ? { cards: cards.map(cardView) } : {}),
+      ...(error ? { error: error.slice(0, 2_000) } : {}),
     });
     this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
     this.finished.set(turn.id, status);
@@ -5661,40 +5648,6 @@ export class Bot {
   }
 
   // ------------------------------------------------------------------------------------------
-  // Cards
-
-  card(messageId: string, cardId: string) {
-    const record = this.records.find((candidate) => candidate.id === messageId);
-    const card = record?.cards?.find((candidate) => candidate.id === cardId);
-    if (!card) throw new ContractError("not_found", "No such card.");
-    return card;
-  }
-
-  cardSave(messageId: string, cardId: string, data: string): ResultOf<"card.save"> {
-    const card = this.card(messageId, cardId);
-    try {
-      const value = JSON.parse(data);
-      if (value === null || value === undefined) throw new Error("null");
-    } catch {
-      throw new ContractError("bad_request", "ccb.save takes JSON data that is not null.");
-    }
-    card.data = data;
-    this.persist();
-    this.emit({ type: "card.updated", botId: this.id, messageId, cardId, data });
-    return { saved: true };
-  }
-
-  cardAction(messageId: string, cardId: string, name: string, value: string): ResultOf<"card.action"> {
-    this.card(messageId, cardId);
-    // Card actions are requests, not commands: the core decides what (if anything) they do. The
-    // only one so far is "say", which shows the value as a notice; nothing runs a shell or opens files.
-    if (name !== "say") throw new ContractError("forbidden", `Cards cannot ask for "${name}".`);
-    this.emit({ type: "card.acted", botId: this.id, messageId, cardId, name, value });
-    this.notice(`A card says: ${value}`);
-    return { accepted: true };
-  }
-
-  // ------------------------------------------------------------------------------------------
   // Core hot swap (hot-swap.ts): this bot and its partner head as one.
 
   holdForSwap(hold: boolean) {
@@ -6027,10 +5980,6 @@ export function stepView(step: StepRecord, subagents?: Pick<SubagentBook, "get">
   return view;
 }
 
-function cardView(card: { id: string; html: string; data: string | null }): CardView {
-  return { id: card.id, html: card.html, data: card.data };
-}
-
 /** A routines view without its next times (they move with the clock alone). */
 function routinesKey(view: ResultOf<"routines.list">): string {
   return JSON.stringify([view.error, view.routines.map((routine) => [routine.id, routine.status, routine.schedule, routine.timezone])]);
@@ -6117,7 +6066,6 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
   const view: MessageView = { id: record.id, role: record.role, text: record.text.slice(0, 400_000), time: swiftDateISO(record.date) };
   if (record.turnID && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.turnID)) view.turnId = record.turnID;
   if (record.state) view.state = record.state;
-  if (record.cards?.length) view.cards = record.cards.slice(0, 20).map(cardView);
   if (record.choices?.length) {
     view.choices = record.choices.slice(0, 20).map(choiceView);
     view.chosen = typeof record.chosen === "number" && record.chosen >= 0 ? record.chosen : null;

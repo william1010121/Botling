@@ -26,7 +26,7 @@ function owner() {
     { id: "legacy-card", name: "Old task", state: "done", stateFromTag: "done", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true },
     { id: "empty-card", name: "No agents yet", state: "done", createdAt: 1, updatedAt: 2, messageIDs: [], kept: true, subagentIDs: [], declared: true },
   ]));
-  const bot = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });
+  const bot = new Bot({ profile, deferStartup: true, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });
   bot.subagents.list.push(
     { id: "claude-call", description: "API research", prompt: "Look up API", status: "completed", type: "general-purpose", background: true, startedAt: 1, endedAt: 2, steps: [], result: "Found the API" },
     { id: "worker-id", description: "Build parser", prompt: "Implement the parser", status: "running", type: "codex-worker", background: true, startedAt: 1, steps: [], execution: { run: 2, ownerSessionId: "owner-session", threadId: "actual-thread", turnId: "actual-turn" } },

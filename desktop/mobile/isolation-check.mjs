@@ -1,5 +1,5 @@
-// Botling Web card isolation, in a real headless Chromium (no visible window) against the synthetic
-// fixture (`npm run test:web-isolation`): from INSIDE rendered component/card frames (after the frame host's document.write), every
+// Botling Web component isolation, in a real headless Chromium (no visible window) against the synthetic
+// fixture (`npm run test:web-isolation`): from INSIDE rendered component frames (after the frame host's document.write), every
 // way out must fail — network (bridge API, external), nested frames, forms, workers, popups,
 // same-origin access to the chat page / app shell, cookies and storage.
 //
@@ -49,7 +49,7 @@ try {
   await page.click('.bot-row[data-bot="proj-botling"]');
   await page.waitForTimeout(2500);
   const hosts = page.frames().filter(frame => frame.url().endsWith('/mobile/frame-host.html'));
-  if (hosts.length < 2) result.failures.push(`expected a component and a Phase 0 card frame, found ${hosts.length}`);
+  if (hosts.length < 1) result.failures.push(`expected a component frame, found ${hosts.length}`);
   const hitsBefore = (await (await fetch(`${shellOrigin}/fixture/hits`)).json()).length;
   probing = true;
   for (const frame of hosts) {

@@ -61,9 +61,7 @@ chats.get('proj-botling').messages.push(
     data: JSON.stringify({ headline: 'BTLEServer is using most of the CPU', cpuPercent: 83, loadAvg: [9.7, 11, 12.4], cores: 10,
       processes: [{ name: 'BTLEServer', cpu: 87, note: 'Bluetooth reconnecting', flag: 'warn' }, { name: 'WindowServer', cpu: 24 }], nextStep: 'Turn Bluetooth off and watch BTLEServer.' }),
     at: null, command: 'python3 ~/.claudecodebot/plugins/ccb-components/scripts/cpu-load.py', folder: null, detail: null, card: 'cpu/0', status: 'done', error: null,
-    ranAt: minutes(2), images: null, pinned: false, every: null }] }),
-  message('card0', 'bot', 'A Phase 0 card:', { ago: 1, engine: 'claude', cards: [{ id: 'c1', data: null,
-    html: '<div style="padding:10px;border:1px solid #444;border-radius:10px">Phase 0 card <b>rendered</b> <script>document.write(" (script ran)")</script></div>' }] }));
+    ranAt: minutes(2), images: null, pinned: false, every: null }] }));
 const settings = { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: ['proj-jenytsian', 'proj-csit'] };
 const waiting = { items: [{ botId: 'proj-rl', text: 'Approve the training run budget', messageId: null }], doing: { 'proj-botling': 'Task 與報告重新設計' } };
 let seq = 0, authenticated = true, denied = false;

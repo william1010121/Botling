@@ -80,7 +80,7 @@ export const routinesAdapter: RoutinesDriver = {
           const settings = join(profile.storeDir, "bot.json");
           if (!existsSync(settings)) writeFileSync(settings, JSON.stringify({ engine: "claude", heads: { engines: ["claude"], answerWith: "claude" } }));
           next[bot] = new Bot({
-            profile, welcome: false, ledger: { record() {}, forget() {} } as any,
+            profile, ledger: { record() {}, forget() {} } as any,
             headConfig(_p, c) { return { ...c, command: "/never-spawn", cwd: profile.folder, allowedTools: [] }; },
             codexConfig(_p, c) { return { command: "/never-spawn", cwd: profile.folder, threads: new CodexThreads(join(root, "threads")), sessionId: c.sessionId, resume: c.resume, model: c.codexModel, effort: c.effort, instructions: c.systemPrompt, workerInstructions: null }; },
             prompts: (engine, heads) => botPrompts({ profile, engine, heads }),

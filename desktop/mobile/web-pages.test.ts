@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { Client, RequestFailed } from '../src/renderer/client';
-import { CARD_CSP, COMPONENT_CSP, PANEL_CSP } from '../src/main/card-page';
-import { cardHostPage, componentHostPage, desktopCardURL, showInHost } from '../src/renderer/web-pages';
+import { COMPONENT_CSP, PANEL_CSP } from '../src/main/card-page';
+import { componentHostPage, showInHost } from '../src/renderer/web-pages';
 import { WebBridge } from './web-bridge';
 
 const page = '<!doctype html><html data-size="2x2"><head><meta charset="utf-8"><script>window.ok = 1</script></head><body><div id="ccb-root"></div></body></html>';
 
-describe('component and card pages on the web (no botling-card:// scheme)', () => {
+describe('component pages on the web (no botling-card:// scheme)', () => {
   it('a component page carries the desktop component CSP before any of its own content', () => {
     const html = componentHostPage(page);
     expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="${COMPONENT_CSP}">`);
@@ -17,11 +17,6 @@ describe('component and card pages on the web (no botling-card:// scheme)', () =
     // A later, looser policy in the page can only narrow the app's (policies intersect).
     const hostile = componentHostPage('<head></head><meta http-equiv="Content-Security-Policy" content="script-src *">');
     expect(hostile.indexOf(COMPONENT_CSP)).toBeLessThan(hostile.indexOf('script-src *'));
-  });
-  it('a Phase 0 card is the desktop card page (CARD_CSP); the desktop keeps botling-card://', () => {
-    expect(cardHostPage('<b>hi</b>')).toContain(`content="${CARD_CSP}"`);
-    expect(cardHostPage('<b>hi</b>')).toContain('<body><b>hi</b></body>');
-    expect(desktopCardURL('bot 1', 'm/1', 'c')).toBe('botling-card://card/bot%201/m%2F1/c');
   });
   it('showInHost loads the sandboxed frame host and hands it only the latest page, once loaded', () => {
     const frame = document.createElement('iframe');

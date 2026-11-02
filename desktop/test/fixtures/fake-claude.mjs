@@ -10,7 +10,6 @@
 //   normal   — streams "You said: <prompt>" a word at a time, then a result line (default)
 //   slow     — streams words until interrupted or killed (an interrupt ends the turn)
 //   stubborn — like slow, but ignores SIGTERM and interrupts, and so does a helper it starts
-//   card     — replies with a ccb-card block
 //   crash    — streams a little, then exits 3 without a result line
 //   netloss  — (long-lived) claude's API retries, then its connection error that ends the turn (no HTTP answer)
 //   tool     — (long-lived) asks to run a Bash command and reports whether it was allowed:
@@ -112,7 +111,7 @@ function helper(ignoreTerm) {
 }
 
 function directive(prompt) {
-  const match = /^\/(normal|slow|stubborn|card|crash|netloss|tool|resume|choices|task|react|agent|bgagent|worker|failtool)(?::([A-Za-z]+))?\s*/.exec(prompt);
+  const match = /^\/(normal|slow|stubborn|crash|netloss|tool|resume|choices|task|react|agent|bgagent|worker|failtool)(?::([A-Za-z]+))?\s*/.exec(prompt);
   return match ? { mode: match[1], tool: match[2] ?? "Bash", rest: prompt.slice(match[0].length) } : { mode: envMode, tool: "Bash", rest: prompt };
 }
 
@@ -187,9 +186,7 @@ if (!longLived) {
     await sleep(20);
     process.exit(3);
   }
-  const reply = envMode === "card"
-    ? "Here is a card.\n```ccb-card\n<button id=\"b\" onclick=\"ccb.save({clicked: true})\">Click</button>\n```"
-    : `You said: ${prompt}`;
+  const reply = `You said: ${prompt}`;
   const keepAlive = helper(false);
   const text = await stream(reply);
   out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text }] } });
@@ -551,9 +548,7 @@ async function turn(job) {
     result(`${intro}\n\n${text}`);
     return;
   }
-  const reply = mode === "card"
-    ? "Here is a card.\n```ccb-card\n<button id=\"b\" onclick=\"ccb.save({clicked: true})\">Click</button>\n```"
-    : mode === "resume" ? `session ${session} resumed=${!!resumed}`
+  const reply = mode === "resume" ? `session ${session} resumed=${!!resumed}`
     : mode === "choices" ? "Which way?\n<choices>\n* Fast | done today\n- Slow | costs a week\n</choices>"
     : mode === "task" ? "Working on the docs.\n<task name=\"Docs\" now=\"writing the intro\" next=\"examples\" state=\"running\"/>"
     : mode === "react" ? `<reaction message="${rest.trim()}" emoji="👍" present="true"/>`

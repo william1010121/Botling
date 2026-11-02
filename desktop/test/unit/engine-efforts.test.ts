@@ -32,7 +32,7 @@ afterEach(async () => { for (const b of bots.splice(0)) await b.shutdown({ tidy:
 function make(settings: Record<string, unknown>) {
   const folder = tempDir('engine-efforts'), profile = mainProfile(folder); mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, 'bot.json'), JSON.stringify({ engine: 'claude', heads: { engines: ['claude', 'codex', 'agy'], answerWith: 'claude' }, ...settings }));
-  const b = new Bot({ profile, deferStartup: true, welcome: false, ledger: { record() {}, forget() {} } as any,
+  const b = new Bot({ profile, deferStartup: true, ledger: { record() {}, forget() {} } as any,
     headConfig(_p, c) { return { ...c, command: '/never-spawn', cwd: folder, allowedTools: [] }; },
     agyConfig(_p, c) { return { ...c, transport: 'acp', command: '/never-spawn' }; },
     codexConfig(_p, c) { return { command: '/never-spawn', cwd: folder, threads: new CodexThreads(join(folder, 'threads')), sessionId: c.sessionId, resume: c.resume, model: c.codexModel, effort: c.effort, instructions: c.systemPrompt, workerInstructions: null }; },

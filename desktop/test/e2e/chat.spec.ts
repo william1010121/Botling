@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from "node:fs";
 import {pathToFileURL} from "node:url";
 import { alive, pidsIn, sleep, tempDir, until, desktop, fakeCli } from "../helpers";
-import { audit, chatFrame, launch, post, say, waitForWelcome } from "./launch";
+import { audit, chatFrame, launch, post, say } from "./launch";
 
 test("sends a message and streams the reply into the chat", async () => {
   const { app, page, chat } = await launch();
@@ -65,7 +65,7 @@ for(const startup of [0,5500])test(`reloading the window preserves the running t
     const before = await chat.locator(".row.bot[data-id]").count();
     await page.reload();
     await page.waitForSelector('.shell[data-ready="1"]');
-    await chat.locator('html[data-chat]').waitFor({state:'attached'});await waitForWelcome(chat);
+    await chat.locator('html[data-chat]').waitFor({state:'attached'});
     const reply = chat.locator(".row.bot[data-id]").last();
     await expect(reply).toHaveAttribute("data-state", "streaming");
     await expect(chat.locator(".row.bot[data-id]")).toHaveCount(before); // No second turn was started.
@@ -89,11 +89,11 @@ test("main refuses what the page may not ask for; the chat frame has no bridge o
     const frame = await chatFrame(page);
     expect(await frame.evaluate(() => [typeof (window as any).botling, typeof (window as any).require, typeof (window as any).process])).toEqual(["undefined", "undefined", "undefined"]);
     const bot = "6A0B0000-0000-4000-8000-000000000002";
-    expect(await post(page, { v: 10, id: "a", cmd: { type: "card.html", botId: bot, messageId: "0B07E11C-0000-4000-8000-00000000C0DE", cardId: "c-counter" } })).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(await post(page, { v: 10, id: "a", cmd: { type: "card.image", token: "0".repeat(40) } })).toMatchObject({ ok: false, error: { code: "forbidden" } });
     expect(await post(page, { v: 10, id: "b", cmd: { type: "shell.run", command: "id" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
     expect(await post(page, { v: 11, id: "c", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, error: { code: "unsupported_version" } });
     expect(await post(page, { v: 10, id: "e", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: true });
-    expect((await audit(app)).some((entry) => entry.includes("refused renderer command card.html"))).toBe(true);
+    expect((await audit(app)).some((entry) => entry.includes("refused renderer command card.image"))).toBe(true);
   } finally {
     await app.close();
   }

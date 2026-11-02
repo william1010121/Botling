@@ -60,19 +60,8 @@ export async function launch(options: { whiteboard?: boolean; dataDir?: string; 
   await chat.locator(".composer").waitFor();
   // The page has its first state (the chat a test means is the one shown).
   await chat.locator("html[data-chat]").waitFor({ state: "attached" });
-  // Feature tests start after the initial welcome iframe has loaded and sized itself. Its load
-  // can take native focus mid-keypress. Launch-race tests explicitly use waitForState:false.
-  if(!options.args?.some(arg=>arg.startsWith('--botling-update-token=')))await waitForWelcome(chat);
   return { app, page, chat, dataDir };
   }catch(error){await app.close().catch(()=>{});throw error;}
-}
-
-/** The initial card may still be loading after the outer shell/first chat state is ready. */
-export async function waitForWelcome(chat:FrameLocator):Promise<void>{
- const welcome=chat.locator('[data-card="c-counter"] iframe');
- if(!await welcome.count())return;
- await chat.frameLocator('[data-card="c-counter"] iframe').locator('#n').waitFor();
- await until(async()=>await welcome.evaluate(el=>(el as HTMLIFrameElement).style.height!=='80px'),{what:'welcome card load/size handshake'});
 }
 
 /** The chat frame itself (for evaluate). */

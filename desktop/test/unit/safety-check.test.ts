@@ -44,7 +44,7 @@ describe("the card for a safety check", () => {
     const profile = mainProfile(dir);
     mkdirSync(profile.storeDir, { recursive: true });
     writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine: "claude" }));
-    const bot = new Bot({ profile, deferStartup: true, welcome: false,
+    const bot = new Bot({ profile, deferStartup: true,
       ledger: new ProcessLedger(join(dir, "ledger.json")),
       headConfig() { throw new Error("No CLI needed"); },
       prompts: () => botPrompts({ profile, engine: "claude" }),

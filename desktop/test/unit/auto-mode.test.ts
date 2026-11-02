@@ -63,7 +63,7 @@ describe("auto mode: the blocked-call card", () => {
     mkdirSync(profile.storeDir, { recursive: true });
     writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine: "claude" }));
     const events: any[] = [];
-    const bot = new Bot({ profile, deferStartup: true, welcome: false,
+    const bot = new Bot({ profile, deferStartup: true,
       ledger: new ProcessLedger(join(dir, "ledger.json")),
       headConfig() { throw new Error("No CLI needed"); },
       prompts: () => botPrompts({ profile, engine: "claude" }),

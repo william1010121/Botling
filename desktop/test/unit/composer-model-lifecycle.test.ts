@@ -28,7 +28,7 @@ afterEach(async()=>{for(const b of bots.splice(0))await b.shutdown({tidy:false})
 function make(engine:'claude'|'codex'|'agy'){
  const folder=tempDir('composer-lifecycle'),profile=mainProfile(folder);mkdirSync(profile.storeDir,{recursive:true});
  writeFileSync(join(profile.storeDir,'bot.json'),JSON.stringify({engine,model:'old',agyModel:'old',heads:{engines:[engine],answerWith:engine,codexModel:'old'}}));
- const b=new Bot({profile,deferStartup:true,welcome:false,ledger:{record(){},forget(){}} as any,
+ const b=new Bot({profile,deferStartup:true,ledger:{record(){},forget(){}} as any,
  headConfig(_p,c){return {...c,command:'/never-spawn',cwd:folder,allowedTools:[]};},
  agyConfig(_p,c){return {...c,transport:'acp',command:'/never-spawn'};},
  codexConfig(_p,c){return {command:'/never-spawn',cwd:folder,threads:new CodexThreads(join(folder,'threads')),sessionId:c.sessionId,resume:c.resume,model:c.codexModel,effort:c.effort,instructions:c.systemPrompt,workerInstructions:null};},

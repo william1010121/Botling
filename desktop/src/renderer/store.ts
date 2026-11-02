@@ -313,7 +313,7 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       return withChat({ ...chat, runs, live: event.steps });
     }
     case "turn.finished": {
-      const next = update(event.messageId, (message) => ({ ...message, text: event.text, state: event.status, ...(event.cards ? { cards: event.cards } : {}) }));
+      const next = update(event.messageId, (message) => ({ ...message, text: event.text, state: event.status }));
       const runs = (chat.runs ?? []).filter((run) => run.turnId !== event.turnId);
       if (chat.running?.turnId !== event.turnId) return withChat({ ...next, runs });
       // The other head's turn, if one runs, is the one shown now.
@@ -328,13 +328,6 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       return withChat({ ...chat, pins: event.pins, floating: event.floating, pinChoices: event.pinChoices });
     case "catchup.updated":
       return withChat({ ...chat, catchUp: event.catchUp, intervalSummaries: event.intervalSummaries });
-    case "card.updated":
-      return withChat(update(event.messageId, (message) => ({
-        ...message,
-        cards: message.cards?.map((card) => (card.id === event.cardId ? { ...card, data: event.data === "null" ? null : event.data } : card)),
-      })));
-    case "card.acted":
-      return view;
     default:
       return view;
   }

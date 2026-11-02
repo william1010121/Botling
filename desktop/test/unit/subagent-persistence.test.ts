@@ -22,7 +22,7 @@ afterEach(async () => {
 function fixture(primary?: Bot) {
   const root=tempDir('subagent-journal'); roots.push(root);
   const profile=mainProfile(root), events: any[]=[], log=vi.fn();
-  const bot=new Bot({profile,primary,engine:primary?'codex':'claude',deferStartup:true,welcome:false,
+  const bot=new Bot({profile,primary,engine:primary?'codex':'claude',deferStartup:true,
     headConfig(){throw Error('No CLI in persistence tests');},prompts(){throw Error('No turn');},
     ledger:new ProcessLedger(join(root,'ledger.json')),emit:event=>events.push(event),log,
     approvalTimeoutMs:100,idleMs:100,interruptGraceMs:100});
@@ -142,7 +142,7 @@ it('a restarted bot loads the index without steps; opening one subagent reads ju
   writeFileSync(worker,readFileSync(worker,'utf8')+'{corrupt\n');
   rmSync(join(f.steps,'other.jsonl')); // a missing file is an empty history
   const profile=mainProfile(roots[0]!),events:any[]=[];
-  const bot=new Bot({profile,engine:'claude',deferStartup:true,welcome:false,headConfig(){throw Error('No CLI');},prompts(){throw Error('No turn');},
+  const bot=new Bot({profile,engine:'claude',deferStartup:true,headConfig(){throw Error('No CLI');},prompts(){throw Error('No turn');},
     ledger:new ProcessLedger(join(roots[0]!,'ledger2.json')),emit:e=>events.push(e),log:vi.fn(),approvalTimeoutMs:100,idleMs:100,interruptGraceMs:100});
   bots.push(bot);
   expect(bot.subagents.list.map(s=>s.id)).toEqual(['worker','other']);

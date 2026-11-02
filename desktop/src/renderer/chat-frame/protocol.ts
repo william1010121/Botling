@@ -3,7 +3,7 @@
 // checks who sent a message (`event.source`) and its origin, so a card frame inside the chat frame
 // cannot pass for either.
 import type { ChatState, SpecState, StatePatch } from "../../../../Web/src/types";
-import type { Command, WebPluginSpecView } from "../../contract";
+import type { WebPluginSpecView } from "../../contract";
 import type { FrameExtras } from "../payload";
 
 /** Botling Web (desktop/mobile/build.mjs defines it): the same shell and chat page, served by the
@@ -27,8 +27,6 @@ export const CHAT_SANDBOX: string | undefined = WEB ? "allow-scripts" : undefine
 export type FrameMessage =
   /** Something the chat page posted for "the app" (`Action` in Web/src/types.ts). */
   | { botling: "action"; reportPreview?: boolean; linkSource?: "user" | "component"; linkMessageId?:string; linkPinId?:string; action: { type: string; [key: string]: unknown } }
-  /** A card's save or action, for the core (only these two kinds are accepted). */
-  | { botling: "request"; id: number; cmd: Extract<Command, { type: "card.save" | "card.action" }> }
   /** The Stop button the desktop adds to the input box. */
   | { botling: "stop" }
   /** Global message column setting, committed after a drag or reset. */
@@ -59,7 +57,6 @@ export type ShellMessage =
   | { botling: "state"; avatarSources?: string[]; state: ChatState; revision?: number; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
   /** Sequenced delta against the last full snapshot or delta in this page. */
   | { botling: "stateDelta"; avatarSources?: string[]; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
-  | { botling: "response"; id: number; ok: boolean; error?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }
   /** Where a component frame's page is served (null: refused). */

@@ -28,7 +28,7 @@ export class StagingController {
   const profile:BotProfile={id:randomUUID(),name:'ACP acceptance scratch',role:'bot',folder:this.workspace,storeDir,memoryPath:'.bot/memory.md',avatar:'circle',tools:[],job:null,problem:null};
   writeFileSync(join(storeDir,'bot.json'),JSON.stringify({engine:'agy',heads:{engines:['agy'],answerWith:'agy'}}));
   this.ledger=new ProcessLedger(join(root,'process-ledger.json'));
-  this.bot=new Bot({profile,deferStartup:true,welcome:false,ledger:this.ledger,
+  this.bot=new Bot({profile,deferStartup:true,ledger:this.ledger,
    launch:()=>({autoMode:false,agyBypassPermissions:false,claudeBypassPermissions:false,codexBypassPermissions:false,subagentHourCache:false}),
    headConfig(){throw Error('Only ACP is available in this staging runner');},
    agyConfig:(_p,config)=>({...config,command,transport:'acp',acpHome:join(root,'acp-profile'),bypassPermissions:false}),

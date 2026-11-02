@@ -36,7 +36,7 @@ describe("chat state for the Web/src page", () => {
     expect(state.messages[1]).toMatchObject({ interrupted: true, avatar: expect.stringMatching(/^data:image\/svg\+xml;base64,/) });
     expect(state.messages[2]).toMatchObject({ open: true, choices: [{ action: "allowOnce", recommended: true }, { action: "deny" }] });
     expect(state.messages[0]).toMatchObject({ avatar: null, choices: null, attachments: null, openable: false });
-    expect(extras).toEqual({ botId: "B", running: true, cards: {}, states: { r1: "stopped" } });
+    expect(extras).toEqual({ botId: "B", running: true, states: { r1: "stopped" } });
 
     const answered = chatState(bot, { botId: "B", messages: [{ ...messages[2]!, chosen: 0 }, { ...messages[3]!, text: "Done" }], running: { turnId: "t2", messageId: "r2" }, live, tasks: [] }).state;
     expect(answered.messages[0]!.open).toBe(false);

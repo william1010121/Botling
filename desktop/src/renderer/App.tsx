@@ -903,19 +903,6 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         client.request({ type: "card.page", html: message.html }).then((result) => answer(result.url), () => answer(null));
         return;
       }
-      if (message.botling === "request") {
-        const reply = (ok: boolean, error?: string) => {
-          const response: ShellMessage = { botling: "response", id: message.id, ok, ...(error ? { error } : {}) };
-          postToChat(response);
-        };
-        const cmd = message.cmd;
-        if (cmd?.type !== "card.save" && cmd?.type !== "card.action") {
-          reply(false, "forbidden: only card saves and actions come from the chat page");
-          return;
-        }
-        client.request(cmd).then(() => reply(true), (failure) => reply(false, failure instanceof RequestFailed ? `${failure.error.code}: ${failure.error.message}` : String(failure)));
-        return;
-      }
       if (message.botling !== "action") return;
       const action = message.action;
       const composerReply = (ok: boolean, error?: string) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CARD_SAVE_LIMIT, CardMessage, EventEnvelope, PROTOCOL_VERSION, RENDERER_COMMANDS, parseInbound } from "../../src/contract";
+import { CARD_SAVE_LIMIT, EventEnvelope, PROTOCOL_VERSION, RENDERER_COMMANDS, parseInbound } from "../../src/contract";
 
 const bot = "6A0B0000-0000-4000-8000-000000000002";
 
@@ -52,16 +52,8 @@ describe("contract", () => {
     expect(parseInbound({ v: 10, id: "r1", cmd: { type: "chat.send", botId: bot, text: "" } }).ok).toBe(true);
     expect(parseInbound({ v: 10, id: "r1", cmd: { type: "chat.send", botId: bot, text: "x".repeat(100_001) } }).ok).toBe(false);
     const big = "x".repeat(CARD_SAVE_LIMIT + 1);
-    expect(parseInbound({ v: 10, id: "r1", cmd: { type: "card.save", botId: bot, messageId: "m", cardId: "c", data: big } }).ok).toBe(false);
+    expect(parseInbound({ v: 10, id: "r1", cmd: { type: "component.save", botId: bot, messageId: "m", index: 0, data: big } }).ok).toBe(false);
     expect(CARD_SAVE_LIMIT).toBe(262144); // Shared with the Swift app through Web/src/contract.json.
-  });
-
-  it("card messages are strict: no smuggled ids", () => {
-    expect(CardMessage.safeParse({ ccb: "save", data: "{}" }).success).toBe(true);
-    expect(CardMessage.safeParse({ ccb: "save", data: "{}", botId: "b2" }).success).toBe(false);
-    expect(CardMessage.safeParse({ ccb: "save", data: "{}", cardId: "c2" }).success).toBe(false);
-    expect(CardMessage.safeParse({ ccb: "shell", command: "ls" }).success).toBe(false);
-    expect(CardMessage.safeParse({ ccb: "action", name: "Run Shell", value: "" }).success).toBe(false);
   });
 
   it("events carry epoch, a non-negative integer seq and their bot", () => {

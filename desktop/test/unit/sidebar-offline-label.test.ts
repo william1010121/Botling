@@ -25,7 +25,7 @@ function harness() {
   const dir = tempDir("sidebar-offline-label");
   const events: Event[] = [];
   let forward = (_event: Event) => {};
-  const bot = new Bot({ profile: mainProfile(dir), deferStartup: true, welcome: false,
+  const bot = new Bot({ profile: mainProfile(dir), deferStartup: true,
     ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); },
     codexConfig() { throw new Error("No real CLI"); },
     prompts() { throw new Error("No real turn launch"); }, emit(event) { events.push(event); forward(event); }, log() {},

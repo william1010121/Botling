@@ -10,7 +10,7 @@ it('persists discovered Claude/subagent IDs and defaults without changing engine
  const dir=tempDir('model-persistence'),profile=mainProfile(dir);mkdirSync(profile.storeDir,{recursive:true});
  const file=join(profile.storeDir,'bot.json');
  writeFileSync(file,JSON.stringify({engine:'claude',heads:{engines:['claude','codex','agy'],answerWith:'agy'},model:'old-custom',subagentModel:'old-subagent',agyModel:'old-agy'}));
- const make=()=>new Bot({profile,deferStartup:true,welcome:false,ledger:new ProcessLedger(join(dir,'ledger.json')),headConfig(){throw Error('No inference authorized');},prompts:()=>({system:''}) as any,emit(){},log(){},approvalTimeoutMs:100,idleMs:60000,interruptGraceMs:10});
+ const make=()=>new Bot({profile,deferStartup:true,ledger:new ProcessLedger(join(dir,'ledger.json')),headConfig(){throw Error('No inference authorized');},prompts:()=>({system:''}) as any,emit(){},log(){},approvalTimeoutMs:100,idleMs:60000,interruptGraceMs:10});
  let bot=make();
  try {
   expect(BotSettingsView.parse(bot.settingsView())).toMatchObject({model:'old-custom',subagentModel:'old-subagent'});

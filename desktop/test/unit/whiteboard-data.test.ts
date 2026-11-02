@@ -107,7 +107,7 @@ describe("done log in the bot: review regressions", () => {
     const profile = mainProfile(dir);
     mkdirSync(profile.storeDir, { recursive: true });
     writeFileSync(join(profile.storeDir, "tasks.json"), JSON.stringify(tasks));
-    const bot = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 } as any);
+    const bot = new Bot({ profile, deferStartup: true, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No real CLI"); }, prompts() { throw new Error("No turn"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 } as any);
     return { bot: bot as any, file: join(profile.storeDir, "done-days.json"), tasksFile: join(profile.storeDir, "tasks.json") };
   };
   const doneCard = (n: number, at: number) => ({ id: `D${n}`, name: `Done ${n}`, state: "done", createdAt: toSwiftDate(at - 60_000), updatedAt: toSwiftDate(at), messageIDs: [`M${n}`], kept: true, declared: true,

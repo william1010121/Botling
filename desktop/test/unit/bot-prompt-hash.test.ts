@@ -30,7 +30,7 @@ let system='system v1';
 function make(engine:'claude'|'codex'='claude'){
  const folder=tempDir('prompt-hash'),profile=mainProfile(folder);mkdirSync(profile.storeDir,{recursive:true});
  writeFileSync(join(profile.storeDir,'bot.json'),JSON.stringify({engine,heads:{engines:[engine],answerWith:engine}}));
- const b=new Bot({profile,deferStartup:true,welcome:false,ledger:{record(){},forget(){}} as any,
+ const b=new Bot({profile,deferStartup:true,ledger:{record(){},forget(){}} as any,
  headConfig(_p,c){return {...c,command:'/never-spawn',cwd:folder,allowedTools:[]};},
  codexConfig(_p,c){return {command:'/never-spawn',cwd:folder,threads:new CodexThreads(join(folder,'threads')),sessionId:c.sessionId,resume:c.resume,model:c.codexModel,effort:c.effort,instructions:c.systemPrompt,workerInstructions:null};},
  prompts:(engine,heads)=>({...botPrompts({profile,engine,heads}),system}),emit(){},log(){},idleMs:600000,approvalTimeoutMs:1000,interruptGraceMs:10});bots.push(b);return b;

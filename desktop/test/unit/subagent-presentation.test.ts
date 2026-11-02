@@ -80,7 +80,7 @@ it.each(["claude", "codex"] as const)("keeps the owning %s avatar identity even 
   const profile = mainProfile(dir);
   mkdirSync(profile.storeDir, { recursive: true });
   writeFileSync(join(profile.storeDir, "bot.json"), JSON.stringify({ engine, heads: { engines: [engine], answerWith: engine } }));
-  const owner = new Bot({ profile, deferStartup: true, welcome: false, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No CLI is needed to present a row"); }, prompts() { throw new Error("No turn should run"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });
+  const owner = new Bot({ profile, deferStartup: true, ledger: new ProcessLedger(join(dir, "ledger.json")), headConfig() { throw new Error("No CLI is needed to present a row"); }, prompts() { throw new Error("No turn should run"); }, emit() {}, log() {}, approvalTimeoutMs: 100, idleMs: 100, interruptGraceMs: 100 });
   owner.subagents.list.push(child());
   expect(owner.view().heads).toEqual([engine]);
   expect(owner.view().subagentRows[0]?.head).toBe(engine);

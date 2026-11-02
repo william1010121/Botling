@@ -14,8 +14,8 @@ import { z } from "zod";
 import type { ModelDiscovery } from "./model-discovery";
 import { DoctorView } from "./doctor";
 export { DoctorCheck, DoctorView } from "./doctor";
-import { ContractId, CARD_SAVE_LIMIT, FILE_DATA_LIMIT, CardSaveCommand, CardActionCommand } from "./editor-card";
-export { CARD_SAVE_LIMIT, FILE_DATA_LIMIT, CardSaveCommand, CardActionCommand } from "./editor-card";
+import { ContractId, CARD_SAVE_LIMIT, FILE_DATA_LIMIT } from "./editor-card";
+export { CARD_SAVE_LIMIT, FILE_DATA_LIMIT } from "./editor-card";
 
 /**
  * Bumped on any incompatible change to a command, response or event shape.
@@ -47,15 +47,6 @@ export const MAINTAINER_BOT_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
 
 // ---------------------------------------------------------------------------------------------
 // Shared views
-
-export const CardView = z.strictObject({
-  id,
-  /** Agent-written HTML. Never rendered in the app's own frame: only in a sandboxed card frame. */
-  html: z.string().max(200_000),
-  /** What the card last saved (JSON text), or null. */
-  data: z.string().max(CARD_SAVE_LIMIT).nullable(),
-});
-export type CardView = z.infer<typeof CardView>;
 
 /** A button on a question. `action` is set on a tool approval's buttons: what picking it does. */
 export const ChoiceView = z.strictObject({
@@ -334,7 +325,6 @@ export const MessageView = z.strictObject({
   time: z.string(),
   turnId: id.nullable().optional(),
   state: MessageState.optional(),
-  cards: z.array(CardView).max(20).optional(),
   /** A question: its buttons, which one was picked, or the words it was answered with. */
   choices: z.array(ChoiceView).max(20).optional(),
   chosen: z.number().int().nonnegative().nullable().optional(),
@@ -1071,10 +1061,6 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
   z.strictObject({ type: z.literal("turn.await"), botId, turnId: id }),
-  CardSaveCommand,
-  CardActionCommand,
-  /** Main only: the card's HTML for the botling-card: protocol. */
-  z.strictObject({ type: z.literal("card.html"), botId, messageId: id, cardId: id }),
   /** The bot's routines (routines.cron and scheduled-routines.json), and why they cannot be read, if so. */
   z.strictObject({ type: z.literal("routines.list"), botId }),
   /** Creates (once with `at`, recurring with `cron` in `timezone`), pauses, resumes or cancels one (`app_routines`' operations). */
@@ -1276,9 +1262,9 @@ export const Command = z.discriminatedUnion("type", [
 export type Command = z.infer<typeof Command>;
 export type CommandType = Command["type"];
 
-/** Commands the renderer may send. `card.html` is for main's protocol handler only. */
+/** Commands the renderer may send. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action",
+  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
@@ -1374,9 +1360,6 @@ export interface Results {
   "chat.read": { read: true };
   "turn.stop": { stopped: boolean; killed: number[]; forced: boolean };
   "turn.await": { status: z.infer<typeof MessageState> };
-  "card.save": { saved: true };
-  "card.action": { accepted: true };
-  "card.html": { html: string };
   "routines.list": { routines: RoutineView[]; error: string | null };
   "routines.change": { routines: RoutineView[]; error: string | null };
   "component.command": { accepted: boolean; needsApproval?: ApprovalAskView };
@@ -1485,10 +1468,7 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("turn.finished"), botId, turnId: id, messageId: id,
     status: z.enum(["done", "stopped", "failed"]), text: z.string(), error: z.string().optional(),
-    cards: z.array(CardView).max(20).optional(),
   }),
-  z.strictObject({ type: z.literal("card.updated"), botId, messageId: id, cardId: id, data: z.string() }),
-  z.strictObject({ type: z.literal("card.acted"), botId, messageId: id, cardId: id, name: z.string(), value: z.string() }),
   /** A bot with two heads: who new messages go to, the rounds line and the hand-offs changed (null: one head now). */
   z.strictObject({ type: z.literal("heads.updated"), botId, heads: HeadsView.nullable() }),
   /** A bot's pins changed (one added, moved, its command ran…). */
@@ -1581,16 +1561,3 @@ export function errorResponse(id: string, error: WireError): ResponseEnvelope {
 export function okResponse(id: string, result: unknown): ResponseEnvelope {
   return { v: PROTOCOL_VERSION, id, ok: true, result };
 }
-
-// ---------------------------------------------------------------------------------------------
-// Card ⇄ broker messages (inside the renderer). A card frame may post only these; anything else,
-// including extra keys such as a bot or card id, is refused. The frame's identity comes from
-// which iframe sent it, never from the message.
-
-export const CardMessage = z.discriminatedUnion("ccb", [
-  z.strictObject({ ccb: z.literal("save"), data: z.string().max(CARD_SAVE_LIMIT) }),
-  z.strictObject({ ccb: z.literal("action"), name: z.string().min(1).max(64).regex(/^[a-z][a-zA-Z0-9.]*$/), value: z.string().max(4_000) }),
-  z.strictObject({ ccb: z.literal("size"), height: z.number().int().min(0).max(4_000) }),
-]);
-export type CardMessage = z.infer<typeof CardMessage>;
-

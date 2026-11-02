@@ -16,7 +16,7 @@ export function nativeEditorNavigation(contents:WebContents,details:{isMainFrame
  const host=hosts.get(contents);if(!host)return null;
  if(details.isMainFrame)return !host.loaded&&details.url===EDITOR_URL;
  const root=contents.mainFrame,parent=details.frame?.parent,initiator=details.initiator;
- if(card(details.url,'card')||card(details.url,'page'))return parent===root&&(!initiator||initiator===root);
+ if(card(details.url,'page'))return parent===root&&(!initiator||initiator===root);
  if(card(details.url,'preview'))return !!parent&&parent.parent===root&&card(parent.url,'page')&&(!initiator||initiator===parent);
  return false;
 }
