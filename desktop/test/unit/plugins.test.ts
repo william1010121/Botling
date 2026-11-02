@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { chmodSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir, until } from "../helpers";
-import { checkPlugin, compatible } from "../../src/core/plugins/manifest";
+import { checkPlugin, checkPluginIssues, CHECK_NEXT_STEPS, compatible } from "../../src/core/plugins/manifest";
+import { checkReport } from "../../src/core/plugins/check-report";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { swiftPrettyJSON } from "../../src/core/swift-json";
 import { MemorySecretStore, SealedSecretStore, PortSealer, testSealer } from "../../src/core/plugins/secrets";
@@ -276,4 +277,53 @@ it('A2 keychain API denial is a nonfatal warning and preserves sealed bytes', as
  expect(store.problem).toContain('User denied keychain access');expect(readFileSync(file,'utf8')).toBe(original);
  await expect(store.set('synthetic','other','no plaintext persistence')).rejects.toThrow('User denied keychain access');
  expect(readFileSync(file,'utf8')).toBe(original);
+});
+
+describe("the check's stable codes and nextStep (ADR-006 M3)", () => {
+  it("locks the code table: codes are a contract and are never renamed", () => {
+    expect(Object.keys(CHECK_NEXT_STEPS)).toEqual([
+      "MANIFEST_NOT_FOUND", "MANIFEST_MALFORMED", "NAME_INVALID", "VERSION_INVALID", "ENGINE_MISSING", "ENGINE_INCOMPATIBLE",
+      "CCB_MISSING", "PATH_OUTSIDE_FOLDER", "PATH_MISSING", "CLAUDE_PLUGIN_JSON_MISSING", "STYLE_MISSING", "PERMISSION_UNKNOWN",
+      "COMMAND_DUPLICATE", "SHORTCUT_UNREADABLE", "PANEL_NEEDS_WEB", "SETTING_ENV_INVALID", "SETTING_ENUM_NO_OPTIONS",
+      "SETTING_DEFAULT_INVALID", "SETTING_TYPE_INVALID",
+    ]);
+    for (const [code, step] of Object.entries(CHECK_NEXT_STEPS)) expect(step.length, code).toBeGreaterThan(20);
+  });
+
+  it("gives every failure its code and a non-empty nextStep, and checkPlugin keeps the plain messages", () => {
+    const root = tempDir("plugins");
+    const cases: Array<[string, string]> = [
+      ["escape", "PATH_OUTSIDE_FOLDER"], ["missing", "PATH_MISSING"], ["old", "ENGINE_INCOMPATIBLE"], ["Upper", "NAME_INVALID"],
+      ["permission", "PERMISSION_UNKNOWN"], ["panel", "PANEL_NEEDS_WEB"], ["env", "SETTING_ENV_INVALID"], ["enum", "SETTING_ENUM_NO_OPTIONS"],
+    ];
+    const folders: Record<string, string> = {
+      escape: plugin(root, "escape", { ccb: { web: "../../etc/passwd" } }),
+      missing: plugin(root, "missing", { web: null }),
+      old: plugin(root, "old", { engines: "^1.0.0" }),
+      Upper: plugin(root, "Upper", { engines: "^2.0.0" }),
+      permission: plugin(root, "permission", { ccb: { permissions: ["root"] } }),
+      panel: plugin(root, "panel", { ccb: { contributes: { panels: [{ id: "p", title: "P" }] } } }),
+      env: plugin(root, "env", { ccb: { contributes: { settings: { t: { type: "string", title: "T", env: "lower" } } } } }),
+      enum: plugin(root, "enum", { ccb: { contributes: { settings: { e: { type: "enum", title: "E" } } } } }),
+    };
+    for (const [name, code] of cases) {
+      const issues = checkPluginIssues(folders[name]);
+      expect(issues.map((issue) => issue.code), name).toContain(code);
+      for (const issue of issues) { expect(issue.nextStep.length).toBeGreaterThan(0); expect(issue.nextStep).toBe(CHECK_NEXT_STEPS[issue.code]); }
+      expect(checkPlugin(folders[name])).toEqual(issues.map((issue) => issue.message));
+    }
+    expect(checkPluginIssues(join(root, "nothing-here")).map((issue) => issue.code)).toEqual(["MANIFEST_NOT_FOUND"]);
+    const broken = join(root, "broken"); mkdirSync(broken); writeFileSync(join(broken, "package.json"), "{nope");
+    expect(checkPluginIssues(broken).map((issue) => issue.code)).toEqual(["MANIFEST_MALFORMED"]);
+    expect(checkPluginIssues(plugin(root, "good2"))).toEqual([]);
+  });
+
+  it("keeps the ✗ line readable and adds the next step to the report", () => {
+    const root = tempDir("plugins");
+    const report = checkReport(plugin(root, "Upper", { engines: "^2.0.0" }));
+    expect(report.code).toBe(1);
+    expect(report.stdout).toContain('✗ name "Upper" may only use lowercase letters, digits, - . _.\n');
+    expect(report.stdout).toContain("→ next [NAME_INVALID]: " + CHECK_NEXT_STEPS.NAME_INVALID);
+    expect(checkReport(plugin(root, "fine")).code).toBe(0);
+  });
 });

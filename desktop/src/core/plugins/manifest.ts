@@ -171,76 +171,115 @@ export function loadPlugin(folder: string): { ok: true; manifest: PluginManifest
 
 const inside = (path: string) => !path.startsWith("/") && !path.split("/").includes("..");
 
-/** The problems with a plugin folder (`PluginRegistry.check`); none: it may load. */
-export function checkPlugin(folder: string): string[] {
+/**
+ * Every way `checkPlugin` can fail, with the one next action that fixes it. The codes are a contract: the
+ * Maintainer's repair loop (and UI hints) go by them, so a code is never renamed or reused (test/unit/plugins.test.ts
+ * locks the table). Add new codes at the end.
+ */
+export const CHECK_NEXT_STEPS = {
+  MANIFEST_NOT_FOUND: "Create package.json in the plugin folder with name, version, engines.ccb and a ccb field (see PLUGINS.md).",
+  MANIFEST_MALFORMED: "Fix package.json so it is valid JSON with the fields PLUGINS.md describes, then run the check again.",
+  NAME_INVALID: "Rename the plugin in package.json to lowercase letters, digits, - . _ (and rename its folder to match).",
+  VERSION_INVALID: "Set version in package.json to a semver such as 1.0.0.",
+  ENGINE_MISSING: `Add \"engines\": { \"ccb\": \"${ENGINE_RANGE}\" } to package.json.`,
+  ENGINE_INCOMPATIBLE: `Set engines.ccb in package.json to a range this Botling satisfies, for example \"${ENGINE_RANGE}\".`,
+  CCB_MISSING: "Add a ccb field to package.json naming the parts of the plugin (web, host, claude, contributes), see PLUGINS.md.",
+  PATH_OUTSIDE_FOLDER: "Change that path in package.json to a relative path inside the plugin folder (no leading / and no ..).",
+  PATH_MISSING: "Create the file at that path (for a bundled part, run the esbuild step) or correct the path in package.json.",
+  CLAUDE_PLUGIN_JSON_MISSING: "Add .claude-plugin/plugin.json inside the Claude part's folder (see PLUGINS.md for its shape).",
+  STYLE_MISSING: "Create the stylesheet or remove it from ccb.styles; the path must stay inside the plugin folder.",
+  PERMISSION_UNKNOWN: "Remove the permission or replace it with one from the allowed list in the message.",
+  COMMAND_DUPLICATE: "Give each command in ccb.contributes.commands its own unique id.",
+  SHORTCUT_UNREADABLE: "Write the shortcut as modifiers joined by + and one key, for example cmd+shift+l.",
+  PANEL_NEEDS_WEB: "Add ccb.web (the bundle that draws panels) or remove the panel from ccb.contributes.panels.",
+  SETTING_ENV_INVALID: "Rename the setting's env to uppercase letters, digits and underscores, for example MY_TOKEN.",
+  SETTING_ENUM_NO_OPTIONS: "Give the enum setting a non-empty options list.",
+  SETTING_DEFAULT_INVALID: "Make the setting's default match its type (and be one of options for an enum), or remove the default.",
+  SETTING_TYPE_INVALID: "Set the setting's type to boolean, enum, string or number.",
+} as const;
+
+export type CheckCode = keyof typeof CHECK_NEXT_STEPS;
+
+/** One problem from the check: a stable code, the readable message and what to do about it. */
+export interface PluginIssue { code: CheckCode; message: string; nextStep: string }
+
+/** The structured problems with a plugin folder; none: it may load. */
+export function checkPluginIssues(folder: string): PluginIssue[] {
+  const issues: PluginIssue[] = [];
+  const add = (code: CheckCode, message: string) => { issues.push({ code, message, nextStep: CHECK_NEXT_STEPS[code] }); };
   let text: string;
-  try { text = readFileSync(join(folder, "package.json"), "utf8"); } catch { return ["package.json not found."]; }
+  try { text = readFileSync(join(folder, "package.json"), "utf8"); } catch { add("MANIFEST_NOT_FOUND", "package.json not found."); return issues; }
   let manifest: PluginManifest;
   try {
     manifest = decodeManifest(JSON.parse(text));
   } catch (error) {
     const message = error instanceof DecodeError ? error.message : "The given data was not valid JSON.";
-    return [`package.json is malformed: ${message}`];
+    add("MANIFEST_MALFORMED", `package.json is malformed: ${message}`);
+    return issues;
   }
-  const problems: string[] = [];
-  if (!/^[a-z0-9][a-z0-9._-]*$/.test(manifest.name)) problems.push(`name "${manifest.name}" may only use lowercase letters, digits, - . _.`);
-  if (!/^\d+\.\d+\.\d+/.test(manifest.version)) problems.push(`version "${manifest.version}" must be semver, for example 1.0.0.`);
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(manifest.name)) add("NAME_INVALID", `name "${manifest.name}" may only use lowercase letters, digits, - . _.`);
+  if (!/^\d+\.\d+\.\d+/.test(manifest.version)) add("VERSION_INVALID", `version "${manifest.version}" must be semver, for example 1.0.0.`);
   const range = manifest.engines?.ccb;
   if (range === undefined) {
-    problems.push(`engines.ccb is missing (for example "${ENGINE_RANGE}").`);
-    return problems;
+    add("ENGINE_MISSING", `engines.ccb is missing (for example "${ENGINE_RANGE}").`);
+    return issues;
   }
-  if (!compatible(range)) problems.push(`engines.ccb "${range}" is not compatible with this Botling (${API_VERSION.major}.${API_VERSION.minor}).`);
+  if (!compatible(range)) add("ENGINE_INCOMPATIBLE", `engines.ccb "${range}" is not compatible with this Botling (${API_VERSION.major}.${API_VERSION.minor}).`);
   const ccb = manifest.ccb;
   if (!ccb) {
-    problems.push("The ccb field is missing.");
-    return problems;
+    add("CCB_MISSING", "The ccb field is missing.");
+    return issues;
   }
   for (const [label, path] of [["web", ccb.web], ["host", ccb.host], ["claude", ccb.claude], ["contributes.components", ccb.contributes?.components]] as const) {
     if (path === undefined) continue;
-    if (!inside(path)) problems.push(`${label} "${path}" must be a relative path inside the plugin folder.`);
-    else if (!existsSync(join(folder, path))) problems.push(`${label} points to "${path}", which does not exist.`);
+    if (!inside(path)) add("PATH_OUTSIDE_FOLDER", `${label} "${path}" must be a relative path inside the plugin folder.`);
+    else if (!existsSync(join(folder, path))) add("PATH_MISSING", `${label} points to "${path}", which does not exist.`);
   }
   if (ccb.claude !== undefined && !existsSync(join(folder, ccb.claude, ".claude-plugin", "plugin.json"))) {
-    problems.push(`The Claude part "${ccb.claude}" must contain .claude-plugin/plugin.json.`);
+    add("CLAUDE_PLUGIN_JSON_MISSING", `The Claude part "${ccb.claude}" must contain .claude-plugin/plugin.json.`);
   }
-  for (const style of ccb.styles ?? []) if (!inside(style) || !existsSync(join(folder, style))) problems.push(`"${style}" in styles does not exist.`);
+  for (const style of ccb.styles ?? []) if (!inside(style) || !existsSync(join(folder, style))) add("STYLE_MISSING", `"${style}" in styles does not exist.`);
   for (const permission of ccb.permissions ?? []) {
-    if (!PERMISSION_NAMES.includes(permission)) problems.push(`Unknown permission "${permission}" (allowed: ${PERMISSION_NAMES.join(", ")}).`);
+    if (!PERMISSION_NAMES.includes(permission)) add("PERMISSION_UNKNOWN", `Unknown permission "${permission}" (allowed: ${PERMISSION_NAMES.join(", ")}).`);
   }
   const ids = new Set<string>();
   for (const command of ccb.contributes?.commands ?? []) {
-    if (ids.has(command.id)) problems.push(`Command "${command.id}" is declared twice.`);
+    if (ids.has(command.id)) add("COMMAND_DUPLICATE", `Command "${command.id}" is declared twice.`);
     ids.add(command.id);
     if (command.key !== undefined && !legacyKey(command.key) && !/^((cmd|ctrl|alt|option|shift)\+)*[^+]+$/.test(command.key)) {
-      problems.push(`Command "${command.id}" has an unreadable shortcut "${command.key}" (for example cmd+shift+l).`);
+      add("SHORTCUT_UNREADABLE", `Command "${command.id}" has an unreadable shortcut "${command.key}" (for example cmd+shift+l).`);
     }
   }
-  for (const panel of ccb.contributes?.panels ?? []) if (ccb.web === undefined) problems.push(`Panel "${panel.id}" needs a web part (ccb.web) to draw it.`);
+  for (const panel of ccb.contributes?.panels ?? []) if (ccb.web === undefined) add("PANEL_NEEDS_WEB", `Panel "${panel.id}" needs a web part (ccb.web) to draw it.`);
   for (const [key, setting] of Object.entries(ccb.contributes?.settings ?? {})) {
-    if (setting.env !== undefined && !/^[A-Z_][A-Z0-9_]*$/.test(setting.env)) problems.push(`Setting "${key}": env "${setting.env}" must use uppercase letters, digits and underscores.`);
+    if (setting.env !== undefined && !/^[A-Z_][A-Z0-9_]*$/.test(setting.env)) add("SETTING_ENV_INVALID", `Setting "${key}": env "${setting.env}" must use uppercase letters, digits and underscores.`);
     const value = setting.default;
     switch (setting.type) {
       case "boolean":
-        if (value !== undefined && typeof value !== "boolean") problems.push(`Setting "${key}": the default must be true or false.`);
+        if (value !== undefined && typeof value !== "boolean") add("SETTING_DEFAULT_INVALID", `Setting "${key}": the default must be true or false.`);
         break;
       case "enum": {
         const options = setting.options ?? [];
-        if (!options.length) problems.push(`Setting "${key}" is an enum and needs options.`);
-        if (value !== undefined && !(typeof value === "string" && options.includes(value))) problems.push(`Setting "${key}": the default is not one of the options.`);
+        if (!options.length) add("SETTING_ENUM_NO_OPTIONS", `Setting "${key}" is an enum and needs options.`);
+        if (value !== undefined && !(typeof value === "string" && options.includes(value))) add("SETTING_DEFAULT_INVALID", `Setting "${key}": the default is not one of the options.`);
         break;
       }
       case "string":
-        if (value !== undefined && typeof value !== "string") problems.push(`Setting "${key}": the default must be text.`);
+        if (value !== undefined && typeof value !== "string") add("SETTING_DEFAULT_INVALID", `Setting "${key}": the default must be text.`);
         break;
       case "number":
-        if (value !== undefined && typeof value !== "number") problems.push(`Setting "${key}": the default must be a number.`);
+        if (value !== undefined && typeof value !== "number") add("SETTING_DEFAULT_INVALID", `Setting "${key}": the default must be a number.`);
         break;
       default:
-        problems.push(`Setting "${key}": type "${setting.type}" must be boolean, enum, string or number.`);
+        add("SETTING_TYPE_INVALID", `Setting "${key}": type "${setting.type}" must be boolean, enum, string or number.`);
     }
   }
-  return problems;
+  return issues;
+}
+
+/** The problems with a plugin folder (`PluginRegistry.check`) as plain messages; none: it may load. */
+export function checkPlugin(folder: string): string[] {
+  return checkPluginIssues(folder).map((issue) => issue.message);
 }
 
 // ---------------------------------------------------------------------------------------------
