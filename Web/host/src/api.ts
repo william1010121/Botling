@@ -33,6 +33,8 @@ export interface PluginEvents {
   workerDone: { botId: string; workerId: string; status: string; report: string };
 }
 export type PluginEventName = keyof PluginEvents;
+/** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
+export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
 export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnFinished", "workerDone"];
 
 // ── The workspace (plugin-extraction.md §4.3): what the whiteboard reads, for any plugin, read only ──
@@ -119,6 +121,15 @@ export interface BotlingApi {
   };
   routines: { add(botId: string, cron: string, task: string): Promise<void> };
   workspace: WorkspaceApi;
+  /** The tags this plugin declared in its manifest (`replyTags`), from bots' replies. */
+  replyTags: { on(tag: string, fn: (tag: ReplyTag) => void): Dispose };
+  approvals: {
+    /**
+     * Whether the user allowed `command` to run in the bot's folder (approved-commands.json, as cards' commands).
+     * Only the user allows one, on the app page (a frame's `ccb.requestApproval`); a plugin never can.
+     */
+    check(botId: string, command: string): Promise<{ folder: string; approved: boolean }>;
+  };
   settings: {
     get<T>(key: string): T;
     /** One of this plugin's own settings (a secret one is set with `secrets.set`). */
@@ -192,13 +203,14 @@ export interface Loaded {
   settingHandlers: Map<string, ((value: unknown) => void)[]>;
   /** `events.on`'s listeners, and `workspace.onChange`'s under WORKSPACE_EVENT. */
   events: Map<PluginEventName | typeof WORKSPACE_EVENT, ((data: unknown) => void)[]>;
+  replyTags: Map<string, ((tag: ReplyTag) => void)[]>;
   children: Children;
 }
 
 export function newLoaded(spec: HostPluginSpec): Loaded {
   return {
     spec, disposers: [], beforeSend: [], afterReply: [], replyListeners: [], commands: new Map(), web: new Map(),
-    exposed: new Set(), settingHandlers: new Map(), events: new Map(), children: new Children(),
+    exposed: new Set(), settingHandlers: new Map(), events: new Map(), replyTags: new Map(), children: new Children(),
   };
 }
 
@@ -319,6 +331,17 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
         const off = remove(list, fn as (data: unknown) => void);
         return own(() => { off(); announceLater(); });
       },
+    },
+    replyTags: {
+      on: (tag, fn) => {
+        const list = plugin.replyTags.get(String(tag)) ?? [];
+        list.push(fn);
+        plugin.replyTags.set(String(tag), list);
+        return remove(list, fn);
+      },
+    },
+    approvals: {
+      check: async (botId, command) => (await ask("approvals.check", { bot: botId, command })) as { folder: string; approved: boolean },
     },
     settings: {
       get: <T>(key: string) => plugin.spec.settings[key] as T,

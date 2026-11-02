@@ -166,6 +166,11 @@ export class PluginHostClient {
     if (this.running) this.write({ method: "reply", params: { bot, text } });
   }
 
+  /** Hands a reply's tag to the plugin that declared it (`replyTags.on`); dropped while the host is not running. */
+  replyTag(plugin: string, bot: unknown, tag: { tag: string; attributes: Record<string, string>; body: string }) {
+    if (this.running) this.write({ method: "replyTag", params: { plugin, bot, tag: tag.tag, attributes: tag.attributes, body: tag.body } });
+  }
+
   /** Tells plugins listening with `events.on`; nothing is sent while none listens for `name`. */
   event(name: string, data: unknown) {
     if (this.running && this.events.has(name)) this.write({ method: "event", params: { name, data } });

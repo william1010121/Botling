@@ -265,7 +265,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {/* A panel a plugin's program part opened (`ui.openView`). */}
       {!web && view.pluginPanel && (
         <PanelFrame key={`${view.pluginPanel.plugin}/${view.pluginPanel.panel}`} client={client} plugin={view.pluginPanel.plugin} panel={view.pluginPanel.panel}
-          title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} onBuiltin={runBuiltin} />
+          title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
       )}
       {railCollapsed ? (
         <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
@@ -383,7 +383,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             statusOf={(candidate) => ({ key: status(candidate), text: statusText(candidate) })}
             onOpenChat={(botId) => { setWhiteboardOn(false); selectBot(botId); }} onError={fail} />
         )}
-        {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} onBuiltin={runBuiltin} />}
+        {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
         {review && bot && <Review client={client} bot={bot} target={review} lang={view.settings?.effectiveLanguage ?? null} onClose={() => setReviewing(null)} />}
         {/* Under the whiteboard the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />

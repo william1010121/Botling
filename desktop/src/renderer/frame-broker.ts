@@ -8,8 +8,10 @@
 // its calls into `plugins.call` with the plugin the page registered it for (`from: "frame"`), runs
 // only that plugin's own commands (with their few string arguments) and Botling's own openChat /
 // openResult, which the page runs itself, and answers each call. The core checks the method is one the
-// plugin exposed (ui.expose).
-import { BUILTIN_COMMANDS, builtinCommand, frameParams, frameReply, ownsCommand, parseFrameRequest, type BuiltinCommand } from "../../../Web/src/frame-protocol";
+// plugin exposed (ui.expose). A frame may also ask for a tile (a card page of a library component it
+// may frame) and ask the user to allow a bot's command (`ccb.requestApproval`): the page answers both
+// itself (plugin-frame-host.ts); the approval is the page's own ApprovalSheet, so a frame can only ask.
+import { BUILTIN_COMMANDS, builtinCommand, frameParams, frameReply, ownsCommand, parseFrameRequest, type BuiltinCommand, type FrameRequest } from "../../../Web/src/frame-protocol";
 
 export interface FrameTarget {
   frame: HTMLIFrameElement;
@@ -92,6 +94,10 @@ export interface PluginFrameHost {
   command(plugin: string, id: string, args?: string[]): Promise<unknown>;
   /** Botling's own command (botling.openChat / openResult), run by the page; none: refused. */
   builtin?(plugin: string, command: BuiltinCommand): void;
+  /** A tile's card page for `plugin`'s frame: its URL (a page without these refuses). */
+  tile?(plugin: string, spec: Omit<Extract<FrameRequest, { ccb: "tile" }>, "ccb" | "id">): Promise<string>;
+  /** The page's own ApprovalSheet for what `plugin`'s frame asks: whether the user allowed it. */
+  requestApproval?(plugin: string, ask: Omit<Extract<FrameRequest, { ccb: "approval" }>, "ccb" | "id">): Promise<{ allowed: boolean }>;
 }
 
 export interface PluginFrame {
@@ -135,6 +141,15 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
           if (!ownsCommand(plugin, message.id)) { broker.refuse(`a command of another plugin ("${message.id}")`, target); return; }
           if (!broker.allow(target)) { broker.refuse("too many calls", target); return; }
           host.command(plugin, message.id, message.args).catch((failure) => onNotice?.(why(failure)));
+          return;
+        }
+        case "tile":
+        case "approval": {
+          if (!broker.allow(target)) { reply(message.id, false, "Too many calls; wait a moment."); return; }
+          const { ccb: kind, id, ...ask } = message;
+          const answer = kind === "tile" ? host.tile?.(plugin, ask as never) : host.requestApproval?.(plugin, ask as never);
+          if (!answer) { reply(id, false, `This page does not answer ${kind === "tile" ? "ccb.tile" : "ccb.requestApproval"}.`); return; }
+          answer.then((value) => reply(id, true, value), (failure) => reply(id, false, why(failure)));
           return;
         }
         case "notify":

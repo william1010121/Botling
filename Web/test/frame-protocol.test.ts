@@ -23,6 +23,18 @@ describe("the frame protocol", () => {
     expect(parseFrameRequest(null)).toBeNull();
   });
 
+  it("reads a tile ask and an approval ask (plugin-extraction.md W4); neither can say it is allowed", () => {
+    expect(parseFrameRequest({ ccb: "tile", id: 1, component: "status", data: { ok: true }, size: "2x1", botId: "main" })).toEqual({ ccb: "tile", id: 1, component: "status", data: { ok: true }, size: "2x1", botId: "main" });
+    expect(parseFrameRequest({ ccb: "tile", id: 2, component: "status", size: "1x1", botId: "main" })).toEqual({ ccb: "tile", id: 2, component: "status", data: null, size: "1x1", botId: "main" });
+    expect(parseFrameRequest({ ccb: "approval", id: 3, botId: "B1", command: "git log", folder: "/p", card: "gitlog" })).toEqual({ ccb: "approval", id: 3, botId: "B1", command: "git log", folder: "/p", card: "gitlog" });
+    expect(parseFrameRequest({ ccb: "approval", id: 4, botId: "B1", command: "git log", folder: "/p" })).toEqual({ ccb: "approval", id: 4, botId: "B1", command: "git log", folder: "/p" });
+    expect(parseFrameRequest({ ccb: "tile", id: 5, component: "status", data: null, size: "2x2", botId: "main" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "tile", id: 6, component: "", data: null, size: "1x1", botId: "main" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "approval", id: 7, botId: "B1", command: "git log", folder: "/p", approved: true })).toBeNull();
+    expect(parseFrameRequest({ ccb: "approval", id: 8, botId: "B1", command: "", folder: "/p" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "approval", id: 9, botId: "B1", command: "git log", folder: "/p", card: 3 })).toBeNull();
+  });
+
   it("parameters must be JSON and not too big", () => {
     expect(frameParams({ a: [1, "b", null] })).toEqual({ ok: true, value: { a: [1, "b", null] } });
     expect(frameParams(undefined)).toEqual({ ok: true, value: null });

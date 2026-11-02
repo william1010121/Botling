@@ -52,7 +52,7 @@ import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
 import { headsJSON, singleHead, type Engine, type Heads } from "./heads";
-import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, type BotPrompts, type ReportTool } from "./prompts";
+import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, withPluginSections, type BotPrompts, type ReportTool } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
@@ -322,6 +322,8 @@ export class Core {
           if (!bot) throw new Error("The bot could not be started.");
           return { ...this.botInfo(bot), created: made.kind === "made" };
         },
+        commandApproval: (botId, command) => this.pluginBot(botId)?.commandApproval(command) ?? null,
+        approveCommand: (botId, command) => this.pluginBot(botId)?.approveCommand(command) ?? false,
         addRoutine: (botId, cron, task) => {
           const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
           if (!bot) return "no-bot";
@@ -431,6 +433,7 @@ export class Core {
         specsChanged: (bot) => this.specs?.specsChanged(bot),
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
+        pluginTags: (bot, tags) => this.plugins.replyTags(this.botInfo(bot), tags),
         plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment(), tools: this.plugins.registry.claudeTools() }),
         pluginStamp: () => this.plugins.registry.claudeStamp(),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
@@ -2255,7 +2258,7 @@ First write a test that shows this, then fix it.`;
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
       workingFolder: workingFolder !== profile.folder ? workingFolder : null,
       parentName: profile.parent ? this.profiles.find((candidate) => candidate.id === profile.parent)?.name ?? null : null,
-    }), profile, this.options.reports ?? null, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app");
+    }), profile, this.options.reports ?? null, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.plugins.promptSections()));
   }
 
   private event(event: Event) {
@@ -2419,6 +2422,8 @@ First write a test that shows this, then fix it.`;
       case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
+      case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card);
+      case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder);
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
       case "agy.runtime.install": {

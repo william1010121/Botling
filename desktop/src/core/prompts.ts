@@ -431,6 +431,33 @@ export const withoutPartsNote = (text: string) => (text.startsWith(PARTS_NOTE) ?
 export const WHITEBOARD_PICTURE_LINE = "  To give your card on the main bot's whiteboard a small picture: add <whiteboard name=\"component name\" size=\"1x1\">JSON</whiteboard> to a reply (or command=\"…\" instead of JSON; size 1x1 or 2x1). The app draws it on your card and shows nothing in the chat; a later one replaces it and <whiteboard clear/> removes it. Pick a component that reads well tiny (a key number, a trend) and send a new one when it changes.";
 const SHOW_LINE = "  To show data with a component: add <show name=\"component name\">JSON matching its format</show> to your reply.";
 
+/**
+ * Words a feature adds to bots' instructions (plugin-platform `promptSections`): a plugin's, or one the core
+ * still gives for a feature on its way to a plugin. `after: "show"` puts it right after the <show> line (at the
+ * end when a prompt has none); `roles` are the bots told it.
+ */
+export interface PromptSection { id: string; text: string; after: "show" | "end"; roles: readonly ("main" | "manager" | "bot")[] }
+/**
+ * The sections the core gives today. The whiteboard picture line is the first version of botling.whiteboard's
+ * section (plugin-extraction.md W3): the same id and bytes, so moving it to the plugin changes no prompt.
+ */
+export const CORE_PROMPT_SECTIONS: readonly PromptSection[] = [
+  { id: "botling.whiteboard.picture", text: WHITEBOARD_PICTURE_LINE, after: "show", roles: ["manager", "bot"] },
+];
+/** The core's sections with plugins' after them; a plugin's section with the id of a core one takes its place (only its own: the id starts with its name). */
+export function withPluginSections(sections: readonly (PromptSection & { plugin: string })[], core: readonly PromptSection[] = CORE_PROMPT_SECTIONS): PromptSection[] {
+  const own = (section: PromptSection & { plugin: string }) => section.id.startsWith(`${section.plugin}.`);
+  const out: PromptSection[] = core.map((section) => {
+    const plugin = sections.find((candidate) => candidate.id === section.id && own(candidate));
+    return plugin ? { id: plugin.id, text: plugin.text, after: plugin.after, roles: plugin.roles } : section;
+  });
+  for (const section of sections) {
+    if (out.some((candidate) => candidate.id === section.id)) continue;
+    out.push({ id: section.id, text: section.text, after: section.after, roles: section.roles });
+  }
+  return out;
+}
+
 /** 2.0 only: the `<task>` line's optional `stage`, told right after its states, to every bot. */
 export const TASK_STAGE_SENTENCE = "stage (optional) is built, reviewed, installed or verified, for work that must still be installed or checked before it is really done.";
 const TASK_STATES_SENTENCE = "state is running, waiting (the user must act), done or stopped.";
@@ -461,11 +488,11 @@ const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
 /**
  * The instructions as 2.0 gives them: `botPrompts`, plus the `<task>` stage sentence (after its
- * states) for every bot, the whiteboard picture line (after the <show> line) for every bot but the
- * main bot, and — when the app has its report command — the report page line after the results rule
+ * states) for every bot, the prompt sections (`sections`: by default the whiteboard picture line, after
+ * the <show> line, for every bot but the main bot), and — when the app has its report command — the report page line after the results rule
  * for every bot and Codex worker.
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, reports: ReportTool | null = null, engine: Engine = "claude", claudeWorkers = true): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, reports: ReportTool | null = null, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS): BotPrompts {
   let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
@@ -484,11 +511,15 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   if (engine === "agy" && profile.parent && profile.role !== "main") {
     system = `${system}\nYou are a sub bot of your project bot: your first message, starting with "${SUB_BOT_RELAY_PREFIX}", names a handoff.md file; read it and take over exactly where it stops. Keep the progress.md file named there current (what is done, what you are doing, what is next, anything waiting on the user) and set its first line to "Status: done" when your job is finished; your project bot reads it. In .bot/ only the handoff.md and progress.md files named in your first message are yours to write besides memory and artifacts.`;
   }
-  if (profile.role !== "main") {
+  // The sections (the whiteboard picture line, plugins'), in order: those after <show> one after another there.
+  const told = sections.filter((section) => section.roles.includes(profile.role));
+  const afterShow = told.filter((section) => section.after === "show").map((section) => section.text);
+  if (afterShow.length) {
     system = system.includes(SHOW_LINE)
-      ? system.replace(SHOW_LINE, `${SHOW_LINE}\n${WHITEBOARD_PICTURE_LINE}`)
-      : `${system}\n${WHITEBOARD_PICTURE_LINE}`;
+      ? system.replace(SHOW_LINE, [SHOW_LINE, ...afterShow].join("\n"))
+      : [system, ...afterShow].join("\n");
   }
+  for (const section of told) if (section.after === "end") system = `${system}\n${section.text}`;
   let codexWorkerSystem = prompts.codexWorkerSystem;
   if (reports) {
     const artifacts = profile.folder ? join(profile.folder, profile.role === "main" ? "artifacts" : ".bot/artifacts") : "<your artifacts folder>";

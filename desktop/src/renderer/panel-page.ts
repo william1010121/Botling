@@ -3,8 +3,10 @@
 // (opaque origin, no network, no storage, no bridge), served by main under PANEL_CSP. The page gets a
 // small `ccb`: panels.register, settings, notify, commands (and `command(id, ...args)`, Botling's
 // openChat / openResult too), host.call or call (to what its own program part exposes, through the app
-// page's frame broker and the core; Web/src/frame-protocol.ts). What
-// only the chat page could lend (the input box, markdown, components) does nothing here.
+// page's frame broker and the core; Web/src/frame-protocol.ts), tile (a library component's card page it
+// may put in a frame of its own) and requestApproval (asks the user, on the app page's ApprovalSheet, to
+// allow a bot's command). What only the chat page could lend (the input box, markdown, components) does
+// nothing here.
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").replace(new RegExp("\u2028", "g"), "\\u2028").replace(new RegExp("\u2029", "g"), "\\u2029");
 
 export function panelPage(plugin: string, panel: string, source: string, settings: Record<string, unknown>): string {
@@ -41,6 +43,14 @@ addEventListener("message", (event) => {
   }
 });
 const nothing = () => () => {};
+/** A request the page answers (a reply with the same id). */
+function ask(message) {
+  return new Promise((resolve, reject) => {
+    const id = ++next;
+    waiting.set(id, { resolve, reject });
+    post({ ...message, id });
+  });
+}
 function draw() {
   const render = panels.get(PANEL);
   if (!render) { root.innerHTML = '<p class="panel-empty">This panel is not ready.</p>'; return; }
@@ -76,15 +86,13 @@ const ccb = {
   },
   command: (id, ...args) => ccb.commands.execute(id, ...args),
   host: {
-    call(method, params) {
-      return new Promise((resolve, reject) => {
-        const id = ++next;
-        waiting.set(id, { resolve, reject });
-        post({ ccb: "call", id, method: String(method), params: params === undefined ? null : params });
-      });
-    },
+    call: (method, params) => ask({ ccb: "call", method: String(method), params: params === undefined ? null : params }),
   },
   call: (method, params) => ccb.host.call(method, params),
+  /** A component of the library as a tile ({ component, data, size: "1x1" | "2x1", botId }): the URL of its page, for an iframe of this page's own. */
+  tile: (spec) => ask({ ccb: "tile", component: String(spec?.component ?? ""), data: spec?.data === undefined ? null : spec.data, size: String(spec?.size ?? ""), botId: String(spec?.botId ?? "") }),
+  /** Asks the user to allow a bot's command in its folder ({ botId, command, folder, card? }); resolves { allowed }. */
+  requestApproval: (req) => ask({ ccb: "approval", botId: String(req?.botId ?? ""), command: String(req?.command ?? ""), folder: String(req?.folder ?? ""), ...(req?.card != null ? { card: String(req.card) } : {}) }),
   // Only the chat page can lend these; in a panel frame they do nothing.
   composer: { element: null, view: null, getText: () => "", insert() {}, addExtension: nothing, showPopover: nothing, onKeyDown: nothing },
   messages: { use() {}, afterRender: nothing },

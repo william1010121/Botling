@@ -7,13 +7,27 @@
 //                                                         Botling's own openChat / openResult (`builtinCommand`)
 //                  { ccb: "notify", text }                a line for the user
 //                  { ccb: "error", message }              its code failed
+//                  { ccb: "tile", id, component, data, size, botId }
+//                                                         a component of the library drawn as a tile: the reply is
+//                                                         the URL of a card page (botling-card://page/<token>) it may
+//                                                         frame, read only (plugin-extraction.md W4, `ccb.tile`)
+//                  { ccb: "approval", id, botId, command, folder, card? }
+//                                                         asks the user to allow a bot's command: the page around it
+//                                                         shows its own ApprovalSheet; the reply is { allowed }. A
+//                                                         frame can ask, never allow (`ccb.requestApproval`)
 //   page → frame   { ccb: "reply", id, ok, value }        the call's answer, or why it failed
 
 export type FrameRequest =
   | { ccb: "call"; id: number; method: string; params: unknown }
   | { ccb: "command"; id: string; args?: string[] }
   | { ccb: "notify"; text: string }
-  | { ccb: "error"; message: string };
+  | { ccb: "error"; message: string }
+  | { ccb: "tile"; id: number; component: string; data: unknown; size: TileSize; botId: string }
+  | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string };
+
+/** The sizes a frame's tile may have (a whiteboard card's picture: 1×1 or 2×1). */
+export const TILE_SIZES = ["1x1", "2x1"] as const;
+export type TileSize = (typeof TILE_SIZES)[number];
 
 export interface FrameReply { ccb: "reply"; id: number; ok: boolean; value: unknown }
 
@@ -30,7 +44,10 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   command: ["ccb", "id", "args"],
   notify: ["ccb", "text"],
   error: ["ccb", "message"],
+  tile: ["ccb", "id", "component", "data", "size", "botId"],
+  approval: ["ccb", "id", "botId", "command", "folder", "card"],
 };
+const text = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
 /** A frame's message as a request, or null if it is not exactly one. */
 export function parseFrameRequest(data: unknown): FrameRequest | null {
@@ -51,6 +68,13 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
     }
     case "notify":
       return typeof message.text === "string" ? { ccb: "notify", text: message.text } : null;
+    case "tile":
+      if (!Number.isSafeInteger(message.id) || !text(message.component, 200) || !text(message.botId, 64) || !(TILE_SIZES as readonly unknown[]).includes(message.size)) return null;
+      return { ccb: "tile", id: message.id as number, component: message.component, data: message.data ?? null, size: message.size as TileSize, botId: message.botId };
+    case "approval":
+      if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.command, 20_000) || !text(message.folder, 4_000)) return null;
+      if (message.card !== undefined && !text(message.card, 200)) return null;
+      return { ccb: "approval", id: message.id as number, botId: message.botId, command: message.command, folder: message.folder, ...(message.card !== undefined ? { card: message.card as string } : {}) };
     default:
       return typeof message.message === "string" ? { ccb: "error", message: message.message } : null;
   }

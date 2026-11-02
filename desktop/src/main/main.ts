@@ -29,7 +29,7 @@ import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
-import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
+import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { attachmentFile, attachmentTarget } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
@@ -629,6 +629,9 @@ app.on("web-contents-created", (_, contents: WebContents) => {
       allowed = (!hasNativeEditorHost(contents)||details.url===`${CHAT_URL}?spec=1`) && parent === mainFrame && (!initiator || initiator === mainFrame);
     } else if (details.url.startsWith(CARD_PREFIX) || details.url.startsWith(PAGE_PREFIX)) {
       allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
+      // A tile a plugin's panel asked for (`ccb.tile`), inside that panel.
+      if (!allowed) allowed = tileNavigation(details.url, parent ? { url: parent.url, childOfApp: parent.parent === mainFrame } : null, !initiator || initiator === parent,
+        (token) => { const page = pages.get(token); return page ? (page.panel ? "panel" : "component") : null; });
     } else if (details.url.startsWith(PREVIEW_PREFIX)) {
       // A result page: a shell-owned full-page viewer, or a component-owned preview card child.
       // The sandboxed report itself still cannot initiate navigation.

@@ -116,7 +116,25 @@ export const PREVIEW_TYPES: Record<string, string> = {
 
 /**
  * A plugin panel's page (its web part in a sandboxed frame): as COMPONENT_CSP, plus `blob:` scripts so
- * the plugin's module (its own source text, given by the core) can be imported. Still no network,
- * frames, forms or workers; the frame is `sandbox="allow-scripts"` (opaque origin).
+ * the plugin's module (its own source text, given by the core) can be imported, and frames of card pages
+ * (botling-card://page/<token>, the tiles `ccb.tile` asks for; main serves each token once, under
+ * COMPONENT_CSP, so a tile frames nothing further). Still no network, forms or workers; the frame is
+ * `sandbox="allow-scripts"` (opaque origin).
  */
-export const PANEL_CSP = COMPONENT_CSP.replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' blob:");
+export const PAGE_URL = "botling-card://page/";
+
+/**
+ * Whether a frame may load `url` as a tile of a plugin's panel (`ccb.tile`): a component page (never a panel's)
+ * in a frame whose parent is a panel page the app page itself holds, started by that panel (or by nothing). `kind`
+ * is what main served under a token. Every other card page loads only in the app page or the chat page.
+ */
+export function tileNavigation(url: string, parent: { url: string; childOfApp: boolean } | null, byParent: boolean, kind: (token: string) => "panel" | "component" | null): boolean {
+  const token = (page: string) => (page.startsWith(PAGE_URL) ? page.slice(PAGE_URL.length).split(/[?#/]/)[0] || null : null);
+  const tile = token(url);
+  const panel = parent ? token(parent.url) : null;
+  return !!tile && !!panel && !!parent?.childOfApp && byParent && kind(tile) === "component" && kind(panel) === "panel";
+}
+
+export const PANEL_CSP = COMPONENT_CSP
+  .replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' blob:")
+  .replace("frame-src botling-card://preview", "frame-src botling-card://preview botling-card://page/");

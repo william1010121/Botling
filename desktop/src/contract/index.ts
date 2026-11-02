@@ -672,6 +672,8 @@ const PluginCommandId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
 const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette"]);
 /** Who asks a plugin: one of its sandboxed frames (panel, tile, card) or the chat page (its web part). */
 const PluginCaller = z.enum(["frame", "chat"]);
+/** A bot as plugins name it ("main", or its id: `bots.list`). */
+const PluginBotId = z.union([z.literal("main"), BotId]);
 const SettingKey = z.string().min(1).max(200);
 const SettingValue = z.union([z.boolean(), z.number(), z.string().max(10_000), z.null()]);
 
@@ -1193,6 +1195,13 @@ export const Command = z.discriminatedUnion("type", [
    * method that plugin exposed (`ui.expose`). For a frame the plugin is the one the page bound it to.
    */
   z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown(), from: PluginCaller }),
+  /**
+   * A plugin frame's `ccb.requestApproval` (plugin-extraction.md W4), from the app page that bound the frame to `name`:
+   * what its ApprovalSheet shows for a bot's command in that bot's folder (null: allowed already). It allows nothing.
+   */
+  z.strictObject({ type: z.literal("plugins.approvalAsk"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), card: z.string().min(1).max(200).optional() }),
+  /** "Allow and run" on the app page's ApprovalSheet for a plugin frame's ask: the command and folder the sheet showed. No frame can send it. */
+  z.strictObject({ type: z.literal("plugins.approve"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000) }),
   /** The app's settings (settings.json), with every default filled in. */
   z.strictObject({ type: z.literal("settings.get") }),
   z.strictObject({ type: z.literal("agy.runtime.check") }),
@@ -1278,7 +1287,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
-  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
+  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "worktrees.list", "worktrees.create", "worktrees.use", "worktrees.merge", "worktrees.discard", "worktrees.terminal", "review.files", "review.diff", "worktrees.commit", "pr.draft", "pr.create", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
@@ -1404,6 +1413,8 @@ export interface Results {
   "plugins.command": { result: unknown };
   "plugins.panel": { title: string; source: string; settings: Record<string, boolean | number | string | null> };
   "plugins.call": { result: unknown };
+  "plugins.approvalAsk": { needsApproval: ApprovalAskView | null };
+  "plugins.approve": { accepted: boolean };
   "plugins.web": { specs: WebPluginSpecView[] };
   "settings.get": SettingsView;
   "agy.runtime.install": DoctorView;

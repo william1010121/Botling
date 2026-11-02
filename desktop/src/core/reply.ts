@@ -7,6 +7,9 @@
 // - <reaction …/> on a line of its own sets the bot's own reaction;
 // - <show> becomes a component display (kept in 1.x's `displays` format; 2.0 does not draw them yet);
 // - <whiteboard> (2.0 only) sets the bot's picture on the main bot's whiteboard, drawn nowhere in the chat;
+// - a tag a plugin declares (`replyTags`, plugins/contributions.ts) comes out where <whiteboard> does and
+//   is handed to that plugin; with none declared nothing here changes. Once botling.whiteboard declares
+//   <whiteboard>, it is that plugin's and the core no longer reads it;
 // - the other requests (<component>, <plugin>, <install>, <new-bot>, <new-project>, …) are
 //   parsed and taken out of the text, so the chat never shows raw tags; 2.0 acts on none of them yet
 //   and says so (bot.ts).
@@ -53,9 +56,14 @@ export interface CompletionSignal { kind: "end" | "block"; evidence: string }
 /** The bot's picture on the main bot's whiteboard (`<whiteboard name="x" size="2x1">JSON</whiteboard>`, or `<whiteboard clear/>`). */
 export type WhiteboardTag = { clear: true } | { name: string; data: string; command?: string; size: "1x1" | "2x1" };
 
+/** A tag a plugin declared, as the bot wrote it (`<deploy-status env="prod">{"ok":true}</deploy-status>`). */
+export interface PluginTag { tag: string; attributes: Record<string, string>; body: string }
+
 export interface Parsed {
   /** The last <whiteboard> tag outside code, if any. */
   whiteboard?: WhiteboardTag;
+  /** Plugins' tags outside code, in order; absent when there are none. */
+  pluginTags?: PluginTag[];
   body: string;
   choices: Choice[] | null;
   requests: BotRequest[];
@@ -88,6 +96,14 @@ const openQuestionTag = () => /<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)
 const projectTag = () => /<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:\/>|>\s*([\s\S]*?)\s*<\/new-project>)/g;
 const showTag = () => /<show((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/show>)/g;
 const whiteboardTag = () => /<whiteboard((?:\s+[A-Za-z-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/whiteboard>)/g;
+/** The tags plugins declare now (set by the core when its plugins change); parseReply reads them by default. */
+let declaredTags: readonly string[] = [];
+const tagName = (tag: string) => /^[a-z][a-z0-9-]{0,39}$/.test(tag);
+export function setPluginTags(tags: readonly string[]) { declaredTags = [...new Set(tags)].filter(tagName); }
+export const pluginTagNames = (): readonly string[] => declaredTags;
+const declaredTag = (tags: readonly string[]) => new RegExp(`<(${tags.join("|")})((?:\\s+[A-Za-z-]+(?:\\s*=\\s*(?:"[^"]*"|'[^']*'))?)*)\\s*(?:\\/>|>\\s*([\\s\\S]*?)\\s*<\\/\\1>)`, "g");
+/** The most of a plugin tag's body handed on. */
+export const PLUGIN_TAG_BODY_MAX = 100_000;
 const attributeTag = () => /([A-Za-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 const codeRegion = () => /(`{3,}|~{3,})[\s\S]*?(?:\1|$(?![\s\S]))|`[^`\n]+`/g;
 const reactionTag = () => /^ {0,3}<reaction message="([0-9A-Fa-f-]{36})" emoji="([^"]+)" present="(true|false)"\/>[ \t]*$/gm;
@@ -177,7 +193,7 @@ function choiceFrom(line: string): Choice | null {
 }
 
 /** `ReplyParser.parseAll`. */
-export function parseReply(reply: string): Parsed {
+export function parseReply(reply: string, tags: readonly string[] = declaredTags): Parsed {
   let text = reply;
   let mask = masked(reply);
   const replace = (index: number, length: number, inText: string, inMask = inText) => {
@@ -220,9 +236,17 @@ export function parseReply(reply: string): Parsed {
     replace(hit.index, hit.length, marker);
   }
 
-  // <whiteboard>: the last good one counts; every one leaves the text.
+  // Plugins' tags: every one leaves the text and is handed on, in order.
+  const pluginTags: PluginTag[] = [];
+  const own = tags.filter(tagName);
+  if (own.length) for (const hit of hits(declaredTag(own), mask).reverse()) {
+    pluginTags.unshift({ tag: group(text, hit, 0), attributes: attributes(group(text, hit, 1)), body: group(text, hit, 2).slice(0, PLUGIN_TAG_BODY_MAX) });
+    replace(hit.index, hit.length, "");
+  }
+
+  // <whiteboard>: the last good one counts; every one leaves the text (unless a plugin owns it now).
   let whiteboard: WhiteboardTag | undefined;
-  for (const hit of hits(whiteboardTag(), mask).reverse()) {
+  if (!own.includes("whiteboard")) for (const hit of hits(whiteboardTag(), mask).reverse()) {
     const attrs = group(text, hit, 0);
     const body = group(text, hit, 1);
     replace(hit.index, hit.length, "");
@@ -335,7 +359,7 @@ export function parseReply(reply: string): Parsed {
 
   const { body, places } = placing(text, displays.length);
   displays.forEach((display, i) => { if (places[i] != null) display.at = places[i]!; });
-  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(whiteboard ? { whiteboard } : {}) };
+  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(whiteboard ? { whiteboard } : {}), ...(pluginTags.length ? { pluginTags } : {}) };
 }
 
 /** The text without its markers, trimmed, and where each marker was (UTF-16 offsets). */

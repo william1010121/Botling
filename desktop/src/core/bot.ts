@@ -80,7 +80,7 @@ import {
 import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
-import { masked, parseReply, unsupportedRequest, type BotRequest, type WhiteboardTag } from "./reply";
+import { masked, parseReply, pluginTagNames, unsupportedRequest, type BotRequest, type PluginTag, type WhiteboardTag } from "./reply";
 import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
@@ -212,6 +212,8 @@ export interface BotOptions {
   replyFilter?: () => ((text: string) => Promise<string>) | null;
   /** A reply showed (plugins' `bots.onReply`; Maintainer's requests settle). */
   replied?: (bot: Bot, record: ChatRecord) => void;
+  /** A reply's tags that plugins declared (`replyTags`), for the plugins to hear (the bot is the one whose reply it was). */
+  pluginTags?: (bot: Bot, tags: PluginTag[]) => void;
   /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
   plugins?: () => { dirs: string[]; env: Record<string, string>; tools?: string[] };
   /** What the plugins' Claude parts are now (`PluginRegistry.claudeStamp`, 1.x's `pluginStamp`). */
@@ -2470,6 +2472,7 @@ export class Bot {
   private showAppReply(raw: string) {
     const parsed = parseReply(raw);
     if (parsed.whiteboard) this.owner.setWhiteboard(parsed.whiteboard);
+    if (parsed.pluginTags) this.options.pluginTags?.(this.owner, parsed.pluginTags);
     const record: ChatRecord = { id: newId(), role: "bot", text: "", date: toSwiftDate(), state: "done", engine: this.engine };
     let text = parsed.body;
     const extracted = extractCards(text);
@@ -3686,6 +3689,7 @@ export class Bot {
     const ended = turn.origin === "background" ? [...this.pendingEnded.splice(0), ...turn.ended] : turn.ended;
     if (status === "done") this.applyReactions(parsed.reactions);
     if (status === "done" && parsed.whiteboard) this.owner.setWhiteboard(parsed.whiteboard);
+    if (status === "done" && parsed.pluginTags) this.options.pluginTags?.(this.owner, parsed.pluginTags);
     // Nothing for the user, whoever started the turn: no bubble (`headTurnContent` says what the head keeps out).
     const content = headTurnContent({ status, origin: turn.origin, sharesChat: this.sharesChat, raw, parsed, body: tags.body, handoff: !!tags.handoff, steps: turn.steps.length, error: error ?? null });
     if (!hasVisibleContent(content)) {
@@ -5007,6 +5011,22 @@ export class Bot {
     return { accepted: true };
   }
 
+  /** A plugin's command for this bot (its frame's `ccb.requestApproval`): the folder it runs in, and whether the user allowed it there. */
+  commandApproval(command: string): { folder: string; approved: boolean } | null {
+    if (this.options.primary) return this.options.primary.commandApproval(command);
+    const context = this.context;
+    return context ? { folder: this.commandFolder, approved: context.commands.isApproved(command, this.commandFolder) } : null;
+  }
+
+  /** The user allowed a plugin's command on the app page's ApprovalSheet: remembered for this bot's folder, as a card's. */
+  approveCommand(command: string): boolean {
+    if (this.options.primary) return this.options.primary.approveCommand(command);
+    const context = this.context;
+    if (!context || this.readOnly) return false;
+    context.commands.approve(command, this.commandFolder);
+    return true;
+  }
+
   /** The command its picture's data comes from (kept with it when it was set). */
   private whiteboardCommand(): string | null {
     return this.whiteboard?.command ?? null;
@@ -5972,7 +5992,7 @@ export function streamingText(raw: string): string {
   // Tags in code are examples: they are looked for outside code only (code that is not closed yet counts as code).
   const outside = masked(raw);
   let cut = -1;
-  for (const name of BLOCK_TAGS) {
+  for (const name of [...BLOCK_TAGS, ...pluginTagNames()]) {
     const opener = new RegExp(`<${name}(?=[\\s/>]|$)`, "g");
     let open = -1;
     for (const match of outside.matchAll(opener)) open = match.index!;

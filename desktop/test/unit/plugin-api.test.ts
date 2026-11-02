@@ -29,6 +29,7 @@ function fakeWorld() {
     stopped: [] as string[],
     ignored: [] as string[][],
     watching: [] as boolean[],
+    approved: [] as string[],
   };
   const settings = { language: "en", botLook: "cute", workerLimit: 4 };
   const overrides: Record<string, string> = { settings: "Mod+Shift+P" };
@@ -45,6 +46,8 @@ function fakeWorld() {
     openPanel: (plugin, panel, title) => { log.panels.push([plugin, panel, title]); },
     appSettings: () => ({ ...settings }),
     shortcutOverrides: () => ({ ...overrides }),
+    commandApproval: (botId, command) => (botId === "main" ? { folder: "/home/me", approved: log.approved.includes(command) } : null),
+    approveCommand: (botId, command) => botId === "main" && !!log.approved.push(command),
     createBot: () => { throw new Error("not here"); },
     addRoutine: () => "added",
     changed: () => {},

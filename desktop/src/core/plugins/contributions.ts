@@ -24,6 +24,25 @@ export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;
 export const STATUS_SLOTS = ["chatHeader", "botRow"] as const;
 export const MENU_SLOTS = ["message/context", "bot/context", "composer/plus", "commandPalette"] as const;
 export const HOOKS = ["beforeSend", "afterReply", "toolCall"] as const;
+/** Where a prompt section goes: right after the line about <show> (at the end when a prompt has none), or at the end. */
+export const PROMPT_ANCHORS = ["show", "end"] as const;
+export const PROMPT_ROLES = ["main", "manager", "bot"] as const;
+export type PromptAnchor = (typeof PROMPT_ANCHORS)[number];
+export type PromptRole = (typeof PROMPT_ROLES)[number];
+/** The longest prompt section a plugin may give (bots read it in every session). */
+export const PROMPT_SECTION_MAX = 4_000;
+/**
+ * Tags the core reads itself (reply.ts, heads.ts) or that are HTML: no plugin may take one. A plugin's own
+ * tag has a "-" in it, as a custom element does, so it is never an HTML element either.
+ */
+export const CORE_REPLY_TAGS = [
+  "choices", "no-reply", "task", "reaction", "show", "whiteboard", "component", "new-bot", "sub-bot", "plugin", "agent-message", "agent-stop",
+  "need-folder", "install", "install-build", "give-component", "take-component", "suggest-component", "component-spec", "component-declined",
+  "app-screenshot", "open-question", "new-project", "decision-ref", "end", "block", "handoff",
+] as const;
+/** Core tags on their way to the first-party plugin that will own them (plugin-extraction.md §4.2): only that plugin may declare one. */
+export const HANDED_TAGS: Readonly<Record<string, string>> = { whiteboard: "botling.whiteboard" };
+const PLUGIN_TAG = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/;
 export type ViewSlot = (typeof VIEW_SLOTS)[number];
 export type ViewRole = (typeof VIEW_ROLES)[number];
 export type TileSurface = (typeof TILE_SURFACES)[number];
@@ -44,6 +63,10 @@ export type Contribution = { plugin: string } & (
   | { kind: "menu"; menu: (typeof MENU_SLOTS)[number]; command: string }
   | { kind: "hook"; hook: (typeof HOOKS)[number] }
   | { kind: "routine"; id: string; cron: string; command: string }
+  /** A tag bots may write in a reply (`<tag …>body</tag>`): taken out of the text and handed to the plugin's program part. */
+  | { kind: "replyTag"; tag: string }
+  /** Words every bot of `roles` is told in its instructions, at `after`. */
+  | { kind: "promptSection"; id: string; text: string; after: PromptAnchor; roles: PromptRole[] }
   /** Skills (a folder with SKILL.md each), agent definitions and MCP servers for every engine; `claude` is the old Claude Code plugin folder. */
   | { kind: "agent"; claude: string | null; mcp: string | null; skills: { name: string; dir: string }[]; agents: { name: string; file: string }[] }
 );
@@ -194,6 +217,32 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
   list("routines").forEach((entry, index) => {
     const f = fields(entry, `contributes.routines.${index}`, ["id", "cron", "command"]);
     if (f && ownId("Routine", f.id)) out.push({ kind: "routine", plugin, id: f.id, cron: f.cron, command: f.command });
+  });
+  list("replyTags").forEach((entry, index) => {
+    const f = fields(entry, `contributes.replyTags.${index}`, ["tag"]);
+    if (!f) return;
+    const handed = HANDED_TAGS[f.tag];
+    if (handed !== undefined ? handed !== plugin : (CORE_REPLY_TAGS as readonly string[]).includes(f.tag) || !PLUGIN_TAG.test(f.tag) || f.tag.length > 40) {
+      problems.push(handed !== undefined || (CORE_REPLY_TAGS as readonly string[]).includes(f.tag)
+        ? `Reply tag "${f.tag}" is Botling's own.`
+        : `Reply tag "${f.tag}" must be lowercase words joined by "-" (like "deploy-status"), at most 40 characters.`);
+      return;
+    }
+    if (out.some((other) => other.kind === "replyTag" && other.tag === f.tag)) { problems.push(`Reply tag "${f.tag}" is declared twice.`); return; }
+    out.push({ kind: "replyTag", plugin, tag: f.tag });
+  });
+  list("promptSections").forEach((entry, index) => {
+    const f = fields(entry, `contributes.promptSections.${index}`, ["id", "text", "after?"]);
+    if (!f) return;
+    const after = oneOf(PROMPT_ANCHORS, f.after, "end");
+    if (!after) { problems.push(`Prompt section "${f.id}": after "${f.after}" must be ${named(PROMPT_ANCHORS)}.`); return; }
+    if (!f.text.trim() || f.text.length > PROMPT_SECTION_MAX) { problems.push(`Prompt section "${f.id}": its text must be 1 to ${PROMPT_SECTION_MAX} characters.`); return; }
+    const roles = entry.roles ?? [...PROMPT_ROLES];
+    if (!Array.isArray(roles) || !roles.length || roles.some((role) => !(PROMPT_ROLES as readonly unknown[]).includes(role))) {
+      problems.push(`Prompt section "${f.id}": roles must be a list of ${named(PROMPT_ROLES)}.`);
+      return;
+    }
+    if (ownId("Prompt section", f.id)) out.push({ kind: "promptSection", plugin, id: f.id, text: f.text, after, roles: PROMPT_ROLES.filter((role) => roles.includes(role)) });
   });
   // Skills and agents as provider-layer.md §8.4 names them (`contributes.skills`, `contributes.agents`).
   const agent = { skills: path(c, "skills"), agents: path(c, "agents"), mcp: path(c, "mcp") };

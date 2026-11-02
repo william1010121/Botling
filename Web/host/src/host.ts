@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createApi, newLoaded, type BotlingApi, type HostPluginSpec, type Incoming, type JSONValue, type Loaded, type Outgoing, type PluginEventName, type WORKSPACE_EVENT } from "./api";
 
 export type {
-  AppSettingKey, BotInfo, BotlingApi, BotSummary, BrowserOperation, BrowserScope, CcbHost, HostPluginSpec, Incoming, Keybinding, NewBot, Outgoing, PluginEvents, StatusItem,
+  AppSettingKey, BotInfo, BotlingApi, BotSummary, BrowserOperation, BrowserScope, CcbHost, HostPluginSpec, Incoming, Keybinding, NewBot, Outgoing, PluginEvents, ReplyTag, StatusItem,
   WorkspaceApi, WorkspaceChange, WorkspaceKind,
 } from "./api";
 
@@ -90,6 +90,13 @@ export class Host {
         for (const plugin of this.plugins.values()) {
           for (const listener of [...(plugin.events.get(name) ?? [])]) this.run(plugin.spec.name, () => listener(params.data));
         }
+        return null;
+      }
+      case "replyTag": {
+        // A bot's reply had a tag this plugin declared (Botling checked it is the plugin's).
+        const plugin = this.plugins.get(params.plugin);
+        const tag = { bot: params.bot, tag: params.tag, attributes: params.attributes ?? {}, body: params.body ?? "" };
+        for (const listener of [...(plugin?.replyTags.get(params.tag) ?? [])]) this.run(plugin!.spec.name, () => listener(tag));
         return null;
       }
       case "command": {

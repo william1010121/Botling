@@ -3,11 +3,12 @@ import { ShellOverlay } from "./ShellOverlay";
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
 import { useEffect, useRef, useState } from "react";
-import type { PluginView, PluginsView } from "../contract";
+import type { BotView, ComponentInfoView, PluginView, PluginsView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import type { BuiltinCommand } from "../../../Web/src/frame-protocol";
 import { panelPage } from "./panel-page";
+import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
@@ -134,8 +135,14 @@ const panelFrames = () => (brokerForPanels ??= new FrameBroker(window, { ignore:
 /** Runs Botling's own commands a plugin frame asks for (botling.openChat / openResult); without it they are refused. */
 export type BuiltinRunner = (plugin: string, command: BuiltinCommand) => void;
 
-/** A plugin view's sandboxed frame: its page made from the web part, its calls to its own program part, its commands. */
-function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner) {
+/** What a plugin frame's tiles and approval asks need of this page (plugin-frame-host.ts): the library, the bots, its own ApprovalSheet. */
+export interface FrameServices { components?: Record<string, ComponentInfoView>; bots?: BotView[]; ask?: PluginFrameHostDeps["ask"] }
+
+/**
+ * A plugin view's sandboxed frame: its page made from the web part, its calls to its own program part, its commands,
+ * its tiles and approval asks (answered here; only this page's ApprovalSheet allows).
+ */
+function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner, services: FrameServices = {}) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -144,6 +151,8 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
   const builtin = useRef(onBuiltin);
   builtin.current = onBuiltin;
   const runsBuiltins = !!onBuiltin;
+  const now = useRef(services);
+  now.current = services;
   useEffect(() => {
     let live = true;
     client.request({ type: "plugins.panel", name: plugin, panel })
@@ -155,8 +164,13 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
     const element = frame.current;
     if (!url || !element) return;
     return registerPluginFrame(panelFrames(), {
-      call: (name, method, params) => client.request({ type: "plugins.call", name, method, params, from: "frame" }).then((answer) => answer.result, (failure) => { throw new Error(why(failure)); }),
-      command: (name, id, args) => client.request({ type: "plugins.command", id, from: "frame", name, ...(args?.length ? { args } : {}) }),
+      ...pluginFrameHost({
+        client,
+        components: () => now.current.components ?? {},
+        bots: () => now.current.bots ?? [],
+        // No sheet on this page: nothing is allowed.
+        ask: (view, approve, done) => (now.current.ask ? now.current.ask(view, approve, done) : done(false)),
+      }),
       ...(runsBuiltins ? { builtin: (name: string, command: BuiltinCommand) => builtin.current?.(name, command) } : {}),
     }, {
       frame: element,
@@ -169,8 +183,8 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
 }
 
 /** A plugin's panel: its web part in a sandboxed frame; its `host.call`s go to its own program part. */
-export function PanelFrame({ client, plugin, panel, title, onClose, onBuiltin }: { client: Client; plugin: string; panel: string; title: string; onClose: () => void; onBuiltin?: BuiltinRunner }) {
-  const { frame, url, problem, note } = usePluginFrame(client, plugin, panel, onBuiltin);
+export function PanelFrame({ client, plugin, panel, title, onClose, onBuiltin, ...services }: { client: Client; plugin: string; panel: string; title: string; onClose: () => void; onBuiltin?: BuiltinRunner } & FrameServices) {
+  const { frame, url, problem, note } = usePluginFrame(client, plugin, panel, onBuiltin, services);
   return (
     <div className="plugin-panel" role="dialog" aria-label={title}>
       <div className="plugins-head">
@@ -185,8 +199,8 @@ export function PanelFrame({ client, plugin, panel, title, onClose, onBuiltin }:
 }
 
 /** A plugin's main-area tab (`where: "mainTab"`, plan W2): the same frame, in the chat's place. */
-export function MainTabFrame({ client, plugin, view, title, onBuiltin }: { client: Client; plugin: string; view: string; title: string; onBuiltin: BuiltinRunner }) {
-  const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin);
+export function MainTabFrame({ client, plugin, view, title, onBuiltin, ...services }: { client: Client; plugin: string; view: string; title: string; onBuiltin: BuiltinRunner } & FrameServices) {
+  const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin, services);
   return (
     <div className="main-tab" role="region" aria-label={title} data-plugin={plugin}>
       {problem && <p className="plugins-problem">{problem}</p>}

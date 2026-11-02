@@ -48,6 +48,7 @@ export async function createWorkspaceDriver({ dataDir, plugins: names }: { dataD
     bots: () => [], send: () => { throw new Error("not here"); }, interrupt: async () => null, notice: () => {},
     ask: () => new Promise(() => {}), openPanel: () => {}, appSettings: () => ({}), shortcutOverrides: () => ({}),
     createBot: () => { throw new Error("not here"); }, addRoutine: () => "no-bot", changed: () => {}, broken: () => {}, log: () => {},
+    commandApproval: () => null, approveCommand: () => false,
     workspace: {
       bots: () => [{ id: "main", name: String(ver), role: "main", parent: null, folder: "Main", engine: "claude", busy: false, asleep: false, avatar: "circle", pinned: false }],
       memory: () => { throw new Error("not here"); }, tasks: () => [], taskHistory: () => [], results: () => [], waiting: () => ({ items: [], doing: {} }),

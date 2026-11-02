@@ -16,8 +16,9 @@
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
 import { join } from "node:path";
 import { z } from "zod";
-import { ContractError, type PluginsView, type WebPluginSpecView } from "../../contract";
+import { ContractError, type ApprovalAskView, type PluginsView, type WebPluginSpecView } from "../../contract";
 import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } from "../../contract/shortcuts";
+import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
 import { viewSurfaces } from "./views";
 import { ofKind, type Contribution } from "./contributions";
@@ -52,6 +53,10 @@ export interface PluginWorld {
   appSettings(): Record<string, JSONValue>;
   /** The keys the user chose (settings.json `shortcutBindings`: Botling's shortcuts and plugin commands). */
   shortcutOverrides(): Overrides;
+  /** A bot's folder and whether `command` may run there (approved-commands.json); null: no such bot. */
+  commandApproval(botId: string, command: string): { folder: string; approved: boolean } | null;
+  /** The user allowed `command` in the bot's folder (only ever from the app page's ApprovalSheet); false: no such bot. */
+  approveCommand(botId: string, command: string): boolean;
   /** `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. */
   createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined): BotInfo & { created: boolean };
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
@@ -111,6 +116,7 @@ const StatusParams = z.object({
 });
 const EVENT_NAMES = ["messagePosted", "turnFinished", "workerDone"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
+const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
 const PluginOnly = z.object({ plugin: str(214) });
@@ -155,6 +161,7 @@ export class Plugins {
     };
     this.host.onNotification = (method, params) => this.notified(method, params);
     this.host.onRequest = (method, params) => this.requested(method, params);
+    setPluginTags([...this.replyTagOwners().keys()]);
   }
 
   /** Opens the sealed secrets, then starts the host for the plugins that are on. */
@@ -170,6 +177,8 @@ export class Plugins {
   }
 
   private sync() {
+    // Bots' replies lose the tags plugins declare from the start (the host may not run yet: they are dropped then).
+    setPluginTags([...this.replyTagOwners().keys()]);
     if (!this.started) return;
     const app = this.options.world.appSettings();
     this.host.update(this.registry.hostSpecs(this.dataRoot).map((spec) => ({ ...spec, app })));
@@ -398,6 +407,67 @@ export class Plugins {
     this.host.replied(bot, text);
   }
 
+  // ------------------------------------------------------------------------------------------
+  // Reply tags and prompt sections (plugin-extraction.md W3)
+
+  /** Each tag enabled plugins declare (`replyTags`), with the plugin it goes to: the first by name when two declare it. */
+  replyTagOwners(): Map<string, string> {
+    const owners = new Map<string, string>();
+    for (const entry of ofKind(this.registry.contributions(), "replyTag")) if (!owners.has(entry.tag)) owners.set(entry.tag, entry.plugin);
+    return owners;
+  }
+
+  /** A bot's reply had tags plugins declared: each goes to its plugin's program part (`replyTags.on`), if it runs. */
+  replyTags(bot: BotInfo, tags: PluginTag[]) {
+    const owners = this.replyTagOwners();
+    for (const tag of tags) {
+      const plugin = owners.get(tag.tag);
+      if (plugin && this.loaded(plugin)) this.host.replyTag(plugin, bot, tag);
+    }
+  }
+
+  /** What enabled plugins add to bots' instructions (`promptSections`), in the plugins' order. */
+  promptSections() {
+    return ofKind(this.registry.contributions(), "promptSection");
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Approvals a plugin's frame asks for (plugin-extraction.md W4, `ccb.requestApproval`)
+
+  /** A plugin on now (enabled, not failed) that may ask: it has a frame of its own (a web part). */
+  private asking(name: string) {
+    const plugin = this.known(name);
+    if (!plugin.enabled || plugin.failure) throw new ContractError("conflict", `Plugin "${name}" is not on.`);
+    return plugin;
+  }
+
+  /** The bot's command as the core has it: refused unless `folder` is that bot's own folder. */
+  private approvalState(botId: string, command: string, folder: string) {
+    const state = this.options.world.commandApproval(botId, command);
+    if (!state) throw new ContractError("not_found", "No such bot.");
+    if (state.folder !== folder) throw new ContractError("bad_request", `A plugin's command runs in its bot's folder (${state.folder}), not ${folder}.`);
+    return state;
+  }
+
+  /**
+   * A frame's `ccb.requestApproval`, from the app page (which bound the frame to `name`): what the app page's
+   * ApprovalSheet shows (null: allowed already, nothing to ask). Asking allows nothing.
+   */
+  approvalAsk(name: string, botId: string, command: string, folder: string, card?: string): { needsApproval: ApprovalAskView | null } {
+    const plugin = this.asking(name);
+    const state = this.approvalState(botId, command, folder);
+    if (state.approved) return { needsApproval: null };
+    const who = title(plugin.manifest).slice(0, 100);
+    return { needsApproval: { command, folder: state.folder, detail: null, card: card ? `${who}: ${card.slice(0, 100)}` : who } };
+  }
+
+  /** "Allow and run" on the ApprovalSheet for a plugin's ask: the command as the sheet showed it, in that bot's folder. */
+  approve(name: string, botId: string, command: string, folder: string): { accepted: boolean } {
+    this.asking(name);
+    this.approvalState(botId, command, folder);
+    return { accepted: this.options.world.approveCommand(botId, command) };
+  }
+
   /** The plugin whose name a host message gives, if it is loaded (the host names it; it is all one process). */
   private loaded(name: unknown) {
     if (typeof name !== "string") return null;
@@ -563,6 +633,13 @@ export class Plugins {
         const raw = parsed.data as Record<string, unknown>;
         const text = (key: string) => (typeof raw[key] === "string" ? (raw[key] as string).slice(0, 4_000) : "");
         return world.createBot(plugin.manifest.name, plugin.manifest.displayName ?? plugin.manifest.name, text("name"), text("job"), text("avatar") || undefined);
+      }
+      case "approvals.check": {
+        // Whether the user allowed a command in a bot's folder (its frame asks with ccb.requestApproval).
+        const { data } = this.asked(ApprovalParams, params);
+        const state = world.commandApproval(data.bot, data.command);
+        if (!state) throw new Error("No such bot.");
+        return state;
       }
       case "routines.add": {
         const parsed = RoutineParams.safeParse(params);
