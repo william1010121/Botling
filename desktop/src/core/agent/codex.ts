@@ -57,7 +57,7 @@ import { activity, type StreamItem } from "./stream";
 import type { HeadExit, HeadHandlers } from "./head";
 import { movedTaskError, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./workers";
 import { ComponentEditorAdapter, EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
-import tools from "./codex-tools.json";
+import { appTools, codexDynamicTools } from "../app-tools/registry";
 import { RoutineError, ScheduledRoutineStore } from "../routines";
 import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
 import { toSwiftDate } from "../store/records";
@@ -194,7 +194,7 @@ interface Approval {
 
 /** Codex's coordinator: no shell, no native subagents, no web search (`coordinatorConfig`). */
 const COORDINATOR_CONFIG = { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled" };
-export const MANAGED_TOOLS = tools as Record<string, unknown>[];
+export const MANAGED_TOOLS: Record<string, unknown>[] = codexDynamicTools(appTools("codex"));
 /** The longest hand-off the worker core takes. */
 const MAX_HANDOFF = 64_000;
 /** Changing the tools needs a new coordinator thread (tools are fixed when a thread starts). */

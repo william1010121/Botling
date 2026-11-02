@@ -10,6 +10,7 @@ import { tmpdir, homedir } from 'node:os';
 import { resolve, relative, isAbsolute, join } from 'node:path';
 import { processTreeAdapter, type ManagedProcess } from '../process/tree';
 import { inSpec, shellWritesSpec, specRoots, SPEC_DENIED } from '../spec-guard';
+import { appTools } from '../app-tools/registry';
 
 export const AGY_FILE_HELPER_SHA = '1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403';
 export function verifyAgyFileHelper(path: string | undefined, workspace: string) {
@@ -27,13 +28,7 @@ export const AGY_LOCAL_TOOLS: AgyTool[] = [
   { name:'write_file', description:'Write exact UTF-8 contents to a workspace file. Requires approval unless Full permission is active.', inputSchema:schema({path:text,content:text},['path','content']) },
   { name:'run_command', description:'Run a shell command in this workspace, waiting for completion (maximum 120 seconds). Requires approval unless Full permission is active. Stop cancels its process group.', inputSchema:schema({command:text},['command']) },
 ];
-export const AGY_WORKER_TOOLS: AgyTool[] = [
-  { name:'app_task_checkpoint', description:'Resolve this task/run report with concrete acceptance evidence or a specific blocker. Does not grant authorization.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},outcome:{type:'string',enum:['complete','waiting_user','waiting_dependency','blocked']},evidence:text,dependency_task_id:text},['task_id','run','outcome','evidence']) },
-  { name:'app_reconcile_report', description:'Needs no user approval card. Acknowledge an uncertain report as received, or retry only its delivery. Never replays the worker task.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},action:{type:'string',enum:['acknowledge','retry']}},['task_id','run','action']) },
-  { name:'app_handoff', description:'Assign an authorized task to an app-managed agy or Codex worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.', inputSchema:schema({instructions:text,name:text,engine:{type:'string',enum:['agy','codex']}},['instructions']) },
-  { name:'app_send_message', description:'Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1},message:text},['task_id','run','message']) },
-  { name:'app_cancel_task', description:'Stop one app-managed worker and its active tools.', inputSchema:schema({task_id:text,run:{type:'integer',minimum:1}},['task_id','run']) },
-];
+export const AGY_WORKER_TOOLS: AgyTool[] = appTools('agy');
 export const AGY_AUTO_ALLOWED_TOOLS = new Set(['app_handoff','app_send_message','app_task_checkpoint','app_cancel_task','app_reconcile_report']);
 const canonical = (v: any): string => v && typeof v === 'object' ? Array.isArray(v) ? '['+v.map(canonical).join(',')+']' : '{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}' : JSON.stringify(v);
 
@@ -70,8 +65,7 @@ export class AgyMcpBridge {
     this.extra = extraRoots.flatMap(dir => { try { return [{ raw: resolve(dir), real: realpathSync(dir) }]; } catch { return []; } });
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
     this.tools = delegate && agyWorkerRuntimeEnabled()
-      ? AGY_WORKER_TOOLS.map(tool => tool.name === 'app_handoff'
-        ? {...tool, inputSchema:schema({instructions:text,name:text,engine:{type:'string',enum:['agy']}},['instructions'])} : tool)
+      ? appTools('agy', {engines:['agy']})
       : [...AGY_LOCAL_TOOLS];
     this.base = realpathSync(cwd);
     const root = statSync(this.base, {bigint:true}), profile = statSync(protectedPath, {bigint:true});

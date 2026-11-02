@@ -20,6 +20,7 @@ import {
   ClaudeLegacyStore, WorkerCore,
   type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
 } from "../worker-core";
+import { appTools } from "../app-tools/registry";
 import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
@@ -42,16 +43,7 @@ export interface ClaudeWorkerHead {
 
 /** The in-process MCP server Claude coordinators get (head.ts `appMcp`). */
 export const CLAUDE_APP_SERVER = "botling";
-const schema = (properties: Record<string, unknown>, required: string[]) => ({ type: "object", properties, required, additionalProperties: false });
-const text = { type: "string" };
-export const CLAUDE_APP_TOOLS: AppToolSpec[] = [
-  { name: "app_handoff", description: "Start an app-managed worker: a Claude subagent that runs as its own session in this bot's folder and reports back to you. Use it wherever you would use the Agent tool (which is off here): give a short name and complete, self-contained instructions; subagent_type picks a .claude/agents definition, model overrides the worker's model (haiku, sonnet, opus). Returns task_id and run at once; the worker's report arrives later as an app message (<app_task_result>). Finish your turn instead of waiting or polling.",
-    inputSchema: schema({ name: text, instructions: text, subagent_type: text, model: text }, ["instructions"]) },
-  { name: "app_send_message", description: "Send words to one of your workers by task_id: joined into its run while it works, or the start of its next run (same session, same task) once it has reported. Its next report comes as an app message.",
-    inputSchema: schema({ task_id: text, message: text, run: { type: "integer", minimum: 1 } }, ["task_id", "message"]) },
-  { name: "app_cancel_task", description: "Stop one of your workers by task_id. Its work so far stays; no report is made.",
-    inputSchema: schema({ task_id: text, run: { type: "integer", minimum: 1 } }, ["task_id"]) },
-];
+export const CLAUDE_APP_TOOLS: AppToolSpec[] = appTools("claude");
 
 /** The deny reason the coordinator reads if a native Agent/Task call still gets through (head.ts `agentGuard`). */
 export const CLAUDE_AGENT_GUARD = "Native subagents are off in Botling: the app runs every subagent as a worker of its own. Call the app_handoff tool instead (botling MCP server; load it with ToolSearch if it is deferred), with this call's prompt as instructions, its description as name, and its subagent_type. Do not retry Agent or Task.";

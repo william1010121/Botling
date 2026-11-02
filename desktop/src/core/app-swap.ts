@@ -236,7 +236,7 @@ export function finishInstall(root: string) {
 export const SENSITIVE_PATHS = [
   "src/core/prompts.ts", "src/core/prompts-codex-text.ts", "src/core/prompts/delegation.ts", "src/core/prompts-agy.ts",
   "src/core/maintainer-text.ts", "src/core/agent/head.ts",
-  "src/core/agent/codex.ts", "src/core/agent/codex-tools.json", "src/core/settings.ts", "src/core/app-swap.ts",
+  "src/core/agent/codex.ts", "src/core/app-tools/registry.ts", "src/core/settings.ts", "src/core/app-swap.ts",
   "src/core/permission-rules.ts", "src/core/store/workspace.ts",
 ];
 /** Changed lines with these anywhere count too. */

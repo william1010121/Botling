@@ -176,7 +176,7 @@ function joinStraddles(lines, needles) {
 
 const CHECKS = [
   [new RegExp(escape(home)), "home folder"], [new RegExp(`\\b${escape(user)}\\b`, "i"), "user name"], [/\/Users\/[^/"\s]+/, "a /Users path"],
-  // The one /Volumes path allowed is an example in the app's own tool schema (src/core/agent/codex-tools.json).
+  // The one /Volumes path allowed is an example in the app's own tool schema (src/core/app-tools/registry.ts).
   [/\/Volumes\/(?!My-SSD\/botling-work\/<name>)/, "a /Volumes path"], [/\/var\/folders/, "a temp path"], [EMAIL, "an e-mail address"],
   ...machine.map((name) => [new RegExp(escape(name), "i"), "the machine's name"]), [/\bwilliam\b/i, "the git user name"],
   [/Bearer\s+[A-Za-z0-9._-]{10,}/, "a bearer token"], [/\bsk-[A-Za-z0-9_-]{16,}/, "an API key"], [/\beyJ[A-Za-z0-9_-]{20,}\./, "a JWT"],

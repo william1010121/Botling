@@ -6,7 +6,7 @@ import type { RunHandle, WorkerAdapterKind } from "./events";
 import type { WorkerLedgerRecord } from "./ledger";
 
 /**
- * The union of the three coordinators' app_handoff arguments (claude-workers.ts, codex-tools.json, agy-mcp.ts): the
+ * The union of the three coordinators' app_handoff arguments (app-tools/registry.ts): the
  * schemas stay as they are, the core accepts any of their names.
  */
 export interface HandoffArgs {
