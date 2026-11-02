@@ -4,9 +4,12 @@ import * as view from "@codemirror/view";
 import type MarkdownIt from "markdown-it";
 import { post } from "./bridge";
 import type { ChipHandle, ComposerChip } from "./composer";
+import { DecorationLayer, type DecorationRenderer } from "./decorations";
 import { ownsCommand } from "./frame-protocol";
-import { md, resetMarkdown } from "./markdown";
+import { mediaHTML, md, renderMarkdown, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
+import { taskCardChipHTML } from "./task-cards";
+import type { TaskCardView } from "./types";
 
 /** A plugin's web part, as the Swift side sends it. */
 export interface PluginSpec {
@@ -63,7 +66,18 @@ export interface CcbWeb {
     /** What the bubble of your own message shows, from its text (each handler gets what the one before left; empty: no bubble). */
     userText(handler: (text: string) => string): Dispose;
     afterRender(handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void): Dispose;
+    /** Words as the chat draws a message's (Markdown, with every plugin's renderers), as HTML. */
+    render(text: string): string;
+    /** A picture or video as the chat draws one in a message, as HTML. */
+    media(url: string, label: string): string;
+    /** A task's chip as the chat draws it under a reply, as HTML; `action`: the chip's data-action. */
+    taskChip(task: TaskCardView, action?: string): string;
   };
+  /**
+   * Chat extension v2: draws what this plugin's program part put among a chat's messages
+   * (`chat.decorate`): folded lines behind a card, or a card after a line (decorations.ts).
+   */
+  decorations: { register(renderer: DecorationRenderer): Dispose };
   components: { register(name: string, render: ComponentRender): Dispose };
   /** A page in the right column, declared in contributes.panels; drawn when you open it. */
   panels: { register(id: string, render: (root: HTMLElement) => void | Dispose): Dispose };
@@ -98,6 +112,8 @@ export class PluginHost {
   private markdownChanged = false;
   /** Called when a plugin registers a panel (the panel page waits for its own). */
   onPanels: (() => void) | null = null;
+  /** What plugins draw among the messages (decorations.ts); the chat places it on every update. */
+  readonly decorations = new DecorationLayer((plugin, run) => this.guard(plugin, run));
   /** host.call requests waiting for the plugin host's answer. */
   private readonly hostCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextCall = 1;
@@ -318,6 +334,12 @@ export class PluginHost {
           this.markdownChanged = true;
           return own(remove(extensions.afterRender, item));
         },
+        render: (text) => renderMarkdown(text),
+        media: (url, label) => mediaHTML(url, label),
+        taskChip: (task, action) => taskCardChipHTML(task, action),
+      },
+      decorations: {
+        register: (renderer) => own(this.decorations.register(name, renderer)),
       },
       components: {
         register: (component, render) => {

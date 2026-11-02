@@ -19,10 +19,12 @@ import { claudeSessionPermissionConfig, type HeadConfig } from "./agent/head";
 import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
-import { claudeSummarizer, codexSummarizer, engineSummarizer } from "./catchup";
 import { probeEndpoint, probeNetwork } from "./network-resume";
 import { PortSealer, testSealer, type Sealer } from "./plugins/secrets";
 import type { HostCommand } from "./plugins/host-client";
+import type { EngineCli } from "./plugins";
+import { childEnvironment } from "./agent/runner";
+import { resolveExecutable } from "./process/executable";
 import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
 import { StartupMarks } from "../startup-marks";
 
@@ -149,13 +151,20 @@ const dataLock = new DataDirLock(dataDir, { version: process.env.BOTLING_APP_VER
   }, checkMs).unref();
 }
 
-/** Catch-up summaries: the real Claude (`claude -p`) or Codex (`codex exec`) CLI by the chosen engine, or the fake Codex's `exec`. */
-function summarizer() {
-  const kind = process.env.BOTLING_AGENT ?? "fake";
-  const timeout = number(process.env.BOTLING_SUMMARY_TIMEOUT_MS, 60_000);
-  if (kind === "claude") return engineSummarizer({ codex: codexSummarizer({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }, timeout), claude: claudeSummarizer({ file: process.env.BOTLING_CLAUDE_PATH ?? "claude" }, timeout) });
+/**
+ * An engine's CLI for a plugin's one-shot model call (`engines.cli`): the real `claude` or `codex` (found
+ * where the bots' are, BOTLING_*_PATH), or under the fake agent the fake Codex (with the FAKE_CODEX_*
+ * variables tests give it; the plugin host gets no environment of the core's own).
+ */
+function engineCli(engine: "claude" | "codex"): EngineCli | null {
+  if ((process.env.BOTLING_AGENT ?? "fake") === "claude") {
+    const command = engine === "claude" ? process.env.BOTLING_CLAUDE_PATH ?? "claude" : process.env.BOTLING_CODEX_PATH ?? "codex";
+    return { file: resolveExecutable(command, childEnvironment()), args: [], env: {} };
+  }
   const script = process.env.BOTLING_FAKE_CODEX;
-  return script ? engineSummarizer({ codex: codexSummarizer({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, timeout) }) : null;
+  if (engine !== "codex" || !script) return null;
+  const fake = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[0].startsWith("FAKE_CODEX_") && entry[1] !== undefined));
+  return { file: process.execPath, args: [script], env: { ...fake, ELECTRON_RUN_AS_NODE: "1" } };
 }
 
 /** The models the local Codex offers (`model/list`): the real CLI, or the fake app-server. */
@@ -269,7 +278,7 @@ const core = new Core({
   stallMinuteMs: number(process.env.BOTLING_STALL_MINUTE_MS, 60_000),
   // Whether Claude's API answers again, while a bot waits for the network (BOTLING_NETWORK_PROBE_URL: another address, for tests).
   networkProbe: () => probeNetwork(process.env.BOTLING_NETWORK_PROBE_URL || probeEndpoint()),
-  summarizer: summarizer(),
+  engineCli,
   codexModels: codexModels(),
   engineModels: (engine, profile) => queryModels(engine, profile.folder),
   // The library and memory files are watched; these are the slow looks that catch what a watcher missed.

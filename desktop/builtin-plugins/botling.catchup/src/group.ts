@@ -1,64 +1,51 @@
-import { findMessageRow } from "./message-navigation";
-import { post } from "./bridge";
-import { summaryCountable } from "./summary-countable";
-export { setSummaryCountable } from "./summary-countable";
-import { t } from "./i18n";
-import type { CatchUpView, ChatState, MessageView } from "./types";
-import { sourceLinks, clickableSourceURL, type SourceLink } from "./catchup-links";
-import { summaryMessages, summaryReferences } from "./summary-sources";
-import { summaryViewer, sourceAuthor, sourceHead, summaryBy } from "./summary-viewer";
-import { escapeHTML } from "./util";
-import { taskCardChipHTML } from "./task-cards";
+// Catch-up and interval summaries in the chat (botling.catchup's web part): each is a message decoration
+// its program part chose (catchup.ts), folding the lines it summarizes behind a card with a short summary
+// on top. The page places the card and folds the lines (Web/src/decorations.ts); this draws the card,
+// opens its sources (viewer.ts) and asks the program part to retry a failed one. Under the last reply of
+// each stretch between your messages it also puts "Summarize N replies" (hidden by the desktop's CSS).
+import type { DecorationRenderer, DecorationContext, PlacedContext } from "../../../../Web/src/decorations";
+import type { ChatState, MessageView } from "../../../../Web/src/types";
+import { escapeHTML } from "../../../../Web/src/util";
+import { sourceLinks, clickableSourceURL, type SourceLink } from "./links";
+import { page } from "./page";
+import { summaryMessages, summaryReferences } from "./sources";
+import { viewOf, type CatchUpView } from "./types";
+import { summaryViewer, sourceAuthor, sourceHead, summaryBy } from "./viewer";
+import { t } from "./words";
+
+/** The replies a summary counts: bot replies and app notices (contract/summary.ts `isSummaryReply`). */
+export const summaryCountable = (message: Pick<MessageView, "role">): boolean => message.role === "bot" || message.role === "notice";
 
 /**
- * Catch-up summary: the unread messages you came back to, folded into one group with a short
- * summary on top. The messages stay where they are in the list (moving one would reload its
- * component frames): folded ones are only hidden, and the card goes just before the first.
- * Elements it adds carry `catchup-extra`, so the message loop steps over them.
+ * One summary's card, drawn into the element the page placed before the first line it folds (that
+ * element is the old `catchup-head`). "Show N messages" and the source chips open the originals.
  */
 export class CatchUpGroup {
-  /** The unread divider and the summary card, before the first folded message. */
-  readonly head: HTMLElement;
-  /** "End of unread", after the last one, while expanded. */
-  readonly end: HTMLElement;
-  /** Ranges you expanded, by `CatchUpView.key`. */
-  private readonly revealed = new Set<string>();
   private state: ChatState | null = null;
-  private element: (id: string) => HTMLElement | null = () => null;
+  private context: PlacedContext | null = null;
   private tooltip: HTMLElement | null = null;
   private owner = "";
-  private folded = new Set<HTMLElement>();
   private drawnKey = "";
   private view: CatchUpView | null = null;
   private botID = "";
 
-  constructor(private readonly interval = false) {
-    this.head = document.createElement("div");
-    this.head.className = "catchup-extra catchup-head";
-    this.end = document.createElement("div");
-    this.end.className = "catchup-extra catchup-end";
-    for (const element of [this.head, this.end]) {
-      element.addEventListener("click", (event) => this.clicked(event));
-      element.addEventListener("pointerover",event=>this.preview(event));
-      element.addEventListener("focusin",event=>this.preview(event));
-      element.addEventListener("pointerout",()=>this.tooltip?.remove());
-      element.addEventListener("focusout",()=>this.tooltip?.remove());
-    }
+  constructor(readonly head: HTMLElement, private readonly interval = false) {
+    head.classList.add("catchup-head");
+    head.addEventListener("click", (event) => this.clicked(event));
+    head.addEventListener("pointerover",event=>this.preview(event));
+    head.addEventListener("focusin",event=>this.preview(event));
+    head.addEventListener("pointerout",()=>this.tooltip?.remove());
+    head.addEventListener("focusout",()=>this.tooltip?.remove());
   }
 
-  /** Places the group for `state`; `element` finds a message's drawn row. */
-  update(state: ChatState, element: (id: string) => HTMLElement | null): void {
+  /** Draws the card for `view` as the chat stands in `context`. */
+  update(view: CatchUpView, context: PlacedContext): void {
+    const state = context.state;
     this.botID = state.botID;
     this.state = state;
-    this.element = element;
-    let view = state.subagent ? null : state.catchUp ?? null;
-    const rows = view ? view.ids.map(element).filter((row): row is HTMLElement => !!row) : [];
-    if (!view || rows.length === 0) {
-      this.clear();
-      return;
-    }
+    this.context = context;
     const owner = `${state.botID}:${view.key}`;
-    if(this.owner && this.owner!==owner){summaryViewer.close(this.owner);this.revealed.clear();}
+    if(this.owner && this.owner!==owner)summaryViewer.close(this.owner);
     this.owner=owner;
     const open = summaryViewer.isOpen(this.owner);
     const source = summaryMessages(view,state.messages);
@@ -74,56 +61,43 @@ export class CatchUpGroup {
     const links = sourceLinks(state.messages.filter((m) => view.ids.includes(m.id)));
     const drawKey = JSON.stringify([view, open, avatars, links, source, state.lang, state.avatar]);
     if (drawKey !== this.drawnKey) {
-      const focused = this.head.contains(document.activeElement) || this.end.contains(document.activeElement)
-        ? (document.activeElement as HTMLElement).dataset.action : undefined;
+      const focused = this.head.contains(document.activeElement) ? (document.activeElement as HTMLElement).dataset.action : undefined;
       this.drawnKey = drawKey;
       this.head.innerHTML = headHTML(view, open, avatars, links, source, this.interval);
-      this.end.innerHTML = endHTML(view.manual);
-      if (focused) (this.head.querySelector<HTMLElement>(`[data-action="${focused}"]`) ?? this.end.querySelector<HTMLElement>(`[data-action="${focused}"]`))?.focus({ preventScroll: true });
+      if (focused) this.head.querySelector<HTMLElement>(`[data-action="${focused}"]`)?.focus({ preventScroll: true });
     }
     this.head.classList.toggle("open", open);
     this.head.classList.toggle("interval-summary-head", this.interval);
-
-    const now = new Set(rows);
-    for (const row of this.folded) if (!now.has(row)) row.classList.remove("catchup-folded");
-    for (const id of view.ids) element(id)?.classList.toggle("catchup-folded", !this.revealed.has(id));
-    this.folded = now;
-
-    const first = rows[0], last = rows[rows.length - 1];
-    if (first.previousElementSibling !== this.head) first.before(this.head);
-    this.end.remove();
   }
 
+  /** The summary went away. */
   clear(): void {
-    for (const row of this.folded) row.classList.remove("catchup-folded");
-    this.folded.clear();
-    this.revealed.clear();
     if(this.owner) summaryViewer.close(this.owner);
     this.owner="";
     this.tooltip?.remove();
-    this.head.remove();
-    this.end.remove();
     this.view = null;
     this.drawnKey = "";
   }
 
   private clicked(event: Event): void {
     const button = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
-    if (!button || !this.view) return;
+    if (!button || !this.view || !this.context) return;
     if (button.dataset.action === "task") {
-      if (button.dataset.taskId) post({ type: "selectTask", id: button.dataset.taskId });
+      if (button.dataset.taskId) this.context.openTask(button.dataset.taskId);
       return;
     }
     if (button.dataset.action === "retry") {
-      post({ type: "catchUpRetry", botID: this.botID, ...(this.interval ? { key: this.view.key } : {}) });
+      void page.call("retry", { botId: this.botID, ...(this.interval ? { key: this.view.key } : {}) }).catch(() => {});
       return;
     }
     const point = button.dataset.citePoint == null ? -1 : Number(button.dataset.citePoint);
     const index = Number(button.dataset.citeIndex ?? 0);
     if (!this.state) return;
     this.tooltip?.remove();
-    summaryViewer.open(this.owner,this.state,this.view,this.element,id=>this.revealSource(id),point,index);
-    onToggle?.();
+    const context = this.context;
+    summaryViewer.onClose = () => context.redraw();
+    summaryViewer.open(this.owner,this.state,this.view,(id)=>context.row(id),id=>context.reveal(id),point,index);
+    context.redraw();
     summaryViewer.setRestoreTarget(()=>this.head.querySelector<HTMLElement>(point<0?'[data-action="toggle"]':`[data-cite-point="${point}"][data-cite-index="${index}"]`));
   }
 
@@ -138,33 +112,89 @@ export class CatchUpGroup {
     document.body.append(tooltip);this.tooltip=tooltip;
     const rect=chip.getBoundingClientRect();tooltip.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-Math.min(340,innerWidth-16)-8))}px`;tooltip.style.top=`${Math.max(8,Math.min(rect.bottom+8,innerHeight-tooltip.offsetHeight-8))}px`;
   }
-
-  private revealSource(id: string): void {
-    if (!this.view?.ids.includes(id)) return;
-    this.revealed.add(id);
-    onToggle?.();
-    const row=this.element(id)??findMessageRow(id);if(!row)return;
-    row.classList.remove("catchup-folded");row.classList.add("source-live-flash");
-    row.scrollIntoView?.({block:"center"});
-    const focus=row.querySelector<HTMLElement>('button:not([disabled]),iframe,input,textarea')??row;
-    if(!focus.hasAttribute("tabindex"))focus.setAttribute("tabindex","-1");focus.focus({preventScroll:true});
-    setTimeout(()=>row.classList.remove("source-live-flash"),2000);
-  }
 }
 
-/** Draws again after a toggle (the chat sets it). */
-let onToggle: (() => void) | null = null;
-export function onCatchUpToggle(redraw: () => void): void {
-  onToggle = redraw;
-  summaryViewer.onClose = redraw;
+/**
+ * The renderer the web part registers: a card per summary, kept by its element, and the "Summarize N
+ * replies" buttons under each stretch's last reply that no summary folds.
+ */
+export function catchUpRenderer(): DecorationRenderer {
+  const groups = new Map<HTMLElement, CatchUpGroup>();
+  const triggers = new Map<string, HTMLButtonElement>();
+  return {
+    draw(root, decoration, context) {
+      const view = viewOf(decoration);
+      let group = groups.get(root);
+      if (!group) { group = new CatchUpGroup(root, view.kind === "interval"); groups.set(root, group); }
+      group.update(view, context);
+    },
+    removed(decoration) {
+      for (const [root, group] of groups) if (root.dataset.key === decoration.key && !root.isConnected) { group.clear(); groups.delete(root); }
+    },
+    update(context) {
+      drawTriggers(context, triggers);
+    },
+  };
+}
+
+const lines = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9"/></svg>`;
+
+/** "Summarize N replies" under the last reply of each stretch between your messages that no interval summary folds. */
+function drawTriggers(context: DecorationContext, triggers: Map<string, HTMLButtonElement>): void {
+  const state = context.state;
+  const covered = new Set((state.subagent ? [] : state.decorations ?? []).filter((d) => (d.data as CatchUpView | undefined)?.kind === "interval").flatMap((d) => d.fold ?? []));
+  const retained = new Set<string>();
+  if (!state.subagent) for (let i = 0; i < state.messages.length; i++) {
+    const user = state.messages[i];
+    if (user.role !== "user") continue;
+    let end = i + 1;
+    while (end < state.messages.length && state.messages[end].role !== "user") end++;
+    const replies = state.messages.slice(i + 1, end).filter(summaryCountable);
+    const last = replies.at(-1);
+    if (!last || covered.has(last.id)) continue;
+    const row = context.row(last.id);
+    if (!row) continue;
+    let footer = row.querySelector<HTMLElement>(".message-footer");
+    if (!footer) {
+      let holder = row.querySelector<HTMLElement>(".speaker-column, .bot-column, .reaction-message-column");
+      if (!holder) {
+        const bubble = row.querySelector<HTMLElement>(".bot-bubble");
+        if (!bubble) continue;
+        holder = document.createElement("div");
+        holder.className = "reaction-message-column";
+        bubble.replaceWith(holder);
+        holder.append(bubble);
+      }
+      footer = document.createElement("div");
+      footer.className = "message-footer";
+      holder.append(footer);
+    }
+    const key = `${state.botID}:${user.id}`;
+    retained.add(key);
+    let trigger = triggers.get(key);
+    if (!trigger) {
+      trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "interval-summary-trigger";
+      const botId = state.botID, userMessageId = user.id;
+      trigger.addEventListener("click", () => { void page.call("interval", { botId, userMessageId }).catch(() => {}); });
+      triggers.set(key, trigger);
+    }
+    trigger.innerHTML = lines + escapeHTML(t("interval.summarize", { n: replies.length }));
+    if (trigger.parentElement !== footer) footer.append(trigger);
+    i = end - 1;
+  }
+  for (const [key, trigger] of triggers) if (!retained.has(key)) {
+    const footer = trigger.parentElement;
+    trigger.remove();
+    if (footer?.childElementCount === 0) footer.remove();
+    triggers.delete(key);
+  }
 }
 
 const sparkle = `<svg class="catchup-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>`;
 const alert = `<svg class="catchup-icon error" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/></svg>`;
-const down = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
-const up = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>`;
 const retry = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg>`;
-const check = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
 
 /** A bullet as HTML: `code` spans and commit/agent ids in code, a decision ("!! …") marked. */
 export function bulletHTML(bullet: string): string {
@@ -214,11 +244,6 @@ function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: So
     + `</div></section>`;
 }
 
-function endHTML(manual = false): string {
-  return `<div class="line"></div>${check}<span>${escapeHTML(t(manual ? "catchup.rangeEnd" : "catchup.end"))}</span>`
-    + `<button type="button" class="catchup-button outline small" data-action="collapse">${escapeHTML(t("catchup.collapse"))}${up}</button><div class="line"></div>`;
-}
-
 function linksHTML(links: SourceLink[]): string {
   return links.length ? `<div class="catchup-links"><strong>${escapeHTML(t("catchup.links"))}</strong><ul>${links.map(({ url, labels }) => {
       const label = labels.length ? labels.join(" · ") : url;
@@ -226,81 +251,12 @@ function linksHTML(links: SourceLink[]): string {
     }).join("")}</ul></div>` : "";
 }
 
-const lines = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9"/></svg>`;
-
-/** One independent group per range. Never routes an older chip to the latest range. */
-export class IntervalSummaries {
-  private groups = new Map<string, CatchUpGroup>();
-  private triggers = new Map<string, HTMLButtonElement>();
-  private unread = new CatchUpGroup();
-
-  update(state: ChatState, element: (id: string) => HTMLElement | null): void {
-    const views = state.subagent ? [] : state.intervalSummaries ?? [];
-    const active = new Set(views.map(v => `${state.botID}:${v.key}`));
-    for (const [key, group] of this.groups) if (!active.has(key)) { group.clear(); this.groups.delete(key); }
-    // Unread automation keeps its own state. Avoid overlapping DOM folding owners.
-    const covered = new Set(views.flatMap(v => v.ids));
-    this.unread.update({ ...state, catchUp: state.catchUp?.ids.some(id => covered.has(id)) ? null : state.catchUp }, element);
-    for (const view of views) {
-      const key = `${state.botID}:${view.key}`;
-      let group = this.groups.get(key);
-      if (!group) { group = new CatchUpGroup(true); this.groups.set(key, group); }
-      group.update({ ...state, catchUp: view }, element);
-    }
-    const retained = new Set<string>();
-    if (!state.subagent) for (let i = 0; i < state.messages.length; i++) {
-      const user = state.messages[i];
-      if (user.role !== "user") continue;
-      let end = i + 1;
-      while (end < state.messages.length && state.messages[end].role !== "user") end++;
-      const replies = state.messages.slice(i + 1, end).filter(summaryCountable);
-      const last = replies.at(-1);
-      if (!last || covered.has(last.id)) continue;
-      const row = element(last.id);
-      if (!row) continue;
-      let footer = row.querySelector<HTMLElement>(".message-footer");
-      if (!footer) {
-        let holder = row.querySelector<HTMLElement>(".speaker-column, .bot-column, .reaction-message-column");
-        if (!holder) {
-          const bubble = row.querySelector<HTMLElement>(".bot-bubble");
-          if (!bubble) continue;
-          holder = document.createElement("div");
-          holder.className = "reaction-message-column";
-          bubble.replaceWith(holder);
-          holder.append(bubble);
-        }
-        footer = document.createElement("div");
-        footer.className = "message-footer";
-        holder.append(footer);
-      }
-      const key = `${state.botID}:${user.id}`;
-      retained.add(key);
-      let trigger = this.triggers.get(key);
-      if (!trigger) {
-        trigger = document.createElement("button");
-        trigger.type = "button";
-        trigger.className = "interval-summary-trigger";
-        trigger.addEventListener("click", () => post({ type: "catchUpManual", botID: state.botID, userMessageID: user.id }));
-        this.triggers.set(key, trigger);
-      }
-      trigger.innerHTML = lines + escapeHTML(t("interval.summarize", { n: replies.length }));
-      if (trigger.parentElement !== footer) footer.append(trigger);
-      i = end - 1;
-    }
-    for (const [key, trigger] of this.triggers) if (!retained.has(key)) {
-      const footer = trigger.parentElement;
-      trigger.remove();
-      if (footer?.childElementCount === 0) footer.remove();
-      this.triggers.delete(key);
-    }
-  }
-}
 
 function bulletsHTML(view: CatchUpView, source: MessageView[]): string {
   const cards = new Map((view.tasks ?? []).map(task => [task.id.toUpperCase(), task]));
   return summaryReferences(view,source).map((bullet,point)=>{
     // The task it is about first, then where it comes from.
-    const taskChips=(bullet.tasks ?? []).map(id=>cards.get(id.toUpperCase())).filter(task=>!!task).map(task=>taskCardChipHTML(task!,"task")).join("");
+    const taskChips=(bullet.tasks ?? []).map(id=>cards.get(id.toUpperCase())).filter(task=>!!task).map(task=>page.taskChip(task!,"task")).join("");
     const chips=taskChips+bullet.sources.map((reference,index)=>{
       const message=source.find(m=>m.id===reference.messageID)!;
       return `<button type="button" class="source-cite ${sourceHead(message,reference)}" data-action="source" data-cite-point="${point}" data-cite-index="${index}" aria-haspopup="dialog" aria-label="${escapeHTML(t("source.openFrom",{author:sourceAuthor(message,reference),n:point+1}))}"><span class="source-head-dot" aria-hidden="true"></span>${escapeHTML(sourceAuthor(message,reference))}</button>`;

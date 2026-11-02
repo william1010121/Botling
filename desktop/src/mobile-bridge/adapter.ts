@@ -26,7 +26,7 @@ export async function mobileCommand(access: MobileAccess, raw: unknown, allowedB
       return okResponse(id, access.history(cmd));
     }
     if (cmd.type === 'chat.snapshot') {
-      // snapshot() is read-only; chat.read would clear unread/catch-up state.
+      // snapshot() is read-only; chat.read would clear unread state (and tell plugins it was read).
       const snapshot = access.snapshot(botId);
       if (allowedBots.includes(ALL_BOTS)) return okResponse(id, webSnapshot(snapshot));
       return okResponse(id, { epoch: snapshot.epoch, seq: snapshot.seq,

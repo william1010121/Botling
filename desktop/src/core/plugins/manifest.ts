@@ -22,6 +22,8 @@ export interface PluginSetting {
   secret?: boolean;
   /** For a secret: the environment variable bots get it in (MCP servers read it). */
   env?: string;
+  /** Set somewhere else in Botling (a built-in plugin's settings on the Settings page), not in the Plugins page. */
+  hidden?: boolean;
 }
 
 export interface PluginCommand { id: string; title: string; key?: string }
@@ -130,6 +132,7 @@ function decodeManifest(value: unknown): PluginManifest {
           if (setting.secret != null) { if (typeof setting.secret !== "boolean") throw new DecodeError(`${at([...p, "secret"])} has the wrong type`); out.secret = setting.secret; }
           const env = optString(setting, "env", p);
           if (env !== undefined) out.env = env;
+          if (setting.hidden != null) { if (typeof setting.hidden !== "boolean") throw new DecodeError(`${at([...p, "hidden"])} has the wrong type`); out.hidden = setting.hidden; }
           contributes.settings[name] = out;
         }
       }

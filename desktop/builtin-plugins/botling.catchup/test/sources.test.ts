@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import type { CatchUpView, MessageView } from "../src/types";
-import { citedBullet, summaryMessages, sourceTexts } from "../src/summary-sources";
+import type { MessageView } from "../../../../Web/src/types";
+import type { CatchUpView } from "../src/types";
+import { citedBullet, summaryMessages, sourceTexts } from "../src/sources";
 const message = (id: string, text: string): MessageView => ({ id, text, role: "bot", stamp: null, avatar: null, choices: null, chosen: null, answer: null, open: false, attachments: null, replyTo: null, replyPreview: null, openable: false });
 const source = [message("A", "The exact sentence. Next sentence."), message("B", "The exact sentence.")];
 describe("summary source provenance", () => {
@@ -36,7 +38,7 @@ it("preserves exact quotes containing single square brackets",()=>{
 
 
 it("labels source records without author metadata honestly without inventing an author", async () => {
-  const { sourceAuthor } = await import("../src/summary-viewer");
+  const { sourceAuthor } = await import("../src/viewer");
   expect(sourceAuthor({...source[0],role:"notice"})).toBe("Original conversation");
   expect(sourceAuthor({...source[0],sourceAuthor:"Garden",sourceEngine:"codex"})).toBe("Garden · Codex");
 });

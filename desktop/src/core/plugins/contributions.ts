@@ -194,6 +194,7 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
       if (Array.isArray(entry.options)) value.options = entry.options.filter((option): option is string => typeof option === "string");
       if (typeof entry.secret === "boolean") value.secret = entry.secret;
       if (typeof entry.env === "string") value.env = entry.env;
+      if (typeof entry.hidden === "boolean") value.hidden = entry.hidden;
       out.push({ kind: "setting", plugin, key, setting: value });
     }
   }

@@ -56,7 +56,7 @@ const SUMMARY_ENGINES: { engine: ModelEngine; name: string; source: string }[] =
 const choiceKey = (engine: ModelEngine, model: string) => `${engine}:${model}`;
 
 /**
- * The Catch-up summary model: the same lists as `ModelPicker`, grouped by engine, one select. Engines that cannot
+ * The chat summaries' model: the same lists as `ModelPicker`, grouped by engine, one select. Engines that cannot
  * write a summary (`unavailable`) are listed but disabled, with `unavailableNote` under the picker.
  */
 export function SummaryModelPicker({ label, value, discovery, unavailable = [], unavailableNote, onChange }: {

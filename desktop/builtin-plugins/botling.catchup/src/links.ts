@@ -1,6 +1,6 @@
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token.mjs";
-import type { MessageView } from "./types";
+import type { MessageView } from "../../../../Web/src/types";
 
 export interface SourceLink { url: string; labels: string[] }
 // Independent of model bullets and their prompt limits, and of mutable renderer plugins.

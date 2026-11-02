@@ -168,7 +168,7 @@ describe("the plugin host", () => {
     const view = await c.call({ type: "plugins.secret", name: "news", key: "token", value: "tok-123-plain" });
     expect(view.plugins.find((p: any) => p.name === "news").settings).toEqual([
       { key: "token", type: "string", title: "Token", options: [], value: null, secret: true, set: true },
-      { key: "greeting", type: "string", title: "Greeting", options: [], value: "hi", secret: false, set: true },
+      { key: "greeting", type: "string", title: "Greeting", options: [], value: "hi", secret: false, set: true, default: "hi" },
     ]);
     expect(JSON.stringify(view)).not.toContain("tok-123");
     expect(readFileSync(join(dir, "plugin-secrets.json"), "utf8")).not.toContain("tok-123");

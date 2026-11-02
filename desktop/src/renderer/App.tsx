@@ -407,7 +407,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           status={{ key: status(bot), text: statusText(bot) }}
           results={results} watching={watching} collapsed={collapsed}
           tasks={chat?.botId === bot.id ? chat.tasks ?? [] : []} messages={chat?.botId === bot.id ? chat.messages : []}
-          summarized={chat?.botId === bot.id ? new Set([...(chat.catchUp?.ids ?? []), ...(chat.intervalSummaries ?? []).flatMap((summary) => summary.ids)]) : undefined}
+          summarized={chat?.botId === bot.id ? new Set((chat.decorations ?? []).flatMap((decoration) => decoration.fold ?? [])) : undefined}
           selectedTask={selectedTask} onSelectTask={selectTask}
           onCompleteTask={(taskId) => void client.request({ type: "task.complete", botId: bot.id, taskId }).catch(fail)}
           onJumpToTask={(messageId, taskId) => {
@@ -1026,12 +1026,6 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
             .catch(onError);
           return;
         }
-        case "catchUpRetry":
-          if (chat && action.botID === chat.botId) void client.request({ type: "catchup.retry", botId: chat.botId, ...(typeof action.key === "string" && action.key ? { key: action.key } : {}) }).catch(onError);
-          return;
-        case "catchUpManual":
-          if (chat && action.botID === chat.botId && typeof action.userMessageID === "string") void client.request({ type: "catchup.interval", botId: chat.botId, userMessageId: action.userMessageID }).catch(onError);
-          return;
         // Components and pins: each becomes a contract command the core checks again (the card, its
         // command, the folder it showed); a frame's calls are paced so one cannot flood the core.
         case "componentCommand":

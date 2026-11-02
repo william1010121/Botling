@@ -1,8 +1,8 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
-import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
+import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
+import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
@@ -121,16 +121,16 @@ export function headsParts(heads: HeadsView | null | undefined): Pick<ChatState,
   };
 }
 
-/** A summary as the page draws it (`ChatPayload.CatchUpView`): its task cards as chips. */
-export function catchUpView(view: CatchUpView, tasks: TaskView[]): WebCatchUp {
-  const chips = view.taskIds.flatMap((id) => {
+/** A plugin's decoration as the page draws it: the task cards it is about as chips, as they stand now. */
+export function decorationView(decoration: ChatDecoration, tasks: TaskView[]): DecorationView {
+  const chips = (decoration.tasks ?? []).flatMap((id) => {
     const task = tasks.find((candidate) => candidate.id === id);
     return task ? [{ id: task.id, name: task.name, state: task.state, owner: task.owner } satisfies TaskCardView] : [];
   });
   return {
-    key: view.key, ids: view.ids, count: view.count, heads: view.heads, state: view.state, bullets: view.bullets, error: view.error, model: view.model,
-    since: view.since, until: view.until, latest: view.latest, manual: view.manual, automatic: view.automatic, speakerCounts: view.speakerCounts,
-    requestedBy: view.requestedBy, tasks: chips.length ? chips : null,
+    plugin: decoration.plugin, key: decoration.key,
+    ...(decoration.fold ? { fold: decoration.fold } : {}), ...(decoration.after ? { after: decoration.after } : {}),
+    tasks: chips.length ? chips : null, data: decoration.data,
   };
 }
 
@@ -327,8 +327,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     // "Make into component" on replies (1.x: every chat but a subagent's).
     makeComponents: true,
     feedback,
-    catchUp: chat.catchUp ? catchUpView(chat.catchUp, chat.tasks ?? []) : null,
-    intervalSummaries: (chat.intervalSummaries ?? []).map((view) => catchUpView(view, chat.tasks ?? [])),
+    decorations: (chat.decorations ?? []).map((decoration) => decorationView(decoration, chat.tasks ?? [])),
   };
   return { state, extras };
 }

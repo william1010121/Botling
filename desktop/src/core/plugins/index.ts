@@ -7,6 +7,8 @@
 // process). Everything else is refused. A plugin's message to a bot shows as sent by it unless it
 // asked to send as the user (plugin-platform.md §5, N1). Any plugin may read the workspace (`workspace.*`,
 // what the whiteboard shows: bots, memory, tasks, results, what waits on you); none may answer for you.
+// Reading a chat (`chat.messages`) needs the "messages" permission; what a plugin draws among a chat's
+// messages (`chat.decorate`, chat extension v2) is kept here per chat until it unloads, and its web part draws it.
 //
 // Web parts: since Phase 4a the chat page has an origin of its own (botling-chat://chat, no bridge,
 // nothing shared with the app page but postMessage), so plugins' web parts run in it again as in 1.x:
@@ -17,6 +19,7 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { ContractError, type ApprovalAskView, type PluginsView, type WebPluginSpecView } from "../../contract";
+import { ContractId } from "../../contract/editor-card";
 import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } from "../../contract/shortcuts";
 import { setPluginTags, type PluginTag } from "../reply";
 import { commandSurfaces } from "./commands";
@@ -37,6 +40,12 @@ export interface AppQuestion { text: string; choices: { label: string; detail?: 
 /** Its answer: a pick, or the user's own words (`typed` only). Ignoring it (no callbacks, by design) answers nothing. */
 export type AppAnswer = { index: number } | { text: string };
 export interface PluginStatusItem { id: string; text: string; icon: string | null; tooltip: string | null; command: string | null }
+/** A chat as a plugin may read it (`chat.messages`): its newest lines as kept, its task cards, its name and unread count. */
+export interface PluginChat { botId: string; name: string; unread: number; messages: unknown[]; tasks: { id: string; name: string; state: string; messageIDs: string[] }[] }
+/** What a plugin's web part draws among a chat's messages (`chat.decorate`, chat extension v2). */
+export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; tasks?: string[]; data?: JSONValue }
+/** How Botling starts an engine's CLI here (`engines.cli`), for a plugin's one-shot model call. */
+export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
 
 /** What the core lends the plugins. */
 export interface PluginWorld {
@@ -71,6 +80,14 @@ export interface PluginWorld {
   imageUrls(botId: string, data: string): Record<string, string> | null;
   /** `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. */
   createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined): BotInfo & { created: boolean };
+  /** A chat's newest `limit` lines (`chat.messages`; null: no such bot). Absent: a world without chats (tests, spec adapters). */
+  chat?(botId: string, limit: number): PluginChat | null;
+  /** The bot a plugin names ("main" too) as the core knows it (null: none). */
+  botId?(botId: string): string | null;
+  /** A chat's message decorations changed. */
+  decorated?(botId: string): void;
+  /** An engine's CLI as Botling starts it (null: not here). */
+  engineCli?(engine: "claude" | "codex"): EngineCli | null;
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
   addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
   /** The library changed: the app shows it. */
@@ -126,7 +143,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnFinished", "workerDone"] as const;
+const EVENT_NAMES = ["messagePosted", "turnFinished", "workerDone", "chatRead"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -142,6 +159,19 @@ const HistoryParams = BotParams.extend({ days: Limit(14, 14) });
 const ResultsParams = BotParams.extend({ limit: Limit(100, 12) });
 const IgnoreParams = BotParams.extend({ text: z.string().min(1).max(400) });
 const FaceParams = BotParams.extend({ look: z.enum(["original", "cute"]) });
+const ChatParams = BotParams.extend({ limit: z.number().int().min(1).max(2_000).default(500) });
+const DecorateParams = BotParams.extend({
+  decorations: z.array(z.object({
+    key: str(300).min(1),
+    fold: z.array(ContractId).max(2_000).optional(),
+    after: ContractId.optional(),
+    tasks: z.array(ContractId).max(100).optional(),
+    data: z.unknown().optional(),
+  })).max(200),
+});
+const EngineParams = z.object({ plugin: str(214), engine: z.enum(["claude", "codex"]) });
+/** How much one plugin may draw in one chat (`chat.decorate`), as JSON. */
+const DECORATION_BYTES = 1_000_000;
 
 export class Plugins {
   readonly registry: PluginRegistry;
@@ -155,6 +185,8 @@ export class Plugins {
   private readonly status = new Map<string, Map<string, PluginStatusItem>>();
   /** Some plugin listens for workspace changes, as the host last said (`workspace.onChange`). */
   watchingWorkspace = false;
+  /** What each plugin draws in each chat (`chat.decorate`), by the core's bot id, until it unloads. */
+  private readonly decorated = new Map<string, Map<string, MessageDecoration[]>>();
 
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
@@ -172,6 +204,7 @@ export class Plugins {
       this.followWorkspace();
       if (!plugin) return;
       this.status.delete(plugin);
+      this.dropDecorations(plugin);
       this.registry.recordHostFailure(plugin, message, fatal);
     };
     this.host.onRegistered = () => {
@@ -203,7 +236,29 @@ export class Plugins {
     const app = this.options.world.appSettings();
     this.host.update(this.registry.hostSpecs(this.dataRoot).map((spec) => ({ ...spec, app })));
     for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
+    this.dropDecorations();
     this.announce();
+  }
+
+  /** Message decorations of plugins no longer running (or whose web part no longer runs) go. */
+  private dropDecorations(failed?: string) {
+    for (const [botId, byPlugin] of this.decorated) {
+      let changed = false;
+      for (const name of [...byPlugin.keys()]) if (name === failed || !this.drawing(name)) { byPlugin.delete(name); changed = true; }
+      if (!byPlugin.size) this.decorated.delete(botId);
+      if (changed) this.options.world.decorated?.(botId);
+    }
+  }
+
+  /** A plugin whose program part runs and whose web part draws in the chat page. */
+  private drawing(name: string) {
+    const plugin = this.loaded(name);
+    return !!plugin?.manifest.ccb?.web;
+  }
+
+  /** Every plugin's message decorations in a chat, for the chat page (ChatSnapshot.decorations). */
+  decorations(botId: string): MessageDecoration[] {
+    return [...(this.decorated.get(botId)?.values() ?? [])].flat();
   }
 
   /** Botling's settings changed: plugins reading them (`settings.app`) are told. */
@@ -367,6 +422,7 @@ export class Plugins {
   webFailed(name: string, message: string) {
     this.known(name);
     this.registry.markFailed(name, message.slice(0, 2_000) || "Its web part failed.");
+    this.dropDecorations(name);
   }
 
   /** A web part's `ccb.notify`. */
@@ -751,6 +807,38 @@ export class Plugins {
       case "workspace.face": {
         const { data } = this.asked(FaceParams, params);
         return world.workspace.face(data.bot, data.look);
+      }
+      case "chat.messages": {
+        const { plugin, data } = this.asked(ChatParams, params);
+        this.needs(plugin, "messages", "Reading a chat");
+        const chat = world.chat?.(data.bot, data.limit) ?? null;
+        if (!chat) throw new Error("No such bot.");
+        return chat;
+      }
+      case "chat.decorate": {
+        const { plugin, data } = this.asked(DecorateParams, params);
+        const name = plugin.manifest.name;
+        if (!plugin.manifest.ccb?.web) throw new Error("Message decorations are drawn by the plugin's web part: it needs one (ccb.web).");
+        const botId = world.botId?.(data.bot) ?? null;
+        if (!botId) throw new Error("No such bot.");
+        const list: MessageDecoration[] = data.decorations.map((entry) => ({
+          plugin: name, key: entry.key,
+          ...(entry.fold?.length ? { fold: entry.fold } : entry.after ? { after: entry.after } : {}),
+          ...(entry.tasks?.length ? { tasks: entry.tasks } : {}),
+          ...(entry.data === undefined ? {} : { data: entry.data as JSONValue }),
+        }));
+        if (new Set(list.map((entry) => entry.key)).size !== list.length) throw new Error("Each decoration needs a key of its own.");
+        if (JSON.stringify(list).length > DECORATION_BYTES) throw new Error("Too much to draw in one chat (1 MB at most).");
+        const byPlugin = this.decorated.get(botId) ?? new Map<string, MessageDecoration[]>();
+        const before = JSON.stringify(byPlugin.get(name) ?? []);
+        if (list.length) byPlugin.set(name, list); else byPlugin.delete(name);
+        if (byPlugin.size) this.decorated.set(botId, byPlugin); else this.decorated.delete(botId);
+        if (JSON.stringify(list) !== before) world.decorated?.(botId);
+        return null;
+      }
+      case "engines.cli": {
+        const { data } = this.asked(EngineParams, params);
+        return world.engineCli?.(data.engine) ?? null;
       }
       default:
         throw new Error(`Unknown method "${method.slice(0, 80)}".`);

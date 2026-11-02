@@ -221,6 +221,7 @@ describe("plugins' web parts in the chat page", () => {
     const { specs } = await c.call({ type: "plugins.web" });
     // The built-in ones with a web part (step M11) come the same way, first.
     expect(specs.map((spec: any) => [spec.name, spec.styles])).toEqual([
+      ["botling.catchup", ["botling-chat://chat/plugin-files/botling.catchup/catchup.css"]],
       ["botling.chat-extras", ["botling-chat://chat/plugin-files/botling.chat-extras/dist/chat-extras.css"]], ["botling.whiteboard", []],
       ["ccb-latex", ["botling-chat://chat/plugin-files/ccb-latex/dist/katex.min.css"]], ["glow", ["botling-chat://chat/plugin-files/glow/dist/glow.css"]],
     ]);
@@ -229,7 +230,7 @@ describe("plugins' web parts in the chat page", () => {
     await c.call({ type: "plugins.notice", name: "glow", text: "hello" });
     await until(async () => (await c.chat()).messages.some((message: any) => message.text === "glow: hello"));
     await c.call({ type: "plugins.failed", name: "glow", message: "it threw" });
-    expect((await c.call({ type: "plugins.web" })).specs.map((spec: any) => spec.name)).toEqual(["botling.chat-extras", "botling.whiteboard", "ccb-latex"]);
+    expect((await c.call({ type: "plugins.web" })).specs.map((spec: any) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.whiteboard", "ccb-latex"]);
     expect((await c.call({ type: "plugins.list" })).plugins.find((plugin: any) => plugin.name === "glow")).toMatchObject({ enabled: false, failure: "it threw" });
   });
 });
@@ -240,29 +241,25 @@ describe("settings (AppSettings.swift's keys)", () => {
     const { preferredLanguage } = await import("../../src/core/prompts");
     const empty = settingsView({});
     expect(empty).toMatchObject({
-      language: null, effectiveLanguage: "en", botLook: "cute", chatAvatarSize: null, catchUpEnabled: true, intervalSummaryEnabled: false,
-      thresholdsCustomized: false, catchUpThreshold: 3, intervalSummaryThreshold: 3, catchUpModel: { engine: "codex", model: "gpt-6-luna" }, summaryPrompt: null,
+      language: null, effectiveLanguage: "en", botLook: "cute", chatAvatarSize: null,
       subagentModel: null, subagentHourCache: false,
       codexWorkersFollow: true, codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: "sonnet",
       resultPublishing: "artifactUnlessSensitive", stallReminderMinutes: 15,
     });
-    // A bad value falls back to its own default only; a threshold not 3 counts as customized.
-    expect(settingsView({ languageChoice: "xx", botLookChoice: "original", catchUpThresholdChoice: 99, codexWorkerChoice: { model: "m", effort: "turbo", fast: true } }, "en"))
-      .toMatchObject({ language: null, effectiveLanguage: "en", botLook: "original", catchUpThreshold: 50, thresholdsCustomized: true, codexWorkers: { model: "m", effort: null, fast: true } });
+    // A bad value falls back to its own default only.
+    expect(settingsView({ languageChoice: "xx", botLookChoice: "original", codexWorkerChoice: { model: "m", effort: "turbo", fast: true } }, "en"))
+      .toMatchObject({ language: null, effectiveLanguage: "en", botLook: "original", codexWorkers: { model: "m", effort: null, fast: true } });
     // A language 2.1.0 removed reads as English, even on a Japanese or Korean system.
     for (const old of ["ja", "ko", "zh-Hans"]) expect(settingsView({ languageChoice: old }, "zh-Hant")).toMatchObject({ language: "en", effectiveLanguage: "en" });
     expect(LANGUAGES).toEqual(["en", "zh-Hant"]);
     expect(["ja-JP", "ko-KR", "zh-Hans-CN", "zh-CN"].map((code) => preferredLanguage([code]))).toEqual(["en", "en", "en", "en"]);
     expect(preferredLanguage(["zh-TW"])).toBe("zh-Hant");
-    let raw: Record<string, unknown> = { dailyBudget: 3, languageChoice: "en" };
-    raw = applySetting(raw, { key: "catchUpThreshold", value: 7 });
-    expect(raw).toEqual({ dailyBudget: 3, languageChoice: "en", catchUpThresholdChoice: 7, summaryThresholdsCustomizedChoice: true });
-    raw = applySetting(raw, { key: "thresholdsCustomized", value: false });
-    expect(raw).toEqual({ dailyBudget: 3, languageChoice: "en", summaryThresholdsCustomizedChoice: false });
+    // Keys it does not know (1.x's Catch-up keys, which botling.catchup reads once) stay as they are.
+    let raw: Record<string, unknown> = { dailyBudget: 3, languageChoice: "en", catchUpThresholdChoice: 7 };
+    raw = applySetting(raw, { key: "botLook", value: "original" });
+    expect(raw).toEqual({ dailyBudget: 3, languageChoice: "en", catchUpThresholdChoice: 7, botLookChoice: "original" });
     raw = applySetting(raw, { key: "language", value: null });
     expect(raw.languageChoice).toBeUndefined();
-    raw = applySetting(raw, { key: "summaryPrompt", value: "   " });
-    expect(raw.summaryPromptChoice).toBeUndefined();
     raw = applySetting(raw, { key: "codexWorkers", value: { model: "gpt-x", effort: "high", fast: null } });
     expect(raw.codexWorkerChoice).toEqual({ model: "gpt-x", effort: "high" });
     expect(appliedCodexWorkers(raw)).toEqual({ model: null, effort: null, fast: null });

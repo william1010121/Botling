@@ -86,7 +86,6 @@ import { relatedTaskAgents, taskAgentIds } from "./task-agents";
 import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
 import { approvalSummary } from "./whiteboard-data";
 import { doneLogFile, readDoneLog, recordDone, taskHistory, type DoneDay, type DoneLog } from "./task-history";
-import type { CatchUpChat } from "./catchup";
 import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
 import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SHOWN_COOLDOWN_MS, spelledTone, MAX_FLOATING, type PinRecord } from "./components/pins";
@@ -1801,8 +1800,6 @@ export class Bot {
       routines: this.chatRoutines(),
       runs: turns.map((turn) => ({ turnId: turn.id, messageId: turn.messageId, head: owner(turn).engine, live: turn.steps.slice(-500).map((step) => stepView(step, owner(turn).subagents)) })),
       heads: this.headsView(),
-      catchUp: null,
-      intervalSummaries: [],
       ...this.pinsView(),
     };
   }
@@ -1831,9 +1828,17 @@ export class Bot {
     return this.records.length;
   }
 
-  /** What its summaries are made from (catchup.ts). */
-  catchUpChat(): CatchUpChat {
-    return { id: this.id, name: this.profile.name, records: this.records, unread: this.unread, tasks: this.tasks.tasks };
+  /** What a plugin may read of this chat (`chat.messages`): its newest `limit` lines as kept, its task cards. */
+  pluginChat(limit: number) {
+    return {
+      botId: this.id, name: this.profile.name, unread: this.unread, messages: this.records.slice(-limit),
+      tasks: this.tasks.tasks.map((task) => ({ id: task.id, name: task.name, state: task.state, messageIDs: task.messageIDs })),
+    };
+  }
+
+  /** Where you read it up to (`chatRead`): how many lines were unread, and its newest line. */
+  readMark(): { unread: number; through: string | null } {
+    return { unread: this.unread, through: this.records.at(-1)?.id ?? null };
   }
 
   async taskOutput(messageId: string, taskId: string): Promise<ResultOf<"task.output">> {

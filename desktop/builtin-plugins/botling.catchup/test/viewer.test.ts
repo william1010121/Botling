@@ -1,8 +1,15 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { SummaryViewer, sourceAuthor } from "../src/summary-viewer";
-import type { CatchUpView, ChatState, MessageView } from "../src/types";
-import { sent } from "../src/bridge";
-import { setLanguage } from "../src/i18n";
+import { SummaryViewer, sourceAuthor } from "../src/viewer";
+import type { ChatState, MessageView } from "../../../../Web/src/types";
+import type { CatchUpView } from "../src/types";
+import { sent } from "../../../../Web/src/bridge";
+import { setLanguage } from "../../../../Web/src/i18n";
+import { mediaHTML, renderMarkdown } from "../../../../Web/src/markdown";
+import { taskCardChipHTML } from "../../../../Web/src/task-cards";
+import { setPage } from "../src/page";
+// The chat page lends the web part its Markdown, media and task chips (web.ts).
+setPage({ render: renderMarkdown, media: (url, label) => mediaHTML(url, label), taskChip: taskCardChipHTML });
 const message=(id:string,extra:Partial<MessageView>={}):MessageView=>({id,role:"bot",text:`Original ${id}: First sentence.`,stamp:null,avatar:null,choices:null,chosen:null,answer:null,open:false,attachments:null,replyTo:null,replyPreview:null,openable:false,...extra});
 const a=message("a",{sourceAuthor:"Garden",sourceEngine:"claude",sourceTime:"10:21 PM",choices:[{label:"Stable",detail:"after review",recommended:true},{label:"Canary",detail:null,recommended:false}],chosen:0,answer:"Keep tests. Wait for signing."});
 const b=message("b",{sourceAuthor:"Garden",sourceEngine:"codex",choices:[{label:"Continue",detail:null,recommended:false}],open:true});
@@ -57,7 +64,7 @@ it("highlights the persisted note rather than identical author or metadata text"
 });
 
 it("keeps original image preview inside the top-layer source dialog",async()=>{
- const {openLightbox,closeLightbox}=await import("../src/lightbox");
+ const {openLightbox,closeLightbox}=await import("../../../../Web/src/lightbox");
  viewer.open("owner",state(),view,()=>null,()=>{});
  openLightbox("data:image/png;base64,aGVsbG8=","Original image");
  expect(document.querySelector("dialog .lightbox")).not.toBeNull();
@@ -82,7 +89,7 @@ it("keeps an open source viewer stable when only messages outside its range stre
 
 
 it("disposes image preview listeners on in-range sync and subsequent summary close", async () => {
- const { openLightbox, closeLightbox } = await import("../src/lightbox");
+ const { openLightbox, closeLightbox } = await import("../../../../Web/src/lightbox");
  const restore=document.querySelector<HTMLButtonElement>("#restore")!;restore.focus();
  const original={...state(),messages:[message("a",{text:"![Photo](file:///tmp/a.png)"}),b]};
  viewer.open("owner",original,view,()=>null,()=>{});

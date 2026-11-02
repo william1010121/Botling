@@ -4,8 +4,8 @@ import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { AGY_SUMMARY_UNAVAILABLE, claudeSummarizer, claudeSummaryArguments, engineSummarizer, catchUpSettings, parseClaudeResult, SummaryFailure, type Summarizer } from "../../src/core/catchup";
-import { applySetting, settingsView } from "../../src/core/settings";
+import { AGY_SUMMARY_UNAVAILABLE, claudeSummarizer, claudeSummaryArguments, engineSummarizer, catchUpSettings, parseClaudeResult, SETTING, SummaryFailure, type Summarizer } from "../src/catchup";
+import { legacySettings } from "../src/migrate";
 
 const dir = mkdtempSync(join(tmpdir(), "botling-fake-claude-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -35,24 +35,21 @@ const run = (mode: string, timeout = 5000) => {
   return { summarize, log };
 };
 
+/** The plugin's settings as `api.settings.get` reads them (unset: undefined, as before its defaults apply). */
+const from = (values: Record<string, unknown>) => (key: string) => values[key];
+
 describe("the saved summary model", () => {
   it("nothing saved is Codex's default; an older Codex id stays Codex", () => {
-    expect(settingsView({}).catchUpModel).toEqual({ engine: "codex", model: "gpt-6-luna" });
-    expect(settingsView({ catchUpModelChoice: "gpt-5-old" }).catchUpModel).toEqual({ engine: "codex", model: "gpt-5-old" });
-    expect(catchUpSettings({ catchUpModelChoice: "gpt-5-old" })).toMatchObject({ engine: "codex", model: "gpt-5-old" });
-    expect(catchUpSettings(undefined)).toMatchObject({ engine: "codex", model: "gpt-6-luna" });
+    expect(catchUpSettings(from({}))).toMatchObject({ engine: "codex", model: "gpt-6-luna" });
+    expect(catchUpSettings(from(legacySettings({ catchUpModelChoice: "gpt-5-old" })))).toMatchObject({ engine: "codex", model: "gpt-5-old" });
+    expect(catchUpSettings(from({ [SETTING.engine]: "claude", [SETTING.model]: "  " }))).toMatchObject({ engine: "codex", model: "gpt-6-luna" });
   });
 
-  it("saves engine and model; Codex leaves no engine mark; null goes back to the default", () => {
-    let raw = applySetting({}, { key: "catchUpModel", value: { engine: "claude", model: "sonnet" } });
-    expect(raw).toMatchObject({ catchUpModelChoice: "sonnet", catchUpModelEngine: "claude" });
-    expect(settingsView(raw).catchUpModel).toEqual({ engine: "claude", model: "sonnet" });
-    expect(catchUpSettings(raw)).toMatchObject({ engine: "claude", model: "sonnet" });
-    raw = applySetting(raw, { key: "catchUpModel", value: { engine: "codex", model: "gpt-6-sol" } });
-    expect(raw).toEqual({ catchUpModelChoice: "gpt-6-sol" });
-    raw = applySetting(applySetting({}, { key: "catchUpModel", value: { engine: "claude", model: "opus" } }), { key: "catchUpModel", value: null });
-    expect(raw).toEqual({});
-    expect(settingsView(raw).catchUpModel).toEqual({ engine: "codex", model: "gpt-6-luna" });
+  it("engine and model come from the settings; 1.x's keys are taken over once", () => {
+    expect(catchUpSettings(from({ [SETTING.engine]: "claude", [SETTING.model]: "sonnet" }))).toMatchObject({ engine: "claude", model: "sonnet" });
+    expect(legacySettings({ catchUpModelChoice: "sonnet", catchUpModelEngine: "claude" })).toEqual({ [SETTING.model]: "sonnet", [SETTING.engine]: "claude" });
+    expect(legacySettings({ catchUpModelChoice: "gpt-6-sol" })).toEqual({ [SETTING.model]: "gpt-6-sol", [SETTING.engine]: "codex" });
+    expect(legacySettings({})).toEqual({});
   });
 });
 

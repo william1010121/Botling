@@ -1,4 +1,5 @@
-import type { CatchUpView, MessageView } from "./types";
+import type { MessageView } from "../../../../Web/src/types";
+import type { CatchUpView } from "./types";
 export interface SourceReference { messageID: string; quote?: string; part?: "answer"; }
 /** `tasks`: the ids of the task cards it is about ([[task:ID]]), when it names any. */
 export interface CitedBullet { text: string; sources: SourceReference[]; tasks?: string[]; }

@@ -1,6 +1,6 @@
 import { findMessageRow } from "./message-navigation";
 // Task cards in the chat: a chip under each reply that belongs to a task (its state's color,
-// its name, and on the latest one how it stands), the same chip beside a summary's bullet, and
+// its name, and on the latest one how it stands), the same chip in plugins' decorations, and
 // "Jump to chat" from the task's card in the right panel. Pressing a chip opens its task there
 // (`selectTask`).
 import { post } from "./bridge";
@@ -39,23 +39,23 @@ export function taskCardChips(cards: TaskCardView[]): HTMLElement {
 }
 
 /**
- * Scrolls to a task's latest reply and flashes it. A reply folded into a summary card is not
- * unfolded: the card scrolls into view and the bullet with the task's chip flashes (else the
- * whole card); "Show N messages" still opens the originals.
+ * Scrolls to a task's latest reply and flashes it. A reply folded behind a decoration (a summary card)
+ * is not unfolded: the decoration scrolls into view and the item with the task's chip flashes (else
+ * the decoration's card); the decoration still opens the originals.
  */
 export function jumpToTask(messageID: string, taskID: string): void {
   const row = findMessageRow(messageID);
   if (!row) return;
   document.dispatchEvent(new CustomEvent("ccb-read-back"));
-  const folded = row.closest(".catchup-folded");
+  const folded = row.closest(".decoration-folded");
   let target: HTMLElement = row;
   if (folded) {
-    // The card just before the folded reply holds it; its bullet about the task, if one is.
+    // The decoration just before the folded reply holds it; its item about the task, if one is.
     let head: Element | null = folded.previousElementSibling;
-    while (head && !head.classList.contains("catchup-head")) head = head.previousElementSibling;
-    const selector = `.catchup-bullets [data-task-id="${CSS.escape(taskID)}"]`;
-    const chip = head?.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(`.catchup-head ${selector}`);
-    target = chip?.closest<HTMLElement>("li") ?? (head as HTMLElement | null)?.querySelector<HTMLElement>(".catchup-card") ?? row;
+    while (head && !head.classList.contains("decoration-extra")) head = head.previousElementSibling;
+    const selector = `li [data-task-id="${CSS.escape(taskID)}"]`;
+    const chip = head?.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(`.decoration-extra ${selector}`);
+    target = chip?.closest<HTMLElement>("li") ?? (head as HTMLElement | null)?.querySelector<HTMLElement>("section") ?? row;
   }
   target.scrollIntoView?.({ behavior: "smooth", block: "center" });
   target.classList.add("flash");

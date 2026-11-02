@@ -24,7 +24,7 @@ export { CARD_SAVE_LIMIT, FILE_DATA_LIMIT } from "./editor-card";
  *    message can be removed, a bot can be tidying (writing its notes before it sleeps).
  * 4: Codex heads and bots with two heads (who said a line, who it was for and has seen it, the
  *    composer's Both/Claude/Codex, hand-offs and their rounds), several turns at once.
- * 5: routines (routines.cron and app-owned schedules), catch-up summaries, components (`<show>`
+ * 5: routines (routines.cron and app-owned schedules), chat summaries, components (`<show>`
  *    displays, the component library, pins and the Board) and their commands' approvals.
  * 6: plugins (the library, on/off, settings, sealed secrets, commands, sandboxed panels and their
  *    program part's calls), a message a plugin stopped, Maintainer.
@@ -630,33 +630,28 @@ export const RoutineView = z.strictObject({
 });
 export type RoutineView = z.infer<typeof RoutineView>;
 
-/** A summary of a range of the chat (`ChatPayload.CatchUpView`): unread lines folded on your return, or one interval between your messages. */
-export const CatchUpView = z.strictObject({
-  key: z.string().max(300),
-  ids: z.array(id).max(2_000),
-  count: z.number().int().nonnegative(),
-  heads: z.number().int().nonnegative().nullable(),
-  state: z.enum(["loading", "ready", "failed"]),
-  bullets: z.array(z.string().max(4_000)).max(5),
-  error: z.string().max(2_000).nullable(),
-  model: z.string().max(100),
-  since: z.string().max(100).nullable(),
-  until: z.string().max(100).nullable(),
-  latest: z.string().max(400).nullable(),
-  manual: z.boolean(),
-  automatic: z.boolean(),
-  speakerCounts: z.record(z.string().max(20), z.number().int().nonnegative()).nullable(),
-  requestedBy: z.string().max(40).nullable(),
-  /** The task cards with lines in the range. */
-  taskIds: z.array(id).max(100),
-});
-export type CatchUpView = z.infer<typeof CatchUpView>;
 
 // ---------------------------------------------------------------------------------------------
 // Commands. `target` says who answers it: main answers some itself, the rest go to the core.
 
 const botId = BotId;
 const PluginName = z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/);
+
+/**
+ * What a plugin's web part draws among a chat's messages (chat extension v2, `chat.decorate`): a card
+ * that folds the lines in `fold` behind it (drawn before the first), or one after the line `after`.
+ * `tasks`: the task cards it is about, which the page hands the web part as live chips; `data` is the
+ * plugin's own, for its web part.
+ */
+export const ChatDecoration = z.strictObject({
+  plugin: PluginName,
+  key: z.string().max(300),
+  fold: z.array(id).max(2_000).optional(),
+  after: id.optional(),
+  tasks: z.array(id).max(100).optional(),
+  data: z.unknown().optional(),
+});
+export type ChatDecoration = z.infer<typeof ChatDecoration>;
 const PluginCommandId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
 /** The app's fixed places a plugin may add a command to (`contributes.menus`). */
 const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette"]);
@@ -683,6 +678,10 @@ export const PluginView = z.strictObject({
   settings: z.array(z.strictObject({
     key: SettingKey, type: z.string().max(20), title: z.string().max(400), options: z.array(z.string().max(200)).max(50),
     value: SettingValue, secret: z.boolean(), set: z.boolean(),
+    /** Set on the Settings page instead (a built-in plugin's), not listed with the plugin. */
+    hidden: z.boolean().optional(),
+    /** What it is while you have not set it. */
+    default: SettingValue.optional(),
   })).max(100),
   commands: z.array(z.strictObject({ id: z.string().max(200), title: z.string().max(200), registered: z.boolean() })).max(100),
   panels: z.array(z.strictObject({ id: z.string().max(100), title: z.string().max(200) })).max(20),
@@ -709,15 +708,6 @@ export const SettingsView = z.strictObject({
   chatAvatarSize: z.number().int().min(32).max(96).nullable(),
   /** Botling 2 only: null uses the default 640px column. */
   messageColumnWidth: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable().default(null),
-  catchUpEnabled: z.boolean(),
-  intervalSummaryEnabled: z.boolean(),
-  thresholdsCustomized: z.boolean(),
-  catchUpThreshold: z.number().int().min(1).max(50),
-  intervalSummaryThreshold: z.number().int().min(1).max(50),
-  /** The Catch-up summary model: an engine and one of its models (an older Codex-only setting reads as Codex). */
-  catchUpModel: z.strictObject({ engine: Engine, model: z.string().max(200) }),
-  summaryPrompt: z.string().max(20_000).nullable(),
-  defaultSummaryPrompt: z.string().max(2_000),
   subagentModel: BotModel.nullable(),
   subagentHourCache: z.boolean(),
   claudeBypassPermissions: z.boolean().default(false),
@@ -766,13 +756,6 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("botLook"), value: z.enum(["original", "cute"]) }),
   z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
   z.strictObject({ key: z.literal("messageColumnWidth"), value: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable() }),
-  z.strictObject({ key: z.literal("catchUpEnabled"), value: z.boolean() }),
-  z.strictObject({ key: z.literal("intervalSummaryEnabled"), value: z.boolean() }),
-  z.strictObject({ key: z.literal("thresholdsCustomized"), value: z.boolean() }),
-  z.strictObject({ key: z.literal("catchUpThreshold"), value: z.number().int().min(1).max(50) }),
-  z.strictObject({ key: z.literal("intervalSummaryThreshold"), value: z.number().int().min(1).max(50) }),
-  z.strictObject({ key: z.literal("catchUpModel"), value: z.strictObject({ engine: Engine, model: ModelId }).nullable() }),
-  z.strictObject({ key: z.literal("summaryPrompt"), value: z.string().max(20_000).nullable() }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
   z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),
   z.strictObject({ key: z.literal("claudeWorkerLimit"), value: z.number().int().min(1).max(16).nullable() }),
@@ -1069,10 +1052,6 @@ export const Command = z.discriminatedUnion("type", [
     id: z.string().min(1).max(2_200).optional(), kind: z.enum(["once", "recurring"]).optional(), task: z.string().min(1).max(2_000).optional(),
     at: z.string().max(64).optional(), cron: z.string().max(200).optional(), timezone: z.string().max(100).optional(), requestId: id.optional(),
   }),
-  /** Retry on a failed summary: the folded group, or the interval summary `key`. */
-  z.strictObject({ type: z.literal("catchup.retry"), botId, key: z.string().min(1).max(300).optional() }),
-  /** Summarizes the interval after one of your lines (the footer's button). */
-  z.strictObject({ type: z.literal("catchup.interval"), botId, userMessageId: id }),
   /**
    * A component card's command: run (with the command and folder it showed), again (↻), or by its own timer (`live`).
    * It never allows anything: one not allowed yet answers `needsApproval`, and only the app page's ApprovalSheet sends `component.approve`.
@@ -1268,7 +1247,6 @@ export type CommandType = Command["type"];
 export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
-  "catchup.retry", "catchup.interval",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
@@ -1315,9 +1293,8 @@ export interface ChatSnapshot {
   runs: RunView[];
   /** A bot with two heads; null with one. */
   heads: HeadsView | null;
-  /** Unread lines folded on your return, with their summary. */
-  catchUp: CatchUpView | null;
-  intervalSummaries: CatchUpView[];
+  /** What plugins' web parts draw among its messages (`chat.decorate`). */
+  decorations?: ChatDecoration[];
   /** The bot's pinned components, those floating in a corner, and what the pin picker offers. */
   pins: PinView[];
   floating: PinView[];
@@ -1446,8 +1423,6 @@ export interface Results {
   "files.data": { files: PendingFileView[] };
   "files.remove": { files: PendingFileView[] };
   "attachment.file": { path: string; type: string };
-  "catchup.retry": { started: boolean };
-  "catchup.interval": { started: boolean };
 }
 export type ResultOf<T extends CommandType> = Results[T];
 
@@ -1478,8 +1453,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("pins.updated"), botId, pins: z.array(PinView).max(200), floating: z.array(PinView).max(10), pinChoices: z.array(PinChoiceView).max(200) }),
   /** The component library changed on disk: every component as the page draws it. */
   z.strictObject({ type: z.literal("components.updated"), components: z.record(z.string().max(200), ComponentInfoView) }),
-  /** A summary started, finished or failed. */
-  z.strictObject({ type: z.literal("catchup.updated"), botId, catchUp: CatchUpView.nullable(), intervalSummaries: z.array(CatchUpView).max(200) }),
+  /** What plugins draw among a chat's messages changed (`chat.decorate`). */
+  z.strictObject({ type: z.literal("chat.decorations"), botId, decorations: z.array(ChatDecoration).max(1_000) }),
   /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
   /** A plugin's program part opened one of its panels (`ui.openView`). */

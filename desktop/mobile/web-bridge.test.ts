@@ -8,7 +8,7 @@ import { WebBridge, type CommandTransport } from './web-bridge';
 const snapshot = (seq: number, botId = 'main') => ({ epoch: 'e', seq, imported: null, components: {}, waiting: { items: [], doing: {} }, 
   settings: { effectiveLanguage: 'en', botLook: 'cute', rightPanelCollapsed: false, railCollapsed: false, pinnedBots: [] },
   bots: ['main', 'maintainer', 'project'].map(id => ({ id, name: id, role: id === 'main' ? 'main' : 'manager' })),
-  chat: { botId, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, catchUp: null, intervalSummaries: [], pins: [], floating: [], pinChoices: [] } });
+  chat: { botId, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [] } });
 function setup(extra: Partial<ConstructorParameters<typeof WebBridge>[0]> = {}) {
   let seq = 1;
   const calls: any[] = [];

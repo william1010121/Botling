@@ -20,26 +20,20 @@ export interface FileView {
   url: string;
 }
 
-/** A chat's unread messages folded into one group, with a summary on top. */
-export interface CatchUpView {
-  /** The range and language summarized: expanding is remembered by it. */
+/**
+ * What a plugin's web part draws among the messages (chat extension v2, `ccb.decorations`): its program
+ * part chose it (`chat.decorate`). `fold`: these messages fold behind it, drawn before the first of them;
+ * `after`: drawn after that message, nothing folded.
+ */
+export interface DecorationView {
+  plugin: string;
   key: string;
-  manual?: boolean;
-  automatic?: boolean;
-  speakerCounts?: Record<string, number> | null;
-  requestedBy?: string | null;
-  ids: string[];
-  count: number;
-  heads?: number | null;
-  state: "loading" | "ready" | "failed";
-  bullets: string[];
-  error?: string | null;
-  model: string;
-  since?: string | null;
-  until?: string | null;
-  latest?: string | null;
-  /** The task cards with lines in the range: a chip beside each bullet about one, and the header's count. */
+  fold?: string[];
+  after?: string;
+  /** The task cards it is about, as their chips show them now. */
   tasks?: TaskCardView[] | null;
+  /** The plugin's own, for its web part. */
+  data?: unknown;
 }
 
 /** A task card as the chip under one of its replies shows it (Swift's `TaskCardChip`). */
@@ -483,9 +477,8 @@ export interface ChatState {
   handoffs?: HandoffView[] | null;
   /** Bot look Cute in a bot with two heads: each head's tiny character by its mark ("C", "X"); absent: letters. */
   seenHeads?: Record<string, string> | null;
-  /** Unread messages folded on your return, with their summary (`catchup.ts`). */
-  catchUp?: CatchUpView | null;
-  intervalSummaries?: CatchUpView[];
+  /** What plugins' web parts draw among the messages (decorations.ts). */
+  decorations?: DecorationView[];
 }
 
 /** Where a loop between the heads stands: its line ("Hand-off 1 of 6"), Stop now's words, and the numbers for the meter. */
@@ -542,8 +535,6 @@ export type Action =
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
   | { type: "stopRounds" }
-  | { type: "catchUpRetry"; botID: string; key?: string }
-  | { type: "catchUpManual"; botID: string; userMessageID: string }
   | { type: "stopHandoff"; botID: string; handoffID: string }
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }

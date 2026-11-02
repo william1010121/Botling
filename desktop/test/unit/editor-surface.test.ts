@@ -52,7 +52,7 @@ it('mounts App with a placeholder, routes state/send through the authenticated p
  vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
  const shell=nativeShell();
  const bot:BotView={id:'main',name:'Main',role:'main',avatar:'square',folder:'/synthetic',phase:'awake',working:false,approvals:0,unread:0,subagents:0,problem:null,heads:['claude'],job:null,subagentRows:[]};
- const snapshot:ResultOf<'chat.snapshot'>={epoch:'test',seq:0,bots:[bot],imported:null,settings:settingsView({railCollapsed:true}),chat:{botId:bot.id,messages:[],running:null,live:[],tasks:[],runs:[],heads:null,catchUp:null,intervalSummaries:[],pins:[],floating:[],pinChoices:[]},components:{},plugins:{plugins:[],broken:[],host:{running:false,problem:null},secretsProblem:null}};
+ const snapshot:ResultOf<'chat.snapshot'>={epoch:'test',seq:0,bots:[bot],imported:null,settings:settingsView({railCollapsed:true}),chat:{botId:bot.id,messages:[],running:null,live:[],tasks:[],runs:[],heads:null,pins:[],floating:[],pinChoices:[]},components:{},plugins:{plugins:[],broken:[],host:{running:false,problem:null},secretsProblem:null}};
  const store=new WorkspaceStore(async()=>snapshot);await store.resync();
  const commands:any[]=[];let respond:(message:unknown)=>void=()=>{};
  const client=new Client({protocol:PROTOCOL_VERSION,subscribe(fn){respond=fn;return()=>{};},post(envelope:any){

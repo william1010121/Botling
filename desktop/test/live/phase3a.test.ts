@@ -16,7 +16,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { ClaudeHead } from "../../src/core/agent/head";
 import type { StreamItem } from "../../src/core/agent/stream";
-import { codexSummarizer, summaryPrompt } from "../../src/core/catchup";
+import { codexSummarizer, summaryPrompt } from "../../builtin-plugins/botling.catchup/src/catchup";
 import type { ChatRecord } from "../../src/core/store/records";
 import { tempDir, until } from "../helpers";
 

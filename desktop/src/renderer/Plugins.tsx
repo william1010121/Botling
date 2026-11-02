@@ -85,7 +85,8 @@ function PluginItem({ plugin, onEnable, onSetting, onSecret, onCommand, onPanel 
       {plugin.failure && <div className="plugins-problem">Turned off: {plugin.failure}</div>}
       {plugin.builtIn && <div className="plugin-meta">Built into Botling</div>}
       {plugin.installedFrom && <div className="plugin-meta">from {plugin.installedFrom}</div>}
-      {plugin.settings.map((setting) => (
+      {/* A built-in plugin's settings set on the Settings page (`hidden`) are not repeated here. */}
+      {plugin.settings.filter((setting) => !setting.hidden).map((setting) => (
         <div key={setting.key} className="plugin-setting" data-setting={setting.key}>
           <span className="plugin-setting-title">{setting.title}</span>
           {setting.secret ? <SecretField setting={setting} onSecret={(value) => onSecret(setting.key, value)} />

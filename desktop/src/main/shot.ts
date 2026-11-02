@@ -64,7 +64,7 @@ function stateFor(surface: Surface, name: string, data: string, sizes: string[],
     : surface === "pinned" ? [pin(1, sizes.includes("2x2") ? "2x2" : sizes[0]!, false)]
     : surface === "floating" ? [pin(1, "2x2", true)] : [];
   const chat: ChatSnapshot = {
-    botId: bot.id, running: null, live: [], tasks: [], runs: [], heads: null, catchUp: null, intervalSummaries: [], pinChoices: [],
+    botId: bot.id, running: null, live: [], tasks: [], runs: [], heads: null, pinChoices: [],
     messages: surface === "chat" ? [{ id: "00000000-0000-4000-8000-0000000000A1", role: "bot", text: "", time: new Date().toISOString(), displays: [display] }] : [],
     pins, floating: pins.filter((entry) => entry.float),
   };

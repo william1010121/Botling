@@ -164,7 +164,9 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     // The page's own words follow (its input box is no longer called "Message").
     await expect(chat.getByRole("textbox", { name: "Message" })).toHaveCount(0);
     const settings = JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8"));
-    expect(settings).toMatchObject({ botLookChoice: "original", chatAvatarSizeChoice: 80, intervalSummaryEnabledChoice: true, languageChoice: "ja" });
+    expect(settings).toMatchObject({ botLookChoice: "original", chatAvatarSizeChoice: 80, languageChoice: "ja" });
+    // Chat summaries' switches are botling.catchup's settings now (plugins.json).
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "plugins.json"), "utf8")).settings["botling.catchup"]).toMatchObject({ "botling.catchup.interval": true });
     await sheet.getByLabel("App language").selectOption("");
     await expect(chat.getByRole("textbox", { name: "Message" })).toHaveCount(1);
     // Engines and subagents; this bot.

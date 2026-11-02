@@ -30,8 +30,8 @@ const bots = [
 ];
 const message = (id, role, text, extra = {}) => ({ id, role, text, time: minutes(extra.ago ?? 5), ...Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'ago')) });
 const task = (id, name, state, now, owner = 'claude') => ({ id, name, state, owner, now, next: null, blocked: null, messageIds: [], updatedAt: minutes(2), createdAt: minutes(120) });
-const chat = (botId, messages, more = {}) => ({ botId, messages, running: null, live: [], tasks: [], runs: [], heads: null, catchUp: null,
-  intervalSummaries: [], pins: [], floating: [], pinChoices: [], pendingFiles: [], ...more });
+const chat = (botId, messages, more = {}) => ({ botId, messages, running: null, live: [], tasks: [], runs: [], heads: null,
+  pins: [], floating: [], pinChoices: [], pendingFiles: [], ...more });
 const chats = new Map(bots.map(b => [b.id, chat(b.id, [message(`${b.id}-hello`, 'bot', `Hi, I'm **${b.name}**. This is a synthetic fixture conversation.`, { ago: 50 })])]));
 chats.set('proj-botling', chat('proj-botling', [
   message('u1', 'user', 'How is "Task 與報告重新設計" going? Please report where it stands.', { ago: 12 }),

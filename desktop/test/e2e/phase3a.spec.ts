@@ -32,7 +32,7 @@ test("unread replies fold into a Catch-up summary with its bullets", async () =>
     const head = frame.locator(".catchup-head");
     await expect(head).toBeVisible({ timeout: 10_000 });
     await expect(head).toContainText("Main bot · Claude: Built the installer.", { timeout: 10_000 });
-    await expect(frame.locator(".row.catchup-folded")).toHaveCount(4);
+    await expect(frame.locator(".row.decoration-folded")).toHaveCount(4);
     await shot(page, "catchup");
     const cached = await until(() => { try { return JSON.parse(readFileSync(join(dataDir, "core", "catchup-summaries.json"), "utf8")); } catch { return null; } });
     expect(Object.values(cached)[0]).toMatchObject({ model: "gpt-6-luna", bullets: expect.arrayContaining([expect.stringContaining("[[source:C1000000-0000-4000-8000-00000000000")]) });

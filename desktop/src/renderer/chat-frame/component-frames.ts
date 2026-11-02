@@ -7,7 +7,7 @@
 // the chat page still finds the frame by its window and handles every `ccb` call, as in 1.x;
 // what it posts goes through the app page and the core, which decide what it may do.
 //
-// Frames without scripts (`sandbox=""`, the Catch-up source snapshots) keep their srcdoc.
+// Frames without scripts (`sandbox=""`, a summary's source snapshots) keep their srcdoc.
 import { WEB, type FrameMessage } from "./protocol";
 import { componentHostPage, showInHost } from "../web-pages";
 import { toShell, fromShell, nativeChat } from "./transport";

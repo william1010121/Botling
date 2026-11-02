@@ -1,11 +1,19 @@
-import { closeLightbox } from "./lightbox";
-import { t } from "./i18n";
-import { mediaHTML, renderMarkdown } from "./markdown";
-import { sourceLinks, clickableSourceURL } from "./catchup-links";
-import { requestSourceSnapshot, staticSourcePage } from "./source-snapshot";
-import { summaryMessages, summaryReferences, type SourceReference } from "./summary-sources";
-import type { CatchUpView, ChatState, MessageView } from "./types";
-import { escapeHTML } from "./util";
+// The summary's sources in one dialog (the "Show N messages" button and each bullet's source chips): the
+// original messages of the range, read only, with the cited passage marked; "Show in chat" and "Answer
+// in chat" reveal the message in place (the page's decoration context does that).
+import type { ChatState, MessageView } from "../../../../Web/src/types";
+import { requestSourceSnapshot, staticSourcePage } from "../../../../Web/src/source-snapshot";
+import { escapeHTML } from "../../../../Web/src/util";
+import { sourceLinks, clickableSourceURL } from "./links";
+import { page } from "./page";
+import { summaryMessages, summaryReferences, type SourceReference } from "./sources";
+import type { CatchUpView } from "./types";
+import { t } from "./words";
+
+/** The chat's picture viewer, if it is open over the dialog: closed as the dialog redraws or goes. */
+const closeLightbox = () => document.querySelector<HTMLButtonElement>("dialog.summary-source-viewer .lightbox .lightbox-close")?.click();
+const renderMarkdown = (text: string) => page.render(text);
+const mediaHTML = (url: string, label: string) => page.media(url, label);
 
 export function sourceAuthor(message: MessageView, reference?: SourceReference): string {
   if (reference?.part === "answer" || message.role === "user") return t("source.you");

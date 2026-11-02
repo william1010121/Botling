@@ -6,8 +6,18 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vitest";
 import { BotSettings, SettingsSheet } from "../../src/renderer/Settings";
 import type { Client } from "../../src/renderer/client";
-import type { BotSettingsView, BotView, SettingsChange, SettingsView } from "../../src/contract";
+import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView } from "../../src/contract";
 import { applySetting, settingsView } from "../../src/core/settings";
+import summaries from "../../builtin-plugins/botling.catchup/package.json";
+
+/** The Plugins view with botling.catchup on and its settings (Settings → General → Chat summaries draws them). */
+function plugins(values: Record<string, unknown> = {}): PluginsView {
+  const settings = Object.entries(summaries.ccb.contributes.settings).map(([key, setting]) => ({
+    key, type: setting.type, title: setting.title, options: (setting as { options?: string[] }).options ?? [], secret: false, set: true, hidden: true,
+    default: setting.default as boolean | number | string, value: (key in values ? values[key] : setting.default) as boolean | number | string | null,
+  }));
+  return { plugins: [{ name: summaries.name, title: summaries.displayName, version: summaries.version, description: null, enabled: true, failure: null, installedFrom: null, builtIn: true, permissions: [], parts: ["web", "host"], settings, commands: [], panels: [] }], broken: [], host: { running: true, problem: null }, secretsProblem: null };
+}
 
 const MODELS = [
   { id: "gpt-6-luna", name: "GPT-6 Luna", isDefault: true, efforts: null },
@@ -26,6 +36,7 @@ function fakeClient(raw: Record<string, unknown>, sent: unknown[], botView?: Bot
       if (cmd.type === "settings.get") return settingsView(settings);
       if (cmd.type === "settings.set") { settings = applySetting(settings, cmd.change as SettingsChange); return settingsView(settings); }
       if (cmd.type === "bot.settings") return bot;
+      if (cmd.type === "plugins.setting") return plugins({ [cmd.key]: cmd.value });
       if (cmd.type === "heads.set") { bot = { ...bot!, engines: cmd.engines }; return {}; }
       if (cmd.type === "bot.configure") { const { type: _type, botId: _id, ...change } = cmd; bot = { ...bot!, ...change }; return bot; }
       throw new Error(`unexpected ${cmd.type}`);
@@ -39,7 +50,7 @@ async function render(element: ReturnType<typeof createElement>) {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   await act(async () => root.render(element));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-  return { host, done: async () => { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; } };
+  return { host, rerender: async (next: ReturnType<typeof createElement>) => { await act(async () => root.render(next)); }, done: async () => { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; } };
 }
 
 const select = (host: HTMLElement, label: string) => {
@@ -112,24 +123,34 @@ describe("Settings' model and effort choices are dropdowns", () => {
 
   it("General: the summary model is picked from every engine's models, grouped by engine", async () => {
     const sent: any[] = [];
-    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot: null, plugins: null, initialSection: "general", onClose() {} }));
+    const client = fakeClient({}, sent);
+    const sheet = (values: Record<string, unknown> = {}) => createElement(SettingsSheet, { client, settings: null, bot: null, plugins: plugins(values), initialSection: "general", onClose() {} });
+    const { host, done, rerender } = await render(sheet());
     try {
       const summary = select(host, "Summary model");
       expect(options(summary)).toEqual(["claude:haiku", "claude:sonnet", "claude:opus", "codex:gpt-6-luna", "codex:gpt-6-sol"]);
       expect(summary.value).toBe("codex:gpt-6-luna");
       expect([...summary.querySelectorAll("optgroup")].map((group) => group.label)).toEqual(["Claude", "Codex"]);
       await choose(summary, "codex:gpt-6-sol");
-      expect(sent.at(-1)).toMatchObject({ change: { key: "catchUpModel", value: { engine: "codex", model: "gpt-6-sol" } } });
+      expect(sent.slice(-2)).toMatchObject([
+        { type: "plugins.setting", name: "botling.catchup", key: "botling.catchup.model", value: "gpt-6-sol" },
+        { type: "plugins.setting", name: "botling.catchup", key: "botling.catchup.engine", value: "codex" },
+      ]);
       await choose(select(host, "Summary model"), "claude:sonnet");
-      expect(sent.at(-1)).toMatchObject({ change: { key: "catchUpModel", value: { engine: "claude", model: "sonnet" } } });
+      expect(sent.slice(-2)).toMatchObject([{ key: "botling.catchup.model", value: "sonnet" }, { key: "botling.catchup.engine", value: "claude" }]);
+      // What the plugin keeps comes back in its view.
+      await rerender(sheet({ "botling.catchup.model": "sonnet", "botling.catchup.engine": "claude" }));
       expect(select(host, "Summary model").value).toBe("claude:sonnet");
+      // Off, the plugin's settings are not drawn.
+      await rerender(createElement(SettingsSheet, { client, settings: null, bot: null, plugins: null, initialSection: "general", onClose() {} }));
+      expect(host.querySelector('select[aria-label="Summary model"]')).toBeNull();
     } finally { await done(); }
   });
 
   it("General: with a bot to ask, Antigravity's models are listed but disabled, with the reason", async () => {
     const sent: any[] = [];
     const bot = { id: "11111111-1111-4111-8111-111111111111", heads: ["claude", "codex", "agy"] } as unknown as BotView;
-    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot, plugins: null, initialSection: "general", onClose() {} }));
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot, plugins: plugins(), initialSection: "general", onClose() {} }));
     try {
       const summary = select(host, "Summary model");
       const agy = [...summary.options].filter((option) => option.value.startsWith("agy:"));

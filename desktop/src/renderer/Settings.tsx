@@ -106,7 +106,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
           </header>
           {problem && <p className="settings-problem" role="alert">{problem}</p>}
           <div className="settings-body">
-            {shown && current?.id === "general" && <General client={client} settings={shown} change={change} bot={bot} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} />}
+            {shown && current?.id === "general" && <General client={client} settings={shown} change={change} bot={bot} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} plugins={plugins} onProblem={setProblem} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
             {shown && current?.id === "engines" && <Engines client={client} settings={shown} change={change} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} botCount={bots.length} />}
             {current?.id === "usage" && <Usage client={client} />}
@@ -437,6 +437,61 @@ function Appearance({ settings, change }: { settings: SettingsView; change: (nex
   </Group>;
 }
 
+/** The built-in plugin that writes chat summaries; its settings are set here, not on the Plugins page. */
+const SUMMARIES = "botling.catchup";
+
+/**
+ * Settings → General → Chat summaries: botling.catchup's settings (hidden on the Plugins page), drawn as
+ * they were when the core kept them. Nothing shows while that plugin is off.
+ */
+function ChatSummaries({ client, plugins, codexModels, modelBotId, onProblem }: { client: Client; plugins: PluginsView | null; codexModels: CodexModelOption[]; modelBotId: string | null; onProblem: (problem: string | null) => void }) {
+  const summaryDiscovery = useSummaryDiscovery(client, modelBotId, codexModels);
+  const plugin = plugins?.plugins.find((candidate) => candidate.name === SUMMARIES && candidate.enabled && !candidate.failure);
+  const setting = (key: string) => plugin?.settings.find((entry) => entry.key === `${SUMMARIES}.${key}`);
+  const value = (key: string) => setting(key)?.value ?? setting(key)?.default ?? null;
+  const defaultPrompt = typeof setting("prompt")?.default === "string" ? setting("prompt")!.default as string : "";
+  const saved = typeof value("prompt") === "string" && value("prompt") !== defaultPrompt ? value("prompt") as string : null;
+  const [prompt, setPrompt] = useState(saved ?? defaultPrompt);
+  useEffect(() => setPrompt(saved ?? defaultPrompt), [saved, defaultPrompt]);
+  if (!plugin) return null;
+  const set = (key: string, next: boolean | number | string | null) => {
+    onProblem(null);
+    void client.request({ type: "plugins.setting", name: SUMMARIES, key: `${SUMMARIES}.${key}`, value: next }).catch((failure) => onProblem(why(failure)));
+  };
+  const threshold = (key: string) => (typeof value(key) === "number" ? Math.min(50, Math.max(1, Math.round(value(key) as number))) : 3);
+  const model = typeof value("model") === "string" && (value("model") as string).trim() ? (value("model") as string).trim() : null;
+  const engine = model && (value("engine") === "claude" || value("engine") === "agy") ? value("engine") as EngineId : "codex";
+  const chosen = { engine, model: model ?? String(setting("model")?.default ?? "") };
+  return (
+    <Group title="Chat summaries">
+      <Toggle label="Summarize unread messages" checked={value("unread") !== false} onChange={(next) => set("unread", next)} />
+      <Toggle label="Summarize between your messages" checked={value("interval") === true} onChange={(next) => set("interval", next)} />
+      {value("customThresholds") === true ? (
+        <>
+          <Row label="Unread threshold"><input type="number" aria-label="Unread threshold" min={1} max={50} value={threshold("unreadThreshold")} onChange={(event) => { const next = Number(event.target.value); if (next >= 1 && next <= 50) set("unreadThreshold", Math.round(next)); }} /></Row>
+          <Row label="Interval threshold"><input type="number" aria-label="Interval threshold" min={1} max={50} value={threshold("intervalThreshold")} onChange={(event) => { const next = Number(event.target.value); if (next >= 1 && next <= 50) set("intervalThreshold", Math.round(next)); }} /></Row>
+          <div className="settings-actions"><button type="button" onClick={() => { set("customThresholds", false); set("unreadThreshold", null); set("intervalThreshold", null); }}>Use default thresholds</button></div>
+        </>
+      ) : (
+        <Row label="Default thresholds: unread > 3, interval ≥ 3 bot replies">
+          <button type="button" onClick={() => set("customThresholds", true)}>Adjust individually</button>
+        </Row>
+      )}
+      <Row label="Summary model" hint={`Current summary model: ${ENGINE_NAMES[chosen.engine]} · ${chosen.model}`}>
+        <SummaryModelPicker label="Summary model" value={chosen} discovery={summaryDiscovery} unavailable={["agy"]}
+          unavailableNote="Antigravity models can't write summaries: it has no read-only one-shot mode."
+          onChange={(next) => { const id = next?.model.trim(); set("model", id || null); set("engine", id ? next!.engine : null); }} />
+      </Row>
+      <div className="settings-prompt">
+        <div className="settings-label">Summary prompt <span className="settings-tag">{saved ? "Custom" : "Default"}</span></div>
+        <textarea aria-label="Summary prompt" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)}
+          onBlur={() => { const next = prompt.trim() && prompt !== defaultPrompt ? prompt : null; if (next !== saved) set("prompt", next); }} />
+        <div className="settings-actions"><button type="button" disabled={!saved} onClick={() => set("prompt", null)}>Restore default prompt</button></div>
+      </div>
+    </Group>
+  );
+}
+
 /**
  * The model lists of every engine for the summary picker. With a bot to ask, the engines report their own (as the
  * pickers elsewhere do); without one, Codex's own list and Claude's three aliases stand in, and Antigravity has none.
@@ -456,10 +511,7 @@ function useSummaryDiscovery(client: Client, botId: string | null, codexModels: 
   };
 }
 
-function General({ client, settings, change, bot, codexModels, modelBotId }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null; codexModels: CodexModelOption[]; modelBotId: string | null }) {
-  const summaryDiscovery = useSummaryDiscovery(client, modelBotId, codexModels);
-  const [prompt, setPrompt] = useState(settings.summaryPrompt ?? settings.defaultSummaryPrompt);
-  useEffect(() => setPrompt(settings.summaryPrompt ?? settings.defaultSummaryPrompt), [settings.summaryPrompt, settings.defaultSummaryPrompt]);
+function General({ client, settings, change, bot, codexModels, modelBotId, plugins, onProblem }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null; codexModels: CodexModelOption[]; modelBotId: string | null; plugins: PluginsView | null; onProblem: (problem: string | null) => void }) {
   const size = settings.chatAvatarSize ?? 48;
   const preview = { avatar: bot?.avatar ?? "circle", heads: bot?.heads ?? ["claude"] };
   return (
@@ -487,32 +539,7 @@ function General({ client, settings, change, bot, codexModels, modelBotId }: { c
         <div className="settings-preview"><img src={faceURL(preview, settings.botLook)} alt="Preview" width={size} height={size} /></div>
         <div className="settings-actions"><button type="button" disabled={settings.chatAvatarSize === null} onClick={() => change({ key: "chatAvatarSize", value: null })}>Use default size</button></div>
       </Group>
-      <Group title="Chat summaries">
-        <Toggle label="Summarize unread messages" checked={settings.catchUpEnabled} onChange={(value) => change({ key: "catchUpEnabled", value })} />
-        <Toggle label="Summarize between your messages" checked={settings.intervalSummaryEnabled} onChange={(value) => change({ key: "intervalSummaryEnabled", value })} />
-        {settings.thresholdsCustomized ? (
-          <>
-            <Row label="Unread threshold"><input type="number" aria-label="Unread threshold" min={1} max={50} value={settings.catchUpThreshold} onChange={(event) => { const value = Number(event.target.value); if (value >= 1 && value <= 50) change({ key: "catchUpThreshold", value }); }} /></Row>
-            <Row label="Interval threshold"><input type="number" aria-label="Interval threshold" min={1} max={50} value={settings.intervalSummaryThreshold} onChange={(event) => { const value = Number(event.target.value); if (value >= 1 && value <= 50) change({ key: "intervalSummaryThreshold", value }); }} /></Row>
-            <div className="settings-actions"><button type="button" onClick={() => change({ key: "thresholdsCustomized", value: false })}>Use default thresholds</button></div>
-          </>
-        ) : (
-          <Row label="Default thresholds: unread > 3, interval ≥ 3 bot replies">
-            <button type="button" onClick={() => change({ key: "thresholdsCustomized", value: true })}>Adjust individually</button>
-          </Row>
-        )}
-        <Row label="Summary model" hint={`Current summary model: ${ENGINE_NAMES[settings.catchUpModel.engine]} · ${settings.catchUpModel.model}`}>
-          <SummaryModelPicker label="Summary model" value={settings.catchUpModel} discovery={summaryDiscovery} unavailable={["agy"]}
-            unavailableNote="Antigravity models can't write summaries: it has no read-only one-shot mode."
-            onChange={(value) => change({ key: "catchUpModel", value })} />
-        </Row>
-        <div className="settings-prompt">
-          <div className="settings-label">Summary prompt <span className="settings-tag">{settings.summaryPrompt ? "Custom" : "Default"}</span></div>
-          <textarea aria-label="Summary prompt" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)}
-            onBlur={() => { const next = prompt.trim() && prompt !== settings.defaultSummaryPrompt ? prompt : null; if (next !== settings.summaryPrompt) change({ key: "summaryPrompt", value: next }); }} />
-          <div className="settings-actions"><button type="button" disabled={!settings.summaryPrompt} onClick={() => change({ key: "summaryPrompt", value: null })}>Restore default prompt</button></div>
-        </div>
-      </Group>
+      <ChatSummaries client={client} plugins={plugins} codexModels={codexModels} modelBotId={modelBotId} onProblem={onProblem} />
       <Group title="Reminders" note="When a running bot or subagent shows no new step for this long, you get a reminder in its chat. Never turns it off.">
         <Row label="Remind after no new step for">
           <select aria-label="Remind after no new step for" value={settings.stallReminderMinutes} onChange={(event) => change({ key: "stallReminderMinutes", value: Number(event.target.value) })}>

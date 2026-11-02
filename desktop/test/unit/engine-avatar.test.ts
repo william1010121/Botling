@@ -11,7 +11,7 @@ globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {
 const bot: BotView = { id: "B", name: "Main", role: "main", avatar: "square", folder: "/w", phase: "starting", working: true, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude", "codex"], job: null, subagentRows: [] };
 const empty = (): ResultOf<"chat.snapshot"> => ({
   epoch: "epoch", seq: 0, bots: [bot], imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null },
-  chat: { botId: bot.id, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, catchUp: null, intervalSummaries: [], pins: [], floating: [], pinChoices: [] },
+  chat: { botId: bot.id, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [] },
 });
 const face = (engine: string, working = false, waiting = false) => faceURL(bot, "cute", { engine, working, waiting });
 const draw = (store: WorkspaceStore, look: "cute" | "original" = "cute") => {

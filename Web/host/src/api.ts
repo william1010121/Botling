@@ -28,11 +28,30 @@ export interface PluginEvents {
   messagePosted: { botId: string; role: "user" | "bot"; text: string; id: string };
   turnFinished: { botId: string; ok: boolean; reply: string };
   workerDone: { botId: string; workerId: string; status: string; report: string };
+  /** You read a chat up to its newest line (`through`); `unread`: how many of its lines were unread before. */
+  chatRead: { botId: string; unread: number; through: string | null };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnFinished", "workerDone"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnFinished", "workerDone", "chatRead"];
+
+/** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
+export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
+export interface ChatTask { id: string; name: string; state: string; messageIDs: string[] }
+/** A chat as `chat.messages` reads it: its newest lines, its task cards, its name and how much is unread. */
+export interface ChatData { botId: string; name: string; unread: number; messages: ChatLine[]; tasks: ChatTask[] }
+
+/**
+ * Something a plugin draws among a chat's messages (chat extension v2): its web part draws it with
+ * `ccb.decorations.register`. `fold`: these lines fold behind it, and it is drawn before the first of
+ * them; or `after`: it is drawn after that line, nothing folded. `tasks`: task cards it is about (the
+ * page hands them to the web part as live chips). `data`: the plugin's own, for its web part.
+ */
+export interface MessageDecoration { key: string; fold?: string[]; after?: string; tasks?: string[]; data?: JSONValue }
+
+/** How Botling starts an engine's CLI on this computer, for a one-shot model call: run `file` with `args` first, `env` added. */
+export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
 
 // ── The workspace (plugin-extraction.md §4.3): what the whiteboard reads, for any plugin, read only ──
 export type WorkspaceKind = "bots" | "tasks" | "memory" | "waiting" | "results";
@@ -98,7 +117,8 @@ export interface WorkspaceApi {
 }
 
 export interface BotlingApi {
-  readonly plugin: { name: string; version: string; dir: string; storageDir: string };
+  /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
+  readonly plugin: { name: string; version: string; dir: string; storageDir: string; appDataDir?: string };
   /** Disposed when the plugin unloads (push what `activate` set up). */
   readonly subscriptions: Dispose[];
   /** `plugin.name` (2.x). */
@@ -188,6 +208,16 @@ export interface BotlingApi {
   events: {
     on<E extends PluginEventName>(event: E, fn: (data: PluginEvents[E]) => void): Dispose;
   };
+  chat: {
+    /** A chat's newest lines (at most `limit`, 500 by default, 2,000 at most) and its task cards. Needs "messages". */
+    messages(botId: string, opts?: { limit?: number }): Promise<ChatData>;
+    /** What this plugin draws in a chat, in place of what it drew there before ([] clears). It needs a web part to draw it. */
+    decorate(botId: string, decorations: MessageDecoration[]): Promise<void>;
+  };
+  engines: {
+    /** How to start `claude` or `codex` here (null: that engine is not available). */
+    cli(engine: "claude" | "codex"): Promise<EngineCli | null>;
+  };
   /** `ui.expose`'s 1.x name. */
   web: { handle(method: string, fn: (params: unknown) => unknown): Dispose };
   /** `ui.notify` (2.x). */
@@ -212,6 +242,8 @@ export interface HostPluginSpec {
   app?: Partial<Record<AppSettingKey, JSONValue>>;
   /** A folder the plugin may keep data in. */
   storageDir: string;
+  /** Botling's data folder (built-in plugins only). */
+  appDataDir?: string;
 }
 
 /** A loaded plugin's registrations, which the host routes to. */
@@ -294,7 +326,10 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
   const where = { get cwd() { return plugin.spec.storageDir; } };
 
   return {
-    plugin: { name, version: plugin.spec.version, dir: plugin.spec.dir ?? dirname(plugin.spec.main), storageDir: plugin.spec.storageDir },
+    plugin: {
+      name, version: plugin.spec.version, dir: plugin.spec.dir ?? dirname(plugin.spec.main), storageDir: plugin.spec.storageDir,
+      ...(plugin.spec.appDataDir ? { appDataDir: plugin.spec.appDataDir } : {}),
+    },
     subscriptions,
     name,
     exec: (command, opts = {}) => exec(String(command), opts, where, plugin.children),
@@ -412,6 +447,13 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
         const off = remove(list, fn as (data: unknown) => void);
         return own(() => { off(); announceLater(); });
       },
+    },
+    chat: {
+      messages: async (botId, opts = {}) => (await ask("chat.messages", { bot: botId, ...(opts.limit === undefined ? {} : { limit: opts.limit }) })) as ChatData,
+      decorate: async (botId, decorations) => { await ask("chat.decorate", { bot: botId, decorations: decorations as JSONValue }); },
+    },
+    engines: {
+      cli: async (engine) => (await ask("engines.cli", { engine })) as EngineCli | null,
     },
     web: { handle: expose },
     notify: (text) => notify(text),

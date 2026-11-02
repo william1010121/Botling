@@ -30,6 +30,7 @@ function fakeWorld() {
     ignored: [] as string[][],
     watching: [] as boolean[],
     approved: [] as string[],
+    decorated: [] as string[],
   };
   const settings = { language: "en", botLook: "cute", workerLimit: 4 };
   const overrides: Record<string, string> = { settings: "Mod+Shift+P" };
@@ -51,6 +52,10 @@ function fakeWorld() {
     commandRun: () => null, component: () => null, imageUrls: () => null,
     createBot: () => { throw new Error("not here"); },
     addRoutine: () => "added",
+    chat: (botId, limit) => (botId === "main" ? { botId: "main", name: "Main bot", unread: 2, messages: [{ id: "L1", role: "bot", text: "hi", date: 1 }].slice(-limit), tasks: [] } : null),
+    botId: (botId) => (botId === "main" ? "MAIN-ID" : null),
+    decorated: (botId) => { log.decorated.push(botId); },
+    engineCli: (engine) => (engine === "codex" ? { file: "/bin/codex", args: [], env: {} } : null),
     changed: () => {},
     broken: () => {},
     log: () => {},
@@ -274,6 +279,54 @@ describe("Host API v3 in the core (plan M5)", () => {
     expect(await of("latex.other")).toEqual([{ command: "latex.other", key: "Mod+Alt+L", source: "user" }]);
   });
 
+  it("chat.messages reads a chat's newest lines and needs the messages permission", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "news");
+    plugin(dir, "reader", { permissions: ["messages"] });
+    const { ask } = await setup(dir);
+    await expect(ask("chat.messages", { plugin: "news", bot: "main" })).rejects.toThrow('Reading a chat needs the "messages" permission');
+    expect(await ask("chat.messages", { plugin: "reader", bot: "main", limit: 5 })).toEqual({ botId: "main", name: "Main bot", unread: 2, messages: [{ id: "L1", role: "bot", text: "hi", date: 1 }], tasks: [] });
+    await expect(ask("chat.messages", { plugin: "reader", bot: "B9" })).rejects.toThrow("No such bot.");
+    await expect(ask("chat.messages", { plugin: "reader", bot: "main", limit: 5_000 })).rejects.toThrow(/Not a request/);
+  });
+
+  it("chat.decorate keeps what a plugin draws in a chat until it draws again, clears or turns off", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "sum", { web: "dist/web.js" });
+    plugin(dir, "headless");
+    const { plugins, ask, log } = await setup(dir);
+    await expect(ask("chat.decorate", { plugin: "headless", bot: "main", decorations: [] })).rejects.toThrow(/web part/);
+    await expect(ask("chat.decorate", { plugin: "sum", bot: "B9", decorations: [] })).rejects.toThrow("No such bot.");
+    await expect(ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "a" }, { key: "a" }] })).rejects.toThrow(/key of its own/);
+    await expect(ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "a", fold: ["no spaces allowed"] }] })).rejects.toThrow(/Not a request/);
+    await expect(ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "a", data: "x".repeat(1_100_000) }] })).rejects.toThrow(/1 MB/);
+    expect(await ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "a", fold: ["L1", "L2"], tasks: ["T1"], data: { state: "loading" } }, { key: "b", after: "L3" }] })).toBeNull();
+    expect(plugins.decorations("MAIN-ID")).toEqual([
+      { plugin: "sum", key: "a", fold: ["L1", "L2"], tasks: ["T1"], data: { state: "loading" } },
+      { plugin: "sum", key: "b", after: "L3" },
+    ]);
+    expect(log.decorated).toEqual(["MAIN-ID"]);
+    // The same again changes nothing; [] clears.
+    await ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "a", fold: ["L1", "L2"], tasks: ["T1"], data: { state: "loading" } }, { key: "b", after: "L3" }] });
+    expect(log.decorated).toEqual(["MAIN-ID"]);
+    await ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [] });
+    expect(plugins.decorations("MAIN-ID")).toEqual([]);
+    // Turned off: what it drew goes, and the chat is told.
+    await ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "c", fold: ["L1"] }] });
+    plugins.setEnabled("sum", false);
+    expect(plugins.decorations("MAIN-ID")).toEqual([]);
+    expect(log.decorated).toEqual(["MAIN-ID", "MAIN-ID", "MAIN-ID", "MAIN-ID"]);
+  });
+
+  it("engines.cli says how Botling starts an engine's CLI", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "sum");
+    const { ask } = await setup(dir);
+    expect(await ask("engines.cli", { plugin: "sum", engine: "codex" })).toEqual({ file: "/bin/codex", args: [], env: {} });
+    expect(await ask("engines.cli", { plugin: "sum", engine: "claude" })).toBeNull();
+    await expect(ask("engines.cli", { plugin: "sum", engine: "agy" })).rejects.toThrow(/Not a request/);
+  });
+
   it("events go to the host only for the names some plugin listens to", async () => {
     const dir = tempDir("plugin-api");
     plugin(dir, "watch");
@@ -284,6 +337,44 @@ describe("Host API v3 in the core (plan M5)", () => {
     plugins.event("turnFinished", { botId: "main", ok: true, reply: "b" });
     plugins.event("workerDone", { botId: "main", workerId: "w", status: "completed", report: "" });
     expect(sent.filter((m) => m.method === "event")).toEqual([{ method: "event", params: { name: "turnFinished", data: { botId: "main", ok: true, reply: "b" } } }]);
+  });
+
+  it("events while the host is starting are told once its plugins have loaded", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "sum");
+    const sent: any[] = [];
+    let handlers!: HostHandlers;
+    let answerLoad: (() => void) | null = null;
+    const line = (message: unknown) => handlers.data(JSON.stringify(message) + "\n");
+    const node: HostCommand = {
+      command: "",
+      launch: (_script, _cwd, _env, given) => {
+        handlers = given;
+        queueMicrotask(() => line({ method: "ready", params: {} }));
+        return {
+          pid: 4243,
+          write: (text) => {
+            const message = JSON.parse(text);
+            sent.push(message);
+            if (message.method === "load") answerLoad = () => {
+              line({ method: "registered", params: { beforeSend: 0, afterReply: 0, commands: [], exposed: {}, events: ["chatRead"] } });
+              line({ id: message.id, result: { loaded: ["sum"], failed: [] } });
+            };
+          },
+          terminate: async () => {},
+        };
+      },
+    };
+    const plugins = new Plugins({ dataDir: dir, world: fakeWorld().world, node, hostScript: "host.mjs", sealer: testSealer("test-key") });
+    running.push(plugins);
+    await plugins.start();
+    await until(() => answerLoad);
+    plugins.event("chatRead", { botId: "main", unread: 5, through: "L9" });
+    plugins.event("turnFinished", { botId: "main", ok: true, reply: "nobody listens" });
+    expect(sent.filter((m) => m.method === "event")).toEqual([]);
+    answerLoad!();
+    await until(() => plugins.host.running);
+    expect(sent.filter((m) => m.method === "event")).toEqual([{ method: "event", params: { name: "chatRead", data: { botId: "main", unread: 5, through: "L9" } } }]);
   });
 });
 

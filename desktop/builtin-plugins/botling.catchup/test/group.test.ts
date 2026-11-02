@@ -1,40 +1,35 @@
+// @vitest-environment jsdom
+// The summary card in the real chat page (moved from Web/test/catchup.test.ts): the page places it and
+// folds the lines (decorations.ts), this plugin's web part draws it (src/group.ts).
 import { beforeAll, describe, expect, it } from "vitest";
-import type { CatchUpView, ChatState, MessageView } from "../src/types";
-import { sent } from "../src/bridge";
-import { bulletHTML } from "../src/catchup";
-import { readFileSync } from "node:fs";
-const chatCSS = readFileSync("src/chat.css", "utf8");
-
-globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
-
-const line = (id: string, role: MessageView["role"] = "bot"): MessageView => ({
-  id, role, text: `text ${id}`, stamp: null, avatar: role === "bot" ? `face-${id}` : null, choices: null,
-  chosen: null, answer: null, open: false, attachments: null, replyTo: null, replyPreview: null, openable: false,
-});
+import type { ChatState, MessageView } from "../../../../Web/src/types";
+import { sent } from "../../../../Web/src/bridge";
+import { bulletHTML } from "../src/group";
+import type { CatchUpView } from "../src/types";
+import { catchupCSS, chatCSS, line, openPage, withSummaries } from "./page";
 const view = (extra: Partial<CatchUpView> = {}): CatchUpView => ({
   key: "k1", ids: ["b", "c", "d", "e"], count: 4, heads: 2, state: "ready",
   bullets: ["Build passed for 51db02f0", "!! Ship before the gap is known?"], model: "gpt-test",
   since: "18:04", until: "18:36", latest: "Claude: Ship now?", ...extra,
 });
-const state = (catchUp: CatchUpView | null, extra: Partial<ChatState> = {}): ChatState => ({
+type Extra = Partial<ChatState> & { intervalSummaries?: CatchUpView[] };
+const state = (catchUp: CatchUpView | null, extra: Extra = {}): ChatState => withSummaries({
   botID: "catchup-bot", botName: "Garden", messages: ["a", "b", "c", "d", "e"].map((id) => line(id, id === "a" ? "user" : "bot")),
   working: false, avatar: "face", placeholder: "", replyingTo: null, pendingFiles: [], components: {}, catchUp, ...extra,
 });
+const retried = (key?: string) => ({ type: "hostCall", plugin: "botling.catchup", method: "retry", params: { botId: "catchup-bot", ...(key ? { key } : {}) } });
 const rows = () => [...document.querySelectorAll<HTMLElement>("#messages > .row")];
 const order = () => [...document.querySelectorAll<HTMLElement>("#messages > *")].map((el) =>
-  el.classList.contains("catchup-head") ? "HEAD" : el.classList.contains("catchup-end") ? "END" : el.dataset.id ?? "?");
+  el.classList.contains("catchup-head") ? "HEAD" : el.dataset.id ?? "?");
 
-beforeAll(async () => {
-  document.body.innerHTML = `<main id="scroller"><div id="messages"></div></main><div id="composer-slot"></div>`;
-  await import("../src/main");
-});
+beforeAll(openPage);
 
 describe("catch-up summary", () => {
   it("folds the unread rows behind a card placed before the first, without moving them", () => {
     window.ccb.setState(state(view()));
     const before = rows();
     expect(order()).toEqual(["a", "HEAD", "b", "c", "d", "e"]);
-    expect(before.filter((row) => row.classList.contains("catchup-folded")).map((row) => row.dataset.id)).toEqual(["b", "c", "d", "e"]);
+    expect(before.filter((row) => row.classList.contains("decoration-folded")).map((row) => row.dataset.id)).toEqual(["b", "c", "d", "e"]);
     const card = document.querySelector(".catchup-card")!;
     expect(card.getAttribute("aria-label")).toBe("Catch-up summary");
     expect(document.querySelector(".catchup-divider")?.textContent).toBe("4 unread · since 18:04");
@@ -58,13 +53,13 @@ describe("catch-up summary", () => {
     const originals=rows();
     const toggle = document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!;
     toggle.focus();toggle.click();
-    expect(document.querySelectorAll("#messages .catchup-folded")).toHaveLength(4);
+    expect(document.querySelectorAll("#messages .decoration-folded")).toHaveLength(4);
     expect(order()).toEqual(["a", "HEAD", "b", "c", "d", "e"]);
     expect(document.querySelectorAll(".summary-source-viewer .source-message")).toHaveLength(4);
     expect(rows()).toEqual(originals);
     document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
     expect(document.querySelector(".summary-source-viewer")).toBeNull();
-    expect(document.querySelectorAll("#messages .catchup-folded")).toHaveLength(4);
+    expect(document.querySelectorAll("#messages .decoration-folded")).toHaveLength(4);
     expect(document.activeElement?.getAttribute("data-action")).toBe("toggle");
   });
 
@@ -76,14 +71,14 @@ describe("catch-up summary", () => {
     expect(document.querySelector(".catchup-error-title")?.textContent).toBe("Couldn’t write a summary");
     expect(document.querySelector(".catchup-error-detail")?.textContent).toBe("The model timed out after 60 s. Nothing was lost — all 4 messages are below.");
     document.querySelector<HTMLButtonElement>('[data-action="retry"]')!.click();
-    expect(sent.at(-1)).toEqual({ type: "catchUpRetry", botID: "catchup-bot" });
+    expect(sent.at(-1)).toMatchObject(retried());
   });
 
   it("removes the group and unfolds when there is none", () => {
     window.ccb.setState(state(view()));
     window.ccb.setState(state(null));
     expect(document.querySelector(".catchup-head")).toBeNull();
-    expect(document.querySelectorAll(".catchup-folded")).toHaveLength(0);
+    expect(document.querySelectorAll(".decoration-folded")).toHaveLength(0);
     expect(order()).toEqual(["a", "b", "c", "d", "e"]);
   });
 
@@ -94,7 +89,7 @@ describe("catch-up summary", () => {
 });
 
 it("preserves all mixed source targets beyond model limits in loading/ready/failed cards and opens them", async () => {
-  const { sourceLinks } = await import("../src/catchup-links");
+  const { sourceLinks } = await import("../src/links");
   const source = line("b");
   source.text = `${"long prose ".repeat(1500)}
 [Report](<file:///tmp/final report.html>) [Alternate report](<file:///tmp/final report.html>)
@@ -126,17 +121,18 @@ it("preserves all mixed source targets beyond model limits in loading/ready/fail
 
 it("puts exact interval triggers only on each last bot footer, never beside Send", () => {
   window.ccb.setState(state(null, { messages: [line("u1", "user"), line("b1"), line("n", "notice"), line("b2"), line("u2", "user"), line("b3")] }));
-  expect(document.querySelector(".composer-tools .catchup-button")).toBeNull();
+  expect(document.querySelector(".composer-tools .catchup-button, .composer-tools .interval-summary-trigger")).toBeNull();
   const buttons = [...document.querySelectorAll<HTMLButtonElement>(".interval-summary-trigger")];
   expect(buttons.map(b => b.closest<HTMLElement>(".row")?.dataset.id)).toEqual(["b2", "b3"]);
-  expect(buttons.map(b => b.textContent)).toEqual(["Summarize 2 replies", "Summarize 1 reply"]);
+  // App notices count as replies (contract/summary.ts `isSummaryReply`), as the desktop always counted them.
+  expect(buttons.map(b => b.textContent)).toEqual(["Summarize 3 replies", "Summarize 1 reply"]);
   buttons[0].click();
-  expect(sent.at(-1)).toEqual({ type: "catchUpManual", botID: "catchup-bot", userMessageID: "u1" });
+  expect(sent.at(-1)).toMatchObject({ type: "hostCall", plugin: "botling.catchup", method: "interval", params: { botId: "catchup-bot", userMessageId: "u1" } });
 });
 
 
 it("deduplicates only equal targets and preserves literal punctuation and escaped captions", async () => {
-  const { sourceLinks } = await import("../src/catchup-links");
+  const { sourceLinks } = await import("../src/links");
   const source = line("literal");
   source.text = '[A & B](https://example.org/a?q=1#one) [Other](https://example.org/a?q=1#two) [Again](https://example.org/a?q=1#one) `file:///tmp/report.`';
   expect(sourceLinks([source])).toEqual([
@@ -156,9 +152,9 @@ it("leaves user boundaries and open replies visible and takes links only from th
   const open = line("d");
   open.text = "[outside](https://example.org/outside)";
   window.ccb.setState(state(view({ ids: ["b"], count: 1, manual: true }), { messages: [before, inside, closing, open] }));
-  expect(document.querySelector('[data-id="a"]')?.classList.contains("catchup-folded")).toBe(false);
-  expect(document.querySelector('[data-id="c"]')?.classList.contains("catchup-folded")).toBe(false);
-  expect(document.querySelector('[data-id="d"]')?.classList.contains("catchup-folded")).toBe(false);
+  expect(document.querySelector('[data-id="a"]')?.classList.contains("decoration-folded")).toBe(false);
+  expect(document.querySelector('[data-id="c"]')?.classList.contains("decoration-folded")).toBe(false);
+  expect(document.querySelector('[data-id="d"]')?.classList.contains("decoration-folded")).toBe(false);
   expect([...document.querySelectorAll<HTMLElement>(".catchup-links [data-url]")].map(e => e.dataset.url)).toEqual([
     "file:///tmp/inside.html", "https://claude.ai/public/artifacts/interval"
   ]);
@@ -188,17 +184,17 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   expect(heads()[0].querySelector('[data-action="toggle"]')?.textContent).toContain("2");
   expect(heads()[1].querySelector(".interval-auto, .speaker")).toBeNull();
   heads()[0].querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
-  expect(document.querySelector('[data-id="old"]')?.classList.contains("catchup-folded")).toBe(true);
-  expect(document.querySelector('[data-id="metadata"]')?.classList.contains("catchup-folded")).toBe(true);
-  expect(document.querySelector('[data-id="new"]')?.classList.contains("catchup-folded")).toBe(true);
+  expect(document.querySelector('[data-id="old"]')?.classList.contains("decoration-folded")).toBe(true);
+  expect(document.querySelector('[data-id="metadata"]')?.classList.contains("decoration-folded")).toBe(true);
+  expect(document.querySelector('[data-id="new"]')?.classList.contains("decoration-folded")).toBe(true);
   draw("failed");
   expect(sourceURLs()).toHaveLength(2);
   expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("true");
   heads()[0].querySelector<HTMLButtonElement>('[data-action="retry"]')!.click();
-  expect(sent.at(-1)).toEqual({ type: "catchUpRetry", botID: "catchup-bot", key: "older" });
+  expect(sent.at(-1)).toMatchObject(retried("older"));
   draw("ready");
   expect(sourceURLs()).toHaveLength(2);
-  expect(messages.filter(m => m.role === "user").every(m => !document.querySelector(`[data-id="${m.id}"]`)?.classList.contains("catchup-folded"))).toBe(true);
+  expect(messages.filter(m => m.role === "user").every(m => !document.querySelector(`[data-id="${m.id}"]`)?.classList.contains("decoration-folded"))).toBe(true);
   // Re-render, change language, and switch chat: expansion belongs to the exact chat/range.
   draw("ready", { lang: "en" });
   expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("true");
@@ -211,7 +207,7 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
 
 it("folds timestamped component requests and attachments within the cutoff", () => {
   const style = document.createElement("style");
-  style.textContent = chatCSS;
+  style.textContent = chatCSS + catchupCSS;
   document.head.append(style);
   const request = (id: string, stamp: string): MessageView => ({ ...line(id, "relay"), stamp,
     reactionEnabled: true, attachments: [{ name: `${id}.png`, kind: "image", url: `file:///tmp/${id}.png` }] });

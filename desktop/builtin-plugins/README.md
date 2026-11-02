@@ -13,6 +13,7 @@ one, which is how Maintainer changes a built-in plugin: it copies the folder int
 | `botling.cards` | The web preview card (`網頁預覽卡片`). A component of the same name in the library (`ccb-components`) still wins. |
 | `botling.chat-extras` | Pictures in a row of a reply become one gallery, a long message of yours folds to its first lines (Show more), and a long paste waits as a chip above the input box (its limits are this plugin's settings; the ones Botling's own settings had move here once). Botling Web bundles its web part, as ccb-latex's. |
 | `botling.design` | `/design` in the / menu, put into the message as words; the bots' rules say what it means. |
+| `botling.catchup` | Chat summaries: unread replies folded into a summary card when you read a chat (`chatRead`), intervals between your messages, sources in a dialog. Its program part reads the chat (`chat.messages`), runs the isolated claude/codex one-shot call (`engines.cli`) and puts each summary in the chat as a message decoration (`chat.decorate`), which its web part draws (`ccb.decorations`, Web/src/decorations.ts). Its settings show under Settings → General → Chat summaries (`hidden` on the Plugins page). The first run takes over the core's old `catchup-summaries.json` and settings.json keys without changing them. Botling Web bundles its web part, as it does ccb-latex's. |
 
 The `choices` card is not here: the chat draws a reply's `<choices>` as buttons by itself, and a `choices`
 component in the library replaces them, as before. Shipping a template here would change how questions look

@@ -36,7 +36,7 @@ export interface RightPanelProps {
   /** The bot's task cards and its chat's lines (for "Jump to chat"), and the card pressed open. */
   tasks: TaskView[];
   messages: MessageView[];
-  /** The chat's lines folded into a summary (Catch-up and the interval summaries): a task all of whose replies are in one says "In the summary". */
+  /** The chat's lines folded behind a plugin's decoration (a summary): a task all of whose replies are in one says "In the summary". */
   summarized?: ReadonlySet<string>;
   selectedTask: string | null;
   onSelectTask: (id: string) => void;

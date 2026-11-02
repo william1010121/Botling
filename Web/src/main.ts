@@ -9,7 +9,6 @@ import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { showMainSpeed } from "./subagent-speed";
 import { PinArea } from "./pins";
-import { IntervalSummaries, onCatchUpToggle } from "./catchup";
 import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
@@ -44,8 +43,6 @@ class Chat {
   private readonly pins: PinArea;
   /** Pins floated in a corner of this chat (and other bots' shown in all bots), over the chat and the Board. */
   private readonly floats: FloatLayer;
-  /** Unread messages folded on your return, with their summary. */
-  private readonly catchUp = new IntervalSummaries();
   /**
    * Each message drawn: its element, and the key it was drawn from. `message` and `mark` are what
    * the key was made of, so an update that hands back the same message object (`patchState`)
@@ -94,12 +91,12 @@ class Chat {
     this.scroller = document.getElementById("scroller")!;
     this.list = document.getElementById("messages")!;
     this.historyMore.type = "button";
-    this.historyMore.className = "catchup-button history-more";
+    this.historyMore.className = "history-button history-more";
     this.historyMore.hidden = true;
     this.list.before(this.historyMore);
     this.historyMore.addEventListener("click", () => this.loadEarlier());
     this.historyLatest.type = "button";
-    this.historyLatest.className = "catchup-button history-latest";
+    this.historyLatest.className = "history-button history-latest";
     this.historyLatest.hidden = true;
     this.list.after(this.historyLatest);
     this.historyLatest.addEventListener("click", () => {
@@ -131,9 +128,6 @@ class Chat {
     });
     composer.onKey = (event) => this.plugins.handleKey(event);
     composer.onPaste = (event) => this.plugins.handlePaste(event);
-    onCatchUpToggle(() => {
-      if (this.last) this.catchUp.update(this.last, (id) => this.drawn.get(id)?.element ?? null);
-    });
     this.followBottom();
     this.handleClicks();
     this.handleDrops();
@@ -242,7 +236,7 @@ class Chat {
     const end = this.navigatingHistory ? Math.min(state.messages.length, start + historyWindowSize) : state.messages.length;
     const messages = state.messages.slice(start, end);
     this.historyLatest.hidden = end === state.messages.length;
-    this.historyLatest.textContent = t("catchup.latest", { line: newest?.text.replace(/\s+/g, " ").slice(0, 80) ?? "" });
+    this.historyLatest.textContent = t("history.latest", { line: newest?.text.replace(/\s+/g, " ").slice(0, 80) ?? "" });
     this.firstID = messages[0]?.id ?? null;
     // Older lines the app still holds count as more to load.
     const olderInApp = state.history?.hasMore ? state.history.older : 0;
@@ -288,8 +282,8 @@ class Chat {
         this.drawn.set(message.id, entry);
       }
       let expected: Element | null = previous ? previous.nextElementSibling : this.list.firstElementChild;
-      // The catch-up card and end row sit between messages: step over them.
-      while (expected && expected !== entry.element && expected.classList.contains("catchup-extra")) expected = expected.nextElementSibling;
+      // What plugins draw among the messages sits between them: step over it.
+      while (expected && expected !== entry.element && expected.classList.contains("decoration-extra")) expected = expected.nextElementSibling;
       if (expected !== entry.element) {
         if (previous) previous.after(entry.element);
         else this.list.prepend(entry.element);
@@ -297,7 +291,7 @@ class Chat {
       previous = entry.element;
     }
 
-    this.catchUp.update(state, (id) => this.drawn.get(id)?.element ?? null);
+    this.plugins.decorations.update(state, (id) => this.drawn.get(id)?.element ?? null);
 
     const runs = !state.working ? [] : !state.subagent && state.liveRuns ? state.liveRuns : [{
       id: "legacy", avatar: state.avatar, label: "", live: state.live ?? [],
@@ -478,7 +472,7 @@ class Chat {
     });
   }
 
-  /** Quotes, task links and summary sources can name rows outside the mounted window. */
+  /** Quotes, task links and plugins' decorations can name rows outside the mounted window. */
   private revealMessage(id: string): void {
     if (!this.last || this.drawn.has(id)) return;
     const index = this.last.messages.findIndex((message) => message.id === id);
@@ -629,7 +623,7 @@ declare global {
       hostReply(callID: number, ok: boolean, value: unknown): void;
       detailReply(requestID: number, ok: boolean, value: string): void;
       taskOutput(messageID: string, taskID: string, text: string): void;
-      /** "Jump to chat" on a task's card in the right panel: its latest reply, or the summary that folds it. */
+      /** "Jump to chat" on a task's card in the right panel: its latest reply, or the decoration that folds it. */
       jumpToTask(messageID: string, taskID: string): void;
       focus(): void;
       /** Whether the app's window is shown (not minimized, hidden or fully covered). */

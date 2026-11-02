@@ -1,28 +1,41 @@
-// Catch-up and interval summaries, ported from the Swift app's CatchUp.swift and
-// Workspace+CatchUp.swift. UI only: the chat, its archive and the bot's processes never see a summary.
+// Catch-up and interval summaries (botling.catchup's program part), ported from the Swift app's
+// CatchUp.swift and Workspace+CatchUp.swift. UI only: the chat, its archive and the bot's processes never
+// see a summary; the chat page draws them as message decorations (web.ts).
 //
 // - Coming back to a chat with more than `catchUpThreshold` (3) unread replies folds them into a
 //   group with a summary (`arrive`), once per range: a range already summarized (this run or an
-//   earlier one, `catchup-summaries.json`) shows at once.
+//   earlier one, `summaries.json`) shows at once.
 // - Each user message closes the interval since the one before; with `intervalSummaryEnabled` an
 //   interval with at least `intervalSummaryThreshold` replies is summarized by itself; the page's
 //   footer button summarizes any interval (`interval`). A failed one can be retried.
 // - The summary is written by an isolated, read-only `codex exec` (existing login, ephemeral, no
-//   user config, tools or plugins), as 1.x's: 1–5 bullets citing their sources
-//   ([[source:UUID]], [[source:UUID|quote]], [[task:UUID]]), which the page links back.
+//   user config, tools or plugins), as 1.x's, or `claude -p` with no tools: 1–5 bullets citing their
+//   sources ([[source:UUID]], [[source:UUID|quote]], [[task:UUID]]), which the page links back.
 import { spawn } from "node:child_process";
-import { isSummaryReply } from "../contract/summary";
-import { childEnvironment } from "./agent/runner";
-import { resolveExecutable } from "./process/executable";
-import { killTree } from "./process/kill-tree";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { characterCount, characterPrefix } from "./briefing";
-import { LANGUAGE_PROMPT_NAMES, type AppLanguage } from "./prompts";
-import { writeFileAtomic } from "./durable/atomic";
-import { fromSwiftDate, toSwiftDate, type ChatRecord } from "./store/records";
-import type { TaskCard } from "./tasks";
+import {
+  characterCount, characterPrefix, childEnvironment, fromSwiftDate, isSummaryReply, killGroup, LANGUAGE_PROMPT_NAMES,
+  resolveExecutable, toSwiftDate, writeFileAtomic, type AppLanguage,
+} from "./util";
+
+/** A line of the chat as `chat.messages` gives it (the stored record; only what summaries read is named). */
+export interface ChatRecord {
+  id: string;
+  role: string;
+  text: string;
+  /** Swift date (seconds since 2001). */
+  date: number;
+  engine?: string;
+  choices?: { label: string; detail?: string | null }[];
+  chosen?: number;
+  answer?: string;
+  displays?: unknown;
+}
+
+/** A task card of the chat (tasks.ts `TaskCard`, as `chat.messages` gives it). */
+export interface TaskCard { id: string; name: string; state: string; messageIDs: string[] }
 
 export const DEFAULT_WRITING_PROMPT = "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written.";
 export const DEFAULT_THRESHOLD = 3;
@@ -185,7 +198,7 @@ export function codexSummarizer(command: { file: string; prefixArgs?: string[]; 
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => { if (output.length < 4_000_000) output += chunk; });
     child.stderr.resume();
-    const kill = () => { if (!(child.pid && killTree(child.pid, "SIGKILL"))) { try { child.kill("SIGKILL"); } catch { /* gone */ } } };
+    const kill = () => killGroup(child);
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -245,7 +258,7 @@ export function claudeSummarizer(command: { file: string; prefixArgs?: string[];
     child.stderr.resume();
     child.stdin.on("error", () => { /* it exited first; close reports */ });
     child.stdin.end(`Summarize these messages. Do not use any tools.\n${prompt}`);
-    const kill = () => { if (!(child.pid && killTree(child.pid, "SIGKILL"))) { try { child.kill("SIGKILL"); } catch { /* gone */ } } };
+    const kill = () => killGroup(child);
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -286,7 +299,7 @@ export interface CatchUpState {
   requestedBy: string | null;
 }
 
-/** catchup-summaries.json (1.x keeps it in ~/.claudecodebot; 2.0 in its own folder): ≤ 200 summaries by range. */
+/** summaries.json in the plugin's storage (1.x's and 2.0's catchup-summaries.json, migrate.ts): ≤ 200 summaries by range. */
 export class CatchUpCache {
   private entries: Record<string, { bullets: string[]; model: string; date: number; requestedBy?: string }> = {};
   constructor(readonly file: string) {
@@ -319,27 +332,36 @@ export interface CatchUpSettings {
   writingPrompt: string | null;
 }
 
-/**
- * The saved summary model as engine + model. 1.x (and 2.1.0) saved only a Codex model id in `catchUpModelChoice`, so
- * with no `catchUpModelEngine` beside it the engine is Codex; nothing saved: Codex's default.
- */
-export function savedSummaryModel(value: Record<string, unknown> | undefined): { engine: SummaryEngine; model: string } {
-  const model = typeof value?.catchUpModelChoice === "string" && value.catchUpModelChoice.trim() ? value.catchUpModelChoice.trim() : null;
-  if (!model) return { engine: "codex", model: JUDGE_MODEL };
-  const engine = value?.catchUpModelEngine;
-  return { engine: engine === "claude" || engine === "agy" ? engine : "codex", model };
+/** This plugin's settings (package.json `contributes.settings`); Settings → General → Chat summaries sets them. */
+export const SETTING = {
+  unread: "botling.catchup.unread",
+  interval: "botling.catchup.interval",
+  customThresholds: "botling.catchup.customThresholds",
+  unreadThreshold: "botling.catchup.unreadThreshold",
+  intervalThreshold: "botling.catchup.intervalThreshold",
+  engine: "botling.catchup.engine",
+  model: "botling.catchup.model",
+  prompt: "botling.catchup.prompt",
+} as const;
+
+/** The summary model as engine + model; with no model chosen, Codex's default (1.x saved only a Codex model). */
+export function savedSummaryModel(engine: unknown, model: unknown): { engine: SummaryEngine; model: string } {
+  const chosen = typeof model === "string" && model.trim() ? model.trim() : null;
+  if (!chosen) return { engine: "codex", model: JUDGE_MODEL };
+  return { engine: engine === "claude" || engine === "agy" ? engine : "codex", model: chosen };
 }
 
-/** settings.json's keys as 1.x's AppSettings writes them. */
-export function catchUpSettings(value: Record<string, unknown> | undefined): CatchUpSettings {
-  const number = (key: string) => (typeof value?.[key] === "number" ? (value[key] as number) : null);
+/** The settings as the summaries use them, from `api.settings.get`. */
+export function catchUpSettings(get: (key: string) => unknown): CatchUpSettings {
+  const number = (key: string) => (typeof get(key) === "number" ? (get(key) as number) : null);
+  const prompt = get(SETTING.prompt);
   return {
-    catchUpEnabled: value?.catchUpEnabledChoice !== false,
-    catchUpThreshold: clampedThreshold(number("catchUpThresholdChoice") ?? DEFAULT_THRESHOLD),
-    intervalSummaryEnabled: value?.intervalSummaryEnabledChoice === true,
-    intervalSummaryThreshold: clampedThreshold(number("intervalSummaryThresholdChoice") ?? DEFAULT_THRESHOLD),
-    ...savedSummaryModel(value),
-    writingPrompt: typeof value?.summaryPromptChoice === "string" ? value.summaryPromptChoice : null,
+    catchUpEnabled: get(SETTING.unread) !== false,
+    catchUpThreshold: clampedThreshold(number(SETTING.unreadThreshold) ?? DEFAULT_THRESHOLD),
+    intervalSummaryEnabled: get(SETTING.interval) === true,
+    intervalSummaryThreshold: clampedThreshold(number(SETTING.intervalThreshold) ?? DEFAULT_THRESHOLD),
+    ...savedSummaryModel(get(SETTING.engine), get(SETTING.model)),
+    writingPrompt: typeof prompt === "string" && prompt ? prompt : null,
   };
 }
 
@@ -558,4 +580,31 @@ export class CatchUps {
     intervalSummaries.sort((a, b) => (position.get(a.ids[0] ?? "") ?? 0) - (position.get(b.ids[0] ?? "") ?? 0));
     return { catchUp, intervalSummaries };
   }
+
+  /**
+   * The same as message decorations (`chat.decorate`): each summary folds its lines behind its card. The
+   * folded group gives way to the interval summaries when they share a line, so no line has two owners.
+   */
+  decorations(chat: CatchUpChat): CatchUpDecoration[] {
+    const { catchUp, intervalSummaries } = this.views(chat);
+    const intervals = intervalSummaries.slice(-200);
+    const covered = new Set(intervals.flatMap((view) => view.ids));
+    const out: CatchUpDecoration[] = [];
+    if (catchUp && !catchUp.ids.some((id) => covered.has(id))) out.push(decoration("unread", catchUp));
+    for (const view of intervals) out.push(decoration("interval", view));
+    return out;
+  }
+}
+
+/** A summary as the chat page gets it: its lines folded, the tasks it is about (drawn live as chips), and what web.ts draws. */
+export interface CatchUpDecoration {
+  key: string;
+  fold: string[];
+  tasks: string[];
+  data: Omit<CatchUpViewData, "taskIds"> & { kind: "unread" | "interval" };
+}
+
+function decoration(kind: "unread" | "interval", view: CatchUpViewData): CatchUpDecoration {
+  const { taskIds, ...data } = view;
+  return { key: `${kind}:${view.key}`, fold: view.ids, tasks: taskIds, data: { ...data, kind } };
 }

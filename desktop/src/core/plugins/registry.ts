@@ -57,6 +57,8 @@ export interface HostSpec {
   /** Botling's own settings it may read (`settings.app`); the core adds them. */
   app?: Record<string, JSONValue>;
   storageDir: string;
+  /** Botling's data folder, for a built-in plugin taking over files the core used to keep there (`api.plugin.appDataDir`). */
+  appDataDir?: string;
 }
 
 interface State {
@@ -300,17 +302,20 @@ export class PluginRegistry {
       return [{
         name: plugin.manifest.name, version: plugin.manifest.version, main: join(plugin.folder, host), dir: plugin.folder,
         fingerprint: this.fingerprints[plugin.manifest.name] ?? "", settings, storageDir: join(dataRoot, plugin.manifest.name),
+        ...(plugin.builtIn ? { appDataDir: dirname(dataRoot) } : {}),
       }];
     });
   }
 
   /** The settings a page may see (never secrets: only whether each is set). */
-  settingsView(plugin: InstalledPlugin): { key: string; type: string; title: string; options: string[]; value: JSONValue; secret: boolean; set: boolean }[] {
+  settingsView(plugin: InstalledPlugin): { key: string; type: string; title: string; options: string[]; value: JSONValue; secret: boolean; set: boolean; hidden?: true; default?: boolean | number | string | null }[] {
     const values = this.resolvedSettings(plugin);
     return Object.entries(plugin.manifest.ccb?.contributes?.settings ?? {}).map(([key, setting]) => ({
       key, type: setting.type, title: setting.title, options: setting.options ?? [], secret: !!setting.secret,
       value: setting.secret ? null : values[key] ?? null,
       set: setting.secret ? this.secrets.has(plugin.manifest.name, key) : true,
+      ...(setting.hidden ? { hidden: true as const } : {}),
+      ...(!setting.secret && setting.default !== undefined && (setting.default === null || typeof setting.default !== "object") ? { default: setting.default as boolean | number | string | null } : {}),
     }));
   }
 

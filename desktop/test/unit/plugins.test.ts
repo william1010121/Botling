@@ -78,7 +78,7 @@ describe("the plugin registry", () => {
     // The program part gets its secret; a page never does (settingsView says only that it is set).
     expect(again.hostSpecs(join(dir, "data"))[0]!.settings).toEqual({ "x.on": false, token: "s3cret" });
     expect(again.settingsView(again.plugin("helper")!)).toEqual([
-      { key: "x.on", type: "boolean", title: "On", options: [], secret: false, value: false, set: true },
+      { key: "x.on", type: "boolean", title: "On", options: [], secret: false, value: false, set: true, default: true },
       { key: "token", type: "string", title: "Token", options: [], secret: true, value: null, set: true },
     ]);
   });

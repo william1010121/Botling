@@ -176,10 +176,21 @@ export class PluginHostClient {
     if (this.running) this.write({ method: "replyTag", params: { plugin, bot, tag: tag.tag, attributes: tag.attributes, body: tag.body } });
   }
 
-  /** Tells plugins listening with `events.on`; nothing is sent while none listens for `name`. */
+  /**
+   * Tells plugins listening with `events.on`; nothing is sent while none listens for `name`. While the
+   * host is starting (or starting again) what happens is kept, at most 100 events for 30 s, and told
+   * once the plugins have loaded: the first chat you open as Botling starts is not lost on them.
+   */
   event(name: string, data: unknown) {
-    if (this.running && this.events.has(name)) this.write({ method: "event", params: { name, data } });
+    if (this.running) {
+      if (this.events.has(name)) this.write({ method: "event", params: { name, data } });
+    } else if (this.specs.length && !this.stopping) {
+      this.early.push({ name, data, at: Date.now() });
+      if (this.early.length > 100) this.early.shift();
+    }
   }
+
+  private early: { name: string; data: unknown; at: number }[] = [];
 
   command(id: string, args: unknown[] = []): Promise<unknown> {
     return this.request("command", { id, args }, id.split(".")[0] ?? null, this.timing.call);
@@ -397,6 +408,10 @@ export class PluginHostClient {
     }
     this.loaded = loaded;
     this.running = true;
+    const early = this.early.splice(0).filter((event) => Date.now() - event.at < 30_000);
+    for (const { name, data } of early) this.event(name, data);
     this.onRegistered();
+    // What changed while it loaded (a plugin's settings set as it started): loaded again, with that.
+    if (this.specs !== asked && JSON.stringify(this.specs) !== JSON.stringify(asked)) void this.load();
   }
 }

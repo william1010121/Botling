@@ -63,7 +63,8 @@ export function openLightbox(url: string, label: string): void {
   });
 
   const restore = document.activeElement;
-  (document.querySelector("dialog.summary-source-viewer[open]") ?? document.body).append(box);
+  // Over an open modal dialog (a plugin's, such as a summary's sources) it goes inside it, or the dialog would cover it.
+  ([...document.querySelectorAll<HTMLDialogElement>("dialog[open]")].at(-1) ?? document.body).append(box);
   const close = box.querySelector<HTMLButtonElement>(".lightbox-close")!;
   const onKey = (event: KeyboardEvent) => {
     if (!box.isConnected) { closeLightbox(false); return; }

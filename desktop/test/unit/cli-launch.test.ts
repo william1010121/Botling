@@ -6,7 +6,7 @@ import { ClaudeHead, type HeadExit } from "../../src/core/agent/head";
 import { CodexHead, CodexThreads } from "../../src/core/agent/codex";
 import { AgentTurn, type TurnOutcome } from "../../src/core/agent/runner";
 import { askModels } from "../../src/core/agent/codex-models";
-import { codexSummarizer } from "../../src/core/catchup";
+import { codexSummarizer } from "../../builtin-plugins/botling.catchup/src/catchup";
 import { fakeCli, fakeCodex, tempDir, until } from "../helpers";
 
 const heads: (ClaudeHead | CodexHead)[] = [];

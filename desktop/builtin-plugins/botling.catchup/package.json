@@ -1,0 +1,78 @@
+{
+  "name": "botling.catchup",
+  "displayName": "Chat summaries",
+  "version": "1.0.0",
+  "description": "Coming back to a chat with many unread replies folds them into one card with a short summary; stretches between your messages can be summarized too. Each point links back to the messages it comes from. Settings → General → Chat summaries.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "messages"
+    ],
+    "host": "dist/host.mjs",
+    "web": "dist/web.js",
+    "styles": [
+      "catchup.css"
+    ],
+    "contributes": {
+      "settings": {
+        "botling.catchup.unread": {
+          "type": "boolean",
+          "default": true,
+          "title": "Summarize unread messages",
+          "hidden": true
+        },
+        "botling.catchup.interval": {
+          "type": "boolean",
+          "default": false,
+          "title": "Summarize between your messages",
+          "hidden": true
+        },
+        "botling.catchup.customThresholds": {
+          "type": "boolean",
+          "default": false,
+          "title": "Adjust thresholds individually",
+          "hidden": true
+        },
+        "botling.catchup.unreadThreshold": {
+          "type": "number",
+          "default": 3,
+          "title": "Unread threshold",
+          "hidden": true
+        },
+        "botling.catchup.intervalThreshold": {
+          "type": "number",
+          "default": 3,
+          "title": "Interval threshold",
+          "hidden": true
+        },
+        "botling.catchup.engine": {
+          "type": "enum",
+          "options": [
+            "codex",
+            "claude",
+            "agy"
+          ],
+          "default": "codex",
+          "title": "Summary model engine",
+          "hidden": true
+        },
+        "botling.catchup.model": {
+          "type": "string",
+          "default": "gpt-6-luna",
+          "title": "Summary model",
+          "hidden": true
+        },
+        "botling.catchup.prompt": {
+          "type": "string",
+          "default": "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written.",
+          "title": "Summary prompt",
+          "hidden": true
+        }
+      }
+    }
+  }
+}

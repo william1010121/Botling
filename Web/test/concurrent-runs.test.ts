@@ -15,7 +15,7 @@ describe("concurrent engine output through events, payload and chat DOM", () => 
     const survivor = ended === "a" ? "b" : "a";
     let seq = 0;
     let snapshot = { epoch: "e", seq, bots: [bot], imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null },
-      chat: { botId: "B", messages: [], running: null, live: [], tasks: [], runs: [], heads: null, catchUp: null, intervalSummaries: [], pins: [], floating: [], pinChoices: [] } } as ResultOf<"chat.snapshot">;
+      chat: { botId: "B", messages: [], running: null, live: [], tasks: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [] } } as ResultOf<"chat.snapshot">;
     const store = new WorkspaceStore(async () => snapshot);
     await store.resync();
     const draw = () => window.ccb.setState(chatState(bot, store.getView().chat!).state);

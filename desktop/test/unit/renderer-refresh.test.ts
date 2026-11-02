@@ -26,6 +26,8 @@ function fixture() {
   put("desktop/builtin-plugins/ccb-latex/src/web.ts", 'export const version = "latex-one";');
   put("desktop/builtin-plugins/botling.chat-extras/src/web.ts", 'export const version = "extras-one";');
   put("desktop/builtin-plugins/botling.chat-extras/src/chat-extras.css", '.image-gallery { display: grid; }');
+  put("desktop/builtin-plugins/botling.catchup/src/web.ts", 'export const version = "catchup-one";');
+  put("desktop/builtin-plugins/botling.catchup/catchup.css", '.catchup-head { color: red; }');
   put("desktop/out/main/main.cjs", 'main must stay running');
   put("desktop/out/core/main.cjs", 'core must stay running');
   put("desktop/out/preload/preload.cjs", 'preload must stay unchanged');

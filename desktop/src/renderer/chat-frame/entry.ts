@@ -1,15 +1,13 @@
 // The chat frame (app://botling/chat.html): the Swift app's chat page from Web/src, unchanged,
 // fed with state by the app page. On top of it the desktop adds what the page does not have yet:
-// a Stop button in the input box. KaTeX is the built-in
-// ccb-latex plugin, which arrives with the other plugins' web parts (Botling Web bundles it).
+// a Stop button in the input box. KaTeX is the built-in ccb-latex plugin and summaries the built-in
+// botling.catchup, which arrive with the other plugins' web parts (Botling Web bundles them).
 import { unpackChatAvatars } from "../chat-avatar-wire";
 import { observeTraceEditor } from "./input-trace-chat";
 import { inputTrace } from "../input-trace";
 import "./shim";
 import "./component-frames";
 import { installInputRecovery } from "./input-focus";
-import { setSummaryCountable } from "../../../../Web/src/catchup";
-import { isSummaryReply } from "../../contract/summary";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
@@ -23,11 +21,12 @@ import type { ChatState } from "../../../../Web/src/types";
 import { keepDraft, keptDrafts, pageDraftStore } from "./draft-keep";
 import latex from "../../../builtin-plugins/ccb-latex/package.json";
 import chatExtras from "../../../builtin-plugins/botling.chat-extras/package.json";
+import catchup from "../../../builtin-plugins/botling.catchup/package.json";
 
 declare const __LATEX_SOURCE__: string;
 declare const __CHAT_EXTRAS_SOURCE__: string;
+declare const __CATCHUP_SOURCE__: string;
 
-setSummaryCountable(isSummaryReply);
 observeTraceEditor();
 // Local media comes from the currently shown chat's authenticated origin.
 let shownChat: string | undefined;
@@ -193,7 +192,7 @@ document.addEventListener("keydown", (event) => {
  * Botling Web runs no plugins (the phone is told nothing of them), so its chat page keeps the built-in
  * web parts bundled in, as their manifests describe them, with their stylesheets (and ccb-latex's fonts)
  * beside chat.html, and their settings' defaults. ccb-latex's key (Mod+Shift+M) is the shell's to bind
- * (plugin-commands.ts).
+ * (plugin-commands.ts). botling.catchup's draws the summaries the desktop wrote (its Retry needs the desktop).
  */
 const defaults = (settings: Record<string, { default: unknown }>) => Object.fromEntries(Object.entries(settings).map(([key, setting]) => [key, setting.default]));
 const standalone = WEB ? [{
@@ -209,6 +208,13 @@ const standalone = WEB ? [{
   source: __CHAT_EXTRAS_SOURCE__,
   styles: [new URL("plugins/botling.chat-extras/chat-extras.css", location.href).toString()],
   settings: defaults(chatExtras.ccb.contributes.settings),
+  commands: [],
+}, {
+  name: catchup.name,
+  version: catchup.version,
+  source: __CATCHUP_SOURCE__,
+  styles: catchup.ccb.styles.map((style) => new URL(`plugins/${catchup.name}/${style}`, location.href).toString()),
+  settings: defaults(catchup.ccb.contributes.settings),
   commands: [],
 }] : [];
 /**

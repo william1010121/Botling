@@ -1,6 +1,5 @@
 import { findMessageRow } from "./message-navigation";
 import { artifactCard } from "./artifacts";
-import { summaryCountable } from "./summary-countable";
 import { post } from "./bridge";
 import { t } from "./i18n";
 import { pinBar, specPinButton } from "./pins";
@@ -169,7 +168,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled || messageMenu.items.length) ? actionColumn(message) : replyButton(message);
       const chips = message.specs?.length ? specChips(message, components) : null;
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
-      if (message.speaker || chips || tasks || (message.role === "notice" && summaryCountable(message))) {
+      if (message.speaker || chips || tasks || message.role === "notice") {
         // The group chat: who said it, above what they said. A spec's chip goes under it.
         const column = document.createElement("div");
         column.className = message.speaker ? "speaker-column" : "bot-column";

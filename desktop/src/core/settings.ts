@@ -7,7 +7,6 @@
 // Per-bot choices (model, effort, the subagents' model) live in each bot's bot.json (BotStore.swift).
 import { readFileSync } from "node:fs";
 import { writeFileAtomic } from "./durable/atomic";
-import { DEFAULT_WRITING_PROMPT, savedSummaryModel } from "./catchup";
 import type { SettingsChange, SettingsView } from "../contract";
 import { messageWidth } from "../contract/message-width";
 import { normalizeOverrides } from "../contract/shortcuts";
@@ -20,8 +19,6 @@ export const BOT_MODELS = ["haiku", "sonnet", "opus"] as const;
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export const RESULT_PUBLISHING = ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const;
 export const STALL_CHOICES = [5, 10, 15, 30, 60, 0];
-const THRESHOLD = 3;
-const clampThreshold = (value: number) => Math.min(50, Math.max(1, Math.round(value)));
 
 export type RawSettings = Record<string, unknown>;
 
@@ -51,8 +48,6 @@ export function codexWorkerDefaults(value: unknown): { model: string | null; eff
 
 /** What the Settings page shows (every value with its default filled in). */
 export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES)[number] = "en"): SettingsView {
-  const catchUpThreshold = clampThreshold(int(raw.catchUpThresholdChoice) ?? THRESHOLD);
-  const intervalThreshold = clampThreshold(int(raw.intervalSummaryThresholdChoice) ?? THRESHOLD);
   const size = int(raw.chatAvatarSizeChoice);
   const stall = int(raw.stallReminderMinutes);
   return {
@@ -62,14 +57,6 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
     messageColumnWidth: messageWidth(raw.messageColumnWidth),
-    catchUpEnabled: bool(raw.catchUpEnabledChoice, true),
-    intervalSummaryEnabled: bool(raw.intervalSummaryEnabledChoice, false),
-    thresholdsCustomized: typeof raw.summaryThresholdsCustomizedChoice === "boolean" ? raw.summaryThresholdsCustomizedChoice : catchUpThreshold !== THRESHOLD || intervalThreshold !== THRESHOLD,
-    catchUpThreshold,
-    intervalSummaryThreshold: intervalThreshold,
-    catchUpModel: savedSummaryModel(raw),
-    summaryPrompt: text(raw.summaryPromptChoice),
-    defaultSummaryPrompt: DEFAULT_WRITING_PROMPT,
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
     claudeWorkerLimit: claudeWorkerLimit(raw),
@@ -130,7 +117,7 @@ function mainTabs(value: unknown): Record<string, string> {
   return Object.fromEntries(entries.slice(-500).map(([id, tab]) => [id.toUpperCase(), tab]));
 }
 
-/** One change from the Settings page, as 1.x's setters make it (`Workspace+Settings`, `+CatchUp`). */
+/** One change from the Settings page, as 1.x's setters make it (`Workspace+Settings`). */
 export function applySetting(raw: RawSettings, change: SettingsChange): RawSettings {
   const next: RawSettings = { ...raw };
   const set = (key: string, value: unknown) => { if (value === null || value === undefined) delete next[key]; else next[key] = value; };
@@ -140,23 +127,6 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "botLook": set("botLookChoice", change.value); break;
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
     case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
-    case "catchUpEnabled": set("catchUpEnabledChoice", change.value); break;
-    case "intervalSummaryEnabled": set("intervalSummaryEnabledChoice", change.value); break;
-    case "thresholdsCustomized":
-      // Off: both thresholds go back to the default (1.x clears them).
-      set("summaryThresholdsCustomizedChoice", change.value);
-      if (!change.value) { delete next.catchUpThresholdChoice; delete next.intervalSummaryThresholdChoice; }
-      break;
-    case "catchUpThreshold": set("catchUpThresholdChoice", clampThreshold(change.value)); set("summaryThresholdsCustomizedChoice", true); break;
-    case "intervalSummaryThreshold": set("intervalSummaryThresholdChoice", clampThreshold(change.value)); set("summaryThresholdsCustomizedChoice", true); break;
-    case "catchUpModel": {
-      const model = change.value?.model.trim();
-      set("catchUpModelChoice", model || null);
-      // Codex stays unmarked: an older Botling reads the model id alone as a Codex model.
-      set("catchUpModelEngine", model && change.value!.engine !== "codex" ? change.value!.engine : null);
-      break;
-    }
-    case "summaryPrompt": set("summaryPromptChoice", change.value && change.value.trim() ? change.value : null); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
     case "claudeBypassPermissions": set("claudeBypassPermissions", change.value); break;
     case "agyBypassPermissions": set("agyBypassPermissions", change.value); break;

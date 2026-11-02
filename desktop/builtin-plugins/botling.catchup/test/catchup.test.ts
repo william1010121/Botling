@@ -1,12 +1,10 @@
-// Catch-up's text (core/catchup.ts) against what the Swift app's CatchUp.swift wrote for the same
+// Catch-up's text (src/catchup.ts) against what the Swift app's CatchUp.swift wrote for the same
 // lines (test/fixtures/prompts-golden.json `catchUp`, from DesktopPromptGoldenExport.swift).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { intervalAfter, intervalMessages, instructions, parseBullets, rangeKey, summaryArguments, summaryPrompt, SUMMARY_SCHEMA, unreadMessages, validateCodexEvents } from "../../src/core/catchup";
-import type { ChatRecord } from "../../src/core/store/records";
-import type { TaskCard } from "../../src/core/tasks";
-import { desktop } from "../helpers";
+import { intervalAfter, intervalMessages, instructions, parseBullets, rangeKey, summaryArguments, summaryPrompt, SUMMARY_SCHEMA, unreadMessages, validateCodexEvents, type ChatRecord, type TaskCard } from "../src/catchup";
+import { desktop } from "../../../test/helpers";
 
 const golden = JSON.parse(readFileSync(join(desktop, "test", "fixtures", "prompts-golden.json"), "utf8")).catchUp;
 const records: ChatRecord[] = golden.messages;

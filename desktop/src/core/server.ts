@@ -68,12 +68,11 @@ import { unsupportedRequest, type BotRequest } from "./reply";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
 import { Conversations } from "./conversations";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
-import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { FolderWatch, type WatchTarget } from "./folder-watch";
 import { probeNetwork } from "./network-resume";
-import { Plugins, type BotInfo } from "./plugins";
+import { Plugins, type BotInfo, type EngineCli } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
 import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
@@ -123,8 +122,8 @@ export interface CoreOptions {
   stallMinuteMs?: number;
   /** Whether Claude's API answers again (1.x's `networkProbe`; tests replace it). */
   networkProbe?: () => Promise<boolean>;
-  /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
-  summarizer?: Summarizer | null;
+  /** How an engine's CLI is started here, for a plugin's one-shot model call (`engines.cli`); null: none. */
+  engineCli?: (engine: "claude" | "codex") => EngineCli | null;
   /** The models the local Codex offers (`model/list`); null: none known. */
   engineModels?: (engine: ModelEngine, profile: BotProfile) => Promise<ModelDiscovery>;
   codexModels?: (() => Promise<CodexModel[]>) | null;
@@ -179,7 +178,6 @@ export class Core {
   private imported: ImportView | null = null;
   private routineClock: NodeJS.Timeout | null = null;
   private watchClock: NodeJS.Timeout | null = null;
-  private readonly catchUps: CatchUps;
   private readonly components: ComponentsContext;
   private componentStamp = 0;
   /** Developer mode's builds and screenshots (1.x's Workspace+Developer.swift). */
@@ -240,13 +238,6 @@ export class Core {
     this.doctor = new DoctorModel(options.doctor ?? new Doctor({ agy: () => agyRuntimeStatus(readSettings(Layout.settings(options.dataDir)), options.dataDir) }), doctor => this.event({ type: "doctor.updated", doctor }));
     mkdirSync(options.dataDir, { recursive: true });
     this.pending = new PendingFiles(join(options.dataDir, "incoming"), (botId, files) => this.event({ type: "files.updated", botId, files }));
-    this.catchUps = new CatchUps({
-      cache: new CatchUpCache(join(options.dataDir, "catchup-summaries.json")),
-      summarizer: options.summarizer ?? null,
-      settings: () => catchUpSettings(this.settingsFile()),
-      language: () => this.language(),
-      changed: (botId) => { const bot = this.bots.get(botId); if (bot) this.event({ type: "catchup.updated", botId, ...this.summaries(bot) }); },
-    });
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
@@ -329,6 +320,15 @@ export class Core {
         component: (botId, name, data, command) => this.pluginBot(botId)?.libraryEntry(name, data, command) ?? null,
         imageUrls: (botId, data) => this.pluginBot(botId)?.imageUrls(data) ?? null,
         approveCommand: (botId, command) => this.pluginBot(botId)?.approveCommand(command) ?? false,
+        chat: (botId, limit) => {
+          const bot = this.pluginBot(botId);
+          if (!bot) return null;
+          const chat = bot.pluginChat(limit);
+          return { ...chat, botId: chat.botId === MAIN_BOT_ID ? "main" : chat.botId };
+        },
+        botId: (botId) => this.pluginBot(botId)?.id ?? null,
+        decorated: (botId) => { if (this.bots.has(botId)) this.event({ type: "chat.decorations", botId, decorations: this.plugins.decorations(botId) }); },
+        engineCli: (engine) => options.engineCli?.(engine) ?? null,
         addRoutine: (botId, cron, task) => {
           const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
           if (!bot) return "no-bot";
@@ -2252,11 +2252,6 @@ First write a test that shows this, then fix it.`;
     return savedLanguage(settings.language) ?? preferredLanguage(this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale]);
   }
 
-  private summaries(bot: Bot): { catchUp: CatchUpViewData | null; intervalSummaries: CatchUpViewData[] } {
-    const views = this.catchUps.views(bot.catchUpChat());
-    return { catchUp: views.catchUp, intervalSummaries: views.intervalSummaries.slice(-200) };
-  }
-
   /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
   /** `workingFolder`: the app worktree the session starts in, when there is one. */
   prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null, workingFolder: string | null = null): BotPrompts {
@@ -2306,11 +2301,6 @@ First write a test that shows this, then fix it.`;
     if (event.type === "message.updated" && (this.copies.size || event.message.ignoredAt)) this.closeCopiesOf(event.botId, event.message.id);
     // A question asked or answered, a bot added: what waits on you may have changed.
     if (event.type === "message.added" || event.type === "message.updated" || event.type === "message.removed" || event.type === "bot.updated") this.waitingSoon();
-    // Your line closes an interval: it may be summarized by itself (`summarizeClosedInterval`).
-    if (event.type === "message.added" && event.message.role === "user") {
-      const bot = this.bots.get(event.botId);
-      if (bot) this.catchUps.closedInterval(bot.catchUpChat(), event.message.id);
-    }
   }
 
   private changeListeners = new Set<(change: { botId?: string }) => void>();
@@ -2556,9 +2546,9 @@ First write a test that shows this, then fix it.`;
       case "agent.group": return this.groupAgents(cmd.botId, cmd.subagentIds, { kind: "newSubBot", name: cmd.name, ...(cmd.note ? { note: cmd.note } : {}) });
       case "subbot.close": return this.closeSubBot(cmd.botId);
       case "chat.read": {
-        // You came back to it: many unread replies fold into a summary first (`arrive(at:)`).
+        // You read it up to its newest line: plugins hear how much was unread before (`chatRead`).
         const bot = this.bot(cmd.botId);
-        this.catchUps.arrive(bot.catchUpChat());
+        this.plugins.event("chatRead", { botId: bot.id === MAIN_BOT_ID ? "main" : bot.id, ...bot.readMark() });
         return bot.read();
       }
       case "component.command": return this.bot(cmd.botId).componentCommand(cmd.messageId, cmd.index, cmd);
@@ -2613,8 +2603,6 @@ First write a test that shows this, then fix it.`;
         if (!file) throw new ContractError("not_found", "No such picture.");
         return file satisfies ResultOf<"card.image">;
       }
-      case "catchup.retry": return { started: this.catchUps.retry(this.bot(cmd.botId).catchUpChat(), cmd.key) };
-      case "catchup.interval": return { started: this.catchUps.interval(this.bot(cmd.botId).catchUpChat(), cmd.userMessageId) };
       case "turn.stop": return this.bot(cmd.botId).stop(cmd.turnId);
       case "turn.await": return this.bot(cmd.botId).await(cmd.turnId, signal);
       case "routines.list": return this.bot(cmd.botId).routinesView();
@@ -2635,7 +2623,7 @@ First write a test that shows this, then fix it.`;
       seq: this.seq,
       bots: views,
       imported: this.imported,
-      chat: bot ? { ...bot.snapshot(), ...this.summaries(bot), pendingFiles: this.pending.views(bot.id) } : null,
+      chat: bot ? { ...bot.snapshot(), decorations: this.plugins.decorations(bot.id), pendingFiles: this.pending.views(bot.id) } : null,
       components: this.componentInfos(),
       plugins: this.plugins.view(),
       settings: this.settingsNow(),
