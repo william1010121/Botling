@@ -318,6 +318,9 @@ function swapControl(data: { botling?: unknown; id?: unknown; timeoutMs?: unknow
     catch(error){reply({botling:"drained",id:data.id,ok:false,error:String(error)});}
     return true;
   }
+  // Main's quit: the whole shutdown runs to its end (the restart checkpoint's `ready` last) and the core exits itself.
+  // A SIGTERM from `utilityProcess.kill()` is cut off by Electron after about 2 s, too short for that.
+  if (data.botling === "quit") { quit(); return true; }
   if (data.botling === "undrain") { core.cancelSwap(); return true; }
   if (data.botling !== "drain") return false;
   const ms = (value: unknown, fallback: number) => (typeof value === "number" && Number.isFinite(value) ? Math.min(Math.max(value, 0), 30 * 60_000) : fallback);

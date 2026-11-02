@@ -272,7 +272,12 @@ export class CoreClient {
     this.child?.postMessage({ v: PROTOCOL_VERSION, cancel: id });
   }
 
-  /** Asks the core to stop its work and exit (it tidies idle bots, then ends running agent trees on SIGTERM). */
+  /**
+   * Asks the core to stop its work and exit (it tidies idle bots, then ends running agent trees and writes the restart
+   * checkpoint). The core is asked by message and left to finish: `kill()` is a SIGTERM that Electron follows with a hard
+   * end about 2 s later, which cut the shutdown off before the checkpoint was confirmed. Only a core that has not
+   * exited after `BOTLING_QUIT_GRACE_MS` (default 60 s; the install script waits 300 s for the app) is killed.
+   */
   stop(): Promise<void> {
     this.quitting = true;
     const child = this.child;
@@ -282,8 +287,10 @@ export class CoreClient {
       // (`applicationShouldTerminate` waits for `putEveryoneToSleep`); BOTLING_QUIT_TIDY_MS sets one for tests.
       const limit = Number(this.options.env.BOTLING_QUIT_TIDY_MS);
       const timer = this.options.env.BOTLING_QUIT_TIDY_MS && Number.isFinite(limit) ? setTimeout(() => { void this.endHosts().then(resolve); }, limit + 5_000) : undefined;
-      child.once("exit", () => { clearTimeout(timer); void this.endHosts().then(resolve); });
-      child.kill();
+      const grace = Number(this.options.env.BOTLING_QUIT_GRACE_MS);
+      const hardEnd = setTimeout(() => { this.options.audit("core did not exit after the quit message; killing it"); child.kill(); }, Number.isFinite(grace) && grace > 0 ? grace : 60_000);
+      child.once("exit", () => { clearTimeout(timer); clearTimeout(hardEnd); void this.endHosts().then(resolve); });
+      try { child.postMessage({ botling: "quit" }); } catch { child.kill(); }
     });
   }
 }
