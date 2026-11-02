@@ -394,7 +394,7 @@ export class Core {
         },
         // The component studio's seam (plugins/studio-seam.ts); built when first asked, once Maintainer and the library exist.
         get studio() { return self.studioNow(); },
-        sessionMoved: (botId, reason) => this.bots.get(botId)?.restartBeforeNextMessage(reason),
+        sessionMoved: (botId, reason) => this.bots.get(botId)?.folderMoved(reason),
         sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !this.removed.has(profile.id)).map((profile) => ({
           id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,
           memoryPath: profile.memoryPath, storeDir: profile.storeDir, problem: profile.problem,

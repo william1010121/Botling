@@ -424,6 +424,11 @@ export class Bot {
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   private restartPending = false;
   private modelSettingsPending = false;
+  /**
+   * The restart waiting is for a new working folder (a plugin's `sessions.folder`): your message never goes to the process
+   * still in the old one; while its own work runs it waits, as for a model change (spec/models/folders TurnStartsCurrent).
+   */
+  private folderPending = false;
   /** The restart waiting is also for something other than its model or effort (plugins, folders, subagents' model): a hot switch cannot stand in for it. */
   private restartNonModel = false;
   /** Counts model/effort changes, so a hot switch that finishes after a newer one leaves that one waiting. */
@@ -2628,7 +2633,8 @@ export class Bot {
     if (!current && this.switchReady) { this.queue.push(turn); void this.handOver(); return turn; }
     // A message already waits for this head's work before a model/effort restart: this one goes after it.
     if (this.settingsHold) { this.queue.push(turn); this.checkSettingsHold(); return turn; }
-    if (!current && !this.tidying && !this.switching && turn.origin === "user" && this.modelSettingsPending && this.head?.running && this.ownWorkRunning && !this.canSwitchInPlace(this.head)) {
+    if (!current && !this.tidying && !this.switching && turn.origin === "user" && this.head?.running && this.ownWorkRunning
+      && (this.folderPending || (this.modelSettingsPending && !this.canSwitchInPlace(this.head)))) {
       this.holdForSettings(turn);
       return turn;
     }
@@ -2795,11 +2801,18 @@ export class Bot {
     this.restartFor(reason);
   }
 
+  /** Its session's folder moved (a plugin's `sessions.folder`): it starts again there before your next message, never answering it from the old one. */
+  folderMoved(reason: { told: string; shown: string }) {
+    if (this.options.primary) { this.options.primary.folderMoved(reason); return; }
+    this.restartFor(reason, false, true);
+  }
+
   /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
-  private restartFor(reason: { told: string; shown: string } | null, modelSettings = false) {
+  private restartFor(reason: { told: string; shown: string } | null, modelSettings = false, folder = false) {
     this.restartForPluginsOnly = false;
-    if (!this.head?.running) { this.restartPending = false; this.restartNonModel = false; return; }
+    if (!this.head?.running) { this.restartPending = false; this.restartNonModel = false; this.folderPending = false; return; }
     this.restartPending = true;
+    this.folderPending ||= folder;
     this.modelSettingsPending ||= modelSettings;
     if (modelSettings) this.settingsGeneration += 1;
     else this.restartNonModel = true;
@@ -2887,7 +2900,7 @@ export class Bot {
     }
     // Keep workers alive, but never send a user turn under a known stale model/effort: it waits for this
     // head's own work to finish (a partner head's work does not count), then the restart, then it goes.
-    if (!given && turn.origin === "user" && this.modelSettingsPending && old?.running && this.ownWorkRunning) {
+    if (!given && turn.origin === "user" && (this.modelSettingsPending || this.folderPending) && old?.running && this.ownWorkRunning) {
       this.turn = null;
       turn.head = null;
       turn.sent = false;
@@ -2898,6 +2911,7 @@ export class Bot {
     }
     if (!given && this.restartPending && old?.running && !this.ownWorkRunning) {
       this.restartPending = false;
+      this.folderPending = false;
       this.restartNonModel = false;
       this.restartForPluginsOnly = false;
       this.restarting = old;
@@ -3070,6 +3084,7 @@ export class Bot {
     this.restartPending = false;
     this.restartNonModel = false;
     this.modelSettingsPending = false;
+    this.folderPending = false;
     this.restartForPluginsOnly = false;
     this.loadedPluginStamp = this.options.pluginStamp?.() ?? null;
     const prompts = this.prompts();
@@ -4264,7 +4279,9 @@ export class Bot {
     if (!this.settingsHold) {
       const id = newId();
       const settings = this.restartReason?.shown ?? "the new model or effort";
-      this.owner.add({ id, role: "notice", text: `Model or effort change is waiting for active work to finish (${displayName(this.engine)}: ${this.ownWorkWords()}). Your message is queued and is sent on ${settings} as soon as that work finishes.`, date: toSwiftDate() });
+      const what = this.modelSettingsPending ? "Model or effort change" : "Moving to its new working folder";
+      const after = this.modelSettingsPending ? `on ${settings}` : "there";
+      this.owner.add({ id, role: "notice", text: `${what} is waiting for active work to finish (${displayName(this.engine)}: ${this.ownWorkWords()}). Your message is queued and is sent ${after} as soon as that work finishes.`, date: toSwiftDate() });
       // Work whose end the app hears of without an event (a background task too old to hold the bot) is seen here.
       const timer = setInterval(() => this.checkSettingsHold(), 15_000);
       timer.unref?.();
@@ -4279,7 +4296,7 @@ export class Bot {
     const hold = this.settingsHold;
     if (!hold) return true;
     const waiting = this.queue.some((turn) => turn.open && turn.origin === "user");
-    if (waiting && this.modelSettingsPending && this.head?.running && this.ownWorkRunning) return false;
+    if (waiting && (this.modelSettingsPending || this.folderPending) && this.head?.running && this.ownWorkRunning) return false;
     clearInterval(hold.timer);
     this.settingsHold = null;
     const card = this.owner.records.find((record) => record.id === hold.noticeId);
