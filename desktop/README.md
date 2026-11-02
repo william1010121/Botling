@@ -43,8 +43,8 @@ Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 **2026-10-26: user-authorized development trial, 2.0.0-dev.20261026.1.** Ship the existing input route with known launch/focus input loss; the dormant native editor host is not activated and later input adapters are deferred. This is not formal 2.0 acceptance. See [dev trial / 安全隔離試用](docs/dev-trial.md) for the manual external-volume shortcut, separate profile, disabled automatic 1.x import and exact limitations. Production update trust remains null; no live self-update. Full GUI/native focus/packaged-update checks remain deferred under the no-interruption restriction; current delivery evidence distinguishes artifact validation from runtime checks. Older D-pass artifacts are not this trial. Current [trial validation evidence](docs/dev-trial-validation.md) records the fresh artifacts and exact deferred checks.
 It lives beside the archived Swift 1.x app (`Sources/`, `Tests/`, `Package.swift`), which it does
 not need: `desktop/` builds, tests and packages with the Swift tree absent (the shared character
-art is in `desktop/assets/avatars-static`, the web AIs' page readers in `desktop/resources/`). Web/src is *bundled from source* into the desktop's chat frame (its packages come
-from `desktop/node_modules`), so `cd Web && npm run build` (output in git-ignored `Web/dist`) is not needed;
+art is in `desktop/assets/avatars-static`). Web/src is *bundled from source* into the desktop's chat frame (its packages come
+from `desktop/node_modules`);
 `Web/src/contract.json` is read (for the shared `ccb.save` limit), never written.
 
 ## Removed features
@@ -111,8 +111,7 @@ npm install
 | `npm run dist:mac` | Build out/, then electron-builder: `dist/mac-arm64/Botling 2.app`, `dist/Botling-2-<version>-mac-arm64.zip`, `.dmg` and `latest-mac.yml` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
 | `npm run test:packaged` | Packaged smoke and delivery tests (after `npm run dist:mac`; `BOTLING_PACKAGED_APP=<…/Botling 2.app>` for another copy). |
 
-Since Phase 3b the build also writes `out/host/host.mjs` (Web/host/src/host.ts, bundled as Web/build.mjs
-bundles it for 1.x) and `out/host/check-plugin.cjs` (the plugin check, the command Maintainer runs).
+Since Phase 3b the build also writes `out/host/host.mjs` (Web/host/src/host.ts) and `out/host/check-plugin.cjs` (the plugin check, the command Maintainer runs).
 
 Data goes to `$BOTLING_DATA_DIR`, by default `desktop/.data/` in development (ignored by git) and
 `<appData>/Botling 2` when packaged. The core's part is `<data>/core/`, in the Swift app's layout

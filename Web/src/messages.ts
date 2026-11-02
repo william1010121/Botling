@@ -14,7 +14,6 @@ import { taskChips } from "./tasks";
 import { taskCardChips } from "./task-cards";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
 import { escapeHTML } from "./util";
-import { characterAvatar } from "./animated-avatar";
 
 /** What plugins add to how messages are drawn. */
 export const extensions = {
@@ -54,7 +53,7 @@ export function messageElement(message: MessageView, components: Record<string, 
   drawRole(row, message, components);
   const tasks = row.querySelector<HTMLElement>(".task-chips");
   const cards = message.taskCards?.length ? taskCardChips(message.taskCards) : null;
-  if (cards || tasks || message.reactionEnabled || message.seen?.length || message.completionVerification) {
+  if (cards || tasks || message.reactionEnabled || message.seen?.length) {
     let holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column");
     if (!holder) {
       const body = row.querySelector<HTMLElement>(".bot-bubble, .notice-bubble, .relay-column, .relay:not(.row), .error-text");
@@ -72,7 +71,6 @@ export function messageElement(message: MessageView, components: Record<string, 
       // The task it belongs to comes first: what the reply is part of.
       if (cards) footer.append(cards);
       if (tasks) footer.append(tasks);
-      if (message.completionVerification) footer.append(completionVerificationElement(message.completionVerification));
       if (message.reactionEnabled) footer.append(reactionBar(message));
       if (message.seen?.length) footer.append(seenMarks(message.seen));
       holder.append(footer);
@@ -82,75 +80,6 @@ export function messageElement(message: MessageView, components: Record<string, 
     extensions.guard(plugin, () => handler(row, { id: message.id, role: message.role, text: message.text }));
   }
   return row;
-}
-
-let verificationID = 0;
-
-/** App-owned verdict on this reply; all provider text is inserted as text, never HTML. */
-export function completionVerificationElement(record: NonNullable<MessageView["completionVerification"]>): HTMLElement {
-  const card = document.createElement("div");
-  card.className = "completion-verification";
-  card.dataset.state = record.state;
-  card.dataset.verdict = record.verdict ?? "";
-  const summary = document.createElement("button");
-  summary.type = "button";
-  summary.className = "verification-toggle";
-  summary.setAttribute("aria-expanded", "false");
-  const title = document.createElement("span");
-  title.setAttribute("role", "status");
-  title.className = "verification-title";
-  const verdicts = {
-    CONTINUE: "verification.continue", CONTINUE_ANALYSIS: "verification.analysis",
-    COMPLETE: "verification.complete", NEEDS_TERMINAL_SIGNAL: "verification.evidence",
-    WAITING_USER: "verification.user", CANCELLED: "verification.cancelled",
-    WAITING_DEPENDENCY: "verification.dependency", WAITING_TIMER: "verification.timer", UNKNOWN: "verification.unknown",
-    UNAVAILABLE: "verification.unavailable",
-  } as const;
-  const label = record.state === "checking" ? t("verification.checking")
-    : record.state === "interrupted" ? t("verification.interrupted")
-    : record.verdict ? t(verdicts[record.verdict]) : t("verification.unknown");
-  const accessibleLabel = `${t("verification.title")} · ${label}`;
-  summary.setAttribute("aria-label", accessibleLabel);
-  summary.title = accessibleLabel;
-  title.setAttribute("aria-label", accessibleLabel);
-  const passed = record.state === "judged" && record.verdict === "COMPLETE" && !record.continuationPaused;
-  card.classList.toggle("verification-passed", passed);
-  const status = document.createElement("span");
-  status.className = "verification-status";
-  status.textContent = passed ? "👍" : label;
-  title.append(status);
-  const model = document.createElement("div");
-  model.className = "verification-model";
-  model.textContent = `${record.model} · medium`;
-  summary.append(title);
-  const content = document.createElement("div");
-  content.className = "verification-details";
-  content.id = `verification-details-${++verificationID}`;
-  content.hidden = true;
-  summary.setAttribute("aria-controls", content.id);
-  summary.addEventListener("click", () => {
-    const open = summary.getAttribute("aria-expanded") !== "true";
-    summary.setAttribute("aria-expanded", String(open));
-    card.classList.toggle("open", open);
-    content.hidden = !open;
-  });
-  const heading = document.createElement("div");
-  heading.className = "verification-heading";
-  heading.textContent = accessibleLabel;
-  content.append(heading, model);
-  card.append(summary, content);
-  if (record.state === "judged" && record.reason) {
-    const reason = document.createElement("div");
-    reason.className = "verification-reason";
-    reason.textContent = record.reason;
-    content.append(reason);
-  }
-  if (record.continuationPaused) {
-    const paused = document.createElement("div");
-    paused.textContent = t("verification.paused");
-    content.append(paused);
-  }
-  return card;
 }
 
 export function reactionBar(message: MessageView): HTMLElement {
@@ -240,7 +169,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled || messageMenu.items.length) ? actionColumn(message) : replyButton(message);
       const chips = message.specs?.length ? specChips(message, components) : null;
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
-      if (message.speaker || chips || tasks || message.completionVerification || (message.role === "notice" && summaryCountable(message))) {
+      if (message.speaker || chips || tasks || (message.role === "notice" && summaryCountable(message))) {
         // The group chat: who said it, above what they said. A spec's chip goes under it.
         const column = document.createElement("div");
         column.className = message.speaker ? "speaker-column" : "bot-column";
@@ -345,7 +274,11 @@ function feedbackRelay(message: MessageView, note: { about: string; words: strin
 }
 
 function avatar(src: string | null): HTMLElement {
-  return characterAvatar(src);
+  const image = document.createElement("img");
+  image.className = "avatar";
+  image.alt = "";
+  if (src) image.src = src;
+  return image;
 }
 
 /**

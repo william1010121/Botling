@@ -4,7 +4,7 @@
 
 ## How it was checked
 
-- [ ] `cd Web && npm run typecheck && npm test && npm run build` (if `Web/` changed, its built output is committed)
+- [ ] `cd Web && npm run typecheck && npm test`
 - [ ] `cd desktop && npm run typecheck && npx vitest run test/unit`
 - [ ] A line in `CHANGELOG.md`
 - [ ] A screenshot for a visible change (sample data only)

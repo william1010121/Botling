@@ -26,13 +26,12 @@ app's window, and gets every reply you mark "Not right".
 ## Pull requests
 
 1. Branch from `main` and keep each PR to one change.
-2. Web build output (`Web/dist`) is not committed.
-3. Run the checks CI runs:
+2. Run the checks CI runs:
    ```bash
-   (cd Web && npm run typecheck && npm test && npm run build)
+   (cd Web && npm run typecheck && npm test)
    (cd desktop && npm run typecheck && npx vitest run test/unit)
    ```
-4. Add a line to [CHANGELOG.md](CHANGELOG.md) (under Added, Changed or Fixed) saying what changes
+3. Add a line to [CHANGELOG.md](CHANGELOG.md) (under Added, Changed or Fixed) saying what changes
    for someone using the app. Leave the version alone; releases bump it.
 5. For a visible change, attach a screenshot (sample data only).
 

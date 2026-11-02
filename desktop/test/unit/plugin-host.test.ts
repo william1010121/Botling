@@ -129,7 +129,6 @@ describe("the plugin host", () => {
     const dir = tempDir("plugin-host");
     hostPlugin(dir, "teller", `export function activate(ccb) {
         ccb.ui.expose("balance", () => 42);
-        ccb.browser.registerTool({ id: "peek", title: "Peek", origin: "https://bank.test" }, () => "page");
         ccb.commands.register("teller.run", () => "ran");
       }`, { web: "dist/web.js" });
     writeFileSync(join(dir, "plugins", "teller", "dist", "web.js"), "export function activate() {}");
@@ -142,8 +141,6 @@ describe("the plugin host", () => {
     await until(() => c.call({ type: "plugins.command", id: "vault.open" }).then(() => true, () => false), { timeout: 15_000 });
     expect(await c.call({ type: "plugins.call", name: "teller", method: "balance", params: null, from: "frame" })).toEqual({ result: 42 });
     expect(await c.call({ type: "plugins.call", name: "teller", method: "balance", params: null, from: "chat" })).toEqual({ result: 42 });
-    // A website tool lives in the same table in the host, but it was never exposed.
-    await expect(c.call({ type: "plugins.call", name: "teller", method: "browser.tool.peek", params: null, from: "frame" })).rejects.toThrow(/does not handle/);
     await expect(c.call({ type: "plugins.call", name: "vault", method: "open", params: null, from: "chat" })).rejects.toThrow(/not on/);
     // A frame runs its own plugin's commands only; the chat page only those of plugins it runs.
     expect(await c.call({ type: "plugins.command", id: "teller.run", from: "frame", name: "teller" })).toEqual({ result: "ran" });

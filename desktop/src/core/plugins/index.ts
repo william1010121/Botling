@@ -547,10 +547,6 @@ export class Plugins {
         this.announce();
         return;
       }
-      case "browser.register":
-      case "browser.unregister":
-        // 2.0 has no browser yet: its tools are not offered anywhere.
-        return;
       default:
         world.log(`plugin host: unknown notification ${method.slice(0, 80)}`);
     }
@@ -695,8 +691,6 @@ export class Plugins {
         const { data } = this.asked(FaceParams, params);
         return world.workspace.face(data.bot, data.look);
       }
-      case "browser.perform":
-        throw new Error("No active browser tool invocation.");
       default:
         throw new Error(`Unknown method "${method.slice(0, 80)}".`);
     }

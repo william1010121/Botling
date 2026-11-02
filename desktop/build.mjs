@@ -5,8 +5,7 @@ import { packageAgyHelper } from './scripts/package-agy-helper.mjs';
 // unchanged, plus the desktop's additions). Output goes to out/, which is not committed.
 //
 // Web/src is bundled from its sources here; its packages (markdown-it, KaTeX, CodeMirror) come
-// from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install and its
-// own build output (Web/dist) is never touched.
+// from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install.
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -43,7 +42,7 @@ await Promise.all([
   // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
   buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
-  // The plugin host: Web/host/src/host.ts unchanged, bundled as Web/build.mjs bundles it for 1.x
+  // The plugin host: Web/host/src/host.ts unchanged
   // (its own process, started by the core; see src/core/plugins/host-client.ts).
   build({ entryPoints: [join(web, "host/src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(out, "host/host.mjs") }),
   // The same host in an Electron utility process (main starts it; it talks over a MessagePort).

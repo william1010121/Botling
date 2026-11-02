@@ -20,7 +20,6 @@ import { installImeGuard } from "./ime";
 import { watchFileDrops } from "./drops";
 import { reportVisiblePinsSoon, setWindowVisible } from "./visible";
 import { animateSeenArrivals, setSeenHeads } from "./heads";
-import { configureAnimatedHeads, refreshAvatarVisibility, updateAnimatedAvatars } from "./animated-avatar";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
 installImeGuard(window);
@@ -207,7 +206,6 @@ class Chat {
 
     // Bot look Cute: the seen marks show the heads' tiny characters (a style rule, so lines drawn already follow).
     setSeenHeads(state.seenHeads);
-    configureAnimatedHeads(state.animatedHeads);
 
     // An initially empty concurrent reply can become visible before the first shown row.
     // If the whole chat was visible, keep that newly visible reply in the window too.
@@ -281,16 +279,10 @@ class Chat {
         let element = this.render(message, state);
         if (animateArrivals) animateSeenArrivals(element, entry?.element);
         if (entry) {
-          // A live verdict update keeps the disclosure choice and keyboard position.
-          const oldVerification = entry.element.querySelector<HTMLElement>(".completion-verification > .verification-toggle");
-          const newVerification = element.querySelector<HTMLElement>(".completion-verification > .verification-toggle");
-          const verificationFocused = !!oldVerification && document.activeElement === oldVerification;
-          if (oldVerification?.getAttribute("aria-expanded") === "true") newVerification?.click();
           // Components that did not change keep their frames, so they do not load again.
           const kept = keepFrames(entry.element, element);
           if (kept === element) entry.element.replaceWith(element);
           element = kept;
-          if (verificationFocused) element.querySelector<HTMLElement>(".completion-verification > .verification-toggle")?.focus({ preventScroll: true });
         }
         entry = { key, element, message, mark };
         this.drawn.set(message.id, entry);
@@ -409,7 +401,6 @@ class Chat {
       this.readingAnchor = null;
     }
     if (this.stuck) this.scrollToBottom();
-    updateAnimatedAvatars(state, animateArrivals);
     // The component frames now in view (or near it) are built; the rest once scrolled to.
     buildNear();
     if (!this.stuck) this.restoreReadingAnchor();
@@ -722,7 +713,7 @@ window.ccb = {
   showPanel: (key) => showPanel(key),
   setSpec: (state) => setSpec(state),
   focus: () => chat.focus(),
-  setWindowVisible: (visible) => { setWindowVisible(visible); refreshAvatarVisibility(); },
+  setWindowVisible: (visible) => setWindowVisible(visible),
 };
 // Which pins the user can see changes as the chat or Board scrolls, the window resizes, or a pin
 // is opened or closed: Swift's timer reruns only those (visible.ts).

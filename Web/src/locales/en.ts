@@ -40,30 +40,6 @@ export const en = {
   "interval.autoAttribution": "Summary · Auto",
   "interval.autoHeader": "Settled when you sent your next message · {n} replies, threshold reached",
 
-  "verification.title": "Completion verification",
-  "verification.checking": "Checking…",
-  "verification.interrupted": "Interrupted; no verdict",
-  "verification.continue": "Work remains",
-  "verification.analysis": "Analysis remains",
-  "verification.complete": "Completed",
-  "verification.evidence": "Terminal evidence needed",
-  "verification.user": "Waiting on you",
-  "verification.cancelled": "Cancelled",
-  "verification.dependency": "Waiting on dependency",
-  "verification.timer": "Waiting for scheduled retry",
-  "verification.unknown": "Uncertain",
-  "verification.unavailable": "Unavailable",
-  "verification.paused": "Automatic continuation paused: repeated turns produced no new results or substantive analysis. Work remains unfinished.",
-
-  "avatar.library": "Character animations",
-  "avatar.portrait": "Avatar",
-  "avatar.sticker": "Sticker",
-  "avatar.blink": "Blink",
-  "avatar.typing": "Typing",
-  "avatar.wave": "Wave",
-  "avatar.previewHint": "Preview only. Automatic avatars follow the turn state; reduced motion shows still images.",
-
-
   // steps.ts
   "steps.worked": "Worked",
   "steps.notes": ["{n} note", "{n} notes"],
@@ -217,9 +193,6 @@ export const en = {
   "panel.notReady": "This panel is not ready yet.",
   // markdown.ts
   "markdown.video": "Video",
-  // viewer.ts: the .md file window
-  "viewer.source": "Source",
-  "viewer.formatted": "Formatted",
   // messages.ts: messages and their buttons
   "messages.fromMain": "From the main bot: {text}",
   "messages.addToBot": "Add to another bot…",

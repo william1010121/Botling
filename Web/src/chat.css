@@ -61,33 +61,6 @@ button { font: inherit; color: inherit; }
 }
 .mini-avatar { width: 18px; height: 18px; flex-shrink: 0; }
 
-/* The outer avatar follows the user's existing size. GIF pixels and the bot hat are separate. */
-.animated-avatar { position: relative; padding: 0; border: 0; background: transparent; border-radius: 0; cursor: pointer; }
-.animated-avatar > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
-.animated-avatar .avatar-motion { top: 28.125%; height: 71.875%; visibility: hidden; }
-.animated-avatar .avatar-hat { visibility: hidden; }
-.animated-avatar.playing .avatar-motion, .animated-avatar.playing .avatar-hat { visibility: visible; }
-.animated-avatar.playing .avatar-still { visibility: hidden; }
-body.seen-heads .typing > .avatar.animated-avatar { animation: none; transform: none; }
-.animated-avatar:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 4px; }
-.avatar-library { width: min(620px, calc(100vw - 40px)); max-height: calc(100vh - 40px); box-sizing: border-box; overflow: auto; padding: 20px; color: var(--text); background: var(--ground); border: 1px solid #484854; border-radius: 18px; }
-.avatar-library::backdrop { background: #0009; }
-.avatar-library h2 { font-size: 18px; margin: 0 0 16px; }
-.avatar-library-close { float: right; }
-.avatar-preview { width: min(180px, 100%); height: 180px; margin: auto; cursor: default; }
-.avatar-preview .avatar-motion { top: 0; height: 100%; }
-.avatar-library p { font-size: 13px; text-align: center; overflow-wrap: anywhere; }
-.avatar-library-hint { color: var(--muted); }
-.avatar-library-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.avatar-library-grid button { min-width: 0; display: flex; flex-direction: column; align-items: center; padding: 8px; border: 1px solid #383842; border-radius: 10px; background: var(--bubble); color: var(--text); font: inherit; font-size: 11px; cursor: pointer; }
-.avatar-library-grid button[aria-pressed="true"] { border-color: var(--blue); }
-.avatar-library-grid img { width: 64px; max-width: 100%; height: 64px; object-fit: contain; }
-@media (width < 480px) { .avatar-library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (prefers-reduced-motion: reduce) {
-  .animated-avatar.playing .avatar-motion, .animated-avatar.playing .avatar-hat { visibility: hidden; }
-  .animated-avatar.playing .avatar-still { visibility: visible; }
-}
-
 .reply-button {
   width: 28px; height: 28px; flex-shrink: 0; align-self: center;
   border: none; background: transparent; color: var(--muted); border-radius: 8px;
@@ -896,22 +869,6 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .pin-size-grid button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 .pin-size-caption { margin-top: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* The file window for a .md file (viewer.html): the chat's Markdown at a readable width. */
-body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; }
-.viewer-bar { position: sticky; top: 0; z-index: 1; display: flex; justify-content: flex-end; padding: 10px 14px 0; pointer-events: none; }
-.source-toggle {
-  pointer-events: auto; font-size: 12px; color: var(--muted); background: var(--chip);
-  border: 1px solid var(--line); border-radius: 7px; padding: 3px 10px; cursor: pointer;
-}
-.source-toggle:hover { color: var(--text); }
-.source-toggle[aria-pressed="true"] { color: var(--text); border-color: #3A3A40; }
-.viewer-page { max-width: 760px; margin: 0 auto; padding: 4px 32px 48px; overflow-wrap: anywhere; }
-.viewer-page .markdown h1 { font-size: 24px; margin: 8px 0 14px; }
-.viewer-page .markdown h2 { font-size: 20px; margin: 22px 0 10px; }
-.viewer-page .markdown h3 { font-size: 17px; margin: 18px 0 8px; }
-.viewer-page .markdown h4 { font-size: 15px; margin: 14px 0 6px; }
-.viewer-page .markdown .media { max-height: 520px; }
-.viewer-page .source { margin: 0; font: 13px/1.6 ui-monospace, "SF Mono", Menlo, monospace; white-space: pre-wrap; color: var(--text); }
 /* Make into component: the reply's hover button, a result card's toolbar, the quiet spec chip. */
 .make-component:hover { color: #C4A8F0; }
 .bot-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 520px; }
@@ -1293,8 +1250,6 @@ body.spec-mode .float-layer { display: none; }
 .reaction-message-column .choice { min-width:0; flex-wrap:wrap; }
 .reaction-message-column .choice .detail { white-space:normal; }
 
-/* Verification disclosure in the reply's action row; its content wraps below every action. */
-.message-footer > .completion-verification { display: contents; }
 /* Task cards: a chip under each reply of a task, in its state's color (the same shape as the
    background-work pills); pressed, the right panel opens the task. Also beside a summary's bullet. */
 .message-footer > .task-card-chips { display: contents; }
@@ -1316,19 +1271,6 @@ body.spec-mode .float-layer { display: none; }
 .catchup-bullets .task-card-chip { margin: 0 4px 0 2px; }
 .catchup-task-count.waiting { color: var(--orange-text); }
 .catchup-bullets li.flash, .catchup-card.flash { background: rgba(76, 141, 255, 0.12); border-radius: 8px; transition: background 0.3s; }
-.completion-verification > .verification-toggle { font: inherit; border: 0; background: transparent; display: inline-flex; flex: 1 1 0; align-items: center; gap: 4px; min-width: 0; max-width: max-content; min-height: 26px; box-sizing: border-box; padding: 3px 5px; border-radius: 6px; color: var(--muted); font-size: 12px; line-height: 1.5; cursor: pointer; list-style: none; }
-.completion-verification > .verification-toggle::before { content: "›"; flex: 0 0 auto; font-size: 14px; line-height: 1; }
-.completion-verification.open > .verification-toggle::before { transform: rotate(90deg); }
-.completion-verification.verification-passed > .verification-toggle::before { content: none; }
-.completion-verification.verification-passed > .verification-toggle { flex: 0 0 auto; font-size: 14px; }
-.completion-verification > .verification-toggle:hover, .completion-verification.open > .verification-toggle { background: #ffffff08; }
-.completion-verification > .verification-toggle:focus-visible { outline: 2px solid #4c8dff; outline-offset: 2px; }
-.verification-title, .verification-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.verification-details { order: 2; flex-basis: 100%; min-width: 0; box-sizing: border-box; padding: 4px 8px; border-left: 2px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.verification-details[hidden] { display: none; }
-.verification-heading { color: var(--text); }
-.verification-model { font-size: 11px; }
-.verification-reason { margin-top: 3px; white-space: pre-wrap; }
 
 /* Catch-up summary: unread messages folded on your return (catchup.ts). */
 /* Chat.render returns the timestamp wrapper when the source has a stamp. */

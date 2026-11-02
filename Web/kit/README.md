@@ -170,5 +170,5 @@ under 180 px tall, one row).
 `Web/kit/src` (blocks, hooks, the markup check, `kit.css`) and `Web/kit/vendor` (Preact 10.29.8 and
 hooks, MIT; htm 3.1.1, Apache-2.0; their licences beside them) are bundled by `node Web/kit/build.mjs`
 into `generated/kit.v1.js` and `generated/kit-v1.ts` (the same text as a string for `Web/src/components.ts`).
-Both are committed; `Web/build.mjs` rebuilds them, and `Web/test/kit-build.test.ts` fails when they
+Both are committed; `Web/test/kit-build.test.ts` fails when they
 are stale. Tests: `Web/test/kit.test.ts`, `component-page-kit.test.ts`, `component-page-legacy.test.ts`.

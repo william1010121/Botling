@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createApi, newLoaded, type BotlingApi, type HostPluginSpec, type Incoming, type JSONValue, type Loaded, type Outgoing, type PluginEventName, type WORKSPACE_EVENT } from "./api";
 
 export type {
-  AppSettingKey, BotInfo, BotlingApi, BotSummary, BrowserOperation, BrowserScope, CcbHost, HostPluginSpec, Incoming, Keybinding, NewBot, Outgoing, PluginEvents, ReplyTag, StatusItem,
+  AppSettingKey, BotInfo, BotlingApi, BotSummary, CcbHost, HostPluginSpec, Incoming, Keybinding, NewBot, Outgoing, PluginEvents, ReplyTag, StatusItem,
   WorkspaceApi, WorkspaceChange, WorkspaceKind,
 } from "./api";
 

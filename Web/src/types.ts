@@ -116,13 +116,6 @@ export interface MessageView {
   interrupted?: boolean | null;
   /** The task cards it belongs to: a chip each under the reply. */
   taskCards?: TaskCardView[] | null;
-  completionVerification?: {
-    model: string;
-    state: "checking" | "judged" | "interrupted";
-    verdict?: "CONTINUE" | "CONTINUE_ANALYSIS" | "COMPLETE" | "NEEDS_TERMINAL_SIGNAL" | "WAITING_USER" | "CANCELLED" | "WAITING_DEPENDENCY" | "WAITING_TIMER" | "UNKNOWN" | "UNAVAILABLE" | null;
-    reason?: string | null;
-    continuationPaused?: boolean | null;
-  } | null;
 }
 
 /** A head under a line: recipient highlighting and its separate actual-read receipt. */
@@ -490,30 +483,9 @@ export interface ChatState {
   handoffs?: HandoffView[] | null;
   /** Bot look Cute in a bot with two heads: each head's tiny character by its mark ("C", "X"); absent: letters. */
   seenHeads?: Record<string, string> | null;
-  animatedHeads?: AnimatedHead[] | null;
-  avatarMood?: "normal" | "work" | "think" | "sleep" | null;
   /** Unread messages folded on your return, with their summary (`catchup.ts`). */
   catchUp?: CatchUpView | null;
   intervalSummaries?: CatchUpView[];
-}
-
-export interface CharacterClip {
-  id: string;
-  engine: string;
-  kind: "avatar" | "sticker";
-  action: "blink" | "typing" | "wave";
-  file: string;
-  poster: string;
-  duration: number;
-}
-
-export interface AnimatedHead {
-  engine: string;
-  avatar: string;
-  thinking: string;
-  sleeping: string;
-  hat: string;
-  clips: CharacterClip[];
 }
 
 /** Where a loop between the heads stands: its line ("Hand-off 1 of 6"), Stop now's words, and the numbers for the meter. */

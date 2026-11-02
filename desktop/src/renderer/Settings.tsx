@@ -32,7 +32,7 @@ type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
-  { id: "engines", title: "Engines and subagents", terms: "default engines models primary recipient apply all bots reasoning effort thinking antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
+  { id: "engines", title: "Engines and subagents", terms: "default engines models primary recipient apply all bots reasoning effort thinking antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast component editor" },
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate quota 5 hours week claude codex antigravity" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },

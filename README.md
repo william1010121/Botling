@@ -376,7 +376,7 @@ The Electron app in `desktop/` is the app (see `desktop/README.md`). The archive
 was removed from `main`; it remains in git history (up to v1.20.0).
 
 ```bash
-cd Web && npm ci && npm test && npm run build        # chat surface, built-in plugins, plugin host
+cd Web && npm ci && npm test        # chat surface, built-in plugins, plugin host
 cd ../desktop && npm ci && npm run typecheck && npx vitest run test/unit
 ```
 

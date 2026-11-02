@@ -1,6 +1,6 @@
 // The object a plugin's `activate(api)` receives (plugin-platform.md §4.2): one per plugin, its name
 // bound in. `BotlingApi` is the 3.x name; `CcbHost` (2.x) is the same object, so old plugins keep
-// working: its old members (`name`, `notify`, `web.handle`, `storage.dir`, `browser`) stay beside the new.
+// working: its old members (`name`, `notify`, `web.handle`, `storage.dir`) stay beside the new.
 // What needs Botling is asked over the host's JSON-RPC (`request`, `notify`), always naming the plugin;
 // the core checks every ask (desktop/src/core/plugins/index.ts). `exec` and `spawn` run here.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -16,9 +16,6 @@ export interface BotInfo { id: string; name: string; role: "main" | "manager" | 
 export interface NewBot { name: string; job: string; avatar?: string }
 export interface Outgoing { bot: BotInfo; text: string }
 export interface Incoming { bot: BotInfo; text: string }
-
-export interface BrowserScope { origin: string; account: string; tab: string }
-export interface BrowserOperation extends BrowserScope { operation: "observe" | "click" | "extract"; target?: string }
 
 /** Botling's own settings a plugin may read (`settings.app`). */
 export type AppSettingKey = "language" | "botLook" | "workerLimit";
@@ -159,12 +156,6 @@ export interface BotlingApi {
   };
   /** `ui.expose`'s 1.x name. */
   web: { handle(method: string, fn: (params: unknown) => unknown): Dispose };
-  browser: {
-    /** Offered only at this exact origin; run receives the user's selected account/tab. */
-    registerTool(tool: { id: string; title: string; origin: string }, run: (scope: BrowserScope) => unknown): Dispose;
-    /** Runs only during a user-invoked tool, on that invocation's exact page scope. */
-    perform(operation: BrowserOperation): Promise<unknown>;
-  };
   /** `ui.notify` (2.x). */
   notify(text: string): void;
 }
@@ -386,18 +377,6 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       },
     },
     web: { handle: expose },
-    browser: {
-      registerTool: (tool, run) => {
-        const method = `browser.tool.${tool.id}`;
-        plugin.web.set(method, run as (params: unknown) => unknown);
-        host.notify("browser.register", { ...tool, plugin: name });
-        return own(() => {
-          plugin.web.delete(method);
-          host.notify("browser.unregister", { id: tool.id, plugin: name });
-        });
-      },
-      perform: async (operation) => host.request("browser.perform", { ...operation, plugin: name }),
-    },
     notify: (text) => notify(text),
   };
 }

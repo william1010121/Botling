@@ -38,29 +38,6 @@ export const zhHant: Dictionary = {
   "interval.autoAttribution": "Summary · 自動",
   "interval.autoHeader": "你送出下一則時自動結算 · {n} 則回覆，達到門檻",
 
-  "verification.title": "完成驗證",
-  "verification.checking": "驗證中…",
-  "verification.interrupted": "已中斷；未有判定",
-  "verification.continue": "仍有工作待完成",
-  "verification.analysis": "仍有分析待完成",
-  "verification.complete": "已完成",
-  "verification.evidence": "需要結束證據",
-  "verification.user": "等待你決定",
-  "verification.cancelled": "已取消",
-  "verification.dependency": "等待相依工作",
-  "verification.timer": "等待排定復驗",
-  "verification.unknown": "無法確認",
-  "verification.unavailable": "驗證無法使用",
-  "verification.paused": "自動續跑已暫停：多次回合沒有新結果或實質分析，工作仍未完成。",
-
-  "avatar.library": "角色動圖",
-  "avatar.portrait": "頭像",
-  "avatar.sticker": "全身貼圖",
-  "avatar.blink": "眨眼",
-  "avatar.typing": "打字",
-  "avatar.wave": "揮手",
-  "avatar.previewHint": "此處僅預覽。聊天頭像依工作狀態播放；減少動態效果時顯示靜態圖。",
-
   // steps.ts
   "steps.worked": "已處理",
   "steps.notes": "{n} 段說明",
@@ -214,9 +191,6 @@ export const zhHant: Dictionary = {
   "panel.notReady": "這個面板還沒準備好。",
   // markdown.ts
   "markdown.video": "影片",
-  // viewer.ts: the .md file window
-  "viewer.source": "原始碼",
-  "viewer.formatted": "排版後",
   // messages.ts: messages and their buttons
   "messages.fromMain": "來自主 Bot：{text}",
   "messages.addToBot": "加到其他 Bot…",
