@@ -52,6 +52,9 @@ function apply(session: RoutinesSession, a: Action) {
   }
 }
 
+/** Many walks, each step real file I/O: seconds alone, longer beside other test files. */
+const WALKS_TIMEOUT = 120_000;
+
 const sessions: RoutinesSession[] = [];
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); });
 afterEach(async () => {
@@ -100,16 +103,14 @@ function coverage(walks: { done: Action[]; end: State }[]) {
 }
 
 describe("routines conformance", () => {
-  // Real bug: any read of a bot's routines (the chat snapshot, a plugin's addRoutine) sets routineError, so the clock's next look sees no change and never tells a broken scheduled-routines.json.
-  it.fails("random walks follow the model", async () => {
+  it("random walks follow the model", async () => {
     const walks = [];
     for (let seed = 1; seed <= 60; seed++) walks.push(await walk(seed, 30));
     const seen = coverage(walks);
     for (const [what, n] of Object.entries(seen)) expect(n, `${what} in ${JSON.stringify(seen)}`).toBeGreaterThan(2);
-  });
+  }, WALKS_TIMEOUT);
 
-  // Real bug: the chat snapshot reads the routines and sets routineError first, so the clock's look never says the broken file.
-  it.fails("a look at the routines between a file breaking and the clock's next look keeps the notice", async () => {
+  it("a look at the routines between a file breaking and the clock's next look keeps the notice", async () => {
     const session = open();
     session.boot();
     session.break("p");
@@ -205,8 +206,7 @@ describe("routines trace", () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  // Real bug (as above): a read of the routines before the clock's look takes the broken-file notice away.
-  it.fails("the app's trace of random walks replays through the reference", async () => {
+  it("the app's trace of random walks replays through the reference", async () => {
     let lines = 0;
     for (let seed = 201; seed <= 220; seed++) {
       const dir = mkdtempSync(join(tmpdir(), "spec-routines-trace-"));
@@ -221,5 +221,5 @@ describe("routines trace", () => {
       lines += trace.length;
     }
     expect(lines).toBeGreaterThan(200);
-  });
+  }, WALKS_TIMEOUT);
 });

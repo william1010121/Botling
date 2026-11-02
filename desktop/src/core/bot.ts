@@ -482,6 +482,8 @@ export class Bot {
   private scheduledStore: ScheduledRoutineStore | null = null;
   private routineRuns: Record<string, number> = {};
   private routineError: string | null = null;
+  /** The error the clock last told in the chat: any read of the routines sets `routineError`, so it cannot be what says the notice was given. */
+  private routineTold: string | null = null;
   /** What the app last showed of its routines (`routinesKey`), so a change to the files is shown once. */
   private routinesShown = "";
   /** Its pinned components (pins.json, 1.x's format; the primary's). */
@@ -4615,7 +4617,8 @@ export class Bot {
       }
       ran = true;
     }
-    if (this.routineError && this.routineError !== before) { this.notice(`Routines: ${this.routineError}`); noticed = true; }
+    if (this.routineError && this.routineError !== this.routineTold) { this.notice(`Routines: ${this.routineError}`); noticed = true; }
+    this.routineTold = this.routineError;
     if (specBefore) specTrace("routines", "Check", { bot: this.id, now, noticed, before: specBefore, after: this.routinesSpec() });
     // A job the bot wrote into routines.cron (or Codex's app_routines) shows in its chat without waiting for it to run.
     const view = this.routinesView(now);
