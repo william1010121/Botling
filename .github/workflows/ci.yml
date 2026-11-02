@@ -99,3 +99,35 @@ jobs:
         if: ${{ !cancelled() }}
       - run: npm run test:web-isolation
         if: ${{ !cancelled() }}
+
+  spec:
+    name: Spec models and conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      # The pinned tla2tools.jar (version and sha256 in spec/tools/tlc.sh), fetched once.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/botling-spec
+          key: tla2tools-${{ hashFiles('spec/tools/tlc.sh') }}
+      - name: Model-check every spec/models/*
+        run: spec/tools/check-models.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: desktop
+      # The core imports ../Web/src (see the desktop job).
+      - run: npm ci --no-audit --no-fund --prefix ../Web
+        working-directory: desktop
+      # spec/tests import vitest and the app the way desktop's tests do (desktop/scripts/link-deps.sh does this locally).
+      - run: ln -sfn ../desktop/node_modules spec/node_modules
+      - run: npm run test:spec
+        working-directory: desktop

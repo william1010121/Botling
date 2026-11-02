@@ -17,3 +17,18 @@
   volume with free space: `BOTLING_DIST_DIR`, `electron_config_cache`, `ELECTRON_BUILDER_CACHE`
   (see `desktop/README.md`).
 - `npm run build` only bundles `out/` (under a second); `npm run typecheck` is `tsc --noEmit`.
+
+## Spec program (`spec/`)
+
+- `spec/` holds the protocols Botling must keep: TLA+ models (`spec/models/`), the same machines in TypeScript
+  (`spec/reference/`), the test drivers and conformance tests. The app side is `desktop/spec-adapters/`.
+  Layout and rules: `spec/README.md`.
+- **Only the strong model (opus) and people change `spec/`.** Cheaper models may read it, never write it.
+  App-managed workers not on a model in settings.json `specWriters` (default `["opus"]`) are refused writes there
+  (`desktop/src/core/spec-guard.ts`); bot heads are not restricted. If a fix seems to need a spec change, say so in
+  your report instead.
+- A pull request that changes `spec/**` needs the `spec-approved` label or a `bot/spec-*` branch (the Spec gate
+  workflow); `.github/CODEOWNERS` asks the owner to review `spec/` and `desktop/spec-adapters/`.
+- Checks: `spec/tools/check-models.sh` (all models with TLC; needs Java, fetches the pinned jar into
+  `$BOTLING_SPEC_CACHE`, locally `/Volumes/My-SSD/botling-work/cache/tla`) and `cd desktop && npm run test:spec`
+  (conformance tests). CI runs both in the `spec` job.

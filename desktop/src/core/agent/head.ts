@@ -1,6 +1,7 @@
 import { ClaudeRequestTracker } from "../token-speed";
 import { claudeMonitorDecision, MONITOR_HOOK } from "./monitor-policy";
 import { claudeAutoRiskSettings } from "./auto-risk-policy";
+import { specGuardDecision } from "../spec-guard";
 import { claudeHotEffortEnabled, settingsChange, type HotSettings } from "./hot-settings";
 // A bot's head: one long-lived `claude -p --input-format stream-json` process (as the Swift app's
 // `ClaudeAgentProcess`). Messages go in as JSON lines on stdin; replies, tool calls and permission
@@ -79,6 +80,11 @@ export interface HeadConfig {
    * version ignores the disallow. None in harmless mode.
    */
   agentGuard?: string | null;
+  /**
+   * An app-managed worker: a PreToolUse hook denies its writes into spec/ unless `model` is one of `writers`
+   * (spec-guard.ts). Bot heads leave it out. None in harmless mode.
+   */
+  specGuard?: { writers: readonly string[] } | null;
 }
 
 /** One app tool as MCP's tools/list gives it. */
@@ -87,6 +93,8 @@ export interface AppToolSpec { name: string; description: string; inputSchema: R
 /** The PreToolUse hook that keeps native subagents out of a head whose workers the app manages. */
 export const AGENT_GUARD_HOOK = "botling-agent-guard";
 const NATIVE_AGENT_TOOLS = ["Agent", "Task"];
+/** The PreToolUse hook that keeps a worker not on a spec writer's model out of spec/. */
+export const SPEC_GUARD_HOOK = "botling-spec-guard";
 
 /** The hook's answer: every Agent/Task call is denied with `reason` (shown to the model as "PreToolUse:Agent hook error: <reason>"). */
 export function agentGuardDecision(input: any, reason: string): Record<string, unknown> {
@@ -218,11 +226,13 @@ export class ClaudeHead {
     const monitor = !this.config.harmless && (!this.config.tools || this.config.tools.includes("Monitor"));
     const guard = !this.config.harmless && !!this.config.agentGuard;
     const app = !this.config.harmless && this.config.appMcp ? this.config.appMcp : null;
-    if (monitor || guard || app) {
+    const spec = !this.config.harmless && !!this.config.specGuard;
+    if (monitor || guard || app || spec) {
       this.monitorInit = `monitor-policy-${randomUUID()}`;
       this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), 10_000);
       this.monitorInitTimer.unref();
-      const hooks = [...(monitor ? [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] : []), ...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : [])];
+      const hooks = [...(monitor ? [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] : []), ...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : []),
+        ...(spec ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SPEC_GUARD_HOOK] }] : [])];
       this.write({ type: "control_request", request_id: this.monitorInit, request: { subtype: "initialize",
         ...(hooks.length ? { hooks: { PreToolUse: hooks } } : {}), ...(app ? { sdkMcpServers: [app.server] } : {}) } });
     }
@@ -245,7 +255,7 @@ export class ClaudeHead {
     this.monitorPolicyFailed = true;
     if (this.monitorInitTimer) clearTimeout(this.monitorInitTimer);
     this.queuedMessages = [];
-    this.stderrTail += "\nBotling could not register its tool policy (coordinator-only monitor enforcement, the native subagent guard, the app tools); no queued user input was sent.";
+    this.stderrTail += "\nBotling could not register its tool policy (coordinator-only monitor enforcement, the native subagent guard, the spec/ guard, the app tools); no queued user input was sent.";
     void this.process?.terminate({ graceMs: 0 });
   }
 
@@ -277,6 +287,12 @@ export class ClaudeHead {
     if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === AGENT_GUARD_HOOK) {
       this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
         response: agentGuardDecision(message.request.input, this.config.agentGuard ?? "Native subagents are off here.") } });
+      return;
+    }
+    if (message?.type === "control_request" && message.request?.subtype === "hook_callback" && message.request.callback_id === SPEC_GUARD_HOOK) {
+      const guard = this.config.specGuard;
+      this.write({ type: "control_response", response: { subtype: "success", request_id: message.request_id,
+        response: guard ? specGuardDecision(message.request.input, { model: this.config.model, writers: guard.writers, cwd: this.config.cwd }) : {} } });
       return;
     }
     if (message?.type === "control_request" && message.request?.subtype === "mcp_message") { void this.appMcp(message); return; }

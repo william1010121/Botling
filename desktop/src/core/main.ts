@@ -102,6 +102,7 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     bypassPermissions: session.codexBypassPermissions === true,
     // Its other folders (the main bot: every bot's inbox; Maintainer: folders you let it use) are writable, as in 1.x.
     writableRoots: session.addDirs ?? [],
+    ...(session.specWriters ? { specWriters: session.specWriters } : {}),
   };
   if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };
   const script = process.env.BOTLING_FAKE_CODEX;

@@ -1,0 +1,42 @@
+name: Spec gate
+
+# spec/ is changed only by the strong model and people (AGENTS.md, "Spec program"). A pull request that changes
+# spec/** passes only with the `spec-approved` label or from a bot/spec-* branch of this repository; CODEOWNERS
+# asks the owner to review it either way. Its own workflow so that adding or removing the label runs it again
+# without re-running CI's other jobs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: spec-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spec-gate:
+    name: Spec changes approved
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Changes to spec/ need the spec-approved label or a bot/spec-* branch
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'spec-approved') }}
+        run: |
+          changed=$(git diff --name-only "$BASE...$HEAD" -- spec/)
+          if [ -z "$changed" ]; then echo "No changes under spec/."; exit 0; fi
+          echo "Changed under spec/:"; echo "$changed" | sed 's/^/  /'
+          if [ "$APPROVED" = true ]; then echo "Labelled spec-approved."; exit 0; fi
+          case "$BRANCH" in
+            bot/spec-*) if [ "$SAME_REPO" = true ]; then echo "From $BRANCH."; exit 0; fi ;;
+          esac
+          echo "::error::This pull request changes spec/, which only the strong model and people change. Add the spec-approved label after review, or make the change on a bot/spec-* branch."
+          exit 1

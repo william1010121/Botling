@@ -123,6 +123,7 @@ import {
 import type { BotProfile } from "./store/workspace";
 import { isWorkerHost, isWorkerType, ownProcessWorker, type WorkerHost, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./agent/workers";
 import { CLAUDE_AGENT_GUARD, CLAUDE_APP_SERVER, CLAUDE_APP_TOOLS, ClaudeWorkers, DEFAULT_CLAUDE_WORKER_LIMIT, claudeWorkersFile } from "./agent/claude-workers";
+import { DEFAULT_SPEC_WRITERS } from "./spec-guard";
 
 export type Status = "done" | "stopped" | "failed";
 
@@ -150,6 +151,8 @@ export interface SessionStart {
   allowRules?: string[];
   /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
   codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null;
+  /** Model families whose app-managed workers may write spec/ (settings.json `specWriters`; spec-guard.ts). */
+  specWriters?: readonly string[];
 }
 
 export interface SessionStartCodex extends SessionStart {
@@ -232,7 +235,7 @@ export interface BotOptions {
   /** Its specs changed (the spec panel follows). */
   specsChanged?: (bot: Bot) => void;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
-  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number };
+  launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number; specWriters?: readonly string[] };
   /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
   agents?: AgentPort;
 }
@@ -1237,6 +1240,7 @@ export class Bot {
       pluginDirs: () => this.options.plugins?.().dirs ?? [],
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
+      specWriters: () => this.options.launch?.().specWriters ?? DEFAULT_SPEC_WRITERS,
     }, (item) => this.onWorkerOutput(item), (_id, text) => this.workerReport(text), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
     return this.claudeWorkerHost;
@@ -3057,7 +3061,7 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
+        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
         { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
@@ -3116,6 +3120,7 @@ export class Bot {
       autoMode: launch.autoMode !== false, allowRules: this.allowRules,
       claudeBypassPermissions: launch.claudeBypassPermissions === true,
       codexBypassPermissions: launch.codexBypassPermissions === true,
+      ...(launch.specWriters ? { specWriters: launch.specWriters } : {}),
     };
   }
 

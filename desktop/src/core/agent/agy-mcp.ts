@@ -9,6 +9,7 @@ import { mkdtempSync, realpathSync, rmSync, readFileSync, writeFileSync, statSyn
 import { tmpdir, homedir } from 'node:os';
 import { resolve, relative, isAbsolute, join } from 'node:path';
 import { processTreeAdapter, type ManagedProcess } from '../process/tree';
+import { inSpec, shellWritesSpec, specRoots, SPEC_DENIED } from '../spec-guard';
 
 export const AGY_FILE_HELPER_SHA = '1e6feb57e33dfa1e5ffed2a7a359e6cd15c0df3272293e2ed63ec7af2ffc3403';
 export function verifyAgyFileHelper(path: string | undefined, workspace: string) {
@@ -64,7 +65,7 @@ export class AgyMcpBridge {
   private extra: { raw: string; real: string }[];
   private rootIdentity: string[];
   private protectedIdentity: string[];
-  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void, extraRoots: string[] = []) {
+  constructor(private cwd: string, private protectedPath: string, private delegate?: (name: string, args: Args) => Promise<unknown>, private processStarted?: (pid:number)=>void, private helperPath?: string, private fullPermissionActive: () => boolean = () => false, private onToolEvent?: (item: StreamItem) => void, extraRoots: string[] = [], private specLocked: () => boolean = () => false) {
     // The project's .bot when the session starts in an app worktree (the same extra folder Claude and Codex get).
     this.extra = extraRoots.flatMap(dir => { try { return [{ raw: resolve(dir), real: realpathSync(dir) }]; } catch { return []; } });
     // Worker transport is deliberately unavailable until live isolation/recovery validation.
@@ -160,6 +161,9 @@ export class AgyMcpBridge {
     if(this.stopped)throw new Error('Tool bridge closed.');
     const tool=this.tools.find(t=>t.name===name);if(!tool)throw new Error('Unsupported tool.');
     args = normalizeFileArgs(name, args);
+    // A worker not on a spec writer's model (spec-guard.ts): no write into spec/, whatever was approved.
+    if (this.specLocked() && ((name==='write_file' && typeof args.path==='string' && inSpec(args.path,this.base))
+      || (name==='run_command' && typeof args.command==='string' && shellWritesSpec(args.command,this.base)))) throw new Error(SPEC_DENIED);
     const key=name+':'+canonical(args),grants=(this.grants.get(key)??[]).filter(deadline=>deadline>Date.now());
     const full = AGY_LOCAL_TOOLS.some(t=>t.name===name) && this.fullTurn && this.fullPermissionActive();
     // Coordination tools only dispatch/steer/cancel app-managed workers and never grant file or command
@@ -235,7 +239,8 @@ export class AgyMcpBridge {
       (allow file-write* (subpath ${quoted(cwd)}) (subpath ${quoted(this.scratch)}) (literal "/dev/null") (literal "/dev/tty"))
       (deny file-read* (subpath ${quoted(realpathSync(homedir()))}))
       (allow file-read* (subpath ${quoted(cwd)}) (subpath ${quoted(this.scratch)}))
-      (deny file-read* file-write* (subpath ${quoted(profile)}))`;
+      (deny file-read* file-write* (subpath ${quoted(profile)}))${this.specLocked() ? specRoots(cwd).map(root=>`
+      (deny file-write* (subpath ${quoted(root)}))`).join('') : ''}`;
     const child=processTreeAdapter().spawn(full ? '/bin/sh' : '/usr/bin/sandbox-exec',full ? ['-c',command] : ['-p',sandbox,'/bin/sh','-c',command],{cwd,env});this.commands.add(child);
     try{if(child.pid>0)this.processStarted?.(child.pid);}catch(error){void child.terminate({graceMs:500});return Promise.reject(error);}
     return new Promise(resolve=>{

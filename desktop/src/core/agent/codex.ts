@@ -4,6 +4,7 @@ import {claudeConfigFolder} from '../claude-files';
 import {inspectClaudeRestart, type ClaudeRestartOutcome} from '../claude-restart';
 import { RESTART_NOTE } from '../restart-continuation';
 import { monitorHandback, MONITOR_HANDBACK } from "./monitor-policy";
+import { DEFAULT_SPEC_WRITERS, inSpec, maySpecWrite, shellWritesSpec, SPEC_DENIED } from "../spec-guard";
 import { TokenFlowMeter } from "../token-flow-meter";
 import { codexAutoRiskConfig } from "./auto-risk-policy";
 // A bot's Codex head: one long-lived `codex app-server` (JSON-RPC, one JSON object a line on
@@ -163,6 +164,8 @@ export interface CodexConfig {
   bypassPermissions?: boolean;
   /** More folders it may write besides `cwd` (1.x's `writableRoots`: the bot's `--add-dir` folders). */
   writableRoots?: string[];
+  /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). The coordinator is not restricted. */
+  specWriters?: readonly string[];
 }
 
 /** Codex's `sandbox_workspace_write.writable_roots` for these folders (none: nothing to add). */
@@ -388,6 +391,8 @@ interface ThreadWorker {
   cancelled: boolean;
   isolatedGit?: IsolatedGitOwnership;
   runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
+  /** The model its thread runs on, as the app-server said (spec-guard.ts). */
+  model?: string | null;
   /** Restart: the original turn had completed with these messages (adopted, nothing is sent). */
   adopt?: { said: { text: string; phase: string | null }[]; turn: string };
   /** Restart: the run continues the original one (its scope and Git grant stay). */
@@ -527,7 +532,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
     const c = this.o.config;
     const params: Record<string, unknown> = {
       cwd: c.cwd, approvalPolicy: c.bypassPermissions ? "never" : "on-request", approvalsReviewer: reviewerOf(c), sandbox: c.bypassPermissions ? "danger-full-access" : "workspace-write",
-      developerInstructions: `${c.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate."}\n\n${MONITOR_HANDBACK}`,
+      developerInstructions: `${c.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate."}\n\n${MONITOR_HANDBACK}${this.specNote(w)}`,
       // The workers write where the coordinator may, as in 1.x (`writable_roots`).
       config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(c.autoMode, c.bypassPermissions), ...writableRootsConfig(c.writableRoots) },
     };
@@ -552,11 +557,12 @@ export class CodexThreadAdapter implements WorkerAdapter {
     const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
     w.runtime = { engine: "codex", reasoningEffort: text(result.reasoningEffort), serviceTier: text(result.serviceTier) };
     const model = text(result.model);
+    if (model) w.model = model;
     this.o.wire.item({ kind: "subagentRuntime", id: w.id, runtime: w.runtime, ...(model ? { model } : {}) });
     this.o.wire.item({ kind: "subagentExecution", id: w.id, execution: this.execution(w, run) });
     if (!resumed) return this.startTurn(w, run, w.text);
     // Resume alone can leave the rollout's old developer policy in force: the current one is appended.
-    const policy = `${this.o.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate."}\n\n${MONITOR_HANDBACK}`;
+    const policy = `${this.o.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate."}\n\n${MONITOR_HANDBACK}${this.specNote(w)}`;
     this.call(w, run, "thread/inject_items", { threadId: thread, items: [{ type: "message", role: "developer", content: [{ type: "input_text", text: policy }] }] }, (_result, refused) => {
       if (refused) return this.fail(w, run, `Could not refresh worker instructions: ${message(refused)}`);
       w.loaded = true;
@@ -747,12 +753,39 @@ export class CodexThreadAdapter implements WorkerAdapter {
     }
   }
 
+  /** Whether this worker's model may not write spec/ (spec-guard.ts); unknown counts as not. */
+  private specLocked(w: ThreadWorker): boolean {
+    const c = this.o.config;
+    return !maySpecWrite(w.model ?? c.workerModel ?? c.model, c.specWriters ?? DEFAULT_SPEC_WRITERS);
+  }
+
+  private specNote(w: ThreadWorker): string {
+    return this.specLocked(w) ? `\n\n${SPEC_DENIED}` : "";
+  }
+
+  /** An approval request that writes into spec/: a command that clearly does, or a patch with a path there. */
+  private writesSpec(method: string, params: any): boolean {
+    const cwd = typeof params.cwd === "string" && params.cwd ? params.cwd : this.o.config.cwd;
+    if (method === "item/commandExecution/requestApproval") {
+      const command = typeof params.command === "string" ? params.command : Array.isArray(params.command) ? params.command.join(" ") : "";
+      return !!command && shellWritesSpec(command, cwd);
+    }
+    if (method !== "item/fileChange/requestApproval") return false;
+    const files = typeof params.itemId === "string" ? this.changedFiles.get(params.itemId) ?? [] : [];
+    return [...files, ...(typeof params.grantRoot === "string" ? [params.grantRoot] : [])].some((path) => inSpec(path, cwd));
+  }
+
   // From the app-server
 
   /** One of the app-server's requests on a worker's thread (its approvals). False: not a worker's. */
   serverRequest(method: string, rpcId: unknown, params: any): boolean {
     const w = this.ofThread(params.threadId);
     if (!w) return false;
+    if (this.specLocked(w) && this.writesSpec(method, params)) {
+      // Declined without a card: no answer of the user's lets a worker not on a spec writer's model write spec/.
+      this.o.wire.write(decline(rpcId, method === "item/fileChange/requestApproval" ? "fileChange" : "command"));
+      return true;
+    }
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
@@ -2168,6 +2201,8 @@ export interface CodexHeadConfig {
   bypassPermissions?: boolean;
   /** More folders it may write (its `--add-dir` folders; 1.x's `writableRoots`). */
   writableRoots?: string[];
+  /** Model families whose workers may write spec/ (settings.json `specWriters`). */
+  specWriters?: readonly string[];
   componentEditor?: ComponentEditorRoute | null;
   /** Register the separate Claude process with the app's existing process ledger. */
   editorStarted?: (pid: number) => void;
@@ -2226,6 +2261,7 @@ export class CodexHead {
       autoMode: config.autoMode ?? true,
       bypassPermissions: config.bypassPermissions === true,
       writableRoots: config.writableRoots ?? [],
+      ...(config.specWriters ? { specWriters: config.specWriters } : {}),
       componentEditor: config.componentEditor,
     });
     this.savedWorkers = JSON.stringify(this.session.workerRecords);

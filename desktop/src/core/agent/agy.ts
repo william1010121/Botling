@@ -8,6 +8,8 @@ export interface AgyConfig {
   transport?: "acp";
   worker?: boolean;
   workerEngine?: "agy" | "codex";
+  /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). Bot heads are not restricted. */
+  specWriters?: readonly string[];
   processStarted?: (pid: number) => void;
   canStartReport?: () => boolean;
   prefixArgs?: string[];
