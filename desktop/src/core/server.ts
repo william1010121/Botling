@@ -1165,10 +1165,10 @@ First write a test that shows this, then fix it.`;
     const record = this.agents.byHostBot(botId, subagentId) ?? this.agents.movedIn(botId).find((candidate) => candidate.nativeId === subagentId);
     const waiting = record?.relay.pendingMessages ?? [];
     if (!waiting.length) return view;
-    return { ...view, steps: [...view.steps, ...waiting.map((message) => ({
+    return { ...view, subagent: { ...view.subagent, steps: [...view.subagent.steps, ...waiting.map((message) => ({
       id: `queued:${message.id}`, kind: "message" as const, tool: null, title: message.text.slice(0, 2_000), detail: null, output: null, failed: false, done: true,
       from: "owner", time: new Date(message.at).toISOString(), queued: true,
-    }))].slice(-500) };
+    }))].slice(-500) } };
   }
 
   private agentViewBase(botId: string, subagentId: string): ResultOf<"subagent.view"> {
