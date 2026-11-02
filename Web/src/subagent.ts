@@ -1,6 +1,7 @@
 import { subagentSpeedElement } from "./subagent-speed";
 import { post } from "./bridge";
 import { t, type Key } from "./i18n";
+import { queuedBadge } from "./util";
 import { renderMarkdown } from "./markdown";
 import { foldedRun, liveElement, statusWord } from "./steps";
 import type { MessageView, StepView, SubagentHeaderView } from "./types";
@@ -24,10 +25,11 @@ export function subagentMessageElement(message: MessageView): HTMLElement {
     label.className = "sub-from-label";
     const who = document.createElement("span");
     who.className = "who";
-    who.textContent = message.speaker ?? "";
+    who.textContent = message.speaker ?? t("subagent.you");
     // "From {bot}" in the page's language, with the name set apart.
     const [before, after = ""] = t("subagent.from", { bot: "\u0000" }).split("\u0000");
     label.append(before, who, after, message.time ? ` · ${message.time}` : "");
+    if (message.queued) label.append(queuedBadge());
     const body = document.createElement("div");
     body.className = "sub-from-body markdown";
     body.innerHTML = renderMarkdown(message.text);

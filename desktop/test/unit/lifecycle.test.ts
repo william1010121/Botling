@@ -156,17 +156,18 @@ describe("a message while a reply is written", () => {
     await until(async () => (await c.call({ type: "chat.snapshot" })).bots[0].working === false, { what: "the bot free again" });
   });
 
-  it("waits while an approval is open, and goes once the turn ends", async () => {
+  it("goes into the turn under way even while an approval is open (a card is answered by its buttons, never by words)", async () => {
     const c = core(tempDir("steer"));
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "/tool echo hi" });
     const question = await until(() => c.of("message.added").map((e) => (e.event as { message: any }).message).find((m) => m.approval));
     const later = await c.call({ type: "chat.send", botId: MAIN, text: "after that" });
-    expect(c.of("turn.started").some((e) => (e.event as { turnId: string }).turnId === later.turnId)).toBe(false);
+    // Joined, not queued: it is the same turn, and its line is not marked Queued.
+    expect(later.turnId).toBe(turnId);
+    const line = (await c.chat()).messages.find((m: { role: string; text: string }) => m.role === "user" && m.text === "after that");
+    expect(line.queued).toBeFalsy();
     await c.call({ type: "chat.choose", botId: MAIN, messageId: question.id, index: 0 });
-    await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === turnId));
-    const done = await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === later.turnId));
-    expect(done.event).toMatchObject({ status: "done", text: "You said: after that" });
-    expect(await c.call({ type: "turn.await", botId: MAIN, turnId: later.turnId })).toEqual({ status: "done" });
+    const done = await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === turnId));
+    expect(done.event).toMatchObject({ status: "done" });
   });
 });
 

@@ -51,6 +51,10 @@ export class RunPipeline {
       case "textDelta": case "textWhole": case "textBreak":
         this.blocks(event);
         return;
+      case "userText":
+        this.blocks(event);
+        this.out({ kind: "subagentUser", parent: this.ids.workerId, text: event.text, from: event.from });
+        return;
       case "toolUse":
         this.blocks(event);
         this.out({ kind: "toolUse", id: this.scoped(event.id), tool: event.tool, title: event.title, detail: event.detail, parent: this.ids.workerId, input: event.input });

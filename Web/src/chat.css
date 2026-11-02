@@ -494,6 +494,8 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .row.sub-from:first-child { margin-top: 0; }
 .sub-from-label { font-size: 12px; color: var(--faint); }
 .sub-from-label .who { color: var(--orange-text); }
+.queued-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--faint); border-radius: 8px; font-size: 11px; line-height: 16px; color: var(--faint); vertical-align: baseline; }
+.user-body > .queued-badge { display: block; width: fit-content; margin: 4px 0 0 auto; }
 .sub-from-body {
   padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--orange-line) 75%, var(--ground)); border-radius: 12px;
   background: color-mix(in srgb, var(--orange-line) 16%, var(--ground));

@@ -67,7 +67,7 @@ export class TextBlocks {
       case "textWhole":
         this.open = "";
         return this.close(event.text, event.phase);
-      case "textBreak": case "toolUse": case "toolResult": case "end":
+      case "textBreak": case "toolUse": case "toolResult": case "userText": case "end":
         return this.flush();
       default:
         return [];

@@ -22,6 +22,11 @@ export type WorkerEvent =
   | { type: "textWhole"; text: string; phase: "commentary" | "final" | null }
   /** The next text is a new block (claude textBlock). toolUse / toolResult / end also close the open block. */
   | { type: "textBreak" }
+  /**
+   * Words someone put into the run under way (a steer): the owner bot's (host path) or the coordinator's. The CORE emits it
+   * once the adapter took them; adapters never do. It closes the open text block and is one `message` step.
+   */
+  | { type: "userText"; text: string; from: string }
   | { type: "toolUse"; id: string; tool: string; title: string; detail: string; input: Record<string, unknown> }
   | { type: "toolResult"; id: string; output: string; failed: boolean }
   /** Tokens and dollars used since the adapter's previous usage event of this run: ALWAYS a delta, never a running total. */

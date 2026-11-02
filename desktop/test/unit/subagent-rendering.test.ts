@@ -130,3 +130,36 @@ it.each([false, true])("keeps the restored owner avatar and truthful running sta
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false;
   }
 });
+
+describe("words put into a worker's run under way (steering)", () => {
+  const rows = () => [...document.querySelectorAll("#messages .row")].map((row) => row.className.replace(/\brow\b\s*/, "") + "|" + (row.textContent ?? "").replace(/\s+/g, " ").trim());
+  it("shows as the sender's own line, in order with the worker's text, from the shared step; a queued line carries a Queued badge", () => {
+    const book = new SubagentBook([readSubagent({ id: "w", description: "Work", prompt: "Start", type: "codex-worker", status: "running", background: true, startedAt: 0, steps: [], runtime: { engine: "codex" } })!]);
+    book.text("w", "Reading the code.");
+    expect(book.said("w", "Also check the docs", "owner")).toBe(true);
+    book.text("w", "Docs checked.");
+    const view = SubagentView.parse(subagentView(book.get("w")!, bot.name, book, "claude"));
+    expect(view.steps.map((s) => [s.kind, s.title, s.from ?? null])).toEqual([["text", "Reading the code.", null], ["message", "Also check the docs", "owner"], ["text", "Docs checked.", null]]);
+    const queued = { ...view, steps: [...view.steps, { ...step("queued:1", "message", "And the changelog", { from: "owner", time: "2026-10-27T08:00:00Z", queued: true }) }] };
+    window.ccb.setState(subagentState(bot, SubagentView.parse(queued)).state);
+    const lines = rows();
+    expect(lines[0]).toContain("Start");
+    expect(lines.findIndex((l) => l.includes("Reading the code."))).toBeLessThan(lines.findIndex((l) => l.includes("Also check the docs")));
+    expect(lines.findIndex((l) => l.includes("Also check the docs"))).toBeLessThan(lines.findIndex((l) => l.includes("Docs checked.")));
+    expect(lines.find((l) => l.includes("Also check the docs"))).toContain("Main");
+    const badges = [...document.querySelectorAll(".queued-badge")];
+    expect(badges).toHaveLength(1);
+    expect(badges[0]!.closest(".row")!.textContent).toContain("And the changelog");
+    // Sent: the same line without the mark.
+    window.ccb.setState(subagentState(bot, SubagentView.parse({ ...queued, steps: queued.steps.map((s) => ({ ...s, queued: undefined })) })).state);
+    expect(document.querySelector(".queued-badge")).toBeNull();
+  });
+
+  it("a head chat line the bot could not take in yet shows Queued, until redrawn without it", () => {
+    const line = (queuedMark: boolean) => window.ccb.setState(chatState(bot, { botId: "B", messages: [{ id: "u1", role: "user" as const, text: "hello later", time: "2026-10-27T08:00:00Z", ...(queuedMark ? { queued: true } : {}) }], running: null, live: [], tasks: [] }).state);
+    line(true);
+    expect(document.querySelector("#messages .queued-badge")?.textContent).toBe("Queued");
+    line(false);
+    expect(document.querySelector("#messages .queued-badge")).toBeNull();
+  });
+});

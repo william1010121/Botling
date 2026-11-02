@@ -24,6 +24,8 @@ export type StreamItem =
   | { kind: "toolResult"; id: string; output: string; failed: boolean; parent: string | null; launch: Launch | null }
   /** Words a subagent said (its own assistant text). */
   | { kind: "subagentText"; parent: string; text: string }
+  /** Words put into a worker's run under way (a steer): `from` is "owner" or "coordinator". */
+  | { kind: "subagentUser"; parent: string; text: string; from: string }
   /** claude started a subagent (`task_started`, local_agent): it may run on in the background. */
   | { kind: "subagentStarted"; id: string; description: string; type: string | null; prompt: string; background: boolean; agentID?: string; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }
   | { kind: "subagentExecution"; id: string; execution: SubagentExecution }

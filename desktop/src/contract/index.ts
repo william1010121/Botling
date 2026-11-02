@@ -71,6 +71,11 @@ export const StepView = z.strictObject({
   /** A subagent's: running, completed, failed or stopped; and its tool calls so far. */
   status: z.enum(["running", "completed", "failed", "stopped"]).nullable().optional(),
   count: z.number().int().nonnegative().nullable().optional(),
+  /** A `message` step put into a worker's run: who said it ("user", "app", "coordinator"), and when (ISO-8601). */
+  from: z.string().max(40).optional(),
+  time: z.string().nullable().optional(),
+  /** A `message` step the worker has not read yet: waiting for its run to end. */
+  queued: z.boolean().optional(),
 });
 export type StepView = z.infer<typeof StepView>;
 
@@ -311,6 +316,8 @@ export const MessageView = z.strictObject({
   to: Engine.optional(),
   /** A user line a plugin sent (`bots.send`): the plugin's name as the page shows it. */
   via: z.string().max(200).optional(),
+  /** A user line the head cannot take into its turn under way (an Antigravity head): it waits, and is sent when the turn ends. */
+  queued: z.boolean().optional(),
   /** With two heads: the heads this line has reached. */
   seenBy: z.array(Engine).max(3).optional(),
   /** A question shared between the heads: its source question's id. */

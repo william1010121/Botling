@@ -1160,6 +1160,18 @@ First write a test that shows this, then fix it.`;
 
   /** `subagent.view`: one of the bot's own, or one it owns that another bot runs (read from its host, named as the owner's). */
   private agentView(botId: string, subagentId: string): ResultOf<"subagent.view"> {
+    const view = this.agentViewBase(botId, subagentId);
+    // Words the host could not take while the run worked wait here; they show as the last lines, marked queued, until sent.
+    const record = this.agents.byHostBot(botId, subagentId) ?? this.agents.movedIn(botId).find((candidate) => candidate.nativeId === subagentId);
+    const waiting = record?.relay.pendingMessages ?? [];
+    if (!waiting.length) return view;
+    return { ...view, steps: [...view.steps, ...waiting.map((message) => ({
+      id: `queued:${message.id}`, kind: "message" as const, tool: null, title: message.text.slice(0, 2_000), detail: null, output: null, failed: false, done: true,
+      from: "owner", time: new Date(message.at).toISOString(), queued: true,
+    }))].slice(-500) };
+  }
+
+  private agentViewBase(botId: string, subagentId: string): ResultOf<"subagent.view"> {
     const bot = this.bot(botId);
     const own = this.agents.byHostBot(botId, subagentId);
     if (own || bot.agentFacts(subagentId)) {

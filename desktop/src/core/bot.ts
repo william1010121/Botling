@@ -20,8 +20,8 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 //   Stop button, Escape stops):
 //   · a head at work on anything but handed-over work or the tidy takes the message into the turn
 //     under way — claude as a message on its stdin, read in at its next step; Codex as `turn/steer` —
-//     and that turn goes on: one reply answers both, after your new line (claude: with no approval
-//     open and no foreground subagent at work). A line claude reads only after that turn ended gets
+//     and that turn goes on: one reply answers both, after your new line, even with an approval
+//     open or a foreground subagent at work (an approval is answered by its card, never by words); A line claude reads only after that turn ended gets
 //     a turn of its own (`command_lifecycle` "started"), which answers you;
 //   · the turn is work the user did not start (handed over by the other head, a routine, a report,
 //     claude's own turn), with no approval open and no foreground subagent at work: as 1.x
@@ -29,8 +29,10 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 //     way, with 1.x's pause note (Codex: handed-over work only), and once it has answered you it is
 //     told to carry on (1.x's resume note), on the same hand-off, whose reply still goes back to the
 //     head that handed it;
-//   · otherwise (an approval is open, a foreground subagent works, the tidy) the message waits and goes
-//     when the turn ends.
+//   · otherwise (the tidy; work the user did not start while an approval is open or a foreground subagent
+//     works; an Antigravity head, which has no way to take a line in mid-turn; a line already waiting ahead;
+//     a line from the app, not the user) the message waits, its line marked "Queued", and goes when the
+//     turn ends.
 // - Stop closes the turn's gate first (nothing it prints afterwards reaches anyone) and says so,
 //   then asks claude to interrupt; a head that does not end the turn in time is ended with its
 //   whole process tree.
@@ -770,6 +772,8 @@ export class Bot {
   private messageView(record: ChatRecord): MessageView {
     const lookup = { get: (id: string) => this.members.map(bot => bot.subagents.get(id)).find(Boolean) };
     const view = messageView(record, this.members.map(bot => bot.approvals.get(record.id)).find(Boolean), lookup, this.owner.displayViews(record));
+    // Your line a head could not take into its turn under way waits in a queue: it says so until it is sent.
+    if (record.role === "user" && this.members.some(bot => bot.waitsFor(record.id))) view.queued = true;
     // The result pages it links to, as preview cards, when the library has the card (Phase 5c).
     const previews = this.owner.previews(record);
     if (previews) view.previews = previews.map((data) => ({ name: PAGE_COMPONENT, data }));
@@ -2591,8 +2595,25 @@ export class Bot {
     return true;
   }
 
+  /** Your line `id` is in this head's queue and not sent. */
+  private waitsFor(id: string): boolean {
+    return this.queue.some((turn) => turn.open && !turn.sent && turn.origin === "user" && turn.userId === id);
+  }
+
+  /** Draws your line again when it entered or left the queue (the "Queued" mark). */
+  private redrawQueued(turn: Turn) {
+    const record = turn.origin === "user" && turn.userId ? this.owner.records.find((candidate) => candidate.id === turn.userId) : undefined;
+    if (record) this.owner.emit({ type: "message.updated", botId: this.owner.id, message: this.owner.messageView(record) });
+  }
+
   /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
   private route(turn: Turn): Turn {
+    const routed = this.routeTurn(turn);
+    if (routed === turn && this.queue.includes(turn)) this.redrawQueued(turn);
+    return routed;
+  }
+
+  private routeTurn(turn: Turn): Turn {
     this.requireEngineRoute(this.engine, this.owner.engine);
     const current = this.turn;
     // The core is being swapped (hot-swap.ts): nothing new begins; it waits and is handed over.
@@ -2666,14 +2687,18 @@ export class Bot {
   /**
    * 1.x's steering: a message from you while a head works joins the turn under way (Codex: `turn/steer`;
    * claude: on its stdin), unless that turn is handed-over work (paused for you: `canPause`) or the tidy.
-   * claude takes it only with no approval open and no foreground subagent at work (else it waits).
+   * claude takes it in the user's own turn whatever is open; in work the user did not start only with no approval open and no foreground subagent at work (else it waits).
    */
   private canSteer(current: Turn, next: Turn): boolean {
     if (next.origin !== "user" || current.origin === "tidy" || current.conducted || !current.open || !current.sent) return false;
     if (current.head !== this.head || !this.head?.running || this.draining || this.ignoreResults || this.ending.has(this.head)) return false;
     if (this.head instanceof AgyAcpHead) return false;
     if (this.head instanceof CodexHead) return true;
-    return !this.queue.length && !this.approvals.size && !this.subagents.running.some((subagent) => !subagent.background);
+    // claude reads a line on its stdin at its next step, so an open approval (answered by its card, never by words) or a
+    // foreground subagent does not stop the user's own turn from taking it. Work the user did not start keeps those
+    // gates: there `canPause` refused for them, and joining it unpaused would turn it into the user's turn.
+    if (this.queue.length) return false;
+    return current.origin === "user" || (!this.approvals.size && !this.subagents.running.some((subagent) => !subagent.background));
   }
 
   /** Steers `next` into `current`: the reply now answers your latest words, and shows after them. */
@@ -2742,6 +2767,7 @@ export class Bot {
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
   private begin(turn: Turn, head?: AgentHead) {
     this.turn = turn;
+    this.redrawQueued(turn);
     this.clearIdle();
     if (turn.origin !== "tidy") {
       this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId, head: this.engine });
@@ -3528,6 +3554,9 @@ export class Bot {
         return true;
       case "subagentText":
         if (this.subagents.text(item.parent, item.text)) this.subagentChanged(this.subagents.get(item.parent), true);
+        return true;
+      case "subagentUser":
+        if (this.subagents.said(item.parent, item.text, item.from)) this.subagentChanged(this.subagents.get(item.parent), true);
         return true;
       case "subagentStarted":
         // Initial ownership comes from the Agent call, never from whichever turn is now visible.
@@ -5858,7 +5887,7 @@ export function streamingText(raw: string): string {
 function subagentOf(item: CodexItem): string | null {
   switch (item.kind) {
     case "toolUse": case "toolResult": return item.parent;
-    case "subagentText": return item.parent;
+    case "subagentText": case "subagentUser": return item.parent;
     case "subagentStarted": case "subagentWaiting": case "subagentOutput": return item.id;
     default: return null;
   }
@@ -5915,6 +5944,11 @@ export function stepView(step: StepRecord, subagents?: Pick<SubagentBook, "get">
   };
   const images = readImages(step);
   if (images.length) view.images = images;
+  if (kind === "message" && step.from) {
+    view.from = step.from.slice(0, 40);
+    if (typeof step.at === "number") view.time = iso(step.at);
+    if (step.queued) view.queued = true;
+  }
   if (kind === "subagent") {
     view.status = subagent?.status ?? (step.done ? (step.failed ? "failed" : "completed") : "running");
     view.count = subagent ? toolCount(subagent) : null;

@@ -269,7 +269,8 @@ export class WorkerCore implements WorkerHost {
   /** Every record (copies), oldest first: for a facade's own views. */
   all(): WorkerLedgerRecord[] { return [...this.records.values()].map((r) => structuredClone(r)); }
 
-  sendToWorker(id: string, words: string): Maybe<WorkerSendResult> {
+  /** `from`: who is speaking, as the worker's own view shows it ("owner" for the host path, "coordinator" for app_send_message; the view names both by the owner bot). */
+  sendToWorker(id: string, words: string, from = "owner"): Maybe<WorkerSendResult> {
     const r = this.find(id);
     if (!r || this.closed) return { ok: false, reason: "No such worker." };
     if (typeof words !== "string" || !words.trim() || words.length > MAX_WORDS) return { ok: false, reason: `Message required (maximum ${MAX_WORDS} characters).` };
@@ -288,7 +289,11 @@ export class WorkerCore implements WorkerHost {
       if (live && !live.starting && !live.done) {
         try { steered = adapter.steer(r, words); } catch (error) { this.options.log(`worker ${r.id}: steer failed: ${(error as Error).message}`); }
       }
-      if (steered) traceStep("Steer", r);
+      if (steered) {
+        traceStep("Steer", r);
+        // The worker's own view shows the line, once, for every engine (adapters never do).
+        if (live) this.onEvent(r.id, live, { type: "userText", text: words, from });
+      }
       return steered ? { ok: true, how: "steered", run: r.run } : { ok: false, busy: true, reason: "This worker is starting or stopping; try again in a moment." };
     }
     if (r.cleanup === "pending") return { ok: false, busy: true, reason: "This worker is still cleaning up after its run; try again in a moment." };
@@ -463,7 +468,7 @@ export class WorkerCore implements WorkerHost {
     if (this.options.port.ack === "checkpoint" && r.status !== "running" && this.activeReports.get(r.id) !== r.run
       && (r.report.state === "dispatching" || (r.report.state === "pending" && r.report.attempts === 0)))
       throw new Error("The prior worker report must be acknowledged before continuation.");
-    const sent = await this.sendToWorker(r.id, typeof args.message === "string" ? args.message : "");
+    const sent = await this.sendToWorker(r.id, typeof args.message === "string" ? args.message : "", "coordinator");
     if (!sent.ok) throw new Error(sent.reason);
     return { task_id: r.id, run: sent.run, status: sent.how === "steered" ? "steered" : "accepted" };
   }

@@ -251,6 +251,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       replyTo: message.replyTo ?? null,
       replyPreview: message.replyPreview ?? null,
       ...(message.role === "user" && message.via ? { via: message.via } : {}),
+      ...(message.role === "user" && message.queued ? { queued: true } : {}),
       openable: false,
       steps: steps?.length ? steps.map(step) : null,
       // Stopped or cut off: its words so far stay, and it says so.
@@ -343,9 +344,10 @@ function clock(iso: string | null): string | null {
 export function subagentState(bot: BotView, subagent: SubagentView): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   const extras: FrameExtras = { botId: bot.id, running: false, states: {} };
-  const line = (id: string, role: "user" | "bot" | "error", text: string, steps: WebStep[], time: string | null = null): WebMessage => ({
+  const line = (id: string, role: "user" | "bot" | "error", text: string, steps: WebStep[], time: string | null = null, said?: { you?: boolean; queued?: boolean }): WebMessage => ({
     id: `${subagent.id}-${id}`, role, text, stamp: null, avatar: role === "bot" ? face : null, choices: null, chosen: null, answer: null, open: false,
-    attachments: null, replyTo: null, replyPreview: null, openable: false, speaker: role === "user" ? bot.name : null,
+    attachments: null, replyTo: null, replyPreview: null, openable: false, speaker: role === "user" && !said?.you ? bot.name : null,
+    ...(said?.queued ? { queued: true } : {}),
     steps: steps.length ? steps.map((s) => (subagent.status !== "running" && s.kind === "tool" ? { ...s, done: true } : s)) : null, time,
   });
   const messages: WebMessage[] = [];
@@ -360,7 +362,8 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     } else if (view.kind === "message") {
       if (pending.length) messages.push(line(`${view.id}-before`, "bot", "", pending));
       pending = [];
-      messages.push(line(view.id, "user", view.title, []));
+      // Words put into the run under way (a steer) say who spoke and when; a waiting one is marked queued.
+      messages.push(line(view.id, "user", view.title, [], view.from ? clock(view.time ?? null) : null, view.from ? { you: view.from === "user", queued: view.queued } : undefined));
       said = "";
     } else {
       pending.push(step(view));

@@ -256,6 +256,15 @@ export class SubagentBook {
     return true;
   }
 
+  /** Words put into the worker's run under way (a steer): one `message` step, from whom it came, in order with its work. */
+  said(parent: string, text: string, from: string, now = toSwiftDate()): boolean {
+    const owner = this.get(parent);
+    const words = text.trim();
+    if (!owner || !words) return false;
+    this.push(owner, { id: `${parent}:said:${owner.stepCount ?? 0}`, kind: "message", title: words, from, failed: false, done: true, at: now });
+    return true;
+  }
+
   started(item: { id: string; description: string; type: string | null; prompt: string; background: boolean; agentID?: string; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }, now = toSwiftDate()): boolean {
     const existing = this.get(item.id) ?? (item.agentID ? this.resolve(item.agentID) : undefined);
     if (existing) {

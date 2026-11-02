@@ -12,7 +12,7 @@ import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
 import { taskCardChips } from "./task-cards";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
-import { escapeHTML } from "./util";
+import { escapeHTML, queuedBadge } from "./util";
 
 /** What plugins add to how messages are drawn. */
 export const extensions = {
@@ -495,6 +495,7 @@ function userBody(message: MessageView): HTMLElement {
     name.textContent = message.speaker;
     body.append(name);
   }
+  if (message.queued) body.append(queuedBadge());
   // Sent by a plugin, not typed by you (`bots.send`).
   if (message.via) {
     const via = document.createElement("div");

@@ -46,6 +46,10 @@ export interface StepRecord {
   done: boolean;
   images?: string[];
   at?: number;
+  /** A `message` step put into a worker's run under way: who said it ("owner", "coordinator", or "user" where the user speaks to it directly). */
+  from?: string;
+  /** A `message` step the worker has not read yet (waiting for its run to end). Never stored on disk. */
+  queued?: boolean;
 }
 
 /** `MessageReaction`: an emoji on a line, and who put it there ("user", "head:claude"). */

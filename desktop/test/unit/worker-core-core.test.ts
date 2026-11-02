@@ -278,6 +278,24 @@ describe("follow-ups and steering", () => {
     expect(kinds("subagentEnded")).toHaveLength(1);
   });
 
+  it("steered words become a subagentUser item in the worker's own run, in order with its text; a refused steer records nothing", async () => {
+    const { core, adapter, items, kinds } = setup();
+    const { task_id: id } = await core.handoff("claude-process", { instructions: "Go" });
+    adapter.emit(id, { type: "textDelta", text: "Working on " });
+    expect(await core.sendToWorker(id, "Also check docs")).toEqual({ ok: true, how: "steered", run: 1 });
+    adapter.emit(id, { type: "textDelta", text: "docs now" });
+    await core.message({ task_id: id, message: "from the coordinator" });
+    adapter.steers = false;
+    await core.sendToWorker(id, "refused");
+    adapter.emit(id, normal("DONE"));
+    const lines = items.filter((item) => item.kind === "subagentUser" || item.kind === "subagentText").map((item: any) => [item.kind, item.text, item.from ?? null]);
+    expect(lines).toEqual([
+      ["subagentText", "Working on ", null], ["subagentUser", "Also check docs", "owner"],
+      ["subagentText", "docs now", null], ["subagentUser", "from the coordinator", "coordinator"],
+    ]);
+    expect(kinds("subagentUser")[0]).toMatchObject({ parent: id });
+  });
+
   it("a running ACP worker takes no words until it reports", async () => {
     const adapter = new FakeAdapter("agy-acp", "agy", false);
     const { core } = setup({ adapter });
