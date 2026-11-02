@@ -236,12 +236,14 @@ class Chat {
     const end = this.navigatingHistory ? Math.min(state.messages.length, start + historyWindowSize) : state.messages.length;
     const messages = state.messages.slice(start, end);
     this.historyLatest.hidden = end === state.messages.length;
-    this.historyLatest.textContent = t("history.latest", { line: newest?.text.replace(/\s+/g, " ").slice(0, 80) ?? "" });
+    const latestText = t("history.latest", { line: newest?.text.replace(/\s+/g, " ").slice(0, 80) ?? "" });
+    if (this.historyLatest.textContent !== latestText) this.historyLatest.textContent = latestText;
     this.firstID = messages[0]?.id ?? null;
     // Older lines the app still holds count as more to load.
     const olderInApp = state.history?.hasMore ? state.history.older : 0;
     this.historyMore.hidden = start === 0 && !olderInApp;
-    this.historyMore.textContent = t("messages.loadEarlier", { n: Math.min(start + olderInApp, historyPageSize) });
+    const moreText = t("messages.loadEarlier", { n: Math.min(start + olderInApp, historyPageSize) });
+    if (this.historyMore.textContent !== moreText) this.historyMore.textContent = moreText;
     const keep = new Set(messages.map((message) => message.id));
     for (const [id, entry] of this.drawn) {
       if (!keep.has(id)) {

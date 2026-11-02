@@ -104,7 +104,9 @@ export class DecorationLayer {
   }
 
   private place(id: string, decoration: DecorationView, state: ChatState, row: (id: string) => HTMLElement | null): boolean {
-    const rows = decoration.fold?.length ? decoration.fold.map(row).filter((found): found is HTMLElement => !!found) : [];
+    // The card goes before the first of its lines as they stand in the page, whatever order they are listed in.
+    const rows = decoration.fold?.length ? decoration.fold.map(row).filter((found): found is HTMLElement => !!found)
+      .sort((a, b) => (a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)) : [];
     const anchor = !decoration.fold?.length && decoration.after ? row(decoration.after) : null;
     if (!rows.length && !anchor) return false;
     let placed = this.placed.get(id);

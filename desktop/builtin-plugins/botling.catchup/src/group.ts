@@ -180,7 +180,8 @@ function drawTriggers(context: DecorationContext, triggers: Map<string, HTMLButt
       trigger.addEventListener("click", () => { void page.call("interval", { botId, userMessageId }).catch(() => {}); });
       triggers.set(key, trigger);
     }
-    trigger.innerHTML = lines + escapeHTML(t("interval.summarize", { n: replies.length }));
+    const html = lines + escapeHTML(t("interval.summarize", { n: replies.length }));
+    if (trigger.dataset.drawn !== html) { trigger.dataset.drawn = html; trigger.innerHTML = html; }
     if (trigger.parentElement !== footer) footer.append(trigger);
     i = end - 1;
   }
