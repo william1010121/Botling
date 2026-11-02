@@ -198,7 +198,9 @@ export function NewBotForm({ onDone, busy }: { onDone: (made: { name: string; jo
 }
 
 /** A row's menu (1.x's contextMenu): "Remove bot…" for a bot of its own, "Remove project…" for a project. */
-export function BotMenu({ bot, at, onRemove, onClose, pinned, onTogglePin, onRestart, lang = null }: { bot: BotView; at: { x: number; y: number }; onRemove: () => void; onClose: () => void; pinned: boolean; onTogglePin: () => void; onRestart: () => void; lang?: string | null }) {
+export function BotMenu({ bot, at, onRemove, onClose, pinned, onTogglePin, onRestart, lang = null, commands = [], onCommand }: { bot: BotView; at: { x: number; y: number }; onRemove: () => void; onClose: () => void; pinned: boolean; onTogglePin: () => void; onRestart: () => void; lang?: string | null;
+  /** Plugins' commands for a bot (`contributes.menus["bot/context"]`), run with its id. */
+  commands?: { command: string; title: string }[]; onCommand?: (id: string) => void }) {
   useEffect(() => {
     const close = (event: Event) => { if (!(event.target instanceof Element && event.target.closest(".bot-menu"))) onClose(); };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -211,6 +213,10 @@ export function BotMenu({ bot, at, onRemove, onClose, pinned, onTogglePin, onRes
     <ShellOverlay><div className="bot-menu" role="menu" style={{ left: at.x, top: at.y }}>
         <button type="button" role="menuitem" className="bot-menu-item" onClick={onTogglePin}>{pinned ? "Unpin" : "Pin"}</button>
       <button type="button" role="menuitem" className="bot-menu-item" onClick={onRestart} title={lang === "zh-Hant" ? "在同一段對話中重新啟動，並載入最新的系統提示詞；正在進行的工作結束後才會生效" : "Starts it again in the same conversation with the current instructions; waits for work in progress to finish"}>{lang === "zh-Hant" ? "重新啟動 Bot" : "Restart bot"}</button>
+      {onCommand && commands.length > 0 && <>
+        <div className="bot-menu-rule" />
+        {commands.map((item) => <button key={item.command} type="button" role="menuitem" className="bot-menu-item" onClick={() => onCommand(item.command)}>{item.title}</button>)}
+      </>}
       <div className="bot-menu-rule" />
       <button type="button" role="menuitem" className="bot-menu-item destructive" onClick={onRemove}>{bot.role === "bot" ? "Remove bot…" : "Remove project…"}</button>
     </div></ShellOverlay>

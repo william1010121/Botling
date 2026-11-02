@@ -242,6 +242,7 @@ export const en = {
   "messages.addReaction": "Add reaction",
   "messages.reactEmoji": "React {emoji}",
   "messages.reply": "Reply",
+  "messages.more": "More",
   "messages.interrupted": "Interrupted",
   "messages.fold": "Fold",
   "messages.showMore": "Show more",
@@ -516,6 +517,10 @@ export const en = {
   "shortcuts.needModifier": "Hold ⌘, Ctrl or Alt together with the key.",
   "shortcuts.conflict": "{key} is already used for “{action}”. Change that one first.",
   "shortcuts.reserved": "{key} is reserved for “{action}”.",
+  "shortcuts.group.plugins": "Plugins",
+  "shortcuts.pluginNote": "Keys plugins add. A key the app or the system already has is not given to a plugin.",
+  "shortcuts.pluginTaken": "Off: {key} is used for “{action}”. Pick another key.",
+  "shortcuts.pluginNoKey": "No key",
 } as const satisfies Record<string, Word>;
 
 export type Key = keyof typeof en;

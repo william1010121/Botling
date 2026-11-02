@@ -20,7 +20,8 @@ import { Client, RequestFailed } from "./client";
 import { PanelFrame, PluginsPanel } from "./Plugins";
 import { faceURL } from "./avatars";
 import { EFFORTS_BY_ENGINE } from "../contract/efforts";
-import { FIXED_SHORTCUTS, SHORTCUTS, bindingsFor, comboFromEvent, findConflict, formatCombo, normalizeOverrides, resetBinding, setBinding, type ShortcutId } from "../contract/shortcuts";
+import { FIXED_SHORTCUTS, SHORTCUTS, bindingsFor, comboFromEvent, findConflict, formatCombo, normalizeOverrides, pluginBindings, resetBinding, setBinding, type Conflict } from "../contract/shortcuts";
+import { keybindingsOf } from "./plugin-commands";
 import { say, shellPlatform } from "./shortcut-labels";
 import type { Key } from "../../../Web/src/locales/en";
 
@@ -113,7 +114,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
             {current?.id === "doctor" && <DoctorSection client={client} />}
             {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
-            {shown && current?.id === "shortcuts" && <Shortcuts settings={shown} change={change} />}
+            {shown && current?.id === "shortcuts" && <Shortcuts settings={shown} change={change} plugins={plugins} />}
             {shown && current?.id === "phone" && <PhoneSettings client={client} bots={bots} lang={shown.effectiveLanguage} />}
             {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
             {shown && current?.id === "developer" && <WorktreeSettings settings={shown} change={change} />}
@@ -228,19 +229,25 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
  * the main bot's chat) and see the app's window (core/app-swap.ts).
  */
 /**
- * Settings → Shortcuts: every key the app handles, grouped, with its action and current key. Click a key and press
- * the new combination (Esc cancels); a key another shortcut or the system already has is refused with its name.
+ * Settings → Shortcuts: every key the app handles, grouped, with its action and current key, then the keys plugins
+ * add (plugin-platform.md §3.3). Click a key and press the new combination (Esc cancels); a key another shortcut,
+ * a plugin or the system already has is refused with its name. A plugin key taken by the app is shown as off.
  * Saved in settings.json and applied at once (the menu is rebuilt by main, the pages read the binding).
  */
-function Shortcuts({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
+function Shortcuts({ settings, change, plugins }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; plugins: PluginsView | null }) {
   const lang = settings.effectiveLanguage;
   const platform = shellPlatform();
   const overrides = useMemo(() => normalizeOverrides(settings.shortcuts), [settings.shortcuts]);
   const bindings = bindingsFor(overrides);
-  const [recording, setRecording] = useState<ShortcutId | null>(null);
-  const [refusal, setRefusal] = useState<{ id: ShortcutId; text: string } | null>(null);
-  const latest = useRef({ overrides, change }); latest.current = { overrides, change };
+  const keybindings = useMemo(() => keybindingsOf(plugins), [plugins]);
+  const pluginKeys = pluginBindings(keybindings, overrides);
+  const [recording, setRecording] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<{ id: string; text: string } | null>(null);
+  const latest = useRef({ overrides, change, keybindings }); latest.current = { overrides, change, keybindings };
   const word = (key: string, values?: Record<string, string | number>) => say(lang, key as Key, values);
+  /** What a conflict is called: the app shortcut's action, the plugin command's title or the system key's name. */
+  const named = (conflict: Conflict) => conflict.kind === "shortcut" ? word(`shortcuts.action.${conflict.id}`)
+    : conflict.kind === "command" ? latest.current.keybindings.find((binding) => binding.command === conflict.id)?.title ?? conflict.id : word(`shortcuts.fixed.${conflict.id}`);
   useEffect(() => {
     if (!recording) return;
     // The menu's accelerators step aside while a key is recorded, so Cmd+R and the like reach this page.
@@ -251,14 +258,14 @@ function Shortcuts({ settings, change }: { settings: SettingsView; change: (next
       if (event.key === "Escape") { setRecording(null); setRefusal(null); return; }
       const combo = comboFromEvent(event, platform);
       if (!combo) { setRefusal({ id: recording, text: word("shortcuts.needModifier") }); return; }
-      const conflict = findConflict(recording, combo, latest.current.overrides);
+      const conflict = findConflict(recording, combo, latest.current.overrides, latest.current.keybindings);
       if (conflict) {
-        const action = conflict.kind === "shortcut" ? word(`shortcuts.action.${conflict.id}`) : word(`shortcuts.fixed.${conflict.id}`);
-        setRefusal({ id: recording, text: word(conflict.kind === "shortcut" ? "shortcuts.conflict" : "shortcuts.reserved", { key: formatCombo(combo, platform), action }) });
+        setRefusal({ id: recording, text: word(conflict.kind === "fixed" ? "shortcuts.reserved" : "shortcuts.conflict", { key: formatCombo(combo, platform), action: named(conflict) }) });
         return;
       }
       setRecording(null); setRefusal(null);
-      void latest.current.change({ key: "shortcuts", value: setBinding(latest.current.overrides, recording, combo) });
+      const plugin = latest.current.keybindings.find((binding) => binding.command === recording);
+      void latest.current.change({ key: "shortcuts", value: plugin ? setBinding(latest.current.overrides, recording, combo, plugin.key) : setBinding(latest.current.overrides, recording, combo) });
     };
     window.addEventListener("keydown", onKey, true);
     return () => { window.removeEventListener("keydown", onKey, true); (window as unknown as { botling?: { shortcuts?: { suspend(on: boolean): void } } }).botling?.shortcuts?.suspend(false); };
@@ -284,6 +291,23 @@ function Shortcuts({ settings, change }: { settings: SettingsView; change: (next
           onClick={() => { setRecording(null); setRefusal(null); void change({ key: "shortcuts", value: {} }); }}>{word("shortcuts.resetAll")}</button></div>}
       </Group>
     ))}
+    {pluginKeys.length > 0 && <Group title={word("shortcuts.group.plugins")} note={word("shortcuts.pluginNote")}>
+      {pluginKeys.map((entry) => {
+        const isDefault = !overrides[entry.command];
+        const hint = refusal?.id === entry.command ? refusal.text
+          : entry.conflict && entry.combo === null ? word("shortcuts.pluginTaken", { key: formatCombo(overrides[entry.command] ?? entry.key, platform), action: named(entry.conflict) })
+          : isDefault ? entry.plugin : `${entry.plugin} · ${word("shortcuts.defaultKey", { key: formatCombo(entry.key, platform) })}`;
+        return (
+          <Row key={entry.command} label={entry.title} hint={hint}>
+            <button type="button" aria-label={word("shortcuts.change", { action: entry.title })} onClick={() => { setRefusal(null); setRecording(recording === entry.command ? null : entry.command); }}
+              onBlur={() => { if (recording === entry.command) { setRecording(null); setRefusal(null); } }}>
+              {recording === entry.command ? word("shortcuts.recording") : entry.combo ? formatCombo(entry.combo, platform) : word("shortcuts.pluginNoKey")}
+            </button>
+            <button type="button" disabled={isDefault} onClick={() => { setRecording(null); setRefusal(null); void change({ key: "shortcuts", value: resetBinding(overrides, entry.command) }); }}>{word("shortcuts.reset")}</button>
+          </Row>
+        );
+      })}
+    </Group>}
     {(["system", "chat"] as const).map((group) => (
       <Group key={group} title={word(`shortcuts.group.${group}`)} note={group === "chat" ? word("shortcuts.fixedNote") : undefined}>
         {FIXED_SHORTCUTS.filter((entry) => entry.group === group && (entry.platform === undefined || (entry.platform === "mac") === (platform === "darwin"))).map((entry) => (

@@ -62,7 +62,7 @@ export interface WorkspaceView {
 }
 
 /** Only inputs used by the selected chat page; sidebar activity is deliberately excluded. */
-export type ChatRenderView = Pick<WorkspaceView, "chat" | "subagent" | "board" | "settings" | "components" | "resyncs" | "bots"> & { libraryVersion: number };
+export type ChatRenderView = Pick<WorkspaceView, "chat" | "subagent" | "board" | "settings" | "components" | "resyncs" | "bots" | "plugins"> & { libraryVersion: number };
 
 // Worker progress changes the selected bot's sidebar row on every step. Compare only
 // its chat inputs before invalidating the expensive history conversion. Keep unknown/new
@@ -133,9 +133,9 @@ export class WorkspaceStore {
     }) ? previous.bots : view.bots;
     if (previous && previous.chat === view.chat && previous.subagent === view.subagent && previous.board === view.board
       && previous.settings === view.settings && previous.libraryVersion === this.libraryVersion
-      && previous.resyncs === view.resyncs && previous.bots === bots) return previous;
+      && previous.resyncs === view.resyncs && previous.bots === bots && previous.plugins === view.plugins) return previous;
     return this.chatView = { chat: view.chat, subagent: view.subagent, board: view.board, settings: view.settings,
-      components: view.components, libraryVersion: this.libraryVersion, resyncs: view.resyncs, bots };
+      components: view.components, libraryVersion: this.libraryVersion, resyncs: view.resyncs, bots, plugins: view.plugins };
   };
 
   subscribeChat = (listener: () => void) => {

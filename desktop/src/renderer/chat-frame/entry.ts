@@ -31,7 +31,7 @@ observeTraceEditor();
 // Local media comes from the currently shown chat's authenticated origin.
 let shownChat: string | undefined;
 setMediaSource((url) => localMediaSource(shownChat, url));
-installNativeShellCommands();
+installNativeShellCommands((id) => window.ccb?.runLocalCommand?.(id) ?? false);
 // Reload Chat Page: the drafts this tab kept come back (the chat itself comes back from the core
 // through the shell's next state). The one being typed is kept as the old document goes away, so the
 // composer's half-second save delay cannot lose the last words.
@@ -187,7 +187,9 @@ fromShell(message => {
   } else if (message.botling === "widthRejected") {
     column.rejected(message.value, message.actual);
   } else if (message.botling === "shortcuts") {
-    setShortcutBindings(message.bindings);
+    setShortcutBindings(message.bindings, message.commands);
+  } else if (message.botling === "runCommand") {
+    window.ccb.runCommand(message.id);
   } else if (message.botling === "widthPreview") {
     column.preview(message.value);
   } else if (message.botling === "messageWidthPointer") {
@@ -270,7 +272,8 @@ const latex = {
   source: __LATEX_SOURCE__,
   styles: [new URL("plugins/ccb-latex/katex.min.css", location.href).toString()],
   settings: { "ccb-latex.preview": true, "ccb-latex.copyTeX": true },
-  commands: [{ id: "ccb-latex.insert", title: "Insert inline formula", key: "cmd+shift+m" }],
+  // Its key (Mod+Shift+M) is the shell's to bind (plugin-commands.ts BUNDLED_KEYBINDINGS).
+  commands: [{ id: "ccb-latex.insert", title: "Insert inline formula" }],
 };
 /**
  * Plugins' web parts run here as in 1.x (Phase 4a: this page has an origin of its own, so they reach

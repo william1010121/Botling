@@ -3,6 +3,8 @@
 // Mod, Ctrl, Cmd, Alt, Shift, then one key. `Mod` is Cmd on macOS and Ctrl elsewhere; `Ctrl` and `Cmd`
 // are those physical keys (Ctrl+Cmd+I is both held, as before). Settings keep only the bindings that
 // differ from the default (`shortcutBindings` in settings.json); anything unusable falls back to it.
+// Plugin commands take keys here too (plugin-platform.md §3.3 `keybindings`): a binding's id is then the
+// command id ("uptime.refresh"), its default the manifest's key, and app shortcuts and system keys win.
 
 export type ShortcutId = "search" | "settings" | "toggleSidebar" | "toggleRightPanel" | "toggleTerminal" | "reload" | "forceReload" | "reloadChat";
 export type ShortcutGroup = "navigation" | "panels" | "view";
@@ -34,9 +36,14 @@ export const FIXED_SHORTCUTS: readonly FixedShortcut[] = [
   { id: "send", group: "chat", combo: "Enter" }, { id: "newline", group: "chat", combo: "Shift+Enter" },
 ];
 
-export type Overrides = Partial<Record<ShortcutId, string>>;
+/** Rebound keys: an app shortcut's id or a plugin command's id, to its binding. */
+export type Overrides = Record<string, string>;
 export type Bindings = Record<ShortcutId, string>;
-export type Conflict = { kind: "shortcut"; id: ShortcutId } | { kind: "fixed"; id: string };
+export type Conflict = { kind: "shortcut"; id: ShortcutId } | { kind: "command"; id: string } | { kind: "fixed"; id: string };
+/** A plugin command's key as its manifest gives it (`key`, in either spelling), with whose it is. */
+export interface PluginKeybinding { command: string; key: string; plugin: string; title: string }
+/** A plugin key as it works now: `combo` is null when it is unusable or taken (`conflict` says by what). */
+export interface PluginBinding extends PluginKeybinding { combo: string | null; conflict: Conflict | null }
 export type Platform = NodeJS.Platform | string;
 
 const MODS = ["Mod", "Ctrl", "Cmd", "Alt", "Shift"] as const;
@@ -68,6 +75,23 @@ export function canonical(text: unknown): string | null {
   return combo ? [...combo.mods, combo.key].join("+") : null;
 }
 
+/** A plugin command's id ("<plugin>.<name>"); app shortcut ids never have a dot. */
+export const isCommandId = (id: string): boolean => id.length <= 200 && /^[A-Za-z0-9_-]+\.[A-Za-z0-9_.:-]+$/.test(id);
+
+const LEGACY_MODS: Record<string, Mod> = { cmd: "Mod", command: "Mod", meta: "Mod", ctrl: "Ctrl", control: "Ctrl", alt: "Alt", option: "Alt", shift: "Shift" };
+/** A key in this file's spelling, or the 1.x plugin one ("cmd+shift+l": cmd is Mod; cmd with ctrl is both held). */
+export function legacyKey(text: unknown): string | null {
+  const exact = canonical(text);
+  if (exact || typeof text !== "string" || text.length > 40) return exact;
+  const parts = text.toLowerCase().split("+");
+  const key = parts.pop() ?? "";
+  const mods = parts.map((part) => LEGACY_MODS[part]);
+  if (mods.some((mod) => !mod)) return null;
+  const spelled = mods.includes("Mod") && mods.includes("Ctrl") ? [...mods.filter((mod) => mod !== "Mod"), "Cmd"] : mods;
+  const named = [...NAMED].find((name) => name.toLowerCase() === key) ?? key.toUpperCase();
+  return canonical([...spelled, named].join("+"));
+}
+
 const defaults = (): Bindings => Object.fromEntries(SHORTCUTS.map(s => [s.id, s.default])) as Bindings;
 export const DEFAULT_BINDINGS: Readonly<Bindings> = defaults();
 
@@ -83,16 +107,49 @@ const fixedConflict = (combo: string): Conflict | null => {
   const found = FIXED_SHORTCUTS.find(f => f.combo === combo);
   return found ? { kind: "fixed", id: found.id } : null;
 };
-/** What `combo` would collide with if `id` took it: another shortcut (as bound now) or a fixed system key. */
-export function findConflict(id: ShortcutId, combo: string, overrides: unknown): Conflict | null {
+/**
+ * What `combo` would collide with if `id` (an app shortcut or a plugin command) took it: another app shortcut
+ * or plugin key (as bound now), or a fixed system key.
+ */
+export function findConflict(id: string, combo: string, overrides: unknown, plugins: readonly PluginKeybinding[] = []): Conflict | null {
   const wanted = canonical(combo);
   if (!wanted) return null;
   const now = bindingsFor(overrides);
   const other = SHORTCUT_IDS.find(candidate => candidate !== id && now[candidate] === wanted);
-  return other ? { kind: "shortcut", id: other } : fixedConflict(wanted);
+  if (other) return { kind: "shortcut", id: other };
+  const command = pluginBindings(plugins, overrides).find(binding => binding.command !== id && binding.combo === wanted);
+  return command ? { kind: "command", id: command.command } : fixedConflict(wanted);
 }
 
-/** Saved overrides cleaned: unknown ids, unusable keys, keys equal to the default and keys that collide are dropped. */
+/**
+ * Plugin keys in effect, one per command (the first given): the saved key, else the manifest's. App shortcuts
+ * and system keys come first, then keys you chose, then the manifests' in the order given; a key already
+ * taken leaves the later binding without one.
+ */
+export function pluginBindings(plugins: readonly PluginKeybinding[], overrides: unknown): PluginBinding[] {
+  const saved = normalizeOverrides(overrides);
+  const taken = new Map<string, Conflict>(Object.entries(bindingsFor(saved)).map(([id, combo]) => [combo, { kind: "shortcut", id: id as ShortcutId }]));
+  const seen = new Set<string>();
+  const list = plugins.filter(binding => isCommandId(binding.command) && !seen.has(binding.command) && seen.add(binding.command));
+  const out = new Map<string, PluginBinding>();
+  const take = (binding: PluginKeybinding, combo: string | null) => {
+    const conflict = combo ? taken.get(combo) ?? fixedConflict(combo) : null;
+    out.set(binding.command, { ...binding, combo: combo && !conflict ? combo : null, conflict });
+    if (combo && !conflict) taken.set(combo, { kind: "command", id: binding.command });
+  };
+  for (const binding of list) if (saved[binding.command]) take(binding, saved[binding.command]!);
+  for (const binding of list) if (!out.has(binding.command)) take(binding, legacyKey(binding.key));
+  return list.map(binding => out.get(binding.command)!);
+}
+/** Plugin command to key, for those that have one now. */
+export function commandBindings(plugins: readonly PluginKeybinding[], overrides: unknown): Record<string, string> {
+  return Object.fromEntries(pluginBindings(plugins, overrides).flatMap(binding => binding.combo ? [[binding.command, binding.combo]] : []));
+}
+
+/**
+ * Saved overrides cleaned: unknown ids, unusable keys, keys equal to the default and keys that collide are dropped.
+ * A plugin command's key is kept unless it is a system key or an app shortcut's (its default is not known here).
+ */
 export function normalizeOverrides(raw: unknown): Overrides {
   const saved = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
   const out: Overrides = {};
@@ -110,17 +167,25 @@ export function normalizeOverrides(raw: unknown): Overrides {
       }
     }
   }
+  const used = new Set(Object.values(bindingsFor(out)));
+  for (const [id, value] of Object.entries(saved)) {
+    const combo = isCommandId(id) ? canonical(value) : null;
+    if (combo && !fixedConflict(combo) && !used.has(combo)) { out[id] = combo; used.add(combo); }
+  }
   return out;
 }
 
-/** `id` bound to `combo` (an override equal to the default is no override). The caller checks conflicts first. */
-export function setBinding(overrides: Overrides, id: ShortcutId, combo: string): Overrides {
+/**
+ * `id` bound to `combo` (an override equal to the default is no override; a plugin command's default is its
+ * manifest key). The caller checks conflicts first.
+ */
+export function setBinding(overrides: Overrides, id: string, combo: string, defaultKey: string | null = DEFAULT_BINDINGS[id as ShortcutId] ?? null): Overrides {
   const next = { ...overrides };
   const wanted = canonical(combo);
-  if (!wanted || wanted === DEFAULT_BINDINGS[id]) delete next[id]; else next[id] = wanted;
+  if (!wanted || wanted === legacyKey(defaultKey)) delete next[id]; else next[id] = wanted;
   return next;
 }
-export function resetBinding(overrides: Overrides, id: ShortcutId): Overrides {
+export function resetBinding(overrides: Overrides, id: string): Overrides {
   const next = { ...overrides }; delete next[id]; return next;
 }
 
@@ -189,4 +254,8 @@ export function matchesEvent(text: string, event: KeyLike): boolean {
 /** The shortcut a key press is, among `bindings`. */
 export function actionForEvent(event: KeyLike, bindings: Bindings): ShortcutId | null {
   return SHORTCUT_IDS.find(id => matchesEvent(bindings[id], event)) ?? null;
+}
+/** The plugin command a key press runs, among `commands` (command to key, from `commandBindings`). */
+export function commandForEvent(event: KeyLike, commands: Readonly<Record<string, string>>): string | null {
+  return Object.keys(commands).find(id => matchesEvent(commands[id], event)) ?? null;
 }

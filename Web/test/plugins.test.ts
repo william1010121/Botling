@@ -3,7 +3,7 @@ import { activate as latex } from "../plugins/ccb-latex/src/web";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
 import { messageElement } from "../src/messages";
-import { matches, PluginHost, type PluginSpec } from "../src/plugins";
+import { PluginHost, type PluginSpec } from "../src/plugins";
 import type { MessageView } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
@@ -121,7 +121,7 @@ describe("plugin host", () => {
     void answers;
   });
 
-  it("runs commands from their shortcut and tells plugins when settings change", async () => {
+  it("runs a command its web part registered when a key asks for it, and tells plugins when settings change", async () => {
     const seen: unknown[] = [];
     let ran = 0;
     const activate = async () => (ccb: Parameters<typeof latex>[0]) => {
@@ -130,16 +130,16 @@ describe("plugin host", () => {
     };
     const commands = [{ id: "tool.run", title: "Run", key: "cmd+shift+l" }];
     await host.sync([spec("tool", { commands, settings: { "tool.mode": "a" } })], activate);
+    expect(host.runLocal("tool.run")).toBe(true);
+    expect(ran).toBe(1);
+    expect(host.runLocal("tool.other")).toBe(false);
+    expect(sent.filter((action) => action.type === "command")).toEqual([]);
+    // Keys are matched by the page's one dispatcher (shortcuts.ts, Mod+Shift+L), not here in the 1.x spelling.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "L", metaKey: true, shiftKey: true }));
     expect(ran).toBe(1);
     await host.sync([spec("tool", { commands, settings: { "tool.mode": "b" } })], activate);
     expect(seen).toEqual(["b"]);
     expect(host.isLoaded("tool")).toBe(true);
-  });
-
-  it("matches shortcut keys exactly", () => {
-    expect(matches("cmd+shift+l", new KeyboardEvent("keydown", { key: "l", metaKey: true, shiftKey: true }))).toBe(true);
-    expect(matches("cmd+shift+l", new KeyboardEvent("keydown", { key: "l", metaKey: true }))).toBe(false);
   });
 });
 

@@ -2211,7 +2211,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.enable": return this.plugins.setEnabled(cmd.name, cmd.enabled);
       case "plugins.setting": return this.plugins.setSetting(cmd.name, cmd.key, cmd.value);
       case "plugins.secret": return this.plugins.setSecret(cmd.name, cmd.key, cmd.value);
-      case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name) ?? null };
+      case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };

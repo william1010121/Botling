@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SHORTCUTS, FIXED_SHORTCUTS, bindingsFor, normalizeOverrides, setBinding, resetBinding, findConflict, toAccelerator,
-  matchesEvent, comboFromEvent, formatCombo, actionForEvent, parseCombo } from '../../src/contract/shortcuts';
+  matchesEvent, comboFromEvent, formatCombo, actionForEvent, parseCombo, legacyKey, pluginBindings, commandBindings, commandForEvent } from '../../src/contract/shortcuts';
 import { applySetting, settingsView } from '../../src/core/settings';
 import { SettingsChange } from '../../src/contract';
 
@@ -84,5 +84,63 @@ describe('shortcut settings', () => {
     expect(settingsView({ shortcutBindings: { search: 5, reload: 'Mod+Shift+L' } }).shortcuts).toEqual({ reload: 'Mod+Shift+L' });
     expect(applySetting(saved, { key: 'shortcuts', value: {} }).shortcutBindings).toBeUndefined();
     expect(SettingsChange.safeParse({ key: 'shortcuts', value: { search: 'Mod+L' } }).success).toBe(true);
+  });
+});
+
+describe('plugin keybindings', () => {
+  const latex = { command: 'ccb-latex.insert', key: 'cmd+shift+m', plugin: 'ccb-latex', title: 'Insert inline formula' };
+  const uptime = { command: 'uptime.refresh', key: 'Mod+Shift+U', plugin: 'uptime', title: 'Refresh uptime' };
+  it('reads the old "cmd+shift+l" spelling as Mod+Shift+L, and the new spelling as it is', () => {
+    expect(legacyKey('cmd+shift+l')).toBe('Mod+Shift+L');
+    expect(legacyKey('ctrl+alt+k')).toBe('Ctrl+Alt+K');
+    expect(legacyKey('option+cmd+1')).toBe('Mod+Alt+1');
+    expect(legacyKey('cmd+ctrl+i')).toBe('Ctrl+Cmd+I');
+    expect(legacyKey('Mod+Shift+U')).toBe('Mod+Shift+U');
+    expect(legacyKey('shift+l')).toBeNull();
+    expect(legacyKey('cmd+nonsense')).toBeNull();
+  });
+  it('binds a plugin command to its manifest key until you change it', () => {
+    expect(commandBindings([latex, uptime], {})).toEqual({ 'ccb-latex.insert': 'Mod+Shift+M', 'uptime.refresh': 'Mod+Shift+U' });
+    expect(commandBindings([latex, uptime], { 'uptime.refresh': 'Mod+Alt+U' })).toEqual({ 'ccb-latex.insert': 'Mod+Shift+M', 'uptime.refresh': 'Mod+Alt+U' });
+    expect(commandForEvent(ev({ key: 'u', metaKey: true, shiftKey: true }), commandBindings([uptime], {}))).toBe('uptime.refresh');
+    expect(commandForEvent(ev({ key: 'u', metaKey: true }), commandBindings([uptime], {}))).toBeNull();
+  });
+  it('never lets a plugin take an app shortcut, a system key or an earlier plugin\'s key', () => {
+    const taken = [
+      { command: 'a.search', key: 'Mod+K', plugin: 'a', title: 'A' },
+      { command: 'b.copy', key: 'cmd+c', plugin: 'b', title: 'B' },
+      { command: 'c.one', key: 'Mod+Shift+U', plugin: 'c', title: 'C' },
+      { ...uptime },
+    ];
+    const bound = pluginBindings(taken, {});
+    expect(bound.map(b => [b.command, b.combo, b.conflict])).toEqual([
+      ['a.search', null, { kind: 'shortcut', id: 'search' }],
+      ['b.copy', null, { kind: 'fixed', id: 'copy' }],
+      ['c.one', 'Mod+Shift+U', null],
+      ['uptime.refresh', null, { kind: 'command', id: 'c.one' }],
+    ]);
+    // The app shortcut keeps working exactly as before.
+    expect(actionForEvent(ev({ key: 'k', metaKey: true }), bindingsFor({}))).toBe('search');
+    // Moving the app shortcut away frees its key for the plugin.
+    expect(commandBindings(taken, { search: 'Mod+L' })['a.search']).toBe('Mod+K');
+  });
+  it('detects conflicts between app shortcuts and plugin keys both ways', () => {
+    expect(findConflict('search', 'Mod+Shift+U', {}, [uptime])).toEqual({ kind: 'command', id: 'uptime.refresh' });
+    expect(findConflict('uptime.refresh', 'Mod+J', {}, [uptime])).toEqual({ kind: 'shortcut', id: 'toggleTerminal' });
+    expect(findConflict('uptime.refresh', 'Mod+Shift+M', {}, [latex, uptime])).toEqual({ kind: 'command', id: 'ccb-latex.insert' });
+    expect(findConflict('uptime.refresh', 'Mod+Shift+U', {}, [uptime])).toBeNull();
+    expect(findConflict('uptime.refresh', 'Mod+V', {}, [uptime])).toEqual({ kind: 'fixed', id: 'paste' });
+  });
+  it('keeps plugin overrides in settings, drops unusable ones, and resets to the manifest key', () => {
+    expect(normalizeOverrides({ 'uptime.refresh': 'Mod+Alt+U', 'bad id': 'Mod+Alt+B', 'x.y': 'Mod+C', 'x.z': 'Mod+J', search: 'Mod+L' }))
+      .toEqual({ search: 'Mod+L', 'uptime.refresh': 'Mod+Alt+U' });
+    let o = setBinding({}, 'uptime.refresh', 'Mod+Alt+U', uptime.key);
+    expect(o).toEqual({ 'uptime.refresh': 'Mod+Alt+U' });
+    expect(setBinding(o, 'uptime.refresh', 'Mod+Shift+U', uptime.key)).toEqual({});
+    o = resetBinding(o, 'uptime.refresh');
+    expect(commandBindings([uptime], o)['uptime.refresh']).toBe('Mod+Shift+U');
+    const saved = applySetting({}, { key: 'shortcuts', value: { 'uptime.refresh': 'Mod+Alt+U' } });
+    expect(settingsView(saved).shortcuts).toEqual({ 'uptime.refresh': 'Mod+Alt+U' });
+    expect(SettingsChange.safeParse({ key: 'shortcuts', value: { 'a-plugin.with-a-long-command-name.that-runs': 'Mod+Alt+U' } }).success).toBe(true);
   });
 });

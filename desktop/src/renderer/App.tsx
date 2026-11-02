@@ -10,12 +10,13 @@ import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { actionForEvent, bindingsFor } from "../contract/shortcuts";
+import { actionForEvent, bindingsFor, commandBindings, commandForEvent } from "../contract/shortcuts";
 import { setShortcutLabels, shortcutLabel } from "./shortcut-labels";
-import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
+import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
+import { keybindingsOf, menuItems, offered, runsInHost, type PluginMenu } from "./plugin-commands";
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
@@ -92,6 +93,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   }, [client, store]);
   // The app's keys (Settings > Shortcuts): ⌘, Settings, ⌃⌘I the right panel, ⌃⌘S the left column, ⌘K its search, by default.
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
+  // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
+  const pluginKeys = useMemo(() => commandBindings(keybindingsOf(view.plugins), view.settings?.shortcuts), [view.plugins, view.settings?.shortcuts]);
+  const runCommand = useCallback((id: string, args: string[] = []) => runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure))), [client, store]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       switch (actionForEvent(event, shortcutBindings)) {
@@ -99,6 +103,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
         case "toggleSidebar": event.preventDefault(); toggleRail(); break;
         case "search": event.preventDefault(); startSearch(); break;
+        case null: {
+          const command = event.defaultPrevented ? null : commandForEvent(event, pluginKeys);
+          if (command) { event.preventDefault(); runCommand(command); }
+          break;
+        }
       }
     };
     const onCommand = (event: Event) => {
@@ -112,7 +121,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     window.addEventListener("botling:chat-command", onCommand);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings]);
+  }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings, pluginKeys, runCommand]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   // The spec open in the right panel, when it is made from a line of the chat on screen.
@@ -386,7 +395,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
         onRemove={() => { setRemoving(menu.bot); setMenu(null); }}
         pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }}
-        lang={view.settings?.effectiveLanguage ?? null} onRestart={() => { const target = menu.bot; setMenu(null); setError(null); void client.request({ type: "bot.restart", botId: target.id }).catch(fail); }} />}
+        lang={view.settings?.effectiveLanguage ?? null} onRestart={() => { const target = menu.bot; setMenu(null); setError(null); void client.request({ type: "bot.restart", botId: target.id }).catch(fail); }}
+        commands={menuItems(view.plugins, "bot/context")} onCommand={(id) => { const target = menu.bot; setMenu(null); runCommand(id, [target.id]); }} />}
       {agentMenu && <AgentMenu row={agentMenu.row} at={{ x: agentMenu.x, y: agentMenu.y }} onClose={() => setAgentMenu(null)}
         load={() => client.request({ type: "agent.targets", botId: agentMenu.botId, subagentId: agentMenu.row.id }) as Promise<AgentTargets>}
         onMove={(to) => moveSubagent(agentMenu.botId, agentMenu.row, to)}
@@ -614,6 +624,15 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
 }
 
 /** The reused chat page, in a frame. */
+/**
+ * A plugin command from a key, the / menu or a menu: in the plugin host (the app page asks, so the core runs any),
+ * or in the chat page when a web part there registered it.
+ */
+function runPluginCommand(client: Client, plugins: PluginsView | null | undefined, id: string, args: string[], onError: (failure: unknown) => void) {
+  if (runsInHost(plugins, id)) void client.request({ type: "plugins.command", id, ...(args.length ? { args } : {}) }).catch(onError);
+  else postToChat({ botling: "runCommand", id });
+}
+
 function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void;
   onAsk: (view: ApprovalAskView, approve: import("../contract").Command) => void }) {
   const [report, setReport] = useState<{botId: string; url: string} | null>(null);
@@ -650,6 +669,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
       lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, pasteCollapseChars: current.settings?.pasteCollapseChars, pasteCollapseLines: current.settings?.pasteCollapseLines, bots: current.bots,
       // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
+      plugins: current.plugins,
     });
     const traceId = inputTrace()?.mark("shell.state.send", () => ({ chat: state.botID, ...inputTrace()!.snapshot() }));
     return { state, extras, libraryVersion: current.libraryVersion, resyncs: current.resyncs,
@@ -700,7 +720,8 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
   // The chat page relays the app's keys too, so it is told which they are (again when it reloads).
   const savedShortcuts = useSyncExternalStore(store.subscribe, () => store.getView().settings?.shortcuts);
   const shortcutBindings = useMemo(() => bindingsFor(savedShortcuts), [savedShortcuts]);
-  const pushShortcuts = useCallback(() => postToChat({ botling: "shortcuts", bindings: shortcutBindings }), [shortcutBindings]);
+  const pluginKeys = useMemo(() => commandBindings(keybindingsOf(plugins), savedShortcuts), [plugins, savedShortcuts]);
+  const pushShortcuts = useCallback(() => postToChat({ botling: "shortcuts", bindings: shortcutBindings, commands: pluginKeys }), [shortcutBindings, pluginKeys]);
   useEffect(() => { if (ready.current) pushShortcuts(); }, [pushShortcuts]);
 
   // The frame owns loss detection and text input. The shell only restores its window before
@@ -1157,6 +1178,16 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
             void client.request({ type: "plugins.notice", name: action.name, text: action.text.slice(0, 4_000) }).catch(() => {});
           }
           return;
+        // A plugin command from a key, the / menu or a reply's menu: only one that is offered that way now.
+        case "runCommand": {
+          const via = action.via === "key" || action.via === "slash" || action.via === "menu" ? action.via : null;
+          const menu: PluginMenu | undefined = action.menu === "message/context" ? "message/context" : undefined;
+          const current = store.getView().plugins;
+          if (!via || typeof action.id !== "string" || !offered(current, action.id, via, menu)) return;
+          const args = menu && chat && typeof action.messageID === "string" ? [chat.botId, action.messageID.slice(0, 200)] : [];
+          runPluginCommand(client, current, action.id, args, onError);
+          return;
+        }
         // A web part's command or call: the core takes it only for plugins whose web part runs in the page.
         case "command":
           if (typeof action.id === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(action.id)) void client.request({ type: "plugins.command", id: action.id, from: "chat" }).catch(onError);

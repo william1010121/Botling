@@ -318,8 +318,8 @@ export class Composer {
     // A bare / offers only the app's commands; the components wait for a letter.
     const items = atAt || (at && query) ? this.allMentions : at ? this.mentions
       : query ? this.slashItems : this.slashItems.filter((item) => item.kind === "command");
-    // A name typed in full needs no list (Return then sends).
-    const complete = !atAt && query !== null && items.some((mention) => mention.name.toLowerCase() === query);
+    // A name typed in full needs no list (Return then sends), unless it is a command that runs when picked.
+    const complete = !atAt && query !== null && items.some((mention) => mention.name.toLowerCase() === query && !mention.command);
     const found = query === null || complete ? [] : items.filter((mention) => mention.name.toLowerCase().startsWith(query));
     if (at && query) {
       // The short list's names first.
@@ -456,7 +456,9 @@ export class Composer {
     // Picked in the middle of a word: the rest of the word goes too.
     const line = this.view.state.doc.lineAt(head);
     const rest = /^[A-Za-z0-9_\-]*/.exec(line.text.slice(head - line.from))?.[0].length ?? 0;
-    const insert = mention.file ? fileReference(mention.file.path, mention.file.url) : `${sigil(mention)}${mention.name} `;
+    // A plugin's / command runs instead of going into the message: what was typed for it goes.
+    const insert = mention.command ? "" : mention.file ? fileReference(mention.file.path, mention.file.url) : `${sigil(mention)}${mention.name} `;
+    if (mention.command) post({ type: "runCommand", id: mention.command, via: "slash" });
     this.view.dispatch({ changes: { from: this.mentionFrom, to: head + rest, insert }, selection: { anchor: this.mentionFrom + insert.length } });
     this.mentionMatches = [];
     this.mentionList.hidden = true;
@@ -758,6 +760,8 @@ interface Mention {
   kind: "bot" | "command" | "component" | "file";
   file?: ProjectFile;
   about?: string;
+  /** A plugin's command, run when picked (plugin-platform.md §3.3 `slash`). */
+  command?: string;
   /** A component on the shared library's shelf, not on this bot's own list. */
   library?: boolean;
 }
@@ -785,7 +789,7 @@ function mentionsOf(names: string[] | undefined): Mention[] {
 /** The app's commands first, then the bot's own components, then the rest of the library. */
 function slashItemsOf(state: ChatState): Mention[] {
   return unique([
-    ...(state.slashCommands ?? []).map(({ name, about }): Mention => ({ name, kind: "command", about })),
+    ...(state.slashCommands ?? []).map(({ name, about, command }): Mention => ({ name, kind: "command", about, ...(command ? { command } : {}) })),
     ...(state.slashComponents ?? []).map((name): Mention => ({ name, kind: "component" })),
     ...(state.slashLibrary ?? []).map((name): Mention => ({ name, kind: "component", about: t("composer.library"), library: true })),
   ]);

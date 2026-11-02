@@ -239,6 +239,7 @@ export const zhHant: Dictionary = {
   "messages.addReaction": "加入表情回應",
   "messages.reactEmoji": "以 {emoji} 回應",
   "messages.reply": "回覆",
+  "messages.more": "更多",
   "messages.interrupted": "已中斷",
   "messages.fold": "收合",
   "messages.showMore": "顯示更多",
@@ -513,4 +514,8 @@ export const zhHant: Dictionary = {
   "shortcuts.needModifier": "請同時按住 ⌘、Ctrl 或 Alt 與一個按鍵。",
   "shortcuts.conflict": "{key} 已用於「{action}」，請先更改那一項。",
   "shortcuts.reserved": "{key} 已保留給「{action}」。",
+  "shortcuts.group.plugins": "外掛",
+  "shortcuts.pluginNote": "外掛加入的快捷鍵。App 或系統已在用的鍵不會給外掛。",
+  "shortcuts.pluginTaken": "未啟用：{key} 已用於「{action}」，請另選一個鍵。",
+  "shortcuts.pluginNoKey": "沒有快捷鍵",
 };

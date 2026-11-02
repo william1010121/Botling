@@ -16,7 +16,7 @@ export interface PluginSpec {
   /** file:// URLs of stylesheets the plugin ships (fonts next to them load relative to them). */
   styles: string[];
   settings: Record<string, unknown>;
-  /** `ccb.contributes.commands`: id, title and an optional key like "cmd+shift+l". */
+  /** `ccb.contributes.commands`: id, title and an optional key ("cmd+shift+l"; the page's key dispatcher reads it). */
   commands: { id: string; title: string; key?: string }[];
 }
 
@@ -93,7 +93,6 @@ export class PluginHost {
   private nextCall = 1;
 
   constructor(private readonly hooks: ChatHooks) {
-    document.addEventListener("keydown", (event) => this.runShortcut(event), true);
     extensions.guard = (plugin, run) => this.guard(plugin, run);
   }
 
@@ -189,17 +188,14 @@ export class PluginHost {
     this.redrawIfChanged();
   }
 
-  /** Commands from plugins' manifests that have a key, e.g. "cmd+shift+l". */
-  private runShortcut(event: KeyboardEvent): void {
-    for (const entry of this.loaded.values()) {
-      for (const command of entry.spec.commands) {
-        if (command.key && matches(command.key, event) && this.commandRuns.has(command.id)) {
-          event.preventDefault();
-          this.execute(command.id);
-          return;
-        }
-      }
-    }
+  /**
+   * A command a key asks for (the page's one key dispatcher, shortcuts.ts): run here when a web part
+   * registered it; false otherwise, and the app page runs it in the plugin host.
+   */
+  runLocal(id: string): boolean {
+    const run = this.commandRuns.get(id);
+    if (run) this.guard(id.split(".")[0], run);
+    return !!run;
   }
 
   /** Runs a command: in the page if a web part registered it, otherwise in the plugin host. */
@@ -337,17 +333,4 @@ async function importOnce(spec: PluginSpec): Promise<Activate> {
   } finally {
     URL.revokeObjectURL(url);
   }
-}
-
-/** "cmd+shift+l" against a key event. */
-export function matches(key: string, event: KeyboardEvent): boolean {
-  const parts = key.toLowerCase().split("+");
-  const letter = parts.pop();
-  return (
-    event.key.toLowerCase() === letter &&
-    event.metaKey === parts.includes("cmd") &&
-    event.ctrlKey === parts.includes("ctrl") &&
-    event.altKey === (parts.includes("alt") || parts.includes("option")) &&
-    event.shiftKey === parts.includes("shift")
-  );
 }

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
-import { feedback, messageElement, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
+import { feedback, messageElement, messageMenu, refreshThinkNote, typingElement, updateTypingElement } from "../src/messages";
 import type { ChatState, MessageView, PinSize } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
@@ -849,6 +849,25 @@ describe("messages", () => {
     feedback.enabled = false;
   });
 
+  it("puts plugins' commands in a reply's menu, each run for that reply", () => {
+    expect(messageElement(message({ text: "Hi" }), {}).querySelector(".message-menu-button")).toBeNull();
+    messageMenu.items = [{ command: "quote.it", title: "Quote it" }, { command: "quote.save", title: "Save it" }];
+    try {
+      const row = messageElement(message({ id: "r7", text: "Hi" }), {});
+      document.body.append(row);
+      expect(messageElement(message({ role: "user", text: "Me" }), {}).querySelector(".message-menu-button")).toBeNull();
+      const button = row.querySelector<HTMLButtonElement>(".message-menu-button")!;
+      button.click();
+      const items = [...document.querySelectorAll<HTMLButtonElement>(".message-menu [role=menuitem]")];
+      expect(items.map((item) => item.textContent)).toEqual(["Quote it", "Save it"]);
+      items[1].click();
+      expect(sent).toEqual([{ type: "runCommand", id: "quote.save", via: "menu", menu: "message/context", messageID: "r7" }]);
+      expect(document.querySelector(".message-menu")).toBeNull();
+    } finally {
+      messageMenu.items = [];
+    }
+  });
+
   it("let a notice open its project", () => {
     const row = messageElement(message({ role: "notice", text: "garden: done", openable: true }), {});
     row.querySelector<HTMLButtonElement>(".open-source")!.click();
@@ -1033,6 +1052,35 @@ describe("composer", () => {
     composer.insert("@");
     expect(names()).toEqual(["@garden"]);
     expect(list.classList.contains("slash")).toBe(false);
+  });
+
+  it("runs a plugin's slash command when picked, instead of putting it in the message", () => {
+    const composer = new Composer(document.body);
+    composer.update(state({ slashCommands: [
+      { name: "design", about: "Make a Claude Design" },
+      { name: "todo", about: "Open the TODO panel", command: "todo-panel.open" },
+      { name: "todo (other)", about: "Another", command: "other.todo" },
+    ], slashComponents: ["todos"] }));
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    const names = () => [...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent);
+    const key = (k: string) => composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    composer.insert("/");
+    expect(names()).toEqual(["/design", "/todo", "/todo (other)"]);
+    composer.insert("todo");
+    // Typed in full, a command that runs is still offered (Return runs it rather than sending the words).
+    expect(names()).toEqual(["/todo", "/todo (other)", "/todos"]);
+    composer.setText("");
+    composer.insert("請 /to");
+    key("Enter");
+    expect(sent).toEqual([{ type: "runCommand", id: "todo-panel.open", via: "slash" }]);
+    expect(composer.text).toBe("請 ");
+    expect(list.hidden).toBe(true);
+    // The app's own /design still goes in as words.
+    composer.setText("");
+    composer.insert("/des");
+    key("Enter");
+    expect(composer.text).toBe("/design ");
+    expect(sent).toHaveLength(1);
   });
 
   it("keeps a bare / silent when there are components but no commands", () => {

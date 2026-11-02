@@ -1,8 +1,9 @@
 // The ChatState the reused Web/src chat page draws, built from the contract (as ChatPayload.swift builds it).
 import { describe, expect, it } from "vitest";
 import { chatState, stamp } from "../../src/renderer/payload";
+import { keybindingsOf, offered, runsInHost } from "../../src/renderer/plugin-commands";
 import { apply, type WorkspaceView } from "../../src/renderer/store";
-import type { BotView, MessageView } from "../../src/contract";
+import type { BotView, MessageView, PluginsView } from "../../src/contract";
 
 const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 1, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 25, 8, minute)).toISOString();
@@ -126,5 +127,55 @@ describe("routines.updated", () => {
     const view = { ready: true, bots: [bot], imported: null, chat: { botId: "B", messages: [], running: null, live: [], tasks: [] } } as unknown as WorkspaceView;
     expect(apply(view, { type: "routines.updated", botId: "B", routines: [routine], error: null }).chat!.routines).toEqual([routine]);
     expect(apply(view, { type: "routines.updated", botId: "OTHER", routines: [routine], error: null }).chat!.routines).toBeUndefined();
+  });
+});
+
+describe("the / menu and menus from the plugin registry (M6)", () => {
+  const chat = { botId: "B", messages: [], running: null, live: [], tasks: [] };
+  const plugins: PluginsView = {
+    plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null,
+    slash: [
+      { name: "todo", about: "Open the TODO panel", command: "zeta.open", plugin: "zeta" },
+      { name: "design", about: "Not the app's", command: "alpha.design", plugin: "alpha" },
+      { name: "todo", about: "Another TODO", command: "alpha.todo", plugin: "alpha" },
+    ],
+    menus: [{ menu: "message/context", command: "zeta.quote", plugin: "zeta", title: "Quote it" }, { menu: "bot/context", command: "zeta.wake", plugin: "zeta", title: "Wake" }],
+  };
+  it("keeps the app's own /design first and as it is today when no plugin adds any", () => {
+    expect(chatState(bot, chat).state.slashCommands).toEqual([{ name: "design", about: "Make a Claude Design and get its claude.ai link" }]);
+    expect(chatState(bot, chat).state.messageMenu).toEqual([]);
+  });
+  it("adds plugins' slash commands after it, by plugin name; a name already taken shows whose it is", () => {
+    const { state } = chatState(bot, chat, new Date(), null, { plugins });
+    expect(state.slashCommands).toEqual([
+      { name: "design", about: "Make a Claude Design and get its claude.ai link" },
+      { name: "design (alpha)", about: "Not the app's", command: "alpha.design" },
+      { name: "todo", about: "Another TODO", command: "alpha.todo" },
+      { name: "todo (zeta)", about: "Open the TODO panel", command: "zeta.open" },
+    ]);
+    expect(state.messageMenu).toEqual([{ command: "zeta.quote", title: "Quote it" }]);
+  });
+  it("lets the chat page ask only for a command a key, the / menu or that menu offers", () => {
+    const view = { ...plugins, keybindings: [{ command: "zeta.run", key: "Mod+Alt+Z", plugin: "zeta", title: "Run" }] };
+    expect(offered(view, "zeta.open", "slash")).toBe(true);
+    expect(offered(view, "zeta.open", "key")).toBe(false);
+    expect(offered(view, "zeta.run", "key")).toBe(true);
+    expect(offered(view, "zeta.quote", "menu", "message/context")).toBe(true);
+    expect(offered(view, "zeta.wake", "menu", "message/context")).toBe(false);
+    expect(offered(view, "zeta.other", "slash")).toBe(false);
+    expect(offered(null, "zeta.open", "slash")).toBe(false);
+    // The bundled ccb-latex key is offered and runs in the chat page.
+    expect(offered(null, "ccb-latex.insert", "key")).toBe(true);
+    expect(keybindingsOf(view).map((binding) => binding.command)).toEqual(["ccb-latex.insert", "zeta.run"]);
+  });
+  it("runs a command in the plugin host unless the chat page's web part registered it", () => {
+    const plugin = (name: string, parts: PluginsView["plugins"][number]["parts"], commands: { id: string; registered: boolean }[]) =>
+      ({ name, title: name, version: "1", description: null, enabled: true, failure: null, installedFrom: null, permissions: [], parts, settings: [], panels: [],
+        commands: commands.map((command) => ({ ...command, title: command.id })) });
+    const view = { ...plugins, plugins: [plugin("host", ["host"], []), plugin("both", ["web", "host"], [{ id: "both.a", registered: true }, { id: "both.b", registered: false }])] };
+    expect(runsInHost(view, "host.run")).toBe(true);
+    expect(runsInHost(view, "both.a")).toBe(true);
+    expect(runsInHost(view, "both.b")).toBe(false);
+    expect(runsInHost(view, "ccb-latex.insert")).toBe(false);
   });
 });

@@ -14,6 +14,7 @@
 import { join } from "node:path";
 import { z } from "zod";
 import { ContractError, type PluginsView, type WebPluginSpecView } from "../../contract";
+import { commandSurfaces } from "./commands";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
 import { title } from "./manifest";
 import { PluginRegistry } from "./registry";
@@ -137,6 +138,7 @@ export class Plugins {
       broken: Object.entries(this.registry.problems).slice(0, 200).map(([folder, problems]) => ({ folder: folder.slice(0, 214), problems: problems.slice(0, 50).map((problem) => problem.slice(0, 2_000)) })),
       host: { running: this.host.running, problem: this.host.problem?.slice(0, 2_000) ?? null },
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
+      ...commandSurfaces(this.registry.contributions()),
     };
   }
 
@@ -181,16 +183,16 @@ export class Plugins {
    * A command a program part registered (`Workspace.runCommand`); a failure is said in the main bot's
    * chat too. A frame runs only its own plugin's commands; the chat page only those of plugins whose web
    * part runs there (the page is one realm, so a web part could name any of those). The app page's own
-   * buttons (no `from`) run any.
+   * buttons, keys, / menu and menus (no `from`) run any; `args` are what a menu passes (its bot, its message).
    */
-  async command(id: string, from?: "frame" | "chat", name?: string): Promise<unknown> {
+  async command(id: string, from?: "frame" | "chat", name?: string, args: string[] = []): Promise<unknown> {
     if (from === "frame" && !(name && id.startsWith(`${name}.`))) throw new ContractError("forbidden", `A frame of "${name ?? "?"}" may not run "${id}".`);
     if (from === "chat" && !this.registry.plugins.some((plugin) => plugin.enabled && !plugin.failure && plugin.manifest.ccb?.web && id.startsWith(`${plugin.manifest.name}.`))) {
       throw new ContractError("forbidden", `The chat page may not run "${id}" (no web part of its plugin runs there).`);
     }
     if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     try {
-      return await this.host.command(id);
+      return await this.host.command(id, args);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);

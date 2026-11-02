@@ -4,7 +4,7 @@ import { buildNear, detailReply, keepFrames, releaseFrames } from "./components"
 import { startTaskTicks, taskOutput } from "./tasks";
 import { jumpToTask } from "./task-cards";
 import { Composer, sendFile } from "./composer";
-import { extensions, feedback, jumpTo, makeComponents, messageElement, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
+import { extensions, feedback, jumpTo, makeComponents, messageElement, messageMenu, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { showMainSpeed } from "./subagent-speed";
@@ -225,9 +225,11 @@ class Chat {
     // Turning developer mode on or off redraws every reply with or without its flag.
     const flagged = !!state.feedback && !state.subagent;
     const making = !!state.makeComponents && !state.subagent;
-    if (flagged !== feedback.enabled || making !== makeComponents.enabled) {
+    const menu = state.subagent ? [] : state.messageMenu ?? [];
+    if (flagged !== feedback.enabled || making !== makeComponents.enabled || JSON.stringify(menu) !== JSON.stringify(messageMenu.items)) {
       feedback.enabled = flagged;
       makeComponents.enabled = making;
+      messageMenu.items = menu;
       this.clearList();
       animateArrivals = false;
     }
@@ -627,6 +629,8 @@ declare global {
       patchState(patch: StatePatch): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
+      /** A command a key asks for, run here if a web part registered it (else false: the app page runs it). */
+      runLocalCommand(id: string): boolean;
       showPanel(key: string): void;
       setSpec(state: SpecState): void;
       hostReply(callID: number, ok: boolean, value: unknown): void;
@@ -708,6 +712,7 @@ window.ccb = {
   },
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
+  runLocalCommand: (id) => chat.plugins.runLocal(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
   detailReply: (requestID, ok, value) => detailReply(requestID, ok, value),
   taskOutput: (messageID, taskID, text) => taskOutput(messageID, taskID, text),

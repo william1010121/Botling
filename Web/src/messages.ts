@@ -36,11 +36,14 @@ export const feedback = { enabled: false };
 
 /** Replies can be made into components (set from the state before drawing). */
 export const makeComponents = { enabled: false };
+/** Plugins' commands in a reply's menu (`contributes.menus["message/context"]`); none: no menu button. */
+export const messageMenu: { items: { command: string; title: string }[] } = { items: [] };
 
 const cubeIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>`;
 
 const flagIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
 
+const moreIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>`;
 const replyIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`;
 
 /** One message, as the element that goes in the chat. */
@@ -235,7 +238,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
     case "bot":
     case "notice": {
       const body = botBody(message, components);
-      const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled) ? actionColumn(message) : replyButton(message);
+      const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled || messageMenu.items.length) ? actionColumn(message) : replyButton(message);
       const chips = message.specs?.length ? specChips(message, components) : null;
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
       if (message.speaker || chips || tasks || message.completionVerification || (message.role === "notice" && summaryCountable(message))) {
@@ -368,7 +371,50 @@ function actionColumn(message: MessageView): HTMLElement {
     column.append(make);
   }
   if (feedback.enabled) column.append(feedbackFlag(message));
+  if (messageMenu.items.length) column.append(menuButton(message));
   return column;
+}
+
+/** The reply menu now open (one at a time). */
+let openMenu: { message: string; close: () => void } | null = null;
+
+/** "⋯" beside a reply: plugins' commands for it; the app page runs the one picked (only one this menu offers). */
+function menuButton(message: MessageView): HTMLElement {
+  const button = document.createElement("button");
+  button.className = "reply-button message-menu-button";
+  button.setAttribute("aria-label", t("messages.more"));
+  button.setAttribute("aria-haspopup", "menu");
+  button.innerHTML = moreIcon;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const was = openMenu?.message;
+    openMenu?.close();
+    if (was === message.id) return;
+    const menu = document.createElement("div");
+    menu.className = "message-menu";
+    menu.setAttribute("role", "menu");
+    const close = () => { menu.remove(); openMenu = null; document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", escape, true); };
+    const outside = (down: Event) => { if (!(down.target instanceof Node && (menu.contains(down.target) || button.contains(down.target)))) close(); };
+    const escape = (key: KeyboardEvent) => { if (key.key === "Escape") close(); };
+    for (const item of messageMenu.items) {
+      const entry = document.createElement("button");
+      entry.setAttribute("role", "menuitem");
+      entry.textContent = item.title;
+      entry.addEventListener("click", () => {
+        close();
+        post({ type: "runCommand", id: item.command, via: "menu", menu: "message/context", messageID: message.id });
+      });
+      menu.append(entry);
+    }
+    const box = button.getBoundingClientRect();
+    menu.style.top = `${box.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, box.right - 200)}px`;
+    document.body.append(menu);
+    openMenu = { message: message.id, close };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", escape, true);
+  });
+  return button;
 }
 
 /**

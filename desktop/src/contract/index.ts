@@ -665,6 +665,9 @@ export type CatchUpView = z.infer<typeof CatchUpView>;
 
 const botId = BotId;
 const PluginName = z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/);
+const PluginCommandId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
+/** The app's fixed places a plugin may add a command to (`contributes.menus`). */
+const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette"]);
 /** Who asks a plugin: one of its sandboxed frames (panel, tile, card) or the chat page (its web part). */
 const PluginCaller = z.enum(["frame", "chat"]);
 const SettingKey = z.string().min(1).max(200);
@@ -754,7 +757,7 @@ export const SettingsView = z.strictObject({
   /** Phase 5b (2.0 only): main looks at GitHub Releases for a newer Botling 2 (once a day; off by default). */
   updateCheck: z.boolean(),
   /** Keyboard shortcuts the user rebound (id to binding, see shortcuts.ts); an id left out has its default. */
-  shortcuts: z.record(z.string().max(40), z.string().max(40)).default({}),
+  shortcuts: z.record(z.string().max(200), z.string().max(40)).default({}),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -797,7 +800,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
   /** All rebound shortcuts at once (an empty object: every default). */
-  z.strictObject({ key: z.literal("shortcuts"), value: z.record(z.string().max(40), z.string().max(40)) }),
+  z.strictObject({ key: z.literal("shortcuts"), value: z.record(z.string().max(200), z.string().max(40)) }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
 /** A newer Botling 2 on GitHub Releases (found by electron-updater); installation needs an explicit download and restart. */
@@ -974,6 +977,10 @@ export const PluginsView = z.strictObject({
   host: z.strictObject({ running: z.boolean(), problem: z.string().max(2_000).nullable() }),
   /** Why secrets cannot be kept here (no safe storage), or null. */
   secretsProblem: z.string().max(2_000).nullable(),
+  /** Plugin commands on keys (default key, shortcuts.ts spelling), in the / menu and in the app's menus, from plugins that are on. */
+  keybindings: z.array(z.strictObject({ command: PluginCommandId, key: z.string().max(40), plugin: PluginName, title: z.string().max(200) })).max(500).optional(),
+  slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId, plugin: PluginName })).max(200).optional(),
+  menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200) })).max(200).optional(),
 });
 export type PluginsView = z.infer<typeof PluginsView>;
 
@@ -1163,7 +1170,7 @@ export const Command = z.discriminatedUnion("type", [
    * itself: a plugin's frame (only its own plugin's commands; `name` is the plugin the page bound the frame
    * to) or the chat page (only commands of plugins whose web part runs there).
    */
-  z.strictObject({ type: z.literal("plugins.command"), id: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), from: PluginCaller.optional(), name: PluginName.optional() }),
+  z.strictObject({ type: z.literal("plugins.command"), id: PluginCommandId, from: PluginCaller.optional(), name: PluginName.optional(), args: z.array(z.string().max(200)).max(4).optional() }),
   /** A plugin panel's web part (module text) and its settings, for its sandboxed frame. */
   z.strictObject({ type: z.literal("plugins.panel"), name: PluginName, panel: z.string().min(1).max(100) }),
   /**

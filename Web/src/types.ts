@@ -456,7 +456,10 @@ export interface ChatState {
   /** Every bot you could @ here (the short list first), searched once you type after @, or listed in full after @@. */
   allMentions?: string[];
   /** The app's / commands (e.g. /design), offered after / before the components. */
-  slashCommands?: { name: string; about: string }[];
+  /** The / menu's commands; one with `command` (a plugin's) runs it when picked instead of going into the message. */
+  slashCommands?: { name: string; about: string; command?: string }[];
+  /** Plugin commands in a reply's menu (`contributes.menus["message/context"]`). */
+  messageMenu?: { command: string; title: string }[] | null;
   /** Components you can / (picked, the bot is told you mean that component). */
   slashComponents?: string[];
   /** The shared library's other components (not this bot's yet), offered after its own, marked faintly. */
@@ -619,6 +622,8 @@ export type Action =
   | { type: "pluginNotice"; name: string; text: string }
   | { type: "pluginLoaded"; name: string; version: string }
   | { type: "command"; id: string }
+  /** A plugin command offered by the / menu or a reply's menu (the app page checks it is offered so now). */
+  | { type: "runCommand"; id: string; via: "slash" | "menu" | "key"; menu?: "message/context"; messageID?: string }
   | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number };
 
 /**

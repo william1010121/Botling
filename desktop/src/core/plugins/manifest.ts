@@ -5,6 +5,7 @@
 // one, as one shape with its contributions (contributions.ts). Loading still goes by `ccb` alone.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { legacyKey } from "../../contract/shortcuts";
 import { insidePlugin, readContributions, type Contribution, type FolderView } from "./contributions";
 
 export type { FolderView } from "./contributions";
@@ -206,7 +207,7 @@ export function checkPlugin(folder: string): string[] {
   for (const command of ccb.contributes?.commands ?? []) {
     if (ids.has(command.id)) problems.push(`Command "${command.id}" is declared twice.`);
     ids.add(command.id);
-    if (command.key !== undefined && !/^((cmd|ctrl|alt|option|shift)\+)*[^+]+$/.test(command.key)) {
+    if (command.key !== undefined && !legacyKey(command.key) && !/^((cmd|ctrl|alt|option|shift)\+)*[^+]+$/.test(command.key)) {
       problems.push(`Command "${command.id}" has an unreadable shortcut "${command.key}" (for example cmd+shift+l).`);
     }
   }

@@ -1,11 +1,12 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
+import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
 import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
+import { menuItems, slashMenu } from "./plugin-commands";
 
 /** What the chat frame needs besides the page's own state: Phase 0 cards and turn states. */
 export interface FrameExtras {
@@ -174,8 +175,6 @@ export function componentInfos(components: Record<string, ComponentInfoView>): R
 /** What the app's settings change in the page: its language, the avatars' size and look. */
 export interface PageLook { lang?: string | null; chatAvatarSize?: number | null; pasteCollapseChars?: number; pasteCollapseLines?: number; look?: Look }
 
-/** The app's / commands (`SlashCommands.all`); the bots' rules say what each means. */
-export const SLASH_COMMANDS = [{ name: "design", about: "Make a Claude Design and get its claude.ai link" }];
 
 /** A bot's own components first in the / menu; a chat without a list (a group) has them all. */
 export function slashLists(bot: BotView, names: string[]): { slashComponents: string[]; slashLibrary: string[] } {
@@ -197,7 +196,7 @@ export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[
 }
 
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
-  { components = {}, board = false, lang = null, chatAvatarSize = null, pasteCollapseChars, pasteCollapseLines, look = "original", bots = [], feedback = false }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
+  { components = {}, board = false, lang = null, chatAvatarSize = null, pasteCollapseChars, pasteCollapseLines, look = "original", bots = [], feedback = false, plugins = null }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean; plugins?: PluginsView | null } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   // A line another bot said here (called in with @): its name and face (`speaker`).
   const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
@@ -318,8 +317,9 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
         live: run.live.map(step),
         retrying: head === "codex" ? bot.codexRetry ?? null : null };
     }) } : {}),
-    // The / menu: the app's commands, then the bot's own components, then the rest of the library (`ChatPayload`).
-    slashCommands: SLASH_COMMANDS,
+    // The / menu: the app's and plugins' commands, then the bot's own components, then the rest of the library (`ChatPayload`).
+    slashCommands: slashMenu(plugins),
+    messageMenu: menuItems(plugins, "message/context"),
     ...slashLists(bot, Object.keys(components).sort()),
     ...headsParts(chat.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).
