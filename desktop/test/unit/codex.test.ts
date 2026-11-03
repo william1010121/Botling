@@ -411,6 +411,38 @@ it("reports worker session metadata and attributable absolute output without usi
   expect(new Out(session.receive(note("thread/tokenUsage/updated", { threadId: "worker-thread", tokenUsage: { total: { outputTokens: true } } }))).of("subagentOutput")).toEqual([]);
 });
 
+it("takes an effort on app_handoff: the handoff's, else the Codex workers' setting, else the coordinator's; one Codex does not take is ignored with a notice", () => {
+  const session = new CodexSession(config({ model: "coordinator", effort: "low", workerEffort: "high" }));
+  ready(session);
+  session.send("Review");
+  session.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+  const turnEffort = (args: Record<string, unknown>) => {
+    const handed = new Out(session.receive(toolCall("app_handoff", { instructions: "Work", ...args })));
+    const answer = receipt(handed);
+    const request = handed.writes.find((write) => write.method === "thread/start");
+    const started = new Out(session.receive(JSON.stringify({ id: request.id, result: { thread: { id: `thread-${answer.task_id}` } } })));
+    return { answer, effort: started.writes.find((write) => write.method === "turn/start").params.effort };
+  };
+  const chosen = turnEffort({ effort: "xhigh" });
+  expect(chosen.effort).toBe("xhigh");
+  expect(chosen.answer).toMatchObject({ status: "accepted", effort: "xhigh" });
+  expect(chosen.answer.notice).toBeUndefined();
+  expect(turnEffort({}).effort).toBe("high");
+  const odd = turnEffort({ effort: "max" });
+  expect(odd.effort).toBe("high");
+  expect(odd.answer).toMatchObject({ status: "accepted", effort: "high" });
+  expect(odd.answer.notice).toContain('"max"');
+  expect(odd.answer.notice).toContain("low, medium, high, xhigh");
+  const coordinatorOnly = new CodexSession(config({ model: "coordinator", effort: "medium" }));
+  ready(coordinatorOnly);
+  coordinatorOnly.send("Review");
+  coordinatorOnly.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+  const handed = new Out(coordinatorOnly.receive(toolCall("app_handoff", { instructions: "Work" })));
+  const request = handed.writes.find((write) => write.method === "thread/start");
+  const started = new Out(coordinatorOnly.receive(JSON.stringify({ id: request.id, result: { thread: { id: "w" } } })));
+  expect(started.writes.find((write) => write.method === "turn/start").params.effort).toBe("medium");
+});
+
 describe("monitor owner authorization", () => {
   it("rejects worker start/status/cancel with intent, without approval, command or coordinator wake", () => {
     const s = new CodexSession(config()); ready(s); s.send("authorized work");

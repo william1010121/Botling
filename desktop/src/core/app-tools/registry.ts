@@ -33,7 +33,8 @@ const PARAMS = {
   name: () => text,
   subagent_type: () => text,
   model: () => text,
-  effort: () => ({ type: "string", enum: [...EFFORTS_BY_ENGINE.claude] }),
+  // The levels the provider's own engine takes (its workers run on it): Claude's or Codex's.
+  effort: ({ provider = "claude" }) => ({ type: "string", enum: [...EFFORTS_BY_ENGINE[provider === "codex" ? "codex" : "claude"]] }),
   engine: ({ engines = ["agy", "codex"] }) => ({ type: "string", enum: [...engines] }),
   role: () => ({ type: "string", enum: ["component-editor"], description: "Only for the plugin-library Maintainer: launch its existing Claude ccb-core component editor on its configured model. No new folders, tools, authorization or settings. Omit for ordinary work." }),
   isolated_git: () => ({
@@ -60,7 +61,7 @@ const PARAMS = {
   id: () => text,
   command: () => text,
   monitor_id: () => text,
-} satisfies Record<string, (options: AppToolOptions) => JsonSchema>;
+} satisfies Record<string, (options: AppToolOptions & { provider?: AppToolProvider }) => JsonSchema>;
 type ParamName = keyof typeof PARAMS;
 
 /** One provider's form of a tool: its description, its parameters in order, and the required ones (absent: no `required` key). */
@@ -73,8 +74,8 @@ const APP_TOOLS: readonly AppToolDef[] = [
       params: ["name", "instructions", "subagent_type", "model", "effort"], required: ["instructions"] },
     agy: { description: "Assign an authorized task to an app-managed agy or Codex worker; engine identity cannot change on resume. Returns task_id immediately. A correlated app_task_result arrives later. Does not grant tool permissions.",
       params: ["instructions", "name", "engine"], required: ["instructions"] },
-    codex: { description: "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report.",
-      params: ["instructions", "name", "role", "isolated_git"], required: ["instructions"] },
+    codex: { description: "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report. Optional effort sets the worker's reasoning effort (low, medium, high, xhigh; default: the Codex workers setting, else yours).",
+      params: ["instructions", "name", "role", "isolated_git", "effort"], required: ["instructions"] },
   } },
   { name: "app_send_message", forms: {
     claude: { description: "Send words to one of your workers by task_id: joined into its run while it works, or the start of its next run (same session, same task) once it has reported. Its next report comes as an app message.",
@@ -130,7 +131,7 @@ export function appTools(provider: AppToolProvider, options: AppToolOptions = {}
   return PROVIDER_TOOLS[provider].map((name) => {
     const form = APP_TOOLS.find((tool) => tool.name === name)!.forms[provider];
     if (!form) throw new Error(`${provider} has no form of ${name}`);
-    const properties = Object.fromEntries(form.params.map((param) => [param, PARAMS[param](options)]));
+    const properties = Object.fromEntries(form.params.map((param) => [param, PARAMS[param]({ ...options, provider })]));
     return { name, description: form.description, inputSchema: { type: "object", properties, ...(form.required ? { required: [...form.required] } : {}), additionalProperties: false } };
   });
 }
