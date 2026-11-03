@@ -29,6 +29,7 @@ import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
+import { botCounts, idleCounts, idleList, canIdle, railOrder, railSplit } from "./rail-idle";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubagentRows, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { SpecFrame } from "./SpecFrame";
@@ -513,26 +514,7 @@ export function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned,
   );
 }
 
-/**
- * The left column's rows (1.x's RailView): the main bot and Maintainer, then the pinned ones in the order
- * they were pinned, then the rest — projects and bots together — the one with the newest line
- * first, as in Messages (`entries`, `RailLayout.pinnedFirst`).
- */
-export function railOrder(all: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
-  // A sub bot is not a row of the column: it is listed under its project bot (SubagentRows) and opens from there.
-  const bots = all.filter((bot) => !bot.parent);
-  const main = bots.filter((bot) => bot.role === "main" || bot.id === MAINTAINER_BOT_ID).sort((a, b) => (a.role === "main" ? -1 : b.role === "main" ? 1 : 0));
-  const top = pinned.map((id) => bots.find((bot) => bot.id === id && bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID)).filter((bot): bot is BotView => !!bot);
-  const when = (bot: BotView) => (bot.lastActivity ? Date.parse(bot.lastActivity) : -Infinity);
-  const rest = bots.map((bot, offset) => ({ bot, offset }))
-    .filter(({ bot }) => bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID && !pinned.includes(bot.id))
-    .sort((a, b) => when(b.bot) - when(a.bot) || a.offset - b.offset).map(({ bot }) => bot);
-  return [
-    ...main.map((bot) => ({ bot, section: null })),
-    ...top.map((bot, index) => ({ bot, section: index === 0 ? "pinned" as const : null })),
-    ...rest.map((bot, index) => ({ bot, section: index === 0 ? "rest" as const : null })),
-  ];
-}
+export { railOrder } from "./rail-idle";
 
 /** What a click on a subagent row opens: a sub bot's own chat (with the input box), or a subagent's read-only view. */
 export function rowTarget(row: Pick<SubagentRowView, "id" | "subBot">): { kind: "bot"; botId: string } | { kind: "subagent"; id: string } {
