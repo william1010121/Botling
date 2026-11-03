@@ -269,6 +269,8 @@ export const SpecChipView = z.strictObject({
   display: DisplayView.nullable(),
   /** The bot that wrote the reply is drawing it now (its name). */
   filling: z.string().max(200).nullable(),
+  /** "undo": a built component can be taken off the bots' lists; "restore": it was, and can be put back (ADR-006 M4). */
+  undo: z.enum(["undo", "restore"]).optional(),
 });
 export type SpecChipView = z.infer<typeof SpecChipView>;
 
@@ -391,6 +393,8 @@ export const SpecAction = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("command"), command: z.string().max(20_000), folder: z.string().max(4_000), detail: z.string().max(20_000).optional(), force: z.boolean().optional() }),
   z.strictObject({ kind: z.literal("build") }),
   z.strictObject({ kind: z.literal("cancel") }),
+  z.strictObject({ kind: z.literal("undo") }),
+  z.strictObject({ kind: z.literal("restore") }),
 ]);
 export type SpecAction = z.infer<typeof SpecAction>;
 

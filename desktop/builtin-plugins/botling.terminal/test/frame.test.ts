@@ -4,6 +4,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { desktop } from "../../../test/helpers";
 import { bridgeOf, lane } from "../src/panel";
 
@@ -75,4 +76,56 @@ it("the shipped web part is a module that exports activate and carries the panel
   expect(text).not.toContain("data:font/ttf;base64,");
   expect(text.length).toBeLessThan(1_000_000);
   expect(text).toContain(".xterm");
+});
+
+it("hears the initial visible:true sent right after ready on first mount, so the first terminal tab is not left hidden", async () => {
+  globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as any;
+  window.matchMedia ??= (() => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false })) as any;
+  if (!("fonts" in document)) Object.defineProperty(document, "fonts", { configurable: true, value: { add() {}, load: async () => [] } });
+
+  const root = document.createElement("div");
+  document.body.append(root);
+  const pushHandlers = new Map<string, ((data: any) => void)[]>();
+  const tabState = { botId: "B1", sessionId: SID, shell: "/bin/zsh", cwd: "/w", output: "", offset: 0, exitCode: null };
+  const cleanups: (() => void)[] = [];
+  const ccb = {
+    context: { botId: "B1" },
+    panels: {
+      register(id: string, renderPanel: (el: HTMLElement) => (() => void) | void) {
+        if (id === "botling.terminal.panel") { const off = renderPanel(root); if (typeof off === "function") cleanups.push(off); }
+        return () => {};
+      },
+    },
+    on(name: string, fn: (data: any) => void) {
+      const list = pushHandlers.get(name) ?? [];
+      list.push(fn);
+      pushHandlers.set(name, list);
+      return () => { const at = list.indexOf(fn); if (at >= 0) list.splice(at, 1); };
+    },
+    panel: { setVisible() {} },
+    forwardKey() {},
+    async call(_method: string, req: any) {
+      if (req?.type === "shells") return { shells: ["/bin/zsh"], defaultShell: "/bin/zsh" };
+      if (req?.type === "list") return [];
+      if (req?.type === "open" || req?.type === "attach") return tabState;
+      if (req?.type === "font") throw new Error("no font in jsdom");
+      return null;
+    },
+  };
+
+  try {
+    const uiUrl = `${pathToFileURL(join(desktop, "out/builtin-plugins/botling.terminal/ui.js")).href}?t=${Date.now()}`;
+    const mod = await import(uiUrl);
+    await mod.activate(ccb);
+    // panel-page.ts posts `{ ccb: "ready" }` immediately after `await activate(ccb)`, and BottomPanels replies with `visible: true`
+    // before Preact's deferred rAF + setTimeout `useEffect` flush has run.
+    for (const handler of [...(pushHandlers.get("visible") ?? [])]) handler({ visible: true });
+
+    await vi.waitFor(() => expect(root.querySelector('[role="tab"]')?.textContent).toContain("zsh"));
+    const tab = root.querySelector<HTMLElement>(".terminal-tab");
+    expect(tab).not.toBeNull();
+    expect(tab!.hidden).toBe(false);
+  } finally {
+    for (const off of cleanups) off();
+  }
 });

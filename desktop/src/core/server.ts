@@ -702,6 +702,8 @@ export class Core {
       }
       case "build": this.specs.build(spec.id, chat); break;
       case "cancel": this.specs.cancel(spec.id, chat); break;
+      case "undo": this.specs.undo(spec.id, chat); break;
+      case "restore": this.specs.restore(spec.id, chat); break;
     }
     return { accepted: true };
   }

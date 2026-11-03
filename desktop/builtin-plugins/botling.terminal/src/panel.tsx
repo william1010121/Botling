@@ -1,6 +1,6 @@
 // The Terminal panel of one bot, in its frame. The page around it lays the frame out (border, divider, height) and says when it is
 // shown; this draws the tabs and the emulators. Hiding never destroys a shell or an emulator: the frame stays alive while hidden.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
@@ -95,8 +95,9 @@ export function TerminalPanel({ ccb, botId }: { ccb: PanelCcb; botId: string }) 
   // How many shells the panel has once it started, for what the toggle key does (an empty panel opens a shell).
   const shellCount = useRef<number | undefined>(undefined);
   shellCount.current = busy ? undefined : tabs.length;
-  useEffect(() => ccb.on('visible', (data: { visible?: boolean } | null) => setVisible(!!data?.visible)), []);
-  useEffect(() => ccb.on('toggle', (data: { visible?: boolean } | null) => {
+  // Synchronous (`useLayoutEffect`) so both listeners are registered before `panel-page.ts` posts `{ ccb: "ready" }`.
+  useLayoutEffect(() => ccb.on('visible', (data: { visible?: boolean } | null) => setVisible(!!data?.visible)), []);
+  useLayoutEffect(() => ccb.on('toggle', (data: { visible?: boolean } | null) => {
     const action = terminalToggleAction({ botExists: true, visible: !!data?.visible, shells: shellCount.current });
     if (action === 'none') return;
     ccb.panel.setVisible(action !== 'hide');

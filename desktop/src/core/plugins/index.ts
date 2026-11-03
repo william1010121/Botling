@@ -420,15 +420,7 @@ export class Plugins {
    * (`keybindings.set`) in place of their manifests'; the user's keys still win (shortcuts.ts `pluginBindings`).
    */
   private contributions(): Contribution[] {
-    const set = this.registry.commandKeyOverrides();
-    const list = this.registry.contributions();
-    const on = new Set(list.map((entry) => entry.plugin));
-    const kept = list.filter((entry) => !(entry.kind === "keybinding" && set[entry.plugin] && Object.hasOwn(set[entry.plugin]!, entry.command)));
-    for (const [plugin, keys] of Object.entries(set)) {
-      if (!on.has(plugin)) continue;
-      for (const [command, key] of Object.entries(keys)) if (key) kept.push({ kind: "keybinding", plugin, command, key });
-    }
-    return kept;
+    return this.registry.effectiveContributions();
   }
 
   private known(name: string) {

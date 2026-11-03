@@ -10,6 +10,8 @@ This directory documents the foundational architectural decisions for **Botling 
 | [ADR-002](002-multi-engine-head-and-worker-unification.md) | Multi-Engine Head and Worker Unification (Claude Code, OpenAI Codex, Google Antigravity ACP) | Accepted | 2026-11-02 | `desktop/src/core/app-tools/`, `agent/` | Contract suite & dynamic tool golden |
 | [ADR-003](003-sandboxed-plugin-and-card-frames.md) | Sandboxed Plugin and Card Frames (Zero-Trust FrameBroker and Top-Level ApprovalSheet) | Accepted | 2026-10-30 | `desktop/src/renderer/`, `Web/` | FrameBroker rate & command isolation |
 | [ADR-004](004-file-first-memory-and-session-warm-cache.md) | File-First Memory and Session Warm Cache Architecture | Accepted | 2026-11-02 | `desktop/src/core/session/`, `.bot/` | `specs/tla/BotSessionLifecycle.tla` |
+| [ADR-005](005-plugin-architecture-and-core-slimming.md) | Plugin Architecture and Core Slimming (borrow seams, not the Cordis framework; 8 first-party plugins) | Accepted | 2026-11-03 | `desktop/src/core/plugins/`, `desktop/src/renderer/` | Explicit registry + `dispose()`; ADR-003 sandbox and Ledger v3 unchanged |
+| [ADR-006](006-creator-mode-borrowed-mechanisms.md) | Creator-Mode Borrowed Mechanisms (progressive skills, read-only introspection, `nextStep` repair, suggestion cards) | Accepted (phased) | 2026-11-03 | `desktop/src/core/maintainer*.ts`, `plugins/manifest.ts` | Phased adoption list; no measured token data yet |
 
 ---
 

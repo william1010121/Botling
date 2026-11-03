@@ -214,6 +214,10 @@ export const en = {
   "specChip.showing": "Showing in the right panel",
   "specChip.openInPanel": "Open in the right panel",
   "specChip.edit": "Edit spec",
+  "specChip.undo": "Undo",
+  "specChip.undoTitle": "Take it off the bot's list; it stays in the library and Restore puts it back",
+  "specChip.restore": "Restore",
+  "specChip.restoreTitle": "Put the component back on the bot's list",
   "specChip.editTitle": "Change it in the right panel; Build it makes a new version",
   "specChip.newVersion": "Building a new version · {name}",
   // components.ts: a card that runs a command

@@ -22,7 +22,9 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(maintainerInstructions(M.libraryTooled, "CHECK-COMMAND", "SHOT-COMMAND")).toBe(M.instructionsTooled);
     expect(componentEditorAgent("sonnet")).toBe(M.editorAgentSonnet);
     expect(componentEditorAgent("opus")).toBe(M.editorAgentOpus);
-    expect(pluginGuide()).toBe(M.pluginGuide);
+    // PLUGINS.md is no longer the Swift text: ADR-006 M1 split it into an index (the golden keeps the old full text, for the size comparison).
+    expect(pluginGuide()).not.toBe(M.pluginGuide);
+    expect(pluginGuide().length).toBeLessThan(M.pluginGuide.length / 3);
     expect(arrivalLead("todo", false)).toBe(M.arrivalLead);
     expect(arrivalLead("status", true)).toBe(M.arrivalLeadChanged);
   });
@@ -36,7 +38,7 @@ describe("Maintainer's strings, as the Swift app wrote them", () => {
     expect(readFileSync(join(library, "ccb-core", "claude", ".claude-plugin", "plugin.json"), "utf8")).toBe(M.coreClaudeManifest);
     const editor = join(library, "ccb-core", "claude", "agents", "component-editor.md");
     expect(readFileSync(editor, "utf8")).toBe(M.editorAgentSonnet);
-    expect(readFileSync(join(library, "PLUGINS.md"), "utf8")).toBe(M.pluginGuide);
+    expect(readFileSync(join(library, "PLUGINS.md"), "utf8")).toBe(pluginGuide());
     // Another model: the app's own file follows; an edited one stays.
     prepareLibrary(root, "opus");
     expect(readFileSync(editor, "utf8")).toBe(M.editorAgentOpus);
