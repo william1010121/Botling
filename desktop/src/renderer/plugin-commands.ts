@@ -2,6 +2,7 @@
 // made from the core's one list (PluginsView `keybindings`, `slash`, `menus`), and a command the chat page
 // asks for runs only when a key, the / menu or that menu offers it now. The chat page is one realm with the
 // plugins' web parts, so this is no wall against them; it keeps it from running any other command.
+import { bottomPanelToggledBy } from "./BottomPanels";
 import type { PluginsView } from "../contract";
 import { legacyKey, type PluginKeybinding } from "../contract/shortcuts";
 import latex from "../../builtin-plugins/ccb-latex/package.json";
@@ -68,4 +69,10 @@ export function offered(plugins: PluginsView | null | undefined, id: string, via
 export function runsInHost(plugins: PluginsView | null | undefined, id: string): boolean {
   const plugin = viewOf(plugins).plugins.find((candidate) => id.startsWith(`${candidate.name}.`));
   return !plugin || !plugin.parts.includes("web") || plugin.commands.some((command) => command.id === id && command.registered);
+}
+
+/** Where a plugin command runs when a key, the / menu or a menu asks: a bottom panel's toggle is the page's own, else the host or the chat page. */
+export function commandRoute(plugins: PluginsView | null | undefined, id: string): "bottomPanel" | "host" | "chat" {
+  if (bottomPanelToggledBy(plugins, id)) return "bottomPanel";
+  return runsInHost(plugins, id) ? "host" : "chat";
 }

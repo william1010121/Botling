@@ -155,6 +155,8 @@ function TerminalTab({ ccb, bridge, tab, visible, onError, onExit }: { ccb: Pane
   const terminal = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
   const onExitRef = useRef(onExit); onExitRef.current = onExit;
+  // Until the shell prints something the area is empty: say what is going on instead of showing a blank (a slow login script, a stuck start).
+  const [waiting, setWaiting] = useState<'starting' | 'slow' | null>('starting');
   useEffect(() => { if (tab.exitCode !== null) onExitRef.current(); }, []);
   useEffect(() => {
     const term = new Terminal({ allowProposedApi: true, cursorBlink: true, fontSize: 13, fontFamily: '"Botling Terminal", "MesloLGS NF", "SFMono-Regular", Menlo, monospace', scrollback: 5000, theme: { background: '#111318', foreground: '#e5e7eb' } });
@@ -164,11 +166,13 @@ function TerminalTab({ ccb, bridge, tab, visible, onError, onExit }: { ccb: Pane
     void fontLoading.then(() => document.fonts.load('13px "Botling Terminal"')).then(() => { if (terminal.current === term) { term.refresh(0, term.rows - 1); if (host.current?.offsetHeight) fitter.fit(); } });
     const send = lane(bridge, tab.botId, tab.sessionId, onError);
     let attached = false, disposed = false, offset = 0;
+    const slow = setTimeout(() => setWaiting(w => (w ? 'slow' : w)), 6000);
+    const heard = () => { clearTimeout(slow); setWaiting(null); };
     const pending: TerminalEvent[] = [];
     const accept = (event: TerminalEvent) => {
       if (event.type === 'data') {
         if (event.offset <= offset) return;
-        offset = event.offset;
+        offset = event.offset; heard();
         term.write(event.data, () => { if (!disposed) send.ack(event.offset); });
       } else onExitRef.current();
     };
@@ -179,6 +183,7 @@ function TerminalTab({ ccb, bridge, tab, visible, onError, onExit }: { ccb: Pane
     void bridge.request({ type: 'attach', botId: tab.botId, sessionId: tab.sessionId }).then(value => {
       if (disposed) return;
       const state = value as TerminalState; offset = state.offset; if (state.exitCode !== null) { onExitRef.current(); return; }
+      if (state.output) heard();
       term.write(state.output, () => { if (!disposed) send.ack(state.offset); });
       attached = true; pending.forEach(accept); pending.length = 0;
     }).catch(onError);
@@ -192,10 +197,11 @@ function TerminalTab({ ccb, bridge, tab, visible, onError, onExit }: { ccb: Pane
       event.stopPropagation(); return true;
     });
     const observer = new ResizeObserver(() => { if (host.current?.offsetHeight) fitter.fit(); }); observer.observe(host.current!);
-    return () => { disposed = true; terminal.current = null; observer.disconnect(); unsub(); input.dispose(); binaryInput.dispose(); resize.dispose(); term.dispose(); };
+    return () => { clearTimeout(slow); disposed = true; terminal.current = null; observer.disconnect(); unsub(); input.dispose(); binaryInput.dispose(); resize.dispose(); term.dispose(); };
   }, [tab.sessionId]);
   useEffect(() => { if (visible) { fit.current?.fit(); terminal.current?.focus(); } }, [visible]);
   return <div className="terminal-tab" hidden={!visible}>
     <div className="terminal-emulator" ref={host} />
+    {waiting && <div className="terminal-status" role="status">{waiting === 'starting' ? `Starting ${tab.shell}…` : `Still waiting for ${tab.shell} to print something. A slow login script (~/.zprofile, ~/.zshrc) can take a while; if nothing comes, close this tab and open a new one.`}</div>}
   </div>;
 }

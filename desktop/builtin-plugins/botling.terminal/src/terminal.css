@@ -16,7 +16,8 @@ html, body { height: 100%; margin: 0; overflow: hidden; background: #111318; col
 .terminal-toolbar button:focus-visible, .terminal-toolbar select:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .terminal-toolbar button:disabled { opacity: .4; cursor: default; }
 .terminal-toolbar select { flex-shrink: 0; width: clamp(80px, 20vw, 160px); max-width: 30%; background: var(--bubble); }
-.terminal-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 8px; }
+.terminal-tab { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 4px 8px; }
 .terminal-tab[hidden] { display: none; }
 .terminal-emulator { flex: 1; min-height: 0; }
 .terminal-empty { padding: 20px; }
+.terminal-status { position: absolute; left: 8px; right: 8px; top: 8px; padding: 4px 8px; color: var(--muted); font-size: 12px; pointer-events: none; }

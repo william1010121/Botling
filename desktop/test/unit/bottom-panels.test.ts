@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { moveShortcutsToPlugins, readSettings, writeSettings } from "../../src/core/settings";
 import { bottomPanelToggledBy } from "../../src/renderer/BottomPanels";
+import { commandRoute } from "../../src/renderer/plugin-commands";
 import { apply } from "../../src/renderer/store";
 import type { PluginsView } from "../../src/contract";
 import { tempDir } from "../helpers";
@@ -40,5 +41,19 @@ describe("bottom panels on the app page", () => {
   it("a plugin's push to its frames changes nothing in the view", () => {
     const view = { ready: true } as never;
     expect(apply(view, { type: "plugins.emit", plugin: "botling.terminal", name: "terminal", forBot: "B1", data: { type: "data" } } as never)).toBe(view);
+  });
+});
+
+describe("where a plugin command runs", () => {
+  const plugins = {
+    plugins: [{ name: "botling.terminal", parts: ["web", "host"], commands: [{ id: "botling.terminal.toggle", registered: true }] }],
+    bottomPanels: [{ plugin: "botling.terminal", id: "botling.terminal.panel", title: "Terminal", toggle: "botling.terminal.toggle" }],
+  } as unknown as PluginsView;
+  it("sends a bottom panel's toggle to the page even though the plugin's program part registered it (the chat frame's relayed Mod+J used to reach that no-op)", () => {
+    expect(commandRoute(plugins, "botling.terminal.toggle")).toBe("bottomPanel");
+  });
+  it("leaves other commands to the host or the chat page", () => {
+    expect(commandRoute(plugins, "botling.terminal.other")).toBe("chat");
+    expect(commandRoute({ ...plugins, bottomPanels: [] } as PluginsView, "botling.terminal.toggle")).toBe("host");
   });
 });
