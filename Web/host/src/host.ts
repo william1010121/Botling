@@ -124,7 +124,7 @@ export class Host {
   // MARK: Plugins
 
   /** Loads, reloads or unloads plugins so exactly `specs` run. */
-  async sync(specs: HostPluginSpec[]): Promise<{ loaded: string[]; failed: { name: string; message: string }[] }> {
+  async sync(specs: HostPluginSpec[]): Promise<{ loaded: string[]; failed: { name: string; message: string }[]; timings: Record<string, number> }> {
     const wanted = new Map(specs.map((spec) => [spec.name, spec]));
     for (const [name, plugin] of this.plugins) {
       const next = wanted.get(name);
@@ -141,17 +141,20 @@ export class Host {
       }
     }
     const failed: { name: string; message: string }[] = [];
+    const timings: Record<string, number> = {};
     for (const spec of specs) {
       if (this.plugins.has(spec.name)) continue;
+      const started = performance.now();
       try {
         await this.load(spec);
+        timings[spec.name] = Math.round(performance.now() - started);
       } catch (error) {
         this.unload(spec.name);
         failed.push({ name: spec.name, message: errorText(error) });
       }
     }
     this.announce();
-    return { loaded: [...this.plugins.keys()], failed };
+    return { loaded: [...this.plugins.keys()], failed, timings };
   }
 
   private async load(spec: HostPluginSpec): Promise<void> {

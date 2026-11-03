@@ -203,7 +203,9 @@ export class PluginHostClient {
    * load (at most the load's own limit) instead of failing.
    */
   async webCall(plugin: string, method: string, params: unknown, from: "frame" | "chat"): Promise<unknown> {
+    const waitStarted = Date.now();
     await this.whenLoaded(plugin, this.timing.load);
+    if (Date.now() - waitStarted > 50) this.log(`plugin host: ${plugin}.${method} waited ${Date.now() - waitStarted} ms for the plugin to load`);
     if (this.running && this.loaded.has(plugin) && !this.exposed.get(plugin)?.has(method)) throw new Error(`Plugin "${plugin}" does not handle "${method}".`);
     return this.request("web", { plugin, method, params, from }, plugin, this.timing.call);
   }
@@ -392,6 +394,7 @@ export class PluginHostClient {
   private async load() {
     let result: unknown;
     const asked = this.specs;
+    const loadStarted = Date.now();
     try {
       result = await this.request("load", { plugins: asked }, null, this.timing.load);
     } catch (error) {
@@ -399,6 +402,7 @@ export class PluginHostClient {
       return;
     }
     const failed = (result as { failed?: unknown })?.failed;
+    this.log(`plugin host: loaded in ${Date.now() - loadStarted} ms; per plugin ${JSON.stringify((result as { timings?: unknown })?.timings ?? {})}`);
     const loaded = new Set(asked.map((spec) => spec.name));
     for (const failure of Array.isArray(failed) ? failed : []) {
       const name = (failure as { name?: unknown })?.name;
