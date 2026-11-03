@@ -26,6 +26,8 @@ export interface WebSpec {
   styles: string[];
   settings: Record<string, JSONValue>;
   commands: { id: string; title: string; key?: string }[];
+  /** Ships with Botling (a library plugin of the same name that replaced it is not): the chat page lends it its own parts (`ccb.page`). */
+  builtIn?: boolean;
 }
 
 /** File types a web part's stylesheet may bring along (fonts, pictures). */
@@ -225,6 +227,7 @@ export class PluginRegistry {
       const spec: WebSpec = {
         name, version: plugin.manifest.version, source, styles: [...(plugin.manifest.ccb?.styles ?? [])],
         settings: this.resolvedSettings(plugin), commands: (plugin.manifest.ccb?.contributes?.commands ?? []).map((command) => ({ ...command })),
+        ...(plugin.builtIn ? { builtIn: true } : {}),
       };
       this.lastSent.set(name, spec);
       return [spec];

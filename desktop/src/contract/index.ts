@@ -852,6 +852,8 @@ export const WebPluginSpecView = z.strictObject({
   styles: z.array(z.string().max(2_000)).max(20),
   settings: z.record(z.string().max(200), z.unknown()),
   commands: z.array(z.strictObject({ id: z.string().max(200), title: z.string().max(200), key: z.string().max(40).optional() })).max(100),
+  /** Ships with Botling: its web part may use the chat page's own parts (`ccb.page`, the message bars). */
+  builtIn: z.boolean().optional(),
 });
 export type WebPluginSpecView = z.infer<typeof WebPluginSpecView>;
 export const PluginsView = z.strictObject({

@@ -12,7 +12,7 @@ import { reportVisiblePins } from "../src/visible";
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
 // The plugin as the chat page loads it: a PluginHost lends the page's slots and kit, and the Board's pieces appear and go with it.
-const spec: PluginSpec = { name: manifest.name, version: manifest.version, source: "", styles: [], settings: {}, commands: [] };
+const spec: PluginSpec = { name: manifest.name, version: manifest.version, source: "", styles: [], settings: {}, commands: [], builtIn: true };
 const components: Record<string, ComponentInfo> = { cpu: { template: "<pre></pre>", version: 1, working: false, updated: false, hasPrevious: false } };
 const pin: PinView = {
   id: "P1", name: "cpu", headline: "10%", chip: { text: "10%", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15,
@@ -43,6 +43,20 @@ beforeEach(async () => {
   await host.sync([spec], async () => activate);
 });
 afterEach(() => { host.unload(manifest.name); setWindowVisible(true); });
+
+describe("who may use the page's own parts", () => {
+  it("a plugin that does not ship with Botling gets neither ccb.page nor the message bars: it fails and is unloaded", async () => {
+    host.unload(manifest.name);
+    const used: string[] = [];
+    for (const use of [(ccb: Parameters<typeof activate>[0]) => ccb.page, (ccb: Parameters<typeof activate>[0]) => ccb.messages.cardBar(() => null), (ccb: Parameters<typeof activate>[0]) => ccb.messages.specButton(() => null)]) {
+      sent.length = 0;
+      await host.sync([{ ...spec, name: "outside", builtIn: undefined }], async () => (ccb) => { use(ccb); used.push("ran"); });
+      expect(sent.some((action) => action.type === "pluginError" && String((action as { message?: string }).message).includes("ship with Botling")), String(use)).toBe(true);
+      expect(host.isLoaded("outside")).toBe(false);
+    }
+    expect(used).toEqual([]);
+  });
+});
 
 describe("botling.board loaded into the chat page", () => {
   it("draws the pins of each state in the slots the page gave it", () => {

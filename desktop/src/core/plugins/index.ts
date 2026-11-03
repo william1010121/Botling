@@ -486,6 +486,7 @@ export class Plugins {
       name: spec.name, version: spec.version.slice(0, 100), source: spec.source.slice(0, 5_000_000),
       styles: spec.styles.slice(0, 20).map((style) => `botling-chat://chat/plugin-files/${spec.name}/${style.split("/").map(encodeURIComponent).join("/")}`),
       settings: spec.settings,
+      ...(spec.builtIn ? { builtIn: true } : {}),
       commands: spec.commands.slice(0, 100).map((command) => ({ id: command.id.slice(0, 200), title: command.title.slice(0, 200), ...(command.key ? { key: command.key.slice(0, 40) } : {}) })),
     }));
   }

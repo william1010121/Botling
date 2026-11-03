@@ -27,6 +27,8 @@ export interface PluginSpec {
   settings: Record<string, unknown>;
   /** `ccb.contributes.commands`: id, title and an optional key ("cmd+shift+l"; the page's key dispatcher reads it). */
   commands: { id: string; title: string; key?: string }[];
+  /** Ships with Botling: only such a web part may use `ccb.page` and the message bars (a library plugin gets neither: they hand over the page's own parts). */
+  builtIn?: boolean;
 }
 
 type Dispose = () => void;
@@ -354,6 +356,13 @@ export class PluginHost {
       this.hostCalls.set(callID, { resolve, reject });
       post({ type: "hostCall", plugin: name, method, params: params ?? null, callID });
     });
+    const builtIn = !!entry.spec.builtIn;
+    let kit: PageKit | null = null;
+    const page = (): PageKit => (kit ??= this.pageKit(name, own, remove));
+    /** What only a plugin that ships with Botling may use. */
+    const ownParts = (what: string): void => {
+      if (!builtIn) throw new Error(`${what} is for the plugins that ship with Botling.`);
+    };
     return {
       name,
       codemirror: { state, view, commands },
@@ -405,12 +414,14 @@ export class PluginHost {
           return own(remove(extensions.afterRender, item));
         },
         cardBar: (make) => {
+          ownParts("ccb.messages.cardBar");
           const item = { plugin: name, make };
           extensions.cardBars.push(item);
           this.markdownChanged = true;
           return own(() => { remove(extensions.cardBars, item)(); this.hooks.redraw(); });
         },
         specButton: (make) => {
+          ownParts("ccb.messages.specButton");
           const item = { plugin: name, make };
           extensions.specButtons.push(item);
           this.markdownChanged = true;
@@ -423,7 +434,7 @@ export class PluginHost {
       decorations: {
         register: (renderer) => own(this.decorations.register(name, renderer)),
       },
-      page: this.pageKit(name, own, remove),
+      get page(): PageKit { ownParts("ccb.page"); return page(); },
       components: {
         register: (component, render) => {
           extensions.components.set(component, { plugin: name, render });

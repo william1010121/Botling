@@ -226,12 +226,12 @@ const standalone = WEB ? [{
   styles: [new URL("plugins/botling.board/board.css", location.href).toString()],
   settings: {},
   commands: [],
-}] : [];
+}].map((spec) => ({ ...spec, builtIn: true })) : [];
 /**
  * Plugins' web parts run here as in 1.x (Phase 4a: this page has an origin of its own, so they reach
  * neither the app page's document nor its bridge); since step M11 the built-in ones (ccb-latex) come the same way.
  */
-function setPlugins(specs: { name: string; version: string; source: string; styles: string[]; settings: Record<string, unknown>; commands: { id: string; title: string; key?: string }[] }[]) {
+function setPlugins(specs: { name: string; version: string; source: string; styles: string[]; settings: Record<string, unknown>; commands: { id: string; title: string; key?: string }[]; builtIn?: boolean }[]) {
   return window.ccb.setPlugins([...standalone, ...specs.filter((spec) => !standalone.some((own) => own.name === spec.name))]);
 }
 void setPlugins([]);
