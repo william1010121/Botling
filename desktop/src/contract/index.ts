@@ -685,6 +685,8 @@ export const SettingsView = z.strictObject({
   /** Botling 2 only: null uses the default 640px column. */
   messageColumnWidth: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable().default(null),
   subagentModel: BotModel.nullable(),
+  /** The Claude subagents' (app-managed workers') thinking effort new bots start with; null: each bot's own effort. */
+  subagentEffort: Effort.nullable().default(null),
   subagentHourCache: z.boolean(),
   claudeBypassPermissions: z.boolean().default(false),
   codexBypassPermissions: z.boolean().default(false),
@@ -729,6 +731,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
   z.strictObject({ key: z.literal("messageColumnWidth"), value: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable() }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
+  z.strictObject({ key: z.literal("subagentEffort"), value: Effort.nullable() }),
   z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),
   z.strictObject({ key: z.literal("claudeWorkerLimit"), value: z.number().int().min(1).max(16).nullable() }),
   z.strictObject({ key: z.literal("claudeBypassPermissions"), value: z.boolean() }),
@@ -840,6 +843,8 @@ export const BotSettingsView = z.strictObject({
   /** Each engine's effective effort (its own, else `effort`); the levels an engine does not support are never shown. */
   efforts: z.strictObject({ claude: Effort.nullable(), codex: Effort.nullable(), agy: Effort.nullable() }).optional(),
   subagentModel: z.string().max(200).nullable(),
+  /** Its Claude subagents' (app-managed workers') thinking effort; null: the bot's own Claude effort. */
+  subagentEffort: Effort.nullable().optional(),
   codexModel: z.string().max(200).nullable(),
   agyModel: z.string().max(200).nullable().optional(),
 });
@@ -1108,7 +1113,7 @@ export const Command = z.discriminatedUnion("type", [
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
   z.strictObject({
     type: z.literal("bot.configure"), botId, model: ModelId.nullable().optional(), effort: Effort.nullable().optional(),
-    subagentModel: ModelId.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
+    subagentModel: ModelId.nullable().optional(), subagentEffort: Effort.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
     /** The bot's own primary engine (null: follow the app's default). */
     primary: Engine.nullable().optional(),
     /** An engine's own effort (null: back to the old single effort, else the engine's default); only the keys given change. */

@@ -16,6 +16,8 @@ export interface HandoffArgs {
   name?: unknown; description?: unknown;
   subagent_type?: unknown;
   model?: unknown;
+  /** Its thinking effort (Claude's app_handoff; an engine that takes none ignores it). */
+  effort?: unknown;
   engine?: unknown;
   [key: string]: unknown;
 }

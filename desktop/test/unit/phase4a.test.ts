@@ -242,7 +242,7 @@ describe("settings (AppSettings.swift's keys)", () => {
     const empty = settingsView({});
     expect(empty).toMatchObject({
       language: null, effectiveLanguage: "en", botLook: "cute", chatAvatarSize: null,
-      subagentModel: null, subagentHourCache: false,
+      subagentModel: null, subagentEffort: null, subagentHourCache: false,
       codexWorkersFollow: true, codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: "sonnet",
       resultPublishing: "artifactUnlessSensitive", stallReminderMinutes: 15,
     });
@@ -269,6 +269,9 @@ describe("settings (AppSettings.swift's keys)", () => {
     expect(appliedCodexWorkers(raw)).toEqual({ model: "gpt-x", effort: "high", fast: null });
     // A new bot starts on the app's defaults (`seedEngineDefaults`), in bot.json's keys.
     expect(seeded({ ...raw, subagentModelDefault: "haiku" })).toEqual({ subagentModel: "haiku", codexWorkers: { model: "gpt-x", effort: "high" } });
+    expect(settingsView({ subagentEffortDefault: "turbo" }).subagentEffort).toBeNull();
+    expect(applySetting({}, { key: "subagentEffort", value: "max" })).toEqual({ subagentEffortDefault: "max" });
+    expect(seeded({ subagentEffortDefault: "max" })).toEqual({ subagentEffort: "max" });
   });
 
   it("through the core: settings.set saves and tells; a bot's model, effort and the subagents' choices reach a new claude head", async () => {
@@ -320,6 +323,10 @@ describe("settings (AppSettings.swift's keys)", () => {
     // A bot's own change stays its own; the next app-wide change sets it again (1.x: one batch for all).
     await c.call({ type: "bot.configure", botId: project.botId, subagentModel: "opus" });
     expect(botJSON(project.botId).subagentModel).toBe("opus");
+    await c.call({ type: "settings.set", change: { key: "subagentEffort", value: "low" } });
+    for (const id of [null, project.botId, made.botId]) expect(botJSON(id).subagentEffort).toBe("low");
+    await c.call({ type: "settings.set", change: { key: "subagentEffort", value: null } });
+    for (const id of [null, project.botId, made.botId]) expect(botJSON(id).subagentEffort).toBeUndefined();
     await c.call({ type: "settings.set", change: { key: "subagentModel", value: null } });
     await c.call({ type: "settings.set", change: { key: "codexWorkersFollow", value: true } });
     for (const id of [null, project.botId, made.botId]) {
