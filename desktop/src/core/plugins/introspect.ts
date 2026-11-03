@@ -33,8 +33,8 @@ const pluginName = z.string().min(1).max(200);
 const SLOT_ABOUT: Record<string, string> = {
   rightPanel: "A panel in the right column.", main: "The main area.", window: "A window of its own.", mainTab: "A tab in the main area (forRole says for which bots).",
   "settings.section": "A page of Settings.", quickSettings: "A block in the sidebar gear's popover.", "rightPanel.section": "A block in a bot's right panel overview.",
-  bottomPanel: "A panel under the chat, with a toggle in the chat header.",
-  chatHeader: "A status item in the chat header.", botRow: "A status item on a bot's row in the left column.",
+  bottomPanel: "A panel under the chat, with a toggle in the chat header.", chatHeader: "A button in the chat header that opens a popover (a view) or a status item (statusItem).",
+  botRow: "A status item on a bot's row in the left column.",
   "message/context": "The right-click menu of a message.", "bot/context": "The right-click menu of a bot.", "composer/plus": "The + menu of the input box.", commandPalette: "The command palette.",
 };
 

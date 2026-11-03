@@ -1,4 +1,5 @@
 import { BottomPanels, TOGGLE_BOTTOM_PANEL } from "./BottomPanels";
+import { ChatHeaderViews } from "./ChatHeaderViews";
 import { ownsCommand } from "../../../Web/src/frame-protocol";
 // The app page: React chrome around the reused chat page. The left column lists the bots (as the
 // Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
@@ -14,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { status, statusText } from "../contract/bot-status";
 import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
 import { setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
-import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
+import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
@@ -387,7 +388,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           {!web && <span className="bottom-controls" ref={setBottomControls} />}
           {bot && chat && !web && (
             <span className="chat-actions">
-              <RoutinesButton client={client} botId={bot.id} />
+              <ChatHeaderViews client={client} views={view.plugins?.chatHeaderViews ?? []} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
             </span>
           )}
         </header>
@@ -1262,53 +1263,4 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
     {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
   </div></>;
   return <>{viewer}<iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} sandbox={CHAT_SANDBOX} allow={CHAT_SANDBOX ? "clipboard-write" : undefined} title="Chat" /></>;
-}
-
-/**
- * The bot's routines (routines.cron and the app's own schedules), with Pause / Resume / Cancel —
- * a small stand-in until 2.0 has 1.x's Settings → Routines page.
- */
-function RoutinesButton({ client, botId }: { client: Client; botId: string }) {
-  const [open, setOpen] = useState(false);
-  const [list, setList] = useState<ResultOf<"routines.list"> | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-  const load = useCallback(() => {
-    void client.request({ type: "routines.list", botId }).then(setList, (failure) => setProblem(String((failure as Error)?.message ?? failure)));
-  }, [client, botId]);
-  useEffect(() => { if (open) load(); }, [open, load]);
-  useEffect(() => { setOpen(false); setList(null); }, [botId]);
-  const change = (operation: "pause" | "resume" | "cancel", id: string) => {
-    setProblem(null);
-    void client.request({ type: "routines.change", botId, operation, id }).then(setList, (failure) => setProblem(failure instanceof RequestFailed ? failure.error.message : String(failure)));
-  };
-  const paused = (status: string) => status === "paused";
-  return (
-    <span className="routines">
-      <button type="button" className={`header-button${open ? " on" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>Routines</button>
-      {open && (
-        <ShellOverlay><div className="routines-panel" role="dialog" aria-label="Routines">
-          {list?.error && <p className="routines-problem">{list.error}</p>}
-          {problem && <p className="routines-problem">{problem}</p>}
-          {list && !list.routines.length && <p className="routines-empty">No routines yet. Ask the bot to schedule one.</p>}
-          <ul>
-            {list?.routines.map((routine) => (
-              <li key={routine.id} data-status={routine.status}>
-                <div className="routine-title">{routine.title}</div>
-                <div className="routine-when">
-                  {routine.kind === "once" ? new Date(routine.schedule).toLocaleString() : routine.schedule}
-                  {routine.timezone !== "system_local" ? ` · ${routine.timezone}` : ""} · {routine.status.replace("_", " ")}
-                  {routine.next ? ` · next ${new Date(routine.next).toLocaleString()}` : ""}
-                </div>
-                <div className="routine-buttons">
-                  {(routine.status === "pending" || routine.status === "enabled" || routine.status === "due") && <button type="button" onClick={() => change("pause", routine.id)}>Pause</button>}
-                  {paused(routine.status) && <button type="button" onClick={() => change("resume", routine.id)}>Resume</button>}
-                  {routine.status !== "fired" && routine.status !== "cancelled" && routine.status !== "delivery_uncertain" && <button type="button" onClick={() => change("cancel", routine.id)}>Cancel</button>}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div></ShellOverlay>
-      )}
-    </span>
-  );
 }

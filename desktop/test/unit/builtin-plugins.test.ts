@@ -30,8 +30,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
@@ -57,11 +57,11 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
-    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
+    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
     expect(registry(library).plugin("ccb-latex")!.enabled).toBe(false);
     plugins.setEnabled("ccb-latex", true);
     // Maintainer copies a built-in plugin into the library to change it: that copy is the one that runs.
@@ -194,6 +194,19 @@ describe("the / menu and keys with built-in plugins", () => {
     // (The Terminal's key is the desktop app's; the phone has no terminal.)
     expect(keybindingsOf(null)).toEqual(keybindingsOf(view()).filter((binding) => binding.plugin !== "botling.terminal"));
     expect(runsInHost(null, "ccb-latex.insert")).toBe(false);
+  });
+});
+
+describe("botling.routines", () => {
+  it("brings the Routines button in the chat header (a `chatHeader` view), may only read and change routines (\"routines\"), and ships its program part and web part", async () => {
+    const { viewSurfaces } = await import("../../src/core/plugins/views");
+    const plugins = registry(join(tempDir("builtin-routines"), "plugins"));
+    const routines = plugins.plugin("botling.routines")!;
+    expect(routines.builtIn).toBe(true);
+    expect(routines.manifest.ccb?.permissions).toEqual(["routines"]);
+    const surfaces = viewSurfaces(plugins.contributions(), (name) => !!plugins.webPart(name));
+    expect(surfaces.chatHeaderViews).toEqual([{ plugin: "botling.routines", id: "botling.routines.panel", title: "Routines" }]);
+    for (const part of ["main.js", "ui.js"]) expect(existsSync(join(built, "botling.routines", part)), part).toBe(true);
   });
 });
 

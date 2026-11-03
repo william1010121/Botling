@@ -257,7 +257,7 @@ describe("botling manifests", () => {
       'Command "other.steal" must start with "mine.".',
       'Command "mine.ok" is declared twice.',
       "contributes.commands.3 is missing id.",
-      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section or bottomPanel.',
+      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel or chatHeader.',
       'Tile "mine.t": size "9x9" is not a Board size (for example 2x1).',
       'Setting "on" must start with "mine.".',
       'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette.',

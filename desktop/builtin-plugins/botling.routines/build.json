@@ -1,0 +1,9 @@
+{
+  "alias": {
+    "react": "builtin-plugins/botling.routines/src/react.ts",
+    "react/jsx-runtime": "builtin-plugins/botling.routines/src/jsx-runtime.ts",
+    "preact": "../Web/kit/vendor/preact.module.js",
+    "preact/hooks": "../Web/kit/vendor/hooks.module.js"
+  },
+  "loaders": { ".css": "text" }
+}

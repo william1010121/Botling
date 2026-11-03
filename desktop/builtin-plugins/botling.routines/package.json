@@ -1,0 +1,27 @@
+{
+  "name": "botling.routines",
+  "displayName": "Routines",
+  "version": "1.0.0",
+  "description": "The Routines button in the chat header: a bot's schedules (its routines.cron lines and the app's own one-time and recurring ones), with Pause, Resume and Cancel. Botling still keeps and runs the schedules; this plugin only lists them and asks for the change.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "routines"
+    ],
+    "web": "ui.js",
+    "host": "main.js",
+    "contributes": {
+      "views": [
+        {
+          "id": "botling.routines.panel",
+          "title": "Routines",
+          "where": "chatHeader"
+        }
+      ]
+    }
+  }
+}

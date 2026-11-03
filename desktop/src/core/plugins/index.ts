@@ -18,7 +18,7 @@
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
 import { join } from "node:path";
 import { z } from "zod";
-import { ContractError, type ApprovalAskView, type PluginsView, type WebPluginSpecView } from "../../contract";
+import { ContractError, type ApprovalAskView, type PluginsView, type ResultOf, type WebPluginSpecView } from "../../contract";
 import { ContractId } from "../../contract/editor-card";
 import { bindingsFor, findConflict, legacyKey, pluginBindings, type Overrides } from "../../contract/shortcuts";
 import { setPluginTags, type PluginTag } from "../reply";
@@ -117,6 +117,10 @@ export interface PluginWorld {
   app?: AppWorld;
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
   addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
+  /** A bot's routines as the app lists them (`routines.list`; null: no such bot). Absent: a world without routines (tests, spec adapters). */
+  routinesList?(botId: string): ResultOf<"routines.list"> | null;
+  /** Pauses, resumes or cancels one of a bot's routines (`routines.change`); throws why not. Returns the list after. */
+  routinesChange?(botId: string, operation: "pause" | "resume" | "cancel", id: string): ResultOf<"routines.change"> | null;
   /** The library changed: the app shows it. */
   changed(view: PluginsView): void;
   /** A plugin broke: Maintainer is asked to fix it. */
@@ -183,6 +187,8 @@ const ComponentParams = BotParams.extend({ name: str(200).min(1), data: z.string
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
 const PluginOnly = z.object({ plugin: str(214) });
+const RoutinesListParams = z.object({ plugin: str(214), bot: str(64) });
+const RoutinesChangeParams = RoutinesListParams.extend({ operation: z.enum(["pause", "resume", "cancel"]), id: str(2_200).min(1) });
 const Limit = (most: number, fallback: number) => z.number().int().optional().transform((value) => Math.min(most, Math.max(1, value ?? fallback)));
 const TasksParams = BotParams.extend({ limit: Limit(100, 100) });
 const HistoryParams = BotParams.extend({ days: Limit(14, 14) });
@@ -898,6 +904,17 @@ export class Plugins {
         if (outcome === "no-bot") throw new Error("No such bot.");
         if (outcome === "bad-schedule") throw new Error("Invalid schedule (it must be the 5 crontab fields).");
         return null;
+      }
+      case "routines.list":
+      case "routines.change": {
+        // A built-in plugin shows a bot's routines and pauses, resumes or cancels them, as the app's own Routines panel did. It never creates one.
+        const { plugin, data } = method === "routines.list" ? this.asked(RoutinesListParams, params) : this.asked(RoutinesChangeParams, params);
+        this.needs(plugin, "routines", "Reading or changing routines");
+        if (!this.shipped(plugin.manifest.name)) throw new Error("Only a plugin shipped with Botling may read or change routines.");
+        if (!world.routinesList || !world.routinesChange) throw new Error("Routines are not available here.");
+        const done = method === "routines.list" ? world.routinesList(data.bot) : world.routinesChange(data.bot, (data as z.infer<typeof RoutinesChangeParams>).operation, (data as z.infer<typeof RoutinesChangeParams>).id);
+        if (!done) throw new Error("No such bot.");
+        return done;
       }
       case "usage.view": {
         // Read only, for any plugin: what Settings → Usage and the quota rings show, as the `usage.view` command gives it.

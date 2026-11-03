@@ -142,6 +142,15 @@ export interface UsageView {
   history: { day: string; spent: number; tokens: number }[];
   claude: UsageLimits; codex: UsageLimits;
 }
+/** A routine as the app lists it (the `routines.list` command's rows). */
+export interface RoutineRow {
+  id: string; kind: "once" | "recurring" | "legacy"; task: string; title: string;
+  /** "Every day 08:15", the cron fields, or (once) its time as ISO-8601. */
+  schedule: string; cron?: string | null; timezone: string;
+  /** pending, due, paused, fired, cancelled, delivery_uncertain; enabled/paused for routines.cron. */
+  status: string; next: string | null;
+}
+export interface RoutinesList { routines: RoutineRow[]; error: string | null }
 export interface UsageApi {
   /** The usage now: the core reads the CLIs' quota first (at most about once a minute), then answers. */
   view(): Promise<UsageView>;
@@ -253,7 +262,13 @@ export interface BotlingApi {
      */
     set(command: string, key: string | null): Promise<{ ok: true } | { ok: false; conflict: string }>;
   };
-  routines: { add(botId: string, cron: string, task: string): Promise<void> };
+  routines: {
+    add(botId: string, cron: string, task: string): Promise<void>;
+    /** A bot's routines as the app lists them; needs the "routines" permission, built-in plugins only. */
+    list(botId: string): Promise<RoutinesList>;
+    /** Pauses, resumes or cancels one of a bot's routines (the list after); needs the "routines" permission, built-in plugins only. */
+    change(botId: string, operation: "pause" | "resume" | "cancel", id: string): Promise<RoutinesList>;
+  };
   workspace: WorkspaceApi;
   usage: UsageApi;
   sessions: SessionsApi;
@@ -471,6 +486,8 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     },
     routines: {
       add: async (botId, cron, task) => { await ask("routines.add", { bot: botId, cron, task }); },
+      list: async (botId) => (await ask("routines.list", { bot: botId })) as RoutinesList,
+      change: async (botId, operation, id) => (await ask("routines.change", { bot: botId, operation, id })) as RoutinesList,
     },
     usage: { view: async () => (await ask("usage.view")) as UsageView },
     app: {

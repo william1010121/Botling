@@ -69,6 +69,7 @@ export const PERMISSIONS: Record<string, string> = {
   bots: "talk to bots on your behalf and make new ones",
   claude: "give the bots new tools",
   sessions: "decide the folder a bot's session works in (built-in plugins only)",
+  routines: "see a bot's routines and pause, resume or cancel them (built-in plugins only)",
   app: "install a new build of Botling and restart it, take a picture of its window (built-in plugins only)",
 };
 const PERMISSION_NAMES = Object.keys(PERMISSIONS);

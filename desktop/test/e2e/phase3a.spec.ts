@@ -49,7 +49,8 @@ test("the Routines panel lists a schedule and pauses it", async () => {
     const made = await post(page, { v: 10, id: "r1", cmd: { type: "routines.change", botId: MAIN, operation: "create", kind: "recurring", cron: "0 9 * * 1-5", timezone: "Asia/Taipei", task: "Standup: check the board", requestId: "standup" } });
     expect(made.ok).toBe(true);
     await page.getByRole("button", { name: "Routines" }).click();
-    const panel = page.getByRole("dialog", { name: "Routines" });
+    // The panel is botling.routines' frame inside the header's popover.
+    const panel = page.getByRole("dialog", { name: "Routines" }).frameLocator("iframe");
     await expect(panel.locator("li", { hasText: "Standup" })).toContainText("Weekdays 09:00 · Asia/Taipei · pending");
     await expect(panel.locator("li", { hasText: "Daily summary" })).toContainText("Every day 08:15");
     await shot(page, "routines");

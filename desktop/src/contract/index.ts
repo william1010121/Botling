@@ -874,6 +874,8 @@ export const PluginsView = z.strictObject({
   rightPanelSections: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), forRole: z.enum(["main", "project", "bots", "any"]) })).max(20).optional(),
   /** Panels under the chat (`bottomPanel` views): one frame per bot, a toggle in the chat header; `toggle`: the plugin's command the page runs itself to show or hide it. */
   bottomPanels: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), toggle: PluginCommandId.optional() })).max(5).optional(),
+  /** Plugin views that are buttons in the chat header, each opening a popover with its frame for the bot on screen (`where: "chatHeader"`). */
+  chatHeaderViews: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(5).optional(),
   /** Plugin views that are blocks in the sidebar gear's popover (`where: "quickSettings"`). */
   quickSettings: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(10).optional(),
 });

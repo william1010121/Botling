@@ -21,9 +21,10 @@ export interface FolderView {
  * `settings.section`: a page of Settings (a sandboxed frame in its body); `quickSettings`: a block in the sidebar gear's popover;
  * `rightPanel.section`: a block in a bot's right panel overview, under its tasks (its `forRole` says whose); `bottomPanel`: a panel
  * under the chat, one frame per bot that stays alive while hidden, with a toggle button in the chat header (and `toggle`, one of the
- * plugin's own commands, that the page runs itself: it shows or hides the panel of the bot on screen).
+ * plugin's own commands, that the page runs itself: it shows or hides the panel of the bot on screen); `chatHeader`: a button in the chat
+ * header (its title) that opens a popover under it with the plugin's frame for the bot on screen.
  */
-export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings", "rightPanel.section", "bottomPanel"] as const;
+export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings", "rightPanel.section", "bottomPanel", "chatHeader"] as const;
 /** Which bots a `mainTab` view is a tab for, or a `rightPanel.section` view a block of (a fixed field, not a when-clause): "project" is a project bot. */
 export const VIEW_ROLES = ["main", "project", "bots", "any"] as const;
 export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;

@@ -331,6 +331,12 @@ export class Core {
           if (!bot) return "no-bot";
           return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
         },
+        routinesList: (botId) => this.pluginBot(botId)?.routinesView() ?? null,
+        routinesChange: (botId, operation, id) => {
+          const bot = this.pluginBot(botId);
+          // Not `ContractError`'s wording to a plugin: the store's own message, as the app's panel showed it.
+          return bot ? bot.changeRoutine({ operation, id }) : null;
+        },
         changed: (view) => {
           this.followClaudeParts();
           // A built-in plugin turned on or off brings or takes away its cards (botling.cards).
