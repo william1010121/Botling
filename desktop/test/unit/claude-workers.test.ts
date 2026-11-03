@@ -351,6 +351,40 @@ describe("agent definitions", () => {
     await h.workers.tool("app_handoff", { instructions: "Quick", subagent_type: "reviewer", model: "opus" });
     expect(h.heads[1]!.config.model).toBe("opus");
   });
+  it("takes an effort: the handoff's, else the definition's, else the bot's subagent effort, else the coordinator's (`--effort`)", async () => {
+    const h = harness(undefined, { subagentEffort: "low" });
+    mkdirSync(join(h.cwd, ".claude", "agents"), { recursive: true });
+    writeFileSync(join(h.cwd, ".claude", "agents", "deep.md"), "---\nname: deep\neffort: max\n---\nThink hard.\n");
+    const first: any = await h.workers.tool("app_handoff", { instructions: "A", effort: "xhigh" });
+    expect(first.effort).toBe("xhigh");
+    expect(h.heads[0]!.config.effort).toBe("xhigh");
+    expect(h.items).toContainEqual(expect.objectContaining({ kind: "subagentRuntime", id: first.task_id, runtime: { engine: "claude", reasoningEffort: "xhigh" } }));
+    await h.workers.tool("app_handoff", { instructions: "B", subagent_type: "deep" });
+    expect(h.heads[1]!.config.effort).toBe("max");
+    await h.workers.tool("app_handoff", { instructions: "C", subagent_type: "deep", effort: "medium" });
+    expect(h.heads[2]!.config.effort).toBe("medium");
+    await h.workers.tool("app_handoff", { instructions: "D" });
+    expect(h.heads[3]!.config.effort).toBe("low");
+    const plain = harness();
+    await plain.workers.tool("app_handoff", { instructions: "E" });
+    expect(plain.heads[0]!.config.effort).toBe("high");
+  });
+  it("ignores an effort Claude does not take, says so, and runs at the effort it would have had", async () => {
+    const h = harness();
+    const r: any = await h.workers.tool("app_handoff", { instructions: "A", effort: "turbo" });
+    expect(r).toMatchObject({ accepted: true, effort: "high" });
+    expect(r.notice).toContain('"turbo"');
+    expect(r.notice).toContain("low, medium, high, xhigh, max");
+    expect(h.heads[0]!.config.effort).toBe("high");
+    mkdirSync(join(h.cwd, ".claude", "agents"), { recursive: true });
+    writeFileSync(join(h.cwd, ".claude", "agents", "odd.md"), "---\nname: odd\neffort: ultra\n---\nBody\n");
+    expect(loadAgentDefinition("odd", h.cwd, { home: join(h.dir, "home") })).toMatchObject({ effort: null, effortIgnored: "ultra" });
+    const odd: any = await h.workers.tool("app_handoff", { instructions: "B", subagent_type: "odd" });
+    expect(odd.notice).toContain('"ultra"');
+    expect(h.heads[1]!.config.effort).toBe("high");
+    const quiet: any = await h.workers.tool("app_handoff", { instructions: "C" });
+    expect(quiet.notice).toBeUndefined();
+  });
   it("runs a built-in type as a plain worker and refuses what it cannot reproduce", async () => {
     const h = harness();
     await h.workers.tool("app_handoff", { instructions: "Explore", subagent_type: "Explore" });

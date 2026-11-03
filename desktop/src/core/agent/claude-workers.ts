@@ -26,6 +26,7 @@ import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import type { StreamItem } from "./stream";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
+import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 
 /** What the adapter needs of a worker's process (ClaudeHead; a fake in tests). */
@@ -59,11 +60,21 @@ export const CLAUDE_WORKER_POLICY = [
 ].join("\n");
 
 /** A `.claude/agents/<type>.md` definition, as far as a worker can reproduce it. */
-export interface AgentDefinition { name: string; prompt: string; model: string | null; tools: string[] | null }
+export interface AgentDefinition {
+  name: string; prompt: string; model: string | null; tools: string[] | null;
+  /** Its `effort:` (Claude's `--effort`); null: none, or one Claude does not take (`effortIgnored`). */
+  effort?: EffortLevel | null;
+  /** An `effort:` Claude does not take: not used, and the handoff says so. */
+  effortIgnored?: string;
+}
 
 /** Types Claude Code has built in (no file): a plain worker. */
 const BUILT_IN_TYPES = new Set(["general-purpose", "Explore", "Plan", "statusline-setup", "claude-code-guide"]);
 const MODEL_ALIASES = new Set(["haiku", "sonnet", "opus"]);
+/** The levels Claude's `--effort` takes (the composer's and Settings' own list). */
+const CLAUDE_EFFORTS = EFFORTS_BY_ENGINE.claude;
+/** `value` as a Claude effort level; null: none, or one Claude does not take. */
+export const claudeEffort = (value: unknown): EffortLevel | null => (CLAUDE_EFFORTS as readonly unknown[]).includes(value) ? value as EffortLevel : null;
 
 /**
  * The definition for `subagent_type`: the project's .claude/agents, then the user's, then the plugins' agents/ folders
@@ -92,7 +103,9 @@ export function loadAgentDefinition(type: string | null | undefined, cwd: string
     const model = fields.model && fields.model !== "inherit" ? fields.model : null;
     if (model && !MODEL_ALIASES.has(model) && !/^claude-[a-z0-9.-]+$/.test(model)) return { error: `The agent definition ${file} names an unknown model "${model}". Nothing was started.` };
     const tools = fields.tools ? fields.tools.split(",").map((tool) => tool.trim()).filter(Boolean) : null;
-    return { name: fields.name || short, prompt, model, tools: tools?.length ? tools : null };
+    const wantedEffort = fields.effort && fields.effort !== "inherit" ? fields.effort : null;
+    const effort = claudeEffort(wantedEffort);
+    return { name: fields.name || short, prompt, model, tools: tools?.length ? tools : null, effort, ...(wantedEffort && !effort ? { effortIgnored: wantedEffort } : {}) };
   }
   return { error: `No agent definition named "${wanted}" in ${join(cwd, ".claude", "agents")}, ~/.claude/agents or the plugins. Nothing was started; use a type that exists or leave subagent_type out.` };
 }
@@ -110,6 +123,8 @@ export interface ClaudeWorkersOptions {
   cwd(): string;
   /** The bot's subagent model (null: the coordinator's model). */
   subagentModel(): string | null;
+  /** The bot's subagent effort (null: the coordinator's effort). */
+  subagentEffort?(): string | null;
   /** Plugin folders whose agents/ count as definitions. */
   pluginDirs?(): string[];
   processStarted?(pid: number): void;
@@ -154,12 +169,14 @@ interface Proc {
   settle?: ReturnType<typeof setTimeout>;
   pendingResult?: Extract<StreamItem, { kind: "result" }>;
   keepAlive?: ReturnType<typeof setTimeout>;
+  /** The effort its process was started with (`--effort`; a run into the kept-alive process goes on at it). */
+  effort?: string | null;
   /** The config a run started with, for its opening items (null: it went into the kept-alive process). */
   opening?: { run: number; base: HeadConfig | null };
 }
 
 /** What the Claude adapter needs of the bot (ClaudeWorkersOptions without the journal and the coordinator). */
-export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters">;
+export type ClaudeAdapterOptions = Pick<ClaudeWorkersOptions, "base" | "cwd" | "subagentModel" | "subagentEffort" | "pluginDirs" | "processStarted" | "keepAliveMs" | "settleMs" | "home" | "specWriters">;
 
 /**
  * The Claude engine adapter (shared-core spec 4.1, the Claude row of 4.2): one `claude` process per worker, its
@@ -188,12 +205,21 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     return nonEmpty(r.engineData.model) ?? this.options.subagentModel() ?? base?.model ?? null;
   }
 
+  /** Its `--effort`: the handoff's or its definition's, else the bot's subagent effort, else the coordinator's. */
+  private effort(r: Readonly<WorkerLedgerRecord>, base: HeadConfig | null) {
+    return claudeEffort(r.engineData.effort) ?? claudeEffort(this.options.subagentEffort?.()) ?? base?.effort ?? null;
+  }
+
   /** Its definition and model are checked before anything is recorded; its session id is chosen now (`--session-id`). */
   prepare(request: HandoffRequest) {
     const definition = this.definition(request.type);
     if (definition && "error" in definition) throw new Error(definition.error);
     if (request.model && !MODEL_ALIASES.has(request.model) && !/^claude-[a-z0-9.-]+$/.test(request.model)) throw new Error(`Unknown model "${request.model}": use haiku, sonnet or opus.`);
-    return { engineData: { sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null } };
+    // An effort Claude does not take is not used (the worker runs at the one it would have had); the handoff says so.
+    const wanted = typeof request.args.effort === "string" && request.args.effort.trim() ? request.args.effort.trim() : null;
+    const effort = claudeEffort(wanted) ?? (wanted ? null : definition?.effort ?? null);
+    const ignored = [...(wanted && !claudeEffort(wanted) ? [wanted] : []), ...(!wanted && definition?.effortIgnored ? [definition.effortIgnored] : [])];
+    return { engineData: { sessionId: randomUUID(), sessionStarted: false, model: request.model ?? definition?.model ?? null, effort, ...(ignored.length ? { effortIgnored: ignored } : {}) } };
   }
 
   /** A run into its kept-alive process takes no slot. */
@@ -202,7 +228,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   runtime(r: Readonly<WorkerLedgerRecord>) {
     const proc = this.procs.get(r.id);
     const base = proc?.opening?.run === r.run ? proc.opening.base : proc?.head?.running ? null : this.options.base();
-    return { reasoningEffort: base?.effort ?? null, model: this.model(r, base) };
+    // A run into the kept-alive process goes on at the effort that process started with.
+    return { reasoningEffort: !base && proc?.head?.running ? proc.effort ?? null : this.effort(r, base), model: this.model(r, base) };
   }
 
   /** Sends a run's first words: into its kept-alive process, or a new one (`--resume` once its session exists). */
@@ -226,7 +253,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (def && "error" in def) throw new Error(def.error);
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
-      model: this.model(r, base), monitorWorker: true, appMcp: null, agentGuard: CLAUDE_WORKER_GUARD,
+      model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: null, agentGuard: CLAUDE_WORKER_GUARD,
       specGuard: { writers: this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       systemPrompt: [CLAUDE_WORKER_POLICY, def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
@@ -235,7 +262,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
     const head: ClaudeWorkerHead = this.factory(config, { onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit) });
     head.start();
-    Object.assign(proc, { head, tree: head, run, record: r, opening: { run: run.run, base }, pendingResult: undefined });
+    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, opening: { run: run.run, base }, pendingResult: undefined });
     proc.stream.newProcess();
     proc.queued.clear();
     run.emit({ type: "session", conversationId: sessionId });
@@ -422,6 +449,7 @@ export class ClaudeWorkers implements WorkerHost {
   readonly steersRunning = true;
   /** The shared core that holds these workers (state, runs, reports, approvals). */
   readonly core: WorkerCore;
+  private readonly adapter: ClaudeWorkerAdapter;
 
   constructor(
     options: ClaudeWorkersOptions,
@@ -430,12 +458,13 @@ export class ClaudeWorkers implements WorkerHost {
     report: (id: string, text: string, run: number) => boolean,
     factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead,
   ) {
+    this.adapter = new ClaudeWorkerAdapter(options, factory);
     const core: WorkerCoreOptions = {
       store: new ClaudeJournal(options.file),
       // A Claude coordinator is done with a report once it has it (decision D4: no checkpoint).
       port: { ack: "none", deliver: (r, text) => (report(r.id, text, r.run) ? "taken" : "busy") },
       sink: { item: emit },
-      adapters: [new ClaudeWorkerAdapter(options, factory)],
+      adapters: [this.adapter],
       ownerSessionId: () => options.ownerSessionId(),
       maxRunning: () => workerLimit(options.maxRunning?.()),
       log: (line) => options.log?.(line),
@@ -466,7 +495,11 @@ export class ClaudeWorkers implements WorkerHost {
     if (name === "app_handoff") {
       // The Agent tool's own names (prompt, description) and "task" are taken too: models carry them over (live check).
       const started = await this.core.handoff("claude-process", args);
-      return { ...started, message: "The worker runs on its own in this folder. Its report arrives later as an app message (<app_task_result>). Start any other independent workers you need, say in one sentence what you handed off, then finish your turn: do not wait or poll." };
+      const record = this.core.get(started.task_id);
+      const ignored = Array.isArray(record?.engineData.effortIgnored) ? record.engineData.effortIgnored as string[] : [];
+      const effort = record ? this.adapter.runtime(record).reasoningEffort : null;
+      const notice = ignored.length ? `Effort "${ignored.join('", "')}" ignored: Claude takes ${CLAUDE_EFFORTS.join(", ")}. The worker runs at ${effort ?? "the model's default"} effort.` : undefined;
+      return { ...started, effort, ...(notice ? { notice } : {}), message: "The worker runs on its own in this folder. Its report arrives later as an app message (<app_task_result>). Start any other independent workers you need, say in one sentence what you handed off, then finish your turn: do not wait or poll." };
     }
     if (name === "app_send_message") {
       const sent = await this.core.message(args);

@@ -11,7 +11,7 @@ import type { SettingsChange, SettingsView } from "../contract";
 import { messageWidth } from "../contract/message-width";
 import { normalizeOverrides } from "../contract/shortcuts";
 import { savedLanguage } from "./prompts";
-import { changeEngineDefaults, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
+import { changeEngineDefaults, EFFORTS_BY_ENGINE, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
 import { specWriters } from "./spec-guard";
 
 export const LANGUAGES = ["en", "zh-Hant"] as const;
@@ -58,6 +58,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
     messageColumnWidth: messageWidth(raw.messageColumnWidth),
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
+    subagentEffort: oneOf(EFFORTS_BY_ENGINE.claude, raw.subagentEffortDefault),
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
     claudeWorkerLimit: claudeWorkerLimit(raw),
     claudeBypassPermissions: bool(raw.claudeBypassPermissions, false),
@@ -154,6 +155,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
     case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
+    case "subagentEffort": set("subagentEffortDefault", change.value); break;
     case "claudeBypassPermissions": set("claudeBypassPermissions", change.value); break;
     case "agyBypassPermissions": set("agyBypassPermissions", change.value); break;
     case "codexBypassPermissions": set("codexBypassPermissions", change.value); break;
@@ -236,6 +238,8 @@ export function codexWorkersJSON(value: { model: string | null; effort: string |
 export function seedEngineDefaults(raw: RawSettings, setSetting: (key: string, value: unknown) => void) {
   const model = settingsView(raw).subagentModel;
   if (model) setSetting("subagentModel", model);
+  const effort = settingsView(raw).subagentEffort;
+  if (effort) setSetting("subagentEffort", effort);
   const workers = codexWorkersJSON(appliedCodexWorkers(raw));
   if (workers) setSetting("codexWorkers", workers);
   // Engines, primary, models and effort (Settings → Engines and models).

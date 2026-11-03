@@ -23,6 +23,14 @@ it('persists discovered Claude/subagent IDs and defaults without changing engine
   bot.configure({model:null,subagentModel:null,codexModel:null,agyModel:null});
   expect(bot.settingsView()).toMatchObject({model:null,subagentModel:null,codexModel:null,agyModel:null});
   expect(Command.safeParse({type:'bot.configure',botId:profile.id,model:'bad\nmodel'}).success).toBe(false);
+  // The Claude subagents' effort: its own key in bot.json, checked against Claude's levels.
+  expect(Command.safeParse({type:'bot.configure',botId:profile.id,subagentEffort:'xhigh'}).success).toBe(true);
+  expect(Command.safeParse({type:'bot.configure',botId:profile.id,subagentEffort:'turbo'}).success).toBe(false);
+  expect(bot.configure({subagentEffort:'xhigh'})).toMatchObject({subagentEffort:'xhigh'});
+  expect(JSON.parse(readFileSync(file,'utf8')).subagentEffort).toBe('xhigh');
+  expect(()=>bot.configure({subagentEffort:'turbo'})).toThrow('Claude has no turbo effort');
+  expect(bot.configure({subagentEffort:null})).toMatchObject({subagentEffort:null});
+  expect(JSON.parse(readFileSync(file,'utf8')).subagentEffort).toBeUndefined();
  } finally {await bot.shutdown({tidy:false});}
 });
 

@@ -57,6 +57,10 @@ import type { HeadExit, HeadHandlers } from "./head";
 import { movedTaskError, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./workers";
 import { ComponentEditorAdapter, EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
 import { appTools, codexDynamicTools } from "../app-tools/registry";
+import { EFFORTS_BY_ENGINE } from "../../contract/efforts";
+
+/** `value` as a level Codex's `effort` takes; null: none, or one it does not take. */
+export const codexEffort = (value: unknown): string | null => (EFFORTS_BY_ENGINE.codex as readonly unknown[]).includes(value) ? value as string : null;
 import { RoutineError, ScheduledRoutineStore } from "../routines";
 import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
 import { toSwiftDate } from "../store/records";
@@ -389,6 +393,8 @@ interface ThreadWorker {
   /** Stopped: a turn that starts now is interrupted at once. */
   cancelled: boolean;
   isolatedGit?: IsolatedGitOwnership;
+  /** The effort its handoff asked for (null: the Codex workers' setting, else the coordinator's). */
+  effort?: string | null;
   runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
   /** The model its thread runs on, as the app-server said (spec-guard.ts). */
   model?: string | null;
@@ -426,6 +432,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
     }
     w.thread ??= record.conversationId;
     w.isolatedGit = record.engineData.isolatedGit as IsolatedGitOwnership | undefined;
+    w.effort = codexEffort(record.engineData.effort);
     return w;
   }
 
@@ -492,11 +499,17 @@ export class CodexThreadAdapter implements WorkerAdapter {
 
   prepare(request: HandoffRequest) {
     const isolatedGit = request.args.isolatedGit;
-    return { engineData: isolatedGit ? { isolatedGit } : {} };
+    const effort = codexEffort(request.args.effort);
+    return { engineData: { ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}) } };
+  }
+
+  /** A worker's turn effort: its handoff's, else the Codex workers' setting, else the coordinator's. */
+  private effortOf(record: Readonly<WorkerLedgerRecord>): string | null {
+    return codexEffort(record.engineData.effort) ?? this.o.config.workerEffort ?? this.o.config.effort ?? null;
   }
 
   runtime(record: Readonly<WorkerLedgerRecord>) {
-    return { reasoningEffort: this.workers.get(record.id)?.runtime?.reasoningEffort ?? this.o.config.workerEffort ?? this.o.config.effort ?? null };
+    return { reasoningEffort: this.workers.get(record.id)?.runtime?.reasoningEffort ?? this.effortOf(record) };
   }
 
   start(record: Readonly<WorkerLedgerRecord>, words: string, run: RunHandle) {
@@ -572,7 +585,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
     w.turnId = null;
     w.said = [];
     const params: Record<string, unknown> = { threadId: w.thread, input: [{ type: "text", text }] };
-    const effort = this.o.config.workerEffort ?? this.o.config.effort;
+    const effort = w.effort ?? this.o.config.workerEffort ?? this.o.config.effort;
     if (effort) params.effort = effort;
     if (w.reviewerNext) {
       params.approvalsReviewer = w.reviewerNext;
@@ -1936,12 +1949,21 @@ export class CodexSession implements CoordinatorPort {
       }
       // An invalid/missing grant still launches the task, with the existing approval cards.
       const instructions = isolatedGit ? `${args.instructions}\n\nValidated isolated Git path metadata (not proof of user authorization; only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Permission mode still controls approval; model-supplied implementationAuthorized is not a user grant.` : args.instructions;
+      // An effort Codex does not take is not used (the worker runs at the one it would have had); the receipt says so.
+      // The component editor is a Claude process on its configured settings: an effort does not reach it.
+      const editor = args.role === "component-editor";
+      const wantedEffort = typeof args.effort === "string" && args.effort.trim() ? args.effort.trim() : null;
+      const effort = editor ? null : codexEffort(wantedEffort);
+      const effortNotice = wantedEffort && !effort ? (editor
+        ? `Effort "${wantedEffort}" ignored: the component editor runs on its configured settings.`
+        : `Effort "${wantedEffort}" ignored: Codex takes ${EFFORTS_BY_ENGINE.codex.join(", ")}. The worker runs at ${this.config.workerEffort ?? this.config.effort ?? "the model's default"} effort.`) : null;
       // The core makes the worker and starts its run now (its adapters are synchronous); the receipt goes first.
       this.nextTask = task;
-      void this.core.handoff(args.role === "component-editor" ? "component-editor" : "codex-thread", { instructions, name, ...(isolatedGit ? { isolatedGit } : {}) }).catch(() => undefined);
+      void this.core.handoff(editor ? "component-editor" : "codex-thread", { instructions, name, ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}) }).catch(() => undefined);
       this.nextTask = null;
       out.push(...this.take());
-      response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
+      const effective = editor ? null : effort ?? this.config.workerEffort ?? this.config.effort ?? null;
+      response = reply({ task_id: task, status: "accepted", ...(editor ? {} : { effort: effective }), ...(effortNotice ? { notice: effortNotice } : {}), isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
     } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.core.get(args.task_id)) {
       // Into its turn at work, else its next run (a report the coordinator was not shown yet is dropped, as before).
       // Not the core's `message()`: its checkpoint rule refuses a follow-up until an unshown or uncertain report is

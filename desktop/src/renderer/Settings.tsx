@@ -622,10 +622,14 @@ function Engines({ client, settings, change, codexModels, modelBotId, botCount }
         <Toggle label="Codex: bypass approvals and sandbox" hint="Disables Codex approval prompts, auto review and its filesystem/network sandbox for sessions and Codex workers. Commands run with the app user's OS access." checked={settings.codexBypassPermissions} onChange={(value) => change({ key: "codexBypassPermissions", value })} />
       </Group>
       <AntigravityPermissions client={client} settings={settings} change={change} />
-      <Group title="Claude subagents" note="Model and cache take effect when a bot next wakes; the worker limit, for the next worker that starts.">
+      <Group title="Claude subagents" note="Model and cache take effect when a bot next wakes; thinking effort and the worker limit, for the next worker that starts.">
         <Row label="Model">
           <SelectSetting label="Subagents' model" blank="Same as bot" options={MODELS} value={settings.subagentModel}
             onChange={(value) => change({ key: "subagentModel", value: value as SettingsView["subagentModel"] })} />
+        </Row>
+        <Row label="Thinking effort">
+          <SelectSetting label="Subagents' thinking effort" blank="Same as bot" options={effortOptions("claude")} value={settings.subagentEffort ?? null}
+            onChange={(value) => change({ key: "subagentEffort", value: value as SettingsView["subagentEffort"] })} />
         </Row>
         <Toggle label="Keep subagents' prompt cache for 1 hour" checked={settings.subagentHourCache} onChange={(value) => change({ key: "subagentHourCache", value })} />
         <Row label={limit.label} hint={limit.hint}>
@@ -720,6 +724,10 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           {effortRow("claude")}
           <Row label="Subagents' model">
             <ModelPicker label="Claude subagents' model" blank="Inherit bot" discovery={claudeModels} value={view.subagentModel} subagents onChange={(subagentModel) => configure({ subagentModel })} />
+          </Row>
+          <Row label="Subagents' effort">
+            <SelectSetting label="Claude subagents' thinking effort" blank="Inherit bot" options={effortOptions("claude")} value={view.subagentEffort ?? null}
+              onChange={(value) => configure({ subagentEffort: value as BotSettingsView["effort"] })} />
           </Row>
         </Group>
       )}

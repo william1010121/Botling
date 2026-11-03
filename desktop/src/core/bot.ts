@@ -1231,6 +1231,7 @@ export class Bot {
       },
       cwd: () => this.owner.options.worktree?.()?.cwd ?? this.commandFolder,
       subagentModel: () => this.owner.choices().subagentModel,
+      subagentEffort: () => this.owner.choices().subagentEffort,
       pluginDirs: () => this.options.plugins?.().dirs ?? [],
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
@@ -2241,7 +2242,7 @@ export class Bot {
   }
 
   /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`, `codexWorkers`). */
-  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null } {
+  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null } {
     const settings = this.store.loadSettings();
     const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
     const workers = codexWorkerDefaults(settings.codexWorkers);
@@ -2251,6 +2252,7 @@ export class Bot {
       // Each engine's own effort, the old single one standing in where an engine has none.
       efforts: effortsFor(settings),
       subagentModel: typeof settings.subagentModel === "string" ? settings.subagentModel : null,
+      subagentEffort: pick(settings.subagentEffort, EFFORTS_BY_ENGINE.claude),
       // None set: Codex's own config (~/.codex/config.toml).
       codexWorkers: workers.model || workers.effort || workers.fast !== null ? workers : null,
     };
@@ -2274,11 +2276,12 @@ export class Bot {
    * set every bot): written into its bot.json and its other head's; a head already running keeps its own
    * until it next wakes, as with its own settings.
    */
-  applyEngineDefaults(change: { subagentModel?: string | null; codexWorkers?: Record<string, unknown> | undefined }) {
+  applyEngineDefaults(change: { subagentModel?: string | null; subagentEffort?: string | null; codexWorkers?: Record<string, unknown> | undefined }) {
     const owner = this.owner;
     if (owner.readOnly) return;
     for (const store of owner.members.map(bot => bot.store)) {
       if (change.subagentModel !== undefined) store.saveSetting("subagentModel", change.subagentModel ?? undefined);
+      if (change.subagentEffort !== undefined) store.saveSetting("subagentEffort", change.subagentEffort ?? undefined);
       if ("codexWorkers" in change) store.saveSetting("codexWorkers", change.codexWorkers);
     }
   }
@@ -2292,13 +2295,13 @@ export class Bot {
       primary: owner.headsSettings.answerWith && owner.headsSettings.answerWith !== "both" ? owner.headsSettings.answerWith : null,
       primaryEffective: resolvePrimary(owner.headsSettings, owner.appPrimary()),
       model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"], efforts: choices.efforts as BotSettingsView["efforts"],
-      subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], codexModel: owner.headsSettings.codexModel ?? null,
+      subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], subagentEffort: choices.subagentEffort as BotSettingsView["subagentEffort"], codexModel: owner.headsSettings.codexModel ?? null,
       agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
     };
   }
 
   /** Changes its own choices; a head already running keeps its own until it next wakes. */
-  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
+  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     const before = owner.settingsView();
@@ -2314,7 +2317,9 @@ export class Bot {
         if (level && !(EFFORTS_BY_ENGINE[engine] as readonly string[]).includes(level)) throw new ContractError("bad_request", `${displayName(engine)} has no ${level} effort.`);
       }
     }
-    for (const key of ["model", "effort", "subagentModel", "agyModel"] as const) {
+    // The subagents' effort is read when each worker starts: nothing to restart.
+    if (change.subagentEffort && !(EFFORTS_BY_ENGINE.claude as readonly string[]).includes(change.subagentEffort)) throw new ContractError("bad_request", `Claude has no ${change.subagentEffort} effort.`);
+    for (const key of ["model", "effort", "subagentModel", "subagentEffort", "agyModel"] as const) {
       if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
     }
     if (change.codexModel !== undefined) {

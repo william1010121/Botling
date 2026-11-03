@@ -2666,6 +2666,10 @@ First write a test that shows this, then fix it.`;
     if (change.key === "subagentModel" && model !== settingsView(before).subagentModel) {
       for (const bot of this.bots.values()) bot.applyEngineDefaults({ subagentModel: model });
     }
+    const subagentEffort = settingsView(next).subagentEffort;
+    if (change.key === "subagentEffort" && subagentEffort !== settingsView(before).subagentEffort) {
+      for (const bot of this.bots.values()) bot.applyEngineDefaults({ subagentEffort });
+    }
     const workers = appliedCodexWorkers(next);
     if ((change.key === "codexWorkers" || change.key === "codexWorkersFollow") && JSON.stringify(workers) !== JSON.stringify(appliedCodexWorkers(before))) {
       for (const bot of this.bots.values()) bot.applyEngineDefaults({ codexWorkers: codexWorkersJSON(workers) });

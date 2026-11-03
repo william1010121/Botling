@@ -95,6 +95,9 @@ describe("Settings' model and effort choices are dropdowns", () => {
       expect(host.querySelectorAll(".segmented")).toHaveLength(0);
       expect(host.querySelector('input[type="text"]:not([aria-label="Official ACP runtime path"])')).toBeNull();
       expect(options(select(host, "Subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(options(select(host, "Subagents' thinking effort"))).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
+      await choose(select(host, "Subagents' thinking effort"), "high");
+      expect(sent.at(-1)).toMatchObject({ type: "settings.set", change: { key: "subagentEffort", value: "high" } });
       // The Codex list, after "Same as bot", and the saved model it does not have.
       const workers = select(host, "Workers' model");
       expect(options(workers)).toEqual(["", "gpt-6-luna", "gpt-6-sol", "gpt-5-old"]);
@@ -196,6 +199,13 @@ describe("Settings' model and effort choices are dropdowns", () => {
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { codex: null } });
       await choose(select(host, "Claude thinking effort"), "max");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { claude: "max" } });
+      // The Claude subagents' (workers') own effort, from Claude's levels.
+      expect(select(host, "Claude subagents' thinking effort").closest("section")?.getAttribute("aria-label")).toBe("Claude");
+      expect(options(select(host, "Claude subagents' thinking effort"))).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
+      await choose(select(host, "Claude subagents' thinking effort"), "xhigh");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentEffort: "xhigh" });
+      await choose(select(host, "Claude subagents' thinking effort"), "");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentEffort: null });
     } finally { await done(); }
   });
 

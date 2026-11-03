@@ -1,7 +1,7 @@
 [
  {
   "name": "app_handoff",
-  "description": "Start an app-managed worker: a Claude subagent that runs as its own session in this bot's folder and reports back to you. Use it wherever you would use the Agent tool (which is off here): give a short name and complete, self-contained instructions; subagent_type picks a .claude/agents definition, model overrides the worker's model (haiku, sonnet, opus). Returns task_id and run at once; the worker's report arrives later as an app message (<app_task_result>). Finish your turn instead of waiting or polling.",
+  "description": "Start an app-managed worker: a Claude subagent that runs as its own session in this bot's folder and reports back to you. Use it wherever you would use the Agent tool (which is off here): give a short name and complete, self-contained instructions; subagent_type picks a .claude/agents definition, model overrides the worker's model (haiku, sonnet, opus), effort its thinking effort (low, medium, high, xhigh, max; default: the bot's subagent effort, else yours). Returns task_id and run at once; the worker's report arrives later as an app message (<app_task_result>). Finish your turn instead of waiting or polling.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -16,6 +16,16 @@
     },
     "model": {
      "type": "string"
+    },
+    "effort": {
+     "type": "string",
+     "enum": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+     ]
     }
    },
    "required": [
