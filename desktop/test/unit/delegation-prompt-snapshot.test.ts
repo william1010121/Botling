@@ -19,7 +19,7 @@ const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 function render(engine: typeof ENGINES[number], role: "main" | "manager" | "bot", tree: string | null, h: typeof heads | null) {
   const p = profile(role);
   const prompts = botPrompts({ profile: p, engine, heads: h, language: "en", workingFolder: tree });
-  return { prompts, desktop: desktopPrompts(prompts, p, null, engine, true), native: desktopPrompts(prompts, p, null, engine, false) };
+  return { prompts, desktop: desktopPrompts(prompts, p, engine, true), native: desktopPrompts(prompts, p, engine, false) };
 }
 
 describe("the delegation prompt is byte-identical", () => {

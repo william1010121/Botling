@@ -52,7 +52,7 @@ import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import { maintainerEditorBinding } from "./agent/component-editor";
 import { headsJSON, singleHead, type Engine, type Heads } from "./heads";
-import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, withPluginSections, type BotPrompts, type ReportTool } from "./prompts";
+import { botPrompts, desktopPrompts, isResultPublishing, preferredLanguage, savedLanguage, withPluginSections, type BotPrompts } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { ProcessLedger } from "./process/ledger";
 import { Doctor, DoctorModel } from "./doctor";
@@ -71,6 +71,7 @@ import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { FolderWatch, type WatchTarget } from "./folder-watch";
 import { probeNetwork } from "./network-resume";
+import { agentContributions, agentStamp, claudeWiring } from "./plugins/agent-contributions";
 import { Plugins, type BotInfo, type EngineCli } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
@@ -141,8 +142,11 @@ export interface CoreOptions {
   checkCommand?: string | null;
   /** The component-shot command Maintainer is given (Phase 5a; null: none, it reads the template). */
   shotCommand?: string | null;
-  /** The report command and its guide every bot is told to build report pages with (null: not told). */
-  reports?: ReportTool | null;
+  /**
+   * How a bot runs a command a shipped plugin gives it (`agentCommands`: botling.report's `--render-report`): the command line
+   * for its script and the app's `flag`, null when this core has no way to (a section that names the command is then not told).
+   */
+  runCommand?: ((command: { script: string; flag: string }) => string | null) | null;
   /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
   firstSnapshotDelayMs?: number;
   /**
@@ -400,7 +404,7 @@ export class Core {
     this.componentStamp = this.components.library.stamp;
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.lastPlugins = JSON.stringify(this.plugins.view());
-    this.loadedClaudeParts = JSON.stringify(this.plugins.registry.claudeStamp());
+    this.loadedClaudeParts = JSON.stringify(agentStamp(this.plugins.registry));
     // Quota files must be imported before their first in-memory reading.
     this.usage = new UsageBook(options.dataDir, undefined, undefined, options.quotaRetriever);
     const loaded = loadProfiles(options.dataDir);
@@ -476,8 +480,8 @@ export class Core {
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
         pluginTags: (bot, tags) => this.plugins.replyTags(this.botInfo(bot), tags),
-        plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment(), tools: this.plugins.registry.claudeTools() }),
-        pluginStamp: () => this.plugins.registry.claudeStamp(),
+        plugins: () => claudeWiring(agentContributions(this.plugins.registry)),
+        pluginStamp: () => agentStamp(this.plugins.registry),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
@@ -719,7 +723,7 @@ export class Core {
    * turn and no subagent at work) so they get the new skills, agents and MCP servers.
    */
   private followClaudeParts() {
-    const now = JSON.stringify(this.plugins.registry.claudeStamp());
+    const now = JSON.stringify(agentStamp(this.plugins.registry));
     if (now === this.loadedClaudeParts) return;
     this.loadedClaudeParts = now;
     for (const bot of this.bots.values()) bot.reloadPlugins();
@@ -2263,7 +2267,18 @@ First write a test that shows this, then fix it.`;
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
       workingFolder: workingFolder !== profile.folder ? workingFolder : null,
       parentName: profile.parent ? this.profiles.find((candidate) => candidate.id === profile.parent)?.name ?? null : null,
-    }), profile, this.options.reports ?? null, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.plugins.promptSections()));
+    }), profile, engine, claudeWorkersMode(this.settingsFile() ?? {}) === "app", withPluginSections(this.promptSections()));
+  }
+
+  /** The prompt sections plugins give, each that names a command with that command's line and guide (none without one). */
+  private promptSections() {
+    const commands = this.plugins.agentCommands();
+    return this.plugins.promptSections().flatMap((section) => {
+      if (section.command === undefined) return [section];
+      const command = commands.find((candidate) => candidate.plugin === section.plugin && candidate.id === section.command);
+      const line = command ? this.options.runCommand?.(command) : null;
+      return command && line ? [{ ...section, tool: { command: line, docs: command.docs ?? "" } }] : [];
+    });
   }
 
   private event(event: Event) {

@@ -7,9 +7,10 @@
 // staged beside it in the plugin's own node_modules, and the rest of the folder (package.json, components/, claude/…)
 // is copied as it is; src/, test/ and build.json stay behind.
 import { build } from "esbuild";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { thirdPartyNotices } from "./reports/licenses.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SOURCES_ONLY = new Set(["src", "test", "build.json", "node_modules"]);
@@ -36,6 +37,7 @@ export async function buildBuiltinPlugins({ root = here, outdir = join(root, "ou
     const native = config.nativeModules ?? [];
     if (parts.host) await build({ ...shared, entryPoints: [join(source, "src/host.ts")], platform: "node", format: "esm", target: "node20", external: native, outfile: join(folder, parts.host) });
     for (const module of native) stageNativeModule(root, module, folder);
+    for (const bundle of config.bundles ?? []) await buildBundle(root, folder, bundle);
     copyDeclared(root, source, folder);
   }
   return outdir;
@@ -62,6 +64,25 @@ export function stageNativeModule(root, name, pluginFolder) {
     }
   };
   helpers(target);
+}
+
+/**
+ * A command of a plugin (build.json `bundles`: `{ entry, outfile, minify?, jsx?, cssAsText?, notices? }`, `entry` from desktop/): one
+ * Node file, CJS, with its packages in it. `notices` names the file next to it that lists the licences of the packages bundled
+ * (reports/licenses.mjs); a package with no licence text fails the build.
+ */
+async function buildBundle(root, folder, { entry, outfile, minify = false, jsx = false, cssAsText = false, notices }) {
+  const result = await build({
+    bundle: true, platform: "node", format: "cjs", target: "node22", legalComments: "eof",
+    nodePaths: [join(root, "node_modules")], entryPoints: [join(root, entry)], outfile: join(folder, outfile), minify, metafile: true,
+    ...(jsx ? { jsx: "automatic", tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } } : {}),
+    ...(cssAsText ? { loader: { ".css": "text" } } : {}),
+    ...(minify ? { define: { "process.env.NODE_ENV": '"production"' } } : {}),
+  });
+  if (!notices) return;
+  const found = thirdPartyNotices(result.metafile, root);
+  if (found.missing.length) throw new Error(`No licence text for bundled packages: ${found.missing.join(", ")}`);
+  writeFileSync(join(folder, notices), found.text);
 }
 
 /** A plugin's build.json (none: empty). */

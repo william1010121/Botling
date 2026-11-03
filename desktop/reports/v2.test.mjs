@@ -261,9 +261,12 @@ test('the bundled command ships a licence notice for every package in the bundle
   assert.match(notices.text, /Permission to use, copy, modify, and\/or distribute this software for any/); // ISC (d3)
   assert.match(notices.text, /Eclipse Public License - v 2\.0/);
   assert.match(notices.text, /Permission is hereby granted, free of charge/); // MIT
-  // build.mjs writes it next to report.cjs and packaging copies it out of app.asar with the guide.
-  assert.match(await readFile(join(root, 'build.mjs'), 'utf8'), /writeFileSync\(join\(out, "report", NOTICES_FILE\), notices\.text\)/);
-  assert.match(await readFile(join(root, 'electron-builder.config.cjs'), 'utf8'), new RegExp(`from: "out/report", to: "report", filter: \\[[^\\]]*"${NOTICES_FILE}"`));
+  // botling.report's build writes it next to report.cjs (build.json `bundles`), and packaging copies the whole plugin out of app.asar with the guide.
+  const plugin = JSON.parse(await readFile(join(root, 'builtin-plugins/botling.report/build.json'), 'utf8'));
+  assert.equal(plugin.bundles[0].outfile, 'report.cjs');
+  assert.equal(plugin.bundles[0].notices, NOTICES_FILE);
+  assert.match(await readFile(join(root, 'build-builtin-plugins.mjs'), 'utf8'), /writeFileSync\(join\(folder, notices\), found\.text\)/);
+  assert.match(await readFile(join(root, 'electron-builder.config.cjs'), 'utf8'), /from: "out\/builtin-plugins", to: "builtin-plugins"/);
 });
 
 

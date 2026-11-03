@@ -1,10 +1,11 @@
 import {expect,it} from 'vitest';
 import {botPrompts,desktopPrompts} from '../../src/core/prompts';
 import {AgyAcpProtocol} from '../../src/core/agent/agy-acp';
+import {reportSections} from '../report-section';
 
 it('delivers report rules and conditional permission instructions on new and resumed ACP sessions',async()=>{
  const profile={name:'Research',role:'bot' as const,folder:'/fixture',memoryPath:'.bot/memory.md',job:null};
- const system=desktopPrompts(botPrompts({profile,engine:'agy'}),profile,{command:'fixture --render-report',docs:'/fixture/report-blocks.md'}).system;
+ const system=desktopPrompts(botPrompts({profile,engine:'agy'}),profile,'claude',true,reportSections({command:'fixture --render-report',docs:'/fixture/report-blocks.md'})).system;
  expect(system).not.toContain('Every tool requires a single-action approval card');
  expect(system).toContain('Full permission');
  expect(system).toContain('ReportSpec v2');expect(system).toContain('ASD-STE100');
