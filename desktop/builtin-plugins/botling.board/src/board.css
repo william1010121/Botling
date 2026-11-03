@@ -79,7 +79,7 @@
 .pin-tag { font-size: 10.5px; border-radius: 5px; padding: 1px 6px; background: #26262C; color: var(--muted); }
 .pin-tag.command { background: rgba(76, 195, 138, 0.14); color: #8FDDB6; }
 /* The chips above the input box, and the sheet one raises. */
-#pin-area { container: status-strip / inline-size; position: relative; max-width: 640px; width: 100%; margin: 0 auto; padding: 0 24px; }
+#pin-area { container: status-strip / inline-size; position: relative; max-width: var(--message-column-width, 640px); width: 100%; margin: 0 auto; padding: 0 24px; }
 .dock-row { display: flex; align-items: center; gap: 0; flex-wrap: nowrap; padding-top: 6px; }
 .dock-row:not(:has(> :not([hidden]))) { display: none; }
 /* The pins scroll within one row; + keeps its own slot at the end, even when space is tight. */
