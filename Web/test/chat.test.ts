@@ -868,6 +868,41 @@ describe("messages", () => {
     }
   });
 
+  it("draws a plugin's quick menu entry as a button of its own, with its words for a reply that already is a component", () => {
+    messageMenu.items = [{ command: "studio.make", title: "Make into component", icon: "cube", quick: true, alt: "Add to another bot…", hint: "built from this reply" }, { command: "quote.it", title: "Quote it" }];
+    try {
+      const row = messageElement(message({ id: "r8", text: "Hi" }), {});
+      document.body.append(row);
+      const button = row.querySelector<HTMLButtonElement>(".message-actions button[data-command='studio.make']")!;
+      expect(button.title).toBe("Make into component: built from this reply");
+      expect(button.querySelector("svg")).not.toBeNull();
+      // The other entry stays a row of "⋯"; the quick one is not repeated there.
+      row.querySelector<HTMLButtonElement>(".message-menu-button")!.click();
+      expect([...document.querySelectorAll(".message-menu [role=menuitem]")].map((item) => item.textContent)).toEqual(["Quote it"]);
+      button.click();
+      expect(sent.at(-1)).toEqual({ type: "runCommand", id: "studio.make", via: "menu", menu: "message/context", messageID: "r8" });
+      const already = messageElement(message({ id: "r9", text: "Hi", component: "chart" }), {});
+      const again = already.querySelector<HTMLButtonElement>("button[data-command='studio.make']")!;
+      expect(again.title).toBe("Add to another bot…");
+      expect(again.getAttribute("aria-label")).toBe("Add to another bot…");
+    } finally {
+      messageMenu.items = [];
+    }
+  });
+
+  it("draws a plugin's preview-card button on a result page's card, naming which card", () => {
+    messageMenu.previews = [{ command: "studio.make", title: "Make into component", icon: "cube", quick: true }];
+    try {
+      const row = messageElement(message({ id: "r10", text: "See it", previews: [{ name: "網頁預覽卡片", data: "{}" }] } as never), { "網頁預覽卡片": { template: "<p>x</p>", version: 1, updated: false, working: false, hasPrevious: false, sizes: [], icon: null, title: null } as never });
+      const button = row.querySelector<HTMLButtonElement>(".preview-bar button[data-command='studio.make']");
+      expect(button?.textContent).toBe("Make into component");
+      button!.click();
+      expect(sent.at(-1)).toEqual({ type: "runCommand", id: "studio.make", via: "menu", menu: "message/preview", messageID: "r10", preview: 0 });
+    } finally {
+      messageMenu.previews = [];
+    }
+  });
+
   it("let a notice open its project", () => {
     const row = messageElement(message({ role: "notice", text: "garden: done", openable: true }), {});
     row.querySelector<HTMLButtonElement>(".open-source")!.click();

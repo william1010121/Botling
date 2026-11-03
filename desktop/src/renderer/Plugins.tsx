@@ -259,6 +259,21 @@ export function MainTabFrame({ client, plugin, view, title, onBuiltin, botId, ..
 }
 
 /**
+ * A plugin's page that takes the right panel's place for one bot (`where: "rightPanel.takeover"`, opened with `ui.takeover`): the same
+ * frame, as tall as the panel. The plugin's program part closes it (`ui.takeover(null)`), and says if it is wide.
+ */
+export function TakeoverFrame({ client, plugin, view, title, wide, onBuiltin, botId, ...services }: { client: Client; plugin: string; view: string; title: string; wide: boolean; onBuiltin?: BuiltinRunner; botId: string } & FrameServices) {
+  const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin, services, undefined, { botId });
+  return (
+    <aside className={`takeover-panel${wide ? " wide" : ""}`} aria-label={title} data-plugin={plugin} data-view={view}>
+      {problem && <p className="plugins-problem">{problem}</p>}
+      {note && <p className="plugins-result" role="status">{note}</p>}
+      {url && <iframe ref={frame} className="takeover-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={url} title={title} />}
+    </aside>
+  );
+}
+
+/**
  * A plugin's block inside the app page's own surface (`settings.section`, `quickSettings`): the same sandboxed frame,
  * as tall as its content (the frame says so) and without a border or background, so it reads as part of the page.
  */

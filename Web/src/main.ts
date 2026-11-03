@@ -215,10 +215,12 @@ class Chat {
     const flagged = !!state.feedback && !state.subagent;
     const making = !!state.makeComponents && !state.subagent;
     const menu = state.subagent ? [] : state.messageMenu ?? [];
-    if (flagged !== feedback.enabled || making !== makeComponents.enabled || JSON.stringify(menu) !== JSON.stringify(messageMenu.items)) {
+    const previews = state.subagent ? [] : state.previewMenu ?? [];
+    if (flagged !== feedback.enabled || making !== makeComponents.enabled || JSON.stringify(menu) !== JSON.stringify(messageMenu.items) || JSON.stringify(previews) !== JSON.stringify(messageMenu.previews)) {
       feedback.enabled = flagged;
       makeComponents.enabled = making;
       messageMenu.items = menu;
+      messageMenu.previews = previews;
       this.clearList();
       animateArrivals = false;
     }

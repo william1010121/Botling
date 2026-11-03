@@ -269,8 +269,8 @@ describe("hostile frames stay contained", () => {
     const naming = [...files(join(root, "src/renderer")), ...files(join(root, "src/main")), ...files(join(root, "../Web/src")), ...files(join(root, "../Web/host/src"))]
       .filter((file) => readFileSync(file, "utf8").includes('"plugins.approve"'))
       .map((file) => file.slice(join(root, "..").length + 1)).sort();
-    // plugin-frame-host.ts builds it only as what the sheet's Allow sends (`ask`); tested above.
-    expect(naming).toEqual(["desktop/src/renderer/plugin-frame-host.ts"]);
+    // plugin-frame-host.ts (a frame's ask) and App.tsx (a web part's ask in the chat, the component studio's) build it only as what the sheet's Allow sends (`ask`); tested above.
+    expect(naming).toEqual(["desktop/src/renderer/App.tsx", "desktop/src/renderer/plugin-frame-host.ts"]);
     expect(RENDERER_COMMANDS.has("plugins.approve")).toBe(true);
     expect(Command.safeParse({ type: "plugins.approvalAsk", name: "botling.whiteboard", botId: BOT, ...PICTURE, approve: true }).success).toBe(false);
   });

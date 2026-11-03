@@ -23,7 +23,7 @@ import { commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
-import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
+import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, TakeoverFrame, type BuiltinRunner } from "./Plugins";
 import { boardOffered, mainTabsFor, namedBot, rightPanelSectionsFor, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
@@ -154,6 +154,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
+  // A plugin's page that a program part opened in the right panel's place (`ui.takeover`), while that bot's chat is shown.
+  const takeover = !web && !watching && bot && view.plugins?.takeover?.botId === bot.id ? view.plugins.takeover : null;
+  const takeoverView = takeover ? view.plugins?.takeovers?.find((entry) => entry.plugin === takeover.plugin && entry.id === takeover.view) ?? null : null;
   // A plugin's tab in the main area (plan W2), the one this bot showed last; it takes the whiteboard's place too.
   const tabs = useMemo(() => (bot && !web ? mainTabsFor(view.plugins, bot) : []), [bot, web, view.plugins]);
   // botling.whiteboard's tab; with that plugin off there is no whiteboard.
@@ -427,7 +430,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </section>
       {/* The open component spec takes the right panel's place, while its chat is shown (1.x's `openSpec(in:)`). */}
       {bot && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} onAsk={approval.ask} />}
-      {bot && !openSpec && (
+      {bot && takeover && takeoverView && (
+        <TakeoverFrame key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
+          onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
+      )}
+      {bot && !openSpec && !(takeover && takeoverView) && (
         <TaskDetails
           onDrawerSettings={() => setBotSettings(true)}
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
@@ -683,7 +690,7 @@ function runPluginCommand(client: Client, plugins: PluginsView | null | undefine
 }
 
 function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void;
-  onAsk: (view: ApprovalAskView, approve: import("../contract").Command) => void }) {
+  onAsk: (view: ApprovalAskView, approve: import("../contract").Command, done?: (allowed: boolean) => void) => void }) {
   const [report, setReport] = useState<{botId: string; url: string} | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const placeholder = useRef<HTMLDivElement>(null);
@@ -1216,10 +1223,13 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         // A plugin command from a key, the / menu or a reply's menu: only one that is offered that way now.
         case "runCommand": {
           const via = action.via === "key" || action.via === "slash" || action.via === "menu" ? action.via : null;
-          const menu: PluginMenu | undefined = action.menu === "message/context" ? "message/context" : undefined;
+          const menu: PluginMenu | undefined = action.menu === "message/context" || action.menu === "message/preview" ? action.menu : undefined;
           const current = store.getView().plugins;
           if (!via || typeof action.id !== "string" || !offered(current, action.id, via, menu)) return;
-          const args = menu && chat && typeof action.messageID === "string" ? [chat.botId, action.messageID.slice(0, 200)] : [];
+          // A reply's menu passes its bot and message; a result page's preview card also which of the reply's cards.
+          const args = menu && chat && typeof action.messageID === "string"
+            ? [chat.botId, action.messageID.slice(0, 200), ...(menu === "message/preview" && typeof action.preview === "number" && Number.isInteger(action.preview) && action.preview >= 0 && action.preview <= 2 ? [String(action.preview)] : [])]
+            : [];
           runPluginCommand(client, current, action.id, args, onError);
           return;
         }
@@ -1227,6 +1237,23 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         case "command":
           if (typeof action.id === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(action.id)) void client.request({ type: "plugins.command", id: action.id, from: "chat" }).catch(onError);
           return;
+        // A web part's ask to allow a command (the component studio's chips): this page's own ApprovalSheet shows what the core says, and only its Allow allows.
+        case "pluginApproval": {
+          if (typeof action.plugin !== "string" || typeof action.callID !== "number" || typeof action.botId !== "string" || typeof action.command !== "string" || typeof action.folder !== "string") return;
+          const plugin = action.plugin;
+          const callID = action.callID;
+          const reply = (ok: boolean, value: unknown) => { const message: ShellMessage = { botling: "hostReply", callID, ok, value }; postToChat(message); };
+          if (!paced(`approval:${plugin}`)) { reply(false, "Too many calls: wait a moment."); return; }
+          const card = typeof action.card === "string" && action.card ? action.card.slice(0, 200) : undefined;
+          const detail = typeof action.detail === "string" && action.detail ? action.detail.slice(0, 20_000) : undefined;
+          client.request({ type: "plugins.approvalAsk", name: plugin, botId: action.botId.slice(0, 128), command: action.command.slice(0, 20_000), folder: action.folder.slice(0, 4_000), from: "chat", ...(card ? { card } : {}), ...(detail ? { detail } : {}) })
+            .then((asked) => {
+              const view = asked.needsApproval;
+              if (!view) { reply(true, { allowed: true }); return; }
+              onAsk(view, { type: "plugins.approve", name: plugin, botId: (action.botId as string).slice(0, 128), command: view.command, folder: view.folder, ...(view.detail ? { detail: view.detail } : {}) }, (allowed) => reply(true, { allowed }));
+            }, (failure) => reply(false, failure instanceof RequestFailed ? failure.error.message : String(failure)));
+          return;
+        }
         case "hostCall": {
           if (typeof action.plugin !== "string" || typeof action.method !== "string" || typeof action.callID !== "number") return;
           const callID = action.callID;

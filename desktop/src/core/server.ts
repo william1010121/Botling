@@ -26,6 +26,8 @@ import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
 import { SpecDesk } from "./spec-desk";
+import { studioWorld } from "./studio-world";
+import type { StudioWorld } from "./plugins/studio-seam";
 import type { CodexModel } from "./agent/codex-models";
 import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
@@ -258,9 +260,10 @@ export class Core {
     });
     this.componentStamp = this.components.library.stamp;
     this.components.commands.onPid = (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid));
-    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); };
+    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); this.plugins.event("cardChanged", { card }); };
     // The plugins (their host starts later, in start()); the world they see is read when they ask.
     const host = options.plugins ?? null;
+    const self = this;
     this.plugins = new Plugins({
       dataDir: options.dataDir,
       node: host?.node ?? null,
@@ -382,6 +385,8 @@ export class Core {
             return true;
           },
         },
+        // The component studio's seam (plugins/studio-seam.ts); built when first asked, once Maintainer and the library exist.
+        get studio() { return self.studioNow(); },
         sessionMoved: (botId, reason) => this.bots.get(botId)?.restartBeforeNextMessage(reason),
         sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !this.removed.has(profile.id)).map((profile) => ({
           id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,
@@ -663,6 +668,7 @@ export class Core {
     if (catalogChanged || before !== this.components.library.names.join("\n")) {
       this.maintainer.deliverAsked();
       this.specs.finishBuilds();
+      this.plugins.event("libraryChanged", {});
     }
     if (this.components.library.stamp !== this.componentStamp) {
       this.componentStamp = this.components.library.stamp;
@@ -2134,6 +2140,22 @@ First write a test that shows this, then fix it.`;
 
   /** How plugins see a bot (`Workspace.info(for:)`): "main", or its id. */
   /** The bot a plugin names ("main": the main bot), unless it was taken out of the column. */
+  private studioCache: StudioWorld | null = null;
+  private studioNow(): StudioWorld {
+    return (this.studioCache ??= studioWorld({
+      // Every chat a spec can be in (`chatsWithPins`).
+      chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!]))],
+      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
+      library: this.components.library,
+      commands: this.components.commands,
+      maintainer: this.maintainer,
+      maintainerBot: () => this.bots.get(MAINTAINER_ID) ?? null,
+      componentBots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
+      componentsChanged: () => this.componentsTick(),
+      mainId: MAIN_BOT_ID,
+    }));
+  }
+
   private pluginBot(botId: string): Bot | null {
     const id = botId === "main" ? MAIN_BOT_ID : botId;
     return this.removed.has(id) ? null : this.bots.get(id) ?? null;
@@ -2179,8 +2201,9 @@ First write a test that shows this, then fix it.`;
     if (bot.id === MAINTAINER_ID) {
       this.maintainer.settle(record);
       this.specs.finishBuilds();
+      this.plugins.event("libraryChanged", {});
       // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
-      setImmediate(() => setImmediate(() => { this.specs.settleChanges(record, bot.subagentsAtWork); this.componentsTick(); }));
+      setImmediate(() => setImmediate(() => { this.specs.settleChanges(record, bot.subagentsAtWork); this.plugins.event("maintainerReplied", { role: record.role, running: bot.subagentsAtWork }); this.componentsTick(); }));
       this.componentsTick();
     }
   }
@@ -2425,8 +2448,8 @@ First write a test that shows this, then fix it.`;
       case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
-      case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card);
-      case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder);
+      case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card, cmd.detail, cmd.from);
+      case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.detail);
       case "plugins.tileImages": return this.plugins.tileImages(cmd.name, cmd.botId, cmd.data);
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();

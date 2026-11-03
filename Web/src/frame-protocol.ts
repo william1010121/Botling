@@ -11,7 +11,7 @@
 //                                                         a component of the library drawn as a tile: the reply is
 //                                                         the URL of a card page (botling-card://page/<token>) it may
 //                                                         frame, read only (plugin-extraction.md W4, `ccb.tile`)
-//                  { ccb: "approval", id, botId, command, folder, card? }
+//                  { ccb: "approval", id, botId, command, folder, card?, detail? }
 //                                                         asks the user to allow a bot's command: the page around it
 //                                                         shows its own ApprovalSheet; the reply is { allowed }. A
 //                                                         frame can ask, never allow (`ccb.requestApproval`)
@@ -33,7 +33,7 @@ export type FrameRequest =
   | { ccb: "panel"; visible: boolean }
   | { ccb: "key"; key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }
   | { ccb: "tile"; id: number; component: string; data: unknown; size: TileSize; botId: string }
-  | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string };
+  | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string; detail?: string };
 
 /** The sizes a frame's tile may have (a whiteboard card's picture: 1×1 or 2×1; its report shows it 2×2). */
 export const TILE_SIZES = ["1x1", "2x1", "2x2"] as const;
@@ -65,7 +65,7 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   panel: ["ccb", "visible"],
   key: ["ccb", "key", "code", "metaKey", "ctrlKey", "altKey", "shiftKey"],
   tile: ["ccb", "id", "component", "data", "size", "botId"],
-  approval: ["ccb", "id", "botId", "command", "folder", "card"],
+  approval: ["ccb", "id", "botId", "command", "folder", "card", "detail"],
 };
 const text = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
@@ -94,7 +94,8 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
     case "approval":
       if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.command, 20_000) || !text(message.folder, 4_000)) return null;
       if (message.card !== undefined && !text(message.card, 200)) return null;
-      return { ccb: "approval", id: message.id as number, botId: message.botId, command: message.command, folder: message.folder, ...(message.card !== undefined ? { card: message.card as string } : {}) };
+      if (message.detail !== undefined && !text(message.detail, 20_000)) return null;
+      return { ccb: "approval", id: message.id as number, botId: message.botId, command: message.command, folder: message.folder, ...(message.card !== undefined ? { card: message.card as string } : {}), ...(message.detail !== undefined ? { detail: message.detail as string } : {}) };
     case "panel":
       return typeof message.visible === "boolean" ? { ccb: "panel", visible: message.visible } : null;
     case "key":

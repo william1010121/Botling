@@ -47,11 +47,11 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       const page = componentPage(info.template, json, images, size, "board", true, false);
       return (await client.request({ type: "card.page", html: page })).url;
     },
-    async requestApproval(plugin, { botId, command, folder, card }) {
-      const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}) }).catch(failed);
+    async requestApproval(plugin, { botId, command, folder, card, detail }) {
+      const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }).catch(failed);
       if (!asked.needsApproval) return { allowed: true };
       const view = asked.needsApproval;
-      return new Promise((resolve) => ask(view, { type: "plugins.approve", name: plugin, botId, command: view.command, folder: view.folder }, (allowed) => resolve({ allowed })));
+      return new Promise((resolve) => ask(view, { type: "plugins.approve", name: plugin, botId, command: view.command, folder: view.folder, ...(view.detail ? { detail: view.detail } : {}) }, (allowed) => resolve({ allowed })));
     },
   };
 }

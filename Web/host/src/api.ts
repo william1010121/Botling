@@ -36,11 +36,17 @@ export interface PluginEvents {
   developerChanged: { before: string | null; now: string | null; turnedOn: boolean };
   /** A bot was removed from Botling (its folder stays). */
   botRemoved: { botId: string };
+  /** The component library changed on disk (a component landed, or one's template or about.md did). */
+  libraryChanged: Record<string, never>;
+  /** A component card's command run (a spec's test run or built card, a chat card, a pin) started or ended; `card` is its key. */
+  cardChanged: { card: string };
+  /** Maintainer's reply showed (after the tags in it were handed over): its line's role ("bot" or "error") and whether its subagents are still at work. */
+  maintainerReplied: { role: string; running: boolean };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "libraryChanged", "cardChanged", "maintainerReplied"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -214,6 +220,12 @@ export interface AppApi {
   briefing(briefing: { bot: string; plain: string; worktree: string } | null): Promise<void>;
 }
 
+/**
+ * The component studio's asks of the core (`studio.*`, plugin-extraction.md §3.2 #4): the "studio" permission, built-in plugins only.
+ * `request` takes the method's name without "studio." and its params; desktop/src/core/plugins/studio-seam.ts says what each answers.
+ */
+export interface StudioApi { request(method: string, params?: JSONValue): Promise<unknown> }
+
 export interface BotlingApi {
   /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
   readonly plugin: { name: string; version: string; dir: string; storageDir: string; appDataDir?: string };
@@ -274,6 +286,8 @@ export interface BotlingApi {
   sessions: SessionsApi;
   /** The app around Botling; needs the "app" permission, built-in plugins only. */
   app: AppApi;
+  /** The component studio's seam; needs the "studio" permission, built-in plugins only. */
+  studio: StudioApi;
   /** The tags this plugin declared in its manifest (`replyTags`), from bots' replies. */
   replyTags: { on(tag: string, fn: (tag: ReplyTag) => void): Dispose };
   approvals: {
@@ -310,6 +324,11 @@ export interface BotlingApi {
     input(opts: { title: string; placeholder?: string; secret?: boolean }): Promise<string | null>;
     /** Opens one of this plugin's views (panels). */
     openView(id: string, args?: JSONValue): Promise<void>;
+    /**
+     * Opens (`view`) or closes (null) one of this plugin's `rightPanel.takeover` views: it takes the place of bot `opts.bot`'s right panel
+     * while that bot's chat is shown. One at a time, across plugins; `opts.wide` makes it wide.
+     */
+    takeover(view: string | null, opts?: { bot?: string; wide?: boolean }): Promise<void>;
     /** An item of this plugin's in the status area (null: gone). */
     setStatus(id: string, item: StatusItem | null): void;
     /** Opens `method` to this plugin's own frames (panels) and web part: the only methods they can call. */
@@ -498,6 +517,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       tell: async (bot, kind, text, files) => { await ask("app.tell", { bot, kind, text, ...(files?.length ? { files } : {}) }); },
       briefing: async (briefing) => { await ask("app.briefing", { briefing }); },
     },
+    studio: { request: async (method, params) => ask(`studio.${String(method)}`, (params ?? {}) as Record<string, JSONValue>) },
     sessions: {
       setFolder: async (botId, folder, reason) => { await ask("sessions.folder", { bot: botId, folder, ...(reason ? { reason } : {}) }); },
       syncFolders: async (folders) => { await ask("sessions.folders", { folders }); },
@@ -566,6 +586,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       quickPick: async (items, opts = {}) => (await ask("ui.quickPick", { items, ...(opts.title ? { title: opts.title } : {}) })) as never,
       input: async (opts) => (await ask("ui.input", { title: opts?.title, ...(opts?.placeholder ? { placeholder: opts.placeholder } : {}), ...(opts?.secret ? { secret: true } : {}) })) as string | null,
       openView: async (id, args) => { await ask("ui.openView", { id, ...(args === undefined ? {} : { args }) }); },
+      takeover: async (view, opts = {}) => { await ask("ui.takeover", { view, ...(opts.bot ? { bot: opts.bot } : {}), ...(opts.wide ? { wide: true } : {}) }); },
       setStatus: (id, item) => host.notify("ui.setStatus", { plugin: name, id, item: item ?? null }),
       expose,
       emit: (event, data, opts = {}) => host.notify("ui.emit", { plugin: name, name: String(event), data: data === undefined ? null : data, ...(opts.botId ? { botId: opts.botId } : {}) }),

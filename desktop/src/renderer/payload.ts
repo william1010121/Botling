@@ -317,6 +317,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     // The / menu: the app's and plugins' commands, then the bot's own components, then the rest of the library (`ChatPayload`).
     slashCommands: slashMenu(plugins),
     messageMenu: menuItems(plugins, "message/context"),
+    previewMenu: menuItems(plugins, "message/preview"),
     ...slashLists(bot, Object.keys(components).sort()),
     ...headsParts(chat.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).

@@ -71,6 +71,7 @@ export const PERMISSIONS: Record<string, string> = {
   sessions: "decide the folder a bot's session works in (built-in plugins only)",
   routines: "see a bot's routines and pause, resume or cancel them (built-in plugins only)",
   app: "install a new build of Botling and restart it, take a picture of its window (built-in plugins only)",
+  studio: "turn replies into components: read and keep the component specs of every chat, hand Maintainer jobs, change bots' component lists, run allowed commands (built-in plugins only)",
 };
 const PERMISSION_NAMES = Object.keys(PERMISSIONS);
 

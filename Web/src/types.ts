@@ -159,6 +159,9 @@ export interface TaskChipView {
  * A component made from a reply, under it: a chip while it is a suggestion (pressed: its first
  * version is built) or being built, then the component itself with "Edit spec".
  */
+/** A plugin's entry in a reply's menu: a row of "⋯", or (`quick`) a button of its own with the page's icon `icon`; `alt`: its words for a reply that already is a library component. */
+export interface MessageMenuItem { command: string; title: string; icon?: string; quick?: boolean; alt?: string; hint?: string }
+
 export interface SpecChipView {
   id: string;
   name: string;
@@ -449,7 +452,9 @@ export interface ChatState {
   /** The / menu's commands; one with `command` (a plugin's) runs it when picked instead of going into the message. */
   slashCommands?: { name: string; about: string; command?: string }[];
   /** Plugin commands in a reply's menu (`contributes.menus["message/context"]`). */
-  messageMenu?: { command: string; title: string }[] | null;
+  messageMenu?: MessageMenuItem[] | null;
+  /** Plugins' buttons on a result page's preview card (`message/preview`: all `quick`). */
+  previewMenu?: MessageMenuItem[] | null;
   /** Components you can / (picked, the bot is told you mean that component). */
   slashComponents?: string[];
   /** The shared library's other components (not this bot's yet), offered after its own, marked faintly. */
@@ -591,8 +596,9 @@ export type Action =
   | { type: "pluginLoaded"; name: string; version: string }
   | { type: "command"; id: string }
   /** A plugin command offered by the / menu or a reply's menu (the app page checks it is offered so now). */
-  | { type: "runCommand"; id: string; via: "slash" | "menu" | "key"; menu?: "message/context"; messageID?: string }
-  | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number };
+  | { type: "runCommand"; id: string; via: "slash" | "menu" | "key"; menu?: "message/context" | "message/preview"; messageID?: string; preview?: number }
+  | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number }
+  | { type: "pluginApproval"; plugin: string; callID: number; botId: string; command: string; folder: string; card?: string; detail?: string };
 
 /**
  * What `ccb.patchState(...)` gets: only what changed since the last state. `base` is the state

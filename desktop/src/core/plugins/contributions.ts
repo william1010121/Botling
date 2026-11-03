@@ -22,14 +22,15 @@ export interface FolderView {
  * `rightPanel.section`: a block in a bot's right panel overview, under its tasks (its `forRole` says whose); `bottomPanel`: a panel
  * under the chat, one frame per bot that stays alive while hidden, with a toggle button in the chat header (and `toggle`, one of the
  * plugin's own commands, that the page runs itself: it shows or hides the panel of the bot on screen); `chatHeader`: a button in the chat
- * header (its title) that opens a popover under it with the plugin's frame for the bot on screen.
+ * header (its title) that opens a popover under it with the plugin's frame for the bot on screen; `rightPanel.takeover`: a page that takes the
+ * whole right panel's place for one bot while its program part has it open (`ui.takeover`: the component studio's spec).
  */
-export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings", "rightPanel.section", "bottomPanel", "chatHeader"] as const;
+export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings", "rightPanel.section", "bottomPanel", "chatHeader", "rightPanel.takeover"] as const;
 /** Which bots a `mainTab` view is a tab for, or a `rightPanel.section` view a block of (a fixed field, not a when-clause): "project" is a project bot. */
 export const VIEW_ROLES = ["main", "project", "bots", "any"] as const;
 export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;
 export const STATUS_SLOTS = ["chatHeader", "botRow"] as const;
-export const MENU_SLOTS = ["message/context", "bot/context", "composer/plus", "commandPalette"] as const;
+export const MENU_SLOTS = ["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview"] as const;
 export const HOOKS = ["beforeSend", "afterReply", "toolCall"] as const;
 /**
  * Where a prompt section goes: right after the line about <show> (at the end when a prompt has none), right after the
@@ -51,7 +52,10 @@ export const CORE_REPLY_TAGS = [
   "app-screenshot", "open-question", "new-project", "decision-ref", "end", "block", "handoff",
 ] as const;
 /** Core tags on their way to the first-party plugin that will own them (plugin-extraction.md §4.2): only that plugin may declare one. */
-export const HANDED_TAGS: Readonly<Record<string, string>> = { whiteboard: "botling.whiteboard", "install-build": "botling.dev", "app-screenshot": "botling.dev" };
+export const HANDED_TAGS: Readonly<Record<string, string>> = {
+  whiteboard: "botling.whiteboard", "install-build": "botling.dev", "app-screenshot": "botling.dev",
+  "suggest-component": "botling.component-studio", "component-spec": "botling.component-studio",
+};
 const PLUGIN_TAG = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/;
 export type ViewSlot = (typeof VIEW_SLOTS)[number];
 export type ViewRole = (typeof VIEW_ROLES)[number];
@@ -71,7 +75,11 @@ export type Contribution = { plugin: string } & (
   | { kind: "card"; id: string; title: string; component?: ComponentRef }
   | { kind: "statusItem"; id: string; where: (typeof STATUS_SLOTS)[number] }
   | { kind: "setting"; key: string; setting: PluginSetting }
-  | { kind: "menu"; menu: (typeof MENU_SLOTS)[number]; command: string }
+  /**
+   * `quick` (message menus): a button of its own (tooltip: its title, then `hint`) beside the reply's other buttons (or on a result page's preview card, `message/preview`) instead of
+   * a row in the "⋯" menu, drawn with the page's icon `icon`; `alt` is its words for a reply that already is a library component.
+   */
+  | { kind: "menu"; menu: (typeof MENU_SLOTS)[number]; command: string; icon?: string; quick?: boolean; alt?: string; hint?: string }
   | { kind: "hook"; hook: (typeof HOOKS)[number] }
   | { kind: "routine"; id: string; cron: string; command: string }
   /** A tag bots may write in a reply (`<tag …>body</tag>`): taken out of the text and handed to the plugin's program part. */
@@ -228,8 +236,12 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
     else for (const [menu, items] of Object.entries(c.menus)) {
       if (!(MENU_SLOTS as readonly string[]).includes(menu)) { problems.push(`Menu "${menu}" is not one of ${MENU_SLOTS.join(", ")}.`); continue; }
       for (const [index, item] of (Array.isArray(items) ? items : [items]).entries()) {
-        const f = isObject(item) ? fields(item, `contributes.menus.${menu}.${index}`, ["command"]) : (problems.push(`contributes.menus.${menu}.${index} has the wrong type.`), null);
-        if (f) out.push({ kind: "menu", plugin, menu: menu as (typeof MENU_SLOTS)[number], command: f.command });
+        const f = isObject(item) ? fields(item, `contributes.menus.${menu}.${index}`, ["command", "icon?", "alt?", "hint?"]) : (problems.push(`contributes.menus.${menu}.${index} has the wrong type.`), null);
+        if (f) {
+          const quick = isObject(item) && item.quick === true;
+          if (menu === "message/preview" && !quick) { problems.push(`contributes.menus.${menu}.${index}: a preview card's menu entry must be quick.`); continue; }
+          out.push({ kind: "menu", plugin, menu: menu as (typeof MENU_SLOTS)[number], command: f.command, ...(f.icon !== undefined ? { icon: f.icon.slice(0, 40) } : {}), ...(quick ? { quick: true } : {}), ...(f.alt !== undefined ? { alt: f.alt.slice(0, 200) } : {}), ...(f.hint !== undefined ? { hint: f.hint.slice(0, 400) } : {}) });
+        }
       }
     }
   }

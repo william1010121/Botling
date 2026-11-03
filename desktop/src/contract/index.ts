@@ -630,7 +630,7 @@ export const ChatDecoration = z.strictObject({
 export type ChatDecoration = z.infer<typeof ChatDecoration>;
 const PluginCommandId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
 /** The app's fixed places a plugin may add a command to (`contributes.menus`). */
-const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette"]);
+const PluginMenu = z.enum(["message/context", "bot/context", "composer/plus", "commandPalette", "message/preview"]);
 /** Who asks a plugin: one of its sandboxed frames (panel, tile, card) or the chat page (its web part). */
 const PluginCaller = z.enum(["frame", "chat"]);
 /** A bot as plugins name it ("main", or its id: `bots.list`). */
@@ -867,7 +867,7 @@ export const PluginsView = z.strictObject({
   keybindings: z.array(z.strictObject({ command: PluginCommandId, key: z.string().max(40), plugin: PluginName, title: z.string().max(200) })).max(500).optional(),
   /** Without `command` the name goes into the message as words, for the bot (botling.design's /design). */
   slash: z.array(z.strictObject({ name: z.string().max(40), about: z.string().max(400), command: PluginCommandId.optional(), plugin: PluginName })).max(200).optional(),
-  menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200) })).max(200).optional(),
+  menus: z.array(z.strictObject({ menu: PluginMenu, command: PluginCommandId, plugin: PluginName, title: z.string().max(200), icon: z.string().max(40).optional(), quick: z.boolean().optional(), alt: z.string().max(200).optional(), hint: z.string().max(400).optional() })).max(200).optional(),
   /** Plugin views that are tabs beside Chat / Board (`where: "mainTab"`), for the main bot, project bots or any (plan W2). */
   mainTabs: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), icon: z.string().max(40).optional(), forRole: z.enum(["main", "project", "bots", "any"]) })).max(50).optional(),
   /** Plugin views that are pages of Settings (`where: "settings.section"`): `after` names the core page it follows, `link` the sidebar popover's link that opens it. */
@@ -878,6 +878,10 @@ export const PluginsView = z.strictObject({
   bottomPanels: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), toggle: PluginCommandId.optional() })).max(5).optional(),
   /** Plugin views that are buttons in the chat header, each opening a popover with its frame for the bot on screen (`where: "chatHeader"`). */
   chatHeaderViews: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(5).optional(),
+  /** Pages that take the whole right panel's place for a bot while a plugin's program part has one open (`rightPanel.takeover` views, `ui.takeover`). */
+  takeovers: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(5).optional(),
+  /** The takeover open now (null: none): which view, for which bot, and whether it is wide. */
+  takeover: z.strictObject({ plugin: PluginName, view: z.string().max(100), botId: z.string().max(100), wide: z.boolean() }).nullable().optional(),
   /** Plugin views that are blocks in the sidebar gear's popover (`where: "quickSettings"`). */
   quickSettings: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(10).optional(),
 });
@@ -1073,9 +1077,9 @@ export const Command = z.discriminatedUnion("type", [
    * A plugin frame's `ccb.requestApproval` (plugin-extraction.md W4), from the app page that bound the frame to `name`:
    * what its ApprovalSheet shows for a bot's command in that bot's folder (null: allowed already). It allows nothing.
    */
-  z.strictObject({ type: z.literal("plugins.approvalAsk"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), card: z.string().min(1).max(200).optional() }),
+  z.strictObject({ type: z.literal("plugins.approvalAsk"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), card: z.string().min(1).max(200).optional(), detail: z.string().min(1).max(20_000).optional(), from: PluginCaller.optional() }),
   /** "Allow and run" on the app page's ApprovalSheet for a plugin frame's ask: the command and folder the sheet showed. No frame can send it. */
-  z.strictObject({ type: z.literal("plugins.approve"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("plugins.approve"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), detail: z.string().min(1).max(20_000).optional() }),
   /** The pictures a plugin frame's tile data names, as card-page URLs: the app page puts them into the tile's page (`ccb.tile`). */
   z.strictObject({ type: z.literal("plugins.tileImages"), name: PluginName, botId: PluginBotId, data: z.string().max(300_000) }),
   /** The app's settings (settings.json), with every default filled in. */

@@ -12,8 +12,10 @@ import { language, pieces, t } from "./i18n";
 import { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords } from "./refresh";
 import { mediaHTML, md, renderMarkdown, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
+import { commandCard, componentElement, detailTarget, type CommandSend } from "./components";
+import { specPinButton } from "./pins";
 import { taskCardChipHTML } from "./task-cards";
-import type { Action, ChatState, DisplayView, SpecChipView, TaskCardView } from "./types";
+import type { Action, ChatState, ComponentInfo, DisplayView, SpecChipView, TaskCardView } from "./types";
 import { onScreen, setWindowListener, whenShownAgain, windowVisible } from "./visible";
 
 /** A plugin's web part, as the Swift side sends it. */
@@ -128,6 +130,25 @@ export interface CcbWeb {
   commands: { register(id: string, run: () => void): Dispose; execute(id: string): void };
   settings: { get<T>(key: string): T; onChange(key: string, handler: (value: unknown) => void): Dispose };
   notify(text: string): void;
+  /**
+   * What the chat itself draws, for a decoration that shows a component the way the chat does (the component studio's chips): the component
+   * with its command card (↻, the command and folder it shows, an ask for your OK) and the pin button of a component made from a reply.
+   */
+  draw: {
+    /**
+     * `name`'s component (`info`: the library's, from `state.components`) with `display`'s data, as under a reply. With a command
+     * (`display.command`) it is wrapped in the command card: `cardKey` names its runs, `send` gets the run it asks for (command, folder,
+     * detail, force), and `lazy` draws it only when scrolled to. Null: it cannot be drawn.
+     */
+    component(spec: { name: string; info: ComponentInfo | undefined; display: DisplayView; key: string; cardKey: string; send?: CommandSend; lazy?: boolean }): HTMLElement | null;
+    /** The pin button of a component made from a reply (the Board's pin dialog), or its Pinned badge. */
+    pinButton(chip: SpecChipView): HTMLElement;
+  };
+  /**
+   * Asks you, on the app's own sheet, to allow a command in a folder (and a Detail command): the reply says whether you did. Only
+   * built-in plugins with the studio permission may name a folder that is not the bot's own. A web part can ask; never allow.
+   */
+  requestApproval(request: { botId: string; command: string; folder: string; card?: string; detail?: string }): Promise<{ allowed: boolean }>;
   /** Calls what this plugin's own program part exposes (`ui.expose`, or `web.handle`). */
   call(method: string, params?: unknown): Promise<unknown>;
   /** `call`'s 1.x name. */
@@ -363,6 +384,12 @@ export class PluginHost {
     const ownParts = (what: string): void => {
       if (!builtIn) throw new Error(`${what} is for the plugins that ship with Botling.`);
     };
+    const requestApproval = (request: { botId: string; command: string; folder: string; card?: string; detail?: string }) => new Promise<{ allowed: boolean }>((resolve, reject) => {
+      const callID = this.nextCall++;
+      this.hostCalls.set(callID, { resolve: (value) => resolve({ allowed: (value as { allowed?: unknown } | null)?.allowed === true }), reject });
+      post({ type: "pluginApproval", plugin: name, callID, botId: String(request?.botId ?? ""), command: String(request?.command ?? ""), folder: String(request?.folder ?? ""),
+        ...(request?.card ? { card: String(request.card) } : {}), ...(request?.detail ? { detail: String(request.detail) } : {}) });
+    });
     return {
       name,
       codemirror: { state, view, commands },
@@ -469,6 +496,14 @@ export class PluginHost {
         },
       },
       notify: (text) => post({ type: "pluginNotice", name, text }),
+      draw: {
+        component: ({ name: component, info, display, key, cardKey, send, lazy }) => {
+          const draw = () => componentElement(component, info, display.data, null, key, display.images, detailTarget(display), undefined, "chat", false, null, true);
+          return display.command ? commandCard(display, cardKey, 0, draw, { ...(send ? { send } : {}), lazy: lazy !== false }) : draw();
+        },
+        pinButton: (chip) => specPinButton(chip),
+      },
+      requestApproval,
       call,
       host: { call },
     };

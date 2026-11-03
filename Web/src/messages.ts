@@ -10,7 +10,7 @@ import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
 import { taskCardChips } from "./task-cards";
-import type { ChatState, ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
+import type { ChatState, ComponentInfo, DisplayView, FileView, MessageMenuItem, MessageView, SeenView, SpecChipView, StepView } from "./types";
 import { escapeHTML, queuedBadge } from "./util";
 
 /** What plugins add to how messages are drawn. */
@@ -40,7 +40,11 @@ export const feedback = { enabled: false };
 /** Replies can be made into components (set from the state before drawing). */
 export const makeComponents = { enabled: false };
 /** Plugins' commands in a reply's menu (`contributes.menus["message/context"]`); none: no menu button. */
-export const messageMenu: { items: { command: string; title: string }[] } = { items: [] };
+export const messageMenu: { items: MessageMenuItem[]; previews: MessageMenuItem[] } = { items: [], previews: [] };
+
+/** The page's icons a plugin's quick menu entry may name (`icon`); any other name is a dot. */
+const quickIcons: Record<string, string> = { cube: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>` };
+const quickIcon = (name: string | undefined) => (name && quickIcons[name]) || "•";
 
 const cubeIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>`;
 
@@ -308,8 +312,26 @@ function actionColumn(message: MessageView): HTMLElement {
     column.append(make);
   }
   if (feedback.enabled) column.append(feedbackFlag(message));
-  if (messageMenu.items.length) column.append(menuButton(message));
+  // Plugins' quick entries are buttons of their own (the component studio's "Make into component"); the rest are rows of "⋯".
+  for (const item of messageMenu.items.filter((entry) => entry.quick)) column.append(quickButton(message, item, "message/context"));
+  if (messageMenu.items.some((entry) => !entry.quick)) column.append(menuButton(message));
   return column;
+}
+
+/** A plugin's quick menu entry as a reply's button: the app page runs its command with the bot and message (and, on a preview card, which card). */
+function quickButton(message: MessageView, item: MessageMenuItem, menu: "message/context" | "message/preview", preview?: number): HTMLButtonElement {
+  const label = message.component ? item.alt ?? item.title : item.title;
+  const button = document.createElement("button");
+  button.className = "reply-button make-component";
+  button.dataset.command = item.command;
+  button.setAttribute("aria-label", label);
+  button.title = message.component || !item.hint ? label : `${label}: ${item.hint}`;
+  button.innerHTML = quickIcon(item.icon);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    post({ type: "runCommand", id: item.command, via: "menu", menu, messageID: message.id, ...(preview === undefined ? {} : { preview }) });
+  });
+  return button;
 }
 
 /** The reply menu now open (one at a time). */
@@ -333,7 +355,7 @@ function menuButton(message: MessageView): HTMLElement {
     const close = () => { menu.remove(); openMenu = null; document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", escape, true); };
     const outside = (down: Event) => { if (!(down.target instanceof Node && (menu.contains(down.target) || button.contains(down.target)))) close(); };
     const escape = (key: KeyboardEvent) => { if (key.key === "Escape") close(); };
-    for (const item of messageMenu.items) {
+    for (const item of messageMenu.items.filter((entry) => !entry.quick)) {
       const entry = document.createElement("button");
       entry.setAttribute("role", "menuitem");
       entry.textContent = item.title;
@@ -607,23 +629,38 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`, null, null, undefined, "chat", false, null, true);
     if (!card) return;
     card.classList.add("page-preview");
-    if (!makeComponents.enabled || message.role !== "bot") {
+    const quick = message.role === "bot" ? messageMenu.previews.filter((entry) => entry.quick) : [];
+    if ((!makeComponents.enabled && !quick.length) || message.role !== "bot") {
       appendWide(card);
       return;
     }
-    // Its hover toolbar: make the page into a component.
+    // Its hover toolbar: make the page into a component (the component studio's `message/preview` entry).
     const holder = document.createElement("div");
     holder.className = "preview-holder";
     const bar = document.createElement("div");
     bar.className = "preview-bar";
-    const make = document.createElement("button");
-    make.className = "preview-make";
-    make.innerHTML = `${cubeIcon}<span>${escapeHTML(t("messages.makeComponent"))}</span>`;
-    make.addEventListener("click", (event) => {
-      event.stopPropagation();
-      post({ type: "makeComponent", messageID: message.id, preview: index });
-    });
-    bar.append(make);
+    if (makeComponents.enabled) {
+      const make = document.createElement("button");
+      make.className = "preview-make";
+      make.innerHTML = `${cubeIcon}<span>${escapeHTML(t("messages.makeComponent"))}</span>`;
+      make.addEventListener("click", (event) => {
+        event.stopPropagation();
+        post({ type: "makeComponent", messageID: message.id, preview: index });
+      });
+      bar.append(make);
+    }
+    for (const item of quick) {
+      const make = document.createElement("button");
+      make.className = "preview-make";
+      make.dataset.command = item.command;
+      make.innerHTML = `${quickIcon(item.icon)}<span></span>`;
+      make.querySelector("span")!.textContent = item.title;
+      make.addEventListener("click", (event) => {
+        event.stopPropagation();
+        post({ type: "runCommand", id: item.command, via: "menu", menu: "message/preview", messageID: message.id, preview: index });
+      });
+      bar.append(make);
+    }
     holder.append(card, bar);
     appendWide(holder);
   });
