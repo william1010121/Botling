@@ -13,12 +13,13 @@ const row = (over: Partial<SubagentRowView>): SubagentRowView => ({ id: "r", tit
 const rowMarkup = (extra: Record<string, unknown>) => renderToStaticMarkup(createElement(BotRow, { bot: base, selected: false, look: "original", waiting: false, onSelect() {}, ...extra } as Parameters<typeof BotRow>[0]));
 
 describe("a bot row", () => {
-  it("shows up to two numbers, blue unread then orange needs you, each hidden at zero", () => {
-    const both = rowMarkup({ counts: { unread: 3, needsYou: 1 } });
-    expect(both).toContain('<span class="badge" aria-hidden="true">3</span><span class="badge waiting" aria-hidden="true">1</span>');
+  it("shows only the blue unread number, hidden at zero; no needs-you number and no task count", () => {
+    const both = rowMarkup({ counts: { unread: 3, needsYou: 1 }, bot: { ...base, openTasks: 5 } });
+    expect(both).toContain('<span class="badge" aria-hidden="true">3</span>');
+    expect(both).not.toContain("badge waiting");
+    expect(both).not.toContain("task-count");
     expect(both).toContain("1 waiting on you, 3 unread");
-    expect(rowMarkup({ counts: { unread: 0, needsYou: 2 } })).not.toContain('class="badge"');
-    expect(rowMarkup({ counts: { unread: 0, needsYou: 0 } })).not.toContain("bot-counts");
+    expect(rowMarkup({ counts: { unread: 0, needsYou: 2 } })).not.toContain("bot-counts");
   });
   it("has the clock corner button to send it to Idle, and in Idle the back arrow", () => {
     const out = rowMarkup({ idle: { away: false, onToggle() {} } });

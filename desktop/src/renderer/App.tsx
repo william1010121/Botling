@@ -596,12 +596,8 @@ export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu,
         <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
         <span className="bot-gap" />
-        {tasks > 0 && <span className="task-count" aria-hidden="true">{tasks} task{tasks === 1 ? "" : "s"}</span>}
         {bot.working && <span className="bot-dot working" aria-hidden="true" />}
-        {(unread > 0 || needsYou > 0) && <span className="bot-counts">
-          {unread > 0 && <span className="badge" aria-hidden="true">{unread}</span>}
-          {needsYou > 0 && <span className="badge waiting" aria-hidden="true">{needsYou}</span>}
-        </span>}
+        {unread > 0 && <span className="bot-counts"><span className="badge" aria-hidden="true">{unread}</span></span>}
       </button>
       {idle && (
         // The clock at the row's top-right corner while the pointer is on it (the settle clock's icon); in Idle, the back arrow.
