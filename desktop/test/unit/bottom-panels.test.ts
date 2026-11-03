@@ -60,7 +60,7 @@ describe("bottom panels on the app page", () => {
     const bot: BotView = { id: BOT, name: "Site", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
     const pluginsView: PluginsView = {
       plugins: [
-        { name: "alpha", title: "Alpha", version: "1.0.0", description: null, enabled: true, failure: null, installedFrom: null, permissions: [], parts: ["web", "host"], settings: [], panels: [], commands: [{ id: "alpha.toggle", title: "Toggle Alpha", registered: true }, { id: "alpha.sync", title: "Sync", registered: true }] },
+        { name: "alpha", title: "Alpha", version: "1.0.0", description: null, enabled: true, failure: null, installedFrom: null, permissions: [], parts: ["web", "host"], settings: [], panels: [], commands: [{ id: "alpha.toggle", title: "Toggle Alpha", registered: true }, { id: "alpha.sync", title: "Sync", registered: true }, { id: "alpha.webCmd", title: "Alpha Web", registered: false }] },
         { name: "beta", title: "Beta", version: "1.0.0", description: null, enabled: true, failure: null, installedFrom: null, permissions: [], parts: ["web", "host"], settings: [], panels: [], commands: [{ id: "beta.toggle", title: "Toggle Beta", registered: true }, { id: "beta.secret", title: "Secret", registered: true }, { id: "beta.webCmd", title: "Web", registered: false }] },
       ],
       broken: [], host: { running: true, problem: null }, secretsProblem: null,
@@ -71,6 +71,7 @@ describe("bottom panels on the app page", () => {
       keybindings: [
         { command: "alpha.toggle", key: "Mod+J", plugin: "alpha", title: "Toggle Alpha" },
         { command: "alpha.sync", key: "Mod+Shift+9", plugin: "alpha", title: "Sync" },
+        { command: "alpha.webCmd", key: "Mod+Shift+5", plugin: "alpha", title: "Alpha Web" },
         { command: "beta.toggle", key: "Mod+Shift+7", plugin: "beta", title: "Toggle Beta" },
         { command: "beta.secret", key: "Mod+Shift+8", plugin: "beta", title: "Secret" },
         { command: "beta.webCmd", key: "Mod+Shift+6", plugin: "beta", title: "Web" },
@@ -133,10 +134,15 @@ describe("bottom panels on the app page", () => {
     expect(chatPosted.filter((m: any) => m?.botling === "runCommand")).toEqual([]);
     expect(host.querySelector('[data-plugin="beta"]')).toBeNull();
 
-    // 2. Alpha's own bound command runs with explicit frame attribution (`from: "frame", name: "alpha"`).
+    // 2. Alpha's own host command runs with explicit frame attribution (`from: "frame", name: "alpha"`),
+    //    and alpha's own web-only command in the chat page runs too.
     await sendKey("9", "Digit9", { metaKey: true, shiftKey: true }); // alpha.sync
+    await sendKey("5", "Digit5", { metaKey: true, shiftKey: true }); // alpha.webCmd
     expect(requests.filter((r) => r.type === "plugins.command")).toEqual([
       { type: "plugins.command", id: "alpha.sync", from: "frame", name: "alpha" },
+    ]);
+    expect(chatPosted.filter((m: any) => m?.botling === "runCommand")).toEqual([
+      { botling: "runCommand", id: "alpha.webCmd" },
     ]);
 
     // 3. App shortcut (Ctrl+Cmd+I -> toggleRightPanel) still works from the panel's frame, without dispatching synthetic window keydowns.

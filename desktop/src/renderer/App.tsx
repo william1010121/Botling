@@ -676,7 +676,7 @@ function runPluginCommand(client: Client, plugins: PluginsView | null | undefine
   // A bottom panel's toggle command is the page's own to run: it shows or hides the panel of the bot on screen.
   if (bottomPanelToggledBy(plugins, id)) { window.dispatchEvent(new CustomEvent(TOGGLE_BOTTOM_PANEL, { detail: id })); return; }
   if (runsInHost(plugins, id)) void client.request({ type: "plugins.command", id, ...(caller ?? {}), ...(args.length ? { args } : {}) }).catch(onError);
-  else if (!caller) postToChat({ botling: "runCommand", id });
+  else postToChat({ botling: "runCommand", id });
 }
 
 function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void;
