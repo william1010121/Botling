@@ -125,7 +125,20 @@ export class Conversations {
     const lines = (this.pending.get(chatId) ?? []).filter((entry) => entry.body !== null).map((entry) => entry.state === "answering"
       ? `(App: ${quoteName(entry.member.name)} is still answering your @ from ${clock(entry.since)}.)`
       : `(App: ${quoteName(entry.member.name)} is queued to answer your @ from ${clock(entry.since)}, after another call-in.)`);
+    // The @s that failed since its last turn: told once, so it can say so to the user.
+    lines.push(...(this.failures.get(chatId) ?? []));
+    this.failures.delete(chatId);
     return lines.length ? lines.join("\n") : null;
+  }
+
+  /** Per chat, what its own bot is told with its next turn about @s that were not delivered or not answered. */
+  private failures = new Map<string, string[]>();
+
+  /** An @ of `chat`'s own bot failed: the chat gets the notice (`words`), and the bot itself is told too, so it can tell the user. */
+  private failed(chat: Bot, words: string) {
+    chat.appNotice(words);
+    const lines = this.failures.get(chat.id) ?? [];
+    this.failures.set(chat.id, [...lines.slice(-4), `(App: Your @ was not delivered or not answered. ${words} Tell the user so; do not ask the same bot again unless the user says so.)`]);
   }
 
   /** A spec trace line (spec/models/callin) in `chatId`, with what its pending list shows then. */
@@ -209,6 +222,7 @@ export class Conversations {
     const elsewhere = (this.deps.subBots?.() ?? []).filter((sub) => sub.parent !== chat.id).map(({ id, name }) => ({ id, name }));
     const addressed: { member: Member; body: string }[] = [];
     const unreachable: Member[] = [];
+    const unknown: string[] = [];
     let ambiguous = false;
     for (const candidate of botMentionCandidates(record.text)) {
       // Every bot, itself among them, so "@itself …" is not read as a shorter name.
@@ -217,6 +231,7 @@ export class Conversations {
       if (!first || !candidate.toLowerCase().startsWith("@" + first.name.toLowerCase())) {
         const other = mentioned(candidate, elsewhere)[0];
         if (other && candidate.toLowerCase().startsWith("@" + other.name.toLowerCase())) unreachable.push(other);
+        else { const word = /^@([^\s,，:：、]+)/u.exec(candidate)?.[1]; if (word) unknown.push(word); }
         continue;
       }
       if (named.filter((member) => member.name.toLowerCase() === first.name.toLowerCase()).length > 1) { ambiguous = true; continue; }
@@ -226,12 +241,16 @@ export class Conversations {
     }
     if (unreachable.length) {
       const names = [...new Set(unreachable.map((member) => member.name))];
-      chat.appNotice(`Not sent to ${names.join(", ")} with @: ${names.length === 1 ? "it is" : "they are"} not a bot this chat can call in (another bot's sub bot answers only in that bot's chat).`);
+      this.failed(chat, `Not sent to ${names.join(", ")} with @: ${names.length === 1 ? "it is" : "they are"} not a bot this chat can call in (another bot's sub bot answers only in that bot's chat).`);
+    }
+    if (unknown.length) {
+      const names = [...new Set(unknown)].map((name) => `@${name}`);
+      this.failed(chat, `Not sent to ${names.join(", ")}: no bot with that name (a sub bot that was closed is gone; the bots this chat can call in are listed in the @ menu).`);
     }
     const recipients = [...new Set(addressed.map((entry) => entry.member.id))];
     if (!recipients.length && !ambiguous) { route(unreachable[0]?.id ?? null, null, unreachable.length ? "unreachable" : "none"); return; }
     if (recipients.length !== 1 || ambiguous) {
-      chat.appNotice("Not sent with @: this reply names more than one bot at the start of a line. Name one bot per reply.");
+      this.failed(chat, "Not sent with @: this reply names more than one bot at the start of a line. Name one bot per reply.");
       route(null, null, "many");
       return;
     }
@@ -241,7 +260,7 @@ export class Conversations {
     // The same reply heard again: no new @.
     if (log.records.some((entry) => entry.message === record.id)) { route(recipient.id, body, "seen"); return; }
     if (depth >= MAX_FOLLOW_DEPTH) {
-      chat.appNotice(`Not sent to ${recipient.name} with @: bots have already called each other in ${MAX_FOLLOW_DEPTH} times in a row from one message of yours.`);
+      this.failed(chat, `Not sent to ${recipient.name} with @: bots have already called each other in ${MAX_FOLLOW_DEPTH} times in a row from one message of yours.`);
       route(recipient.id, body, "dropped");
       return;
     }
@@ -252,20 +271,20 @@ export class Conversations {
     if (recent.some((entry) => entry.recipient === recipient.id && entry.body === body)) {
       // Still to be answered: that answer covers this one too.
       if (!(this.pending.get(chat.id) ?? []).some((entry) => entry.member.id === recipient.id && entry.body === body)) {
-        chat.appNotice(`Not sent to ${recipient.name} with @: it was already asked the same since your last message.`);
+        this.failed(chat, `Not sent to ${recipient.name} with @: it was already asked the same since your last message.`);
         route(recipient.id, body, "dropped");
       } else route(recipient.id, body, "merged");
       return;
     }
     if (recent.length >= BOT_MENTIONS_PER_USER_LINE) {
-      chat.appNotice(`Not sent to ${recipient.name} with @: a bot can call others in at most ${BOT_MENTIONS_PER_USER_LINE} times per message of yours.`);
+      this.failed(chat, `Not sent to ${recipient.name} with @: a bot can call others in at most ${BOT_MENTIONS_PER_USER_LINE} times per message of yours.`);
       route(recipient.id, body, "dropped");
       return;
     }
     try {
       log.add({ message: record.id, sender: chat.id, recipient: recipient.id, body, date: new Date().toISOString() });
     } catch (error) {
-      chat.appNotice(`Not sent to ${recipient.name} with @: could not keep a record of it (${(error as Error).message}).`);
+      this.failed(chat, `Not sent to ${recipient.name} with @: could not keep a record of it (${(error as Error).message}).`);
       route(recipient.id, body, "dropped");
       return;
     }
@@ -341,7 +360,7 @@ export class Conversations {
       }
       this.deps.refreshWaiting();
     }
-    if (unheard.length) chat.appNotice(`Did not answer this time: ${unheard.join(", ")}.`);
+    if (unheard.length) { const words = `Did not answer this time: ${unheard.join(", ")}.`; if (caller) this.failed(chat, words); else chat.appNotice(words); }
   }
 
   /** Who answers in `chatId` now (null: nobody); `guest`, the bot that starts or stops answering there, is drawn again too. */
