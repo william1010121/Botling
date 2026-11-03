@@ -303,16 +303,17 @@ describe("a sub bot in the core", () => {
     } finally { vi.restoreAllMocks(); await core.shutdown(); }
   });
 
-  it("says so when a sub bot's own reply starts a line with @ and a bot's name, instead of dropping it silently", async () => {
+  it("is called in by a sub bot's reply that starts a line with @ and a project bot's name", async () => {
     const h = fixture({ subName: "bench-correction" }), core = h.open();
     try {
+      const parent = bots(core).get(PROJECT)!;
       const sub = bots(core).get(SUB)!;
-      const notices: string[] = [];
-      vi.spyOn(sub, "appNotice").mockImplementation(((text: string) => { notices.push(text); return "n"; }) as any);
-      (core as any).conversations.receiveBotMention({ id: "R2", role: "bot", text: `@${bots(core).get(PROJECT)!.profile.name} please fetch the data`, date: 0 }, sub);
-      expect(notices).toHaveLength(1);
-      expect(notices[0]).toContain("Not sent");
-      expect(notices[0]).toContain("sub bot");
+      const asked: string[] = [];
+      vi.spyOn(parent, "groupTurn").mockImplementation(async (text: string) => { asked.push(text); return { kind: "busy" }; });
+      vi.spyOn(sub, "appNotice").mockImplementation(() => "n");
+      (core as any).conversations.receiveBotMention({ id: "R2", role: "bot", text: `@${parent.profile.name} please fetch the data`, date: 0 }, sub);
+      await vi.waitFor(() => expect(asked).toHaveLength(1));
+      expect(asked[0]).toContain("please fetch the data");
     } finally { vi.restoreAllMocks(); await core.shutdown(); }
   });
 });

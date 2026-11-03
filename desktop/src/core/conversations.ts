@@ -149,7 +149,9 @@ export class Conversations {
   /** The bots that can be called into `chat` with @: everyone but its own bot, and its own sub bots (`callable(into:)`). */
   callable(chatId: string): Member[] {
     const members = this.deps.members();
-    return members.some((member) => member.id === chatId) ? [...members.filter((member) => member.id !== chatId), ...this.subBotsOf(chatId)] : [];
+    if (members.some((member) => member.id === chatId)) return [...members.filter((member) => member.id !== chatId), ...this.subBotsOf(chatId)];
+    // A sub bot may call the project bots in (its parent too), never another bot's sub bots.
+    return (this.deps.subBots?.() ?? []).some((sub) => sub.id === chatId) ? members : [];
   }
 
   /** The names the @ menu offers (the main bot and Maintainer), then every other bot (`callInView`). */
@@ -199,14 +201,8 @@ export class Conversations {
       if (this.deps.members().some((member) => member.id === chat.id)) this.trace("BotReply", chat.id, { to, body, msg: record.id, depth, outcome });
     };
     if (!record.text.includes("@")) { route(null, null, "none"); return; }
-    if (!this.deps.members().some((member) => member.id === chat.id)) {
-      // A sub bot's reply: it cannot call others in (only its project bot's chat can), but the @ must not vanish unseen.
-      if ((this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id) && botMentionCandidates(record.text).length) {
-        chat.appNotice("Not sent with @: a sub bot cannot call other bots in. Ask its project bot to do it, or tell the user what you need.");
-        route(null, null, "unreachable");
-      }
-      return;
-    }
+    const isSub = (this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id);
+    if (!isSub && !this.deps.members().some((member) => member.id === chat.id)) return;
     const members = [...this.deps.members(), ...this.subBotsOf(chat.id)];
     const callable = this.callable(chat.id);
     // Other bots' sub bots: not callable here, only named so the @ is not lost without a word.
