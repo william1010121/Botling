@@ -8,16 +8,41 @@
 // 2.0 differences: no pictures of the pages (1.x's PageShots): a card always runs its page in a frame; and a
 // page named by a `<show>` card outside an `artifacts` folder is not served (1.x serves that one file).
 import { statSync } from "node:fs";
-import { basename, extname } from "node:path";
-import { pathToFileURL } from "node:url";
-import { filePath, isArtifactPage, pageInCard, PAGE_COMPONENT } from "./specs";
-import { previewURL } from "./preview-url";
+import { basename, dirname, extname, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { PAGE_COMPONENT, previewURL } from "./preview-url";
 
 export { PREVIEW_ORIGIN, previewFile, previewURL } from "./preview-url";
 
 export { PAGE_COMPONENT };
 /** At most this many pages are previewed under one message (`perMessage`). */
 const PER_MESSAGE = 3;
+
+/** A path from what a bot wrote: `/abs/path`, `~/path` or a `file://` URL (`PagePreview.fileURL(from:)`). */
+export function filePath(text: string): string | null {
+  const value = text.trim();
+  if (value.toLowerCase().startsWith("file:")) { try { return resolve(fileURLToPath(value)); } catch { return null; } }
+  if (value.startsWith("~/")) return resolve(process.env.HOME ?? "/", value.slice(2));
+  return value.startsWith("/") ? resolve(value) : null;
+}
+
+/** A result page: an .html file in an `artifacts` folder (`PagePreview.isArtifactPage`). */
+export function isArtifactPage(path: string): boolean {
+  if (!/\.html?$/i.test(path)) return false;
+  for (let folder = dirname(path); folder !== "/" && folder; folder = dirname(folder)) if (basename(folder) === "artifacts") return true;
+  return false;
+}
+
+/** The page a preview card's data names (`PagePreview.page(inCard:)`). */
+export function pageInCard(data: string): string | null {
+  try {
+    const object = JSON.parse(data) as Record<string, unknown>;
+    const given = typeof object.path === "string" ? object.path : typeof object.url === "string" ? object.url : null;
+    return given ? filePath(given) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** A path from what a bot wrote: `/abs/path`, `~/path` or a `file://` URL. */
 export const pagePath = filePath;

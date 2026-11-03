@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { cardData, linkedCards, previewCards, previewFile, previewURL } from "../../src/core/page-preview";
 import { Command } from "../../src/contract";
-import { draftSpec, replyPages } from "../../src/core/specs";
+import { draftSpec, replyPages } from "../../builtin-plugins/botling.component-studio/src/specs";
 import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT } from "../../src/core/components/builtins";
 import { parseLine } from "../../src/core/agent/stream";
 import { addSpending, claudeRateLimits, codexRateLimits, codexTokens, freshSpending, type RateLimits, type RateLimitWindow } from "../../src/core/usage";

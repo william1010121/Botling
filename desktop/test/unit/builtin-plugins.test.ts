@@ -31,8 +31,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.component-studio, botling.design, botling.dev, botling.git, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.design", "botling.dev", "botling.git", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
@@ -67,7 +67,7 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.board", true, true], ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.board", true, true], ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.component-studio", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);

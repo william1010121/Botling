@@ -40,8 +40,8 @@ export interface PluginEvents {
   libraryChanged: Record<string, never>;
   /** A component card's command run (a spec's test run or built card, a chat card, a pin) started or ended; `card` is its key. */
   cardChanged: { card: string };
-  /** Maintainer's reply showed (after the tags in it were handed over): its line's role ("bot" or "error") and whether its subagents are still at work. */
-  maintainerReplied: { role: string; running: boolean };
+  /** Maintainer's reply showed (after the tags in it were handed over): its line's role ("bot" or "error"), its words (the first 2,000 characters) and whether its subagents are still at work. */
+  maintainerReplied: { role: string; text: string; running: boolean };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */

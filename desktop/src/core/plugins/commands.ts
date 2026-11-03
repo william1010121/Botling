@@ -27,7 +27,7 @@ export function commandSurfaces(list: Contribution[]): CommandSurfaces {
       .map((entry) => ({ name: entry.name, about: entry.about.slice(0, 400), ...(entry.command !== undefined ? { command: entry.command } : {}), plugin: entry.plugin })),
     menus: ofKind(list, "menu").filter(own).slice(0, 200).map((entry) => ({
       menu: entry.menu, command: entry.command, plugin: entry.plugin, title: title(entry),
-      ...(entry.icon ? { icon: entry.icon } : {}), ...(entry.quick ? { quick: true } : {}), ...(entry.alt ? { alt: entry.alt } : {}), ...(entry.hint ? { hint: entry.hint } : {}),
+      ...(entry.icon ? { icon: entry.icon } : {}), ...(entry.quick ? { quick: true } : {}), ...(entry.alt ? { alt: entry.alt } : {}), ...(entry.hint ? { hint: entry.hint } : {}), ...(entry.locales ? { locales: entry.locales } : {}),
     })),
   };
 }

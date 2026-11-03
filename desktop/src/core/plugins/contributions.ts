@@ -76,10 +76,10 @@ export type Contribution = { plugin: string } & (
   | { kind: "statusItem"; id: string; where: (typeof STATUS_SLOTS)[number] }
   | { kind: "setting"; key: string; setting: PluginSetting }
   /**
-   * `quick` (message menus): a button of its own (tooltip: its title, then `hint`) beside the reply's other buttons (or on a result page's preview card, `message/preview`) instead of
+   * `quick` (message menus): a button of its own (tooltip: its title, then `hint`; `locales`: those words in another page language, "zh-Hant") beside the reply's other buttons (or on a result page's preview card, `message/preview`) instead of
    * a row in the "⋯" menu, drawn with the page's icon `icon`; `alt` is its words for a reply that already is a library component.
    */
-  | { kind: "menu"; menu: (typeof MENU_SLOTS)[number]; command: string; icon?: string; quick?: boolean; alt?: string; hint?: string }
+  | { kind: "menu"; menu: (typeof MENU_SLOTS)[number]; command: string; icon?: string; quick?: boolean; alt?: string; hint?: string; locales?: Record<string, { title?: string; alt?: string; hint?: string }> }
   | { kind: "hook"; hook: (typeof HOOKS)[number] }
   | { kind: "routine"; id: string; cron: string; command: string }
   /** A tag bots may write in a reply (`<tag …>body</tag>`): taken out of the text and handed to the plugin's program part. */
@@ -240,7 +240,16 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
         if (f) {
           const quick = isObject(item) && item.quick === true;
           if (menu === "message/preview" && !quick) { problems.push(`contributes.menus.${menu}.${index}: a preview card's menu entry must be quick.`); continue; }
-          out.push({ kind: "menu", plugin, menu: menu as (typeof MENU_SLOTS)[number], command: f.command, ...(f.icon !== undefined ? { icon: f.icon.slice(0, 40) } : {}), ...(quick ? { quick: true } : {}), ...(f.alt !== undefined ? { alt: f.alt.slice(0, 200) } : {}), ...(f.hint !== undefined ? { hint: f.hint.slice(0, 400) } : {}) });
+          const locales: Record<string, { title?: string; alt?: string; hint?: string }> = {};
+          if (isObject(item) && isObject(item.locales)) {
+            for (const [language, words] of Object.entries(item.locales).slice(0, 10)) {
+              if (!isObject(words)) continue;
+              const given = (key: string) => (typeof words[key] === "string" ? (words[key] as string).slice(0, 400) : undefined);
+              const [title, alt, hint] = [given("title"), given("alt"), given("hint")];
+              locales[language.slice(0, 20)] = { ...(title !== undefined ? { title } : {}), ...(alt !== undefined ? { alt } : {}), ...(hint !== undefined ? { hint } : {}) };
+            }
+          }
+          out.push({ kind: "menu", plugin, menu: menu as (typeof MENU_SLOTS)[number], command: f.command, ...(Object.keys(locales).length ? { locales } : {}), ...(f.icon !== undefined ? { icon: f.icon.slice(0, 40) } : {}), ...(quick ? { quick: true } : {}), ...(f.alt !== undefined ? { alt: f.alt.slice(0, 200) } : {}), ...(f.hint !== undefined ? { hint: f.hint.slice(0, 400) } : {}) });
         }
       }
     }

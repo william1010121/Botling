@@ -1,0 +1,16 @@
+{
+  "name": "botling.component-studio",
+  "displayName": "Component studio",
+  "version": "1.0.0",
+  "description": "Turns a reply into a component: \"Make into component\" under a reply (or on a result page's preview card), a bot's own <suggest-component> chip, and the spec workspace in the right panel where you and Maintainer shape it.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "studio"
+    ]
+  }
+}

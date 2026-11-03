@@ -3,7 +3,7 @@ import * as state from "@codemirror/state";
 import * as view from "@codemirror/view";
 import type MarkdownIt from "markdown-it";
 import { post } from "./bridge";
-import { commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markPinFrames, maxColumns, maxRows, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
+import { commandCard, componentElement, type CommandSend, componentSizes, detailTarget, hasFrame, keepFrames, markPinFrames, maxColumns, maxRows, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChipHandle, ComposerChip } from "./composer";
 import { DecorationLayer, type DecorationRenderer } from "./decorations";
 import { ownsCommand } from "./frame-protocol";
@@ -12,8 +12,6 @@ import { language, pieces, t } from "./i18n";
 import { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords } from "./refresh";
 import { mediaHTML, md, renderMarkdown, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
-import { commandCard, componentElement, detailTarget, type CommandSend } from "./components";
-import { specPinButton } from "./pins";
 import { taskCardChipHTML } from "./task-cards";
 import type { Action, ChatState, ComponentInfo, DisplayView, SpecChipView, TaskCardView } from "./types";
 import { onScreen, setWindowListener, whenShownAgain, windowVisible } from "./visible";
@@ -141,8 +139,8 @@ export interface CcbWeb {
      * detail, force), and `lazy` draws it only when scrolled to. Null: it cannot be drawn.
      */
     component(spec: { name: string; info: ComponentInfo | undefined; display: DisplayView; key: string; cardKey: string; send?: CommandSend; lazy?: boolean }): HTMLElement | null;
-    /** The pin button of a component made from a reply (the Board's pin dialog), or its Pinned badge. */
-    pinButton(chip: SpecChipView): HTMLElement;
+    /** The button the Board plugin adds to a built component's head (its pin dialog, or its Pinned badge), if it is on. */
+    pinButton(chip: SpecChipView): HTMLElement | null;
   };
   /**
    * Asks you, on the app's own sheet, to allow a command in a folder (and a Detail command): the reply says whether you did. Only
@@ -385,6 +383,7 @@ export class PluginHost {
       if (!builtIn) throw new Error(`${what} is for the plugins that ship with Botling.`);
     };
     const requestApproval = (request: { botId: string; command: string; folder: string; card?: string; detail?: string }) => new Promise<{ allowed: boolean }>((resolve, reject) => {
+      ownParts("ccb.requestApproval");
       const callID = this.nextCall++;
       this.hostCalls.set(callID, { resolve: (value) => resolve({ allowed: (value as { allowed?: unknown } | null)?.allowed === true }), reject });
       post({ type: "pluginApproval", plugin: name, callID, botId: String(request?.botId ?? ""), command: String(request?.command ?? ""), folder: String(request?.folder ?? ""),
@@ -498,10 +497,12 @@ export class PluginHost {
       notify: (text) => post({ type: "pluginNotice", name, text }),
       draw: {
         component: ({ name: component, info, display, key, cardKey, send, lazy }) => {
+          ownParts("ccb.draw.component");
           const draw = () => componentElement(component, info, display.data, null, key, display.images, detailTarget(display), undefined, "chat", false, null, true);
           return display.command ? commandCard(display, cardKey, 0, draw, { ...(send ? { send } : {}), lazy: lazy !== false }) : draw();
         },
-        pinButton: (chip) => specPinButton(chip),
+        // The buttons plugins add to a built component's head (the Board's pin: `messages.specButton`), the first one that makes one.
+        pinButton: (chip) => ownParts("ccb.draw.pinButton") ?? extensions.specButtons.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(chip)) ?? [])[0] ?? null,
       },
       requestApproval,
       call,

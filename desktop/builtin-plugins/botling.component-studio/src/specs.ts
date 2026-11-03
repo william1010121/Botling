@@ -5,15 +5,14 @@
 // specs.json beside chat.json, in 1.x's format. The strings are checked character for character against
 // the Swift app's (test/unit/phase5.test.ts, test/fixtures/phase5-golden.json).
 import { readFileSync, statSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { characterCount, characterPrefix, type Clock } from "./briefing";
-import { BUILT_INS, safeName, type ComponentLibrary } from "./components/library";
-import { clampMinutes, DEFAULT_MINUTES, type PinRefresh } from "./components/pins";
-import { parseReply, type Display } from "./reply";
-import { cardData as pageCardData } from "./page-preview";
-import { PAGE_COMPONENT } from "./preview-url";
-import { newId, type ChatRecord } from "./store/records";
+import { basename, resolve } from "node:path";
+import { characterCount, characterPrefix, type Clock } from "../../../src/core/briefing";
+import { BUILT_INS, safeName } from "../../../src/core/components/library";
+import { clampMinutes, DEFAULT_MINUTES, type PinRefresh } from "../../../src/core/components/pins";
+import { parseReply, type Display } from "../../../src/core/reply";
+import { cardData as pageCardData, filePath, isArtifactPage, pageInCard } from "../../../src/core/page-preview";
+import { PAGE_COMPONENT } from "../../../src/core/preview-url";
+import { newId, type ChatRecord } from "../../../src/core/store/records";
 
 export type SpecOrigin = "user" | "maintainer" | "app";
 export type SpecStatus = "draft" | "building" | "done";
@@ -220,7 +219,7 @@ export { PAGE_COMPONENT };
  * What the app can tell from a reply alone (`draft(from:…)`): the data a component in it was drawn with
  * (its fields and a sample), the command that gave that card its data, a name and the bot's folder.
  */
-export function draftSpec(record: ChatRecord, bot: string, folder: string, library: ComponentLibrary | null, createdAt: number, page: string | null = null): ComponentSpec {
+export function draftSpec(record: ChatRecord, bot: string, folder: string, library: { names: readonly string[] } | null, createdAt: number, page: string | null = null): ComponentSpec {
   const names = new Set(library?.names ?? []);
   const shown = shownOf(record).filter((display) => !isBuiltIn(display.name));
   // From a result page's preview card (Phase 5c): named after the page, its sample the card.
@@ -450,32 +449,6 @@ const PAGE_LIMIT = 12_000;
 const PER_MESSAGE = 3;
 
 export interface ReplyPage { path: string; text: string }
-
-/** A path from what a bot wrote: `/abs/path`, `~/path` or a `file://` URL (`PagePreview.fileURL(from:)`). */
-export function filePath(text: string): string | null {
-  const value = text.trim();
-  if (value.toLowerCase().startsWith("file:")) { try { return resolve(fileURLToPath(value)); } catch { return null; } }
-  if (value.startsWith("~/")) return resolve(process.env.HOME ?? "/", value.slice(2));
-  return value.startsWith("/") ? resolve(value) : null;
-}
-
-/** A result page: an .html file in an `artifacts` folder (`PagePreview.isArtifactPage`). */
-export function isArtifactPage(path: string): boolean {
-  if (!/\.html?$/i.test(path)) return false;
-  for (let folder = dirname(path); folder !== "/" && folder; folder = dirname(folder)) if (basename(folder) === "artifacts") return true;
-  return false;
-}
-
-/** The page a preview card's data names (`PagePreview.page(inCard:)`). */
-export function pageInCard(data: string): string | null {
-  try {
-    const object = JSON.parse(data) as Record<string, unknown>;
-    const given = typeof object.path === "string" ? object.path : typeof object.url === "string" ? object.url : null;
-    return given ? filePath(given) : null;
-  } catch {
-    return null;
-  }
-}
 
 /** The result pages a message links to, `[name](file://…/artifacts/x.html)`, that are there (`PagePreview.linkedCards`, as paths). */
 function linkedPages(text: string): string[] {

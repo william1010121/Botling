@@ -14,7 +14,7 @@ import {
   COMPONENT_ACTIONS, actionHeader, answerOpenQuestions, answerQuestion, boardCommandRequest, buildRequest, changeRequest, draftRequest, draftSpec, editSpecValue,
   fieldsFromJSON, filledData, fillRequest, firstBuildRequest, lastCommand, outputMatches, pageText, parseFields, purposeLine, replyPages, sayRequest, shortTime, slug,
   specSummary, tagNote, updateSpec, type ComponentSpec,
-} from "../../src/core/specs";
+} from "../../builtin-plugins/botling.component-studio/src/specs";
 import { tempDir } from "../helpers";
 
 const golden = JSON.parse(readFileSync(join(__dirname, "..", "fixtures", "phase5-golden.json"), "utf8"));

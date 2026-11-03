@@ -47,7 +47,7 @@ import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } f
 import { agentMessageNotice, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotClosedNotice, subBotGroupFirstMessage } from "./agent-relay";
 import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
-import { filePath, pageInCard } from "./specs";
+import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
 import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
@@ -2203,7 +2203,7 @@ First write a test that shows this, then fix it.`;
       this.specs.finishBuilds();
       this.plugins.event("libraryChanged", {});
       // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
-      setImmediate(() => setImmediate(() => { this.specs.settleChanges(record, bot.subagentsAtWork); this.plugins.event("maintainerReplied", { role: record.role, running: bot.subagentsAtWork }); this.componentsTick(); }));
+      setImmediate(() => setImmediate(() => { this.specs.settleChanges(record, bot.subagentsAtWork); this.plugins.event("maintainerReplied", { role: record.role, text: record.text.slice(0, 2_000), running: bot.subagentsAtWork }); this.componentsTick(); }));
       this.componentsTick();
     }
   }

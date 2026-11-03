@@ -17,9 +17,9 @@ import {
   answerOpenQuestions, answerQuestion, buildRequest, changeRequest, clip, draftRequest, draftSpec, editSpecValue, filledData, fillRequest, firstBuildRequest,
   isFilling, lastCommand, nextVersion, outputMatches, preferredSample, replyPages, sayRequest, shortTime, slug, specCard, updateSpec, type ComponentSpec,
   type SpecChange, LINE_BREAKS,
-} from "./specs";
+} from "../../builtin-plugins/botling.component-studio/src/specs";
 import { safeName } from "./components/library";
-import { judgeSuggestion } from "./suggestion-rules";
+import { judgeSuggestion } from "../../builtin-plugins/botling.component-studio/src/suggestion-rules";
 import { toSwiftDate, type ChatRecord } from "./store/records";
 import type { Display } from "./reply";
 

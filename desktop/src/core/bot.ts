@@ -57,7 +57,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
-import { readSpec, sameSpec, type ComponentSpec } from "./specs";
+import { readSpec, sameSpec, type ComponentSpec } from "../../builtin-plugins/botling.component-studio/src/specs";
 import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import {
