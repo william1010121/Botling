@@ -1,5 +1,6 @@
-// Phase 4b in the real app: New bot (the form, the bot set up and shown), a bot's subagent rows in
-// the left column (open, settle into the right panel's Settled, bring back), Results / "Just done"
+// Phase 4b in the real app: New bot (the form, the bot set up and shown), a bot's subagents in its
+// status card beside the left column (opened by hovering its row: open one; settled into the right
+// panel's Settled, brought back), Results / "Just done"
 // (opened by main, only links of that chat), the right panel folded into its strip (icons with
 // counts, a section beside the strip, kept in settings.json), and removing a bot (its folder stays). Screenshots go to
 // desktop/.tmp/screens/.
@@ -7,7 +8,7 @@ import { expect, test } from "@playwright/test";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktop, tempDir } from "../helpers";
-import { launch, MAIN, say } from "./launch";
+import { launch, MAIN, post, say } from "./launch";
 
 const screens = join(desktop, ".tmp", "screens");
 const shot = async (page: import("@playwright/test").Page, name: string) => {
@@ -36,17 +37,26 @@ test("New bot, subagent rows and Settled, Results, the folded strip, removing a 
     const botId = await row.getAttribute("data-bot");
     expect(JSON.parse(readFileSync(join(dataDir, "core", "projects.json"), "utf8"))).toEqual([expect.objectContaining({ id: botId, name: "Morning news", job: "Every day at 08:00, the top 5 tech stories" })]);
 
-    // A subagent of the main bot: its row under the main bot, with its end mark.
-    await page.locator(`.bot-row[data-bot="${MAIN}"]`).click();
+    // A subagent of the main bot: in the main bot's status card (hover its row), under the folded "Agents" row, done.
+    const mainRow = page.locator(`.bot-row[data-bot="${MAIN}"]`);
+    const agentsOfMain = async () => {
+      await mainRow.hover();
+      const card = page.locator(`.rail-peek[data-bot="${MAIN}"]`);
+      await expect(card).toBeVisible();
+      await card.locator(".rail-peek-group").click();
+      return card.locator(".rail-peek-agent");
+    };
+    await mainRow.click();
     await say(chat, "/agent");
-    const sub = page.locator(`.subagent-rows[data-bot="${MAIN}"] .subagent-row`);
+    const sub = await agentsOfMain();
     await expect(sub).toHaveCount(1);
     await expect(sub.locator(".subagent-title")).toHaveText("Research the API");
-    await expect(sub).not.toHaveClass(/running/);
+    await expect(sub.locator(".rail-peek-state")).not.toHaveClass(/running/);
+    const subId = await sub.getAttribute("data-subagent");
     // Opening it shows its own conversation in the chat's place.
-    await sub.locator(".subagent-open").click();
-    await expect(sub).toHaveClass(/selected/);
-    await expect(page.locator(`.bot-row[data-bot="${MAIN}"]`)).not.toHaveClass(/selected/);
+    await sub.click();
+    await expect(chat.locator("#subagent-bar")).toBeVisible();
+    await expect(mainRow).not.toHaveClass(/selected/);
     // Results: a link the main bot hands over is listed; main opens it (only this chat's links).
     await page.locator(`.bot-row[data-bot="${MAIN}"]`).click();
     await say(chat, "/say Here it is: [Weekly report](https://example.com/report) and [Notes](https://example.com/notes)");
@@ -59,10 +69,8 @@ test("New bot, subagent rows and Settled, Results, the folded strip, removing a 
     await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingOpenedResults.slice())).toEqual(["https://example.com/report"]);
     // The main bot's subagent row in the column and its "Just done" (looked at).
     await shot(page, "phase4b-rows");
-    // Settling: the row leaves the column for Settled in the right panel.
-    await sub.hover();
-    await sub.locator(".subagent-settle").click();
-    await expect(sub).toHaveCount(0);
+    // Settling (the card has no settle clock; the core's request): it leaves the card for Settled in the right panel.
+    expect(await post(page, { v: 10, id: "settle", cmd: { type: "subagent.settle", botId: MAIN, subagentId: subId, settled: true } })).toMatchObject({ ok: true });
     const settled = page.locator(".settled-section .settled-row");
     await expect(settled).toHaveCount(1);
     await expect(settled.locator(".settled-title")).toHaveText("Research the API");
@@ -72,7 +80,7 @@ test("New bot, subagent rows and Settled, Results, the folded strip, removing a 
     await shot(page, "phase4b-panel");
     await page.getByRole("form", { name: "New bot" }).getByRole("button", { name: "Cancel" }).click();
     await settled.locator(".settled-back").click();
-    await expect(sub).toHaveCount(1);
+    await expect(await agentsOfMain()).toHaveCount(1);
     await expect(page.locator(".settled-section")).toHaveCount(0);
 
     // The right panel folded (the button at the top right): the face, the Results icon with its count.

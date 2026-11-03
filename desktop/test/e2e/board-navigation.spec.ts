@@ -62,9 +62,17 @@ test("watching a subagent hides the switch and returning restores the selected B
   try {
     const control = page.getByRole("group", { name: "Chat or Board", exact: true });
     await say(chat, "/bgagent");
-    const row = page.locator(".subagent-row").first();
+    // The subagent is in the main bot's status card (hover its row), under the folded "Agents" row.
+    await page.locator(`.bot-row[data-bot="${MAIN}"]`).hover();
+    const card = page.locator(`.rail-peek[data-bot="${MAIN}"]`);
+    await expect(card).toBeVisible();
+    await card.locator(".rail-peek-group").click();
+    const row = card.locator(".rail-peek-agent").first();
     await expect(row).toBeVisible();
     await control.getByRole("button", { name: "Board", exact: true }).click();
+    // The click on the switch was outside the card: it closed; hovering the row opens it again.
+    await page.locator(`.bot-row[data-bot="${MAIN}"]`).hover();
+    if (!(await row.isVisible())) await card.locator(".rail-peek-group").click();
     await row.click();
     await expect(chat.locator("#subagent-bar")).toBeVisible();
     await expect(control).toBeHidden();
