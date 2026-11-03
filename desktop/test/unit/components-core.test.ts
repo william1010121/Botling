@@ -1,6 +1,6 @@
 // Components through the built core with the fake claude: the library from the plugin folder,
 // what a bot is told about it, <show> cards (and updating one by id), ccb.save, a command card
-// that asks first and runs only once allowed, its Detail command, and pins.
+// that asks first and runs only once allowed, and its Detail command (pins: board-pins.test.ts).
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -60,7 +60,7 @@ describe("components", () => {
     const id = await turn(c, `/say Your list: <show name="todo">{"items":["milk"]}</show>`);
     const shown = await line(c, id);
     expect(shown.text).toBe("Your list:");
-    expect(shown.displays).toEqual([expect.objectContaining({ name: "todo", data: `{"items":["milk"]}`, command: null, status: null, pinned: false, card: null })]);
+    expect(shown.displays).toEqual([expect.objectContaining({ name: "todo", data: `{"items":["milk"]}`, command: null, status: null, card: null })]);
     expect(await c.call({ type: "component.save", botId: MAIN, messageId: id, index: 0, data: `{"items":["milk","eggs"]}` })).toEqual({ saved: true });
     expect((await line(c, id)).displays[0].data).toBe(`{"items":["milk","eggs"]}`);
     expect(JSON.parse(readFileSync(join(dir, "main", "chat.json"), "utf8")).find((m: any) => m.id === id).displays[0]).toMatchObject({ name: "todo", data: `{"items":["milk","eggs"]}`, savedAt: expect.any(Number) });
@@ -135,51 +135,5 @@ describe("components", () => {
     const before = c.of("message.updated").length;
     expect(await c.call({ type: "component.command", botId: MAIN, messageId: id, index: 0, command: card.command, folder: card.folder, force: true })).toEqual({ accepted: true });
     await until(() => c.of("message.updated").length >= before + 2);
-  });
-
-  it("pins: from a card or the picker, kept in pins.json; resized, laid out, saved, its chip set; a pinned command runs only once allowed", async () => {
-    const dir = tempDir("components");
-    writeLibrary(dir);
-    const c = core(dir);
-    const id = await turn(c, `/say <show name="todo">{"items":["milk"]}</show>`);
-    const pinId = "AAAAAAAA-0000-4000-8000-000000000001";
-    expect(await c.call({ type: "pin.add", botId: MAIN, id: pinId, messageId: id, index: 0, refresh: "shown", minutes: 15 })).toEqual({ pinned: true });
-    // The same component again is not pinned twice.
-    expect(await c.call({ type: "pin.add", botId: MAIN, id: "AAAAAAAA-0000-4000-8000-000000000009", messageId: id, index: 0, refresh: "shown", minutes: 15 })).toEqual({ pinned: false });
-    let chat = await c.chat();
-    expect(chat.pins).toEqual([expect.objectContaining({ id: pinId, name: "todo", size: "2x2", refresh: "manual", headline: "milk", chip: { text: "milk", tone: "neutral" }, floatMenu: "float" })]);
-    expect(chat.messages.find((m: any) => m.id === id).displays[0].pinned).toBe(true);
-    // What it drew (now on its list, as 1.x), then its own others with a Command (none yet: gitlog is not its own).
-    expect(chat.pinChoices.map((choice: any) => [choice.name, choice.pinned])).toEqual([["todo", true]]);
-    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).toEqual(["網頁預覽卡片", "todo"]);
-    for (const change of [{ kind: "resize", size: "4x2" }, { kind: "status", text: "3 open and more", tone: "ok" }, { kind: "save", data: `{"items":["milk","tea"]}` }, { kind: "float", floating: true }, { kind: "floatAt", corner: "bottomLeft", width: 9999 }]) {
-      expect(await c.call({ type: "pin.change", botId: MAIN, id: pinId, change })).toEqual({ changed: true });
-    }
-    expect(await c.call({ type: "pin.arrange", botId: MAIN, places: [{ id: pinId, col: 1, row: 2, size: "3x2" }] })).toEqual({ changed: true });
-    chat = await c.chat();
-    expect(chat.pins[0]).toMatchObject({ size: "3x2", place: { col: 1, row: 2 }, chip: { text: "3 open and mo…", tone: "good" }, float: { corner: "bottomLeft", width: 640, height: null, collapsed: false }, floatMenu: "stop" });
-    expect(chat.floating).toHaveLength(1);
-    const saved = JSON.parse(readFileSync(join(dir, "main", "pins.json"), "utf8"));
-    expect(saved).toEqual([expect.objectContaining({ id: pinId, name: "todo", data: `{"items":["milk","tea"]}`, size: "3x2", place: { col: 1, row: 2 }, status: { text: "3 open and mo…", tone: "good" }, makingLive: false, savedAt: expect.any(Number) })]);
-    expect(c.of("pins.updated").length).toBeGreaterThan(5);
-    // From the picker, a component with a Command: it asks before it runs, then keeps what it printed.
-    const live = "AAAAAAAA-0000-4000-8000-000000000002";
-    expect(await c.call({ type: "pin.add", botId: MAIN, id: live, name: "gitlog", refresh: "shown", minutes: 15 })).toEqual({ pinned: true });
-    let pin = (await c.chat()).pins.find((p: any) => p.id === live);
-    expect(pin).toMatchObject({ headline: "Needs your OK", chip: { text: "Allow?", tone: "warning" }, display: { status: "approve", command: `printf '{"n":3}'` } });
-    expect(await c.call({ type: "pin.shown", botId: MAIN, ids: null })).toEqual({ ran: 0 });
-    expect(await c.call({ type: "pin.command", botId: MAIN, id: live, command: pin.display.command, folder: pin.display.folder }))
-      .toEqual({ accepted: false, needsApproval: { command: pin.display.command, folder: pin.display.folder, detail: pin.display.detail, card: "gitlog" } });
-    await expect(c.call({ type: "pin.command", botId: MAIN, id: live, command: pin.display.command, folder: pin.display.folder, detail: pin.display.detail, approve: true })).rejects.toThrow(/approve/);
-    expect(await c.call({ type: "pin.approve", botId: MAIN, id: live, command: pin.display.command, folder: "/tmp", detail: pin.display.detail })).toEqual({ accepted: false });
-    expect(await c.call({ type: "pin.approve", botId: MAIN, id: live, command: pin.display.command, folder: pin.display.folder, detail: pin.display.detail })).toEqual({ accepted: true });
-    pin = await until(async () => { const p = (await c.chat()).pins.find((p: any) => p.id === live); return p.display.status === "done" && p; });
-    expect(pin.display.data).toBe(`{"n":3}`);
-    expect(JSON.parse(readFileSync(join(dir, "main", "pins.json"), "utf8")).find((p: any) => p.id === live)).toMatchObject({ command: `printf '{"n":3}'`, data: `{"n":3}`, ranAt: expect.any(Number) });
-    // Shown again within 30 s: not run again.
-    expect(await c.call({ type: "pin.shown", botId: MAIN, ids: [live] })).toEqual({ ran: 0 });
-    expect(await c.call({ type: "pin.change", botId: MAIN, id: pinId, change: { kind: "remove" } })).toEqual({ changed: true });
-    expect((await c.chat()).pins.map((p: any) => p.id)).toEqual([live]);
-    await sleep(50);
   });
 });

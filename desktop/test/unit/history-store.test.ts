@@ -8,7 +8,7 @@ const line = (n: number, text = `line ${n}`): MessageView => ({ id: `m${n}`, rol
 const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => line(from + i));
 const snap = (messages: MessageView[], older: number): ResultOf<"chat.snapshot"> => ({
   epoch: "e", seq: 1, bots: [bot], imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null },
-  chat: { botId: "A", messages, running: null, live: [], tasks: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], ...(older ? { history: { hasMore: true, older } } : {}) },
+  chat: { botId: "A", messages, running: null, live: [], tasks: [], runs: [], heads: null, ...(older ? { history: { hasMore: true, older } } : {}) },
 } as unknown as ResultOf<"chat.snapshot">);
 const event = (seq: number, e: unknown): EventEnvelope => ({ v: 10, epoch: "e", seq, event: e } as EventEnvelope);
 

@@ -720,7 +720,7 @@ export class SpecDesk {
     const chosen = index === null ? undefined : spec.samples[index];
     const view: DisplayView = {
       name, data: (command === null ? spec.filled ?? chosen?.data : kept ?? chosen?.data) ?? "null", at: null, command: null, folder: null, detail: null, card: null,
-      status: null, error: null, ranAt: null, images: null, pinned: null, every: null,
+      status: null, error: null, ranAt: null, images: null, every: null,
     };
     if (command === null) {
       if (view.data === "null") view.status = "empty";

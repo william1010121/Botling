@@ -1,9 +1,22 @@
 // Components pinned to a bot (the Swift app's Pins.swift): a chip above its input box and a card
-// on its Board, kept in the bot's pins.json in 1.x's format (dates as Swift dates, ids upper case).
+// on its Board, kept by this plugin's program part in 1.x's format (dates as Swift dates, ids upper case; the core's pins.json imported once).
 // A pin with a command is drawn again with what the command prints (when shown, every so often, or
 // only on ↻) once the user allowed that command for the bot's folder, as any component card; one
 // without keeps the data it was last drawn (or saved, `ccb.save`) with.
-import { characterCount, characterPrefix } from "../briefing";
+const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+/** Swift's `String.count`: characters, not UTF-16 units. */
+const characterCount = (text: string) => { let n = 0; for (const _ of segmenter.segment(text)) n++; return n; };
+/** Swift's `String(text.prefix(n))`. */
+function characterPrefix(text: string, n: number): string {
+  if (text.length <= n) return text;
+  let out = "";
+  let count = 0;
+  for (const { segment } of segmenter.segment(text)) {
+    if (count++ >= n) break;
+    out += segment;
+  }
+  return out;
+}
 
 export type PinRefresh = "shown" | "interval" | "manual";
 export type Corner = "topRight" | "topLeft" | "bottomRight" | "bottomLeft";
@@ -106,7 +119,7 @@ export function chip(status: PinRecord["status"], line: string, command: string 
   return status ?? { text: short(line), tone: "neutral" };
 }
 
-/** A pin read from pins.json; values this build does not know fall back, so the rest still loads. */
+/** A pin read from pins.json (or what this plugin stored); values this build does not know fall back, so the rest still loads. */
 export function readPin(value: unknown): PinRecord | null {
   if (!value || typeof value !== "object") return null;
   const v = value as Record<string, unknown>;
@@ -153,4 +166,38 @@ export function isDue(pin: PinRecord, now: number, lastRan: number | null): bool
   if (pin.refresh !== "interval" || !pin.command) return false;
   if (lastRan === null) return true;
   return now - lastRan >= (pin.seconds ?? pin.minutes * 60) * 1000;
+}
+
+/** A Board size as about.md or a pin spells it ("3x2", "2×1", a name, S/M/L); null otherwise (`PinnedComponent.Size(spelled:)`). */
+export function spelledSize(text: string): string | null {
+  const value = text.trim().toLowerCase().replaceAll("×", "x").replaceAll(" ", "");
+  if (value === "s") return "1x1";
+  if (value === "m") return "2x2";
+  if (value === "l") return "4x2";
+  const named: Record<string, string> = { small: "1x1", wide: "2x1", tall: "1x2", large: "2x2", xlarge: "4x2" };
+  if (named[value]) return named[value]!;
+  const match = /^(\d+)x(\d+)$/.exec(value);
+  if (!match) return null;
+  const [w, h] = [Number(match[1]), Number(match[2])];
+  return w >= 1 && w <= 4 && h >= 1 && h <= 4 ? `${w}x${h}` : null;
+}
+
+/** Swift's reference date (2001-01-01) in ms, and a time as the Swift seconds pins.json keeps. */
+export const SWIFT_EPOCH = Date.UTC(2001, 0, 1);
+export const toSwiftDate = (ms = Date.now()) => (ms - SWIFT_EPOCH) / 1000;
+
+/** What data may be kept on a pin (`ccb.save`): JSON that is not null, under 256 KB. */
+export function keepable(json: string): boolean {
+  if (!json || json.length > 256 * 1024) return false;
+  try { return JSON.parse(json) !== null; } catch { return false; }
+}
+
+/** How a pin refreshes, as Maintainer is told it in a problem report (`refreshWords(of:)`). */
+export function reportWords(pin: PinRecord): string {
+  if (!pin.command) return "no command; keeps the data it was drawn with";
+  switch (pin.refresh) {
+    case "shown": return "refreshes when shown";
+    case "manual": return "refreshes only on ↻";
+    case "interval": return typeof pin.seconds === "number" ? `refreshes every ${pin.seconds} sec` : `refreshes every ${pin.minutes} min`;
+  }
 }

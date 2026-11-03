@@ -3,7 +3,7 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
 import {CoreHarness,MAIN} from '../core-harness';
-import {tempDir,swiftLine} from '../helpers';
+import {tempDir,swiftLine,until} from '../helpers';
 const running:CoreHarness[]=[];
 afterEach(async()=>{for(const c of running.splice(0))await c.kill();});
 const GUEST='DEC0DE00-0000-4000-8000-00000000DEC0';
@@ -38,6 +38,8 @@ it('D8 generated preview reply context keeps its own author authority without st
 
 it('F6 legacy pins inherit their pin bot author without borrowing guest links',async()=>{
  const data=tempDir('legacy-pin'),pin=randomUUID().toUpperCase();mkdirSync(join(data,'main'));writeFileSync(join(data,'main/pins.json'),JSON.stringify([{id:pin,name:'todo',data:'{}',refresh:'manual',minutes:15,size:'2x2',makingLive:false}]));writeFileSync(join(data,'main/chat.json'),JSON.stringify([swiftLine({id:randomUUID(),role:'bot',text:'[own](https://example.org/pin-own)'}),swiftLine({id:randomUUID(),role:'bot',sourceID:GUEST,text:'[guest](https://example.org/pin-guest)'})]));const c=new CoreHarness(data);running.push(c);
+ // The pins are botling.board's now: its program part imports pins.json (the file stays) and answers whose a pin is.
+ await until(async()=>(await c.call({type:'plugins.call',name:'botling.board',method:'pin.owner',params:{botId:MAIN,id:pin,strict:true},from:'chat'}).catch(()=>({result:null}))).result,{timeout:20_000});
  expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-own'})).linked).toBe(true);expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-guest'})).linked).toBe(false);
 });
 

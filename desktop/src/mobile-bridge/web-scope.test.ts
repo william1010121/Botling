@@ -24,7 +24,7 @@ function access(handled: unknown[] = []): MobileAccess {
   return {
     pending: () => [],
     snapshot: (botId) => ({ epoch: 'e', seq: 7, bots, imported: { source: '/Users/someone/.old', at: '', bots: 1, messages: 1, skipped: [] },
-      chat: { botId: botId ?? MAIN_BOT_ID, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] },
+      chat: { botId: botId ?? MAIN_BOT_ID, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, pendingFiles: [] },
       components: { card: { name: 'card' } }, plugins: { plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null },
       settings: { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false,
         pinnedBots: ['project-b'], developerMode: true, developerProject: 'project-a', claudeBypassPermissions: true, summaryPrompt: 'secret prompt' },

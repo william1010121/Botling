@@ -13,7 +13,7 @@ import {
 } from "../core/component-shot";
 import { ComponentLibrary } from "../core/components/library";
 import { chatState } from "../renderer/payload";
-import type { BotView, ChatSnapshot, ComponentInfoView, DisplayView, PinView } from "../contract";
+import type { BotView, ChatSnapshot, ComponentInfoView, DisplayView } from "../contract";
 
 /** How long each step is given, in ms (1.x's `Timing`). */
 const TIMING = { giveUp: 180_000, beforeSecondScript: 500, settle: 3_500, pageNeverReady: 20_000 };
@@ -56,8 +56,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The state the chat page draws for one surface (1.x's ChatPayload for a throwaway main bot). */
 function stateFor(surface: Surface, name: string, data: string, sizes: string[], info: ComponentInfoView) {
-  const display: DisplayView = { name, data, at: null, command: null, folder: null, detail: null, card: null, status: null, error: null, ranAt: null, images: null, pinned: null, every: null };
-  const pin = (id: number, size: string, float: boolean): PinView => ({
+  const display: DisplayView = { name, data, at: null, command: null, folder: null, detail: null, card: null, status: null, error: null, ranAt: null, images: null, every: null };
+  // A pin as botling.board's program part hands the chat page (`state.pluginData["botling.board"]`).
+  const pin = (id: number, size: string, float: boolean) => ({
     id: `00000000-0000-4000-8000-${String(id).padStart(12, "0")}`, name, headline: name, chip: { text: name.slice(0, 14), tone: "neutral" }, size, place: null, panelHeight: null,
     refresh: "manual", minutes: 15, seconds: null, display: { ...display, card: `pin/${id}` }, makingLive: null,
     float: float ? { corner: "topRight", width: null, height: null, collapsed: false } : null, floatMenu: float ? "stop" : "float",
@@ -68,9 +69,9 @@ function stateFor(surface: Surface, name: string, data: string, sizes: string[],
     : surface === "pinned" ? [pin(1, sizes.includes("2x2") ? "2x2" : sizes[0]!, false)]
     : surface === "floating" ? [pin(1, "2x2", true)] : [];
   const chat: ChatSnapshot = {
-    botId: bot.id, running: null, live: [], tasks: [], runs: [], heads: null, pinChoices: [],
+    botId: bot.id, running: null, live: [], tasks: [], runs: [], heads: null,
     messages: surface === "chat" ? [{ id: "00000000-0000-4000-8000-0000000000A1", role: "bot", text: "", time: new Date().toISOString(), displays: [display] }] : [],
-    pins, floating: pins.filter((entry) => entry.float),
+    pluginData: { "botling.board": { pins, floating: pins.filter((entry) => entry.float), pinChoices: [] } },
   };
   return chatState(bot, chat, new Date(), null, { components: { [name]: info }, board: surface === "board", look: "original" }).state;
 }

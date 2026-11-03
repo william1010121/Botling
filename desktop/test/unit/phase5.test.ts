@@ -9,7 +9,7 @@ import { callInPrompt, transcriptBefore, type Member } from "../../src/core/grou
 import type { ChatRecord } from "../../src/core/store/records";
 import { slashLists } from "../../src/renderer/payload";
 import { problemReport } from "../../src/core/maintainer";
-import type { PinRecord } from "../../src/core/components/pins";
+import { reportWords, type PinRecord } from "../../builtin-plugins/botling.board/src/pin-data";
 import {
   COMPONENT_ACTIONS, actionHeader, answerOpenQuestions, answerQuestion, boardCommandRequest, buildRequest, changeRequest, draftRequest, draftSpec, editSpecValue,
   fieldsFromJSON, filledData, fillRequest, firstBuildRequest, lastCommand, outputMatches, pageText, parseFields, purposeLine, replyPages, sayRequest, shortTime, slug,
@@ -69,7 +69,9 @@ describe("reports and change requests (Workspace+ComponentReport.swift, requestC
       const record = pin ? { id: "X", name: "test", data: "{}", size: "2x2", makingLive: false, refresh: pin.refresh, minutes: pin.minutes,
         ...(pin.command ? { command: pin.command } : {}), ...(pin.seconds !== null ? { seconds: pin.seconds } : {}),
         ...(pin.ranAt !== null ? { ranAt: pin.ranAt } : {}), ...(pin.savedAt !== null ? { savedAt: pin.savedAt } : {}) } as PinRecord : null;
-      expect([label, problemReport("It is cut off", "Shop", record, label === "shown" ? "/tmp/shot one.png" : null)]).toEqual([label, report]);
+      // The core words the report; how the card refreshes and when its data is from are botling.board's to say (`pin.owner`).
+      const card = record ? { words: reportWords(record), when: record.ranAt ?? record.savedAt ?? null } : null;
+      expect([label, problemReport("It is cut off", "Shop", card, label === "shown" ? "/tmp/shot one.png" : null)]).toEqual([label, report]);
     }
   });
 });

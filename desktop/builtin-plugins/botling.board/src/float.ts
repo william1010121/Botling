@@ -1,8 +1,9 @@
-import { language, onScreen, page, post, shared, t, whenShownAgain, windowVisible } from "./kit";
+import { language, noteChat, onScreen, page, post, shared, t, whenShownAgain, windowVisible } from "./kit";
 import { componentSizes, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./kit";
 import type { LiveCard } from "../../../../Web/src/refresh";
 import { boardCell, boardGap, capture, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, reportItem, whenWords, type MenuItem } from "./pins";
-import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "../../../../Web/src/types";
+import type { ComponentInfo, PinSize } from "../../../../Web/src/types";
+import type { BoardState, FloatCorner, FloatView, FloatingPinView, PinView } from "./types";
 
 /**
  * Pins floated in a corner of the window ("Float in corner" in a pin's menu): a small card over
@@ -191,10 +192,11 @@ export class FloatLayer {
     this.layer.remove();
   }
 
-  update(state: ChatState): void {
+  update(state: BoardState): void {
     this.layer.setAttribute("aria-label", t("float.layer"));
     const list: FloatingPinView[] = state.subagent ? [] : state.floating ?? [];
     this.components = state.components;
+    noteChat(state.botID, list.map((entry) => entry.pin));
     const keep = new Set(list.map((f) => f.pin.id));
     for (const [id, entry] of this.entries) {
       if (keep.has(id)) continue;

@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { DoctorView, SpecStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, ChatDecoration, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RoutineView, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { DoctorView, SpecStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, ChatDecoration, ComponentInfoView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RoutineView, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex" | "agy"; live: StepView[] }
@@ -24,10 +24,8 @@ export interface ChatView {
   heads?: HeadsView | null;
   /** What plugins draw among its messages (`chat.decorate`). */
   decorations?: ChatDecoration[];
-  /** Its pins, those floating, and what the pin picker offers. */
-  pins?: PinView[];
-  floating?: PinView[];
-  pinChoices?: PinChoiceView[];
+  /** What plugins keep for the page to draw from (`chat.setData`), by plugin. */
+  pluginData?: Record<string, unknown>;
   /** Files waiting in the input box. */
   pendingFiles?: PendingFileView[];
   /** Its routines, shown with its scheduled work. */
@@ -326,8 +324,10 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       return withChat({ ...chat, pendingFiles: event.files });
     case "heads.updated":
       return withChat({ ...chat, heads: event.heads });
-    case "pins.updated":
-      return withChat({ ...chat, pins: event.pins, floating: event.floating, pinChoices: event.pinChoices });
+    case "chat.pluginData": {
+      const { [event.plugin]: _gone, ...rest } = chat.pluginData ?? {};
+      return withChat({ ...chat, pluginData: event.data === null || event.data === undefined ? rest : { ...rest, [event.plugin]: event.data } });
+    }
     case "chat.decorations":
       return withChat({ ...chat, decorations: event.decorations });
     default:

@@ -1,8 +1,8 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
-import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
+import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
+import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
@@ -138,17 +138,7 @@ export function decorationView(decoration: ChatDecoration, tasks: TaskView[]): D
 export function displayView(view: DisplayView): WebDisplay {
   return {
     name: view.name, data: view.data, at: view.at, command: view.command, folder: view.folder, detail: view.detail, card: view.card,
-    status: view.status, error: view.error, ranAt: view.ranAt, images: view.images, pinned: view.pinned, every: view.every,
-  };
-}
-
-/** A pin as the page draws it (`ChatPayload.Pin`). */
-export function pinView(view: PinView): WebPin {
-  return {
-    id: view.id, name: view.name, headline: view.headline, chip: view.chip, size: view.size as PinSize, place: view.place, panelHeight: view.panelHeight,
-    refresh: view.refresh, minutes: view.minutes, seconds: view.seconds, display: displayView(view.display), makingLive: view.makingLive,
-    float: view.float ? { corner: view.float.corner, width: view.float.width, height: view.float.height, collapsed: view.float.collapsed } : null,
-    floatMenu: view.floatMenu,
+    status: view.status, error: view.error, ranAt: view.ranAt, images: view.images, every: view.every,
   };
 }
 
@@ -321,9 +311,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     ...headsParts(chat.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).
     seenHeads: look === "cute" && two ? Object.fromEntries(engines.map((engine) => [markLetter(engine), characterURL(engine)])) : null,
-    pins: (chat.pins ?? []).map(pinView),
-    floating: (chat.floating ?? []).map((view) => ({ botID: bot.id, botName: bot.name, pin: pinView(view), global: null, blocked: null })),
-    pinChoices: chat.pinChoices ?? [],
+    // What plugins keep for the page to draw from (botling.board's pins).
+    pluginData: chat.pluginData ?? {},
     board,
     // "Make into component" on replies (1.x: every chat but a subagent's).
     makeComponents: true,

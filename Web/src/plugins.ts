@@ -3,7 +3,7 @@ import * as state from "@codemirror/state";
 import * as view from "@codemirror/view";
 import type MarkdownIt from "markdown-it";
 import { post } from "./bridge";
-import { commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markPinFrames, maxColumns, maxRows, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
+import { commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markStatusFrames, maxColumns, maxRows, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChipHandle, ComposerChip } from "./composer";
 import { DecorationLayer, type DecorationRenderer } from "./decorations";
 import { ownsCommand } from "./frame-protocol";
@@ -76,6 +76,13 @@ export interface PageKit {
   /** Told whether the app's window is shown (`ccb.setWindowVisible`). */
   onWindowVisible(fn: () => void): Dispose;
   post(action: Action): void;
+  /** Calls what this plugin's program part exposes (`ui.expose`), as `ccb.call`. */
+  call(method: string, params?: unknown): Promise<unknown>;
+  /**
+   * Asks the user, on the app page's ApprovalSheet, to allow a command of a component's card in a bot's folder. The core says what the
+   * sheet shows (the command, its folder, the component's Detail command), never the page; true once Allow was pressed.
+   */
+  requestApproval(ask: { botId: string; command: string; folder: string; component: string; card?: string }): Promise<boolean>;
   t: typeof t;
   language: typeof language;
   pieces: typeof pieces;
@@ -85,7 +92,7 @@ export interface PageKit {
   refresh: { intervalRow: typeof intervalRow; LiveSchedule: typeof LiveSchedule; liveTick: number; parseInterval: typeof parseInterval; presetMinutes: number; presetSeconds: number; refreshWords: typeof refreshWords };
   components: {
     commandCard: typeof commandCard; componentElement: typeof componentElement; componentSizes: typeof componentSizes; detailTarget: typeof detailTarget;
-    hasFrame: typeof hasFrame; keepFrames: typeof keepFrames; markPinFrames: typeof markPinFrames; maxColumns: number; maxRows: number;
+    hasFrame: typeof hasFrame; keepFrames: typeof keepFrames; markStatusFrames: typeof markStatusFrames; maxColumns: number; maxRows: number;
     pinSize: typeof pinSize; pinSizes: typeof pinSizes; reportComponent: typeof reportComponent; resizeFrame: typeof resizeFrame; sizeInfo: typeof sizeInfo;
   };
 }
@@ -104,8 +111,11 @@ export interface CcbWeb {
     /** What the bubble of your own message shows, from its text (each handler gets what the one before left; empty: no bubble). */
     userText(handler: (text: string) => string): Dispose;
     afterRender(handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void): Dispose;
-    /** A bar over each component a bot's message shows (the Board's pin / ↻ / ⋯); null: none for that card. */
-    cardBar(make: (display: DisplayView, messageID: string, index: number) => HTMLElement | null): Dispose;
+    /**
+     * A bar over each component a bot's message shows (the Board's pin / ↻ / ⋯); null: none for that card. `stamp(state)` is asked with each
+     * state before the messages are drawn (it may keep the state): a message with a card is drawn again when its text changes.
+     */
+    cardBar(make: (display: DisplayView, messageID: string, index: number) => HTMLElement | null, stamp?: (state: ChatState) => string): Dispose;
     /** A button in the head of a component made from a reply; null: none. */
     specButton(make: (spec: SpecChipView) => HTMLElement | null): Dispose;
     /** Words as the chat draws a message's (Markdown, with every plugin's renderers), as HTML. */
@@ -162,6 +172,7 @@ export class PluginHost {
   /** The chat's last state, and who wants it (`page.onState`). */
   private lastState: ChatState | null = null;
   private readonly stateListeners: { plugin: string; fn: (state: ChatState) => void }[] = [];
+  private readonly approvals = new Map<number, (allowed: boolean) => void>();
   private readonly windowListeners: { plugin: string; fn: () => void }[] = [];
   private readonly hostCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextCall = 1;
@@ -322,6 +333,27 @@ export class PluginHost {
     }
   }
 
+  private callHost(name: string, method: string, params?: unknown): Promise<unknown> {
+    return new Promise<unknown>((resolve, reject) => {
+      const callID = this.nextCall++;
+      this.hostCalls.set(callID, { resolve, reject });
+      post({ type: "hostCall", plugin: name, method, params: params ?? null, callID });
+    });
+  }
+
+  /** The app page answered a `requestApproval`: the user pressed Allow, or did not. */
+  approvalReply(requestId: number, allowed: boolean): void {
+    const waiter = this.approvals.get(requestId);
+    if (!waiter) return;
+    this.approvals.delete(requestId);
+    waiter(allowed);
+  }
+
+  /** What the bars plugins draw over cards depend on, from this state (asked before the messages are drawn). */
+  cardStamp(state: ChatState): string {
+    return extensions.cardBars.map(({ plugin, stamp }) => (stamp ? this.guard(plugin, () => stamp(state)) ?? "" : "")).join("|");
+  }
+
   private pageKit(name: string, own: (dispose: Dispose) => Dispose, remove: <T>(list: T[], item: T) => () => void): PageKit {
     const slots = this.hooks.slots ?? { pinArea: document.createElement("div"), board: document.createElement("div"), overlay: document.body };
     return pageKit(slots, {
@@ -336,6 +368,12 @@ export class PluginHost {
         this.windowListeners.push(item);
         return own(remove(this.windowListeners, item));
       },
+      call: (method, params) => this.callHost(name, method, params),
+      requestApproval: (ask) => new Promise<boolean>((resolve) => {
+        const requestId = this.nextCall++;
+        this.approvals.set(requestId, resolve);
+        post({ type: "approvalRequest", plugin: name, requestId, ...ask });
+      }),
     });
   }
 
@@ -351,11 +389,7 @@ export class PluginHost {
     const chips = new Set<ChipHandle>();
     own(() => { for (const handle of [...chips]) handle.remove(); });
     // The plugin is named here, not by the caller (the page is one realm: the core checks again).
-    const call = (method: string, params?: unknown) => new Promise<unknown>((resolve, reject) => {
-      const callID = this.nextCall++;
-      this.hostCalls.set(callID, { resolve, reject });
-      post({ type: "hostCall", plugin: name, method, params: params ?? null, callID });
-    });
+    const call = (method: string, params?: unknown) => this.callHost(name, method, params);
     const builtIn = !!entry.spec.builtIn;
     let kit: PageKit | null = null;
     const page = (): PageKit => (kit ??= this.pageKit(name, own, remove));
@@ -413,9 +447,9 @@ export class PluginHost {
           this.markdownChanged = true;
           return own(remove(extensions.afterRender, item));
         },
-        cardBar: (make) => {
+        cardBar: (make, stamp) => {
           ownParts("ccb.messages.cardBar");
-          const item = { plugin: name, make };
+          const item = { plugin: name, make, ...(stamp ? { stamp } : {}) };
           extensions.cardBars.push(item);
           this.markdownChanged = true;
           return own(() => { remove(extensions.cardBars, item)(); this.hooks.redraw(); });
@@ -476,7 +510,9 @@ export class PluginHost {
 }
 
 /** The page's parts for a plugin that draws cards over it; `listen` says how it hears the chat's state and the window (a test gives none). */
-export function pageKit(slots: PageSlots, listen: Pick<PageKit, "onState" | "onWindowVisible"> = { onState: () => () => {}, onWindowVisible: () => () => {} }): PageKit {
+export function pageKit(slots: PageSlots, listen: Pick<PageKit, "onState" | "onWindowVisible" | "call" | "requestApproval"> = {
+  onState: () => () => {}, onWindowVisible: () => () => {}, call: () => Promise.reject(new Error("No program part here.")), requestApproval: () => Promise.resolve(false),
+}): PageKit {
   return {
     slots,
     ...listen,
@@ -485,7 +521,7 @@ export function pageKit(slots: PageSlots, listen: Pick<PageKit, "onState" | "onW
     visible: { windowVisible, onScreen, whenShownAgain },
     refresh: { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords },
     components: {
-      commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markPinFrames, maxColumns, maxRows,
+      commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markStatusFrames, maxColumns, maxRows,
       pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo,
     },
   };

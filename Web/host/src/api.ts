@@ -36,11 +36,15 @@ export interface PluginEvents {
   developerChanged: { before: string | null; now: string | null; turnedOn: boolean };
   /** A bot was removed from Botling (its folder stays). */
   botRemoved: { botId: string };
+  /** The run of a card of a built-in plugin's (the key it ran under, `pin/<id>`) started or ended. */
+  cardChanged: { card: string };
+  /** The component library changed (a component added, edited, being changed). */
+  componentsChanged: Record<string, never>;
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -120,6 +124,56 @@ export interface WorkspaceApi {
   component(botId: string, name: string, spec?: { data?: string; command?: string }): Promise<{ exists: boolean; command: string | null }>;
   /** Told when anything the methods above answer changed, naming the bots and kinds. */
   onChange(fn: (change: WorkspaceChange) => void): Dispose;
+}
+
+// ── Cards (plugin-extraction.md §3.3, M8): the components a chat shows and their commands, for built-in plugins that keep cards of their own ──
+/** A component in a chat's line, newest line first (what a pin is made from). */
+export interface ShownCard {
+  messageId: string; index: number; name: string;
+  /** The command="…" its tag carried, if any. */
+  command: string | null;
+  /** The command its data comes from now: that one, else its component's own for one shown with no data. */
+  shownCommand: string | null;
+  data: string;
+  /** The bot that wrote the line (upper case id), if it was not the chat's own. */
+  author: string | null;
+}
+/** The component library as a chat's bot has it. `offered`: what the bot may use; `entries`: each component's Command, Detail command, refresh interval (seconds) and the sizes about.md hints at. */
+export interface CardLibrary {
+  /** The bot's own id ("main" is the main bot's real one). */
+  botId: string;
+  names: string[]; offered: string[];
+  entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>;
+  /** The bot cannot change anything (its folder is gone). */
+  readOnly: boolean;
+  /** The folder its commands run in. */
+  folder: string;
+}
+export interface CardRunState { status: CommandRun["status"]; data: string | null; error: string | null; ranAt: number | null }
+/** A card's command as the core has it: what it asks, how it ran, the pictures its data names. */
+export interface CardState extends CardRunState {
+  folder: string; detail: string | null; every: number | null;
+  /** The pictures the run's data names, and those the data you gave names (`data`). */
+  images: Record<string, string>; dataImages: Record<string, string>;
+  /** When the card last ran, whatever it ran. */
+  lastRan: number | null;
+  /** The card's last run of exactly this command in this folder. */
+  run: CardRunState | null;
+}
+export interface CardsApi {
+  library(botId: string): Promise<CardLibrary | null>;
+  /** Every component in the chat, newest first. */
+  shown(botId: string): Promise<ShownCard[]>;
+  /** Each card's state (`command` null: not a card with one: only its component's Detail command and interval, and its data's pictures). */
+  states(botId: string, cards: { card: string; command: string | null; name: string; data?: string }[]): Promise<CardState[]>;
+  /** Runs the command of a card of this plugin's kind (`pin/<id>`) when the user allowed it in the bot's folder; false: not allowed. */
+  run(botId: string, card: string, command: string, force: boolean): Promise<boolean>;
+  /** What the ApprovalSheet asks about a card's command and its component's Detail command; null: allowed already. */
+  ask(botId: string, card: string, command: string, component: string): Promise<{ command: string; folder: string; detail: string | null; card: string } | null>;
+  /** What changed in this plugin's cards, which the bot hears with the user's next message (Swift dates and the words). */
+  setNotes(botId: string, notes: { date: number; line: string }[]): Promise<void>;
+  /** The pins the core kept in the bot's pins.json before this plugin did (as the file has them); null: none. */
+  legacyPins(botId: string): Promise<unknown[] | null>;
 }
 
 // ── Usage: what Settings → Usage and the quota rings show, for any plugin, read only ──
@@ -272,6 +326,8 @@ export interface BotlingApi {
   workspace: WorkspaceApi;
   usage: UsageApi;
   sessions: SessionsApi;
+  /** The components a chat shows and their commands; needs the "cards" permission, built-in plugins only. */
+  cards: CardsApi;
   /** The app around Botling; needs the "app" permission, built-in plugins only. */
   app: AppApi;
   /** The tags this plugin declared in its manifest (`replyTags`), from bots' replies. */
@@ -328,6 +384,11 @@ export interface BotlingApi {
     messages(botId: string, opts?: { limit?: number }): Promise<ChatData>;
     /** What this plugin draws in a chat, in place of what it drew there before ([] clears). It needs a web part to draw it. */
     decorate(botId: string, decorations: MessageDecoration[]): Promise<void>;
+    /**
+     * What this plugin's web part draws the chat from, in place of what it kept there before (null clears; 1 MB at most): the chat
+     * page gets it with the chat's state (`state.pluginData[<plugin>]`), on the phone too. Built-in plugins only (`cards`).
+     */
+    setData(botId: string, data: JSONValue | null): Promise<void>;
   };
   engines: {
     /** How to start `claude` or `codex` here (null: that engine is not available). */
@@ -538,6 +599,15 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       state: async (botId, command, key) => (await ask("approvals.state", { bot: botId, command, key })) as CommandRun,
       run: async (botId, command, key, opts) => (await ask("approvals.run", { bot: botId, command, key, ...(opts?.minIntervalMs === undefined ? {} : { minIntervalMs: opts.minIntervalMs }) })) as CommandRun & { started: boolean },
     },
+    cards: {
+      library: async (botId) => (await ask("cards.library", { bot: botId })) as CardLibrary | null,
+      shown: async (botId) => ((await ask("cards.shown", { bot: botId })) ?? []) as ShownCard[],
+      states: async (botId, cards) => ((await ask("cards.states", { bot: botId, cards: cards as JSONValue })) ?? []) as CardState[],
+      run: async (botId, card, command, force) => (await ask("cards.run", { bot: botId, card, command, force })) === true,
+      ask: async (botId, card, command, component) => (await ask("cards.ask", { bot: botId, card, command, name: component })) as never,
+      setNotes: async (botId, notes) => { await ask("cards.setNotes", { bot: botId, notes: notes as JSONValue }); },
+      legacyPins: async (botId) => (await ask("cards.legacyPins", { bot: botId })) as unknown[] | null,
+    },
     settings: {
       get: <T>(key: string) => plugin.spec.settings[key] as T,
       update: async (key, value) => { await ask("settings.update", { key, value: value === undefined ? null : value }); },
@@ -584,6 +654,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     chat: {
       messages: async (botId, opts = {}) => (await ask("chat.messages", { bot: botId, ...(opts.limit === undefined ? {} : { limit: opts.limit }) })) as ChatData,
       decorate: async (botId, decorations) => { await ask("chat.decorate", { bot: botId, decorations: decorations as JSONValue }); },
+      setData: async (botId, data) => { await ask("chat.setData", { bot: botId, data: data as JSONValue }); },
     },
     engines: {
       cli: async (engine) => (await ask("engines.cli", { engine })) as EngineCli | null,

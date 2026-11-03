@@ -50,6 +50,7 @@ class Chat {
    */
   private componentsText = "";
   private componentsMark = 0;
+  private cardStamp = "";
   /** The components object `componentsText` was made from (a patch hands the same one back). */
   private componentsSeen: unknown = null;
   private typing = new Map<string, HTMLElement>();
@@ -254,6 +255,12 @@ class Chat {
         this.componentsText = componentsText;
         this.componentsMark += 1;
       }
+    }
+    // What plugins' bars over cards depend on (the Board: which components are pinned) counts as the components changing.
+    const cardStamp = this.plugins.cardStamp(state);
+    if (cardStamp !== this.cardStamp) {
+      this.cardStamp = cardStamp;
+      this.componentsMark += 1;
     }
     let previous: Element | null = null;
     for (const message of messages) {
@@ -617,6 +624,7 @@ declare global {
       showPanel(key: string): void;
       setSpec(state: SpecState): void;
       hostReply(callID: number, ok: boolean, value: unknown): void;
+      approvalReply(requestId: number, allowed: boolean): void;
       detailReply(requestID: number, ok: boolean, value: string): void;
       taskOutput(messageID: string, taskID: string, text: string): void;
       /** "Jump to chat" on a task's card in the right panel: its latest reply, or the decoration that folds it. */
@@ -695,6 +703,7 @@ window.ccb = {
   runCommand: (id) => chat.plugins.execute(id),
   runLocalCommand: (id) => chat.plugins.runLocal(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
+  approvalReply: (requestId, allowed) => chat.plugins.approvalReply(requestId, allowed),
   detailReply: (requestID, ok, value) => detailReply(requestID, ok, value),
   taskOutput: (messageID, taskID, text) => taskOutput(messageID, taskID, text),
   jumpToTask: (messageID, taskID) => jumpToTask(messageID, taskID),

@@ -2,14 +2,22 @@
   "name": "botling.board",
   "displayName": "Board and pins",
   "version": "1.0.0",
-  "description": "Pin a component to a bot: a chip above the input box, a card on the bot's Board (the Chat / Board switch in the chat header), or a small card floating in a corner of the window.",
+  "description": "Pin a component to a bot: a chip above the input box, a card on the bot's Board (the Chat / Board switch in the chat header), or a small card floating in a corner of the window. It keeps the pins and runs their commands once you allowed them.",
   "license": "GPL-3.0-or-later",
   "publisher": "Botling",
-  "engines": { "ccb": "^2.0.0" },
+  "engines": {
+    "ccb": "^2.0.0"
+  },
   "ccb": {
-    "permissions": ["messages"],
+    "permissions": [
+      "messages",
+      "cards"
+    ],
     "web": "dist/web.js",
-    "styles": ["dist/board.css"],
-    "contributes": {}
+    "styles": [
+      "dist/board.css"
+    ],
+    "contributes": {},
+    "host": "dist/host.mjs"
   }
 }

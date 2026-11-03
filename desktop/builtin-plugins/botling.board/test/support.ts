@@ -2,10 +2,15 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 // The chat page as the Board's tests need it: the page's kit lent to the plugin (what `PluginHost` does when it loads it), and the bars
 // the plugin puts on a card in a reply (`ccb.messages.cardBar`, `specButton`), registered the way `activate` registers them.
+import { sent as postedActions } from "../../../../Web/src/bridge";
 import { extensions } from "../../../../Web/src/messages";
 import { pageKit } from "../../../../Web/src/plugins";
 import { useKit } from "../src/kit";
-import { pinBar, specPinButton } from "../src/pins";
+import { barFor, pinBar, specPinButton } from "../src/pins";
+
+/** What the page was asked to do, in order: its own actions, and the pin actions the plugin sends its program part. */
+export type SentAction = { type: string; [key: string]: any };
+export const sent = postedActions as unknown as SentAction[];
 
 let bar: (typeof extensions.cardBars)[number] | null = null;
 let button: (typeof extensions.specButtons)[number] | null = null;
@@ -13,9 +18,15 @@ let button: (typeof extensions.specButtons)[number] | null = null;
 /** The kit set, and (unless `bars` is false) the plugin's bars on cards in replies. */
 export function installBoard({ bars = true }: { bars?: boolean } = {}): void {
   removeBoard();
-  useKit(pageKit({ pinArea: document.createElement("div"), board: document.createElement("div"), overlay: document.body }));
+  // What the user did goes to the plugin's program part as `ccb.call("action", …)`; here it is kept where the chat page's own actions are, so a test reads either.
+  const call = (method: string, params?: unknown) => {
+    if (method === "action") sent.push((params as { action: never }).action);
+    return Promise.resolve(null);
+  };
+  useKit(pageKit({ pinArea: document.createElement("div"), board: document.createElement("div"), overlay: document.body },
+    { onState: () => () => {}, onWindowVisible: () => () => {}, call, requestApproval: () => Promise.resolve(false) }));
   if (!bars) return;
-  bar = { plugin: "botling.board", make: (display, messageID, index) => (display.pinned === undefined || display.pinned === null ? null : pinBar(display, messageID, index)) };
+  bar = { plugin: "botling.board", make: (display, messageID, index) => (barFor(display.name).offered ? pinBar(display, messageID, index) : null) };
   button = { plugin: "botling.board", make: (spec) => specPinButton(spec) };
   extensions.cardBars.push(bar);
   extensions.specButtons.push(button);

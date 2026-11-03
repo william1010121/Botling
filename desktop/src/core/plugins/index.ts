@@ -16,7 +16,7 @@
 // chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
 // web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { z } from "zod";
 import { ContractError, type ApprovalAskView, type PluginsView, type ResultOf, type WebPluginSpecView } from "../../contract";
 import { ContractId } from "../../contract/editor-card";
@@ -93,6 +93,22 @@ export interface PluginWorld {
    */
   commandRun(botId: string, key: string, command: string, run: false | { minIntervalMs: number }):
     { folder: string; approved: boolean; status: "approve" | "idle" | "running" | "done" | "failed"; data: string | null; error: string | null; ranAt: number | null; started: boolean } | null;
+  /** What the ApprovalSheet asks about a pin's card (`approvalAsk` with a `component`): its command and the component's Detail command; null: allowed already (or no such bot). */
+  cardAsk?(botId: string, card: string, command: string, component: string): ApprovalAskView | null;
+  /** "Allow" for a pin's card: its command and Detail command as the sheet showed them. */
+  cardApprove?(botId: string, command: string, component: string, folder: string, detail: string | null): boolean;
+  /** What built-in plugins that keep cards of their own ask of a chat's components and their commands (`cards.*`); null: no such bot (or no component context). */
+  cards?: {
+    library(botId: string): { botId: string; names: string[]; offered: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null;
+    shown(botId: string): { messageId: string; index: number; name: string; command: string | null; shownCommand: string | null; data: string; author: string | null }[] | null;
+    states(botId: string, cards: { card: string; command: string | null; name: string; data?: string }[]): unknown[] | null;
+    run(botId: string, card: string, command: string, force: boolean): boolean | null;
+    ask(botId: string, card: string, command: string, component: string): ApprovalAskView | null;
+    setNotes(botId: string, notes: { date: number; line: string }[]): boolean;
+    legacyPins(botId: string): unknown[] | null;
+  };
+  /** What a plugin keeps for a chat's page changed (`chat.setData`). */
+  dataChanged?(botId: string, plugin: string, data: unknown): void;
   /** The bot's component library, read only (`workspace.component`); null: no such bot. */
   component(botId: string, name: string, data: string | undefined, command: string | undefined): { exists: boolean; command: string | null } | null;
   /** The card-page URLs of the pictures a component's data names for that bot (what a tile needs); null: no such bot. */
@@ -177,7 +193,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -189,6 +205,14 @@ const CreateParams = z.object({ plugin: str(214) }).passthrough();
 const PluginOnly = z.object({ plugin: str(214) });
 const RoutinesListParams = z.object({ plugin: str(214), bot: str(64) });
 const RoutinesChangeParams = RoutinesListParams.extend({ operation: z.enum(["pause", "resume", "cancel"]), id: str(2_200).min(1) });
+const CardKey = z.string().min(1).max(110).regex(/^pin\/[A-Za-z0-9-]{1,100}$/);
+const CardsStates = BotParams.extend({ cards: z.array(z.object({ card: z.string().min(1).max(110), command: z.string().max(20_000).nullable(), name: str(200), data: z.string().max(1_000_000).optional() })).max(200) });
+const CardsRun = BotParams.extend({ card: CardKey, command: z.string().min(1).max(20_000), force: z.boolean() });
+const CardsAsk = BotParams.extend({ card: CardKey, command: z.string().min(1).max(20_000), name: str(200) });
+const CardsNotes = BotParams.extend({ notes: z.array(z.object({ date: z.number(), line: z.string().max(4_000) })).max(50) });
+const ChatDataParams = BotParams.extend({ data: z.unknown() });
+/** How much one plugin may keep for one chat's page (`chat.setData`), as JSON. */
+const CHAT_DATA_BYTES = 1_000_000;
 const Limit = (most: number, fallback: number) => z.number().int().optional().transform((value) => Math.min(most, Math.max(1, value ?? fallback)));
 const TasksParams = BotParams.extend({ limit: Limit(100, 100) });
 const HistoryParams = BotParams.extend({ days: Limit(14, 14) });
@@ -234,6 +258,8 @@ export class Plugins {
   watchingWorkspace = false;
   /** What each plugin draws in each chat (`chat.decorate`), by the core's bot id, until it unloads. */
   private readonly decorated = new Map<string, Map<string, MessageDecoration[]>>();
+  /** What each plugin keeps for each chat's page (`chat.setData`), by the core's bot id, until it unloads. */
+  private readonly chatDatas = new Map<string, Map<string, JSONValue>>();
 
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
@@ -340,6 +366,19 @@ export class Plugins {
       if (!byPlugin.size) this.decorated.delete(botId);
       if (changed) this.options.world.decorated?.(botId);
     }
+    for (const [botId, byPlugin] of this.chatDatas) {
+      for (const name of [...byPlugin.keys()]) {
+        if (name !== failed && this.drawing(name)) continue;
+        byPlugin.delete(name);
+        this.options.world.dataChanged?.(botId, name, null);
+      }
+      if (!byPlugin.size) this.chatDatas.delete(botId);
+    }
+  }
+
+  /** What plugins keep for a chat's page, by plugin (ChatSnapshot.pluginData). */
+  chatData(botId: string): Record<string, unknown> {
+    return Object.fromEntries(this.chatDatas.get(botId) ?? []);
   }
 
   /** A plugin whose program part runs and whose web part draws in the chat page. */
@@ -516,6 +555,15 @@ export class Plugins {
     this.options.world.notice(`${title(plugin.manifest)}: ${text.slice(0, 4_000)}`);
   }
 
+  /**
+   * The core asks a built-in plugin's own program part something (a pin's author for a link, its words for a problem report): its
+   * answer, or null when the plugin is not shipped here, not running, or does not answer. The core then does what it does without it.
+   */
+  async askBuiltIn(name: string, method: string, params: unknown): Promise<unknown> {
+    if (!this.shipped(name) || !this.loaded(name)) return null;
+    try { return (await this.host.webCall(name, method, params, "chat")) ?? null; } catch { return null; }
+  }
+
   webFile(name: string, path: string) {
     const file = this.registry.webFile(name, path);
     if (!file) throw new ContractError("not_found", "No such file.");
@@ -684,8 +732,17 @@ export class Plugins {
    * A frame's `ccb.requestApproval`, from the app page (which bound the frame to `name`): what the app page's
    * ApprovalSheet shows (null: allowed already, nothing to ask). Asking allows nothing.
    */
-  approvalAsk(name: string, botId: string, command: string, folder: string, card?: string): { needsApproval: ApprovalAskView | null } {
+  approvalAsk(name: string, botId: string, command: string, folder: string, card?: string, component?: string): { needsApproval: ApprovalAskView | null } {
     const plugin = this.asking(name);
+    // A pin's card (botling.board): the component's own Detail command comes with it, and the sheet names the component, as a card's does.
+    if (component !== undefined) {
+      if (!this.shipped(name)) throw new ContractError("forbidden", "Only a plugin shipped with Botling may ask about a component's card.");
+      if (!card || !/^pin\/[A-Za-z0-9-]{1,100}$/.test(card)) throw new ContractError("bad_request", "A component's card is asked about with its key (pin/<id>).");
+      const ask = this.options.world.cardAsk?.(botId, card, command, component);
+      if (ask === undefined || ask === null) return { needsApproval: null };
+      if (resolvePath(ask.folder) !== resolvePath(folder)) throw new ContractError("conflict", "That is not the folder this bot's commands run in.");
+      return { needsApproval: ask };
+    }
     const state = this.approvalState(botId, command, folder);
     if (state.approved) return { needsApproval: null };
     const who = title(plugin.manifest).slice(0, 100);
@@ -701,8 +758,12 @@ export class Plugins {
   }
 
   /** "Allow and run" on the ApprovalSheet for a plugin's ask: the command as the sheet showed it, in that bot's folder. */
-  approve(name: string, botId: string, command: string, folder: string): { accepted: boolean } {
+  approve(name: string, botId: string, command: string, folder: string, component?: string, detail?: string | null): { accepted: boolean } {
     this.asking(name);
+    if (component !== undefined) {
+      if (!this.shipped(name)) throw new ContractError("forbidden", "Only a plugin shipped with Botling may approve a component's card.");
+      return { accepted: this.options.world.cardApprove?.(botId, command, component, folder, detail ?? null) ?? false };
+    }
     this.approvalState(botId, command, folder);
     return { accepted: this.options.world.approveCommand(botId, command) };
   }
@@ -721,6 +782,12 @@ export class Plugins {
     const plugin = this.loaded((parsed.data as { plugin?: unknown }).plugin);
     if (!plugin) throw new Error("That plugin is not running.");
     return { plugin, data: parsed.data };
+  }
+
+  /** The cards a chat shows and their commands are for the plugins that ship with Botling and say so (`cards` in package.json). */
+  private cardsAllowed(plugin: InstalledPlugin) {
+    this.needs(plugin, "cards", "Reading and running a chat's cards");
+    if (!this.shipped(plugin.manifest.name)) throw new Error("Only a plugin shipped with Botling may use a chat's cards.");
   }
 
   /** The consistency check of plugin-platform.md §5: what acts as the user needs the capability declared. */
@@ -1056,6 +1123,57 @@ export class Plugins {
         if (byPlugin.size) this.decorated.set(botId, byPlugin); else this.decorated.delete(botId);
         if (JSON.stringify(list) !== before) world.decorated?.(botId);
         return null;
+      }
+      case "chat.setData": {
+        // What a built-in plugin's web part draws a chat from (botling.board's pins), kept here and sent with the chat to every page.
+        const { plugin, data } = this.asked(ChatDataParams, params);
+        const name = plugin.manifest.name;
+        this.cardsAllowed(plugin);
+        const botId = world.botId?.(data.bot) ?? null;
+        if (!botId) throw new Error("No such bot.");
+        const value = (data.data ?? null) as JSONValue;
+        const text = JSON.stringify(value);
+        if (text.length > CHAT_DATA_BYTES) throw new Error("Too much for one chat's page (1 MB at most).");
+        const byPlugin = this.chatDatas.get(botId) ?? new Map<string, JSONValue>();
+        const before = byPlugin.has(name) ? JSON.stringify(byPlugin.get(name)) : undefined;
+        if (value === null) byPlugin.delete(name); else byPlugin.set(name, value);
+        if (byPlugin.size) this.chatDatas.set(botId, byPlugin); else this.chatDatas.delete(botId);
+        if (text !== before && !(value === null && before === undefined)) world.dataChanged?.(botId, name, value);
+        return null;
+      }
+      case "cards.library":
+      case "cards.shown": {
+        const { plugin, data } = this.asked(BotParams, params);
+        this.cardsAllowed(plugin);
+        const answer = method === "cards.library" ? world.cards?.library(data.bot) : world.cards?.shown(data.bot);
+        if (answer === undefined) throw new Error("Cards are not available here.");
+        return answer;
+      }
+      case "cards.states": {
+        const { plugin, data } = this.asked(CardsStates, params);
+        this.cardsAllowed(plugin);
+        return world.cards?.states(data.bot, data.cards) ?? null;
+      }
+      case "cards.run": {
+        const { plugin, data } = this.asked(CardsRun, params);
+        this.cardsAllowed(plugin);
+        return world.cards?.run(data.bot, data.card, data.command, data.force) ?? false;
+      }
+      case "cards.ask": {
+        const { plugin, data } = this.asked(CardsAsk, params);
+        this.cardsAllowed(plugin);
+        return world.cards?.ask(data.bot, data.card, data.command, data.name) ?? null;
+      }
+      case "cards.setNotes": {
+        const { plugin, data } = this.asked(CardsNotes, params);
+        this.cardsAllowed(plugin);
+        if (!world.cards?.setNotes(data.bot, data.notes)) throw new Error("No such bot.");
+        return null;
+      }
+      case "cards.legacyPins": {
+        const { plugin, data } = this.asked(BotParams, params);
+        this.cardsAllowed(plugin);
+        return world.cards?.legacyPins(data.bot) ?? null;
       }
       case "engines.cli": {
         const { data } = this.asked(EngineParams, params);

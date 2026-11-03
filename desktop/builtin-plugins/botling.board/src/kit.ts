@@ -3,7 +3,8 @@
 // bundle holds none of the page's modules (one `components.ts` runs, the page's, so a card is the same thing wherever it shows).
 import type { PageKit } from "../../../../Web/src/plugins";
 import type { Key } from "../../../../Web/src/i18n";
-import type { ChatState, PinSize } from "../../../../Web/src/types";
+import type { Action, ChatState, PinSize } from "../../../../Web/src/types";
+import type { PinAction } from "./types";
 import { shared } from "../../../../Web/src/contract";
 import { isOwn, own, type OwnKey } from "./words";
 
@@ -23,8 +24,43 @@ export function page(): PageKit {
   return current;
 }
 
-export function post(action: Parameters<PageKit["post"]>[0]): void {
-  page().post(action);
+const PIN_ACTIONS: ReadonlySet<string> = new Set(["pin", "unpin", "pinCommand", "pinShown", "pinsVisible", "movePin", "resizePin", "arrangePins", "setPinHeight", "floatPin", "setPinGlobal", "setPinFloat", "setPinRefresh", "pinStatus", "pinSave"]);
+
+/** The chat on show, and its pins' components by id (what a pin's command asks the user to allow is named by its component). */
+const shown: { botId: string | null; componentOf: Map<string, string> } = { botId: null, componentOf: new Map() };
+
+/** Which chat the user is in, and which component each of its pins is (from the state the page drew). */
+export function setChat(botId: string | null, pins: { id: string; name: string }[]): void {
+  shown.botId = botId;
+  shown.componentOf = new Map(pins.map((pin) => [pin.id, pin.name]));
+}
+
+/** The same for pins a layer draws on top of those (the floating cards): added to what is known, the chat as given. */
+export function noteChat(botId: string, pins: { id: string; name: string }[]): void {
+  shown.botId = botId;
+  for (const pin of pins) shown.componentOf.set(pin.id, pin.name);
+}
+
+/**
+ * What the user did: pin actions go to this plugin's program part (which keeps the pins), the rest to the page as before. A pinned card's
+ * command that is not allowed yet answers what the ApprovalSheet asks; the app page shows it and, once Allow was pressed, the command runs.
+ */
+export function post(action: PinAction | Action): void {
+  if (PIN_ACTIONS.has(action.type)) void send(action as PinAction);
+  else page().post(action as Action);
+}
+
+async function send(action: PinAction): Promise<void> {
+  const botId = shown.botId;
+  if (!botId) return;
+  const result = (await page().call("action", { botId, action }).catch(() => null)) as { needsApproval?: { command: string; folder: string } } | null;
+  if (action.type !== "pinCommand" || !result?.needsApproval || action.live === true) return;
+  const component = shown.componentOf.get(action.id);
+  if (!component) return;
+  const { command, folder } = result.needsApproval;
+  if (await page().requestApproval({ botId, command, folder, component, card: `pin/${action.id}` })) {
+    await page().call("action", { botId, action: { type: "pinCommand", id: action.id, command, folder } }).catch(() => null);
+  }
 }
 
 export type WordKey = OwnKey | Key;
@@ -75,7 +111,14 @@ export const componentSizes = fromComponents("componentSizes");
 export const detailTarget = fromComponents("detailTarget");
 export const hasFrame = fromComponents("hasFrame");
 export const keepFrames = fromComponents("keepFrames");
-export const markPinFrames = fromComponents("markPinFrames");
+/** Marks the component frames in `element` as pin `id`'s: their `ccb.setStatus` sets its chip (text and tone as strings, or cleared). */
+export function markPinFrames(element: HTMLElement | null, id: string): void {
+  page().components.markStatusFrames(element, (message) => {
+    if (message.clear) { post({ type: "pinStatus", id, text: null, tone: null }); return; }
+    const text = typeof message.text === "string" ? message.text : typeof message.text === "number" ? String(message.text) : "";
+    post({ type: "pinStatus", id, text, tone: typeof message.tone === "string" && message.tone !== "" ? message.tone : null });
+  });
+}
 export const pinSize = fromComponents("pinSize");
 export const reportComponent = fromComponents("reportComponent");
 export const resizeFrame = fromComponents("resizeFrame");
