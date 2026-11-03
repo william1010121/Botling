@@ -32,6 +32,46 @@ describe("a bot row", () => {
   });
 });
 
+describe("a bot row and its card", () => {
+  // BotRow uses no hooks: its element tree can be read and its handlers called with stand-in events.
+  type Node = { type: unknown; props: Record<string, any> };
+  const tree = (extra: Record<string, unknown>) => BotRow({ bot: base, selected: false, look: "original", waiting: false, onSelect() {}, ...extra } as Parameters<typeof BotRow>[0]) as unknown as Node;
+  const button = (wrap: Node) => (wrap.props.children as Node[]).find((child) => child && child.type === "button")!;
+  it("the pointer coming onto the row (not a touch) or leaving it goes to the card; a click only selects", () => {
+    const calls: string[] = [];
+    const rowEl = { querySelector: () => "row-el" };
+    const wrap = tree({ onSelect: (from: { keyboard: boolean }) => calls.push(`select ${from.keyboard}`), peek: { enter: (el: unknown) => calls.push(`enter ${el}`), leave: () => calls.push("leave"), focus: () => calls.push("focus") } });
+    wrap.props.onPointerEnter({ pointerType: "mouse", currentTarget: rowEl });
+    wrap.props.onPointerLeave({ pointerType: "mouse" });
+    wrap.props.onPointerEnter({ pointerType: "touch", currentTarget: rowEl });
+    wrap.props.onPointerLeave({ pointerType: "touch" });
+    button(wrap).props.onClick({ currentTarget: {}, detail: 1 });
+    button(wrap).props.onClick({ currentTarget: {}, detail: 0 });
+    expect(calls).toEqual(["enter row-el", "leave", "select false", "select true"]);
+  });
+  it("only keyboard focus opens it (not the focus a click leaves), and blurring into the card keeps it", () => {
+    const calls: string[] = [];
+    const wrap = tree({ peek: { enter() {}, leave: () => calls.push("leave"), focus: () => calls.push("focus") } });
+    const el = (visible: boolean) => ({ matches: () => visible });
+    button(wrap).props.onFocus({ currentTarget: el(true) });
+    button(wrap).props.onFocus({ currentTarget: el(false) });
+    // No DOM here: a stand-in Element class for the instanceof check.
+    class FakeElement { closest() { return {}; } }
+    const had = (globalThis as any).Element;
+    (globalThis as any).Element = FakeElement;
+    try {
+      button(wrap).props.onBlur({ relatedTarget: new FakeElement() });
+      button(wrap).props.onBlur({ relatedTarget: null });
+    } finally { (globalThis as any).Element = had; }
+    expect(calls).toEqual(["focus", "leave"]);
+  });
+  it("a row with nothing to peek at has no hover handlers", () => {
+    const wrap = tree({});
+    expect(wrap.props.onPointerEnter).toBeUndefined();
+    expect(button(wrap).props.onFocus).toBeUndefined();
+  });
+});
+
 describe("the status card", () => {
   const sub: BotView = { ...base, id: "s1", name: "sess-align", role: "bot", parent: "a", working: true, subagentRows: [row({ id: "t1", title: "run-4090-1" })] };
   const owner: BotView = { ...base, subagentRows: [row({ id: "s1", subBot: "s1", title: "sess-align" }), row({ id: "w1", title: "Fix API" })] };

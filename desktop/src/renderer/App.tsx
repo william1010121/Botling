@@ -30,6 +30,7 @@ import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { botCounts, canIdle, idleCounts, idleList, peekCard, railOrder, railSplit } from "./rail-idle";
+import { peekHover } from "./peek-hover";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { SpecFrame } from "./SpecFrame";
@@ -109,14 +110,29 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     const now = (store.getView().settings?.idleBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
     void client.request({ type: "settings.set", change: { key: "idleBots", value: idleList(now, botId, away) } }).catch(() => {});
   }, [client, store]);
-  /** The status card beside a bot row (PeekCard): the bot, where its row is, and whether the keyboard opened it. */
+  /**
+   * The status card beside a bot row (PeekCard): the bot, where its row is, and whether the focus goes into it.
+   * It opens on hover (peek-hover.ts: after a short delay, kept while the pointer crosses into it), on keyboard focus,
+   * or, where nothing hovers (touch), on a tap. A click on a row only opens the chat.
+   */
   const [peek, setPeek] = useState<{ botId: string; top: number; right: number; keyboard: boolean } | null>(null);
+  const peekInto = useRef(false);
+  const peeking = useMemo(() => peekHover({
+    onOpen: (botId, anchor) => { const keyboard = peekInto.current; peekInto.current = false; setPeek({ botId, ...anchor, keyboard }); },
+    onClose: () => setPeek(null),
+  }), []);
+  useEffect(() => () => peeking.dispose(), [peeking]);
+  // Focus put back on a row by Escape does not open its card again.
+  const peekQuiet = useRef(false);
   const closePeek = useCallback((refocus: boolean) => {
-    setPeek((current) => {
-      if (current && refocus) setTimeout(() => document.querySelector<HTMLElement>(`.rail .bot-row[data-bot="${current.botId}"]`)?.focus(), 0);
-      return null;
-    });
-  }, []);
+    const botId = peeking.shown();
+    peeking.close();
+    if (botId && refocus) {
+      peekQuiet.current = true;
+      document.querySelector<HTMLElement>(`.rail .bot-row[data-bot="${botId}"]`)?.focus();
+      peekQuiet.current = false;
+    }
+  }, [peeking]);
   // The app's keys (Settings > Shortcuts): ⌘, Settings, ⌃⌘I the right panel, ⌃⌘S the left column, ⌘K its search, by default.
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
@@ -358,6 +374,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                 const look = view.settings?.botLook ?? "original";
                 const split = railSplit(view.bots, pinned, idle);
                 const shownId = !watching ? chat?.botId ?? null : null;
+                const hasPeek = (candidate: BotView) => { const card = peekCard(candidate, view.bots, view.waiting, now); return card.subBots.length > 0 || card.agents.length > 0; };
                 const row = (candidate: BotView, away: boolean) => {
                   const counts = botCounts(candidate, view.bots, view.waiting, candidate.id === shownId);
                   return (
@@ -369,16 +386,22 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                       counts={counts}
                       onSelect={(from) => {
                         selectBot(candidate.id);
-                        // The status card opens beside the row when the bot has sub bots or subagents to show.
-                        const card = peekCard(candidate, view.bots, view.waiting, Date.now());
-                        if (from && (card.subBots.length || card.agents.length)) {
-                          const box = from.el.getBoundingClientRect();
-                          setPeek({ botId: candidate.id, top: box.top, right: box.right, keyboard: from.keyboard });
-                        } else setPeek(null);
+                        // A click only opens the chat. Enter on a focused row also takes the focus into its card; a tap
+                        // where nothing hovers opens the card (the hover's stand-in).
+                        if (!from || !hasPeek(candidate)) return;
+                        if (from.keyboard) {
+                          if (peeking.shown() === candidate.id) setPeek((current) => (current ? { ...current, keyboard: true } : current));
+                          else { peekInto.current = true; peeking.openNow(candidate.id, anchorOf(from.el)); }
+                        } else if (!canHover()) peeking.openNow(candidate.id, anchorOf(from.el));
+                      }}
+                      peek={{
+                        enter: (el) => { if (hasPeek(candidate)) peeking.enterRow(candidate.id, () => anchorOf(el)); else peeking.leaveRow(); },
+                        leave: () => peeking.leaveRow(),
+                        focus: (el) => { if (!peekQuiet.current && hasPeek(candidate)) peeking.openNow(candidate.id, anchorOf(el)); },
                       }}
                       pinned={!away && canIdle(candidate) ? pinned.includes(candidate.id) : undefined}
                       onTogglePin={() => togglePin(candidate.id)}
-                      idle={canIdle(candidate) ? { away, onToggle: () => { setIdle(candidate.id, !away); setPeek(null); } } : undefined}
+                      idle={canIdle(candidate) ? { away, onToggle: () => { setIdle(candidate.id, !away); peeking.close(); } } : undefined}
                       onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
                     />
                   );
@@ -411,8 +434,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         {peek && !query.trim() && (() => {
           const target = view.bots.find((candidate) => candidate.id === peek.botId);
           return target ? <PeekCard key={target.id} bot={target} card={peekCard(target, view.bots, view.waiting, now)} anchor={{ top: peek.top, right: peek.right }} now={now} focusFirst={peek.keyboard}
-            onOpenChat={(botId) => { setPeek(null); selectBot(botId); }}
-            onOpenAgent={(botId, agentRow) => { setPeek(null); openSubagent(botId, agentRow); }}
+            onOpenChat={(botId) => { peeking.close(); selectBot(botId); }}
+            onOpenAgent={(botId, agentRow) => { peeking.close(); openSubagent(botId, agentRow); }}
+            onPointerIn={() => peeking.enterCard()} onPointerOut={() => peeking.leaveCard()}
             onSubBotMenu={(subBotId, at) => setSubBotMenu({ botId: subBotId, ...at })}
             onClose={closePeek} /> : null;
         })()}
@@ -537,7 +561,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   );
 }
 
-export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle }: {
+export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle, peek }: {
   bot: BotView; selected: boolean; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
   /** The row was clicked: the row, and whether the keyboard pressed it (the status card then takes the focus). */
   onSelect: (from?: { el: HTMLElement; keyboard: boolean }) => void;
@@ -547,6 +571,8 @@ export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu,
   pinned?: boolean; onTogglePin?: () => void;
   /** The corner button: a clock sends it to Idle, a back arrow (in Idle) brings it back. Undefined: it cannot go to Idle. */
   idle?: { away: boolean; onToggle: () => void };
+  /** Its status card: the pointer came onto the row (corner buttons included) or left it; the keyboard focused the row. */
+  peek?: { enter: (row: HTMLElement) => void; leave: () => void; focus: (row: HTMLElement) => void };
 }) {
   const asleep = bot.phase === "asleep" && !bot.working;
   const tasks = bot.openTasks ?? 0;
@@ -555,9 +581,14 @@ export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu,
   const label = [bot.name, statusText(bot), needsYou ? `${needsYou} waiting on you` : waiting ? "waiting on you" : null, unread ? `${unread} unread` : null,
     tasks ? `${tasks} task${tasks === 1 ? "" : "s"} under way` : null, pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
   return (
-    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}`}>
+    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}`}
+      // A touch has no hover: its tap opens the card instead (onSelect).
+      onPointerEnter={peek ? (event) => { if (event.pointerType !== "touch") peek.enter(event.currentTarget.querySelector<HTMLElement>(".bot-row") ?? event.currentTarget); } : undefined}
+      onPointerLeave={peek ? (event) => { if (event.pointerType !== "touch") peek.leave(); } : undefined}>
       <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label}
         onClick={(event) => onSelect({ el: event.currentTarget, keyboard: event.detail === 0 })}
+        onFocus={peek ? (event) => { if (focusVisible(event.currentTarget)) peek.focus(event.currentTarget); } : undefined}
+        onBlur={peek ? (event) => { if (!(event.relatedTarget instanceof Element && event.relatedTarget.closest(".rail-peek, .bot-row-wrap"))) peek.leave(); } : undefined}
         onContextMenu={onMenu ? (event) => { event.preventDefault(); onMenu(event.clientX, event.clientY); } : undefined}>
         <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
@@ -587,6 +618,22 @@ export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu,
 }
 
 export { railOrder } from "./rail-idle";
+
+/** Where a row's card sits: beside the row. */
+function anchorOf(row: HTMLElement): { top: number; right: number } {
+  const box = row.getBoundingClientRect();
+  return { top: box.top, right: box.right };
+}
+
+/** Whether the pointer can hover here (a touch screen cannot: a tap opens the card instead). */
+function canHover(): boolean {
+  return typeof window === "undefined" || typeof window.matchMedia !== "function" || window.matchMedia("(hover: hover)").matches;
+}
+
+/** Focus from the keyboard (not the focus a mouse click leaves on the row). */
+function focusVisible(el: Element): boolean {
+  try { return el.matches(":focus-visible"); } catch { return false; }
+}
 
 /** What a click on a subagent row opens: a sub bot's own chat (with the input box), or a subagent's read-only view. */
 export function rowTarget(row: Pick<SubagentRowView, "id" | "subBot">): { kind: "bot"; botId: string } | { kind: "subagent"; id: string } {

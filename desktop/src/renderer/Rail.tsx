@@ -365,13 +365,13 @@ export function AgentMenu({ row, at, load, onMove, onClose, onMessage, onStop, o
 }
 
 /**
- * A bot's status card beside the left column (opened with its row): its sub bots, each with its state, what it is
+ * A bot's status card beside the left column (opened by hovering its row, see peek-hover.ts): its sub bots, each with its state, what it is
  * doing and how long it has run, a click showing that sub bot's own subagents; the bot's direct subagents in one
  * folded "Agents N" row; and a link to its chat. Subagent rows have no menu and no settle clock (the right panel's
  * Settled keeps those); a sub bot row keeps its "⋯". Nothing here is remembered: every part starts folded.
  * The chat is a native view above the shell, so the card is a shell overlay.
  */
-export function PeekCard({ bot, card, anchor, now, focusFirst, onOpenChat, onOpenAgent, onSubBotMenu, onClose }: {
+export function PeekCard({ bot, card, anchor, now, focusFirst, onOpenChat, onOpenAgent, onSubBotMenu, onClose, onPointerIn, onPointerOut }: {
   bot: BotView;
   card: ReturnType<typeof peekCard>;
   /** The row's box, in the window: the card sits beside it. */
@@ -386,6 +386,9 @@ export function PeekCard({ bot, card, anchor, now, focusFirst, onOpenChat, onOpe
   onSubBotMenu: (subBotId: string, at: { x: number; y: number }) => void;
   /** An outside click, Escape, or the window losing focus; `refocus`: give the focus back to the row. */
   onClose: (refocus: boolean) => void;
+  /** The pointer came into the card / left it (it opened on hover: it stays while the pointer is in it). */
+  onPointerIn?: () => void;
+  onPointerOut?: () => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [y, setY] = useState(anchor.top);
@@ -401,7 +404,8 @@ export function PeekCard({ bot, card, anchor, now, focusFirst, onOpenChat, onOpe
     // A sub bot's menu or its Close dialog is part of the card's work: clicks there, and the Escape that closes them, leave the card open.
     const busy = () => !!document.querySelector(".sub-bot-menu, .dialog-backdrop");
     const away = (event: Event) => {
-      if (event.target instanceof Element && event.target.closest(".rail-peek, .sub-bot-menu, .dialog-backdrop")) return;
+      // A bot row is not outside: its hover and focus decide the card, and a click on it only opens its chat.
+      if (event.target instanceof Element && event.target.closest(".rail-peek, .sub-bot-menu, .dialog-backdrop, .bot-row-wrap")) return;
       onClose(false);
     };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy()) { event.preventDefault(); onClose(true); } };
@@ -413,7 +417,10 @@ export function PeekCard({ bot, card, anchor, now, focusFirst, onOpenChat, onOpe
   }, [onClose]);
   const subs = card.subBots.length;
   return (
-    <ShellOverlay><div ref={box} className="rail-peek" role="dialog" aria-label={`${bot.name} status`} data-bot={bot.id} style={{ top: y, left: anchor.right + 8 }}>
+    <ShellOverlay><div ref={box} className="rail-peek" role="dialog" aria-label={`${bot.name} status`} data-bot={bot.id} style={{ top: y, left: anchor.right + 8 }}
+      onPointerEnter={onPointerIn}
+      // Off to a sub bot's "⋯" menu or its Close dialog: the card stays until that is done.
+      onPointerLeave={() => { if (!document.querySelector(".sub-bot-menu, .dialog-backdrop")) onPointerOut?.(); }}>
       <div className="rail-peek-head">
         <span className="rail-peek-name">{bot.name}</span>
         {subs > 0 && <span className="rail-peek-count">{subs} sub bot{subs === 1 ? "" : "s"}</span>}
