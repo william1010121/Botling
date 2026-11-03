@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import { PinArea } from "../src/pins";
-import type { ChatState, PinView } from "../src/types";
+import { installBoard } from "./support";
+import type { ChatState, PinView } from "../../../../Web/src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 HTMLElement.prototype.scrollIntoView ??= () => {};
@@ -16,6 +18,7 @@ const state = (items = pins): ChatState => ({
 });
 let area: PinArea;
 beforeEach(() => {
+  installBoard();
   document.body.innerHTML = '<div id="pin-area"></div><section id="board"></section>';
   area = new PinArea(document.querySelector("#pin-area")!, document.querySelector("#board")!);
   area.update(state());

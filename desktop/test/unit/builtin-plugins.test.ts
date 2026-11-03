@@ -31,14 +31,15 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.board, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.report, botling.routines, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.board", "botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.report", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
     }
     expect(existsSync(join(built, "ccb-latex", "dist", "web.js"))).toBe(true);
     for (const part of ["dist/host.mjs", "dist/web.js", "catchup.css"]) expect(existsSync(join(built, "botling.catchup", part)), part).toBe(true);
+    for (const part of ["dist/web.js", "dist/board.css"]) expect(existsSync(join(built, "botling.board", part)), part).toBe(true);
     expect(readdirSync(join(built, "ccb-latex", "dist", "fonts")).some((font) => font.endsWith(".woff2"))).toBe(true);
   });
 
@@ -66,18 +67,23 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.board", true, true], ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.report", true, true], ["botling.routines", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
-    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
+    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.board", "botling.catchup", "botling.chat-extras", "botling.git", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
     expect(registry(library).plugin("ccb-latex")!.enabled).toBe(false);
+    // Only a plugin that ships with Botling is told so (the chat page lends it its own parts); a library plugin of the same name is not.
+    expect(plugins.webSpecs().map((spec) => [spec.name, spec.builtIn === true])).toEqual([
+      ["botling.board", true], ["botling.catchup", true], ["botling.chat-extras", true], ["botling.git", true], ["botling.terminal", true], ["botling.usage", true], ["botling.whiteboard", true], ["aaa", false],
+    ]);
     plugins.setEnabled("ccb-latex", true);
     // Maintainer copies a built-in plugin into the library to change it: that copy is the one that runs.
     cpSync(join(built, "ccb-latex"), join(library, "ccb-latex"), { recursive: true });
     const replaced = registry(library);
     expect(replaced.plugin("ccb-latex")).toMatchObject({ builtIn: false, folder: join(library, "ccb-latex") });
     expect(replaced.plugins.filter((plugin) => plugin.manifest.name === "ccb-latex")).toHaveLength(1);
+    expect(replaced.webSpecs().find((spec) => spec.name === "ccb-latex")!.builtIn).toBeUndefined();
   });
 
   it("runs botling.chat-extras' web part with its stylesheet, and the paste limits settings.json had", () => {

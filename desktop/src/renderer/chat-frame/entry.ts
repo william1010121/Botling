@@ -22,10 +22,12 @@ import { keepDraft, keptDrafts, pageDraftStore } from "./draft-keep";
 import latex from "../../../builtin-plugins/ccb-latex/package.json";
 import chatExtras from "../../../builtin-plugins/botling.chat-extras/package.json";
 import catchup from "../../../builtin-plugins/botling.catchup/package.json";
+import board from "../../../builtin-plugins/botling.board/package.json";
 
 declare const __LATEX_SOURCE__: string;
 declare const __CHAT_EXTRAS_SOURCE__: string;
 declare const __CATCHUP_SOURCE__: string;
+declare const __BOARD_SOURCE__: string;
 
 observeTraceEditor();
 // Local media comes from the currently shown chat's authenticated origin.
@@ -192,7 +194,8 @@ document.addEventListener("keydown", (event) => {
  * Botling Web runs no plugins (the phone is told nothing of them), so its chat page keeps the built-in
  * web parts bundled in, as their manifests describe them, with their stylesheets (and ccb-latex's fonts)
  * beside chat.html, and their settings' defaults. ccb-latex's key (Mod+Shift+M) is the shell's to bind
- * (plugin-commands.ts). botling.catchup's draws the summaries the desktop wrote (its Retry needs the desktop).
+ * (plugin-commands.ts). botling.catchup's draws the summaries the desktop wrote (its Retry needs the desktop). botling.board's draws the
+ * pins and the Board the desktop keeps (a pin's command needs the desktop).
  */
 const defaults = (settings: Record<string, { default: unknown }>) => Object.fromEntries(Object.entries(settings).map(([key, setting]) => [key, setting.default]));
 const standalone = WEB ? [{
@@ -216,12 +219,19 @@ const standalone = WEB ? [{
   styles: catchup.ccb.styles.map((style) => new URL(`plugins/${catchup.name}/${style}`, location.href).toString()),
   settings: defaults(catchup.ccb.contributes.settings),
   commands: [],
-}] : [];
+}, {
+  name: board.name,
+  version: board.version,
+  source: __BOARD_SOURCE__,
+  styles: [new URL("plugins/botling.board/board.css", location.href).toString()],
+  settings: {},
+  commands: [],
+}].map((spec) => ({ ...spec, builtIn: true })) : [];
 /**
  * Plugins' web parts run here as in 1.x (Phase 4a: this page has an origin of its own, so they reach
  * neither the app page's document nor its bridge); since step M11 the built-in ones (ccb-latex) come the same way.
  */
-function setPlugins(specs: { name: string; version: string; source: string; styles: string[]; settings: Record<string, unknown>; commands: { id: string; title: string; key?: string }[] }[]) {
+function setPlugins(specs: { name: string; version: string; source: string; styles: string[]; settings: Record<string, unknown>; commands: { id: string; title: string; key?: string }[]; builtIn?: boolean }[]) {
   return window.ccb.setPlugins([...standalone, ...specs.filter((spec) => !standalone.some((own) => own.name === spec.name))]);
 }
 void setPlugins([]);

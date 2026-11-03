@@ -2,7 +2,6 @@ import { findMessageRow } from "./message-navigation";
 import { artifactCard } from "./artifacts";
 import { post } from "./bridge";
 import { t } from "./i18n";
-import { pinBar, specPinButton } from "./pins";
 import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
 import type { ComponentAnswer } from "./components";
 import { mediaHTML, mediaSrc, renderMarkdown } from "./markdown";
@@ -24,6 +23,13 @@ export const extensions = {
   userText: [] as { plugin: string; handler: (text: string) => string }[],
   /** Right-column pages from plugins, by "plugin/id". */
   panels: new Map<string, { plugin: string; render: (root: HTMLElement) => void | (() => void) }>(),
+  /**
+   * A bar over a component a bot's message shows (the Board's pin / ↻ / ⋯): a plugin draws it from the card's display, or
+   * returns null for none. The card and the bars sit in one `.pin-holder`, which shows them on hover.
+   */
+  cardBars: [] as { plugin: string; make: (display: DisplayView, messageID: string, index: number) => HTMLElement | null }[],
+  /** Buttons in the head of a component made from a reply (`SpecChipView`), as the Board's pin button. */
+  specButtons: [] as { plugin: string; make: (spec: SpecChipView) => HTMLElement | null }[],
   /** Runs a plugin's code, unloading the plugin if it throws. */
   guard: <T>(_plugin: string, run: () => T): T | undefined => run(),
 };
@@ -429,8 +435,13 @@ function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>
   label.innerHTML = spec.status === "building" ? `<span class="spinner" aria-hidden="true"></span><span></span>` : `${cubeIcon}<span></span>`;
   label.querySelector("span:not(.spinner)")!.textContent = spec.status === "building" ? t("specChip.newVersion", { name }) : `${t("specChip.component")} · ${name}`;
   head.append(label, editSpecButton(spec), ...(spec.status === "done" && spec.undo === "undo" ? [undoSpecButton(spec)] : []));
-  // Pinned, a bot-filled one is made live on the Board (Maintainer gives it a command).
-  if (spec.status === "done") head.append(specPinButton(spec));
+  // A plugin may add buttons (the Board's pin: a bot-filled one is made live on the Board, Maintainer gives it a command).
+  if (spec.status === "done") {
+    for (const { plugin, make } of extensions.specButtons) {
+      const added = extensions.guard(plugin, () => make(spec));
+      if (added) head.append(added);
+    }
+  }
   box.append(head, card);
   return box;
 }
@@ -654,11 +665,13 @@ function componentView(message: MessageView, display: DisplayView, index: number
   const element = display.command || display.status
     ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components), { lazy: true })
     : drawComponent(message, display, index, components);
-  // In a chat that can pin, hovering it shows pin / ↻ / ⋯.
-  if (!element || display.pinned === undefined || display.pinned === null) return element;
+  // A plugin's bars (the Board's pin / ↻ / ⋯, in a chat that can pin) show on hover.
+  if (!element) return element;
+  const bars = extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
+  if (!bars.length) return element;
   const holder = document.createElement("div");
   holder.className = "pin-holder" + (display.pinned ? " pinned" : "");
-  holder.append(element, pinBar(display, message.id, index));
+  holder.append(element, ...bars);
   return holder;
 }
 

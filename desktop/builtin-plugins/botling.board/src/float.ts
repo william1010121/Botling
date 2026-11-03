@@ -1,11 +1,8 @@
-import { post } from "./bridge";
-import { language, t } from "./i18n";
-import { shared } from "./contract";
-import { componentSizes, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./components";
-import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
-import { onScreen, whenShownAgain, windowVisible } from "./visible";
+import { language, onScreen, page, post, shared, t, whenShownAgain, windowVisible } from "./kit";
+import { componentSizes, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./kit";
+import type { LiveCard } from "../../../../Web/src/refresh";
 import { boardCell, boardGap, capture, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, reportItem, whenWords, type MenuItem } from "./pins";
-import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
+import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "../../../../Web/src/types";
 
 /**
  * Pins floated in a corner of the window ("Float in corner" in a pin's menu): a small card over
@@ -156,9 +153,11 @@ export class FloatLayer {
   private readonly pending = new Map<string, Partial<FloatView>>();
   private components: Record<string, ComponentInfo> = {};
   /** When each pin refreshed every few seconds runs next. */
-  private readonly due = new LiveSchedule();
+  private readonly due = new (page().refresh.LiveSchedule)();
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
+  private readonly listeners = new AbortController();
+  private composerObserver: ResizeObserver | null = null;
   /** A card's content got taller or shorter: the cards after it in its corner move. */
   private readonly observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => this.layOut()) : null;
 
@@ -166,13 +165,13 @@ export class FloatLayer {
     this.layer = document.createElement("div");
     this.layer.className = "float-layer";
     parent.append(this.layer);
-    window.addEventListener("resize", () => this.layOut());
+    window.addEventListener("resize", () => this.layOut(), { signal: this.listeners.signal });
     const composer = document.getElementById("composer-slot");
-    if (composer && typeof ResizeObserver !== "undefined") new ResizeObserver(() => this.layOut()).observe(composer);
+    if (composer && typeof ResizeObserver !== "undefined") { this.composerObserver = new ResizeObserver(() => this.layOut()); this.composerObserver.observe(composer); }
     // Shown again: those refreshed "when shown" run again (Swift skips one that just ran).
     document.addEventListener("visibilitychange", () => {
       if (windowVisible()) this.shown([...this.entries.values()].map((e) => e.pin));
-    });
+    }, { signal: this.listeners.signal });
     // The app's window shown again (it was minimized, hidden or covered): those "when shown" run,
     // and those refreshed every few seconds that are overdue run at once.
     whenShownAgain(() => {
@@ -180,6 +179,16 @@ export class FloatLayer {
       this.shown([...this.entries.values()].map((e) => e.pin));
       this.refreshDue();
     });
+  }
+
+  /** The plugin unloads: its cards go. */
+  dispose(): void {
+    this.listeners.abort();
+    this.observer?.disconnect();
+    this.composerObserver?.disconnect();
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.layer.remove();
   }
 
   update(state: ChatState): void {
@@ -225,7 +234,7 @@ export class FloatLayer {
     }
     this.layOut();
     this.shown(appeared);
-    if (this.entries.size && !this.timer) this.timer = setInterval(() => this.refreshDue(), liveTick);
+    if (this.entries.size && !this.timer) this.timer = setInterval(() => this.refreshDue(), page().refresh.liveTick);
     if (!this.entries.size && this.timer) {
       clearInterval(this.timer);
       this.timer = null;

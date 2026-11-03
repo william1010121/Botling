@@ -1,13 +1,15 @@
+// @vitest-environment jsdom
 /// <reference types="node" />
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { sent } from "../src/bridge";
-import { feedback, makeComponents, messageElement } from "../src/messages";
+import { sent } from "../../../../Web/src/bridge";
+import { feedback, makeComponents, messageElement } from "../../../../Web/src/messages";
 import { PinArea } from "../src/pins";
-import { parseInterval, refreshWords } from "../src/refresh";
-import { chatSize, componentElement } from "../src/components";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinSize, PinView } from "../src/types";
+import { installBoard, pageCss } from "./support";
+import { parseInterval, refreshWords } from "../../../../Web/src/refresh";
+import { chatSize, componentElement } from "../../../../Web/src/components";
+import type { ChatState, ComponentInfo, DisplayView, MessageView, PinSize, PinView } from "../../../../Web/src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
@@ -47,6 +49,7 @@ function setUp(): PinArea {
 const click = (element: Element | null | undefined) => (element as HTMLElement).click();
 
 beforeEach(() => {
+  installBoard();
   sent.length = 0;
   document.body.innerHTML = "";
   document.body.className = "";
@@ -176,7 +179,7 @@ describe("the chips above the input box", () => {
   });
 
   it("an opened pin has the floating card's header: icon, its own name, status, ↻ ⋯ and collapse", () => {
-    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    const css = pageCss();
     const style = document.createElement("style");
     style.textContent = css;
     document.head.append(style);
@@ -303,7 +306,7 @@ describe("chips as small status icons", () => {
   });
 
   it("chips are compact: several fit on one row", () => {
-    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    const css = pageCss();
     const rule = css.match(/\.pin-chip \{[^}]*\}/)?.[0] ?? "";
     const px = (name: string) => Number(rule.match(new RegExp(`${name}: (\\d+)px`))?.[1]);
     expect(px("max-width")).toBeLessThanOrEqual(140);
@@ -438,7 +441,7 @@ describe("the Board", () => {
 
   it("a card's content fits the card: no wider minimum, no sideways scroll, long errors wrap", () => {
     const style = document.createElement("style");
-    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    style.textContent = pageCss();
     document.head.append(style);
     try {
       const area = setUp();
@@ -464,7 +467,7 @@ describe("the Board", () => {
   });
 
   it("a tile is its component, like a widget: no header, controls float over it on hover", () => {
-    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    const css = pageCss();
     const style = document.createElement("style");
     style.textContent = css;
     document.head.append(style);
@@ -513,7 +516,7 @@ describe("the Board", () => {
 
   it("lays the Board out in square cells from its width, like home-screen widgets", () => {
     const style = document.createElement("style");
-    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    style.textContent = pageCss();
     document.head.append(style);
     try {
       const area = setUp();
@@ -1056,7 +1059,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
 
   it("has one flag, and the reply's toolbar sits beside the card's bar, not over it", () => {
     const style = document.createElement("style");
-    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    style.textContent = pageCss();
     document.head.append(style);
     try {
       setUp().update(state());

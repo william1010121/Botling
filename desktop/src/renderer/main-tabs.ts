@@ -6,6 +6,14 @@ import type { BotView, PluginsView } from "../contract";
 /** The first-party plugin whose tab takes the place of this page's own whiteboard (plan W5). */
 export const WHITEBOARD_PLUGIN = "botling.whiteboard";
 
+/** The first-party plugin that draws pins and the Board in the chat page; the header's Board switch shows while it is on. */
+export const BOARD_PLUGIN = "botling.board";
+
+/** Whether the Board is offered: its plugin is on (the library not yet known: yes, the page loads it at once). */
+export function boardOffered(plugins: PluginsView | null | undefined): boolean {
+  return !plugins || plugins.plugins.some((plugin) => plugin.name === BOARD_PLUGIN && plugin.enabled);
+}
+
 export type MainTab = NonNullable<PluginsView["mainTabs"]>[number];
 
 /** How a tab is remembered: "<plugin>/<view id>". */

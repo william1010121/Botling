@@ -3,13 +3,18 @@ import * as state from "@codemirror/state";
 import * as view from "@codemirror/view";
 import type MarkdownIt from "markdown-it";
 import { post } from "./bridge";
+import { commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markPinFrames, maxColumns, maxRows, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChipHandle, ComposerChip } from "./composer";
 import { DecorationLayer, type DecorationRenderer } from "./decorations";
 import { ownsCommand } from "./frame-protocol";
+import { isComposingEnter } from "./ime";
+import { language, pieces, t } from "./i18n";
+import { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords } from "./refresh";
 import { mediaHTML, md, renderMarkdown, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
 import { taskCardChipHTML } from "./task-cards";
-import type { TaskCardView } from "./types";
+import type { Action, ChatState, DisplayView, SpecChipView, TaskCardView } from "./types";
+import { onScreen, setWindowListener, whenShownAgain, windowVisible } from "./visible";
 
 /** A plugin's web part, as the Swift side sends it. */
 export interface PluginSpec {
@@ -22,6 +27,8 @@ export interface PluginSpec {
   settings: Record<string, unknown>;
   /** `ccb.contributes.commands`: id, title and an optional key ("cmd+shift+l"; the page's key dispatcher reads it). */
   commands: { id: string; title: string; key?: string }[];
+  /** Ships with Botling: only such a web part may use `ccb.page` and the message bars (a library plugin gets neither: they hand over the page's own parts). */
+  builtIn?: boolean;
 }
 
 type Dispose = () => void;
@@ -50,6 +57,37 @@ export interface ChatHooks {
   };
   /** Draw every message again (after a renderer changed). */
   redraw(): void;
+  /** The places in the page a plugin may fill (page.slots). */
+  slots?: PageSlots;
+}
+
+/** Elements of the chat page a plugin may fill: above the input box, the Board's place instead of the messages, and over the whole page. */
+export interface PageSlots { pinArea: HTMLElement; board: HTMLElement; overlay: HTMLElement }
+
+/**
+ * What the chat page lends a plugin that draws cards of its own over it (botling.board, the Board and pins; plugin-extraction.md §3.3,
+ * plugin-platform.md M8): the state it draws from, a way to post what the user did, the page's words and clocks, and the
+ * component frames. The same functions the page draws its own cards with, so a card is one thing wherever it shows.
+ */
+export interface PageKit {
+  slots: PageSlots;
+  /** Called with the chat's state after each draw (and at once, with the latest, when it is added). */
+  onState(fn: (state: ChatState) => void): Dispose;
+  /** Told whether the app's window is shown (`ccb.setWindowVisible`). */
+  onWindowVisible(fn: () => void): Dispose;
+  post(action: Action): void;
+  t: typeof t;
+  language: typeof language;
+  pieces: typeof pieces;
+  isComposingEnter: typeof isComposingEnter;
+  /** Whether the window is shown, whether an element is in view, and what runs again when the window is shown. */
+  visible: { windowVisible: typeof windowVisible; onScreen: typeof onScreen; whenShownAgain: typeof whenShownAgain };
+  refresh: { intervalRow: typeof intervalRow; LiveSchedule: typeof LiveSchedule; liveTick: number; parseInterval: typeof parseInterval; presetMinutes: number; presetSeconds: number; refreshWords: typeof refreshWords };
+  components: {
+    commandCard: typeof commandCard; componentElement: typeof componentElement; componentSizes: typeof componentSizes; detailTarget: typeof detailTarget;
+    hasFrame: typeof hasFrame; keepFrames: typeof keepFrames; markPinFrames: typeof markPinFrames; maxColumns: number; maxRows: number;
+    pinSize: typeof pinSize; pinSizes: typeof pinSizes; reportComponent: typeof reportComponent; resizeFrame: typeof resizeFrame; sizeInfo: typeof sizeInfo;
+  };
 }
 
 /** The `ccb` object a plugin's `activate` receives. */
@@ -66,6 +104,10 @@ export interface CcbWeb {
     /** What the bubble of your own message shows, from its text (each handler gets what the one before left; empty: no bubble). */
     userText(handler: (text: string) => string): Dispose;
     afterRender(handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void): Dispose;
+    /** A bar over each component a bot's message shows (the Board's pin / ↻ / ⋯); null: none for that card. */
+    cardBar(make: (display: DisplayView, messageID: string, index: number) => HTMLElement | null): Dispose;
+    /** A button in the head of a component made from a reply; null: none. */
+    specButton(make: (spec: SpecChipView) => HTMLElement | null): Dispose;
     /** Words as the chat draws a message's (Markdown, with every plugin's renderers), as HTML. */
     render(text: string): string;
     /** A picture or video as the chat draws one in a message, as HTML. */
@@ -78,6 +120,8 @@ export interface CcbWeb {
    * (`chat.decorate`): folded lines behind a card, or a card after a line (decorations.ts).
    */
   decorations: { register(renderer: DecorationRenderer): Dispose };
+  /** The chat page's own parts, for a plugin that draws cards over it (the Board). */
+  page: PageKit;
   components: { register(name: string, render: ComponentRender): Dispose };
   /** A page in the right column, declared in contributes.panels; drawn when you open it. */
   panels: { register(id: string, render: (root: HTMLElement) => void | Dispose): Dispose };
@@ -115,11 +159,22 @@ export class PluginHost {
   /** What plugins draw among the messages (decorations.ts); the chat places it on every update. */
   readonly decorations = new DecorationLayer((plugin, run) => this.guard(plugin, run));
   /** host.call requests waiting for the plugin host's answer. */
+  /** The chat's last state, and who wants it (`page.onState`). */
+  private lastState: ChatState | null = null;
+  private readonly stateListeners: { plugin: string; fn: (state: ChatState) => void }[] = [];
+  private readonly windowListeners: { plugin: string; fn: () => void }[] = [];
   private readonly hostCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextCall = 1;
 
   constructor(private readonly hooks: ChatHooks) {
     extensions.guard = (plugin, run) => this.guard(plugin, run);
+    setWindowListener(() => { for (const { plugin, fn } of [...this.windowListeners]) this.guard(plugin, fn); });
+  }
+
+  /** The chat drew `state`: the plugins that draw from it (`page.onState`) draw theirs. */
+  chatState(state: ChatState): void {
+    this.lastState = state;
+    for (const { plugin, fn } of [...this.stateListeners]) this.guard(plugin, () => fn(state));
   }
 
   /** Loads, reloads or unloads plugins so exactly `specs` run. Each is loaded from its source. */
@@ -267,6 +322,23 @@ export class PluginHost {
     }
   }
 
+  private pageKit(name: string, own: (dispose: Dispose) => Dispose, remove: <T>(list: T[], item: T) => () => void): PageKit {
+    const slots = this.hooks.slots ?? { pinArea: document.createElement("div"), board: document.createElement("div"), overlay: document.body };
+    return pageKit(slots, {
+      onState: (fn) => {
+        const item = { plugin: name, fn };
+        this.stateListeners.push(item);
+        if (this.lastState) this.guard(name, () => fn(this.lastState!));
+        return own(remove(this.stateListeners, item));
+      },
+      onWindowVisible: (fn) => {
+        const item = { plugin: name, fn };
+        this.windowListeners.push(item);
+        return own(remove(this.windowListeners, item));
+      },
+    });
+  }
+
   private api(name: string, entry: Loaded): CcbWeb {
     const own = (dispose: Dispose): Dispose => {
       entry.disposers.push(dispose);
@@ -284,6 +356,13 @@ export class PluginHost {
       this.hostCalls.set(callID, { resolve, reject });
       post({ type: "hostCall", plugin: name, method, params: params ?? null, callID });
     });
+    const builtIn = !!entry.spec.builtIn;
+    let kit: PageKit | null = null;
+    const page = (): PageKit => (kit ??= this.pageKit(name, own, remove));
+    /** What only a plugin that ships with Botling may use. */
+    const ownParts = (what: string): void => {
+      if (!builtIn) throw new Error(`${what} is for the plugins that ship with Botling.`);
+    };
     return {
       name,
       codemirror: { state, view, commands },
@@ -334,6 +413,20 @@ export class PluginHost {
           this.markdownChanged = true;
           return own(remove(extensions.afterRender, item));
         },
+        cardBar: (make) => {
+          ownParts("ccb.messages.cardBar");
+          const item = { plugin: name, make };
+          extensions.cardBars.push(item);
+          this.markdownChanged = true;
+          return own(() => { remove(extensions.cardBars, item)(); this.hooks.redraw(); });
+        },
+        specButton: (make) => {
+          ownParts("ccb.messages.specButton");
+          const item = { plugin: name, make };
+          extensions.specButtons.push(item);
+          this.markdownChanged = true;
+          return own(() => { remove(extensions.specButtons, item)(); this.hooks.redraw(); });
+        },
         render: (text) => renderMarkdown(text),
         media: (url, label) => mediaHTML(url, label),
         taskChip: (task, action) => taskCardChipHTML(task, action),
@@ -341,6 +434,7 @@ export class PluginHost {
       decorations: {
         register: (renderer) => own(this.decorations.register(name, renderer)),
       },
+      get page(): PageKit { ownParts("ccb.page"); return page(); },
       components: {
         register: (component, render) => {
           extensions.components.set(component, { plugin: name, render });
@@ -379,6 +473,22 @@ export class PluginHost {
       host: { call },
     };
   }
+}
+
+/** The page's parts for a plugin that draws cards over it; `listen` says how it hears the chat's state and the window (a test gives none). */
+export function pageKit(slots: PageSlots, listen: Pick<PageKit, "onState" | "onWindowVisible"> = { onState: () => () => {}, onWindowVisible: () => () => {} }): PageKit {
+  return {
+    slots,
+    ...listen,
+    post: (action) => post(action),
+    t, language, pieces, isComposingEnter,
+    visible: { windowVisible, onScreen, whenShownAgain },
+    refresh: { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords },
+    components: {
+      commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markPinFrames, maxColumns, maxRows,
+      pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo,
+    },
+  };
 }
 
 /** Loads a bundled ES module from its text. A failed import is tried once more before it counts. */

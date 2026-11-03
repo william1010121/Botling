@@ -53,7 +53,7 @@ export function authenticate(req: Pick<IncomingMessage, 'headers'>, clients: Cli
 const assets: Record<string, string> = { 'index.html': 'text/html; charset=utf-8', 'web.js': 'text/javascript; charset=utf-8',
   'styles.css': 'text/css; charset=utf-8', 'web.css': 'text/css; charset=utf-8', 'chat.html': 'text/html; charset=utf-8',
   'chat.js': 'text/javascript; charset=utf-8', 'chat.css': 'text/css; charset=utf-8', 'frame.css': 'text/css; charset=utf-8',
-  'plugins/ccb-latex/katex.min.css': 'text/css; charset=utf-8', 'plugins/botling.chat-extras/chat-extras.css': 'text/css; charset=utf-8', 'plugins/botling.catchup/catchup.css': 'text/css; charset=utf-8', 'frame-host.html': 'text/html; charset=utf-8', 'frame-host.js': 'text/javascript; charset=utf-8', 'manifest.webmanifest': 'application/manifest+json', 'icon.svg': 'image/svg+xml' };
+  'plugins/ccb-latex/katex.min.css': 'text/css; charset=utf-8', 'plugins/botling.chat-extras/chat-extras.css': 'text/css; charset=utf-8', 'plugins/botling.catchup/catchup.css': 'text/css; charset=utf-8', 'plugins/botling.board/board.css': 'text/css; charset=utf-8', 'frame-host.html': 'text/html; charset=utf-8', 'frame-host.js': 'text/javascript; charset=utf-8', 'manifest.webmanifest': 'application/manifest+json', 'icon.svg': 'image/svg+xml' };
 const FONT = /^plugins\/ccb-latex\/fonts\/[A-Za-z0-9_-]{1,80}\.woff2$/;
 /** The desktop's chat-page CSP (src/main/main.ts CHAT_CSP). The page runs in a sandboxed, opaque-origin
  * frame of the shell (no cookies, no storage, no bridge); only the shell may frame it. Its only frames

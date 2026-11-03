@@ -13,7 +13,7 @@ function fixture() {
   const root = join(repo, "desktop"), outdir = join(root, "out/renderer");
   const put = (path: string, body: string) => { const file = join(repo, path); mkdirSync(resolve(file, ".."), { recursive: true }); writeFileSync(file, body); };
   put("desktop/src/renderer/main.tsx", 'globalThis.shellVersion = "shell-one"; globalThis.mode = process.env.NODE_ENV;');
-  put("desktop/src/renderer/chat-frame/entry.ts", 'globalThis.chatVersion = "chat-one"; globalThis.latex = __LATEX_SOURCE__; globalThis.extras = __CHAT_EXTRAS_SOURCE__;');
+  put("desktop/src/renderer/chat-frame/entry.ts", 'globalThis.chatVersion = "chat-one"; globalThis.latex = __LATEX_SOURCE__; globalThis.extras = __CHAT_EXTRAS_SOURCE__; globalThis.board = __BOARD_SOURCE__;');
   put("desktop/src/renderer/index.html", '<div id="root"></div><script src="renderer.js"></script>');
   put("desktop/src/renderer/styles.css", '@import "../../../Web/src/tokens.css";\n.shell { color: red; }');
   put("desktop/src/renderer/ModelPicker.css", '.model-picker { color: red; }');
@@ -27,6 +27,8 @@ function fixture() {
   put("desktop/builtin-plugins/botling.chat-extras/src/chat-extras.css", '.image-gallery { display: grid; }');
   put("desktop/builtin-plugins/botling.catchup/src/web.ts", 'export const version = "catchup-one";');
   put("desktop/builtin-plugins/botling.catchup/catchup.css", '.catchup-head { color: red; }');
+  put("desktop/builtin-plugins/botling.board/src/web.ts", 'export const version = "board-one";');
+  put("desktop/builtin-plugins/botling.board/src/board.css", '.board-grid { display: grid; }');
   put("desktop/out/main/main.cjs", 'main must stay running');
   put("desktop/out/core/main.cjs", 'core must stay running');
   put("desktop/out/preload/preload.cjs", 'preload must stay unchanged');
@@ -45,6 +47,7 @@ it("renderer-only publication keeps main/core/preload output and retains success
   // The desktop's chat page loads ccb-latex from out/builtin-plugins like any plugin; only Botling Web bundles it.
   expect(f.read("chat.js")).not.toContain("latex-one");
   expect(f.read("chat.js")).not.toContain("extras-one");
+  expect(f.read("chat.js")).not.toContain("board-one");
   expect(existsSync(join(f.outdir, "plugins"))).toBe(false);
   const web = join(f.root, "out/web");
   f.put("desktop/mobile/main.tsx", 'globalThis.shellVersion = "web-one";');
@@ -52,6 +55,8 @@ it("renderer-only publication keeps main/core/preload output and retains success
   await buildRenderer({ ...f, outdir: web, web: true });
   expect(readFileSync(join(web, "chat.js"), "utf8")).toContain("latex-one");
   expect(readFileSync(join(web, "chat.js"), "utf8")).toContain("extras-one");
+  expect(readFileSync(join(web, "chat.js"), "utf8")).toContain("board-one");
+  expect(readFileSync(join(web, "plugins/botling.board/board.css"), "utf8")).toContain(".board-grid");
   expect(readFileSync(join(web, "plugins/ccb-latex/katex.min.css"), "utf8")).toContain("KaTeX");
   expect(readFileSync(join(web, "plugins/botling.chat-extras/chat-extras.css"), "utf8")).toContain(".image-gallery");
   const original = f.read("renderer.js");

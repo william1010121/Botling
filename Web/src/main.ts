@@ -8,8 +8,6 @@ import { extensions, feedback, jumpTo, makeComponents, messageElement, messageMe
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { showMainSpeed } from "./subagent-speed";
-import { PinArea } from "./pins";
-import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, Draft, MessageView, SpecState, StatePatch } from "./types";
@@ -17,7 +15,7 @@ import { applyPatch } from "./patch";
 import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
 import { watchFileDrops } from "./drops";
-import { reportVisiblePinsSoon, setWindowVisible } from "./visible";
+import { setWindowVisible } from "./visible";
 import { animateSeenArrivals, setSeenHeads } from "./heads";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
@@ -39,10 +37,6 @@ class Chat {
   private readonly scroller: HTMLElement;
   private readonly list: HTMLElement;
   private readonly composer: Composer;
-  /** Pinned components: chips above the input box, and the Board. */
-  private readonly pins: PinArea;
-  /** Pins floated in a corner of this chat (and other bots' shown in all bots), over the chat and the Board. */
-  private readonly floats: FloatLayer;
   /**
    * Each message drawn: its element, and the key it was drawn from. `message` and `mark` are what
    * the key was made of, so an update that hands back the same message object (`patchState`)
@@ -111,8 +105,8 @@ class Chat {
       if (typeof id === "string") this.revealMessage(id);
     });
     this.composer = new Composer(document.getElementById("composer-slot")!);
-    this.pins = new PinArea(slot("pin-area", "div"), slot("board", "section"));
-    this.floats = new FloatLayer(document.body);
+    // Where botling.board draws pins and the Board (its web part fills them; empty, they take no room).
+    const slots = { pinArea: slot("pin-area", "div"), board: slot("board", "section"), overlay: document.body };
     const composer = this.composer;
     this.plugins = new PluginHost({
       composer: {
@@ -125,6 +119,7 @@ class Chat {
         chips: { add: (chip) => composer.addChip(chip), list: () => composer.chipsHere() },
       },
       redraw: () => this.redraw(),
+      slots,
     });
     composer.onKey = (event) => this.plugins.handleKey(event);
     composer.onPaste = (event) => this.plugins.handlePaste(event);
@@ -384,8 +379,7 @@ class Chat {
 
     this.showSubagentHeader(state);
     showMainSpeed(state, this.list);
-    this.pins.update(state);
-    this.floats.update(state);
+    this.plugins.chatState(state);
     this.composer.update(state);
     // Live activity belongs at the latest end, not after an older window.
     for (const row of this.typing.values()) row.style.display = this.historyLatest.hidden ? "" : "none";
@@ -691,13 +685,11 @@ function setSpec(state: SpecState): void {
 window.ccb = {
   setState: (state) => {
     chat.setState(state);
-    reportVisiblePinsSoon();
   },
   setDrafts: (drafts) => chat.setDrafts(drafts),
   answerWithSaved: (ack) => chat.answerWithSaved(ack),
   patchState: (patch) => {
     chat.patchState(patch);
-    reportVisiblePinsSoon();
   },
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
@@ -711,10 +703,5 @@ window.ccb = {
   focus: () => chat.focus(),
   setWindowVisible: (visible) => setWindowVisible(visible),
 };
-// Which pins the user can see changes as the chat or Board scrolls, the window resizes, or a pin
-// is opened or closed: Swift's timer reruns only those (visible.ts).
-for (const type of ["scroll", "resize", "click", "visibilitychange"]) {
-  (type === "resize" ? window : document).addEventListener(type, reportVisiblePinsSoon, { capture: true, passive: true });
-}
 startTaskTicks();
 post({ type: "ready" });

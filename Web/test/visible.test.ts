@@ -2,9 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sent } from "../src/bridge";
 import { refreshDueCards } from "../src/components";
 import { messageElement } from "../src/messages";
-import { FloatLayer } from "../src/float";
-import { PinArea } from "../src/pins";
-import { reportVisiblePins, setWindowVisible, visiblePinIDs } from "../src/visible";
+import { setWindowVisible } from "../src/visible";
 import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../src/types";
 
 // One rule for every card that refreshes by itself: it reruns only while the user can see it,
@@ -54,7 +52,6 @@ beforeEach(() => {
 
 afterEach(() => {
   setWindowVisible(true);
-  reportVisiblePins();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -98,49 +95,4 @@ describe("a chat card that refreshes by itself", () => {
   });
 });
 
-describe("a floating card that refreshes by itself", () => {
-  it("does not run while the window is not shown", () => {
-    const layer = new FloatLayer(document.body);
-    layer.update(state({ floating: [{ botID: "b", botName: "B", pin: pin({ float: { corner: "topRight", width: 280, height: 160, collapsed: false }, floatMenu: "stop" }) }] }));
-    const now = Date.now();
-    layer.refreshDue(now);
-    setWindowVisible(false);
-    expect(layer.refreshDue(now + 60_000)).toBe(0);
-    expect(runs()).toEqual([]);
-    // Shown again after longer than its interval: it runs at once.
-    vi.setSystemTime(now + 60_000);
-    setWindowVisible(true);
-    expect(runs()).toHaveLength(1);
-  });
-});
 
-describe("which pins the page shows", () => {
-  it("tells the app the pins the user can see, and only when that changes", () => {
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
-    area.update(state({ pins: [pin(), pin({ id: "P2" })] }));
-    const chips = document.querySelectorAll<HTMLElement>(".pin-chip[data-id]");
-    box(chips[0], 700, 30);
-    // The second chip is not laid out (no box): not seen.
-    expect(visiblePinIDs()).toEqual(["P1"]);
-    reportVisiblePins();
-    expect(sent).toContainEqual({ type: "pinsVisible", ids: ["P1"] });
-    sent.length = 0;
-    reportVisiblePins();
-    expect(sent).toEqual([]);
-    // The window hidden: none.
-    setWindowVisible(false);
-    expect(sent).toContainEqual({ type: "pinsVisible", ids: [] });
-  });
-
-  it("a Board tile scrolled out of the Board is not seen", () => {
-    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
-    area.update(state({ pins: [pin(), pin({ id: "P2" })], board: true }));
-    const board = document.getElementById("board")!;
-    board.style.overflowY = "auto";
-    box(board, 0, 600);
-    const tiles = document.querySelectorAll<HTMLElement>(".board-card[data-id]");
-    box(tiles[0], 20, 200);
-    box(tiles[1], 900, 200);
-    expect(visiblePinIDs()).toEqual(["P1"]);
-  });
-});

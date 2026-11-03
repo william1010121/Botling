@@ -14,8 +14,10 @@ import { WorkspaceStore, type WorkspaceView } from "../../src/renderer/store";
 const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 const PROJECT = "B0000000-0000-4000-8000-000000000001";
 const bot = (id: string, role: BotView["role"], name: string): BotView => ({ id, name, role, avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] });
+/** botling.board, the plugin the header's Board button belongs to. */
+const boardPlugin = (enabled = true): PluginsView["plugins"][number] => ({ name: "botling.board", title: "Board and pins", version: "1.0.0", description: null, enabled, failure: null, installedFrom: null, builtIn: true, permissions: [], parts: ["web"], settings: [], commands: [], panels: [] });
 const plugins: PluginsView = {
-  plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null,
+  plugins: [boardPlugin()], broken: [], host: { running: true, problem: null }, secretsProblem: null,
   mainTabs: [{ plugin: "board", id: "board.wall", title: "Wall", forRole: "main" }, { plugin: "git", id: "git.log", title: "Git", forRole: "project" }],
 };
 
@@ -111,4 +113,11 @@ it("with the plugin off there is no Whiteboard button (the core has no whiteboar
   expect(off.host.querySelector(".chat-column")?.className).not.toContain("whiteboard-on");
   const project = await render(PROJECT, { plugins: board }, true);
   expect(project.buttons()).toEqual(["Chat", "Board"]);
+});
+
+it("the Board button is its plugin's: with botling.board off the header offers Chat only", async () => {
+  const off = await render(MAIN, { plugins: { ...plugins, plugins: [boardPlugin(false)] } });
+  expect(off.buttons()).toEqual(["Chat", "Wall"]);
+  const unknown = await render(MAIN, { plugins: null });
+  expect(unknown.buttons()).toEqual(["Chat", "Board"]);
 });

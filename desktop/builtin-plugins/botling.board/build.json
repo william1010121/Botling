@@ -1,0 +1,5 @@
+{
+  "copy": [
+    { "from": "builtin-plugins/botling.board/src/board.css", "to": "dist/board.css" }
+  ]
+}
