@@ -394,6 +394,8 @@ export class PinBook {
 
   /** A card's run started or ended: a finished run's output is kept on its pin (so it shows after a restart too), and the page is told. */
   async cardChanged(card: string): Promise<void> {
+    // Every card's run is told (the component studio's too): only a pin's (`pin/<id>`) is the board's.
+    if (!card.startsWith("pin/")) return;
     const id = card.slice(4);
     for (const [bot, pins] of this.pins) {
       const pin = pins.find((candidate) => candidate.id === id);

@@ -1,0 +1,74 @@
+{
+  "name": "botling.component-studio",
+  "displayName": "Component studio",
+  "version": "1.0.0",
+  "description": "Turns a reply into a component: \"Make into component\" under a reply (or on a result page's preview card), a bot's own <suggest-component> chip, and the spec workspace in the right panel where you and Maintainer shape it.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "permissions": [
+      "studio"
+    ],
+    "host": "dist/host.mjs",
+    "web": "dist/web.js",
+    "styles": [
+      "studio.css"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "botling.component-studio.make",
+          "title": "Make into component"
+        }
+      ],
+      "views": [
+        {
+          "id": "botling.component-studio.spec",
+          "title": "Component spec",
+          "where": "rightPanel.takeover"
+        }
+      ],
+      "menus": {
+        "message/context": [
+          {
+            "command": "botling.component-studio.make",
+            "quick": true,
+            "icon": "cube",
+            "alt": "Add to another bot…",
+            "hint": "Maintainer builds it from this reply right away",
+            "locales": {
+              "zh-Hant": {
+                "title": "做成元件",
+                "alt": "加到其他 Bot…",
+                "hint": "Maintainer 會馬上用這則回覆做出來"
+              }
+            }
+          }
+        ],
+        "message/preview": [
+          {
+            "command": "botling.component-studio.make",
+            "quick": true,
+            "icon": "cube",
+            "locales": {
+              "zh-Hant": {
+                "title": "做成元件"
+              }
+            }
+          }
+        ]
+      },
+      "replyTags": [
+        {
+          "tag": "suggest-component"
+        },
+        {
+          "tag": "component-spec"
+        }
+      ]
+    }
+  }
+}

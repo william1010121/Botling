@@ -20,7 +20,7 @@
 //   `--add-dir` (its process starts again in the same session before its next message), and a folder
 //   inside one allowed before is allowed at once (`requestFolder`, `answerFolder`).
 //
-// Since Phase 5a: specs (spec-desk.ts), reports, revert and component shots (main/shot.ts). 2.0 gaps: design flows; installs take a folder or
+// Since Phase 5a: specs (the built-in plugin botling.component-studio), reports, revert and component shots (main/shot.ts). 2.0 gaps: design flows; installs take a folder or
 // a git URL (npm packages and archives: not yet).
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -31,7 +31,7 @@ import type { Bot } from "./bot";
 import type { ComponentLibrary } from "./components/library";
 import { COMPONENT_LIMIT, safeName } from "./components/library";
 import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "./components/builtins";
-import { PAGE_COMPONENT } from "./specs";
+import { PAGE_COMPONENT } from "./preview-url";
 import { writeFileAtomic } from "./durable/atomic";
 import { componentEditorAgent, pluginGuide } from "./maintainer-text";
 import { GUIDE_FOLDER, pluginGuideFiles } from "./plugin-guide-text";

@@ -3,7 +3,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { feedback, makeComponents, messageElement } from "../../../../Web/src/messages";
+import { feedback, messageElement, messageMenu } from "../../../../Web/src/messages";
+import { studioSeam } from "../../../../Web/src/plugins";
 import { PinArea } from "../src/pins";
 import { installBoard, pageCss, sent } from "./support";
 import { parseInterval, refreshWords } from "../../../../Web/src/refresh";
@@ -848,17 +849,22 @@ describe("a bot-filled component made live on the Board", () => {
   it("the component made from a reply can be pinned, and says so once pinned", () => {
     setUp().update(state());
     const built = { id: "S1", name: "天氣卡片", status: "done" as const, suggested: false, open: false, component: "天氣卡片", display: { name: "天氣卡片", data: '{"t":21}', at: null } };
-    const row = messageElement({ ...message([]), specs: [built] }, components);
-    document.body.append(row);
-    click(row.querySelector(".spec-built [aria-label='Pin to this bot']"));
+    // The head of the component the studio draws under its reply (botling.component-studio) asks the studio seam's spec buttons for theirs.
+    const headOf = () => {
+      const head = document.createElement("div");
+      for (const { make } of studioSeam.specButtons) { const added = make(built); if (added) head.append(added); }
+      document.body.append(head);
+      return head;
+    };
+    const row = headOf();
+    click(row.querySelector("[aria-label='Pin to this bot']"));
     const dialog = document.querySelector(".pin-dialog")!;
     click(dialog.querySelector(".primary"));
     expect(sent[0]).toMatchObject({ type: "pin", spec: "S1", refresh: "manual" });
     expect((sent[0] as { messageID?: string }).messageID).toBeUndefined();
     // Pinned: a badge instead.
     setUp().update(state({ pins: [pin({ name: "天氣卡片", display: { name: "天氣卡片", data: "{}" } })] }));
-    const again = messageElement({ ...message([]), specs: [built] }, components);
-    expect(again.querySelector(".spec-built .pin-badge")?.textContent).toContain("Pinned");
+    expect(headOf().querySelector(".pin-badge")?.textContent).toContain("Pinned");
   });
 
   it("a pin waiting for its command says it is being made live", () => {
@@ -1069,7 +1075,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
       setUp().update(state());
       for (const [developer, making] of [[false, false], [true, false], [false, true], [true, true]]) {
         feedback.enabled = developer;
-        makeComponents.enabled = making;
+        messageMenu.items = making ? [{ command: "studio.make", title: "Make into component", icon: "cube", quick: true }] : [];
         const row = messageElement({ ...message([{ name: "天氣卡片", data: "{}" }]), text: "" }, components);
         document.getElementById("scroller")!.append(row);
         expect(row.classList.contains("wide")).toBe(true);
@@ -1109,7 +1115,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
       expect(frame.getAttribute("aria-label")).toBe("天氣卡片");
     } finally {
       feedback.enabled = false;
-      makeComponents.enabled = false;
+      messageMenu.items = [];
       style.remove();
     }
   });

@@ -3,7 +3,8 @@
 // the places and the folding; the plugin draws inside the element it is given:
 // - `fold`: the element goes just before the first of those messages, and they are hidden (only hidden:
 //   moving a row would reload its component frames) until the plugin reveals one;
-// - `after`: the element goes just after that message, nothing hidden.
+// - `after`: the element goes just after that message, nothing hidden;
+// - `under`: the element goes inside that message's own column, last, under its words (a message that has none gets one).
 // Elements carry `decoration-extra`, so the message loop steps over them; a folded row carries
 // `decoration-folded`. Nothing is drawn while you watch a subagent.
 import { post } from "./bridge";
@@ -48,9 +49,27 @@ export interface DecorationRenderer {
 interface Placed {
   plugin: string;
   element: HTMLElement;
+  /** The column this element made for a message that had none (taken away again with it). */
+  made?: HTMLElement;
   decoration: DecorationView;
   revealed: Set<string>;
   folded: Set<HTMLElement>;
+}
+
+/**
+ * The column a message's words and what goes under them share (`.bot-column`, `.speaker-column`): a message with nothing under its words
+ * has none, so one is made around its bubble (and given back when its decoration goes: `Placed.made`).
+ */
+function columnOf(row: HTMLElement, placed: Placed): HTMLElement {
+  const column = row.querySelector<HTMLElement>(":scope > .bot-column, :scope > .speaker-column");
+  if (column) return column;
+  if (placed.made?.isConnected && row.contains(placed.made)) return placed.made;
+  const bubble = row.querySelector<HTMLElement>(":scope > .bubble");
+  const made = document.createElement("div");
+  made.className = "bot-column";
+  if (bubble) { bubble.replaceWith(made); made.append(bubble); } else row.append(made);
+  placed.made = made;
+  return made;
 }
 
 export class DecorationLayer {
@@ -108,7 +127,8 @@ export class DecorationLayer {
     const rows = decoration.fold?.length ? decoration.fold.map(row).filter((found): found is HTMLElement => !!found)
       .sort((a, b) => (a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)) : [];
     const anchor = !decoration.fold?.length && decoration.after ? row(decoration.after) : null;
-    if (!rows.length && !anchor) return false;
+    const under = !rows.length && !anchor && decoration.under ? row(decoration.under) : null;
+    if (!rows.length && !anchor && !under) return false;
     let placed = this.placed.get(id);
     if (!placed) {
       const element = document.createElement("div");
@@ -125,7 +145,11 @@ export class DecorationLayer {
     placed.folded = now;
     const { element } = placed;
     if (rows.length) { if (rows[0].previousElementSibling !== element) rows[0].before(element); }
-    else if (anchor!.nextElementSibling !== element) anchor!.after(element);
+    else if (anchor) { if (anchor.nextElementSibling !== element) anchor.after(element); }
+    else {
+      const column = columnOf(under!, placed);
+      if (column.lastElementChild !== element) column.append(element);
+    }
     const renderer = this.renderers.get(decoration.plugin)!;
     const context: PlacedContext = {
       ...this.context(state, row),
@@ -142,6 +166,8 @@ export class DecorationLayer {
     this.placed.delete(id);
     for (const row of placed.folded) row.classList.remove("decoration-folded");
     placed.element.remove();
+    // A column made for it goes (the words stay where they were): the message looks as it did before.
+    if (placed.made?.isConnected && placed.made.children.length === 1) placed.made.replaceWith(placed.made.firstElementChild!);
     const renderer = this.renderers.get(placed.plugin);
     if (tell && renderer?.removed) this.guard(placed.plugin, () => renderer.removed!(placed.decoration));
   }

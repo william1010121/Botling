@@ -35,9 +35,7 @@ export type BotRequest =
   | { kind: "openQuestion"; from: string }
   | { kind: "giveComponent"; bot: string; name: string }
   | { kind: "takeComponent"; bot: string; name: string }
-  | { kind: "suggestComponent"; name: string; draft: string }
-  | { kind: "componentDeclined"; id: string; reason: string }
-  | { kind: "componentSpec"; id: string; json: string };
+  | { kind: "componentDeclined"; id: string; reason: string };
 
 export interface Choice { label: string; detail?: string; recommended: boolean }
 export interface Display { name: string; data: string; at?: number; command?: string; id?: string; refresh?: number; savedAt?: number; [key: string]: unknown }
@@ -77,8 +75,6 @@ const agentStopTag = () => /<agent-stop\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*\/?
 const folderTag = () => /<need-folder>\s*([\s\S]*?)\s*<\/need-folder>/g;
 const installTag = () => /<install>\s*([\s\S]*?)\s*<\/install>/g;
 const listTag = () => /<(give|take)-component\s+bot\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/\1-component>/g;
-const suggestTag = () => /<suggest-component\s+name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*([\s\S]*?)\s*<\/suggest-component>)/g;
-const specTag = () => /<component-spec\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/component-spec>/g;
 const declinedTag = () => /<component-declined\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*([\s\S]*?)\s*<\/component-declined>)/g;
 const taskTag = () => /<task((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*\/?>(?:[ \t]*<\/task>)?/g;
 const noReplyTag = () => /<no-reply\s*\/>|<no-reply>\s*<\/no-reply>/g;
@@ -292,12 +288,6 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
     lists.unshift(kind === "give" ? { kind: "giveComponent", bot, name } : { kind: "takeComponent", bot, name });
   });
   requests.push(...lists);
-  const suggestions: BotRequest[] = [];
-  take(suggestTag, ([a, b, draft]) => { const name = trimWS(a || b!); if (name) suggestions.unshift({ kind: "suggestComponent", name, draft: draft! }); });
-  requests.push(...suggestions);
-  const specs: BotRequest[] = [];
-  take(specTag, ([a, b, json]) => { const id = trimWS(a || b!); if (id) specs.unshift({ kind: "componentSpec", id, json: json! }); });
-  requests.push(...specs);
   const declined: BotRequest[] = [];
   take(declinedTag, ([a, b, reason]) => { const id = trimWS(a || b!); if (id) declined.unshift({ kind: "componentDeclined", id, reason: reason! }); });
   requests.push(...declined);
@@ -364,7 +354,6 @@ export function unsupportedRequest(request: BotRequest): string {
     case "newProject": return `a new project (${request.folder})`;
     case "openQuestion": return `showing ${request.from}'s open question`;
     case "giveComponent": case "takeComponent": return `changing ${request.bot}'s components`;
-    case "suggestComponent": return `making a component ("${request.name}")`;
-    case "componentDeclined": case "componentSpec": return "a component spec update";
+    case "componentDeclined": return "a component spec update";
   }
 }

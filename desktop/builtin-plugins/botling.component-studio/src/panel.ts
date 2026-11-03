@@ -1,15 +1,33 @@
-import { post } from "./bridge";
-import { t, type Key } from "./i18n";
-import { componentElement, keepFrames } from "./components";
-import { handleMediaClicks } from "./lightbox";
-import { mediaHTML } from "./markdown";
-import { escapeHTML } from "./util";
-import { isComposingEnter, isSendEnter } from "./ime";
-import { refreshWords } from "./refresh";
+import { isComposingEnter, isSendEnter } from "../../../../Web/src/ime";
 import type { ComponentInfo, PinRefresh, SpecChange, SpecOrigin, SpecState } from "./types";
+import { t, type Key } from "./words";
+
+/** What the panel needs of the page and of its plugin: asks to the program part, the preview's frames, a picture, the lightbox. */
+export interface PanelIO {
+  /** An ask to the program part (`ccb.call`): one of its `ui.expose`d methods; the panel hears the result as the next state it is pushed. */
+  act(method: string, params?: Record<string, unknown>): void;
+  /** A spec's test run: the program part, then (not allowed yet) the app's ApprovalSheet, then the run again. */
+  testRun(id: string, command: string, folder: string): void;
+  /** The preview's component with `data` (`key`: the same thing across redraws keeps its frame). Null: it cannot be drawn. */
+  preview(name: string, info: ComponentInfo, data: string, key: string): HTMLElement | null;
+  /** Brings the drawn panel up to its redraw, keeping the preview's frame (`ccb.draw.keepFrames`). */
+  keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement;
+  /** A picture or video as the chat draws one, as HTML. */
+  media(url: string, label: string): string;
+  /** Pictures drawn with `media` open in the lightbox when pressed. */
+  mediaClicks(): void;
+}
+
+const escapeHTML = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+/** "When shown", "Every 15 min", "Only on ↻". */
+function refreshWords(refresh: PinRefresh, minutes: number): string {
+  if (refresh === "interval") return t("refresh.everyMinutes", { n: minutes });
+  return refresh === "shown" ? t("refresh.whenShown") : t("refresh.onlyManual");
+}
 
 /**
- * The component spec workspace in the right panel (`chat.html?spec=1`): a live preview with
+ * The component spec workspace in the right panel (the chat page in panel mode, drawn by this plugin's web part): a live preview with
  * switchable sample data, the spec's fields (blue where you set them, purple where Maintainer
  * did), Test run through the usual allow flow, a side conversation with Maintainer whose
  * questions come with suggested answers, and Build it. Every change goes to Swift, which sends
@@ -117,9 +135,9 @@ export class SpecPanel {
   private sending: { id: string; version: number; at: number; request: string } | null = null;
   private ticker: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly root: HTMLElement) {
+  constructor(private readonly root: HTMLElement, private readonly io: PanelIO) {
     // Pictures in Maintainer's words open in the lightbox, as in the chat.
-    handleMediaClicks(document);
+    io.mediaClicks();
   }
 
   update(state: SpecState): void {
@@ -180,7 +198,7 @@ export class SpecPanel {
     const fresh = this.render(state);
     this.tick(this.changeOf(state)?.state === "working");
     if (this.content) {
-      const result = keepFrames(this.content, fresh);
+      const result = this.io.keepFrames(this.content, fresh);
       if (result === fresh) this.content.replaceWith(fresh);
       this.content = result;
     } else {
@@ -246,8 +264,8 @@ export class SpecPanel {
     head.append(mark, titles);
     if (state.status === "draft" && !state.existing) head.append(el("span", "spec-draft", t("spec.draft", { n: state.draft })));
     head.append(
-      button("spec-icon", state.wide ? icons.narrow : icons.expand, () => post({ type: "specWide", wide: !state.wide }), state.wide ? t("spec.narrower") : t("spec.wider")),
-      button("spec-icon", icons.collapse, () => post({ type: "specClose" }), t("spec.collapse")),
+      button("spec-icon", state.wide ? icons.narrow : icons.expand, () => this.io.act("wide", { wide: !state.wide }), state.wide ? t("spec.narrower") : t("spec.wider")),
+      button("spec-icon", icons.collapse, () => this.io.act("close"), t("spec.collapse")),
     );
     return head;
   }
@@ -281,7 +299,7 @@ export class SpecPanel {
     const name = state.preview ?? "spec-preview";
     const info = state.preview ? state.components[state.preview] : plainInfo;
     const data = chosen?.data ?? "null";
-    const card = componentElement(name, info ?? plainInfo, data, null, `spec/${state.id}/${chosen?.label ?? ""}`);
+    const card = this.io.preview(name, info ?? plainInfo, data, `spec/${state.id}/${chosen?.label ?? ""}`);
     if (card) {
       // The report flag is for components in the chat, not a draft.
       card.querySelector(".component-side")?.remove();
@@ -324,7 +342,7 @@ export class SpecPanel {
     input.addEventListener("input", () => { input.dataset.dirty = "1"; });
     input.addEventListener("change", () => {
       input.dataset.dirty = "";
-      if (input.value.trim() !== value.trim()) post({ type: "specEdit", id: state.id, key, value: input.value.trim() });
+      if (input.value.trim() !== value.trim()) this.io.act("edit", { id: state.id, key, value: input.value.trim() });
     });
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !isComposingEnter(event)) input.blur();
@@ -359,7 +377,7 @@ export class SpecPanel {
       line.append(command);
       if (state.command) {
         line.append(button("spec-button small spec-test-run", `${icons.run}${escapeHTML(t("spec.testRun"))}`, () => {
-          post({ type: "specTestRun", id: state.id, command: state.command ?? "", folder: state.folder });
+          this.io.testRun(state.id, state.command ?? "", state.folder);
         }));
       }
       const commandParts: HTMLElement[] = [line];
@@ -372,7 +390,7 @@ export class SpecPanel {
       refresh.setAttribute("role", "group");
       refresh.setAttribute("aria-label", t("pins.refresh"));
       for (const mode of ["shown", "interval", "manual"] as PinRefresh[]) {
-        const option = button(mode === state.refresh ? "on" : "", "", () => post({ type: "specEdit", id: state.id, key: "refresh", value: mode }));
+        const option = button(mode === state.refresh ? "on" : "", "", () => this.io.act("edit", { id: state.id, key: "refresh", value: mode }));
         option.textContent = refreshWords(mode, state.minutes);
         option.setAttribute("aria-pressed", String(mode === state.refresh));
         refresh.append(option);
@@ -384,7 +402,7 @@ export class SpecPanel {
     for (const bot of state.bots) {
       const chip = button(`spec-bot${bot.on ? " on" : ""}`, `${bot.on ? icons.check : ""}<span></span>`, () => {
         const next = state.bots.filter((b) => (b.name === bot.name ? !b.on : b.on)).map((b) => b.name);
-        post({ type: "specEdit", id: state.id, key: "bots", value: next.join(", ") });
+        this.io.act("edit", { id: state.id, key: "bots", value: next.join(", ") });
       });
       chip.querySelector("span")!.textContent = bot.name;
       chip.setAttribute("aria-pressed", String(bot.on));
@@ -397,9 +415,9 @@ export class SpecPanel {
       const name = el("code", "", state.similar);
       const about = el("span", "spec-faint", state.similarAbout ? ` ${state.similarAbout}` : "");
       const choice = el("div", "spec-seg");
-      const fresh = button(state.reuse ? "new" : "new on", "", () => post({ type: "specEdit", id: state.id, key: "reuse", value: "false" }));
+      const fresh = button(state.reuse ? "new" : "new on", "", () => this.io.act("edit", { id: state.id, key: "reuse", value: "false" }));
       fresh.textContent = t("spec.newOne");
-      const reuse = button(state.reuse ? "reuse on" : "reuse", "", () => post({ type: "specEdit", id: state.id, key: "reuse", value: "true" }));
+      const reuse = button(state.reuse ? "reuse on" : "reuse", "", () => this.io.act("edit", { id: state.id, key: "reuse", value: "true" }));
       reuse.textContent = t("spec.reuse", { name: state.similar });
       choice.append(fresh, reuse);
       similar.append(name, about, choice);
@@ -420,7 +438,7 @@ export class SpecPanel {
       const actions = el("div", "command-actions");
       // Asks for the test run again: the app's own sheet allows it.
       const allow = button("primary command-allow", escapeHTML(t("command.allow")), () => {
-        post({ type: "specTestRun", id: state.id, command: run.command, folder: run.folder });
+        this.io.testRun(state.id, run.command, run.folder);
       });
       actions.append(allow, el("span", "command-note", t("spec.remembered")));
       ask.append(actions);
@@ -483,7 +501,7 @@ export class SpecPanel {
       const words = el("div", "spec-words", line.text);
       // Pictures Maintainer showed (a component shot's contact sheet): click for the lightbox.
       for (const url of line.images ?? []) {
-        words.insertAdjacentHTML("beforeend", mediaHTML(url, t("spec.componentShot")));
+        words.insertAdjacentHTML("beforeend", this.io.media(url, t("spec.componentShot")));
       }
       row.append(words);
       block.append(row);
@@ -495,7 +513,7 @@ export class SpecPanel {
         const answers = el("div", "spec-answers");
         question.options.forEach((option, index) => {
           const suggested = index === question.suggested;
-          const answer = button(`spec-answer${suggested ? " suggested" : ""}`, "", () => post({ type: "specAnswer", id: state.id, question: question.id, option: index }));
+          const answer = button(`spec-answer${suggested ? " suggested" : ""}`, "", () => this.io.act("answer", { id: state.id, question: question.id, option: index }));
           answer.textContent = suggested ? `${option.label} · ${t("pins.suggested")}` : option.label;
           answers.append(answer);
         });
@@ -562,11 +580,11 @@ export class SpecPanel {
       if (built && !working) {
         const request = `r${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         this.sending = { id: state.id, version: this.nextVersion(state), at: Date.now(), request };
-        post({ type: "specSay", id: state.id, text, request });
+        this.io.act("say", { id: state.id, text, request });
         this.draw();
         return;
       }
-      post({ type: "specSay", id: state.id, text });
+      this.io.act("say", { id: state.id, text });
     }, t("spec.sendToMaintainer"));
     box.addEventListener("input", () => { box.dataset.dirty = "1"; });
     box.addEventListener("keydown", (event) => {
@@ -586,13 +604,13 @@ export class SpecPanel {
     if (!working) {
       const done = state.status === "done";
       const actions = el("div", "spec-actions");
-      if (done) actions.append(button("spec-button ghost", escapeHTML(t("spec.hide")), () => post({ type: "specClose" })));
-      else actions.append(button("spec-button ghost spec-cancel", escapeHTML(t("common.cancel")), () => post({ type: "specCancel", id: state.id })));
+      if (done) actions.append(button("spec-button ghost", escapeHTML(t("spec.hide")), () => this.io.act("close")));
+      else actions.append(button("spec-button ghost spec-cancel", escapeHTML(t("common.cancel")), () => this.io.act("cancel", { id: state.id })));
       actions.append(el("span", "spec-grow"));
       if (state.questions.length && !built) actions.append(el("span", "spec-faint spec-note", t("spec.openQuestions")));
       // Once built, typing is how it changes: rebuilding is only a secondary action.
       const rebuild = done && !state.existing;
-      const build = button(`spec-button ${rebuild ? "ghost" : "primary"} spec-build`, "", () => post({ type: "specBuild", id: state.id }));
+      const build = button(`spec-button ${rebuild ? "ghost" : "primary"} spec-build`, "", () => this.io.act("build", { id: state.id }));
       build.textContent = state.existing ? t("spec.addToBots") : rebuild ? t("spec.rebuild") : t("spec.buildIt");
       build.disabled = !state.bots.some((b) => b.on);
       if (build.disabled) build.title = t("spec.pickBot");
@@ -602,7 +620,7 @@ export class SpecPanel {
     } else {
       const legend = el("div", "spec-actions");
       legend.append(el("span", "spec-grow"));
-      legend.append(button("spec-button ghost", escapeHTML(t("spec.hide")), () => post({ type: "specClose" })));
+      legend.append(button("spec-button ghost", escapeHTML(t("spec.hide")), () => this.io.act("close")));
       foot.append(legend);
     }
     if (!working && !state.existing) {

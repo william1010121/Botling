@@ -51,8 +51,13 @@ export function slashMenu(plugins: PluginsView | null | undefined): SlashCommand
 }
 
 /** The commands plugins put in one of the app's menus, in order. */
-export function menuItems(plugins: PluginsView | null | undefined, menu: PluginMenu): { command: string; title: string }[] {
-  return (plugins?.menus ?? []).filter((item) => item.menu === menu).map((item) => ({ command: item.command, title: item.title }));
+export function menuItems(plugins: PluginsView | null | undefined, menu: PluginMenu, lang?: string | null): { command: string; title: string; icon?: string; quick?: boolean; alt?: string; hint?: string }[] {
+  return (plugins?.menus ?? []).filter((item) => item.menu === menu).map((item) => {
+    // The words a plugin gave for the page's language (`locales`) replace its own.
+    const said = (lang ? item.locales?.[lang] : undefined) ?? {};
+    const [title, alt, hint] = [said.title ?? item.title, said.alt ?? item.alt, said.hint ?? item.hint];
+    return { command: item.command, title, ...(item.icon ? { icon: item.icon } : {}), ...(item.quick ? { quick: true } : {}), ...(alt ? { alt } : {}), ...(hint ? { hint } : {}) };
+  });
 }
 
 /** Whether `id` is offered `via` a key, the / menu or `menu` now (what the chat page may ask the app page to run). */

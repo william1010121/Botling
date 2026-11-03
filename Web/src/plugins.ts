@@ -3,17 +3,18 @@ import * as state from "@codemirror/state";
 import * as view from "@codemirror/view";
 import type MarkdownIt from "markdown-it";
 import { post } from "./bridge";
-import { commandCard, componentElement, componentSizes, detailTarget, hasFrame, keepFrames, markStatusFrames, maxColumns, maxRows, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
+import { commandCard, componentElement, type CommandSend, componentSizes, detailTarget, hasFrame, keepFrames, markStatusFrames, maxColumns, maxRows, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChipHandle, ComposerChip } from "./composer";
 import { DecorationLayer, type DecorationRenderer } from "./decorations";
 import { ownsCommand } from "./frame-protocol";
+import { handleMediaClicks } from "./lightbox";
 import { isComposingEnter } from "./ime";
 import { language, pieces, t } from "./i18n";
 import { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords } from "./refresh";
 import { mediaHTML, md, renderMarkdown, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
 import { taskCardChipHTML } from "./task-cards";
-import type { Action, ChatState, DisplayView, SpecChipView, TaskCardView } from "./types";
+import type { Action, ChatState, ComponentInfo, DisplayView, SpecChipView, TaskCardView } from "./types";
 import { onScreen, setWindowListener, whenShownAgain, windowVisible } from "./visible";
 
 /** A plugin's web part, as the Swift side sends it. */
@@ -116,8 +117,6 @@ export interface CcbWeb {
      * state before the messages are drawn (it may keep the state): a message with a card is drawn again when its text changes.
      */
     cardBar(make: (display: DisplayView, messageID: string, index: number) => HTMLElement | null, stamp?: (state: ChatState) => string): Dispose;
-    /** A button in the head of a component made from a reply; null: none. */
-    specButton(make: (spec: SpecChipView) => HTMLElement | null): Dispose;
     /** Words as the chat draws a message's (Markdown, with every plugin's renderers), as HTML. */
     render(text: string): string;
     /** A picture or video as the chat draws one in a message, as HTML. */
@@ -132,12 +131,45 @@ export interface CcbWeb {
   decorations: { register(renderer: DecorationRenderer): Dispose };
   /** The chat page's own parts, for a plugin that draws cards over it (the Board). */
   page: PageKit;
+  /**
+   * The component studio's seam in the chat page (botling.component-studio draws the components made from replies): what another plugin
+   * shipped with Botling adds to them. `specButton`: a button in the head of a built component (the Board's pin); null: none.
+   */
+  studio: { specButton(make: (spec: SpecChipView) => HTMLElement | null): Dispose };
   components: { register(name: string, render: ComponentRender): Dispose };
   /** A page in the right column, declared in contributes.panels; drawn when you open it. */
   panels: { register(id: string, render: (root: HTMLElement) => void | Dispose): Dispose };
   commands: { register(id: string, run: () => void): Dispose; execute(id: string): void };
   settings: { get<T>(key: string): T; onChange(key: string, handler: (value: unknown) => void): Dispose };
   notify(text: string): void;
+  /**
+   * What the chat itself draws, for a decoration that shows a component the way the chat does (the component studio's chips): the component
+   * with its command card (↻, the command and folder it shows, an ask for your OK) and the pin button of a component made from a reply.
+   */
+  draw: {
+    /**
+     * `name`'s component (`info`: the library's, from `state.components`) with `display`'s data, as under a reply. With a command
+     * (`display.command`) it is wrapped in the command card: `cardKey` names its runs, `send` gets the run it asks for (command, folder,
+     * detail, force), and `lazy` draws it only when scrolled to. Null: it cannot be drawn.
+     */
+    component(spec: { name: string; info: ComponentInfo | undefined; display: DisplayView; key: string; cardKey: string; send?: CommandSend; lazy?: boolean }): HTMLElement | null;
+    /** The button the Board plugin adds to a built component's head (its pin dialog, or its Pinned badge), if it is on. */
+    pinButton(chip: SpecChipView): HTMLElement | null;
+    /**
+     * Brings the drawn element `old` up to its redraw `fresh`, keeping the component frames that show the same thing (a frame given a new
+     * page, or taken out of the page for a moment, loads again). Returns the element to keep: `old` if a frame was kept, else `fresh`.
+     */
+    keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement;
+    /** Pictures drawn with `messages.media` open in the chat's lightbox when pressed (call once for the page's document). */
+    mediaClicks(root: Document): void;
+  };
+  /** Hears what this plugin's program part pushes (`ui.emit`) to the page it runs in (the right panel's page opened for it). */
+  on(event: string, fn: (data: unknown) => void): Dispose;
+  /**
+   * Asks you, on the app's own sheet, to allow a command in a folder (and a Detail command): the reply says whether you did. Only
+   * built-in plugins with the studio permission may name a folder that is not the bot's own. A web part can ask; never allow.
+   */
+  requestApproval(request: { botId: string; command: string; folder: string; card?: string; detail?: string }): Promise<{ allowed: boolean }>;
   /** Calls what this plugin's own program part exposes (`ui.expose`, or `web.handle`). */
   call(method: string, params?: unknown): Promise<unknown>;
   /** `call`'s 1.x name. */
@@ -145,6 +177,15 @@ export interface CcbWeb {
 }
 
 type Activate = (ccb: CcbWeb) => void | Dispose | Promise<void | Dispose>;
+
+/**
+ * The component studio's seam in the chat page: what other built-in plugins add to the components it made from replies (`ccb.studio`),
+ * and what the studio's chips draw from it (`ccb.draw.pinButton`). Not part of the chat page's own messages.
+ */
+export const studioSeam = {
+  /** Buttons in the head of a component made from a reply (`SpecChipView`), as the Board's pin button. */
+  specButtons: [] as { plugin: string; make: (spec: SpecChipView) => HTMLElement | null }[],
+};
 
 interface Loaded {
   spec: PluginSpec;
@@ -174,6 +215,8 @@ export class PluginHost {
   private readonly stateListeners: { plugin: string; fn: (state: ChatState) => void }[] = [];
   private readonly approvals = new Map<number, (allowed: boolean) => void>();
   private readonly windowListeners: { plugin: string; fn: () => void }[] = [];
+  /** `on`'s listeners: what a plugin's program part pushed to this page (the right panel's page). */
+  private readonly eventListeners: { plugin: string; event: string; fn: (data: unknown) => void }[] = [];
   private readonly hostCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextCall = 1;
 
@@ -298,6 +341,11 @@ export class PluginHost {
     else post({ type: "command", id });
   }
 
+  /** A plugin's program part pushed `data` to this page (`ui.emit`): its web part's `on` listeners for `event` hear it. */
+  pluginEvent(plugin: string, event: string, data: unknown): void {
+    for (const item of [...this.eventListeners]) if (item.plugin === plugin && item.event === event) this.guard(plugin, () => item.fn(data));
+  }
+
   /** The plugin host answered a `host.call`. */
   hostReply(callID: number, ok: boolean, value: unknown): void {
     const waiter = this.hostCalls.get(callID);
@@ -397,6 +445,13 @@ export class PluginHost {
     const ownParts = (what: string): void => {
       if (!builtIn) throw new Error(`${what} is for the plugins that ship with Botling.`);
     };
+    const requestApproval = (request: { botId: string; command: string; folder: string; card?: string; detail?: string }) => new Promise<{ allowed: boolean }>((resolve, reject) => {
+      ownParts("ccb.requestApproval");
+      const callID = this.nextCall++;
+      this.hostCalls.set(callID, { resolve: (value) => resolve({ allowed: (value as { allowed?: unknown } | null)?.allowed === true }), reject });
+      post({ type: "pluginApproval", plugin: name, callID, botId: String(request?.botId ?? ""), command: String(request?.command ?? ""), folder: String(request?.folder ?? ""),
+        ...(request?.card ? { card: String(request.card) } : {}), ...(request?.detail ? { detail: String(request.detail) } : {}) });
+    });
     return {
       name,
       codemirror: { state, view, commands },
@@ -454,16 +509,18 @@ export class PluginHost {
           this.markdownChanged = true;
           return own(() => { remove(extensions.cardBars, item)(); this.hooks.redraw(); });
         },
-        specButton: (make) => {
-          ownParts("ccb.messages.specButton");
-          const item = { plugin: name, make };
-          extensions.specButtons.push(item);
-          this.markdownChanged = true;
-          return own(() => { remove(extensions.specButtons, item)(); this.hooks.redraw(); });
-        },
         render: (text) => renderMarkdown(text),
         media: (url, label) => mediaHTML(url, label),
         taskChip: (task, action) => taskCardChipHTML(task, action),
+      },
+      studio: {
+        specButton: (make) => {
+          ownParts("ccb.studio.specButton");
+          const item = { plugin: name, make };
+          studioSeam.specButtons.push(item);
+          this.markdownChanged = true;
+          return own(() => { remove(studioSeam.specButtons, item)(); this.hooks.redraw(); });
+        },
       },
       decorations: {
         register: (renderer) => own(this.decorations.register(name, renderer)),
@@ -503,6 +560,23 @@ export class PluginHost {
         },
       },
       notify: (text) => post({ type: "pluginNotice", name, text }),
+      draw: {
+        component: ({ name: component, info, display, key, cardKey, send, lazy }) => {
+          ownParts("ccb.draw.component");
+          const draw = () => componentElement(component, info, display.data, null, key, display.images, detailTarget(display), undefined, "chat", false, null, lazy !== false);
+          return display.command ? commandCard(display, cardKey, 0, draw, { ...(send ? { send } : {}), lazy: lazy !== false }) : draw();
+        },
+        // The buttons plugins add to a built component's head through the studio seam (the Board's pin: `studio.specButton`), the first one that makes one.
+        pinButton: (chip) => ownParts("ccb.draw.pinButton") ?? studioSeam.specButtons.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(chip)) ?? [])[0] ?? null,
+        keepFrames: (old, fresh) => { ownParts("ccb.draw.keepFrames"); return keepFrames(old, fresh); },
+        mediaClicks: (root) => { ownParts("ccb.draw.mediaClicks"); handleMediaClicks(root); },
+      },
+      requestApproval,
+      on: (event, fn) => {
+        const item = { plugin: name, event, fn };
+        this.eventListeners.push(item);
+        return own(remove(this.eventListeners, item));
+      },
       call,
       host: { call },
     };

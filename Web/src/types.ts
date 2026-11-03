@@ -30,6 +30,8 @@ export interface DecorationView {
   key: string;
   fold?: string[];
   after?: string;
+  /** Inside the message's own column, under its words. */
+  under?: string;
   /** The task cards it is about, as their chips show them now. */
   tasks?: TaskCardView[] | null;
   /** The plugin's own, for its web part. */
@@ -92,8 +94,6 @@ export interface MessageView {
   previews?: { name: string; data: string }[] | null;
   /** A relay that is a "not right" report: whose reply and the user's words; `text` folds away. */
   feedback?: { about: string; words: string } | null;
-  /** Component specs made from it: a quiet chip each, under the reply. */
-  specs?: SpecChipView[] | null;
   /** The library component this reply already is ("Add to another bot…"). */
   component?: string | null;
   /** The chat's background work (running, and finished since your latest line), on the bot's latest reply only: one row of counts under it. */
@@ -159,6 +159,9 @@ export interface TaskChipView {
  * A component made from a reply, under it: a chip while it is a suggestion (pressed: its first
  * version is built) or being built, then the component itself with "Edit spec".
  */
+/** A plugin's entry in a reply's menu: a row of "⋯", or (`quick`) a button of its own with the page's icon `icon`; `alt`: its words for a reply that already is a library component. */
+export interface MessageMenuItem { command: string; title: string; icon?: string; quick?: boolean; alt?: string; hint?: string }
+
 export interface SpecChipView {
   id: string;
   name: string;
@@ -179,67 +182,6 @@ export interface SpecChipView {
 
 export type SpecStatus = "draft" | "building" | "done";
 export type SpecOrigin = "user" | "maintainer" | "app";
-
-/** The spec workspace in the right panel (`chat.html?spec=1`), from Swift's `SpecPayload`. */
-export interface SpecChange {
-  state: "working" | "asking" | "updated" | "failed";
-  version: number;
-  /** Milliseconds since 1970. */
-  startedAt: number;
-  endedAt?: number | null;
-  error?: string | null;
-  /** The panel's id for the request that started it (`specSay`'s `request`). */
-  request?: string | null;
-}
-
-export interface SpecState {
-  id: string;
-  name: string;
-  about: string;
-  status: SpecStatus;
-  draft: number;
-  /** The chat it is in. */
-  chat: string;
-  /** "from Botling's reply at 22:14", "suggested by garden". */
-  from: string;
-  suggestedBy: string | null;
-  /** The reply already is this component: only which bots get it is left. */
-  existing: string | null;
-  fields: { name: string; type: string; by: SpecOrigin }[];
-  command: string | null;
-  folder: string;
-  refresh: PinRefresh;
-  minutes: number;
-  bots: { name: string; on: boolean }[];
-  similar: string | null;
-  similarAbout: string | null;
-  reuse: boolean;
-  /** `kind`: the app's own samples ("testRun", "reply", "page"); null for Maintainer's. The label is only what the tab says. */
-  samples: { label: string; kind: SampleKind | null; data: string }[];
-  /** The sample shown until you pick one (the app decides: the real run for live data, else the reply's own). */
-  preferredSample: number | null;
-  questions: { id: string; text: string; options: { label: string }[]; suggested: number | null }[];
-  /** `images`: pictures in Maintainer's words (a component shot's contact sheet), as file URLs. */
-  conversation: { kind: "user" | "maintainer" | "event"; text: string; images?: string[] }[];
-  /** Who last set each value: blue for the user, purple for Maintainer. */
-  origins: Record<string, SpecOrigin>;
-  /** The library component whose template draws the preview; null: a plain drawing of the data. */
-  preview: string | null;
-  components: Record<string, ComponentInfo>;
-  /** Its command's test run, as a command card shows one. */
-  testRun: { status: CommandStatus; command: string; folder: string; output: string | null; error: string | null; ranAt: string | null; matches: boolean | null } | null;
-  /** While building and once done: what has happened. */
-  steps: { label: string; state: "done" | "doing" | "todo" | "failed" }[] | null;
-  /** The version in the library once built (1 after the first build). */
-  version?: number | null;
-  /** A change asked for once built: Maintainer making `version`, its one question, landed, or not. */
-  change?: SpecChange | null;
-  /** What was typed during a build: it goes with the next change. */
-  queued?: string[] | null;
-  wide: boolean;
-  /** The language of the panel's own words, as `ChatState.lang`. */
-  lang?: string | null;
-}
 
 export interface DisplayView {
   name: string;
@@ -380,7 +322,9 @@ export interface ChatState {
   /** The / menu's commands; one with `command` (a plugin's) runs it when picked instead of going into the message. */
   slashCommands?: { name: string; about: string; command?: string }[];
   /** Plugin commands in a reply's menu (`contributes.menus["message/context"]`). */
-  messageMenu?: { command: string; title: string }[] | null;
+  messageMenu?: MessageMenuItem[] | null;
+  /** Plugins' buttons on a result page's preview card (`message/preview`: all `quick`). */
+  previewMenu?: MessageMenuItem[] | null;
   /** Components you can / (picked, the bot is told you mean that component). */
   slashComponents?: string[];
   /** The shared library's other components (not this bot's yet), offered after its own, marked faintly. */
@@ -398,7 +342,6 @@ export interface ChatState {
   /** The Board shows instead of the messages. */
   board?: boolean | null;
   /** Replies can be made into components (absent where they can't, e.g. a subagent). */
-  makeComponents?: boolean | null;
   /** The language of the page's own words (Settings → General → Language); absent means English. */
   lang?: string | null;
   /** A bot with two heads (Claude and Codex): who the next message goes to. */
@@ -484,30 +427,17 @@ export type Action =
   | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; force?: boolean; live?: boolean }
   | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number>; card?: string; command?: string }
   | { type: "componentSave"; messageID: string; index: number; data: string }
-  | { type: "makeComponent"; messageID: string; preview?: number; purpose?: string }
-  | { type: "openSpec"; id: string }
   | { type: "selectTask"; id: string }
-  | { type: "pressSpec"; id: string }
-  | { type: "undoSpec"; id: string }
-  | { type: "restoreSpec"; id: string }
-  | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; force?: boolean }
-  | { type: "specEdit"; id: string; key: string; value: string }
-  | { type: "specAnswer"; id: string; question: string; option: number }
-  | { type: "specSay"; id: string; text: string; request?: string }
-  | { type: "specTestRun"; id: string; command: string; folder: string }
-  | { type: "specBuild"; id: string }
-  | { type: "specCancel"; id: string }
-  | { type: "specClose" }
-  | { type: "specWide"; wide: boolean }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }
   | { type: "pluginLoaded"; name: string; version: string }
   | { type: "command"; id: string }
   /** A plugin command offered by the / menu or a reply's menu (the app page checks it is offered so now). */
-  | { type: "runCommand"; id: string; via: "slash" | "menu" | "key"; menu?: "message/context"; messageID?: string }
+  | { type: "runCommand"; id: string; via: "slash" | "menu" | "key"; menu?: "message/context" | "message/preview"; messageID?: string; preview?: number }
   | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number }
-  /** A built-in plugin asks the user to allow a command of a component's card in a bot's folder (the app page answers with `approvalReply`). */
-  | { type: "approvalRequest"; plugin: string; requestId: number; botId: string; command: string; folder: string; component: string; card?: string };
+  /** A built-in plugin's page kit asks the user to allow a command of a component's card in a bot's folder (the app page answers with `approvalReply`). */
+  | { type: "approvalRequest"; plugin: string; requestId: number; botId: string; command: string; folder: string; component: string; card?: string }
+  | { type: "pluginApproval"; plugin: string; callID: number; botId: string; command: string; folder: string; card?: string; detail?: string };
 
 /**
  * What `ccb.patchState(...)` gets: only what changed since the last state. `base` is the state

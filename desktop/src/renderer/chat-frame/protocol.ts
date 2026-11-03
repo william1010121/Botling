@@ -2,7 +2,7 @@
 // each other with postMessage. Both are the app's own code on distinct origins; each side still
 // checks who sent a message (`event.source`) and its origin, so a card frame inside the chat frame
 // cannot pass for either.
-import type { ChatState, SpecState, StatePatch } from "../../../../Web/src/types";
+import type { ChatState, StatePatch } from "../../../../Web/src/types";
 import type { WebPluginSpecView } from "../../contract";
 import type { FrameExtras } from "../payload";
 
@@ -67,6 +67,8 @@ export type ShellMessage =
   | { botling: "hostReply"; callID: number; ok: boolean; value: unknown }
   /** How a built-in plugin's `ccb.page.requestApproval` ended: the user pressed Allow (true), or not (`ccb.approvalReply`). */
   | { botling: "approvalReply"; requestId: number; allowed: boolean }
+  /** What a plugin's program part pushed (`ui.emit`) to the right panel's page opened for it (`ccb.on`). */
+  | { botling: "pluginEvent"; plugin: string; name: string; data: unknown }
   /** A component's `ccb.runDetail` answer (`ccb.detailReply`). */
   | { botling: "detailReply"; requestID: number; ok: boolean; value: string }
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
@@ -77,5 +79,3 @@ export type ShellMessage =
   | { botling: "messageWidthPointer"; kind: "move" | "up" | "cancel"; pointerId: number; x: number }
   /** "Jump to chat" on a task's card in the right panel (`ccb.jumpToTask`). */
   | { botling: "jumpToTask"; messageID: string; taskID: string }
-  /** The spec panel's page (`chat.html?spec=1`): the open spec (`ccb.setSpec`). */
-  | { botling: "spec"; spec: SpecState };

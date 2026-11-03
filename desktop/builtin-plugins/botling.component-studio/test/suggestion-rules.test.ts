@@ -1,6 +1,6 @@
 // ADR-006 M4: the anti-nag rules for <suggest-component>, without a core.
 import { describe, expect, it } from "vitest";
-import { findExisting, judgeSuggestion, MIN_DRAFT, type SuggestionInput } from "../../src/core/suggestion-rules";
+import { findExisting, judgeSuggestion, MIN_DRAFT, type SuggestionInput } from "../src/suggestion-rules";
 
 const base: SuggestionInput = {
   name: "disk-usage", draft: "how full the disk is, from df -h", libraryNames: ["git-status", "choices"], botNames: ["choices"], suggestionsThisTurn: 0, undoneNames: [],

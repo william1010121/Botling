@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // A card's command is allowed only on the app page's ApprovalSheet (plugin-platform.md §5.4, G2): a chat page action
 // carrying approve asks only to run; what the core answers (needsApproval) opens the sheet, whose Allow sends
-// component.approve / pin.approve / spec.approve with the core's values; nothing in a frame's routing can send those.
+// component.approve (or, for a plugin's ask, plugins.approve) with the core's values; nothing in a frame's routing can send those.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -15,18 +15,15 @@ import { ApprovalSheet, useApprovalSheet } from "../../src/renderer/ApprovalShee
 const BOT = "6A0B0000-0000-4000-8000-000000000002";
 const MESSAGE = "6A0B0000-0000-4000-8000-000000000010";
 const PIN = "6A0B0000-0000-4000-8000-000000000011";
-const SPEC = "6A0B0000-0000-4000-8000-000000000012";
 const ask: ApprovalAskView = { command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}", card: "commits" };
 
 describe("chat page actions only ask to run", () => {
-  it("drops approve from componentCommand and specCommand; what is sent is a valid command without it", () => {
+  it("drops approve from componentCommand; what is sent is a valid command without it", () => {
     const runs = [
       cardRun({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "git log", folder: "/p", detail: "git show {hash}", approve: true, force: true }, BOT),
-      cardRun({ type: "specCommand", id: SPEC, command: "git log", folder: "/p", approve: true }, null),
     ];
     expect(runs).toEqual([
       { type: "component.command", botId: BOT, messageId: MESSAGE, index: 0, command: "git log", folder: "/p", detail: "git show {hash}", force: true },
-      { type: "spec.act", specId: SPEC, action: { kind: "command", command: "git log", folder: "/p" } },
     ]);
     for (const run of runs) expect(Command.safeParse(run).success).toBe(true);
     expect(JSON.stringify(runs)).not.toContain("approve");
@@ -39,17 +36,16 @@ describe("chat page actions only ask to run", () => {
 
   it("the contract has no approve on a run, and the approve commands are app-page commands", () => {
     expect(Command.safeParse({ type: "component.command", botId: BOT, messageId: MESSAGE, index: 0, command: "x", folder: "/p", approve: true }).success).toBe(false);
+    // A pin's command (botling.board) and a spec's (botling.component-studio) left the contract: their plugins ask through plugins.approvalAsk.
     expect(Command.safeParse({ type: "pin.command", botId: BOT, id: PIN }).success).toBe(false);
-    expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "testRun", command: "x", folder: "/p", approve: true } }).success).toBe(false);
-    expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "command", command: "x", folder: "/p", approve: true } }).success).toBe(false);
-    for (const type of ["component.approve", "plugins.approve", "spec.approve"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
+    expect(Command.safeParse({ type: "spec.act", specId: "6A0B0000-0000-4000-8000-000000000012", action: { kind: "command", command: "x", folder: "/p" } }).success).toBe(false);
+    for (const type of ["component.approve", "plugins.approve"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
+    for (const type of ["pin.approve", "spec.approve"]) expect(RENDERER_COMMANDS.has(type as never)).toBe(false);
   });
 
   it("the sheet's Allow sends the core's command, folder and Detail command, not the page's", () => {
     const run = cardRun({ type: "componentCommand", messageID: MESSAGE, index: 1, command: "echo page", folder: "/elsewhere" }, BOT)!;
     expect(cardApprove(run, ask)).toEqual({ type: "component.approve", botId: BOT, messageId: MESSAGE, index: 1, command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}" });
-    expect(cardApprove(cardRun({ type: "specCommand", id: SPEC, command: "x", folder: "/p" }, null)!, ask)).toEqual({ type: "spec.approve", specId: SPEC, run: "command", command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}" });
-    expect(cardApprove({ type: "spec.act", specId: SPEC, action: { kind: "testRun", command: "x", folder: "/p" } }, { ...ask, detail: null })).toEqual({ type: "spec.approve", specId: SPEC, run: "testRun", command: "git log --oneline", folder: "/p/garden" });
     for (const approve of [cardApprove(run, ask)]) expect(Command.safeParse(approve).success).toBe(true);
     // A card's own timer never opens the sheet.
     expect(asksUser({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "x", folder: "/p", force: true, live: true })).toBe(false);

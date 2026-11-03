@@ -54,7 +54,8 @@ export function activate(ccb: CcbWeb): () => void {
       return JSON.stringify([!!board.pins, !!board.subagent, (board.pins ?? []).map((pin) => pin.name).sort()]);
     },
   );
-  ccb.messages.specButton((spec) => specPinButton(spec));
+  // The pin button in the head of a component the component studio made from a reply: through the studio's seam, not the chat page's.
+  ccb.studio.specButton((spec) => specPinButton(spec));
   // Which pins the user can see changes as the chat or Board scrolls, the window resizes, or a pin
   // is opened or closed: the program part's timer reruns only those.
   const listeners = new AbortController();

@@ -6,8 +6,7 @@ import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } fro
 import { dirname, join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { cardData, linkedCards, previewCards, previewFile, previewURL } from "../../src/core/page-preview";
-import { Command } from "../../src/contract";
-import { draftSpec, replyPages } from "../../src/core/specs";
+import { draftSpec, replyPages } from "../../builtin-plugins/botling.component-studio/src/specs";
 import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT } from "../../src/core/components/builtins";
 import { parseLine } from "../../src/core/agent/stream";
 import { addSpending, claudeRateLimits, codexRateLimits, codexTokens, freshSpending, type RateLimits, type RateLimitWindow } from "../../src/core/usage";
@@ -101,9 +100,7 @@ describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(f
     expect(previewCards({ role: "user", text }, true)).toBeNull();
     expect(previewCards({ role: "bot", text }, false)).toBeNull();
     expect(previewCards({ role: "bot", text, displays: [{ name: "網頁預覽卡片", data: JSON.stringify({ path }) }] }, true)).toBeNull();
-    const command = { type: "spec.make", botId: "main", messageId: "reply" };
-    for (const preview of [-1, 0.5, 3]) expect(Command.safeParse({ ...command, preview }).success).toBe(false);
-    for (const preview of [0, 1, 2]) expect(Command.safeParse({ ...command, preview }).success).toBe(true);
+    // (Which card "Make into component" is asked for, 0 to 2, is checked by the plugin's `make`, botling.component-studio.)
   });
 
   it("serves only files inside an artifacts folder, through symlinks; a page encoded or climbing out is refused", () => {

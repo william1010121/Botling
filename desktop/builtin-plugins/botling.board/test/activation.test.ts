@@ -51,7 +51,7 @@ describe("who may use the page's own parts", () => {
   it("a plugin that does not ship with Botling gets neither ccb.page nor the message bars: it fails and is unloaded", async () => {
     host.unload(manifest.name);
     const used: string[] = [];
-    for (const use of [(ccb: Parameters<typeof activate>[0]) => ccb.page, (ccb: Parameters<typeof activate>[0]) => ccb.messages.cardBar(() => null), (ccb: Parameters<typeof activate>[0]) => ccb.messages.specButton(() => null)]) {
+    for (const use of [(ccb: Parameters<typeof activate>[0]) => ccb.page, (ccb: Parameters<typeof activate>[0]) => ccb.messages.cardBar(() => null), (ccb: Parameters<typeof activate>[0]) => ccb.studio.specButton(() => null)]) {
       sent.length = 0;
       await host.sync([{ ...spec, name: "outside", builtIn: undefined }], async () => (ccb) => { use(ccb); used.push("ran"); });
       expect(sent.some((action) => action.type === "pluginError" && String((action as { message?: string }).message).includes("ship with Botling")), String(use)).toBe(true);

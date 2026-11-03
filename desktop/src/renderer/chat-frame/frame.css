@@ -34,7 +34,7 @@ body.dropping::after { z-index: 50; }
 .message-width-handle:hover::after, .message-width-handle:focus-visible::after,
 .resizing-message-column .message-width-handle::after { background: var(--blue); }
 .resizing-message-column, .resizing-message-column * { cursor: col-resize !important; user-select: none !important; }
-body.board .message-width-handle, body.spec-mode .message-width-handle, body.panel-mode .message-width-handle { display: none; }
+body.board .message-width-handle, body.panel-mode .message-width-handle { display: none; }
 @media (width < 480px) {
   body:not(.board) #composer-slot, #pin-area { padding-left: 16px; padding-right: 16px; }
 }

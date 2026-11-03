@@ -25,7 +25,8 @@ import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
-import { SpecDesk } from "./spec-desk";
+import { studioWorld } from "./studio-world";
+import type { StudioWorld } from "./plugins/studio-seam";
 import type { CodexModel } from "./agent/codex-models";
 import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
@@ -37,7 +38,7 @@ import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
-  type SettingsChange, type SettingsView, type SpecAction, type SubagentRowView, type AgentTargetView,
+  type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView,
 } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
 import { AgentStore, migrationRecords } from "./store/agent-store";
@@ -45,7 +46,7 @@ import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } f
 import { agentMessageNotice, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotClosedNotice, subBotGroupFirstMessage } from "./agent-relay";
 import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
-import { filePath, pageInCard } from "./specs";
+import { filePath, pageInCard } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";
 import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
@@ -207,8 +208,6 @@ export class Core {
   /** Files waiting in each bot's input box. */
   readonly pending: PendingFiles;
   readonly maintainer: MaintainerDesk;
-  /** Components made from replies (Phase 5a, 1.x's Workspace+Specs). */
-  readonly specs: SpecDesk;
   private lastPlugins = "";
   /** The plugins' Claude parts as bots last heard of them (`followClaudeParts`). */
   private loadedClaudeParts = "[]";
@@ -255,14 +254,11 @@ export class Core {
     });
     this.componentStamp = this.components.library.stamp;
     this.components.commands.onPid = (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid));
-    this.components.commands.onChange = (card) => {
-      for (const bot of this.bots.values()) bot.cardChanged(card);
-      this.specs?.cardChanged(card);
-      // A pin's card is botling.board's: its run changed.
-      if (card.startsWith("pin/")) this.plugins?.event("cardChanged", { card });
-    };
+    // Every card's run goes to the plugins: botling.board's pins (`pin/<id>`), the component studio's specs' cards.
+    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.plugins.event("cardChanged", { card }); };
     // The plugins (their host starts later, in start()); the world they see is read when they ask.
     const host = options.plugins ?? null;
+    const self = this;
     this.plugins = new Plugins({
       dataDir: options.dataDir,
       node: host?.node ?? null,
@@ -396,6 +392,8 @@ export class Core {
             return true;
           },
         },
+        // The component studio's seam (plugins/studio-seam.ts); built when first asked, once Maintainer and the library exist.
+        get studio() { return self.studioNow(); },
         sessionMoved: (botId, reason) => this.bots.get(botId)?.restartBeforeNextMessage(reason),
         sessionBots: () => this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !this.removed.has(profile.id)).map((profile) => ({
           id: profile.id, name: profile.name, role: profile.role as "manager" | "bot", parent: profile.parent ?? null, folder: profile.folder,
@@ -488,9 +486,9 @@ export class Core {
         // What each turn used, by bot, and the subscriptions' limits (1.x's `record`, `note`).
         usage: (name, spent, tokens) => this.usage.record(spent, tokens, name),
         rateLimits: (engine, limits) => this.usage.note(engine, limits),
-        // A reply's spec chips and its own component (Phase 5a).
-        lineExtras: (bot, record) => this.specs?.lineExtras(bot, record) ?? {},
-        specsChanged: (bot) => this.specs?.specsChanged(bot),
+        // What a line shows besides itself for the component studio (botling.component-studio, through its seam): the library component a
+        // reply already is. The studio draws its chips under replies itself (chat.decorate).
+        lineExtras: (_bot, record) => this.plugins.studioLineExtras(record),
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
         pluginTags: (bot, tags) => this.plugins.replyTags(this.botInfo(bot), tags),
@@ -543,20 +541,6 @@ export class Core {
       plugins: () => this.plugins,
       rescan: () => this.scanComponents(),
       log: (line) => this.log(`maintainer: ${line}`),
-    });
-    this.specs = new SpecDesk({
-      // Every chat a spec can be in (`chatsWithPins`).
-      chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!]))],
-      library: this.components.library,
-      commands: this.components.commands,
-      maintainer: this.maintainer,
-      maintainerBot: () => this.bots.get(MAINTAINER_ID) ?? null,
-      member: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
-      bots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
-      emit: (spec) => this.event({ type: "spec.updated", spec }),
-      componentsChanged: () => this.componentsTick(),
-      clock: () => ({}),
-      log: (line) => this.log(`specs: ${line}`),
     });
     const app = options.app ?? null;
     this.releases = new ReleaseNotices({
@@ -671,7 +655,7 @@ export class Core {
     // Components bots asked Maintainer for that are in the library now go on their lists.
     if (catalogChanged || before !== this.components.library.names.join("\n")) {
       this.maintainer.deliverAsked();
-      this.specs.finishBuilds();
+      this.plugins.event("libraryChanged", {});
     }
     if (this.components.library.stamp !== this.componentStamp) {
       this.componentStamp = this.components.library.stamp;
@@ -711,30 +695,6 @@ export class Core {
       for (const file of [...pictures, ...(shot ? [shot] : [])]) rmSync(file, { force: true });
       this.componentsTick();
     }
-  }
-
-  /** Something done with a spec (its chip under a reply, its panel); not accepted when there is no such spec, or a run waits for the user's OK. */
-  private specAct(id: string, action: SpecAction): ResultOf<"spec.act"> {
-    const found = this.specs.locate(id.toUpperCase());
-    if (!found) return { accepted: false };
-    const { chat, spec } = found;
-    switch (action.kind) {
-      case "press": this.specs.press(spec.id, chat); break;
-      case "open": this.specs.open(spec.id, chat); break;
-      case "edit": this.specs.editValue(spec.id, action.key, action.value, chat); break;
-      case "answer": this.specs.answer(spec.id, action.question, action.option, chat); break;
-      case "say": this.specs.say(spec.id, action.text, action.request ?? null, chat); break;
-      case "testRun":
-      case "command": {
-        const outcome = action.kind === "testRun" ? this.specs.testRun(spec.id, chat, action.command, action.folder) : this.specs.runComponent(spec.id, chat, action);
-        return typeof outcome === "boolean" ? { accepted: outcome } : { accepted: false, needsApproval: outcome };
-      }
-      case "build": this.specs.build(spec.id, chat); break;
-      case "cancel": this.specs.cancel(spec.id, chat); break;
-      case "undo": this.specs.undo(spec.id, chat); break;
-      case "restore": this.specs.restore(spec.id, chat); break;
-    }
-    return { accepted: true };
   }
 
   /**
@@ -2009,9 +1969,6 @@ First write a test that shows this, then fix it.`;
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
       else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
       else if (request.kind === "agentMessage" || request.kind === "agentStop") later.push(() => { void this.agentTag(bot, request); });
-      // A bot's <suggest-component>: a chip under its reply; Maintainer's <component-spec>: into that spec (`Workspace.handle`).
-      else if (request.kind === "suggestComponent") later.push(() => this.specs.suggest(request.name, request.draft, this.bots.get(bot.id) ?? bot));
-      else if (request.kind === "componentSpec") { if (bot.id === MAINTAINER_ID) later.push(() => this.specs.applyUpdate(request.id, request.json, bot.lines().findLast((line) => line.role === "bot")?.text ?? "")); }
       else rest.push(request);
     }
     if (later.length) setImmediate(() => { for (const act of later) { try { act(); } catch (error) { this.log(`request: ${(error as Error).message}`); } } });
@@ -2152,6 +2109,22 @@ First write a test that shows this, then fix it.`;
 
   /** How plugins see a bot (`Workspace.info(for:)`): "main", or its id. */
   /** The bot a plugin names ("main": the main bot), unless it was taken out of the column. */
+  private studioCache: StudioWorld | null = null;
+  private studioNow(): StudioWorld {
+    return (this.studioCache ??= studioWorld({
+      // Every chat a spec can be in (`chatsWithPins`).
+      chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!]))],
+      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
+      library: this.components.library,
+      commands: this.components.commands,
+      maintainer: this.maintainer,
+      maintainerBot: () => this.bots.get(MAINTAINER_ID) ?? null,
+      componentBots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id) && !this.isSubBot(id)).map((id) => this.bots.get(id)!),
+      componentsChanged: () => this.componentsTick(),
+      mainId: MAIN_BOT_ID,
+    }));
+  }
+
   private pluginBot(botId: string): Bot | null {
     const id = botId === "main" ? MAIN_BOT_ID : botId;
     return this.removed.has(id) ? null : this.bots.get(id) ?? null;
@@ -2196,9 +2169,9 @@ First write a test that shows this, then fix it.`;
     if (bot.id === MAIN_BOT_ID) this.deliverInboxes();
     if (bot.id === MAINTAINER_ID) {
       this.maintainer.settle(record);
-      this.specs.finishBuilds();
+      this.plugins.event("libraryChanged", {});
       // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
-      setImmediate(() => setImmediate(() => { this.specs.settleChanges(record, bot.subagentsAtWork); this.componentsTick(); }));
+      setImmediate(() => setImmediate(() => { this.plugins.event("maintainerReplied", { role: record.role, text: record.text.slice(0, 2_000), running: bot.subagentsAtWork }); this.componentsTick(); }));
       this.componentsTick();
     }
   }
@@ -2443,7 +2416,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
-      case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card, cmd.component);
+      case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card, cmd.component, cmd.detail, cmd.from);
       case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.component, cmd.detail);
       case "plugins.tileImages": return this.plugins.tileImages(cmd.name, cmd.botId, cmd.data);
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
@@ -2569,22 +2542,11 @@ First write a test that shows this, then fix it.`;
         try { return { sent: this.reportFeedback(cmd.text, cmd.messageId, this.bot(cmd.botId), shot, pictures) }; }
         finally { for (const file of [...pictures, ...(shot ? [shot] : [])]) rmSync(file, { force: true }); }
       }
-      case "spec.make": {
-        const spec = this.specs.make(this.bot(cmd.botId), cmd.messageId, cmd.purpose ?? null, cmd.preview ?? null);
-        return { specId: spec?.id ?? null };
-      }
-      case "spec.act": return this.specAct(cmd.specId, cmd.action);
-      case "spec.approve": {
-        const found = this.specs.locate(cmd.specId.toUpperCase());
-        return { accepted: !!found && this.specs.approve(found.spec.id, found.chat, cmd.run, cmd) };
-      }
-      case "spec.close": this.specs.close(); return {};
       case "engine.models": {
         const bot = this.bot(cmd.botId);
         return this.options.engineModels?.(cmd.engine, bot.profile) ?? discoveryFailure(cmd.engine, "unsupported", "Model discovery is unavailable in this runtime.");
       }
       case "codex.models": return { models: ((await this.options.codexModels?.()) ?? []).slice(0, 200).map((model) => ({ id: model.id.slice(0, 200), name: model.name.slice(0, 200), isDefault: model.isDefault, efforts: model.efforts?.slice(0, 10) ?? null })) };
-      case "spec.wide": this.specs.setWide(cmd.wide); return {};
       case "component.revert": {
         const problem = this.components.library.revert(cmd.name);
         if (problem) this.bots.get(MAIN_BOT_ID)?.appNotice(`Couldn't revert component "${cmd.name}": ${problem}`);
@@ -2622,7 +2584,6 @@ First write a test that shows this, then fix it.`;
       settings: this.settingsNow(),
       doctor: this.doctor.view(),
       waiting: this.waiting(),
-      spec: this.specs.openId ? this.specs.payload(this.specs.openId) : null,
     };
   }
 

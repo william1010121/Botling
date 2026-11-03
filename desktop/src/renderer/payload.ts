@@ -1,8 +1,8 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PluginsView, RoutineView, SpecStateView, SubagentView, TaskView } from "../contract";
-import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
+import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PluginsView, RoutineView, SubagentView, TaskView } from "../contract";
+import type { ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
@@ -129,7 +129,7 @@ export function decorationView(decoration: ChatDecoration, tasks: TaskView[]): D
   });
   return {
     plugin: decoration.plugin, key: decoration.key,
-    ...(decoration.fold ? { fold: decoration.fold } : {}), ...(decoration.after ? { after: decoration.after } : {}),
+    ...(decoration.fold ? { fold: decoration.fold } : {}), ...(decoration.after ? { after: decoration.after } : {}), ...(decoration.under ? { under: decoration.under } : {}),
     tasks: chips.length ? chips : null, data: decoration.data,
   };
 }
@@ -142,10 +142,6 @@ export function displayView(view: DisplayView): WebDisplay {
   };
 }
 
-/** The open spec as the right panel's page draws it (Web/src's `SpecState`). */
-export function specState(view: SpecStateView, lang: string | null = null): SpecState {
-  return { ...view, components: componentInfos(view.components), ...(lang ? { lang } : {}) } as SpecState;
-}
 
 /** The library as the page needs it: being changed by Maintainer now, an earlier version to go back to. */
 const componentCache = new WeakMap<Record<string, ComponentInfoView>, Record<string, ComponentInfo>>();
@@ -263,9 +259,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       earlier: index < lastYours && !!steps?.length ? true : null,
       displays: message.displays?.length ? message.displays.map(displayView) : null,
       previews: message.previews?.length ? message.previews.map((preview) => ({ name: preview.name, data: preview.data })) : null,
-      // Components made from it (Phase 5a): a chip, then the component itself with "Edit spec".
-      specs: message.specs?.length ? message.specs.map((chip) => ({ id: chip.id, name: chip.name, status: chip.status, suggested: chip.suggested, open: chip.open,
-        component: chip.component, display: chip.display ? displayView(chip.display) : null, filling: chip.filling, undo: chip.undo ?? null })) : null,
       component: message.component ?? null,
       feedback: message.feedback ?? null,
     };
@@ -306,7 +299,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     }) } : {}),
     // The / menu: the app's and plugins' commands, then the bot's own components, then the rest of the library (`ChatPayload`).
     slashCommands: slashMenu(plugins),
-    messageMenu: menuItems(plugins, "message/context"),
+    messageMenu: menuItems(plugins, "message/context", lang),
+    previewMenu: menuItems(plugins, "message/preview", lang),
     ...slashLists(bot, Object.keys(components).sort()),
     ...headsParts(chat.heads),
     // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).
@@ -315,7 +309,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     pluginData: chat.pluginData ?? {},
     board,
     // "Make into component" on replies (1.x: every chat but a subagent's).
-    makeComponents: true,
     feedback,
     decorations: (chat.decorations ?? []).map((decoration) => decorationView(decoration, chat.tasks ?? [])),
   };

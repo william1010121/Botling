@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 // The chat page as the Board's tests need it: the page's kit lent to the plugin (what `PluginHost` does when it loads it), and the bars
-// the plugin puts on a card in a reply (`ccb.messages.cardBar`, `specButton`), registered the way `activate` registers them.
+// the plugin puts on a card in a reply (`ccb.messages.cardBar`; and `ccb.studio.specButton`, the pin in a built component's head), registered the way `activate` registers them.
 import { sent as postedActions } from "../../../../Web/src/bridge";
 import { extensions } from "../../../../Web/src/messages";
-import { pageKit } from "../../../../Web/src/plugins";
+import { pageKit, studioSeam } from "../../../../Web/src/plugins";
 import { useKit } from "../src/kit";
 import { barFor, pinBar, specPinButton } from "../src/pins";
 
@@ -13,7 +13,7 @@ export type SentAction = { type: string; [key: string]: any };
 export const sent = postedActions as unknown as SentAction[];
 
 let bar: (typeof extensions.cardBars)[number] | null = null;
-let button: (typeof extensions.specButtons)[number] | null = null;
+let button: (typeof studioSeam.specButtons)[number] | null = null;
 
 /** The kit set, and (unless `bars` is false) the plugin's bars on cards in replies. */
 export function installBoard({ bars = true }: { bars?: boolean } = {}): void {
@@ -29,12 +29,12 @@ export function installBoard({ bars = true }: { bars?: boolean } = {}): void {
   bar = { plugin: "botling.board", make: (display, messageID, index) => (barFor(display.name).offered ? pinBar(display, messageID, index) : null) };
   button = { plugin: "botling.board", make: (spec) => specPinButton(spec) };
   extensions.cardBars.push(bar);
-  extensions.specButtons.push(button);
+  studioSeam.specButtons.push(button);
 }
 
 export function removeBoard(): void {
   if (bar) extensions.cardBars.splice(extensions.cardBars.indexOf(bar), 1);
-  if (button) extensions.specButtons.splice(extensions.specButtons.indexOf(button), 1);
+  if (button) studioSeam.specButtons.splice(studioSeam.specButtons.indexOf(button), 1);
   bar = button = null;
 }
 

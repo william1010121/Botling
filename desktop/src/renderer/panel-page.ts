@@ -122,7 +122,7 @@ const ccb = {
   /** A component of the library as a tile ({ component, data, size: "1x1" | "2x1" | "2x2", botId }): the URL of its page, for an iframe of this page's own. */
   tile: (spec) => ask({ ccb: "tile", component: String(spec?.component ?? ""), data: spec?.data === undefined ? null : spec.data, size: String(spec?.size ?? ""), botId: String(spec?.botId ?? "") }),
   /** Asks the user to allow a bot's command in its folder ({ botId, command, folder, card? }); resolves { allowed }. */
-  requestApproval: (req) => ask({ ccb: "approval", botId: String(req?.botId ?? ""), command: String(req?.command ?? ""), folder: String(req?.folder ?? ""), ...(req?.card != null ? { card: String(req.card) } : {}) }),
+  requestApproval: (req) => ask({ ccb: "approval", botId: String(req?.botId ?? ""), command: String(req?.command ?? ""), folder: String(req?.folder ?? ""), ...(req?.card != null ? { card: String(req.card) } : {}), ...(req?.detail != null ? { detail: String(req.detail) } : {}) }),
   // Only the chat page can lend these; in a panel frame they do nothing.
   composer: { element: null, view: null, getText: () => "", insert() {}, addExtension: nothing, showPopover: nothing, onKeyDown: nothing },
   messages: { use() {}, afterRender: nothing },

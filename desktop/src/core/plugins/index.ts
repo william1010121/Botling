@@ -34,6 +34,7 @@ import { WORKSPACE_EVENT, type WorkspaceChange, type WorkspaceSource } from "../
 import { PendingTags } from "./pending-tags";
 import { SessionFolders, cleanFolder, type SessionFolder } from "./session-folders";
 import { AppBriefingParams, AppCardParams, AppInstallParams, AppTellParams, BriefingBook, installCommandOK, type AppWorld } from "./app-seam";
+import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./studio-seam";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -45,7 +46,7 @@ export interface PluginStatusItem { id: string; text: string; icon: string | nul
 /** A chat as a plugin may read it (`chat.messages`): its newest lines as kept, its task cards, its name and unread count. */
 export interface PluginChat { botId: string; name: string; unread: number; messages: unknown[]; tasks: { id: string; name: string; state: string; messageIDs: string[] }[] }
 /** What a plugin's web part draws among a chat's messages (`chat.decorate`, chat extension v2). */
-export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; tasks?: string[]; data?: JSONValue }
+export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; under?: string; tasks?: string[]; data?: JSONValue }
 /** How Botling starts an engine's CLI here (`engines.cli`), for a plugin's one-shot model call. */
 export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
 
@@ -131,6 +132,8 @@ export interface PluginWorld {
   sessionBots?(): SessionBot[];
   /** The app around the core for botling.dev (`app.*`, built-in plugins only). Absent: a world without an app (tests, spec adapters). */
   app?: AppWorld;
+  /** What the component studio asks of the core (`studio.*`, built-in plugins only). Absent: a world without one (tests, spec adapters). */
+  studio?: StudioWorld;
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
   addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
   /** A bot's routines as the app lists them (`routines.list`; null: no such bot). Absent: a world without routines (tests, spec adapters). */
@@ -184,6 +187,8 @@ const EmitParams = z.object({ plugin: str(214), name: str(100).min(1), botId: st
 /** The most a push to a plugin's frames (`ui.emit`) may carry (JSON text). */
 const EMIT_MAX = 1_000_000;
 const ViewParams = z.object({ plugin: str(214), id: str(100).min(1), args: z.unknown().optional() });
+/** `ui.takeover`: opens one of the plugin's `rightPanel.takeover` views for a bot (`view`), or closes it (null). */
+const TakeoverParams = z.object({ plugin: str(214), view: str(100).min(1).nullable(), bot: str(128).optional(), wide: z.boolean().optional() });
 const SettingParams = z.object({ plugin: str(214), key: str(200), value: z.union([z.boolean(), z.number(), z.string().max(100_000), z.null()]) });
 const SecretKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
 const SecretGetParams = z.object({ plugin: str(214), key: SecretKey });
@@ -193,7 +198,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -225,6 +230,7 @@ const DecorateParams = BotParams.extend({
     key: str(300).min(1),
     fold: z.array(ContractId).max(2_000).optional(),
     after: ContractId.optional(),
+    under: ContractId.optional(),
     tasks: z.array(ContractId).max(100).optional(),
     data: z.unknown().optional(),
   })).max(200),
@@ -260,6 +266,8 @@ export class Plugins {
   private readonly decorated = new Map<string, Map<string, MessageDecoration[]>>();
   /** What each plugin keeps for each chat's page (`chat.setData`), by the core's bot id, until it unloads. */
   private readonly chatDatas = new Map<string, Map<string, JSONValue>>();
+  /** The `rightPanel.takeover` view open now (`ui.takeover`), by the core's bot id; at most one, gone when its plugin is. */
+  private takeover: { plugin: string; view: string; botId: string; wide: boolean } | null = null;
 
   constructor(private readonly options: PluginsOptions) {
     const { dataDir, world } = options;
@@ -280,6 +288,7 @@ export class Plugins {
       this.followWorkspace();
       if (!plugin) return;
       this.status.delete(plugin);
+      if (this.takeover?.plugin === plugin) this.takeover = null;
       this.dropDecorations(plugin);
       this.registry.recordHostFailure(plugin, message, fatal);
     };
@@ -312,6 +321,7 @@ export class Plugins {
     const app = this.options.world.appSettings();
     this.host.update(this.registry.hostSpecs(this.dataRoot).map((spec) => ({ ...spec, app })));
     for (const name of [...this.status.keys()]) if (!this.loaded(name)) this.status.delete(name);
+    if (this.takeover && !this.drawing(this.takeover.plugin)) this.takeover = null;
     this.dropDecorations();
     this.foldersChanged();
     this.announce();
@@ -457,7 +467,15 @@ export class Plugins {
       secretsProblem: this.secrets.problem?.slice(0, 2_000) ?? null,
       ...commandSurfaces(this.contributions()),
       ...viewSurfaces(this.contributions(), (name) => !!this.registry.webPart(name)),
+      takeover: this.takeover ? { plugin: this.takeover.plugin, view: this.takeover.view, botId: this.takeover.botId, wide: this.takeover.wide } : null,
     };
+  }
+
+  /** The user (or the app) closed the takeover: the plugin's program part is told by the frame's own call, not here. */
+  closeTakeover() {
+    if (!this.takeover) return;
+    this.takeover = null;
+    this.announce();
   }
 
   /**
@@ -720,6 +738,22 @@ export class Plugins {
     return plugin;
   }
 
+  /** The studio seam's world, when `name` is a plugin shipped with Botling that has the "studio" permission (the only kind whose frames may ask for a command in another folder). */
+  private studioPlugin(name: string): StudioWorld | null {
+    const plugin = this.registry.plugin(name);
+    if (!plugin || !plugin.enabled || plugin.failure || !plugin.builtIn || !plugin.manifest.ccb?.permissions?.includes("studio")) return null;
+    return this.options.world.studio ?? null;
+  }
+
+  /**
+   * What a chat's line shows besides itself for the component studio (bot.ts `lineExtras`): asked of the studio seam's world, and only
+   * while a plugin shipped with Botling that has the "studio" permission is on (none: nothing, as there is no "Make into component" then).
+   */
+  studioLineExtras(record: { role: string; displays?: unknown }): { component?: string } {
+    const on = this.registry.plugins.find((plugin) => plugin.enabled && !plugin.failure && plugin.builtIn && !!plugin.manifest.ccb?.permissions?.includes("studio"));
+    return (on && this.options.world.studio?.lineExtras(record)) || {};
+  }
+
   /** The bot's command as the core has it: refused unless `folder` is that bot's own folder. */
   private approvalState(botId: string, command: string, folder: string) {
     const state = this.options.world.commandApproval(botId, command);
@@ -732,7 +766,7 @@ export class Plugins {
    * A frame's `ccb.requestApproval`, from the app page (which bound the frame to `name`): what the app page's
    * ApprovalSheet shows (null: allowed already, nothing to ask). Asking allows nothing.
    */
-  approvalAsk(name: string, botId: string, command: string, folder: string, card?: string, component?: string): { needsApproval: ApprovalAskView | null } {
+  approvalAsk(name: string, botId: string, command: string, folder: string, card?: string, component?: string, detail?: string, from?: "frame" | "chat"): { needsApproval: ApprovalAskView | null } {
     const plugin = this.asking(name);
     // A pin's card (botling.board): the component's own Detail command comes with it, and the sheet names the component, as a card's does.
     if (component !== undefined) {
@@ -742,6 +776,16 @@ export class Plugins {
       if (ask === undefined || ask === null) return { needsApproval: null };
       if (resolvePath(ask.folder) !== resolvePath(folder)) throw new ContractError("conflict", "That is not the folder this bot's commands run in.");
       return { needsApproval: ask };
+    }
+    // The chat page is one realm for every plugin's web part: only the component studio's may ask from there (a frame is told apart by its own window).
+    if (from === "chat" && !this.studioPlugin(name)) throw new ContractError("forbidden", `A web part of "${name}" may not ask for approval in the chat.`);
+    // The component studio's commands run in the folder of the reply they came from, and may have a Detail command: what the
+    // sheet asks is exactly the command, folder and detail the user will allow (the core's own words for the card).
+    const studio = this.studioPlugin(name);
+    if (studio) {
+      if (!this.options.world.botId?.(botId)) throw new ContractError("not_found", "No such bot.");
+      if (studio.commands.isApproved(command, folder) && studio.commands.isDetailApproved(detail ?? null, folder)) return { needsApproval: null };
+      return { needsApproval: { command, folder, detail: detail ?? null, card: card ? card.slice(0, 100) : title(plugin.manifest).slice(0, 100) } };
     }
     const state = this.approvalState(botId, command, folder);
     if (state.approved) return { needsApproval: null };
@@ -763,6 +807,12 @@ export class Plugins {
     if (component !== undefined) {
       if (!this.shipped(name)) throw new ContractError("forbidden", "Only a plugin shipped with Botling may approve a component's card.");
       return { accepted: this.options.world.cardApprove?.(botId, command, component, folder, detail ?? null) ?? false };
+    }
+    const studio = this.studioPlugin(name);
+    if (studio) {
+      if (!this.options.world.botId?.(botId)) throw new ContractError("not_found", "No such bot.");
+      studio.commands.approve(command, folder, detail ?? null);
+      return { accepted: true };
     }
     this.approvalState(botId, command, folder);
     return { accepted: this.options.world.approveCommand(botId, command) };
@@ -903,6 +953,22 @@ export class Plugins {
         const panel = plugin.manifest.ccb?.web ? plugin.manifest.ccb.contributes?.panels?.find((candidate) => candidate.id === data.id) : undefined;
         if (!panel) throw new Error(`Plugin "${name}" has no view "${data.id}".`);
         world.openPanel(name, panel.id, panel.title.slice(0, 200));
+        return null;
+      }
+      case "ui.takeover": {
+        const { plugin, data } = this.asked(TakeoverParams, params);
+        const name = plugin.manifest.name;
+        const before = JSON.stringify(this.takeover);
+        if (data.view === null) {
+          if (this.takeover?.plugin === name) this.takeover = null;
+        } else {
+          const declared = plugin.manifest.ccb?.web && ofKind(this.contributions(), "view").some((entry) => entry.plugin === name && entry.id === data.view && entry.where === "rightPanel.takeover");
+          if (!declared) throw new Error(`Plugin "${name}" has no takeover view "${data.view}".`);
+          const botId = data.bot === undefined ? null : world.botId?.(data.bot) ?? null;
+          if (!botId) throw new Error("No such bot.");
+          this.takeover = { plugin: name, view: data.view, botId, wide: data.wide === true };
+        }
+        if (JSON.stringify(this.takeover) !== before) this.announce();
         return null;
       }
       case "settings.update": {
@@ -1111,7 +1177,7 @@ export class Plugins {
         if (!botId) throw new Error("No such bot.");
         const list: MessageDecoration[] = data.decorations.map((entry) => ({
           plugin: name, key: entry.key,
-          ...(entry.fold?.length ? { fold: entry.fold } : entry.after ? { after: entry.after } : {}),
+          ...(entry.fold?.length ? { fold: entry.fold } : entry.after ? { after: entry.after } : entry.under ? { under: entry.under } : {}),
           ...(entry.tasks?.length ? { tasks: entry.tasks } : {}),
           ...(entry.data === undefined ? {} : { data: entry.data as JSONValue }),
         }));
@@ -1179,8 +1245,17 @@ export class Plugins {
         const { data } = this.asked(EngineParams, params);
         return world.engineCli?.(data.engine) ?? null;
       }
-      default:
+      default: {
+        if (isStudioMethod(method)) {
+          // The component studio's asks of the core: a plugin shipped with Botling, with the "studio" permission.
+          const { plugin, data } = this.asked(StudioParams[method], params);
+          this.needs(plugin, "studio", "Asking the component studio's seam");
+          if (!this.shipped(plugin.manifest.name)) throw new Error("Only a plugin shipped with Botling may use the studio seam.");
+          if (!world.studio) throw new Error("There is no component studio here.");
+          return studioAnswer(world.studio, method, data);
+        }
         throw new Error(`Unknown method "${method.slice(0, 80)}".`);
+      }
     }
   }
 }

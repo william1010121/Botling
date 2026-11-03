@@ -57,6 +57,33 @@ describe("DecorationLayer", () => {
     expect(order()).toEqual(["u", "[k]", "a", "b", "c", "d"]);
   });
 
+  it("puts an `under` decoration inside its message's column, last, and makes a column for a message that has none", () => {
+    const layer = new DecorationLayer();
+    layer.register("p", renderer());
+    // `a` has a column (a reply with task chips); `b` has only its bubble.
+    const column = document.createElement("div");
+    column.className = "bot-column";
+    column.innerHTML = `<div class="bubble">a</div><div class="task-chips"></div>`;
+    row("a")!.append(column);
+    row("b")!.innerHTML = `<div class="avatar"></div><div class="bubble">b</div><div class="actions"></div>`;
+    const under = (key: string, id: string): DecorationView => ({ plugin: "p", key, under: id, data: key });
+    layer.update(state([under("ka", "a"), under("kb", "b")]), row);
+    expect([...column.children].map((el) => (el as HTMLElement).className)).toEqual(["bubble", "task-chips", "decoration-extra"]);
+    // The column made for `b` wraps its bubble and holds the decoration after it; the row's other parts stay where they were.
+    const made = row("b")!.querySelector<HTMLElement>(":scope > .bot-column")!;
+    expect([...made.children].map((el) => (el as HTMLElement).className)).toEqual(["bubble", "decoration-extra"]);
+    expect([...row("b")!.children].map((el) => (el as HTMLElement).className)).toEqual(["avatar", "bot-column", "actions"]);
+    // Drawn again: nothing is made twice, and the decoration stays last.
+    column.append(Object.assign(document.createElement("div"), { className: "late" }));
+    layer.update(state([under("ka", "a"), under("kb", "b")]), row);
+    expect(row("b")!.querySelectorAll(".bot-column")).toHaveLength(1);
+    expect([...column.children].at(-1)!.className).toBe("decoration-extra");
+    // Gone: the column made for `b` is given back (the bubble is the row's again).
+    layer.update(state([under("ka", "a")]), row);
+    expect([...row("b")!.children].map((el) => (el as HTMLElement).className)).toEqual(["avatar", "bubble", "actions"]);
+    expect(column.querySelector(".decoration-extra")).not.toBeNull();
+  });
+
   it("puts an `after` decoration after its line without folding anything", () => {
     const layer = new DecorationLayer();
     layer.register("p", renderer());

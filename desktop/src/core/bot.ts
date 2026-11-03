@@ -57,12 +57,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
-import { readSpec, sameSpec, type ComponentSpec } from "./specs";
+import { sameJSON } from "./same-json";
 import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import {
   ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
-  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView,
+  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks,
 } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
@@ -227,10 +227,8 @@ export interface BotOptions {
   answeringIn?: () => string | null;
   /** Its @s still being answered or waiting, said with its next turn (status only; null: none). */
   callInNote?: () => string | null;
-  /** What a line shows besides itself: the specs made from it, the component it already is (Phase 5a). */
-  lineExtras?: (bot: Bot, record: ChatRecord) => { specs?: SpecChipView[]; component?: string };
-  /** Its specs changed (the spec panel follows). */
-  specsChanged?: (bot: Bot) => void;
+  /** What a line shows besides itself for the component studio, through its seam (the plugins' `studioLineExtras`): the component it already is (Phase 5a). */
+  lineExtras?: (bot: Bot, record: ChatRecord) => { component?: string };
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
   launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number; specWriters?: readonly string[] };
   /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
@@ -327,6 +325,14 @@ const PLUGINS_RESTART = { told: "loading new plugins", shown: "loading new plugi
 const PROMPT_SESSION_DIVIDER = "New session (instructions updated)";
 const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
 
+/**
+ * A component spec as specs.json keeps it. It is the component studio's (botling.component-studio) record: the core keeps the list a chat
+ * has, and knows only each record's id and the line it is made from.
+ */
+export interface StoredSpec { id: string; messageID?: string; [field: string]: unknown }
+const readStoredSpec = (value: unknown): StoredSpec | null =>
+  value && typeof value === "object" && !Array.isArray(value) && typeof (value as StoredSpec).id === "string" ? (value as StoredSpec) : null;
+
 export class Bot {
   readonly store: BotStore;
   readonly tasks: TaskBook;
@@ -338,8 +344,8 @@ export class Bot {
    */
   private managedTaskHandoffs = new Map<string, string>();
   private managedHandbacks = new Set<string>();
-  /** Components being made from its replies (specs.json, 1.x's format; the primary's). */
-  private specList: ComponentSpec[] = [];
+  /** Components being made from its replies (specs.json, 1.x's format; the primary's): the component studio's records, kept as they are. */
+  private specList: StoredSpec[] = [];
   /** The task each head last replied on (`headTask`): hand-offs it makes help that task. */
   private headTask = new Map<Engine, string>();
   private records: ChatRecord[] = [];
@@ -520,7 +526,7 @@ export class Bot {
       this.doneLog = readDoneLog(this.store.loadDoneLog());
       this.doneLogSaved = JSON.stringify(doneLogFile(this.doneLog));
       recordDone(this.doneLog, this.tasks.tasks, Date.now());
-      this.specList = this.readList("specs.json", readSpec);
+      this.specList = this.readList("specs.json", readStoredSpec);
       const list = this.store.loadSettings().components;
       this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
     }
@@ -775,9 +781,8 @@ export class Bot {
     // The result pages it links to, as preview cards, when the library has the card (Phase 5c).
     const previews = this.owner.previews(record);
     if (previews) view.previews = previews.map((data) => ({ name: PAGE_COMPONENT, data }));
-    // Specs made from it and the component it already is (Phase 5a), from the spec desk.
+    // The component it already is (Phase 5a), from the component studio's seam; the studio draws the specs made from it itself (chat.decorate).
     const extras = this.owner.options.lineExtras?.(this.owner, record);
-    if (extras?.specs?.length) view.specs = extras.specs;
     if (extras?.component) view.component = extras.component;
     // A "not right" report shows short (1.x's `FeedbackNote`, read back from the text for older ones).
     if (record.role === "relay") {
@@ -792,21 +797,20 @@ export class Bot {
   // Component specs (1.x's `specs`, `editSpecs`)
 
   /** The specs made from its replies. */
-  get specs(): readonly ComponentSpec[] {
+  get specs(): readonly StoredSpec[] {
     return this.owner.specList;
   }
 
   /** Changes its specs and saves them, if anything changed (`editSpecs`); the lines they belong to are drawn again. */
-  editSpecs(change: (specs: ComponentSpec[]) => void): boolean {
+  editSpecs(change: (specs: StoredSpec[]) => void): boolean {
     const owner = this.owner;
     const edited = structuredClone(owner.specList);
     change(edited);
-    if (sameSpec(edited, owner.specList)) return false;
+    if (sameJSON(edited, owner.specList)) return false;
     const touched = new Set([...owner.specList, ...edited].flatMap((spec) => (spec.messageID ? [spec.messageID] : [])));
     owner.specList = edited;
     if (!owner.readOnly) owner.store.saveList("specs.json", edited);
     for (const id of touched) owner.refreshLine(id);
-    owner.options.specsChanged?.(owner);
     return true;
   }
 
@@ -2481,8 +2485,8 @@ export class Bot {
 
   /**
    * No silent fallback to a Claude worker/plugin from an Antigravity reply: <component> and <plugin> set Maintainer to work.
-   * What the app does itself stays: new bots and projects (asked on a card), a <suggest-component> chip (Maintainer only
-   * when the user presses it, as "Make into component"), and Maintainer's own <component-spec>.
+   * What the app does itself stays: new bots and projects (asked on a card). <suggest-component> and
+   * Maintainer's <component-spec> belong to the built-in plugin botling.component-studio (replyTags).
    */
   private handleRequests(requests: BotRequest[]): BotRequest[] {
     const unavailable = new Set(["component", "plugin"]);
