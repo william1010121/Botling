@@ -34,11 +34,13 @@ export interface PluginEvents {
   chatRead: { botId: string; unread: number; through: string | null };
   /** The developer project (Settings → Developer) or developer mode changed: `before`/`now` are the project bot's ids (null: none); `turnedOn`: developer mode was just turned on. */
   developerChanged: { before: string | null; now: string | null; turnedOn: boolean };
+  /** A bot was removed from Botling (its folder stays). */
+  botRemoved: { botId: string };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -218,6 +220,8 @@ export interface BotlingApi {
 
   bots: {
     list(): Promise<BotInfo[]>;
+    /** A bot's working folder (absolute; null: no such bot). The main bot's too. Needs "exec": what runs there is the plugin's own doing. */
+    folder(botId: string): Promise<string | null>;
     /**
      * A message to a bot. By default it shows as sent by this plugin; `as: "user"` sends it as the
      * user's own and needs the "bots" capability.
@@ -295,6 +299,11 @@ export interface BotlingApi {
     setStatus(id: string, item: StatusItem | null): void;
     /** Opens `method` to this plugin's own frames (panels) and web part: the only methods they can call. */
     expose(method: string, fn: (params: unknown) => unknown): Dispose;
+    /**
+     * Pushes `data` (JSON, at most 1 MB) to this plugin's frames as event `event` (`ccb.on(event, fn)` there): those of bot `opts.botId`
+     * only when given, else every frame of this plugin. Fire and forget: a frame not open misses it, and nothing is kept.
+     */
+    emit(event: string, data: JSONValue, opts?: { botId?: string }): void;
   };
   events: {
     on<E extends PluginEventName>(event: E, fn: (data: PluginEvents[E]) => void): Dispose;
@@ -427,6 +436,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     spawn: (file, args, opts = {}) => spawn(String(file), (args ?? []).map(String), opts, where, plugin.children),
     bots: {
       list: async () => (await ask("bots.list")) as BotInfo[],
+      folder: async (botId) => (await ask("bots.folder", { bot: botId })) as string | null,
       send: (botId, text, opts = {}) => quiet(ask("bots.send", { bot: botId, text, as: opts.as === "user" ? "user" : "plugin" }) as Promise<{ messageId: string }>),
       wake: async (botId, prompt) => { await ask("bots.wake", { bot: botId, ...(prompt === undefined ? {} : { prompt }) }); },
       interrupt: async (botId) => { await ask("bots.interrupt", { bot: botId }); },
@@ -541,6 +551,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       openView: async (id, args) => { await ask("ui.openView", { id, ...(args === undefined ? {} : { args }) }); },
       setStatus: (id, item) => host.notify("ui.setStatus", { plugin: name, id, item: item ?? null }),
       expose,
+      emit: (event, data, opts = {}) => host.notify("ui.emit", { plugin: name, name: String(event), data: data === undefined ? null : data, ...(opts.botId ? { botId: opts.botId } : {}) }),
     },
     events: {
       on: (event, fn) => {

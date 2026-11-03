@@ -19,6 +19,8 @@ export interface FrameTarget {
   label: string;
   /** A message from this frame (its window and opaque origin already checked). */
   receive(data: unknown): void;
+  /** How often it may call, when more than most frames (a panel that streams, like a terminal's input and acknowledgements). */
+  rate?: { burst: number; perSecond: number };
 }
 
 export interface Refusal { at: number; reason: string; card: string | null }
@@ -62,8 +64,9 @@ export class FrameBroker {
   /** Spends one of the frame's calls; false: it is calling too often. */
   allow(target: FrameTarget): boolean {
     const now = Date.now();
-    const bucket = this.buckets.get(target) ?? { tokens: RATE.burst, at: now };
-    bucket.tokens = Math.min(RATE.burst, bucket.tokens + ((now - bucket.at) / 1000) * RATE.perSecond);
+    const rate = target.rate ?? RATE;
+    const bucket = this.buckets.get(target) ?? { tokens: rate.burst, at: now };
+    bucket.tokens = Math.min(rate.burst, bucket.tokens + ((now - bucket.at) / 1000) * rate.perSecond);
     bucket.at = now;
     this.buckets.set(target, bucket);
     if (bucket.tokens < 1) return false;
@@ -107,19 +110,29 @@ export interface PluginFrame {
   onError?(message: string): void;
   /** How tall its content is (px); a frame sized to its content (`panelPage` with `fit`) says so. */
   onResize?(height: number): void;
+  /** Its web part is up. */
+  onReady?(): void;
+  /** A `bottomPanel` view asks to be shown or hidden. */
+  onPanel?(visible: boolean): void;
+  /** A key combination it did not use, for the page's own shortcuts. */
+  onKey?(key: Extract<FrameRequest, { ccb: "key" }>): void;
+  /** See `FrameTarget.rate`. */
+  rate?: { burst: number; perSecond: number };
 }
 
 /** Hears a plugin's frame; who it is comes from here, never from its messages. */
-export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, { frame, plugin, onNotice, onError, onResize }: PluginFrame): () => void {
+export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, { frame, plugin, onNotice, onError, onResize, onReady, onPanel, onKey, rate }: PluginFrame): () => void {
   const target: FrameTarget = {
     frame,
     label: plugin,
+    ...(rate ? { rate } : {}),
     receive(data) {
       const message = parseFrameRequest(data);
       if (!message) {
         const kind = (data as { ccb?: unknown } | null)?.ccb;
         // Its page says it is ready; nothing to answer.
-        if (kind !== "ready") broker.refuse(`a message that is not a valid ccb call (${typeof kind === "string" ? kind.slice(0, 40) : typeof data})`, target);
+        if (kind === "ready") onReady?.();
+        else broker.refuse(`a message that is not a valid ccb call (${typeof kind === "string" ? kind.slice(0, 40) : typeof data})`, target);
         return;
       }
       const reply = (id: number, ok: boolean, value: unknown) => frame.contentWindow?.postMessage(frameReply(id, ok, value), "*");
@@ -159,6 +172,14 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
           return;
         case "resize":
           onResize?.(message.height);
+          return;
+        case "panel":
+          if (!broker.allow(target)) { broker.refuse("too many calls", target); return; }
+          onPanel?.(message.visible);
+          return;
+        case "key":
+          if (!broker.allow(target)) { broker.refuse("too many calls", target); return; }
+          onKey?.(message);
           return;
         case "error":
           onError?.(message.message.slice(0, 400));

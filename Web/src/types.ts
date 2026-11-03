@@ -171,6 +171,8 @@ export interface SpecChipView {
   display?: DisplayView | null;
   /** Built; the bot that wrote the reply is drawing it for the reply now (its name). */
   filling?: string | null;
+  /** "undo": it can be taken off the bots' lists; "restore": it was, and can be put back (ADR-006 M4). */
+  undo?: "undo" | "restore" | null;
 }
 
 export type SpecStatus = "draft" | "building" | "done";
@@ -571,6 +573,8 @@ export type Action =
   | { type: "openSpec"; id: string }
   | { type: "selectTask"; id: string }
   | { type: "pressSpec"; id: string }
+  | { type: "undoSpec"; id: string }
+  | { type: "restoreSpec"; id: string }
   | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; force?: boolean }
   | { type: "specEdit"; id: string; key: string; value: string }
   | { type: "specAnswer"; id: string; question: string; option: number }

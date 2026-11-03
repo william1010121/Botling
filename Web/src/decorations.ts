@@ -16,8 +16,13 @@ type Dispose = () => void;
 export interface DecorationContext {
   /** The chat as drawn now (read only). */
   readonly state: ChatState;
-  /** A message's drawn row (null: not drawn now). */
+  /** A message's drawn row (null: not drawn now). Never moves the chat: safe to call on every draw. */
   row(id: string): HTMLElement | null;
+  /**
+   * Like `row`, but a message outside the mounted window is mounted first (the chat moves to it).
+   * Only for something the person asked for, such as opening a source: never on a draw or update.
+   */
+  find(id: string): HTMLElement | null;
   /** Draw every decoration again (after something only the plugin knows changed, such as a dialog closing). */
   redraw(): void;
   /** Opens a task in the right panel, as its chip under a reply does. */
@@ -99,7 +104,9 @@ export class DecorationLayer {
   }
 
   private place(id: string, decoration: DecorationView, state: ChatState, row: (id: string) => HTMLElement | null): boolean {
-    const rows = decoration.fold?.length ? decoration.fold.map(row).filter((found): found is HTMLElement => !!found) : [];
+    // The card goes before the first of its lines as they stand in the page, whatever order they are listed in.
+    const rows = decoration.fold?.length ? decoration.fold.map(row).filter((found): found is HTMLElement => !!found)
+      .sort((a, b) => (a === b ? 0 : a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)) : [];
     const anchor = !decoration.fold?.length && decoration.after ? row(decoration.after) : null;
     if (!rows.length && !anchor) return false;
     let placed = this.placed.get(id);
@@ -142,7 +149,10 @@ export class DecorationLayer {
   private context(state: ChatState, row: (id: string) => HTMLElement | null): DecorationContext {
     return {
       state,
-      row: (id) => row(id) ?? findMessageRow(id),
+      // Draws run on every update of the chat: asking for an unmounted row there would mount the
+      // window around it each time and pull the chat away from where it is read.
+      row: (id) => row(id),
+      find: (id) => row(id) ?? findMessageRow(id),
       redraw: () => queueMicrotask(() => this.redraw()),
       openTask: (id) => post({ type: "selectTask", id }),
     };
@@ -154,6 +164,7 @@ export class DecorationLayer {
     if (!placed?.decoration.fold?.includes(message)) return;
     placed.revealed.add(message);
     const row = this.last?.row(message) ?? findMessageRow(message);
+    // (A person clicked to show it: mounting the window around it is wanted here.)
     this.redraw();
     if (!row) return;
     row.classList.remove("decoration-folded");

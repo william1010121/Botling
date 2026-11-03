@@ -1,9 +1,6 @@
-import { BotTerminals } from './terminal';
-import { sendTerminalEvent } from './terminal-transport';
-import { installTerminalIPC } from './terminal-ipc';
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, webContents, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
@@ -26,6 +23,7 @@ import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
 import {directoryDefaults,packagedDataDir} from "./main-environment";
 import { StartupMarks } from "../startup-marks";
 import { checkReport } from "../core/plugins/check-report";
+import { INSPECT_FLAG, inspectReport } from "../core/plugins/inspect-report";
 import { CoreClient } from "./core-client";
 import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
@@ -54,6 +52,18 @@ const checkAt = process.argv.indexOf("--check-plugin");
 if (checkAt >= 0) {
   const report = checkReport(process.argv[checkAt + 1]);
   // Written synchronously, then exit at once: nothing below (data folder, single-instance lock) runs.
+  if (report.stdout) writeSync(1, report.stdout);
+  if (report.stderr) writeSync(2, report.stderr);
+  process.exit(report.code);
+}
+// `--inspect-plugins list | <query> [json]` (ADR-006 M2): the Maintainer's read-only questions about the plugin world, then exit.
+const inspectAt = process.argv.indexOf(INSPECT_FLAG);
+if (inspectAt >= 0) {
+  const report = inspectReport(process.argv.slice(inspectAt + 1), {
+    cwd: process.cwd(),
+    builtIns: app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"),
+    themeCssFile: join(root, "out", "renderer", "styles.css"),
+  });
   if (report.stdout) writeSync(1, report.stdout);
   if (report.stderr) writeSync(2, report.stderr);
   process.exit(report.code);
@@ -140,11 +150,6 @@ let mainWindow: BrowserWindow | null = null;
 const openingWindows = new WeakMap<BrowserWindow, Promise<boolean>>();
 const appContents = new Set<number>();
 
-const terminals = new BotTerminals((owner, event) => {
-  const contents = webContents.fromId(owner) ?? undefined;
-  sendTerminalEvent(contents, event);
-});
-const deletedTerminalBots = new Set<string>();
 // The application menu's accelerators follow Settings > Shortcuts; rebuilt whenever they change.
 let shortcutOverrides: unknown = {};
 let menuSignature = "";
@@ -166,7 +171,6 @@ const core: CoreClient = new CoreClient({
   env: coreEnvironment(),
   onEvent: (event) => {
     if (event.event.type === 'settings.updated') applyMenu(event.event.settings.shortcuts);
-    if (event.event.type === 'bot.removed') { deletedTerminalBots.add(event.event.botId); terminals.remove(event.event.botId); }
     broadcast(event);
   },
   audit: note,
@@ -343,12 +347,6 @@ function fromAppFrame(event: Pick<IpcMainEvent, "sender" | "senderFrame">): bool
   if (!ok) note(`refused IPC from ${frame?.url ?? "an unknown frame"} (contents ${event.sender.id})`);
   return ok;
 }
-
-installTerminalIPC(ipcMain, terminals, fromAppFrame, async botId => {
-  const snapshot = await core.call({ type: 'chat.snapshot' });
-  if (deletedTerminalBots.has(botId)) return null;
-  return snapshot.bots.find(bot => bot.id === botId)?.folder ?? null;
-});
 
 // A separate diagnostic channel: renderer arguments cannot grant main persistence authority.
 ipcMain.on(TEST_TRACE_CHANNEL,(event,record:unknown)=>acceptTraceIPC(traceWriter,()=>{
@@ -661,7 +659,6 @@ function createWindow() {
   });
   appContents.add(window.webContents.id);
   const id = window.webContents.id;
-  window.webContents.once('destroyed', () => terminals.closeOwner(id));
   window.on('focus',()=>traceWriter?.observe('native.window.focus',{contentsId:id}));
   window.on('blur',()=>traceWriter?.observe('native.window.blur',{contentsId:id}));
   window.webContents.on('focus',()=>traceWriter?.observe('native.contents.focus',{contentsId:id}));
@@ -669,7 +666,7 @@ function createWindow() {
   window.webContents.on('did-start-navigation',(details)=>traceWriter?.observe('native.navigation.start',{contentsId:id,url:details.url.slice(0,2048),isMainFrame:details.isMainFrame,frame:traceFrameIdentity(details.frame)}));
   window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
-  window.on("closed", () => { terminals.closeOwner(id); appContents.delete(id); if (mainWindow === window) mainWindow = null; });
+  window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
   window.webContents.once('did-finish-load',()=>startup.mark('window.loaded'));
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);
   const editor=prepareNativeEditorHost(window,root,ownerReady,preloadDir);
@@ -776,8 +773,7 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
   });
   appContents.add(window.webContents.id);
   const id = window.webContents.id;
-  window.webContents.once('destroyed', () => terminals.closeOwner(id));
-  window.on("closed", () => { terminals.closeOwner(id); appContents.delete(id); });
+  window.on("closed", () => { appContents.delete(id); });
   mainWindow = window;
   return window;
 }
@@ -833,10 +829,9 @@ app.on("before-quit", (event) => {
   if (stopping) return;
   stopping = true;
   event.preventDefault();
-  const terminalShutdown = terminals.closeAll();
   // A plain quit keeps in-flight work: checkpoint it first (bounded), then stop. Failure only means no continuation.
   const armed = core.prepareRestart({ onlyIfBusy: true, timeoutMs: 4_000 }).catch((error) => { note(`quit continuation not saved: ${String(error)}`); core.cancelRestart(); });
-  void Promise.allSettled([terminalShutdown, armed.then(() => core.stop())]).then(async () => {
+  void Promise.allSettled([armed.then(() => core.stop())]).then(async () => {
     ipcMain.removeAllListeners(TEST_TRACE_CHANNEL);
     try{await traceWriter?.close();}catch(error){note('Synthetic trace flush failed: '+String(error));}
     app.exit(0);

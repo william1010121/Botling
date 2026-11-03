@@ -16,7 +16,6 @@ function fixture() {
   put("desktop/src/renderer/chat-frame/entry.ts", 'globalThis.chatVersion = "chat-one"; globalThis.latex = __LATEX_SOURCE__; globalThis.extras = __CHAT_EXTRAS_SOURCE__;');
   put("desktop/src/renderer/index.html", '<div id="root"></div><script src="renderer.js"></script>');
   put("desktop/src/renderer/styles.css", '@import "../../../Web/src/tokens.css";\n.shell { color: red; }');
-  put("desktop/src/renderer/terminal-assets/LICENSE.txt", "fixture terminal font licence");
   put("desktop/src/renderer/ModelPicker.css", '.model-picker { color: red; }');
   put("desktop/src/renderer/ModelPicker.css", '.model-picker { color: red; }');
   put("desktop/src/renderer/chat-frame/chat.html", '<script src="chat.js"></script>');

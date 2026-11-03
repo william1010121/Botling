@@ -1,4 +1,5 @@
-import { TerminalPanels } from './TerminalPanel';
+import { BottomPanels, TOGGLE_BOTTOM_PANEL, bottomPanelToggledBy } from "./BottomPanels";
+import { ownsCommand } from "../../../Web/src/frame-protocol";
 // The app page: React chrome around the reused chat page. The left column lists the bots (as the
 // Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
 // (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
@@ -11,8 +12,8 @@ import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface"
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { status, statusText } from "../contract/bot-status";
-import { actionForEvent, bindingsFor, commandBindings, commandForEvent } from "../contract/shortcuts";
-import { setShortcutLabels, shortcutLabel } from "./shortcut-labels";
+import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
+import { setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
 import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
@@ -52,7 +53,7 @@ function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const [error, setError] = useState<string | null>(null);
-  const [terminalControls, setTerminalControls] = useState<HTMLSpanElement | null>(null);
+  const [bottomControls, setBottomControls] = useState<HTMLSpanElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
@@ -103,7 +104,23 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
   const pluginKeys = useMemo(() => commandBindings(keybindingsOf(view.plugins), view.settings?.shortcuts), [view.plugins, view.settings?.shortcuts]);
-  const runCommand = useCallback((id: string, args: string[] = []) => runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure))), [client, store]);
+  const runCommand = useCallback((id: string, args: string[] = [], caller?: { from: "frame"; name: string }) => {
+    runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure)), caller);
+  }, [client, store]);
+  // A key a panel's frame did not use (a modifier held): runs Botling's shortcuts or that plugin's own bound command (never another plugin's, and never a synthetic window keydown).
+  const forwardKey = useCallback((plugin: string, key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => {
+    switch (actionForEvent(key, shortcutBindings)) {
+      case "settings": openSettings(); break;
+      case "toggleRightPanel": toggleRight(); break;
+      case "toggleSidebar": toggleRail(); break;
+      case "search": startSearch(); break;
+      case null: {
+        const command = commandForEvent(key, pluginKeys);
+        if (command) runCommand(command, [], { from: "frame", name: plugin });
+        break;
+      }
+    }
+  }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings, pluginKeys, runCommand]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       switch (actionForEvent(event, shortcutBindings)) {
@@ -367,7 +384,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => ({ claude: "Claude", codex: "Codex", agy: "Antigravity" }[head])).join(" & ")}</span>
           )}
           {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
-          {!web && <span className="terminal-controls" ref={setTerminalControls} />}
+          {!web && <span className="bottom-controls" ref={setBottomControls} />}
           {bot && chat && !web && (
             <span className="chat-actions">
               <RoutinesButton client={client} botId={bot.id} />
@@ -402,7 +419,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />
-        {!web && <TerminalPanels toggleHost={terminalControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)} shortcutLabel={shortcutLabel("toggleTerminal")} />}
+        {!web && <BottomPanels client={client} panels={view.plugins?.bottomPanels ?? []} toggleHost={bottomControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)}
+          shortcutFor={(command) => (command && pluginKeys[command] ? formatCombo(pluginKeys[command]!, shellPlatform()) : "")} onBuiltin={runBuiltin} onKey={forwardKey} components={view.components} bots={view.bots} ask={approval.ask} />}
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
@@ -653,8 +671,11 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
  * A plugin command from a key, the / menu or a menu: in the plugin host (the app page asks, so the core runs any),
  * or in the chat page when a web part there registered it.
  */
-function runPluginCommand(client: Client, plugins: PluginsView | null | undefined, id: string, args: string[], onError: (failure: unknown) => void) {
-  if (runsInHost(plugins, id)) void client.request({ type: "plugins.command", id, ...(args.length ? { args } : {}) }).catch(onError);
+function runPluginCommand(client: Client, plugins: PluginsView | null | undefined, id: string, args: string[], onError: (failure: unknown) => void, caller?: { from: "frame"; name: string }) {
+  if (caller?.from === "frame" && !ownsCommand(caller.name, id)) return;
+  // A bottom panel's toggle command is the page's own to run: it shows or hides the panel of the bot on screen.
+  if (bottomPanelToggledBy(plugins, id)) { window.dispatchEvent(new CustomEvent(TOGGLE_BOTTOM_PANEL, { detail: id })); return; }
+  if (runsInHost(plugins, id)) void client.request({ type: "plugins.command", id, ...(caller ?? {}), ...(args.length ? { args } : {}) }).catch(onError);
   else postToChat({ botling: "runCommand", id });
 }
 
@@ -1085,6 +1106,11 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         case "pressSpec":
         case "openSpec":
           if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "pressSpec" ? "press" : "open" } }).catch(onError);
+          return;
+        // Undo / Restore of a component made from a chip (ADR-006 M4): off the bot's list and back; the library copy stays.
+        case "undoSpec":
+        case "restoreSpec":
+          if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "undoSpec" ? "undo" : "restore" } }).catch(onError);
           return;
         case "specCommand":
           runCard(action, chat?.botId ?? null);

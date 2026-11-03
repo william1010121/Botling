@@ -211,6 +211,10 @@ export const en = {
   "specChip.showing": "Showing in the right panel",
   "specChip.openInPanel": "Open in the right panel",
   "specChip.edit": "Edit spec",
+  "specChip.undo": "Undo",
+  "specChip.undoTitle": "Take it off the bot's list; it stays in the library and Restore puts it back",
+  "specChip.restore": "Restore",
+  "specChip.restoreTitle": "Put the component back on the bot's list",
   "specChip.editTitle": "Change it in the right panel; Build it makes a new version",
   "specChip.newVersion": "Building a new version · {name}",
   // components.ts: a card that runs a command
@@ -385,7 +389,6 @@ export const en = {
   "shortcuts.action.settings": "Open Settings",
   "shortcuts.action.toggleSidebar": "Show or hide the left column",
   "shortcuts.action.toggleRightPanel": "Show or hide the right panel",
-  "shortcuts.action.toggleTerminal": "Show or hide the terminal (opens a shell when it is empty)",
   "shortcuts.action.reload": "Reload the window",
   "shortcuts.action.forceReload": "Reload the window, ignoring the cache",
   "shortcuts.action.reloadChat": "Reload the chat page",

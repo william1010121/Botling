@@ -2,11 +2,11 @@ import { ShellOverlay } from "./ShellOverlay";
 // The plugin library (1.x: Settings → Plugins): each plugin on or off, its settings (a secret is only
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { BotView, ComponentInfoView, PluginView, PluginsView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
-import type { BuiltinCommand } from "../../../Web/src/frame-protocol";
+import { frameEvent, type BuiltinCommand, type FrameRequest } from "../../../Web/src/frame-protocol";
 import { panelPage, type PanelFit } from "./panel-page";
 import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
 
@@ -143,7 +143,15 @@ export interface FrameServices { components?: Record<string, ComponentInfoView>;
  * A plugin view's sandboxed frame: its page made from the web part, its calls to its own program part, its commands,
  * its tiles and approval asks (answered here; only this page's ApprovalSheet allows).
  */
-function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner, services: FrameServices = {}, fit?: PanelFit, context?: Record<string, string>) {
+/** What only some frames use: a panel under the chat asks to be shown or hidden, hands a key it did not use to the page, and may call more often (it streams). */
+export interface FrameExtras {
+  onReady?(): void;
+  onPanel?(visible: boolean): void;
+  onKey?(key: Extract<FrameRequest, { ccb: "key" }>): void;
+  rate?: { burst: number; perSecond: number };
+}
+
+function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin?: BuiltinRunner, services: FrameServices = {}, fit?: PanelFit, context?: Record<string, string>, extras: FrameExtras = {}) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -155,6 +163,19 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
   const runsBuiltins = !!onBuiltin;
   const now = useRef(services);
   now.current = services;
+  const more = useRef(extras);
+  more.current = extras;
+  const hasRate = !!extras.rate;
+  const botKey = context?.botId;
+  // What the plugin's program part pushes (`ui.emit`) goes to its frames: every one, or those of the bot it names.
+  useEffect(() => {
+    if (!url) return;
+    return client.onEvent(({ event }) => {
+      if (event.type !== "plugins.emit" || event.plugin !== plugin) return;
+      if (event.forBot !== undefined && event.forBot !== botKey) return;
+      frame.current?.contentWindow?.postMessage(frameEvent(event.name, event.data), "*");
+    });
+  }, [client, plugin, url, botKey]);
   useEffect(() => {
     let live = true;
     client.request({ type: "plugins.panel", name: plugin, panel })
@@ -180,8 +201,12 @@ function usePluginFrame(client: Client, plugin: string, panel: string, onBuiltin
       onNotice: (text) => setNote(text),
       onError: (message) => setNote(`The panel failed: ${message}`),
       ...(fit ? { onResize: setHeight } : {}),
+      onReady: () => more.current.onReady?.(),
+      onPanel: (visible) => more.current.onPanel?.(visible),
+      onKey: (key) => more.current.onKey?.(key),
+      ...(hasRate ? { rate: more.current.rate } : {}),
     });
-  }, [client, plugin, url, runsBuiltins, !!fit]);
+  }, [client, plugin, url, runsBuiltins, !!fit, hasRate]);
   return { frame, url, problem, note, height };
 }
 
@@ -227,3 +252,20 @@ export function SlotFrame({ client, plugin, view, title, fontSize, onBuiltin, bo
     </div>
   );
 }
+
+/**
+ * A plugin's panel under the chat (`where: "bottomPanel"`): the same frame, one per bot, kept alive while hidden. The page
+ * (BottomPanels.tsx) lays it out; the frame asks to be shown or hidden and hears when it is, and when its toggle command ran.
+ */
+export const BottomPanelFrame = forwardRef<HTMLIFrameElement | null, { client: Client; plugin: string; view: string; title: string; botId: string; onBuiltin: BuiltinRunner; extras: FrameExtras } & FrameServices>(
+  function BottomPanelFrame({ client, plugin, view, title, botId, onBuiltin, extras, ...services }, ref) {
+    const { frame, url, problem, note } = usePluginFrame(client, plugin, view, onBuiltin, services, undefined, { botId }, extras);
+    useImperativeHandle(ref, () => frame.current as HTMLIFrameElement, [frame, url]);
+    return (
+      <div className="bottom-panel-body" data-plugin={plugin} data-view={view}>
+        {problem && <p className="plugins-problem">{problem}</p>}
+        {note && <p className="plugins-result" role="status">{note}</p>}
+        {url && <iframe ref={frame} className="bottom-panel-frame" sandbox="allow-scripts" referrerPolicy="no-referrer" src={url} title={title} />}
+      </div>
+    );
+  });

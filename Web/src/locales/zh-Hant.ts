@@ -210,6 +210,10 @@ export const zhHant: Dictionary = {
   "specChip.showing": "正顯示在右側面板",
   "specChip.openInPanel": "在右側面板開啟",
   "specChip.edit": "編輯規格",
+  "specChip.undo": "復原",
+  "specChip.undoTitle": "從機器人的清單移除；元件仍留在元件庫，可按「還原」放回",
+  "specChip.restore": "還原",
+  "specChip.restoreTitle": "把元件放回機器人的清單",
   "specChip.editTitle": "在右側面板修改；按「建置」會做出新版本",
   "specChip.newVersion": "建置新版本中 · {name}",
   // components.ts: a card that runs a command
@@ -384,7 +388,6 @@ export const zhHant: Dictionary = {
   "shortcuts.action.settings": "開啟設定",
   "shortcuts.action.toggleSidebar": "顯示或隱藏左側欄",
   "shortcuts.action.toggleRightPanel": "顯示或隱藏右側面板",
-  "shortcuts.action.toggleTerminal": "顯示或隱藏終端機（空白時自動開啟 shell）",
   "shortcuts.action.reload": "重新載入視窗",
   "shortcuts.action.forceReload": "重新載入視窗（忽略快取）",
   "shortcuts.action.reloadChat": "重新載入聊天頁面",

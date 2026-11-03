@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { builtinCommand, frameOf, frameParams, ownsCommand, parseFrameRequest } from "../src/frame-protocol";
+import { builtinCommand, frameEvent, frameOf, frameParams, ownsCommand, parseFrameRequest } from "../src/frame-protocol";
 
 describe("the frame protocol", () => {
   it("reads the four requests a plugin frame may send", () => {
@@ -21,6 +21,21 @@ describe("the frame protocol", () => {
     expect(parseFrameRequest({ ccb: "ready" })).toBeNull();
     expect(parseFrameRequest("call")).toBeNull();
     expect(parseFrameRequest(null)).toBeNull();
+  });
+
+  it("reads a bottom panel's ask to be shown or hidden, and a key it did not use", () => {
+    expect(parseFrameRequest({ ccb: "panel", visible: true })).toEqual({ ccb: "panel", visible: true });
+    expect(parseFrameRequest({ ccb: "panel", visible: "yes" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "panel", visible: false, plugin: "other" })).toBeNull();
+    const key = { ccb: "key", key: "j", code: "KeyJ", metaKey: true, ctrlKey: false, altKey: false, shiftKey: false };
+    expect(parseFrameRequest(key)).toEqual(key);
+    expect(parseFrameRequest({ ...key, metaKey: "true" })).toBeNull();
+    expect(parseFrameRequest({ ...key, key: "x".repeat(33) })).toBeNull();
+    expect(parseFrameRequest({ ...key, extra: 1 })).toBeNull();
+  });
+
+  it("builds the push a frame hears", () => {
+    expect(frameEvent("data", { n: 1 })).toEqual({ ccb: "event", name: "data", data: { n: 1 } });
   });
 
   it("reads a tile ask and an approval ask (plugin-extraction.md W4); neither can say it is allowed", () => {

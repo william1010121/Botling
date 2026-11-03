@@ -5,7 +5,7 @@
 // card, botling.design keeps /design in the / menu as words, and botling.chat-extras brings image groups, the
 // fold of a long message and paste chips to the chat page.
 import { beforeAll, describe, expect, it } from "vitest";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { checkPlugin } from "../../src/core/plugins/manifest";
@@ -30,8 +30,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
@@ -57,11 +57,11 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
-    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.usage", "botling.whiteboard", "aaa"]);
+    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.catchup", "botling.chat-extras", "botling.git", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
     expect(registry(library).plugin("ccb-latex")!.enabled).toBe(false);
     plugins.setEnabled("ccb-latex", true);
     // Maintainer copies a built-in plugin into the library to change it: that copy is the one that runs.
@@ -95,7 +95,7 @@ describe("the registry with built-in plugins", () => {
     const font = readdirSync(join(built, "ccb-latex", "dist", "fonts"))[0]!;
     expect(plugins.webFile("ccb-latex", `dist/fonts/${font}`)?.type).toBe("font/woff2");
     expect(plugins.webFile("ccb-latex", "package.json")).toBeNull();
-    expect(commandSurfaces(plugins.contributions()).keybindings).toEqual([{ command: "ccb-latex.insert", key: "Mod+Shift+M", plugin: "ccb-latex", title: "Insert inline formula" }]);
+    expect(commandSurfaces(plugins.contributions()).keybindings).toContainEqual({ command: "ccb-latex.insert", key: "Mod+Shift+M", plugin: "ccb-latex", title: "Insert inline formula" });
   });
 
   it("gives the component library botling.cards' folder after the library's own, so a copy there still wins", () => {
@@ -185,14 +185,37 @@ describe("the / menu and keys with built-in plugins", () => {
 
   it("binds ccb-latex's key from its manifest and runs it in the chat page, as when it was bundled", () => {
     const plugins = view();
-    expect(keybindingsOf(plugins)).toEqual([{ command: "ccb-latex.insert", key: "Mod+Shift+M", plugin: "ccb-latex", title: "Insert inline formula" }]);
+    expect(keybindingsOf(plugins)).toContainEqual({ command: "ccb-latex.insert", key: "Mod+Shift+M", plugin: "ccb-latex", title: "Insert inline formula" });
     expect(runsInHost(plugins, "ccb-latex.insert")).toBe(false);
   });
 
   it("without a plugins view (Botling Web runs no plugins) still offers /design and ccb-latex's key", () => {
     expect(slashMenu(null)).toEqual(slashMenu(view()));
-    expect(keybindingsOf(null)).toEqual(keybindingsOf(view()));
+    // (The Terminal's key is the desktop app's; the phone has no terminal.)
+    expect(keybindingsOf(null)).toEqual(keybindingsOf(view()).filter((binding) => binding.plugin !== "botling.terminal"));
     expect(runsInHost(null, "ccb-latex.insert")).toBe(false);
+  });
+});
+
+describe("botling.terminal", () => {
+  it("brings the Terminal panel under the chat with its toggle command and key (Mod+J), runs shells through node-pty staged beside its program part, and may only run things (\"exec\")", async () => {
+    const { viewSurfaces } = await import("../../src/core/plugins/views");
+    const plugins = registry(join(tempDir("builtin-terminal"), "plugins"));
+    const terminal = plugins.plugin("botling.terminal")!;
+    expect(terminal.builtIn).toBe(true);
+    expect(terminal.manifest.ccb?.permissions).toEqual(["exec"]);
+    const surfaces = viewSurfaces(plugins.contributions(), (name) => !!plugins.webPart(name));
+    expect(surfaces.bottomPanels).toEqual([{ plugin: "botling.terminal", id: "botling.terminal.panel", title: "Terminal", toggle: "botling.terminal.toggle" }]);
+    expect(commandSurfaces(plugins.contributions()).keybindings).toContainEqual({ command: "botling.terminal.toggle", key: "Mod+J", plugin: "botling.terminal", title: "Toggle terminal" });
+    // node-pty stays outside the program part's bundle, in the plugin's own node_modules, with the shell helper executable.
+    const folder = join(built, "botling.terminal");
+    expect(readFileSync(join(folder, "main.js"), "utf8")).toMatch(/from\s*["']node-pty["']/);
+    expect(existsSync(join(folder, "node_modules", "node-pty", "package.json"))).toBe(true);
+    // The font is a file beside the program part (it hands it to the frame); the licences travel with it.
+    expect(existsSync(join(folder, "assets", "MesloLGS-NF-Regular.ttf"))).toBe(true);
+    expect(readdirSync(join(folder, "licenses")).sort()).toEqual(["Apache-2.0.txt", "LICENSE.txt", "README.txt", "THIRD_PARTY_LICENSES.txt"]);
+    const helpers = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? helpers(join(dir, entry.name)) : entry.name === "spawn-helper" ? [join(dir, entry.name)] : []));
+    for (const helper of helpers(join(folder, "node_modules", "node-pty"))) expect(statSync(helper).mode & 0o111, helper).not.toBe(0);
   });
 });
 

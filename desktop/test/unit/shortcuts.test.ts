@@ -10,16 +10,17 @@ describe('shortcut registry', () => {
   it('lists every app shortcut with today\'s default keys', () => {
     const defaults = Object.fromEntries(SHORTCUTS.map(s => [s.id, s.default]));
     expect(defaults).toEqual({ search: 'Mod+K', settings: 'Mod+,', toggleSidebar: 'Ctrl+Cmd+S', toggleRightPanel: 'Ctrl+Cmd+I',
-      toggleTerminal: 'Mod+J', reload: 'Mod+R', forceReload: 'Mod+Shift+R', reloadChat: 'Mod+Alt+R' });
+      reload: 'Mod+R', forceReload: 'Mod+Shift+R', reloadChat: 'Mod+Alt+R' });
     expect(new Set(SHORTCUTS.map(s => s.default)).size).toBe(SHORTCUTS.length);
     expect(FIXED_SHORTCUTS.length).toBeGreaterThan(5);
   });
   it('falls back to the default for unknown, malformed or missing bindings', () => {
     const overrides = normalizeOverrides({ search: 'Mod+L', bogus: 'Mod+X', settings: 'nonsense', reload: 42, toggleTerminal: 'Shift+J' });
+    // (toggleTerminal is the Terminal plugin's command now; settings.ts moves a saved key once.)
     expect(overrides).toEqual({ search: 'Mod+L' });
     expect(bindingsFor(overrides).search).toBe('Mod+L');
     expect(bindingsFor(overrides).settings).toBe('Mod+,');
-    expect(bindingsFor(null).toggleTerminal).toBe('Mod+J');
+    expect(bindingsFor(null).reload).toBe('Mod+R');
     expect(normalizeOverrides('x')).toEqual({});
   });
   it('drops an override equal to the default and a later duplicate of an earlier binding', () => {
@@ -27,12 +28,12 @@ describe('shortcut registry', () => {
     expect(normalizeOverrides({ search: 'Mod+L', settings: 'Mod+L' })).toEqual({ search: 'Mod+L' });
   });
   it('detects conflicts with other shortcuts and with fixed system keys, never with itself', () => {
-    expect(findConflict('search', 'Mod+J', {})).toEqual({ kind: 'shortcut', id: 'toggleTerminal' });
+    expect(findConflict('search', 'Mod+Shift+R', {})).toEqual({ kind: 'shortcut', id: 'forceReload' });
     expect(findConflict('search', 'Mod+K', {})).toBeNull();
     expect(findConflict('search', 'Mod+C', {})).toEqual({ kind: 'fixed', id: expect.any(String) });
     expect(findConflict('search', 'Mod+L', { settings: 'Mod+L' })).toEqual({ kind: 'shortcut', id: 'settings' });
     // the key a binding left is free for another
-    expect(findConflict('search', 'Mod+J', { toggleTerminal: 'Mod+T' })).toBeNull();
+    expect(findConflict('search', 'Mod+R', { reload: 'Mod+T' })).toBeNull();
   });
   it('sets, resets one and resets all', () => {
     let o = setBinding({}, 'search', 'Mod+L');
@@ -59,8 +60,8 @@ describe('shortcut registry', () => {
     expect(matchesEvent('Ctrl+Cmd+I', ev({ key: 'i', metaKey: true, ctrlKey: true }))).toBe(true);
     expect(matchesEvent('Ctrl+Cmd+I', ev({ key: 'i', metaKey: true }))).toBe(false);
     expect(matchesEvent('Mod+,', ev({ key: ',', metaKey: true }))).toBe(true);
-    expect(actionForEvent(ev({ key: 'j', metaKey: true }), bindingsFor({ toggleTerminal: 'Mod+T' }))).toBeNull();
-    expect(actionForEvent(ev({ key: 't', metaKey: true }), bindingsFor({ toggleTerminal: 'Mod+T' }))).toBe('toggleTerminal');
+    expect(actionForEvent(ev({ key: 'j', metaKey: true }), bindingsFor({ search: 'Mod+T' }))).toBeNull();
+    expect(actionForEvent(ev({ key: 't', metaKey: true }), bindingsFor({ search: 'Mod+T' }))).toBe('search');
   });
   it('records a combo from a key press and refuses bare keys', () => {
     expect(comboFromEvent(ev({ key: 'ø', code: 'KeyO', altKey: true, metaKey: true }), 'darwin')).toBe('Mod+Alt+O');
@@ -126,13 +127,13 @@ describe('plugin keybindings', () => {
   });
   it('detects conflicts between app shortcuts and plugin keys both ways', () => {
     expect(findConflict('search', 'Mod+Shift+U', {}, [uptime])).toEqual({ kind: 'command', id: 'uptime.refresh' });
-    expect(findConflict('uptime.refresh', 'Mod+J', {}, [uptime])).toEqual({ kind: 'shortcut', id: 'toggleTerminal' });
+    expect(findConflict('uptime.refresh', 'Mod+R', {}, [uptime])).toEqual({ kind: 'shortcut', id: 'reload' });
     expect(findConflict('uptime.refresh', 'Mod+Shift+M', {}, [latex, uptime])).toEqual({ kind: 'command', id: 'ccb-latex.insert' });
     expect(findConflict('uptime.refresh', 'Mod+Shift+U', {}, [uptime])).toBeNull();
     expect(findConflict('uptime.refresh', 'Mod+V', {}, [uptime])).toEqual({ kind: 'fixed', id: 'paste' });
   });
   it('keeps plugin overrides in settings, drops unusable ones, and resets to the manifest key', () => {
-    expect(normalizeOverrides({ 'uptime.refresh': 'Mod+Alt+U', 'bad id': 'Mod+Alt+B', 'x.y': 'Mod+C', 'x.z': 'Mod+J', search: 'Mod+L' }))
+    expect(normalizeOverrides({ 'uptime.refresh': 'Mod+Alt+U', 'bad id': 'Mod+Alt+B', 'x.y': 'Mod+C', 'x.z': 'Mod+R', search: 'Mod+L' }))
       .toEqual({ search: 'Mod+L', 'uptime.refresh': 'Mod+Alt+U' });
     let o = setBinding({}, 'uptime.refresh', 'Mod+Alt+U', uptime.key);
     expect(o).toEqual({ 'uptime.refresh': 'Mod+Alt+U' });

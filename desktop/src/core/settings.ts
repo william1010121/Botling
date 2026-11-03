@@ -116,6 +116,25 @@ export function moveSettingsToPlugins(file: string, set: (plugin: string, key: s
   writeSettings(file, Object.fromEntries(Object.entries(raw).filter(([key]) => !moved.includes(key))));
 }
 
+/** Shortcuts that became a built-in plugin's command, by their old id in `shortcutBindings`: the command that took them over. */
+const MOVED_SHORTCUTS: Record<string, string> = { toggleTerminal: "botling.terminal.toggle" };
+
+/** On start: a key the user chose for such a shortcut becomes the key of the command that replaced it (once; one already chosen for the command wins). */
+export function moveShortcutsToPlugins(file: string): void {
+  const raw = readSettings(file);
+  const saved = raw.shortcutBindings;
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) return;
+  const bindings = { ...(saved as Record<string, unknown>) };
+  const moved = Object.keys(MOVED_SHORTCUTS).filter((id) => id in bindings);
+  if (!moved.length) return;
+  for (const id of moved) {
+    const command = MOVED_SHORTCUTS[id]!;
+    if (!(command in bindings) && typeof bindings[id] === "string") bindings[command] = bindings[id];
+    delete bindings[id];
+  }
+  writeSettings(file, { ...raw, shortcutBindings: bindings });
+}
+
 /** settings.json's `mainTabs`: each bot's plugin tab (bot ids upper case), what cannot be used left out. */
 function mainTabs(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};

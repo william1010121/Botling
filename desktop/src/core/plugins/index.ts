@@ -75,6 +75,10 @@ export interface PluginWorld {
   ask(question: AppQuestion): Promise<AppAnswer>;
   /** Opens a plugin's panel on the app page. */
   openPanel(plugin: string, panel: string, title: string): void;
+  /** A plugin's push to its frames (`ui.emit`), on its way to the app page; never part of a snapshot, and no other client hears it. */
+  frameEvent?(plugin: string, name: string, botId: string | undefined, data: unknown): void;
+  /** A bot's working folder as the core keeps it, the main bot's too (null: no such bot). */
+  botFolder?(botId: string): string | null;
   /** Botling's own settings plugins may read (`settings.app`). */
   appSettings(): Record<string, JSONValue>;
   /** The keys the user chose (settings.json `shortcutBindings`: Botling's shortcuts and plugin commands). */
@@ -156,6 +160,9 @@ const PickParams = z.object({
   items: z.array(z.object({ id: str(200).min(1), label: str(400).min(1), detail: str(1_000).optional() })).min(1).max(20),
 });
 const InputParams = z.object({ plugin: str(214), title: str(400).min(1), placeholder: str(400).optional(), secret: z.boolean().optional() });
+const EmitParams = z.object({ plugin: str(214), name: str(100).min(1), botId: str(128).optional(), data: z.unknown() });
+/** The most a push to a plugin's frames (`ui.emit`) may carry (JSON text). */
+const EMIT_MAX = 1_000_000;
 const ViewParams = z.object({ plugin: str(214), id: str(100).min(1), args: z.unknown().optional() });
 const SettingParams = z.object({ plugin: str(214), key: str(200), value: z.union([z.boolean(), z.number(), z.string().max(100_000), z.null()]) });
 const SecretKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -166,7 +173,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -413,15 +420,7 @@ export class Plugins {
    * (`keybindings.set`) in place of their manifests'; the user's keys still win (shortcuts.ts `pluginBindings`).
    */
   private contributions(): Contribution[] {
-    const set = this.registry.commandKeyOverrides();
-    const list = this.registry.contributions();
-    const on = new Set(list.map((entry) => entry.plugin));
-    const kept = list.filter((entry) => !(entry.kind === "keybinding" && set[entry.plugin] && Object.hasOwn(set[entry.plugin]!, entry.command)));
-    for (const [plugin, keys] of Object.entries(set)) {
-      if (!on.has(plugin)) continue;
-      for (const [command, key] of Object.entries(keys)) if (key) kept.push({ kind: "keybinding", plugin, command, key });
-    }
-    return kept;
+    return this.registry.effectiveContributions();
   }
 
   private known(name: string) {
@@ -738,6 +737,18 @@ export class Plugins {
         world.notice(`${title(plugin.manifest)}${level}: ${parsed.data.text.slice(0, 4_000)}`, actions.length ? actions : undefined);
         return;
       }
+      case "ui.emit": {
+        const parsed = EmitParams.safeParse(params);
+        const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;
+        if (!parsed.success || !plugin) return;
+        const { name, botId, data } = parsed.data;
+        // Plain JSON that fits: a frame hears no more than it could be called with.
+        let text: string | undefined;
+        try { text = JSON.stringify(data ?? null); } catch { return; }
+        if (text === undefined || text.length > EMIT_MAX) return;
+        world.frameEvent?.(plugin.manifest.name, name, botId, data ?? null);
+        return;
+      }
       case "ui.setStatus": {
         const parsed = StatusParams.safeParse(params);
         const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;
@@ -783,6 +794,11 @@ export class Plugins {
         const stopped = await world.interrupt(data.bot);
         if (stopped === null) throw new Error("No such bot.");
         return { stopped };
+      }
+      case "bots.folder": {
+        const { plugin, data } = this.asked(BotParams, params);
+        this.needs(plugin, "exec", "Reading a bot's folder");
+        return world.botFolder?.(data.bot) ?? null;
       }
       case "ui.quickPick": {
         const { plugin, data } = this.asked(PickParams, params);

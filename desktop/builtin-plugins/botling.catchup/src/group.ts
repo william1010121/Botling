@@ -96,7 +96,7 @@ export class CatchUpGroup {
     this.tooltip?.remove();
     const context = this.context;
     summaryViewer.onClose = () => context.redraw();
-    summaryViewer.open(this.owner,this.state,this.view,(id)=>context.row(id),id=>context.reveal(id),point,index);
+    summaryViewer.open(this.owner,this.state,this.view,(id)=>context.find(id),id=>context.reveal(id),point,index);
     context.redraw();
     summaryViewer.setRestoreTarget(()=>this.head.querySelector<HTMLElement>(point<0?'[data-action="toggle"]':`[data-cite-point="${point}"][data-cite-index="${index}"]`));
   }
@@ -180,7 +180,8 @@ function drawTriggers(context: DecorationContext, triggers: Map<string, HTMLButt
       trigger.addEventListener("click", () => { void page.call("interval", { botId, userMessageId }).catch(() => {}); });
       triggers.set(key, trigger);
     }
-    trigger.innerHTML = lines + escapeHTML(t("interval.summarize", { n: replies.length }));
+    const html = lines + escapeHTML(t("interval.summarize", { n: replies.length }));
+    if (trigger.dataset.drawn !== html) { trigger.dataset.drawn = html; trigger.innerHTML = html; }
     if (trigger.parentElement !== footer) footer.append(trigger);
     i = end - 1;
   }

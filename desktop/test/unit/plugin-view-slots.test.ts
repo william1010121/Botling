@@ -16,6 +16,7 @@ it("sorts the views by where; a plugin without a web part draws none", () => {
     view("mute", "mute.page", "settings.section"),
     view("trees", "trees.block", "rightPanel.section", { forRole: "bots" }),
     view("trees", "trees.other", "rightPanel.section"),
+    view("term", "term.panel", "bottomPanel", { toggle: "term.toggle" }),
   ];
   const surfaces = viewSurfaces(list, (name) => name !== "mute");
   expect(surfaces).toEqual({
@@ -23,6 +24,7 @@ it("sorts the views by where; a plugin without a web part draws none", () => {
     settingsSections: [{ plugin: "meter", id: "meter.page", title: "meter.page", terms: "quota", after: "engines", link: "Meter by bot" }],
     quickSettings: [{ plugin: "meter", id: "meter.rings", title: "meter.rings" }],
     rightPanelSections: [{ plugin: "trees", id: "trees.block", title: "trees.block", forRole: "bots" }, { plugin: "trees", id: "trees.other", title: "trees.other", forRole: "any" }],
+    bottomPanels: [{ plugin: "term", id: "term.panel", title: "term.panel", toggle: "term.toggle" }],
   });
   const view_ = { plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null, ...surfaces };
   expect(PluginsView.safeParse(view_).success).toBe(true);

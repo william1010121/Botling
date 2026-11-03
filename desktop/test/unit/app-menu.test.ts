@@ -24,21 +24,15 @@ it('Reload Chat Page reloads only that window\'s native chat page, through main'
  // Without a handler (older callers) the item is absent rather than dead.
  expect(flat(appMenuTemplate('darwin')).some(i=>i.label==='Reload Chat Page')).toBe(false);
 });
-it('Cmd+J targets the shell terminal even when a child editor has focus', () => {
- const win=new (BrowserWindow as any)();win.webContents.send=vi.fn();
- const item=flat(appMenuTemplate('darwin')).find(i=>i.accelerator==='CmdOrCtrl+J');
- item.click(item,win,{});item.click(item,undefined,{});
- expect(win.webContents.send).toHaveBeenCalledExactlyOnceWith('botling:terminal:toggle');
-});
 it('menu accelerators follow the saved bindings, and fall back to the defaults', () => {
- const items=flat(appMenuTemplate('darwin',{reloadChat:async()=>true},bindingsFor({toggleTerminal:'Mod+T',reload:'Mod+Shift+L'})));
- expect(items.find(i=>i.label==='Toggle Terminal').accelerator).toBe('CmdOrCtrl+T');
+ const items=flat(appMenuTemplate('darwin',{reloadChat:async()=>true},bindingsFor({reload:'Mod+Shift+L'})));
  expect(items.find(i=>i.label==='Reload').accelerator).toBe('Shift+CmdOrCtrl+L');
  expect(items.find(i=>i.label==='Force Reload').accelerator).toBe('Shift+CmdOrCtrl+R');
  expect(items.find(i=>i.label==='Reload Chat Page').accelerator).toBe('Alt+CmdOrCtrl+R');
- expect(items.some(i=>i.accelerator==='CmdOrCtrl+J')).toBe(false);
+ // The Terminal's key (Mod+J) is a plugin command's now, not the menu's.
+ expect(items.some(i=>i.accelerator==='CmdOrCtrl+J'||i.label==='Toggle Terminal')).toBe(false);
 });
 it('leaves the accelerators off while a new key is being recorded', () => {
  const items=flat(appMenuTemplate('darwin',{reloadChat:async()=>true},bindingsFor({}),true));
- for(const label of ['Toggle Terminal','Reload','Force Reload','Reload Chat Page'])expect(items.find(i=>i.label===label).accelerator).toBeUndefined();
+ for(const label of ['Reload','Force Reload','Reload Chat Page'])expect(items.find(i=>i.label===label).accelerator).toBeUndefined();
 });
