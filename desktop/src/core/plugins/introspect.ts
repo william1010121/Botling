@@ -7,13 +7,14 @@
 // The queries are registered here, in one explicit table (ADR-005: no dynamic lookup by string beyond
 // this table), and reached through `PluginRegistry.inspect` / `PluginRegistry.inspectQueries`.
 import { z } from "zod";
-import { pluginBindings, type PluginKeybinding } from "../../contract/shortcuts";
+import { pluginBindings } from "../../contract/shortcuts";
+import { commandSurfaces } from "./commands";
 import { MENU_SLOTS, STATUS_SLOTS, VIEW_ROLES, VIEW_SLOTS, ofKind, type Contribution } from "./contributions";
 import { checkPluginIssues, title } from "./manifest";
 import type { PluginRegistry } from "./registry";
 
-/** What a query may look at beyond the registry: the app's stylesheet text (the theme variables are in it). */
-export interface InspectContext { themeCss: string | null }
+/** What a query may look at beyond the registry: the app's stylesheet text (the theme variables) and saved shortcut overrides. */
+export interface InspectContext { themeCss: string | null; shortcutOverrides?: unknown }
 
 export type InspectResult = { ok: true; query: string; data: unknown } | { ok: false; query: string; error: string };
 
@@ -45,15 +46,6 @@ export function parseThemeVariables(css: string): Record<"dark" | "light", Recor
     for (const declaration of block[3]!.matchAll(/(--[a-zA-Z0-9-]+)\s*:\s*([^;]+);/g)) out[theme][declaration[1]!] = declaration[2]!.trim();
   }
   return out;
-}
-
-/** The keys plugin manifests give their commands (the app's and the system's are held by `pluginBindings`). */
-function manifestKeys(registry: PluginRegistry): PluginKeybinding[] {
-  const contributions = registry.contributions();
-  const titles = new Map(ofKind(contributions, "command").map((command) => [`${command.plugin}\u0000${command.id}`, command.title]));
-  return ofKind(contributions, "keybinding").map((entry) => ({
-    command: entry.command, key: entry.key, plugin: entry.plugin, title: titles.get(`${entry.plugin}\u0000${entry.command}`) ?? entry.command,
-  }));
 }
 
 export const INSPECT_QUERIES = {
@@ -113,10 +105,9 @@ export const INSPECT_QUERIES = {
   shortcutConflicts: define({
     about: "Keys that plugin commands asked for but could not get: taken by an app shortcut, a system key, or an earlier plugin command. Each says what holds the key.",
     input: none,
-    run(registry) {
-      const overrides: Record<string, string> = {};
-      for (const [, commands] of Object.entries(registry.commandKeyOverrides())) for (const [command, key] of Object.entries(commands)) if (key) overrides[command] = key;
-      const conflicts = pluginBindings(manifestKeys(registry), overrides).filter((binding) => binding.conflict !== null);
+    run(registry, _input, context) {
+      const effective = commandSurfaces(registry.effectiveContributions()).keybindings;
+      const conflicts = pluginBindings(effective, context.shortcutOverrides).filter((binding) => binding.conflict !== null);
       return { conflicts: conflicts.map((binding) => ({ plugin: binding.plugin, command: binding.command, key: binding.key, heldBy: binding.conflict })) };
     },
   }),

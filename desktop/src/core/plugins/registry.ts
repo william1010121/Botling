@@ -495,6 +495,23 @@ export class PluginRegistry {
     });
   }
 
+  /**
+   * What enabled plugins contribute, with the keys their program parts set for their own commands
+   * (`keybindings.set`, including `null` unbinds) in place of their manifests'.
+   */
+  effectiveContributions(): Contribution[] {
+    const set = this.commandKeyOverrides();
+    const list = this.contributions();
+    const declared = new Set(list.flatMap((entry) => (entry.kind === "command" ? [`${entry.plugin}\u0000${entry.id}`] : [])));
+    const kept = list.filter((entry) => !(entry.kind === "keybinding" && set[entry.plugin] && Object.hasOwn(set[entry.plugin]!, entry.command)));
+    for (const [plugin, keys] of Object.entries(set)) {
+      for (const [command, key] of Object.entries(keys)) {
+        if (key && declared.has(`${plugin}\u0000${command}`)) kept.push({ kind: "keybinding", plugin, command, key });
+      }
+    }
+    return kept;
+  }
+
   /** The read-only queries the Maintainer may ask (ADR-006 M2), with their input schemas. */
   inspectQueries() {
     return listInspectQueries();

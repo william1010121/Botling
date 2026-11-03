@@ -31,8 +31,8 @@ export function BottomPanels({ client, panels, botId, botIds, onHide, toggleHost
   /** How the key of a panel's toggle command is written now (empty: none). */
   shortcutFor: (command: string | undefined) => string;
   onBuiltin: BuiltinRunner;
-  /** A key a panel's frame did not use: the page's shortcuts get it. */
-  onKey: (key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => void;
+  /** A key a panel's frame did not use: the page's shortcuts get it, attributed to `plugin`. */
+  onKey: (plugin: string, key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => void;
 } & FrameServices) {
   // The (panel, bot) pairs whose frames exist, and which of them are shown.
   const [opened, setOpened] = useState<string[]>([]);
@@ -134,7 +134,7 @@ function BottomPanelItem({ client, panel, botId, shown, register, setShown, onBu
         rate: STREAMING_RATE,
         onReady: () => { entry.current.ready = true; tell(); },
         onPanel: setShown,
-        onKey,
+        onKey: (key) => onKey(panel.plugin, key),
       }} {...services} />
   </section>;
 }

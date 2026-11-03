@@ -27,7 +27,7 @@ function world() {
   write(library, "alpha", {
     web: "dist/web.js", permissions: ["composer"],
     contributes: {
-      commands: [{ id: "alpha.find", title: "Find", key: "cmd+k" }, { id: "alpha.ok", title: "Fine", key: "cmd+shift+9" }],
+      commands: [{ id: "alpha.find", title: "Find", key: "cmd+k" }, { id: "alpha.ok", title: "Fine", key: "cmd+shift+9" }, { id: "alpha.extra", title: "Extra" }],
       settings: { "alpha.token": { type: "string", title: "Token", secret: true, default: "DEFAULT-SECRET-VALUE" } },
     },
   });
@@ -91,6 +91,45 @@ describe("the introspection queries", () => {
     const conflicts = result.ok ? (result.data as { conflicts: { command: string; heldBy: { kind: string; id: string } }[] }).conflicts : [];
     expect(conflicts.map((conflict) => conflict.command)).toEqual(["alpha.find"]);
     expect(conflicts[0]!.heldBy).toEqual({ kind: "shortcut", id: "search" });
+  });
+
+  it("shortcutConflicts: respects plugin null unbinds, runtime key overrides, and user-customized shortcuts", () => {
+    const { root, library, registry } = world();
+    // Unbinding the conflicting manifest key removes the conflict instead of reporting the manifest's old key.
+    registry.setCommandKey("alpha", "alpha.find", null);
+    expect(registry.inspect("shortcutConflicts", {})).toEqual({ ok: true, query: "shortcutConflicts", data: { conflicts: [] } });
+
+    // A runtime key set on a command (including one with no manifest key) reports the effective key when held.
+    registry.setCommandKey("alpha", "alpha.ok", "Mod+C");
+    registry.setCommandKey("alpha", "alpha.extra", "Mod+R");
+    expect(registry.inspect("shortcutConflicts", {})).toEqual({
+      ok: true,
+      query: "shortcutConflicts",
+      data: {
+        conflicts: [
+          { plugin: "alpha", command: "alpha.ok", key: "Mod+C", heldBy: { kind: "fixed", id: "copy" } },
+          { plugin: "alpha", command: "alpha.extra", key: "Mod+R", heldBy: { kind: "shortcut", id: "reload" } },
+        ],
+      },
+    });
+
+    // Resetting alpha.ok / alpha.extra and restoring alpha.find's manifest conflict, then checking user shortcutOverrides:
+    registry.setCommandKey("alpha", "alpha.ok", "Mod+Shift+9");
+    registry.setCommandKey("alpha", "alpha.extra", null);
+    registry.setCommandKey("alpha", "alpha.find", "Mod+K");
+    // User moved "search" off Mod+K -> alpha.find is now free; user moved "reload" onto Mod+Shift+9 -> alpha.ok now conflicts.
+    expect(registry.inspect("shortcutConflicts", {}, { themeCss: null, shortcutOverrides: { search: "Mod+L", reload: "Mod+Shift+9" } })).toEqual({
+      ok: true,
+      query: "shortcutConflicts",
+      data: {
+        conflicts: [{ plugin: "alpha", command: "alpha.ok", key: "Mod+Shift+9", heldBy: { kind: "shortcut", id: "reload" } }],
+      },
+    });
+    // User rebound alpha.find itself to a free key -> no conflict, including via --inspect-plugins reading settings.json.
+    writeFileSync(join(root, "settings.json"), JSON.stringify({ shortcutBindings: { "alpha.find": "Mod+Shift+8" } }));
+    const cli = inspectReport(["shortcutConflicts"], { builtIns: null, themeCssFile: null, cwd: library });
+    expect(cli.code).toBe(0);
+    expect(JSON.parse(cli.stdout)).toEqual({ ok: true, query: "shortcutConflicts", data: { conflicts: [] } });
   });
 
   it("themeVariables: dark by default, light on request, filtered by prefix; unavailable without the stylesheet", () => {

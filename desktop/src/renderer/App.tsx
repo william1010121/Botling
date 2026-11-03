@@ -1,4 +1,5 @@
-import { BottomPanels, TOGGLE_BOTTOM_PANEL, bottomPanelToggledBy } from './BottomPanels';
+import { BottomPanels, TOGGLE_BOTTOM_PANEL, bottomPanelToggledBy } from "./BottomPanels";
+import { ownsCommand } from "../../../Web/src/frame-protocol";
 // The app page: React chrome around the reused chat page. The left column lists the bots (as the
 // Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
 // (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
@@ -103,15 +104,23 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
   const pluginKeys = useMemo(() => commandBindings(keybindingsOf(view.plugins), view.settings?.shortcuts), [view.plugins, view.settings?.shortcuts]);
-  const runCommand = useCallback((id: string, args: string[] = []) => {
-    // A bottom panel's toggle command is the page's own to run: it shows or hides the panel of the bot on screen.
-    if (bottomPanelToggledBy(store.getView().plugins, id)) { window.dispatchEvent(new CustomEvent(TOGGLE_BOTTOM_PANEL, { detail: id })); return; }
-    runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure)));
+  const runCommand = useCallback((id: string, args: string[] = [], caller?: { from: "frame"; name: string }) => {
+    runPluginCommand(client, store.getView().plugins, id, args, (failure) => setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure)), caller);
   }, [client, store]);
-  // A key a panel's frame did not use (a modifier held) goes through the page's shortcuts as if pressed here.
-  const forwardKey = useCallback((key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => {
-    window.dispatchEvent(new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }));
-  }, []);
+  // A key a panel's frame did not use (a modifier held): runs Botling's shortcuts or that plugin's own bound command (never another plugin's, and never a synthetic window keydown).
+  const forwardKey = useCallback((plugin: string, key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => {
+    switch (actionForEvent(key, shortcutBindings)) {
+      case "settings": openSettings(); break;
+      case "toggleRightPanel": toggleRight(); break;
+      case "toggleSidebar": toggleRail(); break;
+      case "search": startSearch(); break;
+      case null: {
+        const command = commandForEvent(key, pluginKeys);
+        if (command) runCommand(command, [], { from: "frame", name: plugin });
+        break;
+      }
+    }
+  }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings, pluginKeys, runCommand]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       switch (actionForEvent(event, shortcutBindings)) {
@@ -662,9 +671,12 @@ export function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu
  * A plugin command from a key, the / menu or a menu: in the plugin host (the app page asks, so the core runs any),
  * or in the chat page when a web part there registered it.
  */
-function runPluginCommand(client: Client, plugins: PluginsView | null | undefined, id: string, args: string[], onError: (failure: unknown) => void) {
-  if (runsInHost(plugins, id)) void client.request({ type: "plugins.command", id, ...(args.length ? { args } : {}) }).catch(onError);
-  else postToChat({ botling: "runCommand", id });
+function runPluginCommand(client: Client, plugins: PluginsView | null | undefined, id: string, args: string[], onError: (failure: unknown) => void, caller?: { from: "frame"; name: string }) {
+  if (caller?.from === "frame" && !ownsCommand(caller.name, id)) return;
+  // A bottom panel's toggle command is the page's own to run: it shows or hides the panel of the bot on screen.
+  if (bottomPanelToggledBy(plugins, id)) { window.dispatchEvent(new CustomEvent(TOGGLE_BOTTOM_PANEL, { detail: id })); return; }
+  if (runsInHost(plugins, id)) void client.request({ type: "plugins.command", id, ...(caller ?? {}), ...(args.length ? { args } : {}) }).catch(onError);
+  else if (!caller) postToChat({ botling: "runCommand", id });
 }
 
 function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void;

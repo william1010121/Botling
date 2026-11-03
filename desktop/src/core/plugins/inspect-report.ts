@@ -5,6 +5,7 @@
 // no shell. Exit code 0: answered; 1: the query or its input was refused; 2: usage.
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { readSettings } from "../settings";
 import { MemorySecretStore } from "./secrets";
 import { PluginRegistry } from "./registry";
 
@@ -32,10 +33,12 @@ export function inspectReport(args: string[], environment: InspectEnvironment): 
     try { input = JSON.parse(text); } catch { return { code: 2, stdout: "", stderr: `The input is not valid JSON.\n${USAGE}` }; }
   }
   const root = resolve(library);
-  const registry = new PluginRegistry(root, join(dirname(root), "plugins.json"), new MemorySecretStore(), environment.builtIns);
+  const dataDir = dirname(root);
+  const registry = new PluginRegistry(root, join(dataDir, "plugins.json"), new MemorySecretStore(), environment.builtIns);
   if (query === "list") return { code: 0, stdout: JSON.stringify({ queries: registry.inspectQueries() }, null, 2) + "\n", stderr: "" };
   let themeCss: string | null = null;
   if (environment.themeCssFile) { try { themeCss = readFileSync(environment.themeCssFile, "utf8"); } catch { /* not available */ } }
-  const result = registry.inspect(query, input, { themeCss });
+  const shortcutOverrides = readSettings(join(dataDir, "settings.json")).shortcutBindings;
+  const result = registry.inspect(query, input, { themeCss, shortcutOverrides });
   return { code: result.ok ? 0 : 1, stdout: JSON.stringify(result, null, 2) + "\n", stderr: "" };
 }
