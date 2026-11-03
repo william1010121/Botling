@@ -2180,7 +2180,7 @@ First write a test that shows this, then fix it.`;
   private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy" }): Promise<ResultOf<"chat.send">> {
     const bot = this.bot(botId);
     // A message to a bot in Idle brings it back to the list (the user is talking to it again).
-    const idle = this.settingsNow().idleBots;
+    const idle = this.settingsNow().idleBots ?? [];
     if (idle.includes(botId.toUpperCase())) this.changeSetting({ key: "idleBots", value: idle.filter((id) => id !== botId.toUpperCase()) });
     // The files waiting in its input box go with the message (1.x sends them all).
     const files = this.pending.take(botId);
