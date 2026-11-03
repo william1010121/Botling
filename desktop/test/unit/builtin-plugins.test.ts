@@ -71,11 +71,11 @@ describe("the registry with built-in plugins", () => {
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);
-    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.board", "botling.catchup", "botling.chat-extras", "botling.git", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
+    expect(plugins.webSpecs().map((spec) => spec.name)).toEqual(["botling.board", "botling.catchup", "botling.chat-extras", "botling.component-studio", "botling.git", "botling.routines", "botling.terminal", "botling.usage", "botling.whiteboard", "aaa"]);
     expect(registry(library).plugin("ccb-latex")!.enabled).toBe(false);
     // Only a plugin that ships with Botling is told so (the chat page lends it its own parts); a library plugin of the same name is not.
     expect(plugins.webSpecs().map((spec) => [spec.name, spec.builtIn === true])).toEqual([
-      ["botling.board", true], ["botling.catchup", true], ["botling.chat-extras", true], ["botling.git", true], ["botling.routines", true], ["botling.terminal", true], ["botling.usage", true], ["botling.whiteboard", true], ["aaa", false],
+      ["botling.board", true], ["botling.catchup", true], ["botling.chat-extras", true], ["botling.component-studio", true], ["botling.git", true], ["botling.routines", true], ["botling.terminal", true], ["botling.usage", true], ["botling.whiteboard", true], ["aaa", false],
     ]);
     plugins.setEnabled("ccb-latex", true);
     // Maintainer copies a built-in plugin into the library to change it: that copy is the one that runs.
