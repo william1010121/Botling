@@ -418,11 +418,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                   ))}
                   {split.idle.length > 0 && <div className="rail-idle">
                     <button type="button" className="rail-idle-row" aria-expanded={idleOpen} onClick={() => setIdleOpen(!idleOpen)}
-                      aria-label={`Idle, ${idleNumbers.bots} bot${idleNumbers.bots === 1 ? "" : "s"}${idleNumbers.needsYou ? `, ${idleNumbers.needsYou} waiting on you` : ""}`}>
+                      aria-label={`Idle, ${idleNumbers.bots} bot${idleNumbers.bots === 1 ? "" : "s"}`}>
                       <span className={`rail-idle-chevron${idleOpen ? " open" : ""}`} aria-hidden="true"><Icon name="chevronLeft" size={11} /></span>
                       <span>Idle</span>
                       <span className="bot-gap" />
-                      {idleNumbers.needsYou > 0 && <span className="badge waiting" aria-hidden="true">{idleNumbers.needsYou}</span>}
                       <span className="rail-idle-count">{idleNumbers.bots} bot{idleNumbers.bots === 1 ? "" : "s"}</span>
                     </button>
                     {idleOpen && split.idle.map((candidate) => <div key={candidate.id} className="bot-entry">{row(candidate, true)}</div>)}
