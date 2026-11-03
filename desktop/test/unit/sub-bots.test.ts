@@ -184,6 +184,14 @@ describe("handoff.md written by the app", () => {
     expect(note).toContain("Settings (working) (working now): progress file /p/.bot/subagents/a/progress.md");
     expect(note).toContain("do not wake it");
   });
+  it("tells a project bot how to message a sub bot: a line starting with @ and its exact name (eeg thought it could not)", () => {
+    const note = subBotBriefing([{ name: "sess-align-validation", progress: "/p/progress.md", working: true, status: "working" }]);
+    expect(note).toContain('@sess-align-validation');
+    expect(note).toMatch(/start a line of your reply with @ and its exact name/);
+    // The tools a model reaches for first do not reach a sub bot; say so, so it does not do the job itself instead.
+    expect(note).toMatch(/SendMessage and app_send_message do not reach a sub bot/);
+    expect(note).toMatch(/do not do its job yourself/);
+  });
 });
 
 function fixture(extra: { sub?: boolean; subName?: string } = {}) {
