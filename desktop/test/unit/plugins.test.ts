@@ -2,10 +2,10 @@
 // settings, a broken plugin off until its files change, three crashes in ten minutes), sealed secrets
 // (never plain text in a file), and the plugin host client against a host that misbehaves.
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir, until } from "../helpers";
-import { checkPlugin, checkPluginIssues, CHECK_NEXT_STEPS, compatible } from "../../src/core/plugins/manifest";
+import { checkPlugin, checkPluginIssues, CHECK_NEXT_STEPS, MAX_IMAGE_BYTES, compatible } from "../../src/core/plugins/manifest";
 import { checkReport } from "../../src/core/plugins/check-report";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { swiftPrettyJSON } from "../../src/core/swift-json";
@@ -285,7 +285,7 @@ describe("the check's stable codes and nextStep (ADR-006 M3)", () => {
       "MANIFEST_NOT_FOUND", "MANIFEST_MALFORMED", "NAME_INVALID", "VERSION_INVALID", "ENGINE_MISSING", "ENGINE_INCOMPATIBLE",
       "CCB_MISSING", "PATH_OUTSIDE_FOLDER", "PATH_MISSING", "CLAUDE_PLUGIN_JSON_MISSING", "STYLE_MISSING", "PERMISSION_UNKNOWN",
       "COMMAND_DUPLICATE", "SHORTCUT_UNREADABLE", "PANEL_NEEDS_WEB", "SETTING_ENV_INVALID", "SETTING_ENUM_NO_OPTIONS",
-      "SETTING_DEFAULT_INVALID", "SETTING_TYPE_INVALID",
+      "SETTING_DEFAULT_INVALID", "SETTING_TYPE_INVALID", "LINK_OUTSIDE_FOLDER", "ICON_TOO_LARGE",
     ]);
     for (const [code, step] of Object.entries(CHECK_NEXT_STEPS)) expect(step.length, code).toBeGreaterThan(20);
   });
@@ -316,6 +316,27 @@ describe("the check's stable codes and nextStep (ADR-006 M3)", () => {
     const broken = join(root, "broken"); mkdirSync(broken); writeFileSync(join(broken, "package.json"), "{nope");
     expect(checkPluginIssues(broken).map((issue) => issue.code)).toEqual(["MANIFEST_MALFORMED"]);
     expect(checkPluginIssues(plugin(root, "good2"))).toEqual([]);
+  });
+
+  it("pre-install static gate: rejects links out of the folder and oversized images (ADR-006 M6)", () => {
+    const root = tempDir("plugins");
+    const outside = join(root, "outside.txt"); writeFileSync(outside, "secret");
+    const linked = plugin(root, "linked");
+    symlinkSync(outside, join(linked, "dist", "leak.js"));
+    expect(checkPluginIssues(linked).map((issue) => issue.code)).toEqual(["LINK_OUTSIDE_FOLDER"]);
+    const inner = plugin(root, "inner");
+    symlinkSync(join(inner, "dist", "web.js"), join(inner, "dist", "alias.js"));
+    expect(checkPluginIssues(inner)).toEqual([]);
+    const big = plugin(root, "big");
+    writeFileSync(join(big, "icon.png"), Buffer.alloc(MAX_IMAGE_BYTES + 1));
+    writeFileSync(join(big, "small.png"), Buffer.alloc(100));
+    const issues = checkPluginIssues(big);
+    expect(issues.map((issue) => issue.code)).toEqual(["ICON_TOO_LARGE"]);
+    expect(issues[0].message).toContain("icon.png");
+    const skipped = plugin(root, "skipped");
+    mkdirSync(join(skipped, "node_modules"));
+    writeFileSync(join(skipped, "node_modules", "huge.png"), Buffer.alloc(MAX_IMAGE_BYTES + 1));
+    expect(checkPluginIssues(skipped)).toEqual([]);
   });
 
   it("keeps the ✗ line readable and adds the next step to the report", () => {

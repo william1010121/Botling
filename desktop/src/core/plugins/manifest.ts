@@ -3,8 +3,8 @@
 // Plugins.swift: the same problems, worded the same, and the same npm semver ranges for `engines.ccb`.
 // `readManifest` is the 3.x reading (plugin-platform.md §3.1): the `botling` field or the older `ccb`
 // one, as one shape with its contributions (contributions.ts). Loading still goes by `ccb` alone.
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, relative, isAbsolute } from "node:path";
 import { legacyKey } from "../../contract/shortcuts";
 import { insidePlugin, readContributions, type Contribution, type FolderView } from "./contributions";
 
@@ -171,6 +171,42 @@ export function loadPlugin(folder: string): { ok: true; manifest: PluginManifest
 
 const inside = (path: string) => !path.startsWith("/") && !path.split("/").includes("..");
 
+/** Pre-install static gate (ADR-006 M6): the largest an image file in a plugin folder may be. */
+export const MAX_IMAGE_BYTES = 512 * 1024;
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|ico|icns|bmp)$/i;
+const SKIPPED_DIRS = new Set(["node_modules", ".git"]);
+const WALK_LIMIT = 5_000;
+
+/** Links that leave the plugin folder and oversized images, found by walking it (no node_modules or .git). */
+function staticGate(folder: string, add: (code: CheckCode, message: string) => void): void {
+  let root: string;
+  try { root = realpathSync(folder); } catch { return; }
+  const escapes = (real: string) => { const rel = relative(root, real); return rel.startsWith("..") || isAbsolute(rel); };
+  let seen = 0;
+  const walk = (dir: string, shown: string) => {
+    let names: string[];
+    try { names = readdirSync(dir); } catch { return; }
+    for (const name of names.sort()) {
+      if (++seen > WALK_LIMIT) return;
+      const path = join(dir, name);
+      const label = shown ? `${shown}/${name}` : name;
+      let info;
+      try { info = lstatSync(path); } catch { continue; }
+      if (info.isSymbolicLink()) {
+        let real: string;
+        try { real = realpathSync(path); } catch { add("LINK_OUTSIDE_FOLDER", `"${label}" is a link that cannot be followed.`); continue; }
+        if (escapes(real)) { add("LINK_OUTSIDE_FOLDER", `"${label}" is a link that points outside the plugin folder.`); continue; }
+        info = statSync(path);
+      }
+      if (info.isDirectory()) { if (!SKIPPED_DIRS.has(name)) walk(path, label); continue; }
+      if (info.isFile() && IMAGE_FILE.test(name) && info.size > MAX_IMAGE_BYTES) {
+        add("ICON_TOO_LARGE", `Image "${label}" is ${Math.round(info.size / 1024)} KB; the limit is ${Math.round(MAX_IMAGE_BYTES / 1024)} KB.`);
+      }
+    }
+  };
+  walk(root, "");
+}
+
 /**
  * Every way `checkPlugin` can fail, with the one next action that fixes it. The codes are a contract: the
  * Maintainer's repair loop (and UI hints) go by them, so a code is never renamed or reused (test/unit/plugins.test.ts
@@ -196,6 +232,8 @@ export const CHECK_NEXT_STEPS = {
   SETTING_ENUM_NO_OPTIONS: "Give the enum setting a non-empty options list.",
   SETTING_DEFAULT_INVALID: "Make the setting's default match its type (and be one of options for an enum), or remove the default.",
   SETTING_TYPE_INVALID: "Set the setting's type to boolean, enum, string or number.",
+  LINK_OUTSIDE_FOLDER: "Replace that link with a real copy of the file inside the plugin folder (a symlink must not point outside it).",
+  ICON_TOO_LARGE: `Shrink that image below ${Math.round(MAX_IMAGE_BYTES / 1024)} KB (export a smaller size or use SVG) or remove it; a plugin's icons should be small.`,
 } as const;
 
 export type CheckCode = keyof typeof CHECK_NEXT_STEPS;
@@ -274,6 +312,7 @@ export function checkPluginIssues(folder: string): PluginIssue[] {
         add("SETTING_TYPE_INVALID", `Setting "${key}": type "${setting.type}" must be boolean, enum, string or number.`);
     }
   }
+  staticGate(folder, add);
   return issues;
 }
 

@@ -3,7 +3,8 @@ import { ShellOverlay } from "./ShellOverlay";
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { BotView, ComponentInfoView, PluginView, PluginsView } from "../contract";
+import { MAINTAINER_BOT_ID, type BotView, type ComponentInfoView, type PluginView, type PluginsView } from "../contract";
+import { buildRequest, PLUGIN_STARTERS } from "./plugin-starters";
 import { Client, RequestFailed } from "./client";
 import { FrameBroker, registerPluginFrame } from "./frame-broker";
 import { frameEvent, type BuiltinCommand, type FrameRequest } from "../../../Web/src/frame-protocol";
@@ -12,7 +13,7 @@ import { pluginFrameHost, type PluginFrameHostDeps } from "./plugin-frame-host";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-export function PluginsButton({ client, plugins }: { client: Client; plugins: PluginsView | null }) {
+export function PluginsButton({ client, plugins, onAsked }: { client: Client; plugins: PluginsView | null; onAsked?: () => void }) {
   const [open, setOpen] = useState(false);
   const [panel, setPanel] = useState<{ plugin: string; id: string; title: string } | null>(null);
   const broken = (plugins?.plugins.some((plugin) => plugin.failure) ?? false) || (plugins?.broken.length ?? 0) > 0;
@@ -21,13 +22,13 @@ export function PluginsButton({ client, plugins }: { client: Client; plugins: Pl
       <button type="button" className={`rail-button${open ? " on" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>
         Plugins{broken && <span className="rail-dot" aria-label="a plugin needs attention" />}
       </button>
-      {open && <ShellOverlay><PluginsPanel client={client} plugins={plugins} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} /></ShellOverlay>}
+      {open && <ShellOverlay><PluginsPanel client={client} plugins={plugins} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} onAsked={() => { setOpen(false); onAsked?.(); }} /></ShellOverlay>}
       {panel && <ShellOverlay><PanelFrame client={client} plugin={panel.plugin} panel={panel.id} title={panel.title} onClose={() => setPanel(null)} /></ShellOverlay>}
     </div>
   );
 }
 
-export function PluginsPanel({ client, plugins, onPanel, onClose, embedded = false }: { client: Client; plugins: PluginsView | null; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void; embedded?: boolean }) {
+export function PluginsPanel({ client, plugins, onPanel, onClose, onAsked, embedded = false }: { client: Client; plugins: PluginsView | null; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void; onAsked?: () => void; embedded?: boolean }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const run = (promise: Promise<unknown>) => { setProblem(null); void promise.catch((failure) => setProblem(why(failure))); };
@@ -44,6 +45,7 @@ export function PluginsPanel({ client, plugins, onPanel, onClose, embedded = fal
       {problem && <p className="plugins-problem" role="alert">{problem}</p>}
       {result && <p className="plugins-result" role="status">{result}</p>}
       {!plugins?.plugins.length && <p className="plugins-empty">No plugins yet. Ask the main bot or Maintainer for one, or to install one.</p>}
+      <AskMaintainer onSend={(text) => run(client.request({ type: "chat.send", botId: MAINTAINER_BOT_ID, text }).then(() => { setResult("Sent to Maintainer. It builds the plugin and checks it; you approve anything it needs."); onAsked?.(); }))} />
       <ul>
         {plugins?.plugins.map((plugin) => (
           <PluginItem key={plugin.name} plugin={plugin}
@@ -60,6 +62,24 @@ export function PluginsPanel({ client, plugins, onPanel, onClose, embedded = fal
           <div className="plugins-problem">Not loaded: {entry.problems.join("; ")}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** ADR-006 M5: describe a plugin (or start from a template) and hand it to Maintainer; it adds no new way to build. */
+function AskMaintainer({ onSend }: { onSend: (text: string) => void }) {
+  const [text, setText] = useState("");
+  const request = buildRequest(text);
+  return (
+    <div className="plugins-ask">
+      <div className="plugin-title">Ask Maintainer to build</div>
+      <div className="plugins-starters">
+        {PLUGIN_STARTERS.map((starter) => (
+          <button key={starter.id} type="button" className="plugins-starter" data-starter={starter.id} onClick={() => setText(starter.text)}>{starter.title}</button>
+        ))}
+      </div>
+      <textarea className="plugins-ask-text" rows={2} value={text} placeholder="Describe the plugin you want" aria-label="Describe the plugin you want" onChange={(event) => setText(event.target.value)} />
+      <button type="button" className="plugins-ask-send" disabled={!request} onClick={() => { if (request) { onSend(request); setText(""); } }}>Ask Maintainer</button>
     </div>
   );
 }

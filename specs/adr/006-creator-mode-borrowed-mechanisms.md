@@ -5,7 +5,7 @@
 - **Decided Date**: 2026-11-03
 - **Deciders**: Project Lead & Botling Architecture Team
 - **Related**: ADR-003 (sandboxed frames, ApprovalSheet), ADR-005 (plugin architecture)
-- **Implementation (2026-11-03, branch `bot/creator-mode-phase1-2`)**: landed M1, M2, M3, M4 (phases 1 and 2). Not started: M5, M6, role-template retention. Per-mechanism status lines below.
+- **Implementation (2026-11-03, branch `bot/creator-mode-phase1-2`)**: landed M1, M2, M3, M4 (phases 1 and 2). Later on `bot/adr006-rest`: M5 and M6. Not started: role-template retention (deferred by the ADR). Per-mechanism status lines below.
 
 ---
 
@@ -67,13 +67,13 @@ Adopt six mechanisms. None relaxes the sandbox, `ApprovalSheet`, or the Ledger.
 - **Consequences**: Less interruption, reversible creation. Needs per-turn state and a restore path (relies on Git tags/`lastGood`). Cost: medium; naturally lands with the Studio extraction (ADR-005).
 
 ### M5. Plugins-page creation entry
-- **Status**: Not started.
+- **Status**: Landed (`Plugins.tsx` `AskMaintainer`, `plugin-starters.ts`): four starter templates and a description box; it sends a `chat.send` to Maintainer and opens its chat. Placement (top of the Plugins panel) is still to be confirmed with the project lead; only checked by unit test of the request text, typecheck and build, no manual window test.
 - **Context**: DSH has a "let the agent create a plugin" menu and sample guidance.
 - **Decision**: Add a "Ask Maintainer to build" button with starter templates in `Plugins.tsx`.
 - **Consequences**: Discoverability with low risk; it only routes to the existing Maintainer flow. Cost: small (UI). Exact UI placement is **to be confirmed with the project lead** (open item in the research).
 
 ### M6. Pre-install static gate
-- **Status**: Not started.
+- **Status**: Landed in `manifest.ts` (`staticGate`): new codes `LINK_OUTSIDE_FOLDER` (a symlink resolving outside the plugin folder) and `ICON_TOO_LARGE` (an image file over 512 KB; `node_modules` and `.git` skipped). Panel icons are SF Symbol names, not files, so image files are checked wherever they sit.
 - **Context**: DSH runs `validateGeneratedBundle` (path and build checks) before installing.
 - **Decision**: Extend `checkPlugin` in `manifest.ts` to reject out-of-bounds links/paths and oversized icon assets before install.
 - **Consequences**: Cheap defence in depth ahead of the screenshot check; it complements, not replaces, the sandbox. Cost: small.

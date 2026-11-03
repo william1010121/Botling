@@ -136,6 +136,10 @@ button { font: inherit; color: inherit; }
 .plugins-problem { color: var(--error); margin: 2px 0 6px; }
 .plugins-result { color: var(--green); margin: 2px 0 6px; }
 .plugins-empty { color: var(--faint); margin: 2px 0; }
+.plugins-ask { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.plugins-starters { display: flex; flex-wrap: wrap; gap: 6px; }
+.plugins-starter, .plugins-ask-send { font: inherit; cursor: pointer; }
+.plugins-ask-text { font: inherit; resize: vertical; }
 
 /* Settings (SettingsWindow.swift): a sheet with the sections on the left, 1.x's 900×640. */
 .rail-settings { padding: 0 10px 8px; }
