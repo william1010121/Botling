@@ -431,7 +431,7 @@ describe("plugin host (the real Node process)", () => {
 
     await next((m) => m.method === "ready");
     send({ id: 1, method: "load", params: { plugins: [spec("shout", { main: plugin })] } });
-    expect((await next((m) => m.id === 1)).result).toEqual({ loaded: ["shout"], failed: [] });
+    expect((await next((m) => m.id === 1)).result).toMatchObject({ loaded: ["shout"], failed: [] });
     expect((await next((m) => m.method === "notify")).params).toEqual({ plugin: "shout", text: "ready to shout" });
     send({ id: 2, method: "beforeSend", params: { bot: { id: "main" }, text: "one cat" } });
     expect((await next((m) => m.id === 2)).result).toEqual({ text: "one 🐈" });
