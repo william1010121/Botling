@@ -6,6 +6,13 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+- **Component studio is now a built-in plugin (`botling.component-studio`).** "Make into component", the bot's `<suggest-component>` chips and the spec panel
+  moved out of the core and the chat page. Specs are still kept in each chat's `specs.json` (same format, so imports and restarts behave as before),
+  now through a built-in-only `studio` API. New seams for it: `menus` entries for a message, chip decorations that can ask for approval, and
+  `rightPanel.takeover` views. Not yet tried in the real app: the chip look, the panel taking over the right side, and the test-run approval sheet
+  (covered by unit and core-harness tests only). The Board's pin button on a spec (`specPinButton`) and `lineExtras` in `bot.ts` still go through the
+  core's small stable path; they move with the Board's pin work.
+
 ## 2.3.2
 
 - **A sub bot's own subagents show under it in the left column.** The column now nests three levels: project bot, then each of its sub bots, then the subagents that sub bot started (with their settle buttons and read-only view), the same way a normal bot lists its subagents. They were already in the sub bot's own chat, but its row had no children because only top-level bots were given a subagent list. Not yet viewed in the real app.

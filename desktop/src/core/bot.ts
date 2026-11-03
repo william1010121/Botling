@@ -2484,8 +2484,8 @@ export class Bot {
 
   /**
    * No silent fallback to a Claude worker/plugin from an Antigravity reply: <component> and <plugin> set Maintainer to work.
-   * What the app does itself stays: new bots and projects (asked on a card), a <suggest-component> chip (Maintainer only
-   * when the user presses it, as "Make into component"), and Maintainer's own <component-spec>.
+   * What the app does itself stays: new bots and projects (asked on a card). <suggest-component> and
+   * Maintainer's <component-spec> belong to the built-in plugin botling.component-studio (replyTags).
    */
   private handleRequests(requests: BotRequest[]): BotRequest[] {
     const unavailable = new Set(["component", "plugin"]);
