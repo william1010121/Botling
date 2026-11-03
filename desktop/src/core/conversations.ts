@@ -199,7 +199,14 @@ export class Conversations {
       if (this.deps.members().some((member) => member.id === chat.id)) this.trace("BotReply", chat.id, { to, body, msg: record.id, depth, outcome });
     };
     if (!record.text.includes("@")) { route(null, null, "none"); return; }
-    if (!this.deps.members().some((member) => member.id === chat.id)) return;
+    if (!this.deps.members().some((member) => member.id === chat.id)) {
+      // A sub bot's reply: it cannot call others in (only its project bot's chat can), but the @ must not vanish unseen.
+      if ((this.deps.subBots?.() ?? []).some((sub) => sub.id === chat.id) && botMentionCandidates(record.text).length) {
+        chat.appNotice("Not sent with @: a sub bot cannot call other bots in. Ask its project bot to do it, or tell the user what you need.");
+        route(null, null, "unreachable");
+      }
+      return;
+    }
     const members = [...this.deps.members(), ...this.subBotsOf(chat.id)];
     const callable = this.callable(chat.id);
     // Other bots' sub bots: not callable here, only named so the @ is not lost without a word.

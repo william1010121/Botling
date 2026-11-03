@@ -302,6 +302,19 @@ describe("a sub bot in the core", () => {
       expect((core as any).conversations.calledIn("@bench-correction 你有收到嗎", MAIN_BOT_ID)).toEqual([]);
     } finally { vi.restoreAllMocks(); await core.shutdown(); }
   });
+
+  it("says so when a sub bot's own reply starts a line with @ and a bot's name, instead of dropping it silently", async () => {
+    const h = fixture({ subName: "bench-correction" }), core = h.open();
+    try {
+      const sub = bots(core).get(SUB)!;
+      const notices: string[] = [];
+      vi.spyOn(sub, "appNotice").mockImplementation(((text: string) => { notices.push(text); return "n"; }) as any);
+      (core as any).conversations.receiveBotMention({ id: "R2", role: "bot", text: `@${bots(core).get(PROJECT)!.profile.name} please fetch the data`, date: 0 }, sub);
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain("Not sent");
+      expect(notices[0]).toContain("sub bot");
+    } finally { vi.restoreAllMocks(); await core.shutdown(); }
+  });
 });
 
 describe("making a sub bot directly", () => {
