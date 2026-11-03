@@ -7,6 +7,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FocusEvent
 import { LISTED_AT_MOST, listedRows, type AgentTargetView, type BotView, type SubagentRowView } from "../contract";
 import { Icon, SubagentMark } from "./icons";
 import { faceURL, type Look } from "./avatars";
+import { elapsedText, type peekCard } from "./rail-idle";
 
 /** The clock the column's time-based rows go by: a tick every 30 s (1.x's TimelineView). */
 export function useMinuteClock(): number {
@@ -360,5 +361,111 @@ export function AgentMenu({ row, at, load, onMove, onClose, onMessage, onStop, o
             </form>)}
       </>}
     </div></ShellOverlay>
+  );
+}
+
+/**
+ * A bot's status card beside the left column (opened with its row): its sub bots, each with its state, what it is
+ * doing and how long it has run, a click showing that sub bot's own subagents; the bot's direct subagents in one
+ * folded "Agents N" row; and a link to its chat. Subagent rows have no menu and no settle clock (the right panel's
+ * Settled keeps those); a sub bot row keeps its "⋯". Nothing here is remembered: every part starts folded.
+ * The chat is a native view above the shell, so the card is a shell overlay.
+ */
+export function PeekCard({ bot, card, anchor, now, focusFirst, onOpenChat, onOpenAgent, onSubBotMenu, onClose }: {
+  bot: BotView;
+  card: ReturnType<typeof peekCard>;
+  /** The row's box, in the window: the card sits beside it. */
+  anchor: { top: number; right: number };
+  now: number;
+  /** Opened from the keyboard: the focus goes into the card. */
+  focusFirst: boolean;
+  /** Open a bot's chat (this bot's, or a sub bot's). */
+  onOpenChat: (botId: string) => void;
+  /** A subagent row: its read-only view, for the bot whose row it is. */
+  onOpenAgent: (botId: string, row: SubagentRowView) => void;
+  onSubBotMenu: (subBotId: string, at: { x: number; y: number }) => void;
+  /** An outside click, Escape, or the window losing focus; `refocus`: give the focus back to the row. */
+  onClose: (refocus: boolean) => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const [y, setY] = useState(anchor.top);
+  const [open, setOpen] = useState<string[]>([]);
+  const toggle = (key: string) => setOpen((keys) => (keys.includes(key) ? keys.filter((one) => one !== key) : [...keys, key]));
+  // Kept inside the window: a row near the bottom has its card moved up.
+  useLayoutEffect(() => {
+    const height = box.current?.getBoundingClientRect().height ?? 0;
+    setY(Math.max(8, Math.min(anchor.top, window.innerHeight - 8 - height)));
+  }, [anchor.top, open.length, card.subBots.length]);
+  useEffect(() => { if (focusFirst) box.current?.querySelector<HTMLElement>("button")?.focus(); }, [focusFirst]);
+  useEffect(() => {
+    // A sub bot's menu or its Close dialog is part of the card's work: clicks there, and the Escape that closes them, leave the card open.
+    const busy = () => !!document.querySelector(".sub-bot-menu, .dialog-backdrop");
+    const away = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest(".rail-peek, .sub-bot-menu, .dialog-backdrop")) return;
+      onClose(false);
+    };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy()) { event.preventDefault(); onClose(true); } };
+    const blur = () => { if (!busy()) onClose(false); };
+    window.addEventListener("pointerdown", away, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("blur", blur);
+    return () => { window.removeEventListener("pointerdown", away, true); window.removeEventListener("keydown", key); window.removeEventListener("blur", blur); };
+  }, [onClose]);
+  const subs = card.subBots.length;
+  return (
+    <ShellOverlay><div ref={box} className="rail-peek" role="dialog" aria-label={`${bot.name} status`} data-bot={bot.id} style={{ top: y, left: anchor.right + 8 }}>
+      <div className="rail-peek-head">
+        <span className="rail-peek-name">{bot.name}</span>
+        {subs > 0 && <span className="rail-peek-count">{subs} sub bot{subs === 1 ? "" : "s"}</span>}
+      </div>
+      {card.subBots.map((entry) => {
+        const expanded = open.includes(entry.bot.id);
+        return (
+          <Fragment key={entry.bot.id}>
+            <div className={`rail-peek-row${expanded ? " open" : ""}`} data-sub-bot={entry.bot.id}>
+              <button type="button" className="rail-peek-open" aria-expanded={expanded} title={entry.doing || undefined}
+                aria-label={`Sub bot ${entry.bot.name}: ${entry.state === "waiting" ? "waiting for you" : entry.state}${entry.doing ? `, ${entry.doing}` : ""}`}
+                onClick={() => toggle(entry.bot.id)}>
+                <span className={`peek-dot ${entry.state}`} aria-hidden="true" />
+                <span className="rail-peek-main">
+                  <span className="rail-peek-title"><span className="subagent-title">{entry.bot.name}</span><span className="subagent-kind">sub bot</span></span>
+                  {entry.doing && <span className={`rail-peek-doing${entry.state === "waiting" ? " waiting" : ""}`}>{entry.doing}</span>}
+                </span>
+                {entry.elapsedMs !== null && <span className="rail-peek-time">{elapsedText(entry.elapsedMs)}</span>}
+              </button>
+              <button type="button" className="subagent-more-menu" aria-haspopup="menu" aria-label={`More for the sub bot ${entry.bot.name}`} title="More"
+                onClick={(event) => { const at = event.currentTarget.getBoundingClientRect(); onSubBotMenu(entry.bot.id, { x: at.left, y: at.bottom + 2 }); }}>⋯</button>
+            </div>
+            {expanded && <div className="rail-peek-agents">
+              {entry.agents.map((agent) => <PeekAgent key={agent.id} row={agent} onOpen={() => onOpenAgent(entry.bot.id, agent)} />)}
+              {!entry.agents.length && <span className="rail-peek-none">No subagents now</span>}
+              <button type="button" className="rail-peek-link" onClick={() => onOpenChat(entry.bot.id)}>Open {entry.bot.name} chat</button>
+            </div>}
+          </Fragment>
+        );
+      })}
+      {card.agents.length > 0 && <>
+        <button type="button" className="rail-peek-group" aria-expanded={open.includes("agents")} onClick={() => toggle("agents")}>
+          <span className={`rail-peek-chevron${open.includes("agents") ? " open" : ""}`} aria-hidden="true"><Icon name="chevronLeft" size={11} /></span>
+          <span>Agents</span><span className="rail-peek-group-count">{card.agents.length}</span>
+        </button>
+        {open.includes("agents") && <div className="rail-peek-agents">
+          {card.agents.map((agent) => <PeekAgent key={agent.id} row={agent} onOpen={() => onOpenAgent(bot.id, agent)} />)}
+        </div>}
+      </>}
+      <button type="button" className="rail-peek-link" onClick={() => onOpenChat(bot.id)}>Open {bot.name} chat</button>
+    </div></ShellOverlay>
+  );
+}
+
+/** A subagent in the card: its state, title and running/done; a click opens its read-only view. No menu, no settle clock. */
+export function PeekAgent({ row, onOpen }: { row: SubagentRowView; onOpen: () => void }) {
+  const word = row.status === "completed" ? "done" : row.status;
+  return (
+    <button type="button" className="rail-peek-agent" data-subagent={row.id} title={row.prompt} onClick={onOpen} aria-label={`Subagent ${row.title || "Subagent"}, ${word}`}>
+      <span className={`peek-dot ${row.status === "running" ? "running" : "done"}`} aria-hidden="true" />
+      <span className="subagent-title">{row.title || "Subagent"}</span>
+      <span className={`rail-peek-state ${row.status === "running" ? "running" : "done"}`}>{word}</span>
+    </button>
   );
 }

@@ -29,8 +29,8 @@ import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
-import { botCounts, idleCounts, idleList, canIdle, railOrder, railSplit } from "./rail-idle";
-import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubagentRows, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
+import { botCounts, canIdle, idleCounts, idleList, peekCard, railOrder, railSplit } from "./rail-idle";
+import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { SpecFrame } from "./SpecFrame";
 import { useApprovalSheet } from "./ApprovalSheet";
@@ -102,6 +102,21 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     const next = now.includes(botId) ? now.filter((id) => id !== botId) : [...now, botId];
     void client.request({ type: "settings.set", change: { key: "pinnedBots", value: next } }).catch(() => {});
   }, [client, store]);
+  // Idle (the left column's bottom group): only the user sends a bot there, with the clock on its row; the back arrow brings it back.
+  const idle = view.settings?.idleBots ?? [];
+  const [idleOpen, setIdleOpen] = useState(false);
+  const setIdle = useCallback((botId: string, away: boolean) => {
+    const now = (store.getView().settings?.idleBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
+    void client.request({ type: "settings.set", change: { key: "idleBots", value: idleList(now, botId, away) } }).catch(() => {});
+  }, [client, store]);
+  /** The status card beside a bot row (PeekCard): the bot, where its row is, and whether the keyboard opened it. */
+  const [peek, setPeek] = useState<{ botId: string; top: number; right: number; keyboard: boolean } | null>(null);
+  const closePeek = useCallback((refocus: boolean) => {
+    setPeek((current) => {
+      if (current && refocus) setTimeout(() => document.querySelector<HTMLElement>(`.rail .bot-row[data-bot="${current.botId}"]`)?.focus(), 0);
+      return null;
+    });
+  }, []);
   // The app's keys (Settings > Shortcuts): ⌘, Settings, ⌃⌘I the right panel, ⌃⌘S the left column, ⌘K its search, by default.
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
@@ -333,35 +348,74 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
               <div key={candidate.id} className="bot-entry">
                   <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={candidate.id === chat?.botId && !watching}
                     waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
+                    counts={botCounts(candidate, view.bots, view.waiting, candidate.id === chat?.botId && !watching)}
                     onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} />
               </div>
             ));
           })() : (
             <>
-              {railOrder(view.bots, pinned).map(({ bot: candidate, section }) => (
-                <div key={candidate.id} className="bot-entry">
-                  {section === "pinned" && <h4 className="rail-section">Pinned</h4>}
-                  {section === "rest" && pinned.length > 0 && <div className="rail-rule" />}
-                  <BotRow
-                    bot={candidate}
-                    look={view.settings?.botLook ?? "original"}
-                    selected={candidate.id === chat?.botId && !watching}
-                    waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
-                    onSelect={() => selectBot(candidate.id)}
-                    pinned={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? pinned.includes(candidate.id) : undefined}
-                    onTogglePin={() => togglePin(candidate.id)}
-                    onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
-                  />
-                  <SubagentRows bot={candidate} bots={view.bots} chat={{ botId: chat?.botId ?? null, watching }} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null} shownBot={!watching ? chat?.botId ?? null : null}
-                    onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)}
-                    onOpenIn={openSubagent} onSettleIn={(botId, row) => settleSubagent(botId, row, true)} onAgentMenu={openAgentMenu}
-                    onSubBotMenu={(subBotId, at) => setSubBotMenu({ botId: subBotId, ...at })}
-                    selection={picking} onToggleSelect={togglePick} onGroup={groupSubagents} onCancelSelect={() => setPicking(null)} />
-                </div>
-              ))}
+              {(() => {
+                const look = view.settings?.botLook ?? "original";
+                const split = railSplit(view.bots, pinned, idle);
+                const shownId = !watching ? chat?.botId ?? null : null;
+                const row = (candidate: BotView, away: boolean) => {
+                  const counts = botCounts(candidate, view.bots, view.waiting, candidate.id === shownId);
+                  return (
+                    <BotRow
+                      bot={candidate}
+                      look={look}
+                      selected={candidate.id === chat?.botId && !watching}
+                      waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
+                      counts={counts}
+                      onSelect={(from) => {
+                        selectBot(candidate.id);
+                        // The status card opens beside the row when the bot has sub bots or subagents to show.
+                        const card = peekCard(candidate, view.bots, view.waiting, Date.now());
+                        if (from && (card.subBots.length || card.agents.length)) {
+                          const box = from.el.getBoundingClientRect();
+                          setPeek({ botId: candidate.id, top: box.top, right: box.right, keyboard: from.keyboard });
+                        } else setPeek(null);
+                      }}
+                      pinned={!away && canIdle(candidate) ? pinned.includes(candidate.id) : undefined}
+                      onTogglePin={() => togglePin(candidate.id)}
+                      idle={canIdle(candidate) ? { away, onToggle: () => { setIdle(candidate.id, !away); setPeek(null); } } : undefined}
+                      onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
+                    />
+                  );
+                };
+                const idleNumbers = idleCounts(split.idle, view.bots, view.waiting);
+                return <>
+                  {split.rows.map(({ bot: candidate, section }) => (
+                    <div key={candidate.id} className="bot-entry">
+                      {section === "pinned" && <h4 className="rail-section">Pinned</h4>}
+                      {section === "rest" && split.rows.some((entry) => entry.section === "pinned") && <div className="rail-rule" />}
+                      {row(candidate, false)}
+                    </div>
+                  ))}
+                  {split.idle.length > 0 && <div className="rail-idle">
+                    <button type="button" className="rail-idle-row" aria-expanded={idleOpen} onClick={() => setIdleOpen(!idleOpen)}
+                      aria-label={`Idle, ${idleNumbers.bots} bot${idleNumbers.bots === 1 ? "" : "s"}${idleNumbers.needsYou ? `, ${idleNumbers.needsYou} waiting on you` : ""}`}>
+                      <span className={`rail-idle-chevron${idleOpen ? " open" : ""}`} aria-hidden="true"><Icon name="chevronLeft" size={11} /></span>
+                      <span>Idle</span>
+                      <span className="bot-gap" />
+                      {idleNumbers.needsYou > 0 && <span className="badge waiting" aria-hidden="true">{idleNumbers.needsYou}</span>}
+                      <span className="rail-idle-count">{idleNumbers.bots} bot{idleNumbers.bots === 1 ? "" : "s"}</span>
+                    </button>
+                    {idleOpen && split.idle.map((candidate) => <div key={candidate.id} className="bot-entry">{row(candidate, true)}</div>)}
+                  </div>}
+                </>;
+              })()}
             </>
           )}
         </nav>
+        {peek && !query.trim() && (() => {
+          const target = view.bots.find((candidate) => candidate.id === peek.botId);
+          return target ? <PeekCard key={target.id} bot={target} card={peekCard(target, view.bots, view.waiting, now)} anchor={{ top: peek.top, right: peek.right }} now={now} focusFirst={peek.keyboard}
+            onOpenChat={(botId) => { setPeek(null); selectBot(botId); }}
+            onOpenAgent={(botId, agentRow) => { setPeek(null); openSubagent(botId, agentRow); }}
+            onSubBotMenu={(subBotId, at) => setSubBotMenu({ botId: subBotId, ...at })}
+            onClose={closePeek} /> : null;
+        })()}
         {web ? <div className="rail-settings web-rail-footer">{web.railFooter}</div> : <>
         {makingBot && <NewBotForm onDone={createBot} busy={creating} />}
         <div className="rail-add">
@@ -483,27 +537,45 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   );
 }
 
-export function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned, onTogglePin }: {
-  bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
+export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle }: {
+  bot: BotView; selected: boolean; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
+  /** The row was clicked: the row, and whether the keyboard pressed it (the status card then takes the focus). */
+  onSelect: (from?: { el: HTMLElement; keyboard: boolean }) => void;
+  /** The two numbers (rail-idle.ts botCounts): blue unread, orange what needs you (its sub bots' included). Absent: its own approvals and unread. */
+  counts?: { unread: number; needsYou: number };
   /** Undefined for a row that cannot be pinned (the main bot, Maintainer). */
   pinned?: boolean; onTogglePin?: () => void;
+  /** The corner button: a clock sends it to Idle, a back arrow (in Idle) brings it back. Undefined: it cannot go to Idle. */
+  idle?: { away: boolean; onToggle: () => void };
 }) {
   const asleep = bot.phase === "asleep" && !bot.working;
   const tasks = bot.openTasks ?? 0;
-  const label = [bot.name, statusText(bot), bot.approvals ? `${bot.approvals} waiting on you` : waiting ? "waiting on you" : null, bot.unread && !selected ? `${bot.unread} unread` : null,
-    tasks ? `${tasks} task${tasks === 1 ? "" : "s"} under way` : null, pinned ? "pinned" : null].filter(Boolean).join(", ");
+  const unread = counts ? counts.unread : selected ? 0 : bot.unread;
+  const needsYou = counts ? counts.needsYou : bot.approvals;
+  const label = [bot.name, statusText(bot), needsYou ? `${needsYou} waiting on you` : waiting ? "waiting on you" : null, unread ? `${unread} unread` : null,
+    tasks ? `${tasks} task${tasks === 1 ? "" : "s"} under way` : null, pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
   return (
-    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}`}>
-      <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label} onClick={onSelect}
+    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}`}>
+      <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label}
+        onClick={(event) => onSelect({ el: event.currentTarget, keyboard: event.detail === 0 })}
         onContextMenu={onMenu ? (event) => { event.preventDefault(); onMenu(event.clientX, event.clientY); } : undefined}>
         <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
         <span className="bot-gap" />
         {tasks > 0 && <span className="task-count" aria-hidden="true">{tasks} task{tasks === 1 ? "" : "s"}</span>}
         {bot.working && <span className="bot-dot working" aria-hidden="true" />}
-        {bot.approvals > 0 && <span className="badge waiting" aria-hidden="true">{bot.approvals}</span>}
-        {bot.unread > 0 && !selected && <span className="badge" aria-hidden="true">{bot.unread}</span>}
+        {(unread > 0 || needsYou > 0) && <span className="bot-counts">
+          {unread > 0 && <span className="badge" aria-hidden="true">{unread}</span>}
+          {needsYou > 0 && <span className="badge waiting" aria-hidden="true">{needsYou}</span>}
+        </span>}
       </button>
+      {idle && (
+        // The clock at the row's top-right corner while the pointer is on it (the settle clock's icon); in Idle, the back arrow.
+        <button type="button" className={`bot-idle${idle.away ? " away" : ""}`} onClick={idle.onToggle}
+          title={idle.away ? "Back to the list" : "Send to Idle"} aria-label={idle.away ? `Bring ${bot.name} back from Idle` : `Send ${bot.name} to Idle`}>
+          <Icon name={idle.away ? "uturn" : "clock"} size={12} />
+        </button>
+      )}
       {pinned !== undefined && onTogglePin && (
         // The pin glyph at the row's end while the pointer is on it (1.x's BotRow).
         <button type="button" className={`bot-pin${pinned ? " on" : ""}`} onClick={onTogglePin} title={pinned ? "Unpin" : "Pin to the top"} aria-label={pinned ? `Unpin ${bot.name}` : `Pin ${bot.name}`}>
