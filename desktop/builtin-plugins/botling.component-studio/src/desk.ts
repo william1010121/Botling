@@ -8,7 +8,7 @@
 // The specs stay where the core keeps them (specs.json beside each chat, 1.x's format): this desk reads them all when it starts, keeps its
 // own copy (it is the only writer) and writes a chat's whole list back through the studio seam after each change. Everything it does is one
 // step at a time (`run`), as the core's was synchronous: a tag, an event or a press never sees a spec half changed.
-import type { ApprovalAskView, ComponentInfoView, DisplayView, SpecChipView, SpecStateView } from "../../../src/contract";
+import type { ApprovalAskView, ComponentInfoView, DisplayView, SpecChipView } from "../../../src/contract";
 import type { Clock } from "../../../src/core/briefing";
 import { safeName } from "../../../src/core/components/library";
 import { pageOfCard } from "../../../src/core/page-preview";
@@ -20,12 +20,13 @@ import {
 } from "./specs";
 import { judgeSuggestion } from "./suggestion-rules";
 import type { GuestAnswer, LibraryView, Studio, StudioChat, StudioLine } from "./studio";
+import type { SpecState } from "./types";
 
 /** How long a fill waits for the bot to be free, and then for its answer (`fillWait`, `fillAnswerTime`). */
 export const FILL_TIMING = { wait: 3 * 60 * 60 * 1000, answer: 10 * 60 * 1000 };
 
 /** A reply's chips, as the decoration under it carries them (`SpecChipView`s of the specs made from that reply). */
-export interface ChipDecoration { key: string; after: string; data: { specs: SpecChipView[] } }
+export interface ChipDecoration { key: string; under: string; data: { specs: SpecChipView[] } }
 
 export interface DeskDeps {
   studio: Studio;
@@ -34,7 +35,7 @@ export interface DeskDeps {
   /** Opens (chat: its id) or closes (null) the spec panel in the right panel's place. */
   takeover(chat: string | null, wide: boolean): Promise<void>;
   /** The open spec for the panel's frame (null: closed). */
-  emit(chat: string, state: SpecStateView | null): void;
+  emit(chat: string, state: SpecState | null): void;
   clock: () => Clock;
   log: (line: string) => void;
   timing?: typeof FILL_TIMING;
@@ -54,7 +55,7 @@ export function specCommand(spec: ComponentSpec, name: string, library: LibraryV
 }
 
 /** A line of the side conversation, its Markdown pictures of local files apart (`SpecPayload.LineView`). */
-export function lineView(line: { kind: "user" | "maintainer" | "event"; text: string }): SpecStateView["conversation"][number] {
+export function lineView(line: { kind: "user" | "maintainer" | "event"; text: string }): SpecState["conversation"][number] {
   if (!line.text.includes("![")) return { kind: line.kind, text: line.text.slice(0, 40_000) };
   const pattern = /!\[[^\]\n]*\]\(<?((?:file:\/\/)?\/[^)\s>]+\.(?:png|jpe?g|gif|webp))>?\)/gi;
   const images: string[] = [];
@@ -858,7 +859,7 @@ export class SpecDesk {
       by.set(spec.messageID, list);
     }
     this.decorated.add(chat);
-    await this.deps.decorate(chat, [...by].map(([messageID, chips]) => ({ key: `specs/${messageID}`, after: messageID, data: { specs: chips.slice(0, 20) } })));
+    await this.deps.decorate(chat, [...by].map(([messageID, chips]) => ({ key: `specs/${messageID}`, under: messageID, data: { specs: chips.slice(0, 20) } })));
   }
 
   /** One spec's chip, and its component when it is built (`specChips`). */
@@ -906,7 +907,7 @@ export class SpecDesk {
   }
 
   /** The open spec as the right panel draws it (`specPayload`). */
-  async payload(id: string): Promise<SpecStateView | null> {
+  async payload(id: string): Promise<SpecState | null> {
     const found = this.locate(id);
     if (!found) return null;
     const { chat, spec } = found;
@@ -922,7 +923,7 @@ export class SpecDesk {
     const chosen = new Set(spec.bots.map((name) => name.toLowerCase()));
     const every = await this.studio.componentBots();
     const bots = [...every, ...spec.bots.filter((name) => !every.some((other) => other.toLowerCase() === name.toLowerCase()))].map((name) => ({ name: name.slice(0, 200), on: chosen.has(name.toLowerCase()) }));
-    let testRun: SpecStateView["testRun"] = null;
+    let testRun: SpecState["testRun"] = null;
     const command = spec.command;
     if (command !== undefined && (spec.testRun?.command === command || (await this.studio.commands.lastRan(specCard(spec))) !== null)) {
       const state = await this.studio.commands.state(specCard(spec), command, null, spec.folder);
@@ -932,7 +933,7 @@ export class SpecDesk {
       const output = state.data ?? spec.testRun?.output ?? null;
       testRun = { status, command, folder: spec.folder, output, error: state.error ?? spec.testRun?.error ?? null, ranAt: timeOfDay(state.ranAt ?? ms(spec.testRun?.ranAt)), matches: output === null ? null : outputMatches(output, spec.fields) };
     }
-    let steps: SpecStateView["steps"] = null;
+    let steps: SpecState["steps"] = null;
     const filled = () => (spec.filledBy ? [spec.fillError !== undefined ? { label: `${spec.filledBy} did not fill it`, state: "todo" as const } : { label: `Filled by ${spec.filledBy}`, state: isFilling(spec) ? "doing" as const : "done" as const }] : []);
     if (spec.change && spec.built !== undefined) {
       const change = spec.change;
@@ -972,15 +973,18 @@ export class SpecDesk {
       preferredSample: preferredSample(samples, spec.status === "done" && spec.command !== undefined),
       questions: spec.questions.slice(0, 20).map((question) => ({ id: question.id.slice(0, 200), text: question.text.slice(0, 4_000), options: question.options.slice(0, 20).map((option) => ({ label: option.label.slice(0, 400) })), suggested: question.suggested ?? null })),
       conversation: spec.conversation.slice(-500).map((line) => lineView(line)),
-      origins: spec.origins, preview, components, testRun, steps,
+      origins: spec.origins, preview, components: components as SpecState["components"], testRun, steps,
       version: spec.built === undefined ? null : spec.version ?? 1,
       change: spec.change ? { state: spec.change.state, version: spec.change.version, startedAt: ms(spec.change.startedAt)!, endedAt: ms(spec.change.endedAt), error: spec.change.error ?? null, request: spec.change.request ?? null } : null,
       queued: (spec.queued ?? []).slice(0, 50), wide: this.wide,
     };
   }
 
-  /** The spec the panel shows, as its frame asks for it when it opens (null: none is open for that chat). */
-  state(chat: string): Promise<SpecStateView | null> {
-    return this.run(async () => (this.openId && this.openChat === chat ? this.payload(this.openId) : null));
+  /** The spec the panel shows, as its page asks for it when it opens (null: none is open). */
+  state(): Promise<{ chat: string; state: SpecState } | null> {
+    return this.run(async () => {
+      const state = this.openId && this.openChat ? await this.payload(this.openId) : null;
+      return state && this.openChat ? { chat: this.openChat, state } : null;
+    });
   }
 }

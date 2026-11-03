@@ -11,6 +11,64 @@
   "ccb": {
     "permissions": [
       "studio"
-    ]
+    ],
+    "host": "dist/host.mjs",
+    "web": "dist/web.js",
+    "styles": [
+      "studio.css"
+    ],
+    "contributes": {
+      "commands": [
+        {
+          "id": "botling.component-studio.make",
+          "title": "Make into component"
+        }
+      ],
+      "views": [
+        {
+          "id": "botling.component-studio.spec",
+          "title": "Component spec",
+          "where": "rightPanel.takeover"
+        }
+      ],
+      "menus": {
+        "message/context": [
+          {
+            "command": "botling.component-studio.make",
+            "quick": true,
+            "icon": "cube",
+            "alt": "Add to another bot…",
+            "hint": "Maintainer builds it from this reply right away",
+            "locales": {
+              "zh-Hant": {
+                "title": "做成元件",
+                "alt": "加到其他 Bot…",
+                "hint": "Maintainer 會馬上用這則回覆做出來"
+              }
+            }
+          }
+        ],
+        "message/preview": [
+          {
+            "command": "botling.component-studio.make",
+            "quick": true,
+            "icon": "cube",
+            "locales": {
+              "zh-Hant": {
+                "title": "做成元件"
+              }
+            }
+          }
+        ]
+      },
+      "replyTags": [
+        {
+          "tag": "suggest-component"
+        },
+        {
+          "tag": "component-spec"
+        }
+      ]
+    }
   }
 }

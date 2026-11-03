@@ -15,20 +15,17 @@ import { ApprovalSheet, useApprovalSheet } from "../../src/renderer/ApprovalShee
 const BOT = "6A0B0000-0000-4000-8000-000000000002";
 const MESSAGE = "6A0B0000-0000-4000-8000-000000000010";
 const PIN = "6A0B0000-0000-4000-8000-000000000011";
-const SPEC = "6A0B0000-0000-4000-8000-000000000012";
 const ask: ApprovalAskView = { command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}", card: "commits" };
 
 describe("chat page actions only ask to run", () => {
-  it("drops approve from componentCommand, pinCommand and specCommand; what is sent is a valid command without it", () => {
+  it("drops approve from componentCommand and pinCommand; what is sent is a valid command without it", () => {
     const runs = [
       cardRun({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "git log", folder: "/p", detail: "git show {hash}", approve: true, force: true }, BOT),
       cardRun({ type: "pinCommand", id: PIN, command: "git log", folder: "/p", approve: true }, BOT),
-      cardRun({ type: "specCommand", id: SPEC, command: "git log", folder: "/p", approve: true }, null),
     ];
     expect(runs).toEqual([
       { type: "component.command", botId: BOT, messageId: MESSAGE, index: 0, command: "git log", folder: "/p", detail: "git show {hash}", force: true },
       { type: "pin.command", botId: BOT, id: PIN, command: "git log", folder: "/p" },
-      { type: "spec.act", specId: SPEC, action: { kind: "command", command: "git log", folder: "/p" } },
     ]);
     for (const run of runs) expect(Command.safeParse(run).success).toBe(true);
     expect(JSON.stringify(runs)).not.toContain("approve");
@@ -41,17 +38,13 @@ describe("chat page actions only ask to run", () => {
   it("the contract has no approve on a run, and the approve commands are app-page commands", () => {
     expect(Command.safeParse({ type: "component.command", botId: BOT, messageId: MESSAGE, index: 0, command: "x", folder: "/p", approve: true }).success).toBe(false);
     expect(Command.safeParse({ type: "pin.command", botId: BOT, id: PIN, approve: true }).success).toBe(false);
-    expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "testRun", command: "x", folder: "/p", approve: true } }).success).toBe(false);
-    expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "command", command: "x", folder: "/p", approve: true } }).success).toBe(false);
-    for (const type of ["component.approve", "pin.approve", "spec.approve"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
+    for (const type of ["component.approve", "pin.approve"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
   });
 
   it("the sheet's Allow sends the core's command, folder and Detail command, not the page's", () => {
     const run = cardRun({ type: "componentCommand", messageID: MESSAGE, index: 1, command: "echo page", folder: "/elsewhere" }, BOT)!;
     expect(cardApprove(run, ask)).toEqual({ type: "component.approve", botId: BOT, messageId: MESSAGE, index: 1, command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}" });
     expect(cardApprove(cardRun({ type: "pinCommand", id: PIN }, BOT)!, { ...ask, detail: null })).toEqual({ type: "pin.approve", botId: BOT, id: PIN, command: "git log --oneline", folder: "/p/garden" });
-    expect(cardApprove(cardRun({ type: "specCommand", id: SPEC, command: "x", folder: "/p" }, null)!, ask)).toEqual({ type: "spec.approve", specId: SPEC, run: "command", command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}" });
-    expect(cardApprove({ type: "spec.act", specId: SPEC, action: { kind: "testRun", command: "x", folder: "/p" } }, { ...ask, detail: null })).toEqual({ type: "spec.approve", specId: SPEC, run: "testRun", command: "git log --oneline", folder: "/p/garden" });
     for (const approve of [cardApprove(run, ask), cardApprove(cardRun({ type: "pinCommand", id: PIN }, BOT)!, ask)]) expect(Command.safeParse(approve).success).toBe(true);
     // A card's or a floating pin's own timer never opens the sheet.
     expect(asksUser({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "x", folder: "/p", force: true, live: true })).toBe(false);

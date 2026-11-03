@@ -4,13 +4,12 @@ import { buildNear, detailReply, keepFrames, releaseFrames } from "./components"
 import { startTaskTicks, taskOutput } from "./tasks";
 import { jumpToTask } from "./task-cards";
 import { Composer, sendFile } from "./composer";
-import { extensions, feedback, jumpTo, makeComponents, messageElement, messageMenu, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
-import { SpecPanel } from "./spec";
+import { extensions, feedback, jumpTo, messageElement, messageMenu, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { showMainSpeed } from "./subagent-speed";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
-import type { ChatState, Draft, MessageView, SpecState, StatePatch } from "./types";
+import type { ChatState, Draft, MessageView, StatePatch } from "./types";
 import { applyPatch } from "./patch";
 import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
@@ -213,12 +212,10 @@ class Chat {
 
     // Turning developer mode on or off redraws every reply with or without its flag.
     const flagged = !!state.feedback && !state.subagent;
-    const making = !!state.makeComponents && !state.subagent;
     const menu = state.subagent ? [] : state.messageMenu ?? [];
     const previews = state.subagent ? [] : state.previewMenu ?? [];
-    if (flagged !== feedback.enabled || making !== makeComponents.enabled || JSON.stringify(menu) !== JSON.stringify(messageMenu.items) || JSON.stringify(previews) !== JSON.stringify(messageMenu.previews)) {
+    if (flagged !== feedback.enabled || JSON.stringify(menu) !== JSON.stringify(messageMenu.items) || JSON.stringify(previews) !== JSON.stringify(messageMenu.previews)) {
       feedback.enabled = flagged;
-      makeComponents.enabled = making;
       messageMenu.items = menu;
       messageMenu.previews = previews;
       this.clearList();
@@ -617,8 +614,8 @@ declare global {
       /** A command a key asks for, run here if a web part registered it (else false: the app page runs it). */
       runLocalCommand(id: string): boolean;
       showPanel(key: string): void;
-      setSpec(state: SpecState): void;
       hostReply(callID: number, ok: boolean, value: unknown): void;
+      pluginEvent(plugin: string, event: string, data: unknown): void;
       detailReply(requestID: number, ok: boolean, value: string): void;
       taskOutput(messageID: string, taskID: string, text: string): void;
       /** "Jump to chat" on a task's card in the right panel: its latest reply, or the decoration that folds it. */
@@ -665,25 +662,6 @@ function drawPanel(): void {
 }
 chat.plugins.onPanels = () => drawPanel();
 
-/**
- * Spec mode (`chat.html?spec=1`): the same page in the right panel, showing the component spec
- * workspace (`spec.ts`) instead of the chat.
- */
-let specPanel: SpecPanel | null = null;
-if (new URLSearchParams(location.search).has("spec")) document.body.classList.add("spec-mode");
-function setSpec(state: SpecState): void {
-  setLanguage(state.lang);
-  if (!specPanel) {
-    let root = document.getElementById("spec-root");
-    if (!root) {
-      root = document.createElement("div");
-      root.id = "spec-root";
-      document.body.append(root);
-    }
-    specPanel = new SpecPanel(root);
-  }
-  specPanel.update(state);
-}
 window.ccb = {
   setState: (state) => {
     chat.setState(state);
@@ -697,11 +675,11 @@ window.ccb = {
   runCommand: (id) => chat.plugins.execute(id),
   runLocalCommand: (id) => chat.plugins.runLocal(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
+  pluginEvent: (plugin, event, data) => chat.plugins.pluginEvent(plugin, event, data),
   detailReply: (requestID, ok, value) => detailReply(requestID, ok, value),
   taskOutput: (messageID, taskID, text) => taskOutput(messageID, taskID, text),
   jumpToTask: (messageID, taskID) => jumpToTask(messageID, taskID),
   showPanel: (key) => showPanel(key),
-  setSpec: (state) => setSpec(state),
   focus: () => chat.focus(),
   setWindowVisible: (visible) => setWindowVisible(visible),
 };

@@ -23,7 +23,8 @@ import { commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
-import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, TakeoverFrame, type BuiltinRunner } from "./Plugins";
+import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
+import { TakeoverPage } from "./TakeoverPage";
 import { boardOffered, mainTabsFor, namedBot, rightPanelSectionsFor, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
@@ -31,7 +32,6 @@ import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, RemoveDialog, StripPeek, SubagentRows, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
-import { SpecFrame } from "./SpecFrame";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
 
@@ -150,8 +150,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings, pluginKeys, runCommand]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
-  // The spec open in the right panel, when it is made from a line of the chat on screen.
-  const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
   // A plugin's page that a program part opened in the right panel's place (`ui.takeover`), while that bot's chat is shown.
@@ -168,7 +166,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
   }, []);
-  // A card's command waiting for your OK (from the chat page or the spec panel): this page's own sheet asks.
+  // A card's command waiting for your OK (from the chat page or a plugin's right panel): this page's own sheet asks.
   const approval = useApprovalSheet(client, view.settings?.effectiveLanguage ?? null, fail);
 
   /** A bot's chat again. */
@@ -428,13 +426,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
-      {/* The open component spec takes the right panel's place, while its chat is shown (1.x's `openSpec(in:)`). */}
-      {bot && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} onAsk={approval.ask} />}
       {bot && takeover && takeoverView && (
-        <TakeoverFrame key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
-          onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
+        <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
+          plugins={view.plugins} onError={fail} onAsk={approval.ask} />
       )}
-      {bot && !openSpec && !(takeover && takeoverView) && (
+      {bot && !(takeover && takeoverView) && (
         <TaskDetails
           onDrawerSettings={() => setBotSettings(true)}
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
@@ -878,7 +874,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
       bucket.tokens -= 1;
       return true;
     };
-    // A card's command (a card, a pinned card, a spec's built card): the page only asks to run it; one not allowed yet
+    // A card's command (a card, a pinned card): the page only asks to run it; one not allowed yet
     // answers what this page's ApprovalSheet asks about (card-approval.ts), and only the sheet allows it.
     const runCard = (action: Record<string, unknown>, botId: string | null) => {
       const run = cardRun(action, botId);
@@ -1104,26 +1100,6 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         case "openURL":
         case "revealFile":
           if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(message.reportPreview === true && action.type === "openURL" ? {preview: true} : {}), ...(action.type === "revealFile" ? { reveal: true } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).then(result => { if (result.previewURL && store.getChatView().chat?.botId === chat.botId) setReport({botId: chat.botId, url: result.previewURL}); }).catch(onError);
-          return;
-        // A reply made into a component, and its spec's chip and card (Phase 5a).
-        case "makeComponent":
-          if (chat && typeof action.messageID === "string") {
-            void client.request({ type: "spec.make", botId: chat.botId, messageId: action.messageID, ...(typeof action.purpose === "string" && action.purpose.trim() ? { purpose: action.purpose.slice(0, 4_000) } : {}),
-              // One of its result pages' preview cards (Phase 5c).
-              ...(typeof action.preview === "number" && Number.isInteger(action.preview) && action.preview >= 0 && action.preview <= 2 ? { preview: action.preview } : {}) }).catch(onError);
-          }
-          return;
-        case "pressSpec":
-        case "openSpec":
-          if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "pressSpec" ? "press" : "open" } }).catch(onError);
-          return;
-        // Undo / Restore of a component made from a chip (ADR-006 M4): off the bot's list and back; the library copy stays.
-        case "undoSpec":
-        case "restoreSpec":
-          if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "undoSpec" ? "undo" : "restore" } }).catch(onError);
-          return;
-        case "specCommand":
-          runCard(action, chat?.botId ?? null);
           return;
         // "Not right" on a reply (developer mode): main adds the chat frame as you saw it.
         case "feedback": {

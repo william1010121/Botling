@@ -37,8 +37,6 @@ export const extensions = {
 /** Developer mode: bot replies get a "not right" flag (set from the state before drawing). */
 export const feedback = { enabled: false };
 
-/** Replies can be made into components (set from the state before drawing). */
-export const makeComponents = { enabled: false };
 /** Plugins' commands in a reply's menu (`contributes.menus["message/context"]`); none: no menu button. */
 export const messageMenu: { items: MessageMenuItem[]; previews: MessageMenuItem[] } = { items: [], previews: [] };
 
@@ -46,7 +44,6 @@ export const messageMenu: { items: MessageMenuItem[]; previews: MessageMenuItem[
 const quickIcons: Record<string, string> = { cube: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>` };
 const quickIcon = (name: string | undefined) => (name && quickIcons[name]) || "•";
 
-const cubeIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>`;
 
 const flagIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
 
@@ -175,11 +172,10 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
     case "bot":
     case "notice": {
       const body = botBody(message, components);
-      const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled || messageMenu.items.length) ? actionColumn(message) : replyButton(message);
-      const chips = message.specs?.length ? specChips(message, components) : null;
+      const actions = message.role === "bot" && (feedback.enabled || messageMenu.items.length) ? actionColumn(message) : replyButton(message);
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
-      if (message.speaker || chips || tasks || message.role === "notice") {
-        // The group chat: who said it, above what they said. A spec's chip goes under it.
+      if (message.speaker || tasks || message.role === "notice") {
+        // The group chat: who said it, above what they said.
         const column = document.createElement("div");
         column.className = message.speaker ? "speaker-column" : "bot-column";
         if (message.speaker) {
@@ -191,14 +187,11 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
         column.append(body);
         // The chat's background work, when this is its latest message.
         if (tasks) column.append(tasks);
-        if (chips) column.append(chips);
-        // A component in the reply, or one made from it, takes the whole message column.
-        if (body.classList.contains("wide") || column.querySelector(".spec-built")) {
+        // A component in the reply takes the whole message column.
+        if (body.classList.contains("wide")) {
           column.classList.add("wide");
           row.classList.add("wide");
         }
-        // The reply's bubble is as wide as the tile under it, so the two line up on the right.
-        if (column.querySelector(".spec-built")) column.classList.add("tiled");
         row.append(avatar(message.avatar), column, actions);
       } else {
         if (body.classList.contains("wide")) row.classList.add("wide");
@@ -298,19 +291,6 @@ function actionColumn(message: MessageView): HTMLElement {
   const column = document.createElement("div");
   column.className = "message-actions";
   column.append(replyButton(message));
-  if (makeComponents.enabled) {
-    const label = message.component ? t("messages.addToBot") : t("messages.makeComponent");
-    const make = document.createElement("button");
-    make.className = "reply-button make-component";
-    make.setAttribute("aria-label", label);
-    make.title = message.component ? label : t("messages.makeComponentTitle", { label });
-    make.innerHTML = cubeIcon;
-    make.addEventListener("click", (event) => {
-      event.stopPropagation();
-      post({ type: "makeComponent", messageID: message.id });
-    });
-    column.append(make);
-  }
   if (feedback.enabled) column.append(feedbackFlag(message));
   // Plugins' quick entries are buttons of their own (the component studio's "Make into component"); the rest are rows of "⋯".
   for (const item of messageMenu.items.filter((entry) => entry.quick)) column.append(quickButton(message, item, "message/context"));
@@ -374,98 +354,6 @@ function menuButton(message: MessageView): HTMLElement {
     document.addEventListener("keydown", escape, true);
   });
   return button;
-}
-
-/**
- * Components made from a reply, under it. A bot's suggestion is a quiet chip until pressed (then
- * its first version is built); while building the chip says Building…; once built the component
- * itself shows, with "Edit spec" to open its spec in the right panel. A command it runs asks first
- * (Allow and run, with the exact command and folder), as on any card.
- */
-function specChips(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
-  const strip = document.createElement("div");
-  strip.className = "spec-chips";
-  for (const spec of message.specs ?? []) {
-    const built = spec.component && spec.display ? builtSpec(spec, components) : null;
-    if (built) {
-      strip.append(built);
-      continue;
-    }
-    const chip = document.createElement("button");
-    chip.className = `spec-chip ${spec.status}${spec.suggested ? " suggested" : ""}${spec.open ? " open" : ""}`;
-    chip.setAttribute("aria-expanded", String(spec.open));
-    // Built, and the bot that wrote the reply is drawing it for the reply.
-    const filling = spec.status === "done" && spec.filling ? spec.filling : null;
-    const building = spec.status === "building" || !!filling;
-    const words = filling ? t("specChip.filling", { bot: filling }) : spec.status === "done" ? t("specChip.component") : building ? t("specChip.building") : spec.suggested ? t("specChip.suggested") : t("specChip.spec");
-    chip.innerHTML = `${building ? `<span class="spinner" aria-hidden="true"></span>` : cubeIcon}<span></span><span class="spec-chip-arrow" aria-hidden="true">›</span>`;
-    chip.querySelector("span:not(.spinner)")!.textContent = `${words} · ${spec.component ?? spec.name}`;
-    chip.title = filling ? t("specChip.fillingTitle", { bot: filling }) : spec.suggested ? t("specChip.suggestedTitle") : building ? t("specChip.buildingTitle") : spec.open ? t("specChip.showing") : t("specChip.openInPanel");
-    chip.addEventListener("click", () => post({ type: "pressSpec", id: spec.id }));
-    strip.append(chip);
-    if (spec.undo === "restore") strip.append(undoSpecButton(spec));
-    else if (spec.status === "done") strip.append(editSpecButton(spec), ...(spec.undo === "undo" ? [undoSpecButton(spec)] : []));
-  }
-  return strip;
-}
-
-/** Undo (take the component off the bot's list) or Restore (put it back); the library copy and its versions stay. */
-function undoSpecButton(spec: SpecChipView): HTMLButtonElement {
-  const restore = spec.undo === "restore";
-  const button = document.createElement("button");
-  button.className = "spec-edit spec-undo";
-  button.textContent = t(restore ? "specChip.restore" : "specChip.undo");
-  button.title = t(restore ? "specChip.restoreTitle" : "specChip.undoTitle");
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    post({ type: restore ? "restoreSpec" : "undoSpec", id: spec.id });
-  });
-  return button;
-}
-
-function editSpecButton(spec: SpecChipView): HTMLButtonElement {
-  const edit = document.createElement("button");
-  edit.className = "spec-edit";
-  edit.textContent = t("specChip.edit");
-  edit.setAttribute("aria-expanded", String(spec.open));
-  edit.title = spec.open ? t("specChip.showing") : t("specChip.editTitle");
-  edit.addEventListener("click", (event) => {
-    event.stopPropagation();
-    post({ type: "openSpec", id: spec.id });
-  });
-  return edit;
-}
-
-/** A built component under its reply: its name, Edit spec, and the component itself. */
-function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>): HTMLElement | null {
-  const display = spec.display!;
-  const name = spec.component!;
-  const draw = () => componentElement(name, components[name], display.data, null, `spec-${spec.id}`, display.images, detailTarget(display), undefined, "chat", false, null, true);
-  const card = display.command
-    ? commandCard(display, `spec:${spec.id}`, 0, draw, {
-        send: (request) => post({ type: "specCommand", id: spec.id, ...request }),
-        lazy: true,
-      })
-    : draw();
-  if (!card) return null;
-  const box = document.createElement("div");
-  box.className = `spec-built ${spec.status}${spec.open ? " open" : ""}`;
-  const head = document.createElement("div");
-  head.className = "spec-built-head";
-  const label = document.createElement("span");
-  label.className = "spec-built-name";
-  label.innerHTML = spec.status === "building" ? `<span class="spinner" aria-hidden="true"></span><span></span>` : `${cubeIcon}<span></span>`;
-  label.querySelector("span:not(.spinner)")!.textContent = spec.status === "building" ? t("specChip.newVersion", { name }) : `${t("specChip.component")} · ${name}`;
-  head.append(label, editSpecButton(spec), ...(spec.status === "done" && spec.undo === "undo" ? [undoSpecButton(spec)] : []));
-  // A plugin may add buttons (the Board's pin: a bot-filled one is made live on the Board, Maintainer gives it a command).
-  if (spec.status === "done") {
-    for (const { plugin, make } of extensions.specButtons) {
-      const added = extensions.guard(plugin, () => make(spec));
-      if (added) head.append(added);
-    }
-  }
-  box.append(head, card);
-  return box;
 }
 
 /** The "not right" flag, for developer mode. */
@@ -630,7 +518,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     if (!card) return;
     card.classList.add("page-preview");
     const quick = message.role === "bot" ? messageMenu.previews.filter((entry) => entry.quick) : [];
-    if ((!makeComponents.enabled && !quick.length) || message.role !== "bot") {
+    if (!quick.length) {
       appendWide(card);
       return;
     }
@@ -639,16 +527,6 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     holder.className = "preview-holder";
     const bar = document.createElement("div");
     bar.className = "preview-bar";
-    if (makeComponents.enabled) {
-      const make = document.createElement("button");
-      make.className = "preview-make";
-      make.innerHTML = `${cubeIcon}<span>${escapeHTML(t("messages.makeComponent"))}</span>`;
-      make.addEventListener("click", (event) => {
-        event.stopPropagation();
-        post({ type: "makeComponent", messageID: message.id, preview: index });
-      });
-      bar.append(make);
-    }
     for (const item of quick) {
       const make = document.createElement("button");
       make.className = "preview-make";

@@ -57,7 +57,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
-import { readSpec, sameSpec, type ComponentSpec } from "../../builtin-plugins/botling.component-studio/src/specs";
+import { sameJSON } from "./same-json";
 import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import {
@@ -230,8 +230,6 @@ export interface BotOptions {
   callInNote?: () => string | null;
   /** What a line shows besides itself: the specs made from it, the component it already is (Phase 5a). */
   lineExtras?: (bot: Bot, record: ChatRecord) => { specs?: SpecChipView[]; component?: string };
-  /** Its specs changed (the spec panel follows). */
-  specsChanged?: (bot: Bot) => void;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
   launch?: () => { subagentHourCache: boolean; defaultPrimaryEngine?: Engine | null; autoMode?: boolean; claudeBypassPermissions?: boolean; codexBypassPermissions?: boolean; agyBypassPermissions?: boolean; claudeWorkers?: "app" | "native"; claudeWorkerLimit?: number; specWriters?: readonly string[] };
   /** The app-wide agent registry (agents.json): agents it hosts for another owner, and agents it owns that run elsewhere. */
@@ -328,6 +326,14 @@ const PLUGINS_RESTART = { told: "loading new plugins", shown: "loading new plugi
 const PROMPT_SESSION_DIVIDER = "New session (instructions updated)";
 const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
 
+/**
+ * A component spec as specs.json keeps it. It is the component studio's (botling.component-studio) record: the core keeps the list a chat
+ * has, and knows only each record's id and the line it is made from.
+ */
+export interface StoredSpec { id: string; messageID?: string; [field: string]: unknown }
+const readStoredSpec = (value: unknown): StoredSpec | null =>
+  value && typeof value === "object" && !Array.isArray(value) && typeof (value as StoredSpec).id === "string" ? (value as StoredSpec) : null;
+
 export class Bot {
   readonly store: BotStore;
   readonly tasks: TaskBook;
@@ -339,8 +345,8 @@ export class Bot {
    */
   private managedTaskHandoffs = new Map<string, string>();
   private managedHandbacks = new Set<string>();
-  /** Components being made from its replies (specs.json, 1.x's format; the primary's). */
-  private specList: ComponentSpec[] = [];
+  /** Components being made from its replies (specs.json, 1.x's format; the primary's): the component studio's records, kept as they are. */
+  private specList: StoredSpec[] = [];
   /** The task each head last replied on (`headTask`): hand-offs it makes help that task. */
   private headTask = new Map<Engine, string>();
   private records: ChatRecord[] = [];
@@ -522,7 +528,7 @@ export class Bot {
       this.doneLogSaved = JSON.stringify(doneLogFile(this.doneLog));
       recordDone(this.doneLog, this.tasks.tasks, Date.now());
       this.pins = this.readList("pins.json", readPin);
-      this.specList = this.readList("specs.json", readSpec);
+      this.specList = this.readList("specs.json", readStoredSpec);
       const list = this.store.loadSettings().components;
       this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
     }
@@ -794,21 +800,20 @@ export class Bot {
   // Component specs (1.x's `specs`, `editSpecs`)
 
   /** The specs made from its replies. */
-  get specs(): readonly ComponentSpec[] {
+  get specs(): readonly StoredSpec[] {
     return this.owner.specList;
   }
 
   /** Changes its specs and saves them, if anything changed (`editSpecs`); the lines they belong to are drawn again. */
-  editSpecs(change: (specs: ComponentSpec[]) => void): boolean {
+  editSpecs(change: (specs: StoredSpec[]) => void): boolean {
     const owner = this.owner;
     const edited = structuredClone(owner.specList);
     change(edited);
-    if (sameSpec(edited, owner.specList)) return false;
+    if (sameJSON(edited, owner.specList)) return false;
     const touched = new Set([...owner.specList, ...edited].flatMap((spec) => (spec.messageID ? [spec.messageID] : [])));
     owner.specList = edited;
     if (!owner.readOnly) owner.store.saveList("specs.json", edited);
     for (const id of touched) owner.refreshLine(id);
-    owner.options.specsChanged?.(owner);
     return true;
   }
 

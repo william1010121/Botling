@@ -132,6 +132,8 @@ fromShell(message => {
     window.ccb.answerWithSaved({ botID: message.botID, requestID: message.requestID, chosen: message.chosen });
   } else if (message.botling === "plugins") {
     void setPlugins(message.specs);
+  } else if (message.botling === "pluginEvent") {
+    window.ccb.pluginEvent(message.plugin, message.name, message.data);
   } else if (message.botling === "hostReply") {
     window.ccb.hostReply(message.callID, message.ok, message.value);
   } else if (message.botling === "recoverFocus") {
@@ -139,8 +141,6 @@ fromShell(message => {
     takeFocusBack();
   } else if (message.botling === "focus") {
     window.ccb.focus();
-  } else if (message.botling === "spec") {
-    window.ccb.setSpec(message.spec);
   } else if (message.botling === "jumpToTask") {
     window.ccb.jumpToTask(message.messageID, message.taskID);
   } else if (message.botling === "taskOutput") {

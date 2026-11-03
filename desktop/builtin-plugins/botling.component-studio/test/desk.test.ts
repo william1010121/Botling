@@ -76,8 +76,7 @@ describe("Make into component", () => {
       { label: "Sent to Maintainer", state: "done" }, { label: "Built into the library", state: "done" }, { label: "Add to Main bot", state: "done" }, { label: "Filled by Main bot", state: "done" },
     ] });
     expect(opened.from).toMatch(/^from Main bot's reply at /);
-    expect(await desk.state(MAIN)).toMatchObject({ id: made.id });
-    expect(await desk.state("B1")).toBeNull();
+    expect(await desk.state()).toMatchObject({ chat: MAIN, state: { id: made.id } });
     // Words there are a change, built as v2 right away.
     await desk.say(made.id, "make it green", "r1");
     expect(studio.handed.at(-1)).toContain(`(Component spec ${made.id}; action: change) Change it now: build v2 of the component "test-board" with this change, right away.\nThe user asks: make it green`);
@@ -298,7 +297,7 @@ describe("what a restart and the core's own writes do", () => {
     const { studio, desk } = deskOver();
     studio.stored[MAIN] = [{ id: "not-a-spec" }, { nope: true }];
     await desk.load();
-    expect(await desk.state(MAIN)).toBeNull();
+    expect(await desk.state()).toBeNull();
     expect(desk.locate("NOT-A-SPEC")).toBeNull();
   });
 

@@ -626,7 +626,7 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     const parent = details.frame?.parent ?? null;
     let allowed = false;
     if (details.url === CHAT_URL || details.url.startsWith(`${CHAT_URL}?`)) {
-      allowed = (!hasNativeEditorHost(contents)||details.url===`${CHAT_URL}?spec=1`) && parent === mainFrame && (!initiator || initiator === mainFrame);
+      allowed = (!hasNativeEditorHost(contents)||details.url.startsWith(`${CHAT_URL}?panel=`)) && parent === mainFrame && (!initiator || initiator === mainFrame);
     } else if (details.url.startsWith(PAGE_PREFIX)) {
       allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
       // A tile a plugin's panel asked for (`ccb.tile`), inside that panel.

@@ -3,7 +3,7 @@
 import { toSwiftDate } from "../../../src/core/store/records";
 import { LibraryView, type GuestAnswer, type Studio, type StudioChat, type StudioCommandState, type StudioLibrary, type StudioLine } from "../src/studio";
 import { SpecDesk, type ChipDecoration, type DeskDeps } from "../src/desk";
-import type { SpecStateView } from "../../../src/contract";
+import type { SpecState } from "../src/types";
 
 export const MAIN = "main";
 export const MAINTAINER = "DEC0DE00-0000-4000-8000-00000000DEC0";
@@ -123,7 +123,7 @@ export class FakeStudio implements Studio {
 export function deskOver(studio = new FakeStudio(), more: Partial<DeskDeps> = {}) {
   const drawn = new Map<string, ChipDecoration[]>();
   const takeovers: { chat: string | null; wide: boolean }[] = [];
-  const states: { chat: string; state: SpecStateView | null }[] = [];
+  const states: { chat: string; state: SpecState | null }[] = [];
   const desk = new SpecDesk({
     studio,
     decorate: async (chat, decorations) => { if (decorations.length) drawn.set(chat, decorations); else drawn.delete(chat); },
@@ -134,6 +134,6 @@ export function deskOver(studio = new FakeStudio(), more: Partial<DeskDeps> = {}
     timing: { wait: 1000, answer: 1000 },
     ...more,
   });
-  const chips = (chat = MAIN, message?: string) => (drawn.get(chat) ?? []).filter((entry) => !message || entry.after === message).flatMap((entry) => entry.data.specs);
+  const chips = (chat = MAIN, message?: string) => (drawn.get(chat) ?? []).filter((entry) => !message || entry.under === message).flatMap((entry) => entry.data.specs);
   return { studio, desk, drawn, takeovers, states, chips };
 }

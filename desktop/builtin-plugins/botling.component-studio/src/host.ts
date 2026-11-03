@@ -21,7 +21,7 @@ export async function activate(api: BotlingApi, options: Options = {}) {
     studio,
     decorate: (chat, decorations) => api.chat.decorate(chat, decorations),
     takeover: (chat, wide) => api.ui.takeover(chat ? VIEW : null, chat ? { bot: chat, wide } : {}),
-    emit: (chat, state) => api.ui.emit("spec", { state, lang: api.settings.app<string | null>("language") }, { botId: chat }),
+    emit: (chat, state) => api.ui.emit("spec", { state, chat, lang: api.settings.app<string | null>("language") }, { botId: chat }),
     clock: () => ({}),
     log: (line) => console.error(`component studio: ${line}`),
     ...(options.timing ? { timing: options.timing } : {}),
@@ -76,7 +76,10 @@ export async function activate(api: BotlingApi, options: Options = {}) {
   expose("cancel", (p) => desk.cancel(id(p)));
   expose("close", async () => { await desk.closePanel(); return null; });
   expose("wide", async (p) => { await desk.setWide(p.wide === true); return null; });
-  expose("state", (p) => desk.state(must(p.botId, 128)));
+  expose("state", async () => {
+    const open = await desk.state();
+    return open ? { ...open, lang: api.settings.app<string | null>("language") } : null;
+  });
   expose("lang", () => api.settings.app<string | null>("language"));
   return desk;
 }

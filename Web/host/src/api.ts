@@ -57,10 +57,10 @@ export interface ChatData { botId: string; name: string; unread: number; message
 /**
  * Something a plugin draws among a chat's messages (chat extension v2): its web part draws it with
  * `ccb.decorations.register`. `fold`: these lines fold behind it, and it is drawn before the first of
- * them; or `after`: it is drawn after that line, nothing folded. `tasks`: task cards it is about (the
+ * them; or `after`: it is drawn after that line, nothing folded; or `under`: it is drawn inside that message's own column, under its words. `tasks`: task cards it is about (the
  * page hands them to the web part as live chips). `data`: the plugin's own, for its web part.
  */
-export interface MessageDecoration { key: string; fold?: string[]; after?: string; tasks?: string[]; data?: JSONValue }
+export interface MessageDecoration { key: string; fold?: string[]; after?: string; under?: string; tasks?: string[]; data?: JSONValue }
 
 /** How Botling starts an engine's CLI on this computer, for a one-shot model call: run `file` with `args` first, `env` added. */
 export interface EngineCli { file: string; args: string[]; env: Record<string, string> }

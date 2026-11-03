@@ -7,6 +7,7 @@ import { commandCard, componentElement, type CommandSend, componentSizes, detail
 import type { ChipHandle, ComposerChip } from "./composer";
 import { DecorationLayer, type DecorationRenderer } from "./decorations";
 import { ownsCommand } from "./frame-protocol";
+import { handleMediaClicks } from "./lightbox";
 import { isComposingEnter } from "./ime";
 import { language, pieces, t } from "./i18n";
 import { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords } from "./refresh";
@@ -141,7 +142,16 @@ export interface CcbWeb {
     component(spec: { name: string; info: ComponentInfo | undefined; display: DisplayView; key: string; cardKey: string; send?: CommandSend; lazy?: boolean }): HTMLElement | null;
     /** The button the Board plugin adds to a built component's head (its pin dialog, or its Pinned badge), if it is on. */
     pinButton(chip: SpecChipView): HTMLElement | null;
+    /**
+     * Brings the drawn element `old` up to its redraw `fresh`, keeping the component frames that show the same thing (a frame given a new
+     * page, or taken out of the page for a moment, loads again). Returns the element to keep: `old` if a frame was kept, else `fresh`.
+     */
+    keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement;
+    /** Pictures drawn with `messages.media` open in the chat's lightbox when pressed (call once for the page's document). */
+    mediaClicks(root: Document): void;
   };
+  /** Hears what this plugin's program part pushes (`ui.emit`) to the page it runs in (the right panel's page opened for it). */
+  on(event: string, fn: (data: unknown) => void): Dispose;
   /**
    * Asks you, on the app's own sheet, to allow a command in a folder (and a Detail command): the reply says whether you did. Only
    * built-in plugins with the studio permission may name a folder that is not the bot's own. A web part can ask; never allow.
@@ -182,6 +192,8 @@ export class PluginHost {
   private lastState: ChatState | null = null;
   private readonly stateListeners: { plugin: string; fn: (state: ChatState) => void }[] = [];
   private readonly windowListeners: { plugin: string; fn: () => void }[] = [];
+  /** `on`'s listeners: what a plugin's program part pushed to this page (the right panel's page). */
+  private readonly eventListeners: { plugin: string; event: string; fn: (data: unknown) => void }[] = [];
   private readonly hostCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextCall = 1;
 
@@ -304,6 +316,11 @@ export class PluginHost {
     const plugin = id.split(".")[0];
     if (run) this.guard(plugin, run);
     else post({ type: "command", id });
+  }
+
+  /** A plugin's program part pushed `data` to this page (`ui.emit`): its web part's `on` listeners for `event` hear it. */
+  pluginEvent(plugin: string, event: string, data: unknown): void {
+    for (const item of [...this.eventListeners]) if (item.plugin === plugin && item.event === event) this.guard(plugin, () => item.fn(data));
   }
 
   /** The plugin host answered a `host.call`. */
@@ -498,13 +515,20 @@ export class PluginHost {
       draw: {
         component: ({ name: component, info, display, key, cardKey, send, lazy }) => {
           ownParts("ccb.draw.component");
-          const draw = () => componentElement(component, info, display.data, null, key, display.images, detailTarget(display), undefined, "chat", false, null, true);
+          const draw = () => componentElement(component, info, display.data, null, key, display.images, detailTarget(display), undefined, "chat", false, null, lazy !== false);
           return display.command ? commandCard(display, cardKey, 0, draw, { ...(send ? { send } : {}), lazy: lazy !== false }) : draw();
         },
         // The buttons plugins add to a built component's head (the Board's pin: `messages.specButton`), the first one that makes one.
         pinButton: (chip) => ownParts("ccb.draw.pinButton") ?? extensions.specButtons.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(chip)) ?? [])[0] ?? null,
+        keepFrames: (old, fresh) => { ownParts("ccb.draw.keepFrames"); return keepFrames(old, fresh); },
+        mediaClicks: (root) => { ownParts("ccb.draw.mediaClicks"); handleMediaClicks(root); },
       },
       requestApproval,
+      on: (event, fn) => {
+        const item = { plugin: name, event, fn };
+        this.eventListeners.push(item);
+        return own(remove(this.eventListeners, item));
+      },
       call,
       host: { call },
     };

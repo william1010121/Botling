@@ -46,7 +46,7 @@ export interface PluginStatusItem { id: string; text: string; icon: string | nul
 /** A chat as a plugin may read it (`chat.messages`): its newest lines as kept, its task cards, its name and unread count. */
 export interface PluginChat { botId: string; name: string; unread: number; messages: unknown[]; tasks: { id: string; name: string; state: string; messageIDs: string[] }[] }
 /** What a plugin's web part draws among a chat's messages (`chat.decorate`, chat extension v2). */
-export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; tasks?: string[]; data?: JSONValue }
+export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; under?: string; tasks?: string[]; data?: JSONValue }
 /** How Botling starts an engine's CLI here (`engines.cli`), for a plugin's one-shot model call. */
 export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
 
@@ -206,6 +206,7 @@ const DecorateParams = BotParams.extend({
     key: str(300).min(1),
     fold: z.array(ContractId).max(2_000).optional(),
     after: ContractId.optional(),
+    under: ContractId.optional(),
     tasks: z.array(ContractId).max(100).optional(),
     data: z.unknown().optional(),
   })).max(200),
@@ -1100,7 +1101,7 @@ export class Plugins {
         if (!botId) throw new Error("No such bot.");
         const list: MessageDecoration[] = data.decorations.map((entry) => ({
           plugin: name, key: entry.key,
-          ...(entry.fold?.length ? { fold: entry.fold } : entry.after ? { after: entry.after } : {}),
+          ...(entry.fold?.length ? { fold: entry.fold } : entry.after ? { after: entry.after } : entry.under ? { under: entry.under } : {}),
           ...(entry.tasks?.length ? { tasks: entry.tasks } : {}),
           ...(entry.data === undefined ? {} : { data: entry.data as JSONValue }),
         }));
