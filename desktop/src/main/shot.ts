@@ -41,6 +41,10 @@ export const SHOT_JS = (protocolVersion: number) => `(() => {
       ready = true;
       window.__shotReady = true;
       push();
+      // The Board's web part (botling.board) draws the pins, as the app page hands it to the chat page.
+      const plugins = "shot" + (++next);
+      waiting.set(plugins, (answer) => { if (answer.ok) frame.contentWindow.postMessage({ botling: "plugins", specs: (answer.result.specs || []).filter((spec) => spec.name === "botling.board") }, chat); });
+      window.botling.post({ v: ${protocolVersion}, id: plugins, cmd: { type: "plugins.web" } });
     }
   });
   window.__shotStart = (given) => { state = given; push(); };

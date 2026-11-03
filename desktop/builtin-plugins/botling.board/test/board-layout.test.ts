@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { arrange, cellFor, clampTarget, drop, overlaps, pushDown, resize, trailingCell, type Tile } from "../src/board-layout";
 

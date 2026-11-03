@@ -5,7 +5,6 @@ import { describe, expect, it } from "vitest";
 import { maxColumns, maxRows, saveLimit, sizeName } from "../src/components";
 import { slashQuery } from "../src/composer";
 import { shared } from "../src/contract";
-import { floatLimits } from "../src/float";
 import { isImageURL } from "../src/lightbox";
 import { intervalBounds, parseInterval } from "../src/refresh";
 
@@ -13,7 +12,6 @@ describe("the limits shared with Swift (contract.json, written by WebContract.sw
   it("are what the page uses", () => {
     expect([maxColumns, maxRows]).toEqual([shared.board.maxColumns, shared.board.maxRows]);
     expect(saveLimit).toBe(shared.saveLimit);
-    expect([floatLimits.minWidth, floatLimits.maxWidth]).toEqual(shared.floating.widths);
     expect(intervalBounds.maxSeconds).toBe(shared.refresh.maxSeconds);
     expect(sizeName(3, 1)).toBe(shared.board.sizeNames["3x1"]);
     for (const ext of shared.imageExtensions) expect(isImageURL(`file:///a/b.${ext}`)).toBe(true);

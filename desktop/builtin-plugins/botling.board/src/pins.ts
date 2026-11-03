@@ -1,12 +1,11 @@
-import { post } from "./bridge";
-import { language, pieces, t, type Key } from "./i18n";
-import { isComposingEnter } from "./ime";
-import { intervalRow, parseInterval, presetMinutes, presetSeconds, refreshWords, type Interval, type IntervalRow, type IntervalUnit } from "./refresh";
-import { shared } from "./contract";
-import { commandCard, componentElement, hasFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
+import {
+  commandCard, componentElement, componentSizes, detailTarget, escapeHTML, hasFrame, intervalRow, isComposingEnter, keepFrames, language, markPinFrames,
+  maxColumns, parseInterval, pieces, pinSize, pinSizes, post, presetMinutes, presetSeconds, refreshWords, reportComponent, resizeFrame, shared, sizeInfo, t,
+  type WordKey,
+} from "./kit";
 import { arrange, cellFor, clampTarget, drop, resize as resizeTiles, trailingCell, type Place, type Tile } from "./board-layout";
-import { escapeHTML } from "./util";
-import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
+import type { Interval, IntervalRow, IntervalUnit } from "../../../../Web/src/refresh";
+import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "../../../../Web/src/types";
 
 /**
  * Components pinned to a bot. In the chat a component shows pin / ↻ / ⋯ on hover; pinning asks
@@ -507,7 +506,7 @@ export function refreshItems(pin: PinView): MenuItem[] {
 }
 
 /** The float entry's words, as Swift's `Pins.FloatMenu` says them. */
-const floatWords: Record<FloatMenu, Key> = {
+const floatWords: Record<FloatMenu, WordKey> = {
   float: "pins.float",
   stop: "float.stop",
   full: "pins.floatFull",
@@ -520,7 +519,7 @@ export function floatItem(pin: PinView): MenuItem | null {
   return { label: t(floatWords[menu], { n: shared.floating.max }), disabled: menu === "full", run: () => post({ type: "floatPin", id: pin.id, floating: menu === "float" }) };
 }
 
-const sizeWords: Record<string, Key> = { "1x1": "pins.sizeSmall", "2x1": "pins.sizeWide", "1x2": "pins.sizeTall", "2x2": "pins.sizeLarge", "4x2": "pins.sizeExtraWide" };
+const sizeWords: Record<string, WordKey> = { "1x1": "pins.sizeSmall", "2x1": "pins.sizeWide", "1x2": "pins.sizeTall", "2x2": "pins.sizeLarge", "4x2": "pins.sizeExtraWide" };
 
 /** A size as its card's button and menu show it: "Wide 2×1", or "3×2" for one without a name. */
 export function sizeLabel(size: PinSize): string {
@@ -850,6 +849,8 @@ export class PinArea {
   private sheetHeadKey = "";
   /** The language its words were last drawn in. */
   private wordsIn = "";
+  private readonly listeners = new AbortController();
+  private readonly resizes = new ResizeObserver(() => this.layOut());
 
   constructor(area: HTMLElement, board: HTMLElement) {
     this.sheet = document.createElement("section");
@@ -875,16 +876,28 @@ export class PinArea {
     this.grid = document.createElement("div");
     this.grid.className = "board-grid";
     board.append(this.boardHead, this.grid);
-    new ResizeObserver(() => this.layOut()).observe(this.grid);
+    this.resizes.observe(this.grid);
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       if (document.querySelector(".pin-popup")) closePopups();
       else if (this.openID) this.close();
-    });
+    }, { signal: this.listeners.signal });
     document.addEventListener("ccb-open-pin", (event) => {
       const pin = current.pins.find((p) => p.name === (event as CustomEvent<string>).detail);
       if (pin && !this.boardShown) this.open(pin.id);
-    });
+    }, { signal: this.listeners.signal });
+  }
+
+  /** The plugin unloads: what it put in the page goes, and the Board gives the messages back. */
+  dispose(): void {
+    this.listeners.abort();
+    this.resizes.disconnect();
+    this.sheet.remove();
+    this.row.remove();
+    this.boardHead.remove();
+    this.grid.remove();
+    document.body.classList.remove("board");
+    closePopups();
   }
 
   update(state: ChatState): void {

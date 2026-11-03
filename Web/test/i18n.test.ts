@@ -1,10 +1,9 @@
 /// <reference types="node" />
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { globalItems } from "../src/float";
 import { dictionaries, languages, setLanguage, t, type Key } from "../src/i18n";
 import { refreshWords, intervalRow } from "../src/refresh";
 import { taskChips } from "../src/tasks";
-import type { ChatState, MessageView, PinView, StepView } from "../src/types";
+import type { ChatState, MessageView, StepView } from "../src/types";
 
 // The chat page's own words in the app's two languages: every word in every language, and the
 // language the app sends with the state reaching what the page draws.
@@ -89,9 +88,6 @@ describe("menus and rows in Traditional Chinese", () => {
     setLanguage("zh-Hant");
     expect(refreshWords("interval", 15)).toBe("每 15 分鐘");
     expect(refreshWords("shown", 15)).toBe("顯示時");
-    const pin = { id: "p1" } as PinView;
-    expect(globalItems({ pin, botName: "garden", global: false, blocked: null })[0].label).toBe("顯示在所有 Bot");
-    expect(globalItems({ pin, botName: "garden", global: true, blocked: null })[0].label).toBe("只在 garden");
     const row = intervalRow({ start: { count: 30, unit: "sec" }, set: () => {} }, true);
     const line = row.querySelector(".refresh-interval-line")!;
     expect([...line.children].map((child) => child.className)).toEqual(["refresh-interval-pick", "refresh-interval-count", "refresh-interval-unit"]);

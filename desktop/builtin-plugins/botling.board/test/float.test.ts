@@ -1,8 +1,10 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sent } from "../src/bridge";
+import { sent } from "../../../../Web/src/bridge";
 import { FloatLayer, clampFloatSize, defaultFloatWidth, floatCells, floatRect, floatWidth, isNarrow, lineHeight, snapCorner } from "../src/float";
 import { PinArea } from "../src/pins";
-import type { ChatState, ComponentInfo, FloatingPinView, PinView } from "../src/types";
+import { installBoard } from "./support";
+import type { ChatState, ComponentInfo, FloatingPinView, PinView } from "../../../../Web/src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
@@ -45,6 +47,7 @@ function viewport(width: number, height: number): void {
 }
 
 beforeEach(() => {
+  installBoard();
   sent.length = 0;
   document.body.innerHTML = "";
   document.body.className = "";

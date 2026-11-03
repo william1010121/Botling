@@ -42,7 +42,7 @@ module.exports = {
   // The built-in plugins go beside app.asar instead (below), where bots can read them.
   files: ["package.json", "out/**/*", "!out/**/*.map", "!out/builtin-plugins/**/*", "!node_modules/**/*"],
   // Ordinary files for the bridge's explicit absolute assets directory, outside app.asar.
-  extraResources: [{ from: "mobile/dist", to: "mobile", filter: ["index.html", "web.js", "styles.css", "web.css", "chat.html", "chat.js", "chat.css", "frame.css", "frame-host.html", "frame-host.js", "manifest.webmanifest", "icon.svg", "plugins/ccb-latex/katex.min.css", "plugins/ccb-latex/fonts/*.woff2", "plugins/botling.chat-extras/chat-extras.css"] }, { from: "out/report", to: "report", filter: ["report-blocks.md", "NOTICE", "THIRD_PARTY_LICENSES.txt"] },
+  extraResources: [{ from: "mobile/dist", to: "mobile", filter: ["index.html", "web.js", "styles.css", "web.css", "chat.html", "chat.js", "chat.css", "frame.css", "frame-host.html", "frame-host.js", "manifest.webmanifest", "icon.svg", "plugins/ccb-latex/katex.min.css", "plugins/ccb-latex/fonts/*.woff2", "plugins/botling.chat-extras/chat-extras.css", "plugins/botling.board/board.css"] }, { from: "out/report", to: "report", filter: ["report-blocks.md", "NOTICE", "THIRD_PARTY_LICENSES.txt"] },
     // The first-party plugins (ccb-latex, botling.cards, botling.chat-extras, botling.design): read-only, Resources/builtin-plugins.
     { from: "out/builtin-plugins", to: "builtin-plugins" }],
   asar: true,

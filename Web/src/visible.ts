@@ -1,5 +1,3 @@
-import { post } from "./bridge";
-
 /**
  * The one rule for cards that refresh by themselves (a chat card's `Refresh: every 2s` or
  * `<show refresh="2s">`, a pin's interval, a floating pin): they run again only while the user
@@ -7,12 +5,18 @@ import { post } from "./bridge";
  * `ccb.setWindowVisible`, from the window's occlusion: not minimized, not hidden, not fully
  * covered; the page's own `document.visibilityState` counts too), and the card is laid out
  * (its tab, chat or Board, is the one showing) and inside the window and every scrolling area
- * around it (scrolled into view). Pins the page shows are told to Swift (`pinsVisible`), whose
- * timer runs a pin only then.
+ * around it (scrolled into view). Pins the page shows are told to Swift (`pinsVisible`) by
+ * botling.board, whose web part keeps that list (its `visible.ts`).
  */
 
 let windowShown = true;
 const shownAgain: (() => void)[] = [];
+/** Told whenever Swift says the window is shown or hidden (the chat's plugin host: `page.onWindowVisible`). */
+let windowListener: () => void = () => {};
+
+export function setWindowListener(fn: () => void): void {
+  windowListener = fn;
+}
 
 /** Whether the app's window is shown, as Swift says and as the page knows. */
 export function windowVisible(): boolean {
@@ -21,13 +25,13 @@ export function windowVisible(): boolean {
 
 /**
  * Swift's word on the window. Shown again, what waits on it runs at once (a card hidden longer
- * than its interval refreshes right away); the pins seen are told again either way.
+ * than its interval refreshes right away); plugins are told either way.
  */
 export function setWindowVisible(visible: boolean): void {
   const was = windowShown;
   windowShown = visible;
   if (visible && !was) for (const fn of shownAgain) fn();
-  reportVisiblePins();
+  windowListener();
 }
 
 /** Runs `fn` each time the window is shown again. */
@@ -59,42 +63,4 @@ export function onScreen(element: Element): boolean {
     right = Math.min(right, around.right);
   }
   return box.bottom > top && box.top < bottom && box.right > left && box.left < right;
-}
-
-/**
- * The pins the user can see now, in page order: a chip above the input box, the opened pin, a
- * Board tile in view, a floating card (folded too: its header shows how it stands).
- */
-export function visiblePinIDs(): string[] {
-  if (!windowVisible()) return [];
-  const ids: string[] = [];
-  const add = (id: string | undefined) => {
-    if (id && !ids.includes(id)) ids.push(id);
-  };
-  for (const element of document.querySelectorAll<HTMLElement>(".pin-chip[data-id], .board-card[data-id], .float-card[data-id]")) {
-    if (onScreen(element)) add(element.dataset.id);
-  }
-  const sheet = document.querySelector<HTMLElement>(".pin-sheet:not([hidden])");
-  if (sheet && onScreen(sheet)) add(document.querySelector<HTMLElement>(".pin-chip.on[data-id]")?.dataset.id);
-  return ids;
-}
-
-let told: string[] = [];
-
-/** Tells Swift which pins are seen, when that changed since it was last told. */
-export function reportVisiblePins(): void {
-  const ids = visiblePinIDs();
-  if (ids.length === told.length && ids.every((id, index) => id === told[index])) return;
-  told = ids;
-  post({ type: "pinsVisible", ids });
-}
-
-let reportSoon: ReturnType<typeof setTimeout> | null = null;
-
-/** `reportVisiblePins` once things settle (after a scroll, a resize, an update). */
-export function reportVisiblePinsSoon(): void {
-  reportSoon ??= setTimeout(() => {
-    reportSoon = null;
-    reportVisiblePins();
-  }, 150);
 }
