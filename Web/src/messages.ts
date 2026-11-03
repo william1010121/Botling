@@ -25,9 +25,11 @@ export const extensions = {
   panels: new Map<string, { plugin: string; render: (root: HTMLElement) => void | (() => void) }>(),
   /**
    * A bar over a component a bot's message shows (the Board's pin / ↻ / ⋯): a plugin draws it from the card's display, or
-   * returns null for none. The card and the bars sit in one `.pin-holder`, which shows them on hover.
+   * returns null for none. The card and the bars sit in one `.pin-holder`, which shows them on hover; a bar with
+   * `data-holder="pinned"` marks its holder `pinned`. `stamp`: what the bars depend on besides the card (the Board: which components
+   * are pinned), asked before the messages are drawn: a message with a card is drawn again when it changes.
    */
-  cardBars: [] as { plugin: string; make: (display: DisplayView, messageID: string, index: number) => HTMLElement | null }[],
+  cardBars: [] as { plugin: string; make: (display: DisplayView, messageID: string, index: number) => HTMLElement | null; stamp?: (state: ChatState) => string }[],
   /** Buttons in the head of a component made from a reply (`SpecChipView`), as the Board's pin button. */
   specButtons: [] as { plugin: string; make: (spec: SpecChipView) => HTMLElement | null }[],
   /** Runs a plugin's code, unloading the plugin if it throws. */
@@ -670,7 +672,7 @@ function componentView(message: MessageView, display: DisplayView, index: number
   const bars = extensions.cardBars.flatMap(({ plugin, make }) => extensions.guard(plugin, () => make(display, message.id, index)) ?? []);
   if (!bars.length) return element;
   const holder = document.createElement("div");
-  holder.className = "pin-holder" + (display.pinned ? " pinned" : "");
+  holder.className = "pin-holder" + (bars.some((bar) => bar.dataset.holder === "pinned") ? " pinned" : "");
   holder.append(element, ...bars);
   return holder;
 }

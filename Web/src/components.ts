@@ -394,18 +394,14 @@ export type SaveHandler = (json: string) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null; ccbIncoming?: ComponentFrame | null };
+type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null };
 
-/** Marks the component frames in `element` as pin `id`'s: their `ccb.setStatus` sets its chip. */
-export function markPinFrames(element: HTMLElement | null, id: string): void {
-  for (const frame of element?.querySelectorAll<ComponentFrame>("iframe.component-frame") ?? []) frame.ccbPin = id;
-}
+/** What a frame's `ccb.setStatus(...)` is told to: `{clear}` or `{text, tone}` as the frame sent them. */
+export type StatusHandler = (message: { clear?: unknown; text?: unknown; tone?: unknown }) => void;
 
-/** A pinned frame's `ccb.setStatus(...)` as the action Swift gets: text and tone as strings, or cleared. */
-export function pinStatusAction(id: string, message: { clear?: unknown; text?: unknown; tone?: unknown }): Action {
-  if (message.clear) return { type: "pinStatus", id, text: null, tone: null };
-  const text = typeof message.text === "string" ? message.text : typeof message.text === "number" ? String(message.text) : "";
-  return { type: "pinStatus", id, text, tone: typeof message.tone === "string" && message.tone !== "" ? message.tone : null };
+/** Gives the component frames in `element` a place for their `ccb.setStatus(...)` to go (a plugin's pinned copy has a chip to set). */
+export function markStatusFrames(element: HTMLElement | null, handler: StatusHandler): void {
+  for (const frame of element?.querySelectorAll<ComponentFrame>("iframe.component-frame") ?? []) frame.ccbStatus = handler;
 }
 
 /**
@@ -642,8 +638,8 @@ window.addEventListener("message", (event) => {
     // Opened full-size the way a link chip is: a picture in the lightbox, a page in a window of its own.
     openMedia(message.url, typeof message.label === "string" ? message.label : "");
   } else if (message.ccb === "status") {
-    // Only a pinned copy has a chip to set.
-    if (frame.ccbPin) post(pinStatusAction(frame.ccbPin, message as { clear?: unknown; text?: unknown; tone?: unknown }));
+    // Only a copy with a chip to set (a pin's) has somewhere for it to go.
+    frame.ccbStatus?.(message as { clear?: unknown; text?: unknown; tone?: unknown });
   } else if (message.ccb === "live") {
     // It takes new data itself (ccb.onData): a redraw with only new data keeps it.
     frame.ccbLive = true;
@@ -880,7 +876,7 @@ function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
     next.ccbAnswer = shown.ccbAnswer;
     next.ccbSave = shown.ccbSave;
     next.ccbDetail = shown.ccbDetail;
-    next.ccbPin = shown.ccbPin ?? next.ccbPin;
+    next.ccbStatus = shown.ccbStatus ?? next.ccbStatus;
     if (shown.ccbSize && next.ccbSize !== shown.ccbSize) resizeFrame(next, shown.ccbSize);
     for (const name of ["position", "left", "top", "width"]) next.style.removeProperty(name);
     // As tall as it said it is, or else as the shown one.

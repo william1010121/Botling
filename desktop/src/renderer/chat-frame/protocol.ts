@@ -65,6 +65,8 @@ export type ShellMessage =
   | { botling: "plugins"; specs: WebPluginSpecView[] }
   /** A web part's `ccb.host.call` was answered (`ccb.hostReply`). */
   | { botling: "hostReply"; callID: number; ok: boolean; value: unknown }
+  /** How a built-in plugin's `ccb.page.requestApproval` ended: the user pressed Allow (true), or not (`ccb.approvalReply`). */
+  | { botling: "approvalReply"; requestId: number; allowed: boolean }
   /** A component's `ccb.runDetail` answer (`ccb.detailReply`). */
   | { botling: "detailReply"; requestID: number; ok: boolean; value: string }
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */

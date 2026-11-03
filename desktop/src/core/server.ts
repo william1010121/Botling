@@ -194,9 +194,6 @@ export class Core {
   private workspaceWatch: WorkspaceWatch | null = null;
   private workspaceTimer: NodeJS.Timeout | null = null;
   private workspaceClock: NodeJS.Timeout | null = null;
-  private pinClock: NodeJS.Timeout | null = null;
-  /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
-  private visiblePins: { botId: string; ids: string[] } | null = null;
   readonly plugins: Plugins;
   /** Every bot's profile, in the left column's order (Maintainer last). */
   private profiles: BotProfile[] = [];
@@ -258,7 +255,12 @@ export class Core {
     });
     this.componentStamp = this.components.library.stamp;
     this.components.commands.onPid = (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid));
-    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); };
+    this.components.commands.onChange = (card) => {
+      for (const bot of this.bots.values()) bot.cardChanged(card);
+      this.specs?.cardChanged(card);
+      // A pin's card is botling.board's: its run changed.
+      if (card.startsWith("pin/")) this.plugins?.event("cardChanged", { card });
+    };
     // The plugins (their host starts later, in start()); the world they see is read when they ask.
     const host = options.plugins ?? null;
     this.plugins = new Plugins({
@@ -320,6 +322,18 @@ export class Core {
         commandRun: (botId, key, command, run) => this.pluginBot(botId)?.pluginCommand(key, command, run) ?? null,
         component: (botId, name, data, command) => this.pluginBot(botId)?.libraryEntry(name, data, command) ?? null,
         imageUrls: (botId, data) => this.pluginBot(botId)?.imageUrls(data) ?? null,
+        cardAsk: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
+        cardApprove: (botId, command, component, folder, detail) => this.pluginBot(botId)?.cardApproveFor(command, component, folder, detail) ?? false,
+        cards: {
+          library: (botId) => this.pluginBot(botId)?.cardLibrary() ?? null,
+          shown: (botId) => this.pluginBot(botId)?.cardsShown() ?? null,
+          states: (botId, cards) => this.pluginBot(botId)?.cardStates(cards) ?? null,
+          run: (botId, card, command, force) => this.pluginBot(botId)?.cardRun(card, command, force) ?? null,
+          ask: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
+          setNotes: (botId, notes) => { const bot = this.pluginBot(botId); if (!bot) return false; bot.setCardNotes(notes); return true; },
+          legacyPins: (botId) => this.pluginBot(botId)?.legacyPins() ?? null,
+        },
+        dataChanged: (botId, plugin, data) => { if (this.bots.has(botId)) this.event({ type: "chat.pluginData", botId, plugin, data }); },
         approveCommand: (botId, command) => this.pluginBot(botId)?.approveCommand(command) ?? false,
         chat: (botId, limit) => {
           const bot = this.pluginBot(botId);
@@ -594,12 +608,6 @@ export class Core {
       });
       this.libraryWatch.start();
     }
-    // Pins refreshed every so often that the user can see run when their time comes (1.x: each second).
-    this.pinClock = setInterval(() => {
-      const seen = this.visiblePins;
-      if (seen) this.bots.get(seen.botId)?.refreshDuePins(seen.ids);
-    }, 1_000);
-    this.pinClock.unref?.();
     const tick = options.routineTickMs ?? 30_000;
     if (tick > 0) {
       setTimeout(() => this.checkRoutines(), 0);
@@ -651,6 +659,7 @@ export class Core {
     if (this.components.library.stamp === this.componentStamp) return;
     this.componentStamp = this.components.library.stamp;
     this.event({ type: "components.updated", components: this.componentInfos() });
+    this.plugins.event("componentsChanged", {});
   }
 
   /** A template or about.md changed on disk: the page draws it anew; bots hear what changed with their next message. */
@@ -670,19 +679,29 @@ export class Core {
     }
   }
 
+  /** A pin's owner, as botling.board says it (`pin.owner`): its bot, the author its links are its, how it refreshes and when its data is from; null: none (or the plugin is off). */
+  private async pinOwner(botId: string, pinId: string | undefined, name: string | null): Promise<{ botId: string; linkAuthor: string; words: string; when: number | null } | null> {
+    const answer = await this.plugins.askBuiltIn("botling.board", "pin.owner", { botId, ...(pinId ? { id: pinId } : {}), ...(name ? { name } : {}) });
+    if (!answer || typeof answer !== "object") return null;
+    const { botId: owner, linkAuthor, words, when } = answer as Record<string, unknown>;
+    return typeof owner === "string" && typeof linkAuthor === "string" && typeof words === "string" ? { botId: owner, linkAuthor, words, when: typeof when === "number" ? when : null } : null;
+  }
+
   /**
    * A component card's report (1.x's ChatSurface `componentReport`): "Report a problem…" goes to Maintainer
    * as the card's own bot's (a floating card may be another bot's), with its pin and the screenshot kept with
    * that bot; otherwise the user's change request, the screenshot first among the pictures.
    */
-  private reportComponent(cmd: Extract<Command, { type: "component.report" }>): boolean {
+  private async reportComponent(cmd: Extract<Command, { type: "component.report" }>): Promise<boolean> {
     const incoming = join(this.options.dataDir, "incoming");
     const pictures = cmd.images.flatMap((image) => writeIncoming(incoming, image.name, image.base64) ?? []);
     const shot = cmd.screenshot ? writeIncoming(incoming, `${safeName(cmd.name) || "component"}.png`, cmd.screenshot) : null;
     try {
       if (cmd.problem) {
-        const owner = (cmd.pinId ? [...this.bots.values()].find((bot) => bot.hasPin(cmd.pinId!)) : undefined) ?? this.bot(cmd.botId);
-        return this.maintainer.reportProblem(cmd.name, cmd.text, owner, owner.pin(cmd.pinId) ?? owner.pinNamed(cmd.name), shot, pictures);
+        // A pin is botling.board's: whose it is, how it refreshes and when its data is from (its card by that id, else by the component's name).
+        const pin = await this.pinOwner(cmd.botId, cmd.pinId, cmd.name);
+        const owner = (pin ? this.bots.get(pin.botId) : undefined) ?? this.bot(cmd.botId);
+        return this.maintainer.reportProblem(cmd.name, cmd.text, owner, pin ? { words: pin.words, when: pin.when } : null, shot, pictures);
       }
       const files = [...(shot ? [shot] : []), ...pictures];
       if (!cmd.text.trim() && !files.length) return false;
@@ -1628,7 +1647,6 @@ First write a test that shows this, then fix it.`;
       this.removedPluginBots.add(`${profile.plugin}/${profile.name}`.toLowerCase());
       writeFileAtomic(join(this.options.dataDir, "removed-bots.json"), JSON.stringify([...this.removedPluginBots].sort()));
     }
-    if (this.visiblePins?.botId === id) this.visiblePins = null;
     const main = this.bots.get(MAIN_BOT_ID)!;
     for (const [copy, source] of [...this.copies]) {
       if (source.botId !== id) continue;
@@ -2425,8 +2443,8 @@ First write a test that shows this, then fix it.`;
       case "plugins.command": return { result: await this.plugins.command(cmd.id, cmd.from, cmd.name, cmd.args) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params, cmd.from) ?? null };
-      case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card);
-      case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder);
+      case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card, cmd.component);
+      case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.component, cmd.detail);
       case "plugins.tileImages": return this.plugins.tileImages(cmd.name, cmd.botId, cmd.data);
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
@@ -2450,7 +2468,7 @@ First write a test that shows this, then fix it.`;
       case "link.authorize": {
         const lines=this.bot(cmd.botId).lines();
         const context=cmd.messageId?lines.find(line=>line.id===cmd.messageId):null;
-        const pin=cmd.pinId?this.bot(cmd.botId).pin(cmd.pinId):null;
+        const pin=cmd.pinId?await this.pinOwner(cmd.botId,cmd.pinId,null):null;
         if(cmd.pinId&&(!pin||typeof pin.linkAuthor!=="string"))return {result:false,linked:false};
         // A component inherits its own reply's author, never a guest's links merely because they
         // appear in the same host/group chat. Notices can echo user text and grant no authority.
@@ -2543,7 +2561,7 @@ First write a test that shows this, then fix it.`;
       case "component.approve": return this.bot(cmd.botId).componentApprove(cmd.messageId, cmd.index, cmd);
       case "component.detail": return this.bot(cmd.botId).componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
       case "component.save": return this.bot(cmd.botId).componentSave(cmd.messageId, cmd.index, cmd.data);
-      case "component.report": return { sent: this.reportComponent(cmd) };
+      case "component.report": return { sent: await this.reportComponent(cmd) };
       case "chat.feedback": {
         const incoming = join(this.options.dataDir, "incoming");
         const pictures = cmd.images.flatMap((image) => writeIncoming(incoming, image.name, image.base64) ?? []);
@@ -2573,19 +2591,6 @@ First write a test that shows this, then fix it.`;
         this.componentsTick();
         return { reverted: !problem, problem };
       }
-      case "pin.add": return this.bot(cmd.botId).pinAdd(cmd.id, { messageId: cmd.messageId, index: cmd.index, name: cmd.name }, cmd.refresh, cmd.minutes, cmd.seconds);
-      case "pin.change": return this.bot(cmd.botId).pinChange(cmd.id, cmd.change);
-      case "pin.arrange": return this.bot(cmd.botId).pinArrange(cmd.places);
-      case "pin.command": return this.bot(cmd.botId).pinCommand(cmd.id, cmd);
-      case "pin.approve": return this.bot(cmd.botId).pinApprove(cmd.id, cmd);
-      case "pin.shown": {
-        const bot = this.bot(cmd.botId);
-        if (cmd.visible) {
-          this.visiblePins = { botId: cmd.botId, ids: cmd.ids ?? [] };
-          return { ran: bot.refreshDuePins(cmd.ids ?? []) };
-        }
-        return bot.pinsShown(cmd.ids);
-      }
       case "card.image": {
         const file = this.components.images.file(cmd.token);
         if (!file) throw new ContractError("not_found", "No such picture.");
@@ -2611,7 +2616,7 @@ First write a test that shows this, then fix it.`;
       seq: this.seq,
       bots: views,
       imported: this.imported,
-      chat: bot ? { ...bot.snapshot(), decorations: this.plugins.decorations(bot.id), pendingFiles: this.pending.views(bot.id) } : null,
+      chat: bot ? { ...bot.snapshot(), decorations: this.plugins.decorations(bot.id), pluginData: this.plugins.chatData(bot.id), pendingFiles: this.pending.views(bot.id) } : null,
       components: this.componentInfos(),
       plugins: this.plugins.view(),
       settings: this.settingsNow(),
@@ -2747,7 +2752,6 @@ First write a test that shows this, then fix it.`;
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
     if (this.watchClock) { clearInterval(this.watchClock); this.watchClock = null; }
     this.libraryWatch?.stop(); this.libraryWatch = null;
-    if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     this.memoryWatch?.stop(); this.memoryWatch = null;
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
     this.watchWorkspace(false);

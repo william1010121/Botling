@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setLanguage } from "../../../../Web/src/i18n";
 import { shared } from "../../../../Web/src/contract";
-import type { PinView } from "../../../../Web/src/types";
+import type { PinView } from "../src/types";
 import { floatLimits, globalItems } from "../src/float";
 import { installBoard } from "./support";
 import { own, ownWords } from "../src/words";

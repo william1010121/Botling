@@ -87,9 +87,8 @@ import type { SubagentHistory } from "./store/subagent-store";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
 import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
 import { doneLogFile, readDoneLog, recordDone, taskHistory, type DoneDay, type DoneLog } from "./task-history";
-import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
+import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
-import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SHOWN_COOLDOWN_MS, spelledTone, MAX_FLOATING, type PinRecord } from "./components/pins";
 import { detailValues, type CommandStatus } from "./components/commands";
 import type { Display } from "./reply";
 import { headTurnContent, headTurnEnd } from "./head-turn";
@@ -486,8 +485,8 @@ export class Bot {
   private routineTold: string | null = null;
   /** What the app last showed of its routines (`routinesKey`), so a change to the files is shown once. */
   private routinesShown = "";
-  /** Its pinned components (pins.json, 1.x's format; the primary's). */
-  private pins: PinRecord[] = [];
+  /** What a plugin that keeps cards of its own (botling.board's pins) says changed in them, to tell the bot with the user's next message (`cards.setNotes`; the primary's). Swift dates. */
+  private cardNotes: { date: number; line: string }[] = [];
   /** When its tasks were finished (done-days.json; the primary's), with what is not saved yet; filled at start, before any card is trimmed. */
   private doneLog: DoneLog = {};
   /** The done log as last saved (JSON): a log that differs is saved again at the next save or read. */
@@ -521,7 +520,6 @@ export class Bot {
       this.doneLog = readDoneLog(this.store.loadDoneLog());
       this.doneLogSaved = JSON.stringify(doneLogFile(this.doneLog));
       recordDone(this.doneLog, this.tasks.tasks, Date.now());
-      this.pins = this.readList("pins.json", readPin);
       this.specList = this.readList("specs.json", readSpec);
       const list = this.store.loadSettings().components;
       this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
@@ -709,7 +707,7 @@ export class Bot {
     }
   }
 
-  private readList<T>(name: "tasks.json" | "subagents.json" | "pins.json" | "specs.json", read: (value: unknown) => T | null): T[] {
+  private readList<T>(name: "tasks.json" | "subagents.json" | "specs.json", read: (value: unknown) => T | null): T[] {
     try {
       return this.store.loadList(name).map(read).filter((value): value is T => value !== null);
     } catch (error) {
@@ -1800,7 +1798,6 @@ export class Bot {
       routines: this.chatRoutines(),
       runs: turns.map((turn) => ({ turnId: turn.id, messageId: turn.messageId, head: owner(turn).engine, live: turn.steps.slice(-500).map((step) => stepView(step, owner(turn).subagents)) })),
       heads: this.headsView(),
-      ...this.pinsView(),
     };
   }
 
@@ -4695,22 +4692,6 @@ export class Bot {
     this.updated();
   }
 
-  /** One of its pins, by id (null: not this bot's). */
-  pin(id: string | undefined): PinRecord | null {
-    const pin=id ? this.owner.pins.find((pin) => pin.id === id) ?? null : null;
-    // Before author provenance was stored, pins belonged to their host bot. Never borrow a
-    // guest/notice author from current chat contents when upgrading that legacy record.
-    if(pin&&typeof pin.linkAuthor!=="string"){pin.linkAuthor=this.owner.id;this.owner.savePins();}
-    return pin;
-  }
-
-  hasPin(id: string): boolean { return !!this.pin(id); }
-
-  /** Its pin of a component, by the component's name. */
-  pinNamed(name: string): PinRecord | null {
-    return this.owner.pins.find((pin) => pin.name === name) ?? null;
-  }
-
   /** The notes that go, unseen, with your next message about its components (`componentStateNote`, `emptyShowNote`). */
   private componentNotes(user: ChatRecord): string[] {
     const context = this.context;
@@ -4727,9 +4708,7 @@ export class Bot {
         }
       });
     }
-    for (const pin of this.pins) {
-      if (typeof pin.savedAt === "number" && pin.savedAt > before) changed.push({ date: pin.savedAt, line: `- "${pin.name}" pinned to you (pin ${pin.id}): ${quote(pin.data)}` });
-    }
+    for (const note of this.cardNotes) if (note.date > before) changed.push(note);
     const notes: string[] = [];
     if (changed.length) {
       const lines = changed.sort((a, b) => a.date - b.date).slice(-10).map((entry) => entry.line);
@@ -4760,9 +4739,7 @@ export class Bot {
     const context = this.context;
     const displays = (record.displays ?? []) as Display[];
     if (!context || !displays.length) return undefined;
-    const pinned = new Set(this.pins.map((pin) => pin.name));
-    return displays.slice(0, 20).map((display, index) => displayView(context, display, `${record.id}/${index}`, record.role, this.commandFolder,
-      record.role === "bot" && context.library.names.includes(display.name) ? pinned.has(display.name) : null));
+    return displays.slice(0, 20).map((display, index) => displayView(context, display, `${record.id}/${index}`, record.role, this.commandFolder));
   }
 
   /**
@@ -4801,12 +4778,8 @@ export class Bot {
   /** A card's run started or ended: the line (or pin) that shows it is drawn again. */
   cardChanged(card: string) {
     if (this.options.primary) return;
-    if (card.startsWith("pin/")) {
-      const id = card.slice(4);
-      const pin = this.pins.find((candidate) => candidate.id === id);
-      if (pin) { this.keepOutput(pin); this.pinsChanged(); }
-      return;
-    }
+    // A pin's card belongs to botling.board (the server tells it: `cardChanged`).
+    if (card.startsWith("pin/")) return;
     const messageId = card.split("/")[0];
     const record = this.records.find((candidate) => candidate.id === messageId);
     if (record) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
@@ -4896,10 +4869,6 @@ export class Bot {
     if (resolvePath(folder) !== resolvePath(this.commandFolder)) return { ok: false, value: "This component's Detail command is not allowed yet: press \"Allow and run\" on its card first." };
     const saving = card && command ? { card, command } : undefined;
     const outcome = await context.commands.runDetail(template, values, folder, saving);
-    if (saving) {
-      const pin = this.pins.find((candidate) => `pin/${candidate.id}` === saving.card && candidate.command === saving.command);
-      if (pin) { this.keepOutput(pin); this.pinsChanged(); }
-    }
     return outcome.data !== undefined ? { ok: true, value: outcome.data } : { ok: false, value: outcome.error ?? "The Detail command failed." };
   }
 
@@ -4954,291 +4923,103 @@ export class Bot {
     return context ? context.images.urls(data) : null;
   }
 
-  // Pins
+  // Cards for a plugin that keeps some of its own (botling.board's pins): what the chat shows, a card's command run, its ask
+  // and what to tell the bot. Built-in plugins only (`cards.*`, plugins/index.ts); the card keys they run start with "pin/".
 
-  private savePins() {
-    if (!this.readOnly) this.store.saveList("pins.json", this.pins);
+  /** Whether a plugin may run a card under this key: its own kind, never one of a message's. */
+  static pluginCard(card: string): boolean {
+    return /^pin\/[A-Za-z0-9-]{1,100}$/.test(card);
   }
 
-  /** The pins as the page draws them, those floating, and what the picker offers. */
-  pinsView(): { pins: PinData[]; floating: PinData[]; pinChoices: { name: string; command: string | null; uses: number; pinned: boolean }[] } {
-    if (this.options.primary) return this.options.primary.pinsView();
+  /** The component library as a card-keeping plugin sees it, with the folder commands run in. null: no component context. */
+  cardLibrary(): { botId: string; names: string[]; offered: string[]; entries: Record<string, { command: string | null; detail: string | null; every: number | null; sizes: string[] }>; readOnly: boolean; folder: string } | null {
+    if (this.options.primary) return this.options.primary.cardLibrary();
     const context = this.context;
-    if (!context) return { pins: [], floating: [], pinChoices: [] };
-    this.syncPinCommands();
-    const floating = this.pins.filter((pin) => pin.float).length;
-    const views = this.pins.map((pin) => pinView(context, pin, this.commandFolder, floating));
-    return { pins: views, floating: views.filter((view) => view.float), pinChoices: this.pinChoices() };
+    if (!context) return null;
+    const library = context.library;
+    const entries = Object.fromEntries(library.names.map((name) => [name, { command: library.command(name), detail: library.detailCommand(name), every: library.refreshInterval(name), sizes: library.sizes(name) }]));
+    return { botId: this.id, names: [...library.names], offered: (this.componentList ?? library.names).filter((name) => library.names.includes(name)), entries, readOnly: this.readOnly, folder: this.commandFolder };
   }
 
-  /**
-   * A pin keeps the Command its component had when it was pinned; when the component's Command line changes (an update,
-   * a fix), a pin that follows the component takes the new one, so its card and ↻ stop running the old line. A pin made from a
-   * tag with its own command="…" keeps that. Pins from before `followsComponent` existed follow unless a shown card of that
-   * component carried exactly their command.
-   */
-  private syncPinCommands() {
+  /** Every component in its chat, newest line first and each line's last one first (what a pin is made from, what the picker lists). */
+  cardsShown(): { messageId: string; index: number; name: string; command: string | null; shownCommand: string | null; data: string; author: string | null }[] {
+    if (this.options.primary) return this.options.primary.cardsShown();
     const context = this.context;
-    if (!context || this.readOnly) return;
-    let changed = false;
-    for (const pin of this.pins) {
-      if (!pin.command || pin.followsComponent === false) continue;
-      const current = context.library.command(pin.name);
-      if (!current || current === pin.command) continue;
-      if (pin.followsComponent !== true) {
-        const own = this.records.some((record) => record.role === "bot" && ((record.displays ?? []) as Display[]).some((display) => display.name === pin.name && display.command === pin.command));
-        if (own) continue;
-      }
-      pin.command = current;
-      pin.followsComponent = true;
-      changed = true;
-    }
-    if (changed) this.savePins();
-  }
-
-  /** The picker's list (`ChatPayload.pinChoices`): components it drew (newest first), then its own others with a Command. */
-  private pinChoices() {
-    const library = this.context!.library;
-    const available = new Set(library.names);
-    const uses = new Map<string, number>();
-    const commands = new Map<string, string>();
-    const order: string[] = [];
+    if (!context) return [];
+    const out: ReturnType<Bot["cardsShown"]> = [];
     for (const record of [...this.records].reverse()) {
       if (record.role !== "bot") continue;
-      for (const display of [...((record.displays ?? []) as Display[])].reverse()) {
-        if (!available.has(display.name) || display.name === "choices") continue;
-        if (!uses.has(display.name)) {
-          order.push(display.name);
-          const command = displayCommand(display, record.role, library);
-          if (command) commands.set(display.name, command);
-        }
-        uses.set(display.name, (uses.get(display.name) ?? 0) + 1);
+      const displays = (record.displays ?? []) as Display[];
+      for (let index = displays.length - 1; index >= 0; index--) {
+        const display = displays[index]!;
+        out.push({
+          messageId: record.id, index, name: display.name, command: display.command ?? null, shownCommand: displayCommand(display, record.role, context.library), data: display.data,
+          author: typeof record.sourceID === "string" ? record.sourceID.toUpperCase() : null,
+        });
       }
     }
-    const pinned = new Set(this.pins.map((pin) => pin.name));
-    const used = order.map((name) => ({ name, command: commands.get(name) ?? null, uses: uses.get(name) ?? 0, pinned: pinned.has(name) }));
-    const offered = (this.componentList ?? library.names).filter((name) => available.has(name));
-    const others = offered.filter((name) => !uses.has(name)).flatMap((name) => {
-      const command = library.command(name);
-      return command ? [{ name, command, uses: 0, pinned: pinned.has(name) }] : [];
+    return out;
+  }
+
+  /** The state of cards: each one's command run (or what asks first), its Detail command, refresh interval and the pictures its data names. */
+  cardStates(cards: { card: string; command: string | null; name: string; data?: string }[]): {
+    folder: string; detail: string | null; every: number | null; status: CommandStatus; data: string | null; error: string | null; ranAt: number | null;
+    images: Record<string, string>; dataImages: Record<string, string>; lastRan: number | null; run: { status: CommandStatus; data: string | null; error: string | null; ranAt: number | null } | null;
+  }[] | null {
+    if (this.options.primary) return this.options.primary.cardStates(cards);
+    const context = this.context;
+    if (!context) return null;
+    const folder = this.commandFolder;
+    return cards.map(({ card, command, name, data }) => {
+      const detail = context.library.detailCommand(name);
+      const every = context.library.refreshInterval(name);
+      const state = command ? context.commands.state(card, command, detail, folder) : { status: "idle" as CommandStatus, data: null, error: null, ranAt: null };
+      const run = command ? context.commands.runOf(card, command, folder) : null;
+      return {
+        folder, detail, every, ...state,
+        images: state.data !== null ? context.images.urls(state.data) : {}, dataImages: data !== undefined ? context.images.urls(data) : {},
+        lastRan: context.commands.lastRan(card), run: run ? { status: run.status, data: run.data, error: run.error, ranAt: run.ranAt } : null,
+      };
     });
-    return [...used, ...others].slice(0, 200);
   }
 
-  private pinsChanged() {
-    const view = this.pinsView();
-    this.options.emit({ type: "pins.updated", botId: this.id, pins: view.pins, floating: view.floating.slice(0, 10), pinChoices: view.pinChoices });
-  }
-
-  /** Pins a line's component (with what it shows now) or one from the picker (`pin(messageID:)`, `pin(named:)`). */
-  pinAdd(id: string, from: { messageId?: string; index?: number; name?: string }, refresh: PinRecord["refresh"], minutes: number, seconds?: number): ResultOf<"pin.add"> {
-    if (this.options.primary) return this.options.primary.pinAdd(id, from, refresh, minutes, seconds);
+  /** A card's command run again when the user allowed it in this folder (what a pin's ↻, its timer and its first show do); false: not allowed. */
+  cardRun(card: string, command: string, force: boolean): boolean {
+    if (this.options.primary) return this.options.primary.cardRun(card, command, force);
     const context = this.context;
-    if (!context || this.readOnly) return { pinned: false };
-    let messageId = from.messageId;
-    let index = from.index;
-    if (!messageId && from.name) {
-      // The newest line that shows it.
-      for (const record of [...this.records].reverse()) {
-        if (record.role !== "bot") continue;
-        const at = ((record.displays ?? []) as Display[]).findLastIndex((display) => display.name === from.name);
-        if (at >= 0) { messageId = record.id; index = at; break; }
-      }
-    }
-    let pin: PinRecord;
-    if (messageId !== undefined && index !== undefined) {
-      const record = this.records.find((candidate) => candidate.id === messageId);
-      const display = (record?.displays as Display[] | undefined)?.[index];
-      if (!record || !display || !context.library.names.includes(display.name)) return { pinned: false };
-      const command = displayCommand(display, record.role, context.library);
-      let data = display.data;
-      let ranAt: number | undefined;
-      if (command) {
-        const state = context.commands.state(`${record.id}/${index}`, command, null, this.commandFolder);
-        if (state.data !== null) { data = state.data; ranAt = state.ranAt !== null ? toSwiftDate(state.ranAt) : undefined; }
-      } else if (data === "null") return { pinned: false };
-      pin = this.newPin(id, display.name, command, data, refresh, minutes, seconds, ranAt);
-      if (command) pin.followsComponent = display.command === undefined || display.command === null;
-      // Persist provenance from the stored reply, never from a component action payload.
-      if(record.role === "bot")pin.linkAuthor=typeof record.sourceID === "string"?record.sourceID.toUpperCase():this.id;
-    } else if (from.name && context.library.names.includes(from.name)) {
-      const command = context.library.command(from.name);
-      if (!command) return { pinned: false };
-      pin = this.newPin(id, from.name, command, "null", refresh, minutes, seconds);
-      pin.followsComponent = true;
-      pin.linkAuthor=this.id;
-    } else {
-      return { pinned: false };
-    }
-    if (this.pins.some((candidate) => candidate.id === pin.id || (candidate.name === pin.name && candidate.command === pin.command))) return { pinned: false };
-    this.pins.push(pin);
-    this.savePins();
-    this.pinsChanged();
-    for (const record of this.records) if (((record.displays ?? []) as Display[]).some((display) => display.name === pin.name)) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-    return { pinned: true };
+    if (!context || this.readOnly || !Bot.pluginCard(card) || !context.commands.isApproved(command, this.commandFolder)) return false;
+    void context.commands.run(card, command, this.commandFolder, force);
+    return true;
   }
 
-  private newPin(id: string, name: string, command: string | null, data: string, refresh: PinRecord["refresh"], minutes: number, seconds?: number, ranAt?: number): PinRecord {
-    const sizes = this.context!.library.sizes(name);
-    const pin: PinRecord = {
-      id: id.toUpperCase(), name, data, refresh: command ? refresh : "manual", minutes: clampMinutes(minutes), size: sizes.includes("2x2") ? "2x2" : sizes[0] ?? "2x2", makingLive: false,
-    };
-    if (command) pin.command = command;
-    if (seconds !== undefined) pin.seconds = clampSeconds(seconds);
-    if (ranAt !== undefined) pin.ranAt = ranAt;
-    return pin;
-  }
-
-  /** Every other change to a pin (`unpin`, `movePin`, `resizePin`, `setPinPanelHeight`, `setPinStatus`, `savePinData`, `setPinRefresh`, `floatPin`, `setPinFloat`). */
-  pinChange(id: string, change: Extract<import("../contract").Command, { type: "pin.change" }>["change"]): ResultOf<"pin.change"> {
-    if (this.options.primary) return this.options.primary.pinChange(id, change);
-    if (this.readOnly) return { changed: false };
-    const at = this.pins.findIndex((pin) => pin.id.toUpperCase() === id.toUpperCase());
-    if (at < 0) return { changed: false };
-    const pin = this.pins[at]!;
-    switch (change.kind) {
-      case "remove": {
-        this.pins.splice(at, 1);
-        for (const record of this.records) if (((record.displays ?? []) as Display[]).some((display) => display.name === pin.name)) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-        break;
-      }
-      case "move": {
-        this.pins.splice(at, 1);
-        this.pins.splice(Math.min(Math.max(change.to, 0), this.pins.length), 0, pin);
-        break;
-      }
-      case "resize": {
-        const size = spelledSize(change.size);
-        if (!size) return { changed: false };
-        pin.size = size;
-        break;
-      }
-      case "height": {
-        const height = clampPanelHeight(change.height);
-        if (height === undefined) delete pin.panelHeight; else pin.panelHeight = height;
-        break;
-      }
-      case "status":
-        if (change.text === null) delete pin.status;
-        else pin.status = { text: short(change.text), tone: spelledTone(change.tone) };
-        break;
-      case "save":
-        // Not a pin with a command: its data is what the command prints.
-        if (!keepable(change.data) || pin.command) return { changed: false };
-        pin.data = change.data;
-        pin.savedAt = toSwiftDate();
-        break;
-      case "refresh":
-        if (!pin.command) return { changed: false };
-        pin.refresh = change.refresh;
-        if (change.minutes !== undefined) {
-          pin.minutes = clampMinutes(change.minutes);
-          if (change.seconds !== undefined) pin.seconds = clampSeconds(change.seconds); else delete pin.seconds;
-        } else if (change.seconds !== undefined) pin.seconds = clampSeconds(change.seconds);
-        break;
-      case "float":
-        if (change.floating && !pin.float && this.pins.filter((candidate) => candidate.float).length >= MAX_FLOATING) return { changed: false };
-        if (change.floating) pin.float ??= { corner: "topRight", collapsed: false };
-        else delete pin.float;
-        break;
-      case "floatAt": {
-        if (!pin.float) return { changed: false };
-        const clamp = (value: number | undefined, low: number, high: number) => (value === undefined ? undefined : Math.min(Math.max(Math.round(value), low), high));
-        const width = clamp(change.width, 200, 640) ?? pin.float.width;
-        const height = clamp(change.height, 100, 480) ?? pin.float.height;
-        pin.float = { corner: change.corner ?? pin.float.corner, ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), collapsed: change.collapsed ?? pin.float.collapsed };
-        break;
-      }
-    }
-    this.savePins();
-    this.pinsChanged();
-    return { changed: true };
-  }
-
-  /** Board cards laid out where the page put them, with new sizes (`Pins.arrange`). */
-  pinArrange(places: { id: string; col: number; row: number; size?: string }[]): ResultOf<"pin.arrange"> {
-    if (this.options.primary) return this.options.primary.pinArrange(places);
-    let changed = false;
-    for (const entry of places) {
-      const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === entry.id.toUpperCase());
-      if (!pin) continue;
-      pin.place = { col: Math.max(0, entry.col), row: Math.max(0, entry.row) };
-      const size = entry.size ? spelledSize(entry.size) : null;
-      if (size) pin.size = size;
-      changed = true;
-    }
-    if (changed) { this.savePins(); this.pinsChanged(); }
-    return { changed };
-  }
-
-  /** A pinned card's command: run or ↻; only what the user allowed runs (`runPin`), else it answers what the ApprovalSheet asks about. */
-  pinCommand(id: string, shown: { command?: string; folder?: string; detail?: string; force?: boolean }): ResultOf<"pin.command"> {
-    if (this.options.primary) return this.options.primary.pinCommand(id, shown);
+  /** What the ApprovalSheet asks about a card's command and its component's Detail command; null once both are allowed. */
+  cardAskFor(card: string, command: string, name: string): ApprovalAskView | null {
+    if (this.options.primary) return this.options.primary.cardAskFor(card, command, name);
     const context = this.context;
-    this.syncPinCommands();
-    const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === id.toUpperCase());
-    if (!context || !pin?.command) return { accepted: false };
-    const folder = this.commandFolder;
-    if (shown.command !== undefined && shown.command !== pin.command) return { accepted: false };
-    if (shown.folder !== undefined && resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
-    const needsApproval = this.cardAsk(pin.command, context.library.detailCommand(pin.name), folder, pin.name);
-    if (needsApproval) return { accepted: false, needsApproval };
-    void context.commands.run(`pin/${pin.id}`, pin.command, folder, !!shown.force);
-    this.pinsChanged();
-    return { accepted: true };
+    if (!context) return null;
+    // Not a card of a plugin's kind: it is never allowed from here.
+    if (!Bot.pluginCard(card)) return { command, folder: this.commandFolder, detail: null, card: name };
+    return this.cardAsk(command, context.library.detailCommand(name), this.commandFolder, name);
   }
 
-  /** "Allow and run" on the app page's ApprovalSheet for a pinned card, as `componentApprove`. */
-  pinApprove(id: string, shown: { command: string; folder: string; detail?: string }): ResultOf<"pin.approve"> {
-    if (this.options.primary) return this.options.primary.pinApprove(id, shown);
+  /** "Allow" on the sheet for a card of a plugin's: its command and Detail command as the sheet showed them (`approveCard`). */
+  cardApproveFor(command: string, name: string, folder: string, shownDetail: string | null): boolean {
+    if (this.options.primary) return this.options.primary.cardApproveFor(command, name, folder, shownDetail);
     const context = this.context;
-    this.syncPinCommands();
-    const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === id.toUpperCase());
-    if (!context || !pin?.command) return { accepted: false };
-    const folder = this.commandFolder;
-    if (shown.command !== pin.command || resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
-    if (!this.approveCard(pin.command, context.library.detailCommand(pin.name), shown.detail ?? null, folder)) return { accepted: false };
-    void context.commands.run(`pin/${pin.id}`, pin.command, folder, false);
-    this.pinsChanged();
-    return { accepted: true };
+    if (!context || this.readOnly || resolvePath(folder) !== resolvePath(this.commandFolder)) return false;
+    return this.approveCard(command, context.library.detailCommand(name), shownDetail, this.commandFolder);
   }
 
-  /** A finished run's output kept on the pin, so it shows after a restart too (`keepOutput`). */
-  private keepOutput(pin: PinRecord) {
-    const context = this.context;
-    if (!context || !pin.command) return;
-    const state = context.commands.runOf(`pin/${pin.id}`, pin.command, this.commandFolder);
-    if (!state || state.status !== "done" || state.data === null || state.data === pin.data) return;
-    pin.data = state.data;
-    if (state.ranAt !== null) pin.ranAt = toSwiftDate(state.ranAt);
-    this.savePins();
+  /** What the plugin says changed in its cards, told to the bot with the user's next message (`cards.setNotes`). */
+  setCardNotes(notes: { date: number; line: string }[]): void {
+    if (this.options.primary) return this.options.primary.setCardNotes(notes);
+    this.cardNotes = notes;
   }
 
-  /** Pins just shown (`ids` null: all): those refreshed "when shown" run again unless they ran in the last 30 s (`pinsShown`). */
-  pinsShown(ids: string[] | null, now = Date.now()): ResultOf<"pin.shown"> {
-    if (this.options.primary) return this.options.primary.pinsShown(ids, now);
-    return { ran: this.runPins((pin, last) => pin.refresh === "shown" && (!ids || ids.some((id) => id.toUpperCase() === pin.id.toUpperCase())) && (last === null || now - last >= SHOWN_COOLDOWN_MS)) };
-  }
-
-  /** Pins refreshed every so often that the user can see now and whose time has come (`refreshDuePins`). */
-  refreshDuePins(visible: string[], now = Date.now()): number {
-    const seen = new Set(visible.map((id) => id.toUpperCase()));
-    return this.runPins((pin, last) => seen.has(pin.id.toUpperCase()) && !(pin.float && pin.refresh === "interval" && pin.seconds !== undefined) && isDue(pin, now, last));
-  }
-
-  private runPins(due: (pin: PinRecord, lastRan: number | null) => boolean): number {
-    const context = this.context;
-    if (!context) return 0;
-    let count = 0;
-    this.syncPinCommands();
-    for (const pin of this.pins) {
-      if (!pin.command || !context.commands.isApproved(pin.command, this.commandFolder)) continue;
-      const last = context.commands.lastRan(`pin/${pin.id}`) ?? (pin.ranAt !== undefined ? Date.UTC(2001, 0, 1) + pin.ranAt * 1000 : null);
-      if (!due(pin, last)) continue;
-      void context.commands.run(`pin/${pin.id}`, pin.command, this.commandFolder, true);
-      count++;
-    }
-    return count;
+  /** The pins botling.board kept here before it did (pins.json, as it was); null: none. */
+  legacyPins(): unknown[] | null {
+    if (this.options.primary) return this.options.primary.legacyPins();
+    try { return this.store.loadList("pins.json"); } catch { return null; }
   }
 
   // ------------------------------------------------------------------------------------------

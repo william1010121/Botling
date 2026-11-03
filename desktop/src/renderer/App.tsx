@@ -683,7 +683,7 @@ function runPluginCommand(client: Client, plugins: PluginsView | null | undefine
 }
 
 function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void;
-  onAsk: (view: ApprovalAskView, approve: import("../contract").Command) => void }) {
+  onAsk: (view: ApprovalAskView, approve: import("../contract").Command, done?: (allowed: boolean) => void) => void }) {
   const [report, setReport] = useState<{botId: string; url: string} | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const placeholder = useRef<HTMLDivElement>(null);
@@ -871,7 +871,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
       bucket.tokens -= 1;
       return true;
     };
-    // A card's command (a card, a pinned card, a spec's built card): the page only asks to run it; one not allowed yet
+    // A card's command (a card, a spec's built card): the page only asks to run it; one not allowed yet
     // answers what this page's ApprovalSheet asks about (card-approval.ts), and only the sheet allows it.
     const runCard = (action: Record<string, unknown>, botId: string | null) => {
       const run = cardRun(action, botId);
@@ -880,10 +880,6 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         const approve = result.needsApproval && asksUser(action) ? cardApprove(run, result.needsApproval) : null;
         if (approve) onAsk(result.needsApproval!, approve);
       }).catch(onError);
-    };
-    const pinChange = (id: unknown, change: Extract<import("../contract").Command, { type: "pin.change" }>["change"]) => {
-      const chat = store.getView().chat;
-      if (chat && typeof id === "string") void client.request({ type: "pin.change", botId: chat.botId, id, change }).catch(onError);
     };
     const receive = (message: FrameMessage | null) => {
       if (!message || typeof message !== "object") return;
@@ -1138,51 +1134,6 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
             void client.request({ type: "component.save", botId: chat.botId, messageId: action.messageID, index: action.index, data: action.data }).catch(onError);
           }
           return;
-        case "pin":
-          if (chat && typeof action.id === "string" && (action.refresh === "shown" || action.refresh === "interval" || action.refresh === "manual") && typeof action.minutes === "number") {
-            void client.request({ type: "pin.add", botId: chat.botId, id: action.id, refresh: action.refresh, minutes: action.minutes,
-              ...(typeof action.messageID === "string" ? { messageId: action.messageID } : {}), ...(typeof action.index === "number" ? { index: action.index } : {}),
-              ...(typeof action.name === "string" ? { name: action.name } : {}), ...(typeof action.seconds === "number" ? { seconds: action.seconds } : {}) }).catch(onError);
-          }
-          return;
-        case "unpin": pinChange(action.id, { kind: "remove" }); return;
-        case "movePin": if (typeof action.to === "number") pinChange(action.id, { kind: "move", to: action.to }); return;
-        case "resizePin": if (typeof action.size === "string") pinChange(action.id, { kind: "resize", size: action.size }); return;
-        case "setPinHeight": pinChange(action.id, { kind: "height", height: typeof action.height === "number" ? Math.round(action.height) : null }); return;
-        case "pinStatus":
-          if (typeof action.id === "string" && paced(`status:${action.id}`)) pinChange(action.id, { kind: "status", text: typeof action.text === "string" ? action.text.slice(0, 400) : null, tone: typeof action.tone === "string" ? action.tone.slice(0, 40) : null });
-          return;
-        case "pinSave": if (typeof action.data === "string" && paced(`save:${String(action.id)}`)) pinChange(action.id, { kind: "save", data: action.data }); return;
-        case "floatPin": if (typeof action.floating === "boolean") pinChange(action.id, { kind: "float", floating: action.floating }); return;
-        case "setPinFloat":
-          pinChange(action.id, { kind: "floatAt", ...(typeof action.corner === "string" && ["topRight", "topLeft", "bottomRight", "bottomLeft"].includes(action.corner) ? { corner: action.corner as "topRight" } : {}),
-            ...(typeof action.width === "number" ? { width: Math.round(action.width) } : {}), ...(typeof action.height === "number" ? { height: Math.round(action.height) } : {}),
-            ...(typeof action.collapsed === "boolean" ? { collapsed: action.collapsed } : {}) });
-          return;
-        case "setPinRefresh":
-          if (action.refresh === "shown" || action.refresh === "interval" || action.refresh === "manual") {
-            pinChange(action.id, { kind: "refresh", refresh: action.refresh, ...(typeof action.minutes === "number" ? { minutes: action.minutes } : {}), ...(typeof action.seconds === "number" ? { seconds: action.seconds } : {}) });
-          }
-          return;
-        case "arrangePins":
-          if (chat && Array.isArray(action.places)) {
-            const places = (action.places as unknown[]).flatMap((entry) => {
-              const place = entry as { id?: unknown; col?: unknown; row?: unknown; size?: unknown };
-              return typeof place.id === "string" && typeof place.col === "number" && typeof place.row === "number"
-                ? [{ id: place.id, col: Math.max(0, Math.round(place.col)), row: Math.max(0, Math.round(place.row)), ...(typeof place.size === "string" ? { size: place.size } : {}) }] : [];
-            }).slice(0, 200);
-            void client.request({ type: "pin.arrange", botId: chat.botId, places }).catch(onError);
-          }
-          return;
-        case "pinCommand":
-          runCard(action, chat?.botId ?? null);
-          return;
-        case "pinShown":
-          if (chat) void client.request({ type: "pin.shown", botId: chat.botId, ids: Array.isArray(action.ids) ? (action.ids as unknown[]).filter((id): id is string => typeof id === "string").slice(0, 200) : null }).catch(() => {});
-          return;
-        case "pinsVisible":
-          if (chat && Array.isArray(action.ids)) void client.request({ type: "pin.shown", botId: chat.botId, visible: true, ids: (action.ids as unknown[]).filter((id): id is string => typeof id === "string").slice(0, 200) }).catch(() => {});
-          return;
         case "closeSubagent":
           store.watch(null);
           return;
@@ -1239,8 +1190,23 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
             .then((result) => answer(true, result.result), (failure) => answer(false, failure instanceof RequestFailed ? failure.error.message : String(failure)));
           return;
         }
+        // A built-in plugin's web part (botling.board's pins) asks the user to allow a card's command: the core says what the sheet shows
+        // (`plugins.approvalAsk`, never what the page says) and only the sheet's Allow sends `plugins.approve`; the page hears how it ended.
+        case "approvalRequest": {
+          if (typeof action.plugin !== "string" || typeof action.requestId !== "number" || typeof action.command !== "string" || typeof action.folder !== "string" || typeof action.component !== "string") return;
+          const requestId = action.requestId, plugin = action.plugin, command = action.command, component = action.component;
+          const botId = typeof action.botId === "string" ? action.botId : chat?.botId;
+          const reply = (allowed: boolean) => postToChat({ botling: "approvalReply", requestId, allowed } satisfies ShellMessage);
+          if (!botId) { reply(false); return; }
+          client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder: action.folder, component, ...(typeof action.card === "string" ? { card: action.card.slice(0, 200) } : {}) }).then((asked) => {
+            const view = asked.needsApproval;
+            if (!view) { reply(true); return; }
+            onAsk(view, { type: "plugins.approve", name: plugin, botId, command: view.command, folder: view.folder, component, detail: view.detail }, reply);
+          }, (failure) => { reply(false); onError(failure); });
+          return;
+        }
         default:
-          // Drafts, files, reactions, components, pins… are not in 2.0 yet.
+          // Drafts, files, reactions, components… are not in 2.0 yet.
           return;
       }
     };

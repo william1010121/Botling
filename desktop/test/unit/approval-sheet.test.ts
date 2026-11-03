@@ -19,44 +19,41 @@ const SPEC = "6A0B0000-0000-4000-8000-000000000012";
 const ask: ApprovalAskView = { command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}", card: "commits" };
 
 describe("chat page actions only ask to run", () => {
-  it("drops approve from componentCommand, pinCommand and specCommand; what is sent is a valid command without it", () => {
+  it("drops approve from componentCommand and specCommand; what is sent is a valid command without it", () => {
     const runs = [
       cardRun({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "git log", folder: "/p", detail: "git show {hash}", approve: true, force: true }, BOT),
-      cardRun({ type: "pinCommand", id: PIN, command: "git log", folder: "/p", approve: true }, BOT),
       cardRun({ type: "specCommand", id: SPEC, command: "git log", folder: "/p", approve: true }, null),
     ];
     expect(runs).toEqual([
       { type: "component.command", botId: BOT, messageId: MESSAGE, index: 0, command: "git log", folder: "/p", detail: "git show {hash}", force: true },
-      { type: "pin.command", botId: BOT, id: PIN, command: "git log", folder: "/p" },
       { type: "spec.act", specId: SPEC, action: { kind: "command", command: "git log", folder: "/p" } },
     ]);
     for (const run of runs) expect(Command.safeParse(run).success).toBe(true);
     expect(JSON.stringify(runs)).not.toContain("approve");
     // Missing fields or no chat: nothing.
     expect(cardRun({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "git log", folder: "/p" }, null)).toBeNull();
-    expect(cardRun({ type: "pinCommand", approve: true }, BOT)).toBeNull();
+    // A pin's command is not a card run any more (botling.board asks for its own: plugins.approvalAsk).
+    expect(cardRun({ type: "pinCommand", id: PIN, command: "git log", folder: "/p" }, BOT)).toBeNull();
     expect(cardRun({ type: "componentApprove", messageID: MESSAGE, index: 0, command: "git log", folder: "/p" }, BOT)).toBeNull();
   });
 
   it("the contract has no approve on a run, and the approve commands are app-page commands", () => {
     expect(Command.safeParse({ type: "component.command", botId: BOT, messageId: MESSAGE, index: 0, command: "x", folder: "/p", approve: true }).success).toBe(false);
-    expect(Command.safeParse({ type: "pin.command", botId: BOT, id: PIN, approve: true }).success).toBe(false);
+    expect(Command.safeParse({ type: "pin.command", botId: BOT, id: PIN }).success).toBe(false);
     expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "testRun", command: "x", folder: "/p", approve: true } }).success).toBe(false);
     expect(Command.safeParse({ type: "spec.act", specId: SPEC, action: { kind: "command", command: "x", folder: "/p", approve: true } }).success).toBe(false);
-    for (const type of ["component.approve", "pin.approve", "spec.approve"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
+    for (const type of ["component.approve", "plugins.approve", "spec.approve"] as const) expect(RENDERER_COMMANDS.has(type)).toBe(true);
   });
 
   it("the sheet's Allow sends the core's command, folder and Detail command, not the page's", () => {
     const run = cardRun({ type: "componentCommand", messageID: MESSAGE, index: 1, command: "echo page", folder: "/elsewhere" }, BOT)!;
     expect(cardApprove(run, ask)).toEqual({ type: "component.approve", botId: BOT, messageId: MESSAGE, index: 1, command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}" });
-    expect(cardApprove(cardRun({ type: "pinCommand", id: PIN }, BOT)!, { ...ask, detail: null })).toEqual({ type: "pin.approve", botId: BOT, id: PIN, command: "git log --oneline", folder: "/p/garden" });
     expect(cardApprove(cardRun({ type: "specCommand", id: SPEC, command: "x", folder: "/p" }, null)!, ask)).toEqual({ type: "spec.approve", specId: SPEC, run: "command", command: "git log --oneline", folder: "/p/garden", detail: "git show {hash}" });
     expect(cardApprove({ type: "spec.act", specId: SPEC, action: { kind: "testRun", command: "x", folder: "/p" } }, { ...ask, detail: null })).toEqual({ type: "spec.approve", specId: SPEC, run: "testRun", command: "git log --oneline", folder: "/p/garden" });
-    for (const approve of [cardApprove(run, ask), cardApprove(cardRun({ type: "pinCommand", id: PIN }, BOT)!, ask)]) expect(Command.safeParse(approve).success).toBe(true);
-    // A card's or a floating pin's own timer never opens the sheet.
+    for (const approve of [cardApprove(run, ask)]) expect(Command.safeParse(approve).success).toBe(true);
+    // A card's own timer never opens the sheet.
     expect(asksUser({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "x", folder: "/p", force: true, live: true })).toBe(false);
-    expect(asksUser({ type: "pinCommand", id: PIN, command: "x", folder: "/p", force: true, live: true })).toBe(false);
-    expect(asksUser({ type: "pinCommand", id: PIN, command: "x", folder: "/p" })).toBe(true);
+    expect(asksUser({ type: "componentCommand", messageID: MESSAGE, index: 0, command: "x", folder: "/p" })).toBe(true);
   });
 
   it("no chat page, card frame or frame routing names the approve commands: only the app page's sheet sends them", () => {
@@ -126,9 +123,9 @@ describe("ApprovalSheet", () => {
     }
     await act(async () => root.render(createElement(Page)));
     expect(document.querySelector(".approval-sheet")).toBeNull();
-    const first = { type: "pin.approve", botId: BOT, id: PIN, command: ask.command, folder: ask.folder } as const;
+    const first = { type: "plugins.approve", name: "botling.board", botId: BOT, command: ask.command, folder: ask.folder, component: "commits" } as const;
     await act(async () => opener({ ...ask, detail: null }, first));
-    await act(async () => opener({ command: "rm -rf ~", folder: "/", detail: null, card: "other" }, { type: "pin.approve", botId: BOT, id: PIN, command: "rm -rf ~", folder: "/" }));
+    await act(async () => opener({ command: "rm -rf ~", folder: "/", detail: null, card: "other" }, { type: "plugins.approve", name: "botling.board", botId: BOT, command: "rm -rf ~", folder: "/", component: "other" }));
     expect(document.querySelector(".approval-command")?.textContent).toBe("git log --oneline");
     await act(async () => document.querySelector<HTMLButtonElement>(".approval-allow")!.click());
     expect(sent).toEqual([first]);

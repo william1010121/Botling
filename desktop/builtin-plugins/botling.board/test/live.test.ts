@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 /// <reference types="node" />
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sent } from "../../../../Web/src/bridge";
 import { componentElement, componentPage, keepFrames, refreshDueCards } from "../../../../Web/src/components";
 import { messageElement } from "../../../../Web/src/messages";
 import { FloatLayer } from "../src/float";
 import { PinArea } from "../src/pins";
-import { installBoard } from "./support";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../../../../Web/src/types";
+import { installBoard, sent } from "./support";
+import type { ComponentInfo, DisplayView, MessageView } from "../../../../Web/src/types";
+import type { PinView, BoardState } from "../src/types";
 
 // Live components: ccb.onData (new data without reloading the frame), ccb.load(), and a card
 // whose command runs again every few seconds while it is on screen.
@@ -72,7 +72,7 @@ describe("a live Board tile", () => {
     document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
     const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
     const pin = (data: string): PinView => ({ id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card({ data, every: null }) });
-    const state = (data: string) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], board: true }) as ChatState;
+    const state = (data: string) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], board: true }) as BoardState;
     area.update(state(`{"cpu":1}`));
     const tile = document.querySelector<HTMLElement>(".board-card")!;
     const frame = tile.querySelector<HTMLIFrameElement>(".component-frame")!;
@@ -91,7 +91,7 @@ describe("a live Board tile", () => {
 
 describe("a Board tile, a pinned panel and a floating card that do not take live data", () => {
   const pin = (data: string, extra: Partial<PinView> = {}): PinView => ({ id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card({ data, every: null }), ...extra });
-  const state = (data: string, extra: Partial<ChatState> = {}) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], board: true, ...extra }) as ChatState;
+  const state = (data: string, extra: Partial<BoardState> = {}) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], board: true, ...extra }) as BoardState;
   /** Counts every srcdoc `frame` is given from here on. */
   function watch(frame: HTMLIFrameElement): { count: number } {
     const counter = { count: 0 };
@@ -189,7 +189,7 @@ describe("a card that refreshes by itself", () => {
     document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
     const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
     const pin: PinView = { id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card() };
-    area.update({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin], pinChoices: [], board: true } as ChatState);
+    area.update({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin], pinChoices: [], board: true } as BoardState);
     const tile = document.querySelector<HTMLElement>(".board-card .command-card")!;
     tile.getBoundingClientRect = () => ({ top: 10, bottom: 110, left: 0, right: 300, width: 300, height: 100, x: 0, y: 10, toJSON() {} }) as DOMRect;
     sent.length = 0;

@@ -204,8 +204,6 @@ export const DisplayView = z.strictObject({
   ranAt: z.string().max(100).nullable(),
   /** Pictures its data names, each to the URL its frame loads (`ccb.image`). */
   images: z.record(z.string().max(4_096), z.string().max(200)).nullable(),
-  /** In a chat that can pin: whether it is pinned. */
-  pinned: z.boolean().nullable(),
   /** Seconds between runs of a card that refreshes by itself while shown. */
   every: z.number().positive().nullable(),
 });
@@ -213,7 +211,7 @@ export type DisplayView = z.infer<typeof DisplayView>;
 
 /**
  * A card's command waiting for the user's OK, as the core has it (never as a frame said it): what the app
- * page's ApprovalSheet shows before it sends `component.approve` / `pin.approve` / `spec.approve`.
+ * page's ApprovalSheet shows before it sends `component.approve` / `plugins.approve` / `spec.approve`.
  */
 export type ApprovalAskView = { command: string; folder: string; detail: string | null; card: string };
 /** A library component as the page needs it to draw one (`ChatPayload.Component`). */
@@ -230,29 +228,6 @@ export const ComponentInfoView = z.strictObject({
   title: z.string().max(200).nullable(),
 });
 export type ComponentInfoView = z.infer<typeof ComponentInfoView>;
-
-/** A component pinned to the bot: a chip above the input box and a card on its Board (`ChatPayload.Pin`). */
-export const PinView = z.strictObject({
-  id,
-  name: z.string().max(200),
-  headline: z.string().max(400),
-  chip: z.strictObject({ text: z.string().max(100), tone: z.enum(["neutral", "good", "warning", "bad"]) }),
-  size: z.string().regex(/^[1-4]x[1-4]$/),
-  place: z.strictObject({ col: z.number().int().nonnegative(), row: z.number().int().nonnegative() }).nullable(),
-  panelHeight: z.number().int().nullable(),
-  refresh: z.enum(["shown", "interval", "manual"]),
-  minutes: z.number().int().positive(),
-  seconds: z.number().int().positive().nullable(),
-  display: DisplayView,
-  makingLive: z.boolean().nullable(),
-  float: z.strictObject({ corner: z.enum(["topRight", "topLeft", "bottomRight", "bottomLeft"]), width: z.number().int().nullable(), height: z.number().int().nullable(), collapsed: z.boolean() }).nullable(),
-  floatMenu: z.enum(["float", "stop", "full"]),
-});
-export type PinView = z.infer<typeof PinView>;
-
-/** A component the pin picker offers. */
-export const PinChoiceView = z.strictObject({ name: z.string().max(200), command: z.string().max(20_000).nullable(), uses: z.number().int().nonnegative(), pinned: z.boolean() });
-export type PinChoiceView = z.infer<typeof PinChoiceView>;
 
 export const MessageState = z.enum(["streaming", "done", "stopped", "failed"]);
 /** A component made from a reply, under it (`ChatPayload.SpecChip`, Phase 5a): a chip while a suggestion or building, then the component itself. */
@@ -1018,34 +993,6 @@ export const Command = z.discriminatedUnion("type", [
     screenshot: z.string().max(FILE_DATA_LIMIT).optional() }),
   /** Puts back a component's version from before its last change (git; 1.x's `revert`). */
   z.strictObject({ type: z.literal("component.revert"), name: z.string().min(1).max(200) }),
-  /** Pins a line's component (`messageId`+`index`) or one from the picker (`name`). `id` is the page's. */
-  z.strictObject({
-    type: z.literal("pin.add"), botId, id, messageId: id.optional(), index: z.number().int().nonnegative().max(19).optional(), name: z.string().max(200).optional(),
-    refresh: z.enum(["shown", "interval", "manual"]), minutes: z.number().int().positive().max(1_440), seconds: z.number().int().positive().max(86_400).optional(),
-  }),
-  /** Changes a pin: remove, move, resize, arrange (Board places), panel height, chip status, saved data, refresh, float. */
-  z.strictObject({
-    type: z.literal("pin.change"), botId, id,
-    change: z.discriminatedUnion("kind", [
-      z.strictObject({ kind: z.literal("remove") }),
-      z.strictObject({ kind: z.literal("move"), to: z.number().int().nonnegative().max(1_000) }),
-      z.strictObject({ kind: z.literal("resize"), size: z.string().max(10) }),
-      z.strictObject({ kind: z.literal("height"), height: z.number().int().nullable() }),
-      z.strictObject({ kind: z.literal("status"), text: z.string().max(400).nullable(), tone: z.string().max(40).nullable() }),
-      z.strictObject({ kind: z.literal("save"), data: z.string().max(CARD_SAVE_LIMIT) }),
-      z.strictObject({ kind: z.literal("refresh"), refresh: z.enum(["shown", "interval", "manual"]), minutes: z.number().int().positive().max(1_440).optional(), seconds: z.number().int().positive().max(86_400).optional() }),
-      z.strictObject({ kind: z.literal("float"), floating: z.boolean() }),
-      z.strictObject({ kind: z.literal("floatAt"), corner: z.enum(["topRight", "topLeft", "bottomRight", "bottomLeft"]).optional(), width: z.number().int().optional(), height: z.number().int().optional(), collapsed: z.boolean().optional() }),
-    ]),
-  }),
-  /** Board cards laid out: each one's top-left cell (and size). */
-  z.strictObject({ type: z.literal("pin.arrange"), botId, places: z.array(z.strictObject({ id, col: z.number().int().nonnegative().max(1_000), row: z.number().int().nonnegative().max(10_000), size: z.string().max(10).optional() })).max(200) }),
-  /** A pinned card's command: Allow (with what it showed) or ↻. */
-  z.strictObject({ type: z.literal("pin.command"), botId, id, command: z.string().max(20_000).optional(), folder: z.string().max(4_000).optional(), detail: z.string().max(20_000).optional(), force: z.boolean().optional() }),
-  /** A pinned card's "Allow and run" on the app page's ApprovalSheet, as `component.approve`. */
-  z.strictObject({ type: z.literal("pin.approve"), botId, id, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), detail: z.string().max(20_000).optional() }),
-  /** Pins just shown (a chip opened, the Board; none named: all), or the ones the user can see now (`visible`). */
-  z.strictObject({ type: z.literal("pin.shown"), botId, ids: z.array(id).max(200).nullable(), visible: z.boolean().optional() }),
   /** Main only: a component page for a sandboxed frame, served from botling-card://page/<token>. `panel`: a plugin panel (its web part loads as a module). */
   z.strictObject({ type: z.literal("card.page"), html: z.string().max(4_000_000), panel: z.boolean().optional() }),
   /** The plugin library: every plugin, what is broken, and the plugin host. */
@@ -1073,9 +1020,9 @@ export const Command = z.discriminatedUnion("type", [
    * A plugin frame's `ccb.requestApproval` (plugin-extraction.md W4), from the app page that bound the frame to `name`:
    * what its ApprovalSheet shows for a bot's command in that bot's folder (null: allowed already). It allows nothing.
    */
-  z.strictObject({ type: z.literal("plugins.approvalAsk"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), card: z.string().min(1).max(200).optional() }),
+  z.strictObject({ type: z.literal("plugins.approvalAsk"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), card: z.string().min(1).max(200).optional(), component: z.string().min(1).max(200).optional() }),
   /** "Allow and run" on the app page's ApprovalSheet for a plugin frame's ask: the command and folder the sheet showed. No frame can send it. */
-  z.strictObject({ type: z.literal("plugins.approve"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("plugins.approve"), name: PluginName, botId: PluginBotId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000), component: z.string().min(1).max(200).optional(), detail: z.string().max(20_000).nullable().optional() }),
   /** The pictures a plugin frame's tile data names, as card-page URLs: the app page puts them into the tile's page (`ccb.tile`). */
   z.strictObject({ type: z.literal("plugins.tileImages"), name: PluginName, botId: PluginBotId, data: z.string().max(300_000) }),
   /** The app's settings (settings.json), with every default filled in. */
@@ -1144,7 +1091,7 @@ export type CommandType = Command["type"];
 export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
-  "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.approve", "pin.shown", "card.page",
+  "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.approve", "spec.close", "spec.wide", "codex.models", "engine.models", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "projects.pick", "waiting.list", "waiting.ignore",
@@ -1192,10 +1139,8 @@ export interface ChatSnapshot {
   heads: HeadsView | null;
   /** What plugins' web parts draw among its messages (`chat.decorate`). */
   decorations?: ChatDecoration[];
-  /** The bot's pinned components, those floating in a corner, and what the pin picker offers. */
-  pins: PinView[];
-  floating: PinView[];
-  pinChoices: PinChoiceView[];
+  /** What plugins keep for the chat page to draw from (`chat.setData`), by plugin: botling.board's pins, those floating and what its picker offers. */
+  pluginData?: Record<string, unknown>;
   /** Files waiting in the input box for the next message. */
   pendingFiles?: PendingFileView[];
   /** Its routines (its own routines.cron and app-owned schedules), shown with its scheduled work. */
@@ -1252,12 +1197,6 @@ export interface Results {
   "engine.models": ModelDiscovery;
   "codex.models": { models: { id: string; name: string; isDefault: boolean; efforts: string[] | null }[] };
   "spec.wide": Record<string, never>;
-  "pin.add": { pinned: boolean };
-  "pin.change": { changed: boolean };
-  "pin.arrange": { changed: boolean };
-  "pin.command": { accepted: boolean; needsApproval?: ApprovalAskView };
-  "pin.approve": { accepted: boolean };
-  "pin.shown": { ran: number };
   "card.page": { url: string };
   "card.image": { path: string; type: string };
   "plugins.list": PluginsView;
@@ -1333,8 +1272,8 @@ export const Event = z.discriminatedUnion("type", [
   }),
   /** A bot with two heads: who new messages go to, the rounds line and the hand-offs changed (null: one head now). */
   z.strictObject({ type: z.literal("heads.updated"), botId, heads: HeadsView.nullable() }),
-  /** A bot's pins changed (one added, moved, its command ran…). */
-  z.strictObject({ type: z.literal("pins.updated"), botId, pins: z.array(PinView).max(200), floating: z.array(PinView).max(10), pinChoices: z.array(PinChoiceView).max(200) }),
+  /** What a plugin keeps for a chat's page to draw from changed (`chat.setData`). */
+  z.strictObject({ type: z.literal("chat.pluginData"), botId, plugin: PluginName, data: z.unknown() }),
   /** The component library changed on disk: every component as the page draws it. */
   z.strictObject({ type: z.literal("components.updated"), components: z.record(z.string().max(200), ComponentInfoView) }),
   /** What plugins draw among a chat's messages changed (`chat.decorate`). */

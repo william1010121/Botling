@@ -12,7 +12,7 @@ import { seenHeadsCSS } from "../../../Web/src/heads";
 const bot: BotView = { id: "B", name: "Main", role: "main", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude", "codex"], job: null, subagentRows: [] };
 const now = new Date();
 const chat = {
-  botId: bot.id, running: null, live: [], tasks: [], runs: [], pins: [], floating: [], pinChoices: [],
+  botId: bot.id, running: null, live: [], tasks: [], runs: [],
   heads: { engines: ["claude", "codex"], answerWith: "both", rounds: null, handoffs: [] },
   messages: [
     { id: "u", role: "user", text: "hello both", time: now.toISOString(), seenBy: ["claude", "codex"] },

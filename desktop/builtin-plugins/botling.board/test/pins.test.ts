@@ -3,13 +3,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { sent } from "../../../../Web/src/bridge";
 import { feedback, makeComponents, messageElement } from "../../../../Web/src/messages";
 import { PinArea } from "../src/pins";
-import { installBoard, pageCss } from "./support";
+import { installBoard, pageCss, sent } from "./support";
 import { parseInterval, refreshWords } from "../../../../Web/src/refresh";
 import { chatSize, componentElement } from "../../../../Web/src/components";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinSize, PinView } from "../../../../Web/src/types";
+import type { ComponentInfo, DisplayView, MessageView, PinSize } from "../../../../Web/src/types";
+import type { PinView, BoardState } from "../src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
@@ -34,7 +34,7 @@ function pin(overrides: Partial<PinView> = {}): PinView {
   };
 }
 
-function state(overrides: Partial<ChatState> = {}): ChatState {
+function state(overrides: Partial<BoardState> = {}): BoardState {
   return {
     botID: "b1", botName: "ClaudeCodeBot", messages: [], working: false, avatar: "", placeholder: "",
     replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides,
@@ -57,7 +57,8 @@ beforeEach(() => {
 
 describe("pinning from the chat", () => {
   it("a component you can pin shows pin, refresh and more on hover", () => {
-    const row = messageElement(message([{ name: "提交紀錄", data: "[]", command: "git log", folder: "/p", status: "done", pinned: false }]), components);
+    setUp().update(state());
+    const row = messageElement(message([{ name: "提交紀錄", data: "[]", command: "git log", folder: "/p", status: "done" }]), components);
     const bar = row.querySelector(".pin-bar")!;
     expect(bar.querySelector("[aria-label='Pin to this bot']")).not.toBeNull();
     expect(bar.querySelector("[aria-label='Run the command again']")).not.toBeNull();
@@ -67,8 +68,11 @@ describe("pinning from the chat", () => {
   });
 
   it("no bar where nothing can be pinned, and a badge once pinned", () => {
+    // Where the page has no pins for the chat (a subagent's, or none told yet) nothing can be pinned.
+    setUp().update(state({ pins: null }));
     expect(messageElement(message([{ name: "提交紀錄", data: "[]" }]), components).querySelector(".pin-bar")).toBeNull();
-    const row = messageElement(message([{ name: "天氣卡片", data: "{}", pinned: true }]), components);
+    setUp().update(state({ pins: [pin({ id: "P9", name: "天氣卡片", display: { name: "天氣卡片", data: "{}" } })] }));
+    const row = messageElement(message([{ name: "天氣卡片", data: "{}" }]), components);
     expect(row.querySelector(".pin-badge")?.textContent).toContain("Pinned");
     // A component without a command has nothing to run again.
     expect(row.querySelector("[aria-label='Run the command again']")).toBeNull();
@@ -76,7 +80,7 @@ describe("pinning from the chat", () => {
 
   it("pin asks how to refresh, shows the command, then offers Undo", () => {
     setUp().update(state());
-    const row = messageElement(message([{ name: "提交紀錄", data: "[]", command: "git log -5", folder: "/p", status: "done", pinned: false }]), components);
+    const row = messageElement(message([{ name: "提交紀錄", data: "[]", command: "git log -5", folder: "/p", status: "done" }]), components);
     document.body.append(row);
     click(row.querySelector("[aria-label='Pin to this bot']"));
     const dialog = document.querySelector(".pin-dialog")!;
@@ -98,7 +102,7 @@ describe("pinning from the chat", () => {
 
   it("a component without a command pins as it was drawn, without asking how to refresh", () => {
     setUp().update(state());
-    const row = messageElement(message([{ name: "天氣卡片", data: "{}", pinned: false }]), components);
+    const row = messageElement(message([{ name: "天氣卡片", data: "{}" }]), components);
     document.body.append(row);
     click(row.querySelector("[aria-label='Pin to this bot']"));
     const dialog = document.querySelector(".pin-dialog")!;
@@ -1028,7 +1032,7 @@ describe("a pin's refresh interval", () => {
 
   it("the pin dialog takes the same intervals, and says what is wrong instead of pinning", () => {
     setUp().update(state());
-    const row = messageElement(message([{ name: "提交紀錄", data: "[]", command: "git log -5", folder: "/p", status: "done", pinned: false }]), components);
+    const row = messageElement(message([{ name: "提交紀錄", data: "[]", command: "git log -5", folder: "/p", status: "done" }]), components);
     document.body.append(row);
     click(row.querySelector("[aria-label='Pin to this bot']"));
     const dialog = document.querySelector(".pin-dialog")!;
@@ -1066,7 +1070,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
       for (const [developer, making] of [[false, false], [true, false], [false, true], [true, true]]) {
         feedback.enabled = developer;
         makeComponents.enabled = making;
-        const row = messageElement({ ...message([{ name: "天氣卡片", data: "{}", pinned: false }]), text: "" }, components);
+        const row = messageElement({ ...message([{ name: "天氣卡片", data: "{}" }]), text: "" }, components);
         document.getElementById("scroller")!.append(row);
         expect(row.classList.contains("wide")).toBe(true);
 
@@ -1093,7 +1097,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
 
       // Report is still there, in the card's ⋯ menu, and opens the report box.
       feedback.enabled = true;
-      const row = messageElement(message([{ name: "天氣卡片", data: "{}", pinned: false }]), components);
+      const row = messageElement(message([{ name: "天氣卡片", data: "{}" }]), components);
       document.getElementById("scroller")!.append(row);
       click(row.querySelector(".pin-bar [aria-label='More']"));
       const report = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report a problem…");

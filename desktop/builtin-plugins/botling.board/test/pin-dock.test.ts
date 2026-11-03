@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { PinArea } from "../src/pins";
 import { installBoard } from "./support";
-import type { ChatState, PinView } from "../../../../Web/src/types";
+import type { PinView, BoardState } from "../src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 HTMLElement.prototype.scrollIntoView ??= () => {};
@@ -11,10 +11,10 @@ const pins: PinView[] = ["CPU 24%", "426/494 GB", "Memory 80%", "Today: Claudeâ€
   id: `P${index}`, name: `Status ${index}`, headline: text, chip: { text, tone: "neutral" },
   size: "2x2", refresh: "manual", minutes: 15, display: { name: `Status ${index}`, data: "{}" },
 }));
-const state = (items = pins): ChatState => ({
+const state = (items = pins): BoardState => ({
   botID: "status-strip", botName: "botling", messages: [], working: false, avatar: "", placeholder: "",
   replyingTo: null, pendingFiles: [], components: {}, pins: items,
-  pinChoices: [{ name: "New status", uses: 1, pinned: false, command: null }],
+  pinChoices: [{ name: "New status", uses: 1, command: null, pinned: false }],
 });
 let area: PinArea;
 beforeEach(() => {

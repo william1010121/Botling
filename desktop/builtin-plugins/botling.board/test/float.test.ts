@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sent } from "../../../../Web/src/bridge";
 import { FloatLayer, clampFloatSize, defaultFloatWidth, floatCells, floatRect, floatWidth, isNarrow, lineHeight, snapCorner } from "../src/float";
 import { PinArea } from "../src/pins";
-import { installBoard } from "./support";
-import type { ChatState, ComponentInfo, FloatingPinView, PinView } from "../../../../Web/src/types";
+import { installBoard, sent } from "./support";
+import type { ComponentInfo } from "../../../../Web/src/types";
+import type { FloatingPinView, PinView, BoardState } from "../src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
@@ -26,7 +26,7 @@ function floating(...pins: PinView[]): FloatingPinView[] {
   return pins.map((p) => ({ botID: "b1", botName: "Release bot", pin: p }));
 }
 
-function state(overrides: Partial<ChatState> = {}): ChatState {
+function state(overrides: Partial<BoardState> = {}): BoardState {
   return {
     botID: "b2", botName: "Other bot", messages: [], working: false, avatar: "", placeholder: "",
     replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, floating: floating(pin()), ...overrides,
@@ -327,7 +327,7 @@ describe("reporting a problem from a floating card", () => {
     textarea.value = "The Codex rows never update";
     textarea.dispatchEvent(new Event("input"));
     send.click();
-    const report = sent.find((m) => m.type === "componentReport") as Extract<(typeof sent)[number], { type: "componentReport" }>;
+    const report = sent.find((m) => m.type === "componentReport")!;
     expect(report).toMatchObject({ type: "componentReport", name: "build", text: "The Codex rows never update", problem: true, pinID: "P1" });
     // The card's view goes along as a screenshot.
     expect(report.rect).not.toBeNull();

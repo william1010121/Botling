@@ -1,6 +1,6 @@
 // What every bot shares about components: the library, the command runs and their approvals, and
 // the pictures a component's data names (served to its sandboxed frame by token, never by path).
-// Plus the views the page draws (`ChatPayload.display`, `ChatPayload.pin(view:)`).
+// Plus the view the page draws of a component (`ChatPayload.display`).
 import { cardData, PAGE_COMPONENT } from "../page-preview";
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
@@ -9,9 +9,8 @@ import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ComponentCommands, type CommandState } from "./commands";
 import { ComponentLibrary, safeName } from "./library";
-import { chip, floatMenu, headline, type PinRecord } from "./pins";
 import type { Display } from "../reply";
-import type { DisplayView, PinView } from "../../contract";
+import type { DisplayView } from "../../contract";
 
 const IMAGE_TYPES: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", heic: "image/heic", heif: "image/heif",
@@ -91,14 +90,14 @@ export function displayCommand(display: Display, role: string, library: Componen
 }
 
 /** A component in a message, with its command's run when its data comes from one (`ChatPayload.display(_:card:…)`). */
-export function displayView(context: ComponentsContext, display: Display, card: string, role: string, folder: string, pinned: boolean | null): DisplayData {
+export function displayView(context: ComponentsContext, display: Display, card: string, role: string, folder: string): DisplayData {
   const { library, commands, images } = context;
   // The preview card's data gets what the app adds (`PagePreview.cardData`): where its frame loads the page from.
   const data = display.name === PAGE_COMPONENT ? cardData(display.data) : display.data;
   const urls = images.urls(data);
   const view: DisplayData = {
     name: display.name, data, at: typeof display.at === "number" ? display.at : null, command: null, folder: null, detail: null, card: null,
-    status: null, error: null, ranAt: null, images: Object.keys(urls).length ? urls : null, pinned, every: null,
+    status: null, error: null, ranAt: null, images: Object.keys(urls).length ? urls : null, every: null,
   };
   const detail = role === "bot" ? library.detailCommand(display.name) : null;
   if (detail) { view.detail = detail; view.card = card; view.folder = folder; }
@@ -121,49 +120,6 @@ export function displayView(context: ComponentsContext, display: Display, card: 
     view.images = Object.keys(shown).length ? shown : null;
   }
   return view;
-}
-
-export type PinData = PinView;
-
-/** A pin as the page draws it (`ChatPayload.pin(view:context:)`). */
-export function pinView(context: ComponentsContext, pin: PinRecord, folder: string, floating: number): PinData {
-  const { library, commands, images } = context;
-  const urls = images.urls(pin.data);
-  const display: DisplayData = {
-    name: pin.name, data: pin.data, at: null, command: null, folder: null, detail: null, card: null, status: null, error: null, ranAt: null,
-    images: Object.keys(urls).length ? urls : null, pinned: null, every: null,
-  };
-  const card = `pin/${pin.id}`;
-  const detail = library.detailCommand(pin.name);
-  if (detail) { display.detail = detail; display.card = card; display.folder = folder; }
-  if (pin.command) {
-    const state = commands.state(card, pin.command, detail, folder);
-    let status: DisplayData["status"] = state.status;
-    if (status === "idle" && pin.data !== "null" && pin.refresh !== "shown") status = "done";
-    display.command = pin.command;
-    display.folder = folder;
-    display.every = library.refreshInterval(pin.name);
-    display.status = status;
-    display.error = state.error;
-    const ran = state.ranAt ?? (pin.ranAt !== undefined ? Date.UTC(2001, 0, 1) + pin.ranAt * 1000 : null);
-    display.ranAt = ran === null ? null : new Date(ran).toDateString() === new Date().toDateString() ? clock(ran) : new Date(ran).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
-    if (state.data !== null) {
-      display.data = state.data;
-      const shown = images.urls(state.data);
-      display.images = Object.keys(shown).length ? shown : null;
-    }
-  }
-  const line = display.status === "approve" && pin.data === "null" ? "Needs your OK"
-    : display.status === "failed" ? "Failed"
-    : display.status === "running" && pin.data === "null" ? "Running…"
-    : headline(display.status === null ? pin.data : display.data);
-  return {
-    id: pin.id, name: pin.name, headline: line, chip: chip(pin.status, line, display.status, pin.data !== "null"), size: pin.size, place: pin.place ?? null,
-    panelHeight: pin.panelHeight ?? null, refresh: pin.refresh, minutes: pin.minutes, seconds: pin.seconds ?? null, display,
-    makingLive: pin.makingLive && !pin.command ? true : null,
-    float: pin.float ? { corner: pin.float.corner, width: pin.float.width ?? null, height: pin.float.height ?? null, collapsed: pin.float.collapsed } : null,
-    floatMenu: floatMenu(pin, floating) as PinData["floatMenu"],
-  };
 }
 
 export { safeName };

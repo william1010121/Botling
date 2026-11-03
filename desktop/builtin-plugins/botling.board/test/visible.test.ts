@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { sent } from "../../../../Web/src/bridge";
 import { refreshDueCards } from "../../../../Web/src/components";
 import { messageElement } from "../../../../Web/src/messages";
 import { FloatLayer } from "../src/float";
 import { PinArea } from "../src/pins";
-import { installBoard } from "./support";
+import { installBoard, sent } from "./support";
 import { setWindowVisible } from "../../../../Web/src/visible";
 import { reportVisiblePins, visiblePinIDs } from "../src/visible";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../../../../Web/src/types";
+import type { ComponentInfo, DisplayView, MessageView } from "../../../../Web/src/types";
+import type { PinView, BoardState } from "../src/types";
 
 // One rule for every card that refreshes by itself: it reruns only while the user can see it,
 // in a window that is shown (Swift says so: not minimized, hidden or covered), scrolled into view.
@@ -35,8 +35,8 @@ function pin(overrides: Partial<PinView> = {}): PinView {
   return { id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "interval", minutes: 15, seconds: 5, display: card({ every: null }), ...overrides };
 }
 
-function state(overrides: Partial<ChatState> = {}): ChatState {
-  return { botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides } as ChatState;
+function state(overrides: Partial<BoardState> = {}): BoardState {
+  return { botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides } as BoardState;
 }
 
 function box(element: Element, top: number, height = 100): void {

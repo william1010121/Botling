@@ -134,6 +134,8 @@ fromShell(message => {
     void setPlugins(message.specs);
   } else if (message.botling === "hostReply") {
     window.ccb.hostReply(message.callID, message.ok, message.value);
+  } else if (message.botling === "approvalReply") {
+    window.ccb.approvalReply(message.requestId, message.allowed);
   } else if (message.botling === "recoverFocus") {
     inputTrace()?.mark("frame.recover.receive", () => ({ traceId: message.traceId, ...inputTrace()!.snapshot() }));
     takeFocusBack();

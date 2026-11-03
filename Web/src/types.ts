@@ -262,8 +262,6 @@ export interface DisplayView {
   ranAt?: string | null;
   /** Pictures its data names by file path, each to the URL its frame loads (`ccb.image(path)`). */
   images?: Record<string, string> | null;
-  /** In a chat that can pin: whether it is pinned to the bot. Absent where nothing can be pinned. */
-  pinned?: boolean | null;
   /** A card with a command that runs again by itself every this many seconds while on screen. */
   every?: number | null;
 }
@@ -274,73 +272,6 @@ export type PinRefresh = "shown" | "interval" | "manual";
  * from "1x1" to "4x4", as the user drags its corner or picks it.
  */
 export type PinSize = `${number}x${number}`;
-
-/** A pin chip's short value and tone (a dot on its icon unless neutral). */
-export interface ChipStatus {
-  text: string;
-  tone: "neutral" | "good" | "warning" | "bad";
-}
-
-/** A component pinned to the bot: a chip above the input box and a card on its Board. */
-export interface PinView {
-  id: string;
-  name: string;
-  /** One line from its data: its chip's tooltip. */
-  headline: string;
-  /** What its chip shows beside its icon (what the component set, else `headline` cut short). */
-  chip?: ChipStatus;
-  size: PinSize;
-  /** Its Board card's top-left cell (columns and rows from 0); absent: not laid out yet, the Board places it and sends that back. */
-  place?: { col: number; row: number } | null;
-  /** How tall it opens above the input box, as the user dragged its panel; absent: its content's height. */
-  panelHeight?: number | null;
-  refresh: PinRefresh;
-  minutes: number;
-  /** Refreshed every this many seconds instead of `minutes`. */
-  seconds?: number | null;
-  /** The component, with its command's run as for a card in the chat. */
-  display: DisplayView;
-  /** Filled by a bot; Maintainer is giving its component a command so it refreshes here. */
-  makingLive?: boolean | null;
-  /** Where it floats in a corner of the window; absent: it does not float. */
-  float?: FloatView | null;
-  /** Its menu's float entry: Float in corner, Stop floating, or Float shown off (two float already). */
-  floatMenu?: FloatMenu | null;
-}
-
-export type FloatCorner = "topRight" | "topLeft" | "bottomRight" | "bottomLeft";
-export type FloatMenu = "float" | "stop" | "full";
-
-/**
- * Where a floating pin sits: the corner it snaps to, folded to one line, and its card's size in px
- * once the user dragged it: its width, and the most it grows to (absent: a width that fits a
- * card's full layout, and its content's height up to `floatLimits.maxHeight`).
- */
-export interface FloatView {
-  corner: FloatCorner;
-  width?: number | null;
-  height?: number | null;
-  collapsed: boolean;
-}
-
-/** A pin floating in a corner of this chat: this bot's own, or another bot's shown in all bots. */
-export interface FloatingPinView {
-  botID: string;
-  botName: string;
-  pin: PinView;
-  /** Shown in every bot's chat ("Show in all bots"); absent: only in its own bot's. */
-  global?: boolean | null;
-  /** Not global, and that chat already shows the most floating cards: its name ("Show in all bots" is off). */
-  blocked?: string | null;
-}
-
-/** A component the pin picker offers: one this bot drew, or one with a Command. */
-export interface PinChoiceView {
-  name: string;
-  command?: string | null;
-  uses: number;
-  pinned: boolean;
-}
 
 /** "empty": a bot showed it with no data and nothing can fill it, so the chat draws nothing. */
 export type CommandStatus = "approve" | "idle" | "running" | "done" | "failed" | "empty";
@@ -462,11 +393,8 @@ export interface ChatState {
   subagent?: SubagentHeaderView | null;
   /** Developer mode: a bot's replies can be flagged as not right. */
   feedback?: boolean;
-  /** The bot's pinned components; absent where nothing can be pinned (a subagent). */
-  pins?: PinView[] | null;
-  /** The pins floating in a corner of this chat (at most two): those shown in all bots first, then its own. */
-  floating?: FloatingPinView[] | null;
-  pinChoices?: PinChoiceView[] | null;
+  /** What plugins keep for the page to draw from (`chat.setData`), by plugin: botling.board's pins, those floating and its picker's list. */
+  pluginData?: Record<string, unknown> | null;
   /** The Board shows instead of the messages. */
   board?: boolean | null;
   /** Replies can be made into components (absent where they can't, e.g. a subagent). */
@@ -555,22 +483,7 @@ export type Action =
   | { type: "componentRevert"; name: string }
   | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; force?: boolean; live?: boolean }
   | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number>; card?: string; command?: string }
-  | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; spec?: string; refresh: PinRefresh; minutes: number; seconds?: number }
-  | { type: "unpin"; id: string }
-  | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; force?: boolean; live?: boolean }
-  | { type: "pinShown"; ids: string[] | null }
-  | { type: "pinsVisible"; ids: string[] }
-  | { type: "movePin"; id: string; to: number }
-  | { type: "resizePin"; id: string; size: PinSize }
-  | { type: "arrangePins"; places: { id: string; col: number; row: number; size?: PinSize }[] }
-  | { type: "setPinHeight"; id: string; height: number | null }
-  | { type: "floatPin"; id: string; floating: boolean }
-  | { type: "setPinGlobal"; id: string; global: boolean }
-  | { type: "setPinFloat"; id: string; corner?: FloatCorner; width?: number; height?: number; collapsed?: boolean }
-  | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes?: number; seconds?: number }
-  | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
   | { type: "componentSave"; messageID: string; index: number; data: string }
-  | { type: "pinSave"; id: string; data: string }
   | { type: "makeComponent"; messageID: string; preview?: number; purpose?: string }
   | { type: "openSpec"; id: string }
   | { type: "selectTask"; id: string }
@@ -592,7 +505,9 @@ export type Action =
   | { type: "command"; id: string }
   /** A plugin command offered by the / menu or a reply's menu (the app page checks it is offered so now). */
   | { type: "runCommand"; id: string; via: "slash" | "menu" | "key"; menu?: "message/context"; messageID?: string }
-  | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number };
+  | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number }
+  /** A built-in plugin asks the user to allow a command of a component's card in a bot's folder (the app page answers with `approvalReply`). */
+  | { type: "approvalRequest"; plugin: string; requestId: number; botId: string; command: string; folder: string; component: string; card?: string };
 
 /**
  * What `ccb.patchState(...)` gets: only what changed since the last state. `base` is the state

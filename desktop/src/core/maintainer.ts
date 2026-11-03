@@ -39,7 +39,6 @@ import { checkPlugin, ENGINE_RANGE, PERMISSIONS, title, type PluginManifest } fr
 import type { Plugins } from "./plugins";
 import { swiftPrettyJSON } from "./swift-json";
 import type { BotRequest } from "./reply";
-import type { PinRecord } from "./components/pins";
 import { MAINTAINER_ID } from "./store/records";
 import { Layout, TOOLBOX, type BotProfile } from "./store/workspace";
 
@@ -363,15 +362,8 @@ export function folderAnswer(folder: string, allowed: boolean): string {
 }
 
 /** A path as 1.x reads `<need-folder>`'s (`expandingTildeInPath`, `standardizedFileURL`). */
-/** How a pin refreshes, as Maintainer is told it (`refreshWords(of:)`). */
-function refreshWords(pin: PinRecord): string {
-  if (!pin.command) return "no command; keeps the data it was drawn with";
-  switch (pin.refresh) {
-    case "shown": return "refreshes when shown";
-    case "manual": return "refreshes only on ↻";
-    case "interval": return typeof pin.seconds === "number" ? `refreshes every ${pin.seconds} sec` : `refreshes every ${pin.minutes} min`;
-  }
-}
+/** What a card's owner (botling.board's pin) says of it for a problem report: how it refreshes, and when its data is from (Swift seconds). */
+export interface ReportCard { words: string; when: number | null }
 
 /** "2026-10-24 18:54:12", in the user's time zone (`reportStamp`); `date` in Swift seconds. */
 export function reportStamp(date: number): string {
@@ -381,12 +373,11 @@ export function reportStamp(date: number): string {
 }
 
 /** The request a problem report makes (`problemReport`): where it came from, the user's words, then the card's refresh, when its data is from and its screenshot. */
-export function problemReport(text: string, chat: string, pin: PinRecord | null, screenshot: string | null): string {
+export function problemReport(text: string, chat: string, pin: ReportCard | null, screenshot: string | null): string {
   const card: string[] = [];
   if (pin) {
-    card.push(refreshWords(pin));
-    const when = pin.ranAt ?? pin.savedAt;
-    if (typeof when === "number") card.push(`data from ${reportStamp(when)}`);
+    card.push(pin.words);
+    if (typeof pin.when === "number") card.push(`data from ${reportStamp(pin.when)}`);
   }
   const notes: string[] = [];
   if (card.length) notes.push(`Card: ${card.join("; ")}.`);
@@ -531,7 +522,7 @@ export class MaintainerDesk {
    * refreshes, when its data is from, and the screenshot of the card (kept in that bot's attachments).
    * Without words or a picture of the user's own nothing is sent. Returns whether it was sent.
    */
-  reportProblem(name: string, rawText: string, bot: Bot, pin: PinRecord | null, screenshot: string | null, pictures: string[]): boolean {
+  reportProblem(name: string, rawText: string, bot: Bot, pin: ReportCard | null, screenshot: string | null, pictures: string[]): boolean {
     const text = rawText.trim();
     if (!text && !pictures.length) return false;
     const kept = screenshot ? bot.keepFiles([screenshot])[0]?.path ?? null : null;

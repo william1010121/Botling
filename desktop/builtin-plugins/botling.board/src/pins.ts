@@ -1,11 +1,12 @@
 import {
   commandCard, componentElement, componentSizes, detailTarget, escapeHTML, hasFrame, intervalRow, isComposingEnter, keepFrames, language, markPinFrames,
-  maxColumns, parseInterval, pieces, pinSize, pinSizes, post, presetMinutes, presetSeconds, refreshWords, reportComponent, resizeFrame, shared, sizeInfo, t,
+  maxColumns, parseInterval, pieces, pinSize, pinSizes, post, presetMinutes, presetSeconds, refreshWords, reportComponent, resizeFrame, setChat, shared, sizeInfo, t,
   type WordKey,
 } from "./kit";
 import { arrange, cellFor, clampTarget, drop, resize as resizeTiles, trailingCell, type Place, type Tile } from "./board-layout";
 import type { Interval, IntervalRow, IntervalUnit } from "../../../../Web/src/refresh";
-import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "../../../../Web/src/types";
+import type { ComponentInfo, DisplayView, PinRefresh, PinSize, SpecChipView } from "../../../../Web/src/types";
+import type { BoardState, ChipStatus, FloatMenu, PinAction, PinChoiceView, PinView } from "./types";
 
 /**
  * Components pinned to a bot. In the chat a component shows pin / ↻ / ⋯ on hover; pinning asks
@@ -15,9 +16,27 @@ import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinC
  */
 
 /** What the pin bar in the chat needs from the latest state. */
-const current: { botName: string; pins: PinView[]; components: Record<string, ComponentInfo>; choices: PinChoiceView[] } = {
-  botName: "this bot", pins: [], components: {}, choices: [],
+const current: { botName: string; pins: PinView[]; components: Record<string, ComponentInfo>; choices: PinChoiceView[]; enabled: boolean } = {
+  botName: "this bot", pins: [], components: {}, choices: [], enabled: false,
 };
+
+/**
+ * What the pin bars and the pin actions need from a state, taken before the messages are drawn (the bar over a card says whether its
+ * component is pinned) and again by `PinArea.update`. Pins can be made where the page has the plugin's data and no subagent is watched.
+ */
+export function prime(state: BoardState): void {
+  current.enabled = !!state.pins && !state.subagent;
+  current.botName = state.botName;
+  current.pins = state.pins ?? [];
+  current.components = state.components;
+  current.choices = state.pinChoices ?? [];
+  setChat(current.enabled ? state.botID : null, current.pins);
+}
+
+/** Whether the bar over a card in a reply is offered for this component, and a key for what it shows (which components are pinned). */
+export function barFor(name: string): { offered: boolean; pinned: boolean } {
+  return { offered: current.enabled && !!current.components[name], pinned: current.pins.some((pin) => pin.name === name) };
+}
 
 export const icons = {
   pin: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2v.8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9a2 2 0 0 1-1.1-1.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`,
@@ -64,7 +83,9 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
     command: display.command ?? null,
     pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), messageID, index, refresh, minutes, ...(seconds ? { seconds } : {}) }),
   });
-  if (display.pinned) {
+  const pinnedHere = barFor(display.name).pinned;
+  if (pinnedHere) bar.dataset.holder = "pinned";
+  if (pinnedHere) {
     const badge = button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
       document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: display.name }));
     });
@@ -103,7 +124,7 @@ export function reportItem(anchor: HTMLElement, name: string, info: ComponentInf
   return { label: t("pins.report"), run: () => reportComponent(anchor, name, info, drawn, pinID) };
 }
 
-type PinAction = Extract<Parameters<typeof post>[0], { type: "pin" }>;
+type PinAdd = Extract<PinAction, { type: "pin" }>;
 
 /**
  * The pin button of a component made from a reply (drawn under it), or a Pinned badge once this
@@ -137,7 +158,7 @@ function liveNote(): HTMLElement {
  * "Pin to <bot>": how it refreshes (when shown, every N minutes, only on ↻) and the command that
  * redraws it. One without a command keeps the data it is drawn with now. Pin, then Undo.
  */
-function openPinDialog(anchor: HTMLElement, options: { name: string; command: string | null; pin: (refresh: PinRefresh, minutes: number, seconds?: number) => PinAction }): void {
+function openPinDialog(anchor: HTMLElement, options: { name: string; command: string | null; pin: (refresh: PinRefresh, minutes: number, seconds?: number) => PinAdd }): void {
   closePopups();
   const dialog = document.createElement("div");
   dialog.className = "pin-dialog pin-popup";
@@ -582,7 +603,7 @@ function openPicker(): void {
     if (choice.command) row.title = choice.command;
     row.addEventListener("click", () => {
       backdrop.remove();
-      const pin = (refresh: PinRefresh, minutes: number, seconds?: number): PinAction => ({ type: "pin", id: newID(), name: choice.name, refresh, minutes, ...(seconds ? { seconds } : {}) });
+      const pin = (refresh: PinRefresh, minutes: number, seconds?: number): PinAdd => ({ type: "pin", id: newID(), name: choice.name, refresh, minutes, ...(seconds ? { seconds } : {}) });
       if (choice.command) {
         openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add, .board-add") ?? document.body, { name: choice.name, command: choice.command, pin });
       } else {
@@ -900,7 +921,7 @@ export class PinArea {
     closePopups();
   }
 
-  update(state: ChatState): void {
+  update(state: BoardState): void {
     // A new language: everything is drawn again in its words (live frames are kept).
     if (this.wordsIn !== language()) {
       this.wordsIn = language();
@@ -912,11 +933,8 @@ export class PinArea {
       for (const entry of this.cards.values()) entry.key = "";
       this.grid.querySelector(".board-add")?.remove();
     }
-    this.enabled = !!state.pins && !state.subagent;
-    current.botName = state.botName;
-    current.pins = state.pins ?? [];
-    current.components = state.components;
-    current.choices = state.pinChoices ?? [];
+    prime(state);
+    this.enabled = current.enabled;
     if (state.botID !== this.botID) {
       this.botID = state.botID;
       this.openID = null;
@@ -1123,7 +1141,7 @@ export class PinArea {
     return handle;
   }
 
-  private drawBoard(state: ChatState): void {
+  private drawBoard(state: BoardState): void {
     const pins = current.pins;
     const headKey = JSON.stringify([state.botName, pins.length, pins.some((p) => p.display.command)]);
     if (headKey !== this.headKey) {

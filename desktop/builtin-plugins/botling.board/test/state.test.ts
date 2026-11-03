@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 /// <reference types="node" />
 import { beforeEach, describe, expect, it } from "vitest";
-import { sent } from "../../../../Web/src/bridge";
 import { componentPage, keepFrames } from "../../../../Web/src/components";
 import { messageElement } from "../../../../Web/src/messages";
 import { PinArea } from "../src/pins";
-import { installBoard } from "./support";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../../../../Web/src/types";
+import { installBoard, sent } from "./support";
+import type { ComponentInfo, DisplayView, MessageView } from "../../../../Web/src/types";
+import type { PinView, BoardState } from "../src/types";
 
 // A component that keeps its own state with ccb.save(data): a todo list whose ticks stay.
 
@@ -36,7 +36,7 @@ function pin(overrides: Partial<PinView> = {}): PinView {
   };
 }
 
-function state(overrides: Partial<ChatState> = {}): ChatState {
+function state(overrides: Partial<BoardState> = {}): BoardState {
   return {
     botID: "b1", botName: "ClaudeCodeBot", messages: [], working: false, avatar: "", placeholder: "",
     replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides,

@@ -9,7 +9,7 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { characterCount, characterPrefix, type Clock } from "./briefing";
 import { BUILT_INS, safeName, type ComponentLibrary } from "./components/library";
-import { clampMinutes, DEFAULT_MINUTES, type PinRefresh } from "./components/pins";
+import { clampMinutes, DEFAULT_MINUTES, type PinRefresh } from "./components/refresh";
 import { parseReply, type Display } from "./reply";
 import { cardData as pageCardData } from "./page-preview";
 import { PAGE_COMPONENT } from "./preview-url";

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { sent } from "../../../../Web/src/bridge";
 import { messageElement } from "../../../../Web/src/messages";
 import { PluginHost, type PluginSpec } from "../../../../Web/src/plugins";
 import { setWindowVisible } from "../../../../Web/src/visible";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../../../../Web/src/types";
+import { sent } from "./support";
+import type { ChatState, ComponentInfo, DisplayView, MessageView } from "../../../../Web/src/types";
+import type { BoardData, PinView } from "../src/types";
 import manifest from "../package.json";
-import { activate } from "../src/web";
+import { activate, PLUGIN } from "../src/web";
 import { reportVisiblePins } from "../src/visible";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -18,9 +19,11 @@ const pin: PinView = {
   id: "P1", name: "cpu", headline: "10%", chip: { text: "10%", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15,
   display: { name: "cpu", data: "{}" },
 };
+/** The chat's state as the page gets it: the pins are what the program part told (`pluginData`), not a field of the page's own. */
+const withData = (pins: PinView[] = [pin], floating: PinView[] = [], pinChoices: BoardData["pinChoices"] = []) => ({ [PLUGIN]: { pins, floating, pinChoices } });
 const state = (extra: Partial<ChatState> = {}): ChatState => ({
   botID: "b1", botName: "Bot", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [],
-  components, pins: [pin], pinChoices: [], board: false, ...extra,
+  components, pluginData: withData(), board: false, ...extra,
 });
 const message = (display: DisplayView): MessageView => ({
   id: "m1", role: "bot", text: "", stamp: null, avatar: null, choices: null, chosen: null, answer: null, open: false, displays: [display],
@@ -76,7 +79,10 @@ describe("botling.board loaded into the chat page", () => {
   });
 
   it("puts its bar on a component in a reply, only in a chat that can pin", () => {
-    expect(messageElement(message({ name: "cpu", data: "{}", pinned: false }), components).querySelector(".pin-holder > .pin-bar")).not.toBeNull();
+    host.chatState(state());
+    expect(messageElement(message({ name: "cpu", data: "{}" }), components).querySelector(".pin-holder > .pin-bar")).not.toBeNull();
+    // No data from the program part yet, or a subagent watched: no bar.
+    host.chatState(state({ pluginData: undefined }));
     expect(messageElement(message({ name: "cpu", data: "{}" }), components).querySelector(".pin-bar")).toBeNull();
   });
 
@@ -84,21 +90,23 @@ describe("botling.board loaded into the chat page", () => {
     host.chatState(state());
     document.querySelector<HTMLElement>(".pin-chip:not(.add)")!.getBoundingClientRect = () => ({ top: 10, bottom: 40, left: 0, right: 80, width: 80, height: 30, x: 0, y: 10, toJSON() {} }) as DOMRect;
     reportVisiblePins();
-    expect(sent).toContainEqual({ type: "pinsVisible", ids: ["P1"] });
+    // A pin action goes to this plugin's program part, which keeps the pins and runs only the visible ones.
+    const told = (ids: string[]) => expect.objectContaining({ type: "hostCall", plugin: manifest.name, method: "action", params: { botId: "b1", action: { type: "pinsVisible", ids } } });
+    expect(sent).toContainEqual(told(["P1"]));
     sent.length = 0;
     setWindowVisible(false);
-    expect(sent).toContainEqual({ type: "pinsVisible", ids: [] });
+    expect(sent).toContainEqual(told([]));
   });
 
   it("leaves nothing behind when it unloads: no chips, no Board, no bar, no floating layer", () => {
-    host.chatState(state({ board: true, floating: [{ botID: "b1", botName: "Bot", pin: { ...pin, float: { corner: "topRight", collapsed: false } } }] }));
+    host.chatState(state({ board: true, pluginData: withData([pin], [{ ...pin, float: { corner: "topRight", collapsed: false } }]) }));
     expect(document.querySelector(".float-layer")).not.toBeNull();
     host.unload(manifest.name);
     expect(document.querySelector("#pin-area")!.children).toHaveLength(0);
     expect(document.querySelector("#board")!.children).toHaveLength(0);
     expect(document.querySelector(".float-layer")).toBeNull();
     expect(document.body.classList.contains("board")).toBe(false);
-    expect(messageElement(message({ name: "cpu", data: "{}", pinned: false }), components).querySelector(".pin-bar")).toBeNull();
+    expect(messageElement(message({ name: "cpu", data: "{}" }), components).querySelector(".pin-bar")).toBeNull();
     expect(redraws).toBeGreaterThan(0);
   });
 });
