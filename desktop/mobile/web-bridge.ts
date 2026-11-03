@@ -16,7 +16,7 @@ import { MobileError, type MobileCommand } from './transport';
 
 export const REMOTE_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer']);
 /** Layout settings this browser keeps for itself (the desktop keeps its own). */
-export const LOCAL_SETTINGS = ['rightPanelCollapsed', 'railCollapsed', 'pinnedBots', 'messageColumnWidth'] as const;
+export const LOCAL_SETTINGS = ['rightPanelCollapsed', 'railCollapsed', 'pinnedBots', 'idleBots', 'messageColumnWidth'] as const;
 type LocalKey = typeof LOCAL_SETTINGS[number];
 export const SESSION_ENDED = 'The session ended. Sign in again.';
 export const STORAGE_KEY = 'botling-web-layout';

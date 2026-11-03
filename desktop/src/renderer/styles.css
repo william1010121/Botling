@@ -687,3 +687,57 @@ button { font: inherit; color: inherit; }
 
 /* A plugin's block in the app page's own surface (Settings page, gear popover): as tall as its content, no frame of its own. */
 .plugin-slot-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: dark; }
+/* The two numbers on a bot row (blue unread, orange needs you) and the Idle corner button: a 20 pt clock at the
+   row's top-right corner while the pointer is on it (the settle clock's icon); in Idle, a back arrow. The pin
+   moves under it, and the numbers move down so the two never overlap. */
+.bot-counts { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.bot-idle {
+  position: absolute; right: 6px; top: 4px; width: 20px; height: 20px; border: 0; border-radius: 6px; background: var(--chip); color: var(--text);
+  display: none; align-items: center; justify-content: center; padding: 0; cursor: pointer; -webkit-app-region: no-drag;
+}
+.bot-row-wrap.idleable:hover .bot-idle, .bot-idle:focus-visible, .bot-row-wrap.idleable:focus-within .bot-idle { display: inline-flex; }
+.bot-row-wrap.idleable .bot-pin { top: auto; bottom: 4px; right: 6px; width: 20px; height: 20px; }
+.bot-row-wrap.idleable:hover .bot-row { padding-right: 32px; }
+.bot-row-wrap.idleable:hover .bot-counts { margin-top: 14px; }
+/* Idle: the collapsed group at the bottom of the bots (30 pt, as a subagent row), its bots as normal rows when open. */
+.rail-idle { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; border-top: 1px solid var(--line); padding-top: 2px; }
+.rail-idle-row {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: 10px; background: none;
+  color: var(--faint); font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; -webkit-app-region: no-drag;
+}
+.rail-idle-row:hover { background: var(--hover); color: var(--text); }
+.rail-idle-count { font-weight: 500; }
+.rail-idle-chevron, .rail-peek-chevron { display: inline-flex; transform: rotate(180deg); transition: transform .12s; }
+.rail-idle-chevron.open, .rail-peek-chevron.open { transform: rotate(270deg); }
+/* A bot's status card beside the column (PeekCard), drawn as the folded column's peek. */
+.rail-peek {
+  position: fixed; z-index: 40; width: 276px; max-height: calc(100vh - 16px); overflow-y: auto; scrollbar-width: none; padding: 8px;
+  background: var(--bubble); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  display: flex; flex-direction: column; gap: 4px; -webkit-app-region: no-drag;
+}
+.rail-peek-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 2px 4px 4px; }
+.rail-peek-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-peek-count { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.rail-peek-row { display: flex; align-items: center; border-radius: 6px; }
+.rail-peek-row:hover, .rail-peek-row.open { background: var(--hover); }
+.rail-peek-row:hover .subagent-more-menu, .rail-peek-row .subagent-more-menu:focus-visible { display: inline-flex; }
+.rail-peek-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 6px; border: 0; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.rail-peek-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.rail-peek-title { display: flex; align-items: center; font-size: 13px; min-width: 0; }
+.rail-peek-doing { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail-peek-doing.waiting { color: var(--orange); }
+.rail-peek-time { font-size: 11px; color: var(--faint); flex-shrink: 0; }
+.peek-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--faint); }
+.peek-dot.running { background: var(--blue); }
+.peek-dot.waiting { background: var(--orange); }
+.rail-peek-agents { display: flex; flex-direction: column; margin: 0 0 2px 10px; padding-left: 8px; border-left: 1px solid var(--selected); }
+.rail-peek-agent { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--muted); font-size: 12px; text-align: left; cursor: pointer; }
+.rail-peek-agent:hover, .rail-peek-agent:focus-visible { background: var(--hover); color: var(--text); }
+.rail-peek-state { font-size: 11px; flex-shrink: 0; color: var(--faint); }
+.rail-peek-state.running { color: var(--blue); }
+.rail-peek-none { font-size: 11px; color: var(--faint); padding: 4px 6px; }
+.rail-peek-group { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--faint); font-size: 12px; font-weight: 600; text-align: left; cursor: pointer; }
+.rail-peek-group:hover, .rail-peek-group:focus-visible { background: var(--hover); color: var(--text); }
+.rail-peek-group-count { margin-left: auto; font-weight: 500; }
+.rail-peek-link { align-self: flex-start; border: 0; background: none; padding: 4px 6px; border-radius: 6px; color: var(--blue); font-size: 12px; cursor: pointer; }
+.rail-peek-link:hover, .rail-peek-link:focus-visible { background: var(--hover); }

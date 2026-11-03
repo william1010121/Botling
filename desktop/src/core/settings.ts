@@ -74,6 +74,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     rightPanelCollapsed: bool(raw.rightPanelCollapsed, false),
     railCollapsed: bool(raw.railCollapsed, false),
     pinnedBots: [...new Set(readSettingsList(raw.pinnedBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
+    idleBots: [...new Set(readSettingsList(raw.idleBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
     developerMode: bool(raw.developerMode, false),
     developerProject: typeof raw.developerProjectID === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw.developerProjectID) ? raw.developerProjectID.toUpperCase() : null,
     updateCheck: bool(raw.updateCheckEnabled, true),
@@ -187,6 +188,8 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "developerProject": if (change.value) set("developerProjectID", change.value.toUpperCase()); break;
     // 1.x keeps the list (an empty one too) once anything was pinned.
     case "pinnedBots": set("pinnedBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;
+    // The left column's Idle group: only the user sends a bot there (the clock on its row) or brings it back.
+    case "idleBots": set("idleBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;
   }
   return next;
 }
