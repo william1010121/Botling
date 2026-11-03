@@ -1,0 +1,22 @@
+{
+  "bundles": [
+    {
+      "entry": "reports/cli-main.ts",
+      "outfile": "report.cjs",
+      "minify": true,
+      "jsx": true,
+      "cssAsText": true,
+      "notices": "THIRD_PARTY_LICENSES.txt"
+    }
+  ],
+  "copy": [
+    {
+      "from": "docs/report-blocks.md",
+      "to": "skills/report/report-blocks.md"
+    },
+    {
+      "from": "reports/v2/NOTICE",
+      "to": "NOTICE"
+    }
+  ]
+}

@@ -233,10 +233,11 @@ const node = hostNode();
 const checkNode: HostCommand | null = process.env.BOTLING_NODE_PATH ? { command: process.env.BOTLING_NODE_PATH }
   : process.versions.electron ? { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } } : { command: process.execPath };
 // Under Electron, main names the app's own `--check-plugin` (BOTLING_CHECK_COMMAND); a headless core runs the script.
-// The report command every bot builds report pages with: main's `--render-report`, or the bundled script.
-const reportScript = join(__dirname, "..", "report", "report.cjs");
-const reportCommand = process.env.BOTLING_REPORT_COMMAND ? process.env.BOTLING_REPORT_COMMAND : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(reportScript)}` : null;
-const reportDocs = process.env.BOTLING_REPORT_DOCS || join(__dirname, "..", "report", "report-blocks.md");
+// How a bot runs a command a shipped plugin gives it (botling.report's `--render-report`): the app's own flag
+// (main names itself in BOTLING_APP_COMMAND), or Node on the plugin's script in a headless core.
+const appCommand = process.env.BOTLING_APP_COMMAND || null;
+const runCommand = ({ script, flag }: { script: string; flag: string }) => appCommand ? `${appCommand} ${flag}`
+  : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(script)}` : null;
 // The plugins shipped with the app (step M11): main names them, a headless core reads out/builtin-plugins.
 const builtinPlugins = process.env.BOTLING_BUILTIN_PLUGINS || join(__dirname, "..", "builtin-plugins");
 const checkCommand = process.env.BOTLING_CHECK_COMMAND ? process.env.BOTLING_CHECK_COMMAND : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(checkScript)}` : null;
@@ -287,7 +288,7 @@ const core = new Core({
   plugins: { node, hostScript, sealer, builtIns: builtinPlugins },
   checkCommand,
   shotCommand: process.env.BOTLING_SHOT_COMMAND || null,
-  reports: reportCommand ? { command: reportCommand, docs: reportDocs } : null,
+  runCommand,
   // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
   firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,

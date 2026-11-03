@@ -6,17 +6,42 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { promptDoc } from "../../reports/v2/promptdoc";
 import { AGY_DELEGATION_POLICY } from "../../src/core/prompts-agy";
-import { botPrompts, desktopPrompts, codexLocalReportRule, codexWorkerInstructions, reportPageLine, type ReportTool } from "../../src/core/prompts";
+import { botPrompts, desktopPrompts, codexLocalReportRule, codexWorkerInstructions, shellQuote, type ReportTool } from "../../src/core/prompts";
+import { legacyReportPageLine, REPORT_SECTION, reportPageLine, reportSections } from "../report-section";
 
 const tool: ReportTool = { command: "env -u ELECTRON_RUN_AS_NODE '/Applications/Botling 2.app/Contents/MacOS/Botling 2' --render-report", docs: "/Applications/Botling 2.app/Contents/Resources/report/report-blocks.md" };
 const profile = (role: "main" | "manager" | "bot") => ({ name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null });
+
+describe("the report page rule as botling.report gives it", () => {
+  const paths = ["/tmp/p/artifacts", "/tmp/p/.bot/artifacts", "/x/My Project's/.bot/artifacts", "<your artifacts folder>"];
+  const tools: ReportTool[] = [tool, { command: "ELECTRON_RUN_AS_NODE=1 '/usr/bin/node' '/a b/report.cjs'", docs: "/a b/it's/report-blocks.md" }];
+  it("is the line the core wrote before, byte for byte, for any command, guide and artifacts folder", () => {
+    for (const t of tools) for (const artifacts of paths) expect(reportPageLine(t, artifacts)).toBe(legacyReportPageLine(t, artifacts));
+  });
+  for (const role of ["main", "manager", "bot"] as const) {
+    it(`puts the whole prompt where the core did, for a ${role}`, () => {
+      const plain = botPrompts({ profile: profile(role), engine: "claude" });
+      const artifacts = role === "main" ? "/tmp/p/artifacts" : "/tmp/p/.bot/artifacts";
+      const got = desktopPrompts(plain, profile(role), "claude", true, reportSections(tool));
+      const bare = desktopPrompts(plain, profile(role));
+      const anchor = role === "main" ? "- You are the single point of contact." : "Results meant for the user";
+      const insert = (text: string, anchorText: string) => { const lines = text.split("\n"); lines.splice(lines.findIndex((l) => l.includes(anchorText)) + 1, 0, legacyReportPageLine(tool, artifacts)); return lines.join("\n"); };
+      expect(got.system).toBe(insert(bare.system, anchor));
+      expect(got.codexWorkerSystem).toBe(insert(bare.codexWorkerSystem, "Results meant for the user"));
+    });
+  }
+  it("the manifest's command and the section agree, and shell-quotes the guide as the core did", () => {
+    expect(REPORT_SECTION.after).toBe("results");
+    expect(reportPageLine(tool, "/x")).toContain(`read ${shellQuote(tool.docs)} for the format`);
+  });
+});
 
 describe("the report page rule", () => {
   for (const role of ["main", "manager", "bot"] as const) {
     for (const engine of ["claude", "codex"] as const) {
       it(`follows the results rule for a ${role} (${engine}) and keeps the rest unchanged`, () => {
         const plain = botPrompts({ profile: profile(role), engine });
-        const ours = desktopPrompts(plain, profile(role), tool);
+        const ours = desktopPrompts(plain, profile(role), "claude", true, reportSections(tool));
         const artifacts = role === "main" ? "/tmp/p/artifacts" : "/tmp/p/.bot/artifacts";
         const line = reportPageLine(tool, artifacts);
         const lines = ours.system.split("\n");
@@ -42,7 +67,7 @@ describe("the report page rule", () => {
   for (const engine of ["claude", "codex", "agy"] as const) {
     it(`sends long reports to a ReportSpec v2 page and keeps chat to a brief conclusion plus link (${engine})`, () => {
       for (const role of ["main", "manager", "bot"] as const) {
-        const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), tool);
+        const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), "claude", true, reportSections(tool));
         const text = ours.system.split("\n").find((l) => l.includes("ReportSpec v2")) ?? "";
         expect(text).toContain("--render-report");
         expect(text).toMatch(/detailed or long report/);
@@ -54,7 +79,7 @@ describe("the report page rule", () => {
 
   it("adds nothing when the app has no report command", () => {
     const plain = botPrompts({ profile: profile("bot") });
-    expect(desktopPrompts(plain, profile("bot"), null).system).toBe(desktopPrompts(plain, profile("bot")).system);
+    expect(desktopPrompts(plain, profile("bot"), "claude", true, reportSections(null)).system).toBe(desktopPrompts(plain, profile("bot")).system);
   });
 });
 
@@ -139,7 +164,7 @@ describe("the reply length rule reaches every engine", () => {
   for (const engine of ["claude", "codex", "agy"] as const) {
     it(`caps chat replies at 3 sentences and forbids pasting long text (${engine})`, () => {
       for (const role of ["bot", "manager"] as const) {
-        const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), tool).system;
+        const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), "claude", true, reportSections(tool)).system;
         expect(ours).toContain("At most 3 sentences, only the conclusion and the next step");
         expect(ours).toMatch(/never paste long text|Do not paste long text/i);
       }
@@ -147,7 +172,7 @@ describe("the reply length rule reaches every engine", () => {
   }
 
   it("puts the specific brevity rule near the top of the Antigravity system text, before the delegation policy", () => {
-    const system = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "agy" }), profile("bot"), tool).system;
+    const system = desktopPrompts(botPrompts({ profile: profile("bot"), engine: "agy" }), profile("bot"), "claude", true, reportSections(tool)).system;
     for (const phrase of ["no praise, greeting or filler opener", "No headings, no bullet lists, no emoji", "how many and what for", "translations and rewrites of a report"]) expect(system).toContain(phrase);
     expect(system.split("\n").findIndex((l) => l.includes("no praise, greeting"))).toBeLessThanOrEqual(2);
     expect(system.indexOf("no praise, greeting")).toBeLessThan(system.indexOf(AGY_DELEGATION_POLICY.slice(0, 60)));

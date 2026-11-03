@@ -8,6 +8,7 @@ import { tempDir, until } from "../helpers";
 import { checkPlugin, checkPluginIssues, CHECK_NEXT_STEPS, MAX_IMAGE_BYTES, compatible } from "../../src/core/plugins/manifest";
 import { checkReport } from "../../src/core/plugins/check-report";
 import { PluginRegistry } from "../../src/core/plugins/registry";
+import { agentContributions, claudeWiring } from "../../src/core/plugins/agent-contributions";
 import { swiftPrettyJSON } from "../../src/core/swift-json";
 import { MemorySecretStore, SealedSecretStore, PortSealer, testSealer } from "../../src/core/plugins/secrets";
 import { PluginHostClient } from "../../src/core/plugins/host-client";
@@ -93,9 +94,9 @@ describe("the plugin registry", () => {
     writeFileSync(join(folder, "claude", ".mcp.json"), JSON.stringify({ mcpServers: { issues: {}, actions: {} } }));
     plugin(library, "plain");
     const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore());
-    expect(registry.claudeTools()).toEqual(["mcp__plugin_github-tools_actions", "mcp__plugin_github-tools_issues"]);
+    expect(claudeWiring(agentContributions(registry)).tools).toEqual(["mcp__plugin_github-tools_actions", "mcp__plugin_github-tools_issues"]);
     registry.setEnabled("gh", false);
-    expect(registry.claudeTools()).toEqual([]);
+    expect(claudeWiring(agentContributions(registry)).tools).toEqual([]);
   });
 
   it("the Claude parts' stamp changes with their files' bytes, not their dates or other parts (1.x's claudeStamp)", () => {
@@ -108,18 +109,55 @@ describe("the plugin registry", () => {
     writeFileSync(join(folder, "claude", "skills", "a.md"), "one");
     plugin(library, "plain");
     const registry = new PluginRegistry(library, join(dir, "plugins.json"), new MemorySecretStore());
-    const first = registry.claudeStamp();
+    const first = agentContributions(registry).stamp;
     expect(first).toHaveLength(1);
     expect(first[0]).toMatch(new RegExp(`^${join(folder, "claude").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}#[0-9a-f]{64}$`));
     // The same bytes written again: the same stamp.
     writeFileSync(join(folder, "claude", "skills", "a.md"), "one");
     registry.rescan();
-    expect(registry.claudeStamp()).toEqual(first);
+    expect(agentContributions(registry).stamp).toEqual(first);
     writeFileSync(join(folder, "claude", "skills", "a.md"), "two");
     registry.rescan();
-    expect(registry.claudeStamp()).not.toEqual(first);
+    expect(agentContributions(registry).stamp).not.toEqual(first);
     registry.setEnabled("gh", false);
-    expect(registry.claudeStamp()).toEqual([]);
+    expect(agentContributions(registry).stamp).toEqual([]);
+  });
+
+  it("agentContributions lists skills, agents, Claude parts and secrets by plugin; Claude is handed only its own folders", () => {
+    const dir = tempDir("plugins");
+    const library = join(dir, "plugins");
+    const claude = plugin(library, "gh", { ccb: { claude: "claude", contributes: { settings: { token: { type: "string", title: "T", secret: true, env: "GH_TOKEN" } } } }, web: null });
+    mkdirSync(join(claude, "claude", "skills", "triage"), { recursive: true });
+    mkdirSync(join(claude, "claude", "agents"), { recursive: true });
+    mkdirSync(join(claude, "claude", ".claude-plugin"), { recursive: true });
+    writeFileSync(join(claude, "claude", ".claude-plugin", "plugin.json"), JSON.stringify({ name: "gh", version: "1.0.0" }));
+    writeFileSync(join(claude, "claude", "skills", "triage", "SKILL.md"), "---\nname: triage\ndescription: x\n---\n");
+    writeFileSync(join(claude, "claude", "agents", "helper.md"), "agent");
+    writeFileSync(join(claude, "claude", ".mcp.json"), JSON.stringify({ mcpServers: { issues: {} } }));
+    // A skill outside the Claude part (`contributes.skills`): listed for every engine, not handed to Claude.
+    const other = plugin(library, "report", { ccb: { contributes: { skills: "skills", settings: { key: { type: "string", title: "K", secret: true, env: "REPORT_KEY" } } } }, web: null });
+    mkdirSync(join(other, "skills", "report"), { recursive: true });
+    writeFileSync(join(other, "skills", "report", "SKILL.md"), "---\nname: report\ndescription: y\n---\n");
+    const secrets = new MemorySecretStore();
+    void secrets.set("gh", "token", "ghs");
+    void secrets.set("report", "key", "rk");
+    const registry = new PluginRegistry(library, join(dir, "plugins.json"), secrets);
+    const list = agentContributions(registry);
+    expect(list.skills).toEqual([
+      { plugin: "gh", name: "triage", dir: join(claude, "claude", "skills", "triage") },
+      { plugin: "report", name: "report", dir: join(other, "skills", "report") },
+    ]);
+    expect(list.agents).toEqual([{ plugin: "gh", name: "helper", file: join(claude, "claude", "agents", "helper.md") }]);
+    expect(list.claude).toEqual([{ plugin: "gh", dir: join(claude, "claude"), mcpTools: ["mcp__plugin_gh_issues"] }]);
+    // Secrets are kept by plugin (the Claude wiring still merges them as before).
+    expect(list.secrets).toEqual([{ plugin: "gh", env: { GH_TOKEN: "ghs" } }, { plugin: "report", env: { REPORT_KEY: "rk" } }]);
+    expect(claudeWiring(list)).toEqual({ dirs: [join(claude, "claude")], env: { GH_TOKEN: "ghs", REPORT_KEY: "rk" }, tools: ["mcp__plugin_gh_issues"] });
+    // Turning a plugin off takes its parts away; the stamp follows the Claude parts.
+    registry.setEnabled("report", false);
+    expect(agentContributions(registry).skills.map((skill) => skill.plugin)).toEqual(["gh"]);
+    expect(agentContributions(registry).secrets.map((entry) => entry.plugin)).toEqual(["gh"]);
+    registry.setEnabled("gh", false);
+    expect(agentContributions(registry)).toEqual({ skills: [], agents: [], claude: [], secrets: [], stamp: [] });
   });
 
   it("a broken plugin is off until its files change, said once; three crashes in ten minutes turn one off", () => {

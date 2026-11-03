@@ -12,7 +12,6 @@ import { fileURLToPath } from "node:url";
 import { buildRenderer, readCharacters } from "./build-renderer.mjs";
 import { buildPreloads } from "./build-preloads.mjs";
 import { buildBuiltinPlugins } from "./build-builtin-plugins.mjs";
-import { NOTICES_FILE, thirdPartyNotices } from "./reports/licenses.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Keep dependency module identities under node_modules even when link-deps.sh points to a
@@ -56,16 +55,7 @@ await Promise.all([
 packageAgyHelper(here);
 // The bots' Cute pictures beside the core, for plugins' `workspace.face` (src/core/faces.ts).
 writeFileSync(join(out, "core", "characters.json"), JSON.stringify(readCharacters(here)));
-// The report command (reports/cli.ts): run by `Botling --render-report`, or `node out/report/report.cjs`.
-// Its bundled packages' licences go next to it (THIRD_PARTY_LICENSES.txt, from the build's metafile).
-const report = await build({ ...node, entryPoints: [join(here, "reports/cli-main.ts")], outfile: join(out, "report/report.cjs"), minify: true, metafile: true, jsx: "automatic", loader: { ".css": "text" }, define: { "process.env.NODE_ENV": '"production"' }, tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } });
-const notices = thirdPartyNotices(report.metafile, here);
-if (notices.missing.length) throw new Error(`No licence text for bundled packages: ${notices.missing.join(", ")}`);
-writeFileSync(join(out, "report", NOTICES_FILE), notices.text);
-// The bots' guide to report pages and the layout engine's licence notice, next to the command
-// (electron-builder copies them outside app.asar, where bots can read them).
-cpSync(join(here, "docs", "report-blocks.md"), join(out, "report", "report-blocks.md"));
-cpSync(join(here, "reports", "v2", "NOTICE"), join(out, "report", "NOTICE"));
+// The report command (reports/cli.ts), its guide and its licence notices are botling.report's (builtin-plugins/botling.report/build.json).
 console.log("built out/");
 }
 

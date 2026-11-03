@@ -1,0 +1,37 @@
+{
+  "name": "botling.report",
+  "displayName": "Reports",
+  "version": "1.0.0",
+  "description": "Report pages for the bots: a skill (the ReportSpec v2 guide) and a command (Botling 2 --render-report spec.json page.html) that renders one, with the rule that tells every bot to use them.",
+  "license": "GPL-3.0-or-later",
+  "publisher": "Botling",
+  "engines": {
+    "ccb": "^2.0.0"
+  },
+  "ccb": {
+    "contributes": {
+      "skills": "skills",
+      "agentCommands": [
+        {
+          "id": "botling.report.render",
+          "script": "report.cjs",
+          "flag": "--render-report",
+          "docs": "skills/report/report-blocks.md"
+        }
+      ],
+      "promptSections": [
+        {
+          "id": "botling.report.page",
+          "after": "results",
+          "roles": [
+            "main",
+            "manager",
+            "bot"
+          ],
+          "command": "botling.report.render",
+          "text": "- Any detailed or long report (several sections, headings or many bullets: status, investigation, comparison, plan, results) goes into one report page, never into chat: the chat reply carries only a brief conclusion and the link to the page; never paste the report body into chat. Build every report page (status, decision, investigation, comparison, plan, results, explainer) from a ReportSpec v2 JSON, never hand-written HTML: read {{docs}} for the format, the blocks and the writing rules; write the spec; run {{command}} spec.json {{artifacts:<english-name>.html}} exactly as quoted (add --slides for a 16:9 deck, --force to replace). It prints one JSON line {ok, errors, warnings, htmlPath, link}: fix each error (it gives a path and a valid example) and the warnings you can, run it again (at most twice), then deliver the page at htmlPath as the results rule says. Use ASD-STE100-informed plain language: active voice, direct verbs, and consistent terms. Aim for sentences of at most 20 English words or 30 Chinese characters. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese. Keep useful technical names. State verified facts and pending inferences with their reasons; do not assign mechanical confidence percentages. Omit routine defensive boilerplate. Explain material uncertainty and failed checks that affect the reader’s decision; never hide defects or claim unperformed validation. For multistep causes, prefer a flow plus a table of evidence. Keep long paths, hashes, test commands, and preview-tool details in sources or the internal handback, outside the prose."
+        }
+      ]
+    }
+  }
+}

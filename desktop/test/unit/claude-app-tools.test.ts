@@ -120,7 +120,7 @@ describe("the prompt and the hidden setting", () => {
     const workers = desktopPrompts(plain, manager).system;
     expect(workers).toContain(CLAUDE_WORKERS_RULE);
     expect(workers).not.toContain(NATIVE_SUBAGENT_LINE);
-    const native = desktopPrompts(plain, manager, null, "claude", false).system;
+    const native = desktopPrompts(plain, manager, "claude", false).system;
     expect(native).toContain(NATIVE_SUBAGENT_LINE);
     expect(native).not.toContain("app_handoff tool");
   });

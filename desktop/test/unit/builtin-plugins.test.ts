@@ -9,6 +9,7 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, wri
 import { join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { checkPlugin } from "../../src/core/plugins/manifest";
+import { appCommandScript } from "../../src/core/plugins/app-command";
 import { PluginRegistry } from "../../src/core/plugins/registry";
 import { MemorySecretStore } from "../../src/core/plugins/secrets";
 import { commandSurfaces } from "../../src/core/plugins/commands";
@@ -30,8 +31,8 @@ const registry = (library: string, builtIns: string | null = built) => new Plugi
 const card = (root: string) => join(root, "plugins", "ccb-components", "components", "網頁預覽卡片");
 
 describe("the built-in plugins as shipped", () => {
-  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
-    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
+  it("are ccb-latex, botling.cards, botling.catchup, botling.chat-extras, botling.design, botling.dev, botling.git, botling.report, botling.terminal, botling.usage and botling.whiteboard, each passing the plugin check without its sources", () => {
+    expect(readdirSync(built).sort()).toEqual(["botling.cards", "botling.catchup", "botling.chat-extras", "botling.design", "botling.dev", "botling.git", "botling.report", "botling.terminal", "botling.usage", "botling.whiteboard", "ccb-latex"]);
     for (const name of readdirSync(built)) {
       expect(checkPlugin(join(built, name)), name).toEqual([]);
       for (const left of ["src", "test", "build.json"]) expect(existsSync(join(built, name, left)), `${name}/${left}`).toBe(false);
@@ -39,6 +40,14 @@ describe("the built-in plugins as shipped", () => {
     expect(existsSync(join(built, "ccb-latex", "dist", "web.js"))).toBe(true);
     for (const part of ["dist/host.mjs", "dist/web.js", "catchup.css"]) expect(existsSync(join(built, "botling.catchup", part)), part).toBe(true);
     expect(readdirSync(join(built, "ccb-latex", "dist", "fonts")).some((font) => font.endsWith(".woff2"))).toBe(true);
+  });
+
+  it("bring botling.report: the report command, its guide as the report skill, and the licence notices beside the command", () => {
+    const folder = join(built, "botling.report");
+    for (const file of ["report.cjs", "NOTICE", "THIRD_PARTY_LICENSES.txt", "skills/report/SKILL.md", "skills/report/report-blocks.md"]) expect(existsSync(join(folder, file)), file).toBe(true);
+    expect(readFileSync(join(folder, "skills", "report", "report-blocks.md"), "utf8")).toBe(readFileSync(new URL("../../docs/report-blocks.md", import.meta.url), "utf8"));
+    expect(readFileSync(join(folder, "skills", "report", "SKILL.md"), "utf8")).toMatch(/^---\nname: report\ndescription: ".+"\n---\n/);
+    expect(appCommandScript(built, "--render-report")).toBe(join(folder, "report.cjs"));
   });
 
   it("bring the web preview card the app seeded into the library until now, unchanged", () => {
@@ -57,7 +66,7 @@ describe("the registry with built-in plugins", () => {
     writeFileSync(join(library, "aaa", "dist", "web.js"), "export function activate() {}");
     const plugins = registry(library);
     expect(plugins.plugins.map((plugin) => [plugin.manifest.name, plugin.builtIn, plugin.enabled])).toEqual([
-      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
+      ["botling.cards", true, true], ["botling.catchup", true, true], ["botling.chat-extras", true, true], ["botling.design", true, true], ["botling.dev", true, true], ["botling.git", true, true], ["botling.report", true, true], ["botling.terminal", true, true], ["botling.usage", true, true], ["botling.whiteboard", true, true], ["ccb-latex", true, true], ["aaa", false, true],
     ]);
     expect(plugins.problems).toEqual({});
     plugins.setEnabled("ccb-latex", false);

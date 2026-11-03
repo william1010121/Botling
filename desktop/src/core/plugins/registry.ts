@@ -320,18 +320,14 @@ export class PluginRegistry {
     }));
   }
 
-  /** Claude parts of enabled plugins, for bots' `--plugin-dir`. */
-  claudeDirectories(): string[] {
-    return this.plugins.flatMap((plugin) => (plugin.enabled && !plugin.failure && plugin.manifest.ccb?.claude ? [join(plugin.folder, plugin.manifest.ccb.claude)] : []));
-  }
-
   /**
-   * The Claude parts `claudeDirectories()` gives, each with a hash of what its files hold (1.x's
-   * `claudeStamp`): a session started with a different stamp has older skills, agents or MCP servers.
-   * A file written again with the same bytes, or a change outside the Claude part (package.json, the
-   * web part), leaves the stamp as it was: no bot restarts for it.
+   * The Claude parts (`ccb.claude`, a Claude Code plugin folder) of enabled plugins, each with a hash of what its files hold
+   * (1.x's `claudeStamp`: a session started with a different hash has older skills, agents or MCP servers; a file written
+   * again with the same bytes, or a change outside the Claude part, leaves it as it was) and its MCP tools
+   * (`mcp__plugin_<name>_<server>` for each server in `<claude>/.mcp.json`, <name> being its plugin.json name; bots use them
+   * without asking, as in 1.x). The one reading `agentContributions()` (agent-contributions.ts) builds on.
    */
-  claudeStamp(): string[] {
+  claudeParts(): { plugin: string; dir: string; hash: string; mcpTools: string[] }[] {
     return this.plugins.flatMap((plugin) => {
       const claude = plugin.manifest.ccb?.claude;
       if (!plugin.enabled || plugin.failure || !claude) return [];
@@ -348,41 +344,30 @@ export class PluginRegistry {
         known = { fingerprint: print, hash: hasher.digest("hex") };
         this.claudeContents.set(plugin.manifest.name, known);
       }
-      return [`${resolve(plugin.folder, claude)}#${known.hash}`];
-    });
-  }
-
-  /**
-   * The MCP tools of the plugins' Claude parts (`claudeTools`): `mcp__plugin_<name>_<server>` for each server in
-   * `<claude>/.mcp.json`, where <name> is its plugin.json name. Bots use them without asking, as in 1.x.
-   */
-  claudeTools(): string[] {
-    return this.plugins.flatMap((plugin) => {
-      const claude = plugin.manifest.ccb?.claude;
-      if (!plugin.enabled || plugin.failure || !claude) return [];
       const read = (file: string): Record<string, unknown> | null => {
         try { const value = JSON.parse(readFileSync(join(plugin.folder, claude, file), "utf8")); return value && typeof value === "object" && !Array.isArray(value) ? value : null; } catch { return null; }
       };
       const declared = read(join(".claude-plugin", "plugin.json"))?.name;
       const name = typeof declared === "string" && declared ? declared : plugin.manifest.name;
       const mcp = read(".mcp.json");
-      if (!mcp) return [];
-      const servers = mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers) ? mcp.mcpServers as Record<string, unknown> : mcp;
-      return Object.keys(servers).sort().map((server) => `mcp__plugin_${name}_${server}`);
+      const servers = !mcp ? null : mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers) ? mcp.mcpServers as Record<string, unknown> : mcp;
+      return [{ plugin: plugin.manifest.name, dir: join(plugin.folder, claude), hash: known.hash, mcpTools: servers ? Object.keys(servers).sort().map((server) => `mcp__plugin_${name}_${server}`) : [] }];
     });
   }
 
-  /** Secrets that name an `env`, for bots' processes (their MCP servers read them). */
-  secretEnvironment(): Record<string, string> {
-    const env: Record<string, string> = {};
+  /** The secrets of each enabled plugin that name an `env` (their MCP servers read them), by plugin. */
+  secretEnvironments(): { plugin: string; env: Record<string, string> }[] {
+    const out: { plugin: string; env: Record<string, string> }[] = [];
     for (const plugin of this.plugins) {
       if (!plugin.enabled) continue;
+      const env: Record<string, string> = {};
       for (const [key, setting] of Object.entries(plugin.manifest.ccb?.contributes?.settings ?? {})) {
         const value = setting.secret && setting.env ? this.secrets.get(plugin.manifest.name, key) : null;
         if (setting.env && value) env[setting.env] = value;
       }
+      if (Object.keys(env).length) out.push({ plugin: plugin.manifest.name, env });
     }
-    return env;
+    return out;
   }
 
   /** Panels from enabled plugins with a web part, in order. */

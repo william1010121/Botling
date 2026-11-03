@@ -613,7 +613,18 @@ export class Plugins {
   /** What enabled plugins add to bots' instructions (`promptSections`), in the plugins' order; a core section's id only from a built-in plugin. */
   promptSections() {
     return ofKind(this.registry.contributions(), "promptSection")
-      .filter((entry) => !CORE_PROMPT_SECTIONS.some((section) => section.id === entry.id) || this.shipped(entry.plugin));
+      .filter((entry) => !CORE_PROMPT_SECTIONS.some((section) => section.id === entry.id) || this.shipped(entry.plugin))
+      // A section that names a command goes with a plugin shipped with the app only (it tells bots to run that command).
+      .filter((entry) => entry.command === undefined || this.shipped(entry.plugin));
+  }
+
+  /** The commands enabled, shipped plugins give the bots (`agentCommands`), with the script and guide as absolute paths. */
+  agentCommands(): { plugin: string; id: string; script: string; flag: string; docs: string | null }[] {
+    return ofKind(this.registry.contributions(), "agentCommand").flatMap((entry) => {
+      const plugin = this.registry.plugin(entry.plugin);
+      if (!plugin?.builtIn) return [];
+      return [{ plugin: entry.plugin, id: entry.id, script: join(plugin.folder, entry.script), flag: entry.flag, docs: entry.docs === null ? null : join(plugin.folder, entry.docs) }];
+    });
   }
 
   // ------------------------------------------------------------------------------------------

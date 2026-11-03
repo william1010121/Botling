@@ -551,13 +551,13 @@ describe("making a sub bot from a subagent", () => {
 
 describe("prompts", () => {
   const manager = { name: "botling", role: "manager" as "main" | "manager" | "bot", folder: "/p", memoryPath: ".bot/memory.md", job: null, id: PROJECT };
-  const desktop = (profile: typeof manager, engine: "claude" | "codex" | "agy" = "claude") => desktopPrompts(botPrompts({ profile, engine }), profile, null, engine).system;
+  const desktop = (profile: typeof manager, engine: "claude" | "codex" | "agy" = "claude") => desktopPrompts(botPrompts({ profile, engine }), profile, engine).system;
   it("leaves the Swift prompts alone: only the desktop layer adds the sub-bot text", () => {
     expect(botPrompts({ profile: manager }).system).not.toContain("<sub-bot");
     expect(botPrompts({ profile: manager }).system).toContain("In .bot/ only .bot/memory.md, .bot/routines.cron, inbox.md and artifacts/ are yours");
   });
   it("a Claude project bot (native subagents, the hidden fallback) is told how to move a subagent out, and may write handoff.md and progress.md", () => {
-    const system = desktopPrompts(botPrompts({ profile: manager }), manager, null, "claude", false).system;
+    const system = desktopPrompts(botPrompts({ profile: manager }), manager, "claude", false).system;
     expect(system).toContain("<sub-bot name=");
     expect(system).toContain("SendMessage");
     expect(system).toContain("handoff.md and progress.md files under .bot/subagents/<id>/ are yours");
@@ -576,7 +576,7 @@ describe("prompts", () => {
   it("a Codex or Antigravity sub bot reads the handoff and keeps progress.md too", () => {
     const profile = { ...manager, name: "Settings page", role: "bot" as "main" | "manager" | "bot", job: "Continue it", id: SUB, parent: PROJECT, memoryPath: `.bot/sub-bots/${SUB}/memory.md` };
     for (const engine of ["codex", "agy"] as const) {
-      const system = desktopPrompts(botPrompts({ profile, parentName: "botling", engine }), profile, null, engine).system;
+      const system = desktopPrompts(botPrompts({ profile, parentName: "botling", engine }), profile, engine).system;
       expect(system, engine).toContain("sub bot");
       expect(system, engine).toContain("progress.md");
       expect(system, engine).toContain(SUB_BOT_RELAY_PREFIX);

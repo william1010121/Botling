@@ -436,7 +436,7 @@ const SHOW_LINE = "  To show data with a component: add <show name=\"component n
  * still gives for a feature on its way to a plugin. `after: "show"` puts it right after the <show> line (at the
  * end when a prompt has none); `roles` are the bots told it.
  */
-export interface PromptSection { id: string; text: string; after: "show" | "end"; roles: readonly ("main" | "manager" | "bot")[] }
+export interface PromptSection { id: string; text: string; after: "show" | "results" | "end"; roles: readonly ("main" | "manager" | "bot")[]; /** The command and guide `{{command}}` and `{{docs}}` name (see `fillSection`). */ tool?: ReportTool }
 /**
  * The sections the core gives today. The whiteboard picture line is the first version of botling.whiteboard's
  * section (plugin-extraction.md W3): the same id and bytes, so moving it to the plugin changes no prompt.
@@ -449,11 +449,11 @@ export function withPluginSections(sections: readonly (PromptSection & { plugin:
   const own = (section: PromptSection & { plugin: string }) => section.id.startsWith(`${section.plugin}.`);
   const out: PromptSection[] = core.map((section) => {
     const plugin = sections.find((candidate) => candidate.id === section.id && own(candidate));
-    return plugin ? { id: plugin.id, text: plugin.text, after: plugin.after, roles: plugin.roles } : section;
+    return plugin ? { id: plugin.id, text: plugin.text, after: plugin.after, roles: plugin.roles, ...(plugin.tool ? { tool: plugin.tool } : {}) } : section;
   });
   for (const section of sections) {
     if (out.some((candidate) => candidate.id === section.id)) continue;
-    out.push({ id: section.id, text: section.text, after: section.after, roles: section.roles });
+    out.push({ id: section.id, text: section.text, after: section.after, roles: section.roles, ...(section.tool ? { tool: section.tool } : {}) });
   }
   return out;
 }
@@ -464,15 +464,18 @@ const TASK_STATES_SENTENCE = "state is running, waiting (the user must act), don
 
 /** A POSIX shell single-quoted word (paths with spaces or quotes stay one argument). */
 export const shellQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
-/** The app's report command and its guide (core/main.ts: `Botling --render-report`, docs/report-blocks.md as shipped). */
+/** A command a plugin gives the bots and its guide (botling.report: `Botling --render-report`, its report-blocks.md). */
 export interface ReportTool { command: string; docs: string }
 
 /**
- * 2.0 only: how a report page is built (ReportSpec v2 + the app's report command). It does not
- * change where results go or how they are published; that stays the results rule's.
+ * What a section's text may name (`{{…}}`), as the plugin that gave it wrote it: `{{command}}` the command it runs and `{{docs}}` the
+ * shell-quoted path of its guide (the section's `tool`), `{{artifacts:REST}}` the shell-quoted path `<artifacts folder>/REST`.
  */
-export function reportPageLine(tool: ReportTool, artifacts: string): string {
-  return `- Any detailed or long report (several sections, headings or many bullets: status, investigation, comparison, plan, results) goes into one report page, never into chat: the chat reply carries only a brief conclusion and the link to the page; never paste the report body into chat. Build every report page (status, decision, investigation, comparison, plan, results, explainer) from a ReportSpec v2 JSON, never hand-written HTML: read ${shellQuote(tool.docs)} for the format, the blocks and the writing rules; write the spec; run ${tool.command} spec.json ${shellQuote(`${artifacts}/<english-name>.html`)} exactly as quoted (add --slides for a 16:9 deck, --force to replace). It prints one JSON line {ok, errors, warnings, htmlPath, link}: fix each error (it gives a path and a valid example) and the warnings you can, run it again (at most twice), then deliver the page at htmlPath as the results rule says. Use ASD-STE100-informed plain language: active voice, direct verbs, and consistent terms. Aim for sentences of at most 20 English words or 30 Chinese characters. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese. Keep useful technical names. State verified facts and pending inferences with their reasons; do not assign mechanical confidence percentages. Omit routine defensive boilerplate. Explain material uncertainty and failed checks that affect the reader’s decision; never hide defects or claim unperformed validation. For multistep causes, prefer a flow plus a table of evidence. Keep long paths, hashes, test commands, and preview-tool details in sources or the internal handback, outside the prose.`;
+export function fillSection(text: string, tool: ReportTool | undefined, artifacts: string): string {
+  return text
+    .replace(/\{\{artifacts:([^}]*)\}\}/g, (_all, rest: string) => shellQuote(`${artifacts}/${rest}`))
+    .replace(/\{\{command\}\}/g, () => tool?.command ?? "{{command}}")
+    .replace(/\{\{docs\}\}/g, () => (tool ? shellQuote(tool.docs) : "{{docs}}"));
 }
 
 /** Puts `line` after the first line of `text` that contains `anchor` (at the end when none does). */
@@ -488,11 +491,11 @@ const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
 /**
  * The instructions as 2.0 gives them: `botPrompts`, plus the `<task>` stage sentence (after its
- * states) for every bot, the prompt sections (`sections`: by default the whiteboard picture line, after
- * the <show> line, for every bot but the main bot), and — when the app has its report command — the report page line after the results rule
- * for every bot and Codex worker.
+ * states) for every bot, and the prompt sections (`sections`: by default the whiteboard picture line, after
+ * the <show> line, for every bot but the main bot; botling.report's report page line after the results rule, for every bot and
+ * Codex worker).
  */
-export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, reports: ReportTool | null = null, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS): BotPrompts {
+export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS): BotPrompts {
   let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
@@ -521,9 +524,11 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   }
   for (const section of told) if (section.after === "end") system = `${system}\n${section.text}`;
   let codexWorkerSystem = prompts.codexWorkerSystem;
-  if (reports) {
-    const artifacts = profile.folder ? join(profile.folder, profile.role === "main" ? "artifacts" : ".bot/artifacts") : "<your artifacts folder>";
-    const line = reportPageLine(reports, artifacts);
+  // The sections that follow the results rule (botling.report's report page rule), in order: the main bot's results rule has its
+  // own first line, and Codex workers get them too.
+  const artifacts = profile.folder ? join(profile.folder, profile.role === "main" ? "artifacts" : ".bot/artifacts") : "<your artifacts folder>";
+  for (const section of told.filter((entry) => entry.after === "results").reverse()) {
+    const line = fillSection(section.text, section.tool, artifacts);
     system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, line);
     codexWorkerSystem = insertAfterLine(codexWorkerSystem, RESULTS_ANCHOR, line);
   }

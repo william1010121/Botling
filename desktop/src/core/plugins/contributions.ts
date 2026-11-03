@@ -30,8 +30,11 @@ export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;
 export const STATUS_SLOTS = ["chatHeader", "botRow"] as const;
 export const MENU_SLOTS = ["message/context", "bot/context", "composer/plus", "commandPalette"] as const;
 export const HOOKS = ["beforeSend", "afterReply", "toolCall"] as const;
-/** Where a prompt section goes: right after the line about <show> (at the end when a prompt has none), or at the end. */
-export const PROMPT_ANCHORS = ["show", "end"] as const;
+/**
+ * Where a prompt section goes: right after the line about <show> (at the end when a prompt has none), right after the
+ * results rule (the main bot's and Codex workers' too; at the end when a prompt has none), or at the end.
+ */
+export const PROMPT_ANCHORS = ["show", "results", "end"] as const;
 export const PROMPT_ROLES = ["main", "manager", "bot"] as const;
 export type PromptAnchor = (typeof PROMPT_ANCHORS)[number];
 export type PromptRole = (typeof PROMPT_ROLES)[number];
@@ -73,7 +76,13 @@ export type Contribution = { plugin: string } & (
   /** A tag bots may write in a reply (`<tag …>body</tag>`): taken out of the text and handed to the plugin's program part. */
   | { kind: "replyTag"; tag: string }
   /** Words every bot of `roles` is told in its instructions, at `after`. */
-  | { kind: "promptSection"; id: string; text: string; after: PromptAnchor; roles: PromptRole[] }
+  | { kind: "promptSection"; id: string; text: string; after: PromptAnchor; roles: PromptRole[]; command?: string }
+  /**
+   * A command the bots run: a script of the plugin that Botling runs with Node (or, in the app, as its own `flag` argument), and the
+   * guide to it. A prompt section names one with `command`; `{{command}}` and `{{docs}}` in its text are what the bots are given.
+   * Shipped plugins only.
+   */
+  | { kind: "agentCommand"; id: string; script: string; flag: string; docs: string | null }
   /** Skills (a folder with SKILL.md each), agent definitions and MCP servers for every engine; `claude` is the old Claude Code plugin folder. */
   | { kind: "agent"; claude: string | null; mcp: string | null; skills: { name: string; dir: string }[]; agents: { name: string; file: string }[] }
 );
@@ -258,7 +267,15 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
       problems.push(`Prompt section "${f.id}": roles must be a list of ${named(PROMPT_ROLES)}.`);
       return;
     }
-    if (ownId("Prompt section", f.id)) out.push({ kind: "promptSection", plugin, id: f.id, text: f.text, after, roles: PROMPT_ROLES.filter((role) => roles.includes(role)) });
+    if (entry.command != null && typeof entry.command !== "string") { problems.push(`Prompt section "${f.id}": command has the wrong type.`); return; }
+    if (ownId("Prompt section", f.id)) out.push({ kind: "promptSection", plugin, id: f.id, text: f.text, after, roles: PROMPT_ROLES.filter((role) => roles.includes(role)), ...(typeof entry.command === "string" ? { command: entry.command } : {}) });
+  });
+  list("agentCommands").forEach((entry, index) => {
+    const f = fields(entry, `contributes.agentCommands.${index}`, ["id", "script", "flag", "docs?"]);
+    if (!f) return;
+    if (!insidePlugin(f.script) || (f.docs !== undefined && !insidePlugin(f.docs))) { problems.push(`Agent command "${f.id}": script and docs must be relative paths inside the plugin folder.`); return; }
+    if (!/^--[a-z][a-z-]*$/.test(f.flag)) { problems.push(`Agent command "${f.id}": flag "${f.flag}" must look like --render-report.`); return; }
+    if (ownId("Agent command", f.id)) out.push({ kind: "agentCommand", plugin, id: f.id, script: posix.normalize(f.script), flag: f.flag, docs: f.docs === undefined ? null : posix.normalize(f.docs) });
   });
   // Skills and agents as provider-layer.md §8.4 names them (`contributes.skills`, `contributes.agents`).
   const agent = { skills: path(c, "skills"), agents: path(c, "agents"), mcp: path(c, "mcp") };

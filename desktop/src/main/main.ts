@@ -24,6 +24,7 @@ import {directoryDefaults,packagedDataDir} from "./main-environment";
 import { StartupMarks } from "../startup-marks";
 import { checkReport } from "../core/plugins/check-report";
 import { INSPECT_FLAG, inspectReport } from "../core/plugins/inspect-report";
+import { appCommandScript } from "../core/plugins/app-command";
 import { CoreClient } from "./core-client";
 import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
@@ -69,11 +70,14 @@ if (inspectAt >= 0) {
   process.exit(report.code);
 }
 // `--render-report <spec.json> <…/artifacts/page.html> [--slides] [--force] | --check <spec.json>`: the report
-// command bots run (desktop/reports/cli.ts, bundled to out/report/report.cjs), then exit; synchronous,
+// command bots run (desktop/reports/cli.ts, bundled to the plugin's report.cjs), then exit; synchronous,
 // no window, no data folder.
+// The command is botling.report's (`contributes.agentCommands`), found in the plugins shipped with the app.
 const reportAt = process.argv.indexOf("--render-report");
 if (reportAt >= 0) {
-  const { runCli } = createRequire(__filename)(join(__dirname, "..", "report", "report.cjs")) as { runCli(args: string[]): number };
+  const script = appCommandScript(app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"), "--render-report");
+  if (!script) { writeSync(2, "--render-report: the botling.report plugin is not in this build.\n"); process.exit(1); }
+  const { runCli } = createRequire(__filename)(script) as { runCli(args: string[]): number };
   process.exit(runCli(process.argv.slice(reportAt + 1)));
 }
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
@@ -301,9 +305,8 @@ function coreEnvironment(): Record<string, string> {
   env.BOTLING_SHOT_COMMAND ??= `${self} --component-shot`;
   // And its plugin check (1.x: "'<botling>' --check-plugin"); a packaged build cannot run Electron as Node.
   env.BOTLING_CHECK_COMMAND ??= `${self} --check-plugin`;
-  // The report command every bot builds report pages with, and its guide (outside app.asar so bots can read it).
-  env.BOTLING_REPORT_COMMAND ??= `${self} --render-report`;
-  env.BOTLING_REPORT_DOCS ??= app.isPackaged ? join(process.resourcesPath, "report", "report-blocks.md") : join(root, "docs", "report-blocks.md");
+  // The app itself, for the commands shipped plugins give the bots (botling.report: `--render-report`; its guide is in the plugin, outside app.asar).
+  env.BOTLING_APP_COMMAND ??= self;
   // The plugins shipped with the app (step M11), outside app.asar so bots can read them too.
   env.BOTLING_BUILTIN_PLUGINS ??= app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins");
   // The fake CLIs are development's (a packaged build ships neither and always runs the real ones).
