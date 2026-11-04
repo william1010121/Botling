@@ -28,7 +28,6 @@ import { appCommandScript } from "../core/plugins/app-command";
 import { CoreClient } from "./core-client";
 import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
-import { WebPages } from "./web";
 import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { attachmentFile, attachmentTarget } from "../contract/attachment-url";
@@ -178,12 +177,6 @@ const core: CoreClient = new CoreClient({
   ledgerFile: join(dataDir, "core", "children.json"),
   env: coreEnvironment(),
   onEvent: (event) => {
-    // The web AIs' pages are main's to show: it follows the core's view of them.
-    if (event.epoch !== lastEpoch) {
-      if (lastEpoch !== null) web.coreRestarted();
-      lastEpoch = event.epoch;
-    }
-    if (event.event.type === "web.updated") web.update(event.event.web);
     if (event.event.type === 'settings.updated') applyMenu(event.event.settings.shortcuts);
     broadcast(event);
   },
@@ -236,7 +229,6 @@ const core: CoreClient = new CoreClient({
   },
 });
 
-let lastEpoch: string | null = null;
 // One install request at a time (a release's download and restart).
 let installRequestBusy = false;
 async function withInstallRequest<T>(action: () => Promise<T>): Promise<T> {
@@ -293,20 +285,6 @@ const checkForRelease = () => { void updater.check(false).then(announce, (error)
 const openedReleases: string[] = [];
 (globalThis as unknown as { __botlingOpenedReleases: string[] }).__botlingOpenedReleases = openedReleases;
 
-/** The web AIs' sessions the app opened (their cookies are flushed at quit). */
-const openedSessions = new Set<Session>();
-/** The web AIs (Gemini, ChatGPT, Claude): each in its own session, no Node, no preload (main/web.ts). */
-const web = new WebPages({
-  core,
-  note,
-  openExternal: (url) => {
-    if (!/^https?:\/\//i.test(url) || process.env.BOTLING_NO_EXTERNAL === "1") return;
-    void shell.openExternal(url).catch(() => {});
-  },
-  opened: (opened) => openedSessions.add(opened),
-});
-(globalThis as unknown as { __botlingWeb: WebPages }).__botlingWeb = web;
-
 function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
@@ -342,8 +320,6 @@ function coreEnvironment(): Record<string, string> {
   // Trial artifacts skip automatic 1.x import. Explicit imports and read-only project-lock
   // detection remain separate; ordinary packaged behavior is unchanged.
   directoryDefaults(env, process.env.HOME || homedir(), app.isPackaged, devTrial);
-  // Tests show local pages as web AIs; a packaged app lists only the real sites.
-  if (app.isPackaged) delete env.BOTLING_TEST_WEB_SITES;
   // The bots reply in the system's language unless settings name one (`AppLanguage.preferred`).
   try { env.BOTLING_LANGUAGES ??= app.getPreferredSystemLanguages().join(","); } catch { /* Intl's locale then */ }
   return env;
@@ -615,11 +591,6 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
-    case "web.place": {
-      const owner = BrowserWindow.fromWebContents(sender);
-      if (!owner) throw new Error("No window.");
-      return { shown: await web.place(owner, cmd.site, cmd.bounds) };
-    }
     default: throw new Error(`main does not handle ${cmd.type}`);
   }
 }
@@ -864,12 +835,9 @@ app.on("before-quit", (event) => {
   if (stopping) return;
   stopping = true;
   event.preventDefault();
-  // Cookies are written to disk lazily; make sure each web AI's are there before exiting.
-  const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
-  web.closeAll();
   // A plain quit keeps in-flight work: checkpoint it first (bounded), then stop. Failure only means no continuation.
   const armed = core.prepareRestart({ onlyIfBusy: true, timeoutMs: 4_000 }).catch((error) => { note(`quit continuation not saved: ${String(error)}`); core.cancelRestart(); });
-  void Promise.allSettled([armed.then(() => core.stop()), ...flushes]).then(async () => {
+  void Promise.allSettled([armed.then(() => core.stop())]).then(async () => {
     ipcMain.removeAllListeners(TEST_TRACE_CHANNEL);
     try{await traceWriter?.close();}catch(error){note('Synthetic trace flush failed: '+String(error));}
     app.exit(0);

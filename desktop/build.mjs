@@ -6,7 +6,7 @@ import { packageAgyHelper } from './scripts/package-agy-helper.mjs';
 // Web/src is bundled from its sources here; its packages (markdown-it, KaTeX, CodeMirror) come
 // from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install.
 import { build } from "esbuild";
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRenderer, readCharacters } from "./build-renderer.mjs";
@@ -56,12 +56,6 @@ packageAgyHelper(here);
 // The bots' Cute pictures beside the core, for plugins' `workspace.face` (src/core/faces.ts).
 writeFileSync(join(out, "core", "characters.json"), JSON.stringify(readCharacters(here)));
 // The report command (reports/cli.ts), its guide and its licence notices are botling.report's (builtin-plugins/botling.report/build.json).
-// The web AIs' page readers (resources/web-extractors): the core puts them in the plugin library's ccb-web-extractors and falls back to them.
-const extractors = join(here, "resources", "web-extractors");
-mkdirSync(join(out, "web-extractors"), { recursive: true });
-for (const name of readdirSync(extractors).filter((name) => name.endsWith(".js") || name.endsWith(".md"))) {
-  cpSync(join(extractors, name), join(out, "web-extractors", name));
-}
 console.log("built out/");
 }
 

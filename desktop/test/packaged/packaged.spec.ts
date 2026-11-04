@@ -108,8 +108,6 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
     // Test-only variables were dropped; the heads are the real CLIs (here: the stand-ins, never run).
     expect(output).toContain("[packaged] ignored BOTLING_AGENT, BOTLING_PLUGIN_HOST, BOTLING_SHOT_COMMAND, BOTLING_TEST_UPDATE_FEED, BOTLING_TEST_WEB_SITES");
     expect(output).toMatch(/\[core\] started epoch \S+ data .+ agent claude/);
-    // The web AIs are the real three, not the test page BOTLING_TEST_WEB_SITES named.
-    await expect(page.locator(".web-site-row .web-site-name")).toHaveText(["Gemini", "ChatGPT", "Claude"]);
     expect(existsSync(join(base, "agent-calls.log"))).toBe(false);
     // The explicitly saved opt-out is preserved: nothing was looked up.
     const updates = await post(page, { type: "updates.check", manual: false });
