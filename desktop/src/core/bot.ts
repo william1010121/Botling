@@ -5827,7 +5827,7 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
     type: clip(subagent.type, 200),
     model: clip(subagent.model, 200),
     engine: runtime?.engine === "agy" || runtime?.engine === "codex" || runtime?.engine === "claude" ? runtime.engine
-      : subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : ownerEngine ?? "claude",
+      : subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : subagent.type === "agy-worker" ? "agy" : subagent.type === "claude-worker" ? "claude" : ownerEngine ?? "claude",
     runtime: runtime ? { reasoningEffort: text(runtime.reasoningEffort), serviceTier: text(runtime.serviceTier) } : null,
     outputTokens: reportedOutputTokens(subagent),
     tokenSpeed: speedView(readTotals(subagent.speed)),
