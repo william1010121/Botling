@@ -22,6 +22,16 @@ if(['ArrowRight','ArrowDown','PageDown',' '].includes(k)){e.preventDefault();go(
 else if(['ArrowLeft','ArrowUp','PageUp'].includes(k)){e.preventDefault();go(cur()-1)}
 else if(k==='Home'){e.preventDefault();go(0)}else if(k==='End'){e.preventDefault();go(s.length-1)}});})();`;
 
+/** Click / Enter on a [data-zoom] figure shows it in a full-viewport overlay (lightbox); backdrop click or Esc closes. Inline, no network. */
+export const LIGHTBOX = `(()=>{let o=null,from=null;
+const close=()=>{if(!o)return;o.remove();o=null;from&&from.focus&&from.focus({preventScroll:true});from=null};
+const open=el=>{close();from=el;o=document.createElement('div');o.className='lb';o.setAttribute('role','dialog');o.setAttribute('aria-modal','true');o.tabIndex=-1;
+const c=el.cloneNode(true);['data-zoom','tabindex','role','style','width','height','id'].forEach(a=>c.removeAttribute(a));c.classList.add('lb-fig');c.setAttribute('role','img');
+if(c.tagName==='IMG'&&!c.alt)c.alt='';o.appendChild(c);o.addEventListener('click',close);document.body.appendChild(o);o.focus({preventScroll:true})};
+document.addEventListener('click',e=>{const t=e.target.closest&&e.target.closest('[data-zoom]');if(t&&!o){e.preventDefault();open(t)}});
+addEventListener('keydown',e=>{if(o){e.stopPropagation();if(e.key==='Escape'||e.key==='Enter'||e.key===' '){e.preventDefault();close()}return}
+const t=document.activeElement;if((e.key==='Enter'||e.key===' ')&&t&&t.matches&&t.matches('[data-zoom]')){e.preventDefault();e.stopPropagation();open(t)}},true);})();`;
+
 export const css = { tokens, base, blocks: blockCss, slides: slideCss };
 
 /** Compute layouts (elkjs) once; a failing layout turns that block into an ErrorBlock. */
@@ -55,9 +65,11 @@ export function renderV2(input: unknown, opts: { mode?: Mode } = {}): RenderResu
   errors.push(...layoutErrors);
   const slides: SlidePlan[] = planSlides(spec, registry, labels[spec.lang].continued);
   const warnings = lintSpec(spec, registry, slides);
+  const body = renderToStaticMarkup(mode === 'doc' ? <DocReport spec={spec} prepared={prepared}/> : <SlideDeck spec={spec} slides={slides} prepared={prepared}/>);
+  const zoom = body.includes('data-zoom') ? LIGHTBOX : '';
   const html = mode === 'doc'
-    ? page(spec.title, spec.lang, tokens + base + blockCss, renderToStaticMarkup(<DocReport spec={spec} prepared={prepared}/>))
-    : page(spec.title, spec.lang, tokens + base + blockCss + slideCss, renderToStaticMarkup(<SlideDeck spec={spec} slides={slides} prepared={prepared}/>), PAGER);
+    ? page(spec.title, spec.lang, tokens + base + blockCss, body, zoom)
+    : page(spec.title, spec.lang, tokens + base + blockCss + slideCss, body, PAGER + zoom);
   return { ok: errors.length === 0, errors, warnings, html, slides: slides.length, spec };
 }
 

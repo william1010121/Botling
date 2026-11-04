@@ -28,7 +28,7 @@ export const image = defineBlock({
   Doc: ({ block, ctx }) => {
     const anns: Ann[] = block.annotations ?? [];
     return <Card type="image" block={block} ctx={ctx}>
-      <div className="im"><img src={block.src} alt={block.alt}/>{anns.map((a, i) => <span key={i} className="ia" style={{ left: pct(a.x), top: pct(a.y) }} aria-hidden="true">{i + 1}</span>)}</div>
+      <div className="im"><img src={block.src} alt={block.alt} data-zoom="" tabIndex={0} role="button"/>{anns.map((a, i) => <span key={i} className="ia" style={{ left: pct(a.x), top: pct(a.y) }} aria-hidden="true">{i + 1}</span>)}</div>
       {(anns.length > 0 || block.caption) && <figcaption>{anns.length > 0 && <ol>{anns.map((a, i) => <li key={i}><i>{i + 1}</i>{a.label}</li>)}</ol>}{block.caption && <p>{block.caption}</p>}</figcaption>}
     </Card>;
   },

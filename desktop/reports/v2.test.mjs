@@ -129,6 +129,25 @@ test('every block example renders in doc and slide mode, deterministically, with
   }
 });
 
+test('lightbox: images and flow figures open enlarged; script is inline, only present with figures', async () => {
+  const img = api.blocks.find(b => b.type === 'image').examples[0];
+  for (const mode of ['doc', 'slide']) {
+    const r = await api.renderV2(spec([img, { type: 'flow', title: 'F', nodes: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b' }] }]), { mode });
+    assert.equal(r.ok, true, JSON.stringify(r.errors));
+    const d = dom(r.html);
+    const im = d.querySelector('.blk-image img');
+    assert.ok(im.hasAttribute('data-zoom') && im.getAttribute('tabindex') === '0' && im.getAttribute('role') === 'button', `${mode} img hooks`);
+    const fl = d.querySelector('svg.fl');
+    assert.ok(fl.hasAttribute('data-zoom') && fl.getAttribute('tabindex') === '0', `${mode} svg hooks`);
+    const scripts = [...d.querySelectorAll('script')].map(x => x.textContent).join('\n');
+    assert.match(scripts, /lightbox|data-zoom/); assert.match(scripts, /Escape/); assert.match(scripts, /Enter/);
+    assert.doesNotMatch(r.html, /<script[^>]*src=/);
+    assert.match(r.html, /\[data-zoom\][^{]*\{[^}]*cursor:zoom-in/); assert.match(r.html, /\.lb[^{]*\{[^}]*object-fit|object-fit:contain/);
+  }
+  const plain = await api.renderV2(spec([{ type: 'prose', text: 'x' }]), { mode: 'doc' });
+  assert.equal(dom(plain.html).querySelectorAll('script').length, 0);
+});
+
 test('colours come only from theme tokens; light and dark sets are both defined', () => {
   const css = Object.values(api.v2css).join('\n');
   assert.match(css, /prefers-color-scheme:dark/); assert.match(css, /\[data-theme="dark"\]/);
@@ -148,13 +167,13 @@ test('the four examples render clean in doc and slide mode; doc output has no sc
     assert.equal(doc.ok, true, `${f}: ${JSON.stringify(doc.errors)}`);
     assert.deepEqual(doc.warnings, [], f);
     const d = dom(doc.html);
-    assert.equal(d.querySelectorAll('script').length, 0);
+    assert.equal(d.querySelectorAll('script').length, d.querySelector('[data-zoom]') ? 1 : 0); // only the lightbox, only with figures
     assert.equal(d.querySelector('h1').textContent, s.title);
     assert.equal(d.querySelectorAll('section.sec').length, s.sections.length);
     const slides = await api.renderV2(s, { mode: 'slide' });
     const sd = dom(slides.html);
     assert.equal(sd.querySelectorAll('script').length, 1);
-    assert.ok(sd.querySelector('script').textContent.length < 1200);
+    assert.ok(sd.querySelector('script').textContent.length < 3200);
     assert.equal(sd.querySelectorAll('.sv').length, slides.slides);
     assert.ok(sd.querySelector('.m-cover') && sd.querySelector('.sv:last-child .m-closing'));
     for (const sec of s.sections.filter(x => x.takeaway)) assert.ok([...sd.querySelectorAll('.sl>h2')].some(h => h.textContent.startsWith(sec.takeaway)), sec.takeaway);
@@ -166,7 +185,7 @@ test('text is escaped everywhere, including markdown and closing tags', async ()
   const evil = '</style><script>alert(1)</script><img src=x onerror=1>';
   const r = await api.renderV2({ ...spec([{ type: 'prose', text: `**粗** ${evil}` }, { type: 'flow', title: evil, nodes: [{ id: 'a', label: evil.slice(0, 30) }, { id: 'b', label: 'B' }], edges: [{ from: 'a', to: 'b' }] }]), title: evil.slice(0, 40) }, { mode: 'slide' });
   const d = dom(r.html);
-  assert.equal(d.querySelectorAll('script').length, 1); // only the pager
+  assert.equal(d.querySelectorAll('script').length, 1); // only the pager (+ lightbox, no figures here)
   assert.equal(d.querySelectorAll('img').length, 0);
   assert.ok(d.querySelector('.blk-prose strong'));
 });

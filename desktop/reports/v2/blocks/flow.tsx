@@ -15,7 +15,7 @@ function NodeShape({ n }: { n: PlacedNode }) {
 
 function Graph({ g, ctx, cls, maxW }: { g: GraphLayout; ctx: Ctx; cls: string; maxW?: number }) {
   const label = (g.nodes.map(n => n.label).join(' → '));
-  return <svg className={`fl ${cls}`} viewBox={`0 0 ${g.w} ${g.h}`} width={g.w} height={g.h} style={{ maxWidth: maxW ?? g.w }} role="img" aria-label={label}>
+  return <svg className={`fl ${cls}`} viewBox={`0 0 ${g.w} ${g.h}`} width={g.w} height={g.h} style={{ maxWidth: maxW ?? g.w }} role="img" aria-label={label} data-zoom="" tabIndex={0}>
     <defs><marker id={`${ctx.id}-${cls}-a`} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" className="ah"/></marker></defs>
     {g.edges.map((e, i) => <path key={i} className={`edge${e.kind === 'dashed' ? ' dash' : ''}`} d={roundedPath(e.points)} markerEnd={`url(#${ctx.id}-${cls}-a)`}/>)}
     {g.edges.filter(e => e.label && e.lx !== undefined).map((e, i) => <g key={i} className="el" transform={`translate(${e.lx} ${e.ly})`}><rect width={e.lw} height={18} rx={6}/><text x={e.lw! / 2} y={13} textAnchor="middle">{e.label}</text></g>)}
