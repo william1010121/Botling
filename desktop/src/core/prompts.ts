@@ -112,6 +112,8 @@ export const workerSubBotRule = [
 export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.";
 /** What a Claude bot is told instead when its subagents are app-managed workers (the default; claude-workers.ts). */
 export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
+/** Added after CLAUDE_WORKERS_RULE for a Claude bot with app workers: it must hand real work off, not do it itself. */
+export const CLAUDE_DELEGATE_RULE = "- Any real work (building, fixing, researching, editing several files, running tests, anything beyond a few quick reads) must be handed to a worker with app_handoff; do only quick answers yourself, then end your turn.";
 const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id.";
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
 
@@ -500,7 +502,7 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
   if (workers) {
-    system = system.replace(NATIVE_SUBAGENT_LINE, CLAUDE_WORKERS_RULE).replace(NATIVE_SUB_BOT_AGENTS, "you may start your own workers with app_handoff.");
+    system = system.replace(NATIVE_SUBAGENT_LINE, `${CLAUDE_WORKERS_RULE}\n${CLAUDE_DELEGATE_RULE}`).replace(NATIVE_SUB_BOT_AGENTS, "you may start your own workers with app_handoff.");
     if (profile.role === "main") system = `${system}\n${CLAUDE_MAIN_WORKERS_LINE}`;
   }
   // Sub bots (desktop only; the Swift goldens stay as they are): a project's or bot's own bot may write handoff.md and
