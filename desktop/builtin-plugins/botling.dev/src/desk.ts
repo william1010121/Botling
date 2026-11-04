@@ -3,8 +3,9 @@
 // What it needs of the app and the bots comes in `DevBuildDeps` (host.ts gives it the plugin api's `app`), so tests give fakes.
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { pruneBackups, pruneUpdateLeftovers } from "./prune";
 import {
-  FAILURE_LIMIT, HEALTHY_AFTER_MS, HEALTH_WAIT_S, buildLabel, failures, failuresFile, finishInstall, installLog, installOutcome, prepareInstall,
+  FAILURE_LIMIT, HEALTHY_AFTER_MS, HEALTH_WAIT_S, buildLabel, failures, failuresFile, finishInstall, installLog, installOutcome, prepareInstall, updateFolder,
   readBuild, sensitiveChanges, setFailures, type BuildInfo,
 } from "./swap";
 
@@ -31,6 +32,8 @@ export interface DevBuildDeps {
   appDataDir: string | null;
   /** Where developer work goes (`devWorkRoot`); absent or null: beside the project. */
   devWork?: () => string | null;
+  /** The folder holding update leftovers (~/Applications); absent or null: they are not cleaned up. */
+  applicationsDir?: () => string | null;
   /** Starts the script detached, then asks main to quit (the core checkpoints running work first: `app.installAndRestart`). */
   launchInstaller: (command: string[], log: string) => void | Promise<void>;
   /** A PNG of the app's window, or null. */
@@ -153,6 +156,7 @@ ${appWorktree
       const timer = setTimeout(() => {
         finishInstall(this.deps.root);
         setFailures(this.deps.root, 0);
+        this.cleanAfterUpdate(state);
         const asker = this.deps.bot(state.requesterID);
         const how = "";
         main.appNotice(`Botling restarted on ${buildLabel(state.to)} (was ${buildLabel(state.from)}), installed for ${asker?.profile.name ?? "a bot"}${how}.`, undefined, undefined, { sourceID: state.requesterID });
@@ -172,6 +176,23 @@ ${appWorktree
       this.deps.bot(state.requesterID)?.relay(`(App) The build you asked to install, ${buildLabel(state.to)}, did not come up: ${outcome.reason}. Botling put ${buildLabel(state.from)} back. The install log is ${installLog(this.deps.root)}; the failed build was kept beside the app as Botling 2.app.failed. Find out why before trying again.${paused}`);
     } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
     return null;
+  }
+
+  /**
+   * The new build is up: keep only the newest two backups (never this install's rollback copy or a running build) and
+   * remove the leftovers in ~/Applications (prune.ts). Failures are logged; they never get in the way of the update.
+   */
+  private cleanAfterUpdate(state: { from: BuildInfo; to: BuildInfo; backup: string }) {
+    const protect = [state.backup, state.from.path, state.to.path, this.deps.runningBuild()?.path].filter((path): path is string => !!path);
+    try {
+      const backups = pruneBackups(join(updateFolder(this.deps.root), "backups"), { protect });
+      if (backups.removed.length) this.deps.log(`removed ${backups.removed.length} old backup(s)`);
+      const applications = this.deps.applicationsDir?.();
+      if (applications) {
+        const leftovers = pruneUpdateLeftovers(applications, { protect });
+        if (leftovers.removed.length) this.deps.log(`removed ${leftovers.removed.length} update leftover(s) from ${applications}`);
+      }
+    } catch (error) { this.deps.log(`cleanup after the update: ${(error as Error).message}`); }
   }
 
   /** Developer mode turned on again: builds get a fresh start after failures (`setDeveloperMode`). */
