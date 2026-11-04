@@ -3019,7 +3019,15 @@ export class Bot {
       const recent = recentChat(this.chat, { archive: this.paths.archive, leavingOut: null, head: this.sharesChat ? this.engine : null });
       return [this.wakeLine(turn, () => recent), this.wakeNote(), this.componentNote(), this.takeInterruptedNote(), this.engine === "claude" ? recent : "", words].filter(Boolean).join("\n\n");
     }
-    if (turn.origin === "tidy") return words;
+    if (turn.origin === "tidy") {
+      // A turn it takes in another chat (an @ call-in, a group) is a "tidy" too, but is its next turn like any other:
+      // a change to its components since it was told (Maintainer put one on its list) goes with it, not only at a wake.
+      if (turn.guest && this.componentsMayHaveChanged) {
+        const note = this.componentNote();
+        if (note) return `${note}\n\n${words}`;
+      }
+      return words;
+    }
     // Its @s still being answered or waiting their turn: status only, so a slow answer is not taken for a lost one.
     const callIns = this.options.callInNote?.();
     if (callIns) words = `${callIns}\n\n${words}`;
