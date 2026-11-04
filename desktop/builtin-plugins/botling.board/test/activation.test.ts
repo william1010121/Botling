@@ -70,6 +70,15 @@ describe("botling.board loaded into the chat page", () => {
     expect(document.querySelectorAll("#board .board-card")).toHaveLength(1);
   });
 
+  it("draws exactly one strip when the page syncs plugins twice while the first import is still running", async () => {
+    host.unload(manifest.name);
+    host.chatState(state());
+    const slowImport = async () => { await new Promise((resolve) => setTimeout(resolve, 10)); return activate; };
+    await Promise.all([host.sync([spec], slowImport), host.sync([spec], slowImport)]);
+    expect(document.querySelectorAll("#pin-area .pin-dock")).toHaveLength(1);
+    expect(document.querySelectorAll("#pin-area .pin-chip:not(.add)")).toHaveLength(1);
+  });
+
   it("is given the state the page last drew when it loads after it", async () => {
     host.unload(manifest.name);
     host.chatState(state());

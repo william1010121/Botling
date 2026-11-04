@@ -232,7 +232,17 @@ export class PluginHost {
   }
 
   /** Loads, reloads or unloads plugins so exactly `specs` run. Each is loaded from its source. */
-  async sync(specs: PluginSpec[], importer: (spec: PluginSpec) => Promise<Activate> = importModule): Promise<void> {
+  sync(specs: PluginSpec[], importer: (spec: PluginSpec) => Promise<Activate> = importModule): Promise<void> {
+    // One sync at a time: a second one that starts while the first still awaits an import would see the plugin as not loaded
+    // and activate it again, so its slots (the pin strip above the composer) were drawn twice.
+    const run = this.syncing.then(() => this.syncNow(specs, importer));
+    this.syncing = run.catch(() => {});
+    return run;
+  }
+
+  private syncing: Promise<void> = Promise.resolve();
+
+  private async syncNow(specs: PluginSpec[], importer: (spec: PluginSpec) => Promise<Activate>): Promise<void> {
     const wanted = new Map(specs.map((spec) => [spec.name, spec]));
     for (const [name, entry] of this.loaded) {
       const next = wanted.get(name);
