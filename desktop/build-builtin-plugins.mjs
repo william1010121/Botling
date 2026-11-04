@@ -7,7 +7,7 @@
 // staged beside it in the plugin's own node_modules, and the rest of the folder (package.json, components/, claude/…)
 // is copied as it is; src/, test/ and build.json stay behind.
 import { build } from "esbuild";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { thirdPartyNotices } from "./reports/licenses.mjs";
@@ -15,32 +15,53 @@ import { thirdPartyNotices } from "./reports/licenses.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const SOURCES_ONLY = new Set(["src", "test", "build.json", "node_modules"]);
 
-export async function buildBuiltinPlugins({ root = here, outdir = join(root, "out/builtin-plugins"), browser = "chrome130" } = {}) {
+/**
+ * `only` (plugin folder names): build just those, replacing only their folders in `outdir` and keeping the rest, e.g. botling.report
+ * into <data dir>/plugin-overrides, which `Botling --render-report` uses from its next call on (src/core/plugins/app-command.ts).
+ */
+export async function buildBuiltinPlugins({ root = here, outdir = join(root, "out/builtin-plugins"), browser = "chrome130", only = null } = {}) {
   root = resolve(root);
   outdir = resolve(outdir);
   const sources = join(root, "builtin-plugins");
   const nodePaths = [join(root, "node_modules")];
-  rmSync(outdir, { recursive: true, force: true });
+  const names = readdirSync(sources).filter((entry) => !entry.startsWith(".") && existsSync(join(sources, entry, "package.json"))).sort();
+  const unknown = (only ?? []).filter((name) => !names.includes(name));
+  if (unknown.length) throw new Error(`No built-in plugin named ${unknown.join(", ")}`);
+  if (!only) rmSync(outdir, { recursive: true, force: true });
   mkdirSync(outdir, { recursive: true });
-  for (const name of readdirSync(sources).filter((entry) => !entry.startsWith(".")).sort()) {
+  for (const name of only ? names.filter((entry) => only.includes(entry)) : names) {
     const source = join(sources, name);
-    if (!existsSync(join(source, "package.json"))) continue;
     const folder = join(outdir, name);
-    const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
-    cpSync(source, folder, { recursive: true, filter: (path) => !SOURCES_ONLY.has(relative(source, path).split(sep)[0]) });
-    const parts = manifest.ccb ?? {};
-    const config = readConfig(source);
-    // build.json may also map imports onto other files (`alias`, from desktop/) and load other file types as text (`loaders`).
-    const alias = Object.fromEntries(Object.entries(config.alias ?? {}).map(([name, target]) => [name, resolve(root, target)]));
-    const shared = { bundle: true, legalComments: "eof", nodePaths, alias, loader: config.loaders ?? {} };
-    if (parts.web) await build({ ...shared, entryPoints: [join(source, "src/web.ts")], format: "esm", target: browser, minify: true, outfile: join(folder, parts.web) });
-    const native = config.nativeModules ?? [];
-    if (parts.host) await build({ ...shared, entryPoints: [join(source, "src/host.ts")], platform: "node", format: "esm", target: "node20", external: native, outfile: join(folder, parts.host) });
-    for (const module of native) stageNativeModule(root, module, folder);
-    for (const bundle of config.bundles ?? []) await buildBundle(root, folder, bundle);
-    copyDeclared(root, source, folder);
+    // Built beside the old folder and swapped in, so a command run meanwhile finds the old plugin or the new one, never half of one.
+    const staging = only ? join(outdir, `.${name}.building`) : folder;
+    rmSync(staging, { recursive: true, force: true });
+    await buildPlugin(root, source, staging, nodePaths, browser);
+    if (staging !== folder) {
+      const old = join(outdir, `.${name}.old`);
+      rmSync(old, { recursive: true, force: true });
+      if (existsSync(folder)) renameSync(folder, old);
+      renameSync(staging, folder);
+      rmSync(old, { recursive: true, force: true });
+    }
   }
   return outdir;
+}
+
+/** One plugin of builtin-plugins/ (`source`) built into `folder`. */
+async function buildPlugin(root, source, folder, nodePaths, browser) {
+  const manifest = JSON.parse(readFileSync(join(source, "package.json"), "utf8"));
+  cpSync(source, folder, { recursive: true, filter: (path) => !SOURCES_ONLY.has(relative(source, path).split(sep)[0]) });
+  const parts = manifest.ccb ?? {};
+  const config = readConfig(source);
+  // build.json may also map imports onto other files (`alias`, from desktop/) and load other file types as text (`loaders`).
+  const alias = Object.fromEntries(Object.entries(config.alias ?? {}).map(([name, target]) => [name, resolve(root, target)]));
+  const shared = { bundle: true, legalComments: "eof", nodePaths, alias, loader: config.loaders ?? {} };
+  if (parts.web) await build({ ...shared, entryPoints: [join(source, "src/web.ts")], format: "esm", target: browser, minify: true, outfile: join(folder, parts.web) });
+  const native = config.nativeModules ?? [];
+  if (parts.host) await build({ ...shared, entryPoints: [join(source, "src/host.ts")], platform: "node", format: "esm", target: "node20", external: native, outfile: join(folder, parts.host) });
+  for (const module of native) stageNativeModule(root, module, folder);
+  for (const bundle of config.bundles ?? []) await buildBundle(root, folder, bundle);
+  copyDeclared(root, source, folder);
 }
 
 /**
@@ -107,4 +128,9 @@ function copyDeclared(root, source, target) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) console.log("built", await buildBuiltinPlugins());
+// `node build-builtin-plugins.mjs [--only <name>[,<name>…] --out <folder>]` (npm run build:plugins -- …).
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const option = (flag) => { const at = process.argv.indexOf(flag); return at > 0 ? process.argv[at + 1] : undefined; };
+  const only = option("--only")?.split(",").filter(Boolean) ?? null, out = option("--out");
+  console.log("built", await buildBuiltinPlugins({ ...(out ? { outdir: resolve(out) } : {}), only }));
+}

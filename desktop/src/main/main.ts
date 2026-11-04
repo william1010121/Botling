@@ -72,10 +72,13 @@ if (inspectAt >= 0) {
 // `--render-report <spec.json> <…/artifacts/page.html> [--slides] [--force] | --check <spec.json>`: the report
 // command bots run (desktop/reports/cli.ts, bundled to the plugin's report.cjs), then exit; synchronous,
 // no window, no data folder.
-// The command is botling.report's (`contributes.agentCommands`), found in the plugins shipped with the app.
+// The command is botling.report's (`contributes.agentCommands`), found in the plugins shipped with the app, or in
+// <data dir>/plugin-overrides/botling.report when that folder has one (a rebuilt renderer, used from the next call on: app-command.ts).
+// A bot runs this with the core's environment, where BOTLING_DATA_DIR is <data dir>/core and BOTLING_APP_DATA_DIR the data dir.
 const reportAt = process.argv.indexOf("--render-report");
 if (reportAt >= 0) {
-  const script = appCommandScript(app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"), "--render-report");
+  const overrides = join(resolve(process.env.BOTLING_APP_DATA_DIR || process.env.BOTLING_DATA_DIR || (app.isPackaged ? packagedDataDir(app.getPath("appData"), devTrial) : join(root, ".data"))), "plugin-overrides");
+  const script = appCommandScript(app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"), "--render-report", overrides);
   if (!script) { writeSync(2, "--render-report: the botling.report plugin is not in this build.\n"); process.exit(1); }
   const { runCli } = createRequire(__filename)(script) as { runCli(args: string[]): number };
   process.exit(runCli(process.argv.slice(reportAt + 1)));

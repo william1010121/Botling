@@ -1,15 +1,18 @@
 // `Botling 2 --render-report`: main finds the script in the plugins shipped with the app (plugins/app-command.ts), by the flag a plugin
-// declares in `contributes.agentCommands`, never in the user's plugin library.
+// declares in `contributes.agentCommands`, never in the user's plugin library; an override folder (<data dir>/plugin-overrides) may
+// only replace that same plugin's script for that same flag.
 import { describe, expect, it } from "vitest";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tempDir } from "../helpers";
 import { appCommandScript } from "../../src/core/plugins/app-command";
 
-const plugin = (root: string, name: string, commands: unknown) => {
-  mkdirSync(join(root, name), { recursive: true });
-  writeFileSync(join(root, name, "package.json"), JSON.stringify({ name, version: "1.0.0", ccb: { contributes: { agentCommands: commands } } }));
+const plugin = (root: string, name: string, commands: unknown, folder = name) => {
+  mkdirSync(join(root, folder), { recursive: true });
+  writeFileSync(join(root, folder, "package.json"), JSON.stringify({ name, version: "1.0.0", ccb: { contributes: { agentCommands: commands } } }));
+  for (const command of commands as { script: string }[]) if (!command.script.includes("..")) { mkdirSync(dirname(join(root, folder, command.script)), { recursive: true }); writeFileSync(join(root, folder, command.script), ""); }
 };
+const RENDER = [{ id: "botling.report.render", script: "report.cjs", flag: "--render-report" }];
 
 describe("appCommandScript", () => {
   it("finds the script of the plugin that declares the flag", () => {
@@ -26,5 +29,30 @@ describe("appCommandScript", () => {
     plugin(root, "botling.bad", [{ id: "botling.bad.x", script: "../escape.cjs", flag: "--render-report" }]);
     mkdirSync(join(root, "not-a-plugin"));
     expect(appCommandScript(root, "--render-report")).toBeNull();
+  });
+
+  it("takes the override folder's script for the same plugin and flag, falling back to the shipped one", () => {
+    const shipped = tempDir("app-command-shipped"), overrides = tempDir("app-command-overrides");
+    plugin(shipped, "botling.report", RENDER);
+    expect(appCommandScript(shipped, "--render-report", join(overrides, "missing"))).toBe(join(shipped, "botling.report", "report.cjs"));
+    // Matched by manifest name, whatever the folder is called.
+    plugin(overrides, "botling.report", [{ ...RENDER[0], script: "dist/report.cjs" }], "my-report");
+    expect(appCommandScript(shipped, "--render-report", overrides)).toBe(join(overrides, "my-report", "dist", "report.cjs"));
+    expect(appCommandScript(shipped, "--render-report")).toBe(join(shipped, "botling.report", "report.cjs"));
+  });
+
+  it("never lets an override add a flag, take another plugin's flag or name a script that is not there", () => {
+    const shipped = tempDir("app-command-shipped-2"), overrides = tempDir("app-command-overrides-2");
+    plugin(shipped, "botling.report", RENDER);
+    plugin(overrides, "evil.report", RENDER);
+    plugin(overrides, "botling.report", [{ id: "botling.report.new", script: "new.cjs", flag: "--new-flag" }], "botling.report-new");
+    expect(appCommandScript(shipped, "--render-report", overrides)).toBe(join(shipped, "botling.report", "report.cjs"));
+    expect(appCommandScript(shipped, "--new-flag", overrides)).toBeNull();
+    const gone = tempDir("app-command-overrides-3");
+    mkdirSync(join(gone, "botling.report"));
+    writeFileSync(join(gone, "botling.report", "package.json"), JSON.stringify({ name: "botling.report", ccb: { contributes: { agentCommands: RENDER } } }));
+    expect(appCommandScript(shipped, "--render-report", gone)).toBe(join(shipped, "botling.report", "report.cjs"));
+    plugin(gone, "botling.report", [{ ...RENDER[0], script: "../escape.cjs" }], "escape");
+    expect(appCommandScript(shipped, "--render-report", gone)).toBe(join(shipped, "botling.report", "report.cjs"));
   });
 });

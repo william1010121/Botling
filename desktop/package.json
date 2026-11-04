@@ -7,6 +7,7 @@
   "main": "out/main/main.cjs",
   "scripts": {
     "build": "node build.mjs",
+    "build:plugins": "node build-builtin-plugins.mjs",
     "report": "node scripts/report.mjs",
     "test:reports": "node --test reports/report.test.mjs reports/v2.test.mjs",
     "dev": "node build.mjs && BOTLING_AGENT=claude electron .",
