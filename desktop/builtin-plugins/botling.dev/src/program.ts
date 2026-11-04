@@ -3,6 +3,8 @@
 // the install itself (the script, the card, rolling back) is desk.ts and swap.ts, unchanged from when the core had it.
 // What only the app can do is asked of it through the privileged `app` api (core/plugins/app-seam.ts): checkpoint the work
 // under way and quit so the script can swap the build, a picture of the window, a card in the main bot's chat.
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AppState, BotInfo, BotlingApi, ReplyTag } from "../../../../Web/host/src/api";
 import { DevBuilds, type DeskBot } from "./desk";
 import { HEALTHY_AFTER_MS, devWorkRoot, readBuild } from "./swap";
@@ -29,6 +31,7 @@ export class Program {
       get appPid() { return program.state?.pid ?? null; },
       get appDataDir() { return program.state?.appDataDir ?? null; },
       devWork: options.devWork ?? (() => devWorkRoot()),
+      applicationsDir: () => join(homedir(), "Applications"),
       launchInstaller: (command, log) => api.app.installAndRestart(command, log),
       captureWindow: () => api.app.captureWindow().catch(() => null),
       log: (line) => this.log(line),
