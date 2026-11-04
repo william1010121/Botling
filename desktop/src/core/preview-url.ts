@@ -27,3 +27,16 @@ export function previewFile(url: string): string | null {
   for (let folder = dirname(real); folder !== "/" && folder; folder = dirname(folder)) if (basename(folder) === "artifacts") return real;
   return null;
 }
+
+/** A Markdown file's title: its first `# heading` (outside code fences), or null. Reads at most the first 64 KiB. */
+export function markdownTitle(text: string): string | null {
+  let fence: string | null = null;
+  for (const line of text.slice(0, 65536).split(/\r?\n/)) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) { if (!fence) fence = marker[0]!; else if (marker[0] === fence) fence = null; continue; }
+    if (fence) continue;
+    const heading = /^\s{0,3}#\s+(.+?)\s*#*\s*$/.exec(line)?.[1]?.trim();
+    if (heading) return heading.replace(/[*_`]/g, "") || null;
+  }
+  return null;
+}

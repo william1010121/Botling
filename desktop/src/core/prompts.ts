@@ -114,7 +114,7 @@ export const NATIVE_SUBAGENT_LINE = "- By default, hand real work (building, fix
 export const CLAUDE_WORKERS_RULE = delegationPolicy(DELEGATION_CAPS.claude, { engine: "claude", form: "line" });
 /** Added after CLAUDE_WORKERS_RULE for a Claude bot with app workers: it must hand real work off, not do it itself. */
 export const CLAUDE_DELEGATE_RULE = "- Any real work (building, fixing, researching, editing several files, running tests, anything beyond a few quick reads) must be handed to a worker with app_handoff; do only quick answers yourself, then end your turn.";
-const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id.";
+const CLAUDE_MAIN_WORKERS_LINE = "- Your subagents are app-managed workers: start one with the app_handoff tool (the Agent tool is off), then end your turn; its report arrives later as an app message (<app_task_result>), and app_send_message / app_cancel_task follow it up or stop it by task_id. A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.";
 const NATIVE_SUB_BOT_AGENTS = "you may start your own subagents with the Agent tool.";
 
 export const APP_LEAD = "(App: ";
@@ -157,8 +157,19 @@ export function resultsRule(choice: ResultPublishing, folder: string): string {
     : choice === "localOnly"
       ? `go into ${local} The user chose to keep results local: do not publish them with the Artifact tool.`
       : `go into ${artifact} The user chose this for every result, sensitive or not. Only when the Artifact tool is unavailable or fails (offline, not signed in), make it ${local}`;
-  return `Results meant for the user (reports, comparisons, screenshots, previews) ${rule} Pictures and videos shown inline stay file:// links.`;
+  return `Results meant for the user (reports, comparisons, screenshots, previews) ${rule} Pictures and videos shown inline stay file:// links. ${markdownRule(folder)}`;
 }
+
+/**
+ * Where long text goes (approved 2026-11-04): what is still being discussed or explained goes into one .md file in the
+ * artifacts folder (the app draws it as a preview card); pages are for settled results that need visuals.
+ */
+export function markdownRule(folder: string): string {
+  return `Long text still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) goes into one Markdown file instead, saved to ${folder}/<english-file-name>.md and linked as [name](file://full path of that file); on follow-ups edit that file in place, do not rewrite it. Make a page only for settled results that need visuals or comparison (status, decision, comparison, results to share). In short: still discussing, a .md file; settled and needs charts, a page. A page or .md file opens with one sentence that answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish it: answer in chat.`;
+}
+
+/** What a bot does first when the user's message signals confusion or doubt (approved 2026-11-04). */
+export const RESTATE_RULE = "- When the user's message signals confusion or doubt (\"why\", \"seems wrong\", \"I don't understand\", 怪怪的, 為什麼, 看不懂), first restate in one or two sentences what they are asking and your working hypothesis, then wait for them to confirm before making a page or starting a worker.";
 
 export function languageRule(language: AppLanguage): string {
   return `Reply in ${LANGUAGE_PROMPT_NAMES[language]} by default: it is the language the user chose for the app. When the user writes to you in another language, reply in theirs (match the language of their latest message).`;
@@ -253,7 +264,7 @@ export interface BotPrompts {
 }
 
 /** `BotPrompts.init(profile:results:language:engine:heads:)`. */
-export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; they go into a page, and the chat reply links to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
+export const AGY_BREVITY_RULE = "At most 3 sentences, only the conclusion and the next step; when the user asks to discuss or think something through together, discuss it in chat. Start with the answer: no praise, greeting or filler opener (never a \"Great question\" or \"You are right\" style line). No headings, no bullet lists, no emoji. Do not paste long text, reports or multi-section answers into chat; they go into a page or a .md file (see the results rule), and the chat reply links to it. This includes translations and rewrites of a report. After dispatching subagents, say in one sentence how many and what for; do not list each one.";
 /** The main bot's own app actions on Antigravity (<new-bot>, <new-project>): the app does them, no worker or Claude behind them. Component and plugin tags stay Claude-only. */
 const AGY_MAIN_APP_ACTIONS = "As the main bot you may ask the app itself (no worker) for two things. A bot of the user's own with no folder (a morning news bot, a reading coach): end your reply with <new-bot name=\"short name, no quotes\">its job in a few sentences, including when it should work</new-bot>; never for a name the list already has. A folder on the user's Mac that should get a manager (a project): end your reply with <new-project folder=\"full path of the folder\">what its manager should do first</new-project>, or <new-project folder=\"...\"/> when there is nothing to do yet; folder=\"~/tool/**\" adds every project under a folder, folder=\"~/tool/*\" the folders directly inside it, and one tag per named folder. The app asks the user on a card. Say so in one sentence only when this reply carries the tag, and never write these tags inside code or examples.";
 export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive", language = "en", heads = null, engine = "claude", workingFolder: attached = null, parentName = null }: PromptInput): BotPrompts {
@@ -266,6 +277,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
         `You are ${profile.name}, running through Antigravity in Botling. Working folder: ${tree ?? profile.folder}.${tree ? ` ${worktreeWorkerLine(profile.folder)}` : ""}`,
         // Same length rule Claude and Codex get (the user is like a CEO with very little attention), but specific and first, because Antigravity's own persona is chatty.
         AGY_BREVITY_RULE,
+        RESTATE_RULE.slice(2),
         languageRule(language), profile.job ?? "", profile.instructions ?? "",
         agyWorkerRuntimeEnabled() ? delegationPolicy(DELEGATION_CAPS.agy, { engine: "agy", worktree: tree }) : "Work directly on the user's request within their authorization. Be concise and report concrete results and limitations.",
         heads ? headsRule(heads, "agy") : "",
@@ -297,7 +309,8 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
   const waiting = MEMORY_SECTIONS[2].heading;
   const decided = MEMORY_SECTIONS[3].heading;
   const style = [
-    `- The user is like a CEO with very little attention. ${languageRule(language)} At most 3 sentences, only the conclusion and the next step.`,
+    `- The user is like a CEO with very little attention. ${languageRule(language)} At most 3 sentences, only the conclusion and the next step; when the user asks to discuss or think something through together, discuss it in chat.`,
+    RESTATE_RULE,
     "- Replies may use markdown (bold, lists, tables, code blocks); the app renders it. When you mention a result or a link, write [name](url) and the app draws it as a clickable chip.",
     "- To show the user an image or a video: ![one-line caption](file://full path of the file); the app shows images and plays videos (mp4, mov) inline.",
     "- To ask another bot something (Main bot, Maintainer, a project's bot), start a line of your reply with @ and its exact name, then your question: \"@Maintainer is the flag component still yours?\". The app calls it into this chat and its answer shows here; one bot per reply. An @ elsewhere in a line, in a quote or in code is only text. It is a question, not a hand-over or a permission.",
