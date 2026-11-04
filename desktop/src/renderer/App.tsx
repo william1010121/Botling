@@ -36,6 +36,7 @@ import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDial
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
+import { WebPane, WebPanel, WebRail } from "./Web";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
  * header (the phone's bot list button) and the left column's foot in place of the desktop's add,
@@ -60,6 +61,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
+  /** The web AI shown in the chat column instead of a chat, if one is. */
+  const [webSite, setWebSite] = useState<string | null>(null);
+  const site = webSite ? view.web?.sites.find((candidate) => candidate.id === webSite) ?? null : null;
   /** The New bot form, a row's menu, and the bot being asked about before it is removed. */
   const [makingBot, setMakingBot] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -185,15 +189,15 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
   // A plugin's page that a program part opened in the right panel's place (`ui.takeover`), while that bot's chat is shown.
-  const takeover = !web && !watching && bot && view.plugins?.takeover?.botId === bot.id ? view.plugins.takeover : null;
+  const takeover = !web && !watching && !site && bot && view.plugins?.takeover?.botId === bot.id ? view.plugins.takeover : null;
   const takeoverView = takeover ? view.plugins?.takeovers?.find((entry) => entry.plugin === takeover.plugin && entry.id === takeover.view) ?? null : null;
   // A plugin's tab in the main area (plan W2), the one this bot showed last; it takes the whiteboard's place too.
-  const tabs = useMemo(() => (bot && !web ? mainTabsFor(view.plugins, bot) : []), [bot, web, view.plugins]);
+  const tabs = useMemo(() => (bot && !web && !site ? mainTabsFor(view.plugins, bot) : []), [bot, web, view.plugins]);
   // botling.whiteboard's tab; with that plugin off there is no whiteboard.
   const boardTab = bot?.role === "main" ? tabs.find((candidate) => candidate.plugin === WHITEBOARD_PLUGIN) ?? null : null;
-  const remembered = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
+  const remembered = bot && !watching && !site ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
   // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice is kept for the next start.
-  const tab = remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
+  const tab = remembered ?? (boardTab && whiteboardOn && !watching && !site ? boardTab : null);
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -201,11 +205,24 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // A card's command waiting for your OK (from the chat page or a plugin's right panel): this page's own sheet asks.
   const approval = useApprovalSheet(client, view.settings?.effectiveLanguage ?? null, fail);
 
-  /** A bot's chat again. */
+  /** A bot's chat again (and no site). */
   const selectBot = useCallback((botId: string) => {
     setError(null);
+    if (webSite) { setWebSite(null); void client.request({ type: "web.leave" }).catch(() => {}); }
     void store.select(botId);
-  }, [client, store]);
+  }, [client, store, webSite]);
+
+  // Web AIs: a site's own row (a fresh question unless it shows one), a conversation, New question, a row's ✓, Ask Main bot.
+  const openWeb = useCallback((siteId: string, conversationId?: string) => {
+    setError(null);
+    setWebSite(siteId);
+    store.watch(null);
+    void client.request({ type: "web.open", site: siteId, ...(conversationId ? { conversationId } : {}) }).catch(fail);
+  }, [client, store, fail]);
+  const askMainBot = useCallback((siteId: string, conversationId: string) => {
+    setError(null);
+    void client.request({ type: "web.ask", site: siteId, conversationId }).then((result) => { setWebSite(null); void store.select(result.botId); }, fail);
+  }, [client, store, fail]);
 
   // "Add project": main's folder picker; the new (or existing) project's chat is shown.
   const addProject = useCallback(() => {
@@ -221,9 +238,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     if (target.kind === "bot") { void store.select(target.botId); return; }
     const show = () => client.request({ type: "subagent.view", botId, subagentId: row.id })
       .then((result) => { if (store.getView().chat?.botId === botId) store.watch(result.subagent); }, fail);
+    if (webSite) { setWebSite(null); void client.request({ type: "web.leave" }).catch(() => {}); }
     if (store.getView().chat?.botId === botId) void show();
     else void store.select(botId).then(show);
-  }, [client, store, fail]);
+  }, [client, store, fail, webSite]);
   const settleSubagent = useCallback((botId: string, row: SubagentRowView, settled: boolean) => {
     void client.request({ type: "subagent.settle", botId, subagentId: row.id, settled }).catch(fail);
   }, [client, fail]);
@@ -340,7 +358,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           title={view.pluginPanel.title} onClose={() => store.closePluginPanel()} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />
       )}
       {railCollapsed ? (
-        <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!watching ? chat?.botId ?? null : null}
+        <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!site && !watching ? chat?.botId ?? null : null}
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
           onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
           onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }}
@@ -363,7 +381,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             if (!hits.length) return <div className="rail-empty">No bots match</div>;
             return hits.map((candidate) => (
               <div key={candidate.id} className="bot-entry">
-                  <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={candidate.id === chat?.botId && !watching}
+                  <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={!site && candidate.id === chat?.botId && !watching}
                     waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
                     counts={botCounts(candidate, view.bots, view.waiting, candidate.id === chat?.botId && !watching)}
                     onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} />
@@ -374,7 +392,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
               {(() => {
                 const look = view.settings?.botLook ?? "original";
                 const split = railSplit(view.bots, pinned, idle);
-                const shownId = !watching ? chat?.botId ?? null : null;
+                const shownId = !watching && !site ? chat?.botId ?? null : null;
                 const hasPeek = (candidate: BotView) => { const card = peekCard(candidate, view.bots, view.waiting, now); return card.subBots.length > 0 || card.agents.length > 0; };
                 const row = (candidate: BotView, away: boolean) => {
                   const counts = botCounts(candidate, view.bots, view.waiting, candidate.id === shownId);
@@ -382,7 +400,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                     <BotRow
                       bot={candidate}
                       look={look}
-                      selected={candidate.id === chat?.botId && !watching}
+                      selected={!site && candidate.id === chat?.botId && !watching}
                       waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
                       counts={counts}
                       onSelect={(from) => {
@@ -426,6 +444,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                     </button>
                     {idleOpen && split.idle.map((candidate) => <div key={candidate.id} className="bot-entry">{row(candidate, true)}</div>)}
                   </div>}
+                  {view.web && view.web.sites.length > 0 && (
+                    <WebRail web={view.web} shown={site?.id ?? null} onOpen={openWeb}
+                      onSettle={(siteId, conversationId) => void client.request({ type: "web.settle", site: siteId, conversationId }).catch(fail)} />
+                  )}
                 </>;
               })()}
             </>
@@ -456,7 +478,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       </aside>
       )}
       <section className="chat-pane">
-        <div className={`chat-column${tab ? " main-tab-on" : ""}`}>
+        {site && (
+          <>
+            <header className="chat-header drag"><span className="chat-title">{site.name}</span></header>
+            <WebPane client={client} site={site} onError={fail} />
+          </>
+        )}
+        <div className={`chat-column${tab ? " main-tab-on" : ""}`} hidden={!!site}>
         <header className="chat-header drag">
           {web?.headerLead}
           {bot && <span className="chat-title">{bot.parent ? <SubBotTitle bot={bot} parent={view.bots.find((candidate) => candidate.id === bot.parent) ?? null} onOpenParent={selectBot} /> : bot.name}</span>}
@@ -504,11 +532,15 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
-      {bot && takeover && takeoverView && (
+      {site && (
+        <WebPanel site={site} onOpen={(conversationId) => openWeb(site.id, conversationId)} onAsk={(conversationId) => askMainBot(site.id, conversationId)}
+          onNew={() => void client.request({ type: "web.new", site: site.id }).catch(fail)} />
+      )}
+      {bot && !site && takeover && takeoverView && (
         <TakeoverPage key={`${takeover.plugin}/${takeover.view}/${bot.id}`} client={client} plugin={takeover.plugin} view={takeover.view} title={takeoverView.title} wide={takeover.wide} botId={bot.id}
           plugins={view.plugins} onError={fail} onAsk={approval.ask} />
       )}
-      {bot && !(takeover && takeoverView) && (
+      {bot && !site && !(takeover && takeoverView) && (
         <TaskDetails
           onDrawerSettings={() => setBotSettings(true)}
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}

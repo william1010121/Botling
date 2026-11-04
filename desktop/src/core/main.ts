@@ -291,6 +291,8 @@ const core = new Core({
   runCommand,
   // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
   firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
+  // The app's copy of the web AIs' page readers (build.mjs copies 1.x's Resources/web-extractors).
+  webExtractors: join(__dirname, "..", "web-extractors"),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   app: appBridge,
 });
