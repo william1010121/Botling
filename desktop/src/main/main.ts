@@ -17,6 +17,7 @@ import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer
 import { autoUpdater } from "electron-updater";
 import { CHECK_EVERY_MS, Updater } from "./updates";
 import { reportPreviewURL, shellReportNavigation } from "./report-preview";
+import { markdownResponse, markdownStyles } from "./markdown-page";
 import { previewResponse } from "./preview-response";
 import {InputTraceWriter,syntheticTraceContext,acceptTraceIPC} from "./input-trace";
 import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
@@ -94,6 +95,8 @@ const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { a
 const rendererDir = renderer.directory;
 /** Developer builds serve pages with no-store, so nothing cached is reused. */
 const rendererNoStore = renderer.development;
+/** The chat's and KaTeX's stylesheets a Markdown result page is drawn with (read on first use). */
+const markdownPageStyles = markdownStyles(rendererDir, app.isPackaged ? join(process.resourcesPath, "builtin-plugins") : join(root, "out", "builtin-plugins"));
 if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell, Alt+Cmd+R the chat page`);
 // Preloads re-run on each page reload; a developer build dir (--botling-preload-dir) can supply them.
 const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
@@ -773,6 +776,8 @@ function serveApp() {
       const file = previewFile(request.url);
       if (!file) return new Response("Not found", { status: 404 });
       try {
+        // A Markdown result is drawn as the chat draws a reply (markdown-page.ts), never served as text.
+        if (/\.(md|markdown)$/i.test(file)) return markdownResponse(file, markdownPageStyles(), request.method);
         return await previewResponse(file, request);
       } catch {
         return new Response("Not found", { status: 404 });

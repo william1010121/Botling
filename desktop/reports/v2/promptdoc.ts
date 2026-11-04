@@ -55,7 +55,7 @@ export function promptDoc(): string {
   out.push('> Generated from `desktop/reports/v2/promptdoc.ts` and `desktop/reports/v2/blocks` by `node desktop/scripts/report.mjs --docs`. Do not edit by hand.', '');
   out.push('A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick the blocks; layout, colours, fonts and the slide version are decided by the renderer. Write key points only.', '');
   out.push('## Rules', '');
-  out.push('1. **Answer first.** `tldr` ≤ 3 sentences states the conclusion; `next` ≤ 3 one-line steps.',
+  out.push('1. **Answer first.** The first `tldr` sentence answers the user\'s question ("You asked X; the answer is Y"); if it cannot, do not publish the page: answer in chat. `tldr` ≤ 3 sentences states the conclusion; `next` ≤ 3 one-line steps.',
     '2. **Headline = takeaway.** Every section has `takeaway`: its conclusion as one sentence (≈ 22 CJK chars / 15 words). Reading only takeaways gives the argument. `title` is the short topic label.',
     '3. **One idea per section, ≤ 2 charts per section, ≤ 8 in the report.** Visuals for data, prose for reasoning, bullets only for lists (≤ 6, ≤ 2 levels).',
     '4. **Every chart has an action title** (`title`: what it shows, not what it is) and direct labels; never repeat a KPI as a chart.',

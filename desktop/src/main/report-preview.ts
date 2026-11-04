@@ -6,7 +6,7 @@ export function reportPreviewURL(url: string): string {
   let file = "";
   try { file = url.startsWith("file:") ? fileURLToPath(url) : url; } catch {}
   const src = previewURL(file);
-  if (!/\.html?$/i.test(file) || !previewFile(src)) throw new Error("That report page is not available in artifacts.");
+  if (!/\.(html?|md|markdown)$/i.test(file) || !previewFile(src)) throw new Error("That report page is not available in artifacts.");
   return src;
 }
 

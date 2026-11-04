@@ -5,14 +5,17 @@
 // from `botling-card://preview/<path>` — only files inside a folder called `artifacts` (pictures beside a
 // page load too), checked again by main through symlinks (src/main/main.ts).
 //
+// A Markdown result (`artifacts/x.md`, long text still being discussed) gets the same card: main renders it as the chat
+// does (src/main/markdown-page.ts), and its title is its first `# heading`.
+//
 // 2.0 differences: no pictures of the pages (1.x's PageShots): a card always runs its page in a frame; and a
 // page named by a `<show>` card outside an `artifacts` folder is not served (1.x serves that one file).
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { PAGE_COMPONENT, previewURL } from "./preview-url";
+import { markdownTitle, PAGE_COMPONENT, previewURL } from "./preview-url";
 
-export { PREVIEW_ORIGIN, previewFile, previewURL } from "./preview-url";
+export { markdownTitle, PREVIEW_ORIGIN, previewFile, previewURL } from "./preview-url";
 
 export { PAGE_COMPONENT };
 /** At most this many pages are previewed under one message (`perMessage`). */
@@ -26,11 +29,28 @@ export function filePath(text: string): string | null {
   return value.startsWith("/") ? resolve(value) : null;
 }
 
-/** A result page: an .html file in an `artifacts` folder (`PagePreview.isArtifactPage`). */
-export function isArtifactPage(path: string): boolean {
-  if (!/\.html?$/i.test(path)) return false;
+const inArtifacts = (path: string) => {
   for (let folder = dirname(path); folder !== "/" && folder; folder = dirname(folder)) if (basename(folder) === "artifacts") return true;
   return false;
+};
+
+/** A result page: an .html file in an `artifacts` folder (`PagePreview.isArtifactPage`). */
+export function isArtifactPage(path: string): boolean {
+  return /\.html?$/i.test(path) && inArtifacts(path);
+}
+
+/** A Markdown result: an .md file in an `artifacts` folder. */
+export function isArtifactMarkdown(path: string): boolean {
+  return /\.(md|markdown)$/i.test(path) && inArtifacts(path);
+}
+
+/** A result a preview card shows: a page or a Markdown file in an `artifacts` folder. */
+export function isArtifactResult(path: string): boolean {
+  return isArtifactPage(path) || isArtifactMarkdown(path);
+}
+
+function fileTitle(file: string): string | null {
+  try { return markdownTitle(readFileSync(file, "utf8").slice(0, 65536)); } catch { return null; }
 }
 
 /** The page a preview card's data names (`PagePreview.page(inCard:)`). */
@@ -76,15 +96,18 @@ export function cardData(data: string): string {
   object.url = pathToFileURL(file).href;
   object.name = basename(file);
   delete object.shot;
-  if (exists && /^\.html?$/i.test(extname(file)) && isArtifactPage(file)) object.src = previewURL(file, Math.trunc(stat!.mtimeMs / 1000));
+  if (exists && isArtifactResult(file)) object.src = previewURL(file, Math.trunc(stat!.mtimeMs / 1000));
   else delete object.src;
   object.missing = !exists;
-  if (typeof object.title !== "string" || !object.title.trim()) object.title = basename(file, extname(file));
+  // A Markdown result is titled by its first `# heading`.
+  const heading = exists && isArtifactMarkdown(file) ? fileTitle(file) : null;
+  if (heading) object.title = heading;
+  else if (typeof object.title !== "string" || !object.title.trim()) object.title = basename(file, extname(file));
   return sorted(object);
 }
 
 /**
- * Cards for the result pages a message links to, `[name](file://…/artifacts/x.html)`, that are there on disk:
+ * Cards for the result pages a message links to, `[name](file://…/artifacts/x.html)` or `x.md`, that are there on disk:
  * at most three, each page once, none for `skipping` (pages its `<show>` cards show already) (`linkedCards`).
  */
 export function linkedCards(text: string, skipping: string[] = []): string[] {
@@ -95,7 +118,7 @@ export function linkedCards(text: string, skipping: string[] = []): string[] {
     if (cards.length >= PER_MESSAGE) break;
     if (!match[2]!.toLowerCase().startsWith("file:")) continue;
     const file = filePath(match[2]!);
-    if (!file || !isArtifactPage(file) || seen.has(file)) continue;
+    if (!file || !isArtifactResult(file) || seen.has(file)) continue;
     try { if (!statSync(file).isFile()) continue; } catch { continue; }
     seen.add(file);
     cards.push(cardData(JSON.stringify({ path: file, title: match[1]!.trim() })));

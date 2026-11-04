@@ -5,7 +5,7 @@ description: "Build a report page (status, decision, investigation, comparison, 
 
 # Report pages
 
-Any detailed or long report goes into one report page, never into chat. Build the page from a ReportSpec v2 JSON, never by writing HTML.
+A settled result that needs visuals or comparison (status, decision, comparison, results to share) goes into one report page, never into chat; long text still being discussed or explained goes into a .md file instead. The page opens with one sentence that answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish it: answer in chat. Build the page from a ReportSpec v2 JSON, never by writing HTML.
 
 1. Read `report-blocks.md` in this folder: the format, the blocks and the writing rules.
 2. Write the spec as `spec.json`.

@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botPrompts, DEFAULT_HEADS, headsRule, isPlainOK, PAUSE_NOTE, RELAY_PREFIX, TIDY_LEAD, WAKE_LEAD, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { botPrompts, DEFAULT_HEADS, headsRule, isPlainOK, markdownRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, WAKE_LEAD, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -52,6 +52,16 @@ function withDesktopReportGuidance(swift: string, worker: boolean): string {
   return expected;
 }
 
+// Approved desktop-only routing rules (2026-11-04): discuss in chat when asked, restate a doubtful question first,
+// long text still being discussed goes into a .md file, and a worker's follow-ups go to that same worker.
+const OLD_FOLLOW_UP = "Use app_send_message with task_id and message for that follow-up; do not append a separate feature, rename, or policy fix to it merely to reuse context or keep one writer.";
+function withApprovedRouting(swift: string): string {
+  let expected = swift.replace(/(only the conclusion and the next step)\.\n/, `$1; when the user asks to discuss or think something through together, discuss it in chat.\n${RESTATE_RULE}\n`);
+  expected = expected.replace(/saved to ([^\n]+?)\/<english-file-name>\.html([\s\S]*?)Pictures and videos shown inline stay file:\/\/ links\./g,
+    (_all, folder: string, between: string) => `saved to ${folder}/<english-file-name>.html${between}Pictures and videos shown inline stay file:// links. ${markdownRule(folder)}`);
+  return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
+}
+
 describe("prompts: the Swift app's strings", () => {
   it("has golden strings for every configuration", () => {
     expect(golden.prompts.length).toBeGreaterThanOrEqual(13);
@@ -63,7 +73,7 @@ describe("prompts: the Swift app's strings", () => {
       for (const key of ["system", "headsRule", "wake", "tidy", "handoff", "resume"] as const) {
         // Desktop collaboration intentionally replaces the legacy broadcast rule only.
         if (key === "headsRule") continue;
-        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(entry.output[key].replace(entry.output.headsRule, ""));
+        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(withApprovedRouting(entry.output[key].replace(entry.output.headsRule, "")));
       }
     });
   }
@@ -76,7 +86,7 @@ describe("prompts: the Swift app's strings", () => {
           ? withDesktopReportGuidance(entry.output[key], key === "codexWorkerSystem")
           : entry.output[key];
         if (key === "headsRule") continue;
-        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(expected.replace(entry.output.headsRule, ""));
+        expect(ours[key].replace(ours.headsRule, ""), `${entry.name}.${key}`).toBe(withApprovedRouting(expected.replace(entry.output.headsRule, "")));
       }
     });
   }
