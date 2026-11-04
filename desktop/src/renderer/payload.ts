@@ -374,7 +374,7 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     slashCommands: [],
     subagent: {
       id: subagent.id, title: subagent.title, owner: subagent.owner, ...(subagent.host ? { host: subagent.host } : {}), status: subagent.status, type: subagent.type,
-      engine: subagent.engine ?? (subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : bot.heads[0] ?? "claude"), model: subagent.model,
+      engine: subagent.engine ?? (subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : subagent.type === "agy-worker" ? "agy" : subagent.type === "claude-worker" ? "claude" : bot.heads[0] ?? "claude"), model: subagent.model,
       runtime: subagent.runtime ?? null, outputTokens: subagent.outputTokens ?? null, tokenSpeed: subagent.tokenSpeed ?? null,
       startedAt: new Date(subagent.startedAt).getTime(), endedAt: subagent.endedAt ? new Date(subagent.endedAt).getTime() : null,
     },

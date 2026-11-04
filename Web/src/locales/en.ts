@@ -148,6 +148,9 @@ export const en = {
   "subagent.engine.claude": "Claude subagent",
   "subagent.engine.codex": "Codex subagent",
   "subagent.engine.codexWorker": "Codex worker",
+  "subagent.engine.agy": "Antigravity subagent",
+  "subagent.engine.agyWorker": "Antigravity worker",
+  "subagent.engine.claudeWorker": "Claude worker",
   "panel.notReady": "This panel is not ready yet.",
   // markdown.ts
   "markdown.video": "Video",

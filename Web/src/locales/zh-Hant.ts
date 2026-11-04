@@ -147,6 +147,9 @@ export const zhHant: Dictionary = {
   "subagent.engine.claude": "Claude 子代理",
   "subagent.engine.codex": "Codex 子代理",
   "subagent.engine.codexWorker": "Codex 工作 agent",
+  "subagent.engine.agy": "Antigravity 子代理",
+  "subagent.engine.agyWorker": "Antigravity 工作 agent",
+  "subagent.engine.claudeWorker": "Claude 工作 agent",
   "panel.notReady": "這個面板還沒準備好。",
   // markdown.ts
   "markdown.video": "影片",

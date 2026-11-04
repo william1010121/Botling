@@ -67,7 +67,8 @@ function prose(text: string, failed: boolean): HTMLElement {
 /** The header: "Main › Review PR #7  [Claude subagent]   Sonnet · general-purpose · running". */
 export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): void {
   const { title, owner, status, type } = header;
-  const engine = header.engine === "codex" ? "codex" : "claude";
+  const engine = header.engine === "codex" || header.engine === "agy" ? header.engine : "claude";
+  const worker = type?.endsWith("-worker") === true;
   bar.className = status;
   bar.replaceChildren();
   const back = document.createElement("button");
@@ -85,7 +86,7 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
   name.textContent = title;
   const badge = document.createElement("span");
   badge.className = `engine-badge ${engine}`;
-  badge.textContent = t(type === "codex-worker" && engine === "codex" ? "subagent.engine.codexWorker" : `subagent.engine.${engine}` as Key);
+  badge.textContent = t((worker ? `subagent.engine.${engine}Worker` : `subagent.engine.${engine}`) as Key);
   const meta = document.createElement("span");
   meta.className = "meta";
   const reported = header.runtime?.reasoningEffort?.trim();
@@ -96,7 +97,7 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
   const fast = tier === "fast" || tier === "priority" ? t("subagent.fastOn")
     : tier === "default" || tier === "flex" ? t("subagent.fastOff")
     : tier === "ultrafast" ? "Ultrafast" : t("subagent.fastUnknown");
-  meta.textContent = [header.host ? `Host: ${header.host}` : null, header.model, type === "codex-worker" ? null : type, t("subagent.effort", { effort }), engine === "codex" ? fast : null,
+  meta.textContent = [header.host ? `Host: ${header.host}` : null, header.model, worker ? null : type, t("subagent.effort", { effort }), engine === "codex" ? fast : null,
     statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
   meta.title = t("subagent.runtimeHelp") + (engine === "codex" && tier ? ` (${tier})` : "");
   bar.append(back, separator, name, badge, meta, subagentSpeedElement(header));
