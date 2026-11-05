@@ -46,6 +46,27 @@ describe("Codex head: one coordinator thread", () => {
     expect(out.params("turn/start")).toMatchObject({ input: [{ type: "text", text: "Reply with the single word: hello" }], effort: "high" });
   });
 
+  it("gives the app-server the plugins' skill folders before the first thread, and starts it whatever the answer", () => {
+    const session = new CodexSession(config({ skillRoots: ["/data/plugin-guides/botling.report/skills"] }));
+    session.start();
+    session.send("hi");
+    const [init] = recordings.helloAndApproval!;
+    const first = new Out(session.receive(init!));
+    expect(first.methods).toEqual(["initialized", "skills/extraRoots/set"]);
+    expect(first.params("skills/extraRoots/set")).toEqual({ extraRoots: ["/data/plugin-guides/botling.report/skills"] });
+    const id = first.writes.find((w) => w.method === "skills/extraRoots/set").id;
+    expect(new Out(session.receive(JSON.stringify({ id, result: {} }))).methods).toEqual(["thread/start"]);
+    // An older Codex that does not know the method: the thread still starts (without the skills).
+    const old = new CodexSession(config({ skillRoots: ["/x"] }));
+    old.start();
+    const refused = new Out(old.receive(init!)).writes.find((w) => w.method === "skills/extraRoots/set").id;
+    expect(new Out(old.receive(JSON.stringify({ id: refused, error: { code: -32601, message: "unknown method" } }))).methods).toEqual(["thread/start"]);
+    // No folders: nothing asked.
+    const plain = new CodexSession(config({ skillRoots: [] }));
+    plain.start();
+    expect(new Out(plain.receive(init!)).methods).toEqual(["initialized", "thread/start"]);
+  });
+
   it("its other folders are writable roots of the workspace sandbox, as in 1.x; none adds nothing", () => {
     const session = new CodexSession(config({ writableRoots: ["/tmp/other/.bot", "/tmp/shared"] }));
     session.start();

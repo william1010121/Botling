@@ -22,6 +22,11 @@ export interface AgyConfig {
   model?: string | null;
   effort?: string | null;
   systemPrompt?: string;
+  /**
+   * Plugins' skill folders (engine-skills.ts): written as the profile's `config/skills.json`, so this head and its workers
+   * (which inherit them) load the skills natively. None: no skills.json.
+   */
+  skillRoots?: string[];
   /** Separate execution instructions; never inherit the coordinator policy. */
   workerInstructions?: string;
 }

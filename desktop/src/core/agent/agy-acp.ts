@@ -5,7 +5,7 @@ import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } fr
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync, realpathSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
 import type { AgyConfig } from "./agy";
 import type { HeadHandlers } from "./head";
@@ -22,6 +22,16 @@ import { AGY_LOCAL_TOOLS, AgyMcpBridge, verifyAgyFileHelper } from "./agy-mcp";
 import { DEFAULT_SPEC_WRITERS, maySpecWrite } from "../spec-guard";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 
+/**
+ * The plugins' skills for an app-owned profile (engine-skills.ts): `<home>/config/skills.json`, the global customization
+ * root's skills config (GEMINI_HOME is `home`), with one entry per skill folder, each scanned one level deep. No folders:
+ * the file is removed, so a plugin turned off leaves nothing behind. Only this file: the user's own ~/.gemini is never read.
+ */
+export function writeAgySkills(home: string, roots: readonly string[]) {
+  const file = join(home, "config/skills.json");
+  if (!roots.length) { rmSync(file, { force: true }); return; }
+  writeFileSync(file, `${JSON.stringify({ entries: roots.map((path) => ({ path })) }, null, 2)}\n`, { mode: 0o600 });
+}
 export const ACP_VERSION = "1.4.3";
 export const ACP_SERVER_SHA = "1251927db3e21f3d693fd042d6890d82f65eb00587e97f1f3d8f0d798e7f0954";
 export const ACP_HARNESS_SHA = "9e8fdc6e20a3262ca0a771850ca4a8414ca839a642cc964ec5c547cc2c33c200";
@@ -402,6 +412,7 @@ export class AgyAcpHead {
     mkdirSync(join(home, "config"), { recursive: true, mode: 0o700 });
     writeFileSync(join(home, "config/hooks.json"), "{}", { mode: 0o600 });
     writeFileSync(join(home, "config/mcp_config.json"), "{}", { mode: 0o600 });
+    writeAgySkills(home, this.config.skillRoots ?? []);
     // App-owned profile only. Never import the user's CLI/global hooks, policies, or allow caches.
     writeFileSync(join(home, "antigravity-acp/settings.json"), JSON.stringify({ auth: { type: "oauth-personal" } }), { mode: 0o600 });
     writeFileSync(join(home, "antigravity-acp/trusted_workspaces.json"), JSON.stringify({ trusted: [], untrusted: [cwd] }), { mode: 0o600 });

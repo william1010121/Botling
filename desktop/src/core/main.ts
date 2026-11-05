@@ -106,6 +106,8 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     bypassPermissions: session.codexBypassPermissions === true,
     // Its other folders (the main bot: every bot's inbox; Maintainer: folders you let it use) are writable, as in 1.x.
     writableRoots: session.addDirs ?? [],
+    // Plugins' skills (engine-skills.ts), as Codex skills of its app-server.
+    skillRoots: session.skillRoots ?? [],
     ...(session.specWriters ? { specWriters: session.specWriters } : {}),
   };
   if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };

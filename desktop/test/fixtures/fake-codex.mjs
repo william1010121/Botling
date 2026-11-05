@@ -357,6 +357,10 @@ lines.on("line", (line) => {
       return out({ id, result: { userAgent: "claudecodebot/0.163.0-fake", platformFamily: "unix", platformOs: "macos" } });
     case "initialized":
       return;
+    case "skills/extraRoots/set":
+      // The plugins' skill folders the head gives before its first thread (plugins/engine-skills.ts).
+      log("", "skill-roots", JSON.stringify(params.extraRoots ?? []));
+      return out({ id, result: {} });
     case "model/list":
       return out({ id, result: { data: [
         { id: "gpt-6-luna", displayName: "GPT-6 Luna", isDefault: true, hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
