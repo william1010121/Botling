@@ -96,4 +96,11 @@ describe("command_lifecycle", () => {
     expect(parseLine(JSON.stringify({ type: "command_lifecycle", command_uuid: id, state: "finished" }))).toEqual([]);
     expect(parseLine(JSON.stringify({ type: "command_lifecycle", state: "started" }))).toEqual([]);
   });
+
+  it("reads its end too (claude 2.1.318): a message taken into the turn under way gets only 'completed' (or 'cancelled'), never 'started'", () => {
+    const id = "D8EA3991-3FD8-4116-BE54-FABD00E84BB3";
+    for (const state of ["completed", "cancelled", "discarded", "refused"] as const) {
+      expect(parseLine(JSON.stringify({ type: "command_lifecycle", command_uuid: id, state, uuid: "x" }))).toEqual([{ kind: "command", id: id.toLowerCase(), state }]);
+    }
+  });
 });

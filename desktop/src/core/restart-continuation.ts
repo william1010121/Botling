@@ -40,6 +40,26 @@ export interface RestartEntry extends SwapEntry {
 }
 interface RestartIntent { v: 1; id: string; phase: "preparing" | "ready"; entries: RestartEntry[]; at?: number }
 
+/**
+ * The chat notice for an entry that was not continued. Its queued messages never reached the provider, and nothing sends
+ * them now (the entry is blocked as a whole), so the notice names them: the user's words and workers' reports are not
+ * lost without a word.
+ */
+export function restartPausedNotice(entry: RestartEntry, reason: string): string {
+  const head = `Restart continuation paused (${entry.engine}, ${entry.botId}): ${reason}`;
+  const waiting = entry.queued ?? [];
+  if (!waiting.length) return head;
+  const shown = waiting.slice(0, 5).map((q) => {
+    const words = q.words.replace(/\s+/g, " ").trim();
+    const task = /^<app_task_result\b[^>]*\btask_id="([^"]+)"/.exec(words)?.[1];
+    const what = /^<app_task_result\b/.test(words) ? `a worker's report${task ? ` (task ${task})` : ""}`
+      : `${q.origin === "user" ? "your message" : "an app message"} "${words.length > 80 ? `${words.slice(0, 80)}…` : words}"`;
+    return `- ${what}`;
+  });
+  if (waiting.length > shown.length) shown.push(`- and ${waiting.length - shown.length} more`);
+  return `${head}\n${waiting.length === 1 ? "This message was" : `These ${waiting.length} messages were`} waiting and were not sent; send again what is still needed:\n${shown.join("\n")}`;
+}
+
 function validEntry(e: RestartEntry): boolean {
   return !!e && typeof e.botId === "string" && ["claude", "codex", "agy"].includes(e.engine)
     && typeof e.sessionId === "string" && e.sessionId.length > 0 && typeof e.continue === "boolean"

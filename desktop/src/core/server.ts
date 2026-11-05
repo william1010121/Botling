@@ -2,7 +2,7 @@ import { agyPermissionSessions, changeAgyPermissions } from "./agent/agy-permiss
 import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
 import { ProjectFiles } from "./project-files";
-import { RestartJournal } from './restart-continuation';
+import { RestartJournal, restartPausedNotice } from './restart-continuation';
 import { specTrace } from './spec-trace';
 import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
@@ -573,7 +573,7 @@ export class Core {
     }, (entry,reason) => {
       const bot=this.bots.get(entry.botId);
       try { bot?.retainRestartIdentity(entry); } catch(error) { this.log(`restart identity: ${String(error)}`); }
-      (bot ?? this.bots.get(MAIN_BOT_ID))?.appNotice(`Restart continuation paused (${entry.engine}, ${entry.botId}): ${reason}`);
+      (bot ?? this.bots.get(MAIN_BOT_ID))?.appNotice(restartPausedNotice(entry, reason));
       this.log(`restart ${entry.botId}: ${reason}`);
     }); } catch(error){
       this.log(String(error));
@@ -1362,6 +1362,8 @@ First write a test that shows this, then fix it.`;
 
   /** Owner app turns carrying a report: turn id → the report (delivered once that turn starts). */
   private reportTurns = new Map<string, { agentId: string; run: number }>();
+  /** The turns that began while a report was being handed over (`deliverAgentReport`). */
+  private reportStarts: Set<string> | null = null;
   /** Reports handed to an owner in this run of the core (redelivery after a restart goes once per run). */
   private reportsHanded = new Set<string>();
 
@@ -1385,13 +1387,20 @@ First write a test that shows this, then fix it.`;
     if (!owner) return;
     const statusFile = isDetached(record) ? this.writeAgentStatus(record, true) : record.summary.statusFile;
     const from = record.owner.history.at(-1)?.botId ?? record.host.botId;
-    const turnId = owner.appMessage(agentReportNote({
-      engine: record.engine, title: record.summary.description || "Agent", from: this.agentBotName(from), host: this.agentBotName(record.host.botId),
-      run: report.run, status: record.state === "failed" ? "failed" : record.state === "stopped" ? "stopped" : "completed", report: record.summary.lastReport ?? "", agentId, statusFile,
-    }));
+    // A free owner begins the turn (turn.started) before appMessage returns its id: those starts are caught here.
+    const started = new Set<string>();
+    this.reportStarts = started;
+    let turnId: string | null;
+    try {
+      turnId = owner.appMessage(agentReportNote({
+        engine: record.engine, title: record.summary.description || "Agent", from: this.agentBotName(from), host: this.agentBotName(record.host.botId),
+        run: report.run, status: record.state === "failed" ? "failed" : record.state === "stopped" ? "stopped" : "completed", report: record.summary.lastReport ?? "", agentId, statusFile,
+      }));
+    } finally { this.reportStarts = null; }
     if (!turnId) return;
     this.reportsHanded.add(key);
-    this.reportTurns.set(turnId, { agentId, run: report.run });
+    if (started.has(turnId)) this.agents.reportDelivered(agentId, report.run);
+    else this.reportTurns.set(turnId, { agentId, run: report.run });
   }
 
   /** Words left for an agent whose host could not take them while it worked: sent now that its run ended. */
@@ -2311,6 +2320,7 @@ First write a test that shows this, then fix it.`;
     }
     // An owner's turn with an agent's report began: that report is delivered.
     if (event.type === "turn.started") {
+      this.reportStarts?.add(event.turnId);
       const report = this.reportTurns.get(event.turnId);
       if (report) { this.reportTurns.delete(event.turnId); this.agents.reportDelivered(report.agentId, report.run); }
     }

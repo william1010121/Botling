@@ -74,7 +74,7 @@ import {
 } from "./heads";
 import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall, type ScheduleCancellation } from "./session-schedules";
 import { addSample, readTotals, speedView, type RequestEvent, type SpeedTotals } from "./token-speed";
-import { ReplyText, type StreamItem } from "./agent/stream";
+import { commandEnded, ReplyText, type CommandState, type StreamItem } from "./agent/stream";
 import {
   applyingReaction, archiveAll, archiveLine, characterCount, characterPrefix, compareReactions, reactionIntro, reactionUpdate, recentChat,
   REACTION_PALETTE, reportNote, seenReactions, type SeenReactions,
@@ -2776,6 +2776,30 @@ export class Bot {
     this.log("claude read your line after its turn ended: it answers it in a turn of its own");
   }
 
+  /**
+   * claude is done with a message the app sent it (`command_lifecycle`'s end). A message it took into the turn under way
+   * ("absorbed_mid_turn") gets no "started" and no result of its own: only this, before that turn's result. A turn of ours
+   * set aside for it (deferred) would otherwise wait for a turn that never comes, and everything after it with it.
+   * A turn under way that it ends is left to the result that follows (that result is its answer).
+   */
+  private commandEnded(head: AgentHead, id: string, state: CommandState) {
+    // Words steered into a turn, or the other head's words: read in there, nothing more comes for them.
+    this.steered.delete(id);
+    this.contextSent.delete(id);
+    const deferred = this.deferred;
+    if (!deferred || deferred.head !== head || (deferred.userId ?? deferred.messageId).toLowerCase() !== id) return;
+    this.deferred = null;
+    // Stopped by you meanwhile: closed already, and claude has nothing of it left to interrupt.
+    if (!deferred.open) return;
+    const status: Status = state === "completed" ? "done" : "stopped";
+    deferred.open = false;
+    this.emit({ type: "turn.finished", botId: this.id, turnId: deferred.id, messageId: deferred.messageId, status, text: "" });
+    this.finished.set(deferred.id, status);
+    deferred.resolve(status);
+    this.log(state === "completed" ? "claude took a message into the turn under way: it gets no turn of its own" : `claude dropped a message it had taken into a turn (${state})`);
+    this.updated();
+  }
+
   /** Makes `turn` the one under way and sends it (waking the bot if it sleeps). */
   private begin(turn: Turn, head?: AgentHead) {
     this.turn = turn;
@@ -3324,6 +3348,7 @@ export class Bot {
     }
     if (item.kind === "rateLimits") { this.options.rateLimits?.(item.engine, item.limits); return; }
     if (item.kind === "command") {
+      if (commandEnded(item.state)) { this.commandEnded(head, item.id, item.state); return; }
       const steered = this.steered.get(item.id);
       if (steered) {
         if (item.state === "started") { this.steered.delete(item.id); this.steeredStarted(head, steered); }

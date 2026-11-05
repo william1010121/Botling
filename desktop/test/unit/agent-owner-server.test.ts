@@ -3,6 +3,7 @@
 // the owner, the host's turns do not hear of it, an undelivered report is handed over again after a restart.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Core } from "../../src/core/server";
+import { Bot } from "../../src/core/bot";
 import { MAIN_BOT_ID } from "../../src/core/store/records";
 import { fixture, messages, notices, OTHER, PROJECT, relays, rows, stubTurns, turns, W1, W2 } from "../agent-owner-fake";
 
@@ -29,6 +30,27 @@ describe.each(["codex", "agy", "claude"] as const)("a worker hosted by a %s bot,
     expect(f.registry.get(moved.agentId)!.relay.report).toEqual({ run: 1, delivered: false });
     (f.core as any).event({ type: "turn.started", botId: OTHER, turnId: `turn-${turns}`, messageId: "m", head: "claude" });
     expect(f.registry.get(moved.agentId)!.relay.report).toEqual({ run: 1, delivered: true });
+  });
+
+  it("a report whose turn starts at once (an idle owner) is delivered, so no restart hands it over again", async () => {
+    const f = open();
+    const moved = await f.core.moveAgent(PROJECT, W1, { kind: "bot", botId: OTHER });
+    // As the real Bot does when it is free: its turn begins (turn.started) inside appMessage, before the turn id comes back.
+    vi.spyOn(Bot.prototype, "appMessage").mockImplementation(function (this: Bot, text: string) {
+      messages.push({ id: this.id, text });
+      const turnId = `turn-now-${messages.length}`;
+      (f.core as any).event({ type: "turn.started", botId: this.id, turnId, messageId: "m", head: "claude" });
+      return turnId;
+    });
+    (f.bots.get(PROJECT) as any).workerReported({ kind: "workerReport", id: W1, run: 1, engine, status: "completed", report: "Done once." });
+    expect(messages.filter((m) => m.id === OTHER)).toHaveLength(1);
+    expect(f.registry.get(moved.agentId)!.relay.report).toEqual({ run: 1, delivered: true });
+    await f.core.shutdown(); opened.pop();
+    messages.length = 0;
+    const again = new Core({ dataDir: f.dir, headConfig() { throw new Error("No agent allowed"); }, emit() {}, deferStartup: true, routineTickMs: 0, componentScanMs: 0, waitingScanMs: 0, watchMs: 0, quitTidyMs: 0 });
+    opened.push(again);
+    (again as any).reconcileAgents(true);
+    expect(messages.filter((m) => m.id === OTHER)).toEqual([]);
   });
 
   it("an undelivered report is handed to the owner again after a restart, once", async () => {

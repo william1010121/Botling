@@ -10,6 +10,12 @@ import type { SubagentRuntime, SubagentExecution, PreviousRunEnd } from "../suba
 import { scheduleResult, type ScheduleResult } from "../session-schedules";
 import { isConnectionLoss } from "../network-resume";
 
+/** A queued message's states on claude's stdout (`command_lifecycle`): the last four are its end. */
+export const COMMAND_STATES = ["queued", "started", "completed", "cancelled", "discarded", "refused"] as const;
+export type CommandState = (typeof COMMAND_STATES)[number];
+/** The message is done with: it will get no turn (more) of its own. */
+export const commandEnded = (state: CommandState): boolean => state !== "queued" && state !== "started";
+
 export type StreamItem =
   | { kind: "scheduleResult"; id: string; result: ScheduleResult; parent: string | null }
   | { kind: "init"; sessionId: string }
@@ -58,7 +64,7 @@ export type StreamItem =
   | { kind: "unsupportedRequest"; requestId: string; subtype: string }
   | { kind: "controlResponse"; requestId: string }
   /** A message sent with a `uuid` (`command_lifecycle`): read into claude's queue, or its own turn starts. */
-  | { kind: "command"; id: string; state: "queued" | "started" }
+  | { kind: "command"; id: string; state: CommandState }
   /**
    * The turn ended. `how`: how the engine says it ended (worker-core classifyRun reads it); `failedTools`: failed tool
    * results in the turn, for engines that count them. `ok` stays for callers not on classifyRun yet.
@@ -294,9 +300,11 @@ export function parseLine(line: string): StreamItem[] {
       return [{ kind: "unsupportedRequest", requestId, subtype: String(request.subtype ?? "") }];
     }
     case "command_lifecycle": {
-      // A message sent with a `uuid`: queued when claude reads it, started when its turn begins (StreamEvent.swift).
+      // A message sent with a `uuid`: queued when claude reads it, started when its turn begins (StreamEvent.swift), then one
+      // end. A message claude takes into the turn under way ("absorbed_mid_turn") may get no "started", only its end, which
+      // comes before that turn's result (claude 2.1.318's command_lifecycle).
       const id = typeof message.command_uuid === "string" ? message.command_uuid.toLowerCase() : null;
-      const state = message.state === "queued" || message.state === "started" ? message.state : null;
+      const state = (COMMAND_STATES as readonly unknown[]).includes(message.state) ? message.state as CommandState : null;
       return id && state ? [{ kind: "command", id, state }] : [];
     }
     case "control_cancel_request":

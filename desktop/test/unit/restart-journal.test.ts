@@ -1,7 +1,7 @@
 import {expect,it,vi} from 'vitest';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {RestartJournal,RESTART_FILE,RESTART_MAX_AGE_MS,type RestartEntry} from '../../src/core/restart-continuation';
+import {RestartJournal,RESTART_FILE,RESTART_MAX_AGE_MS,restartPausedNotice,type RestartEntry} from '../../src/core/restart-continuation';
 import {tempDir} from '../helpers';
 const entry=(botId:string):RestartEntry=>({botId,engine:'claude',sessionId:'same-session',continue:true,queued:[]});
 it('persists multiple original owners and claims each exactly once across boots',()=>{
@@ -43,4 +43,13 @@ it('a ready journal older than the max age is never resumed',()=>{
 it('a fresh ready journal is resumed',()=>{
  const dir=tempDir('restart-fresh'),j=new RestartJournal(dir);j.prepare([entry('one')]);j.ready();
  const send=vi.fn();new RestartJournal(dir).recover(send,vi.fn());expect(send).toHaveBeenCalledOnce();
+});
+it('a paused entry names the messages that waited behind it, which nothing sends now (2026-11-05: two of yours and a worker report)',()=>{
+ const q=(words:string,origin:'user'|'app')=>({words,origin,userId:origin==='user'?'U':null,turnId:'t',messageId:'m',handoffId:null,conducted:false});
+ const text=restartPausedNotice({...entry('bot'),queued:[q('<app_task_result task_id="0af0673d" run="1" engine="claude" status="completed">\nReport</app_task_result>','app'),q('Web page readers 這一個處理到哪裡了。','user')]},'Prompt delivery has no confirmed response yet.');
+ expect(text).toMatch(/^Restart continuation paused \(claude, bot\): Prompt delivery has no confirmed response yet\.\n/);
+ expect(text).toContain('These 2 messages were waiting and were not sent');
+ expect(text).toContain("- a worker's report (task 0af0673d)");
+ expect(text).toContain('- your message "Web page readers 這一個處理到哪裡了。"');
+ expect(restartPausedNotice(entry('bot'),'why')).toBe('Restart continuation paused (claude, bot): why');
 });

@@ -33,6 +33,7 @@ Queued messages retain their original turn and message IDs; interrupted replies 
 - Monitored commands and uncertain callback delivery are never replayed.
 
 Pending permissions, unknown prompt delivery, running tools, paused/deferred work, and unsupported children produce explicit notices.
+A blocked entry's queued messages (never sent) are not delivered either; its notice lists them so the user can send again what is still needed.
 The original conversation identity and permission-request text remain available; stale process approval handles are not automatically approved.
 No operating-system process is claimed to survive restart.
 

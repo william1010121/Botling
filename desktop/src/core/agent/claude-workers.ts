@@ -24,7 +24,7 @@ import { appTools } from "../app-tools/registry";
 import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
-import type { StreamItem } from "./stream";
+import { commandEnded, type StreamItem } from "./stream";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
@@ -303,6 +303,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (event) { run.emit(event); return; }
     switch (item.kind) {
       case "command":
+        // Its end with no "started": read into the turn under way, before that turn's result (nothing more to wait for).
+        if (commandEnded(item.state)) { proc.queued.delete(item.id); return; }
         if (item.state !== "started" || !proc.queued.delete(item.id)) return;
         // "started" after the turn's result: a turn of its own (init follows), the run goes on until its result.
         // Before the result it was read into the turn under way (no init, no result of its own): nothing more to wait for.
