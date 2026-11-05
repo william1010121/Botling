@@ -71,6 +71,7 @@ function fakeWorld() {
       ignoreWaiting: (botId, text) => { known(botId); log.ignored.push([botId, text]); },
       pendingApprovals: (botId) => { known(botId); return [{ tool: "Bash", text: "ls", at: null }]; },
       face: (botId, look) => { known(botId); return `data:image/svg+xml;base64,${look}`; },
+      current: () => ({ botId: "main", engine: "claude", sessionId: "S1", heads: [{ engine: "claude", sessionId: "S1" }], view: "tab", tab: "botling.whiteboard/board" }),
     },
     workspaceWatch: (on) => { log.watching.push(on); },
   };
@@ -408,6 +409,8 @@ describe("workspace for plugins (plan W1)", () => {
     expect(await ask("workspace.waiting", { plugin: "board" })).toEqual({ items: [], doing: {} });
     expect(await ask("workspace.pendingApprovals", { plugin: "board", bot: "main" })).toEqual([{ tool: "Bash", text: "ls", at: null }]);
     expect(await ask("workspace.face", { plugin: "board", bot: "main", look: "cute" })).toBe("data:image/svg+xml;base64,cute");
+    expect(await ask("workspace.current", { plugin: "board" })).toEqual({ botId: "main", engine: "claude", sessionId: "S1", heads: [{ engine: "claude", sessionId: "S1" }], view: "tab", tab: "botling.whiteboard/board" });
+    await expect(ask("workspace.current", { plugin: "ghost" })).rejects.toThrow("not running");
     await expect(ask("workspace.face", { plugin: "board", bot: "main", look: "scary" })).rejects.toThrow(/Not a request/);
     await expect(ask("workspace.memory", { plugin: "board", bot: "B9" })).rejects.toThrow("No such bot.");
     await expect(ask("workspace.bots", { plugin: "ghost" })).rejects.toThrow("not running");

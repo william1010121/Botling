@@ -255,4 +255,27 @@ describe("the plugin host", () => {
     writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\n- The theme is back up.\n");
     await until(async () => (await notices(c)).includes(`Board: memory ${PROJECT} The theme is back up.`), { timeout: 15_000 });
   });
+
+  it("workspace.current: a plugin reads the chat the main window shows and hears when it switches", async () => {
+    const dir = tempDir("plugin-host");
+    const PROJECT = "B0000000-0000-4000-8000-000000000A12";
+    const folder = join(tempDir("plugin-host-proj"), "Shop");
+    mkdirSync(folder, { recursive: true });
+    saveProjectRow(dir, { id: PROJECT, name: "Shop", folder, avatar: "triangle" });
+    hostPlugin(dir, "usage", `export function activate(api) {
+      api.workspace.onChange((change) => {
+        if (change.kinds.includes("current")) api.workspace.current().then((now) => api.notify("current " + (now ? now.botId + " " + now.engine + " " + now.view + " " + now.tab + " " + typeof now.sessionId : "none")));
+      });
+      api.commands.register("usage.current", () => api.workspace.current());
+    }`, {}, { displayName: "Usage" });
+    const c = core(dir);
+    expect(await until(() => c.call({ type: "plugins.command", id: "usage.current" }).then((r) => r, () => null), { timeout: 15_000 })).toEqual({ result: null });
+    await c.call({ type: "chat.shown", botId: MAIN, view: "tab", tab: "botling.whiteboard/board" });
+    await until(async () => (await notices(c)).includes("Usage: current main claude tab botling.whiteboard/board object"), { timeout: 15_000 });
+    expect((await c.call({ type: "plugins.command", id: "usage.current" })).result).toMatchObject({ botId: "main", view: "tab", sessionId: null, heads: [{ engine: "claude", sessionId: null }] });
+    await c.call({ type: "chat.shown", botId: PROJECT, view: "chat", tab: "ignored/tab" });
+    await until(async () => (await notices(c)).includes(`Usage: current ${PROJECT} claude chat null object`), { timeout: 15_000 });
+    await c.call({ type: "chat.shown", botId: null, view: "chat", tab: null });
+    await until(async () => (await notices(c)).includes("Usage: current none"), { timeout: 15_000 });
+  });
 });

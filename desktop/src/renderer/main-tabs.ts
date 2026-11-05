@@ -37,6 +37,14 @@ export function shownTab(tabs: MainTab[], remembered: string | undefined): MainT
   return (remembered && tabs.find((tab) => tabKey(tab) === remembered)) || null;
 }
 
+/** What the main window tells the core it shows (`chat.shown`, for plugins' `workspace.current`). */
+export function shownChat(botId: string | null, shown: { subagent: boolean; tab: MainTab | null; board: boolean }): { type: "chat.shown"; botId: string | null; view: "chat" | "board" | "tab" | "subagent"; tab: string | null } {
+  if (!botId) return { type: "chat.shown", botId: null, view: "chat", tab: null };
+  if (shown.subagent) return { type: "chat.shown", botId, view: "subagent", tab: null };
+  if (shown.tab) return { type: "chat.shown", botId, view: "tab", tab: tabKey(shown.tab) };
+  return { type: "chat.shown", botId, view: shown.board ? "board" : "chat", tab: null };
+}
+
 /** The bot a plugin names in botling.openChat / openResult ("main": the main bot, as plugins see it), if it is there. */
 export function namedBot(bots: Pick<BotView, "id" | "role">[], botId: string): string | null {
   const bot = botId === "main" ? bots.find((candidate) => candidate.role === "main") : bots.find((candidate) => candidate.id === botId);

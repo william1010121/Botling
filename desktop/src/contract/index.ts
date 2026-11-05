@@ -892,6 +892,11 @@ export const Command = z.discriminatedUnion("type", [
   /** Core-only membership lookup: no chat payload or component rendering. */
   z.strictObject({ type: z.literal("link.authorize"), source:z.enum(["user","component"]).optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
+  /**
+   * Main window only: the chat on screen now (null: none) and which of its views — its chat, the Board, a plugin's
+   * main tab (`tab`: "<plugin>/<view id>") or a subagent's run. Plugins read it with `workspace.current`.
+   */
+  z.strictObject({ type: z.literal("chat.shown"), botId: botId.nullable(), view: z.enum(["chat", "board", "tab", "subagent"]), tab: z.string().min(1).max(400).nullable() }),
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
   z.strictObject({ type: z.literal("turn.await"), botId, turnId: id }),
@@ -1042,7 +1047,7 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "turn.stop", "turn.await",
+  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
@@ -1132,6 +1137,7 @@ export interface Results {
   "task.output": { text: string };
   "subagent.view": { subagent: SubagentView };
   "chat.read": { read: true };
+  "chat.shown": { shown: true };
   "turn.stop": { stopped: boolean; killed: number[]; forced: boolean };
   "turn.await": { status: z.infer<typeof MessageState> };
   "routines.list": { routines: RoutineView[]; error: string | null };

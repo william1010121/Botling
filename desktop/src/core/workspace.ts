@@ -9,7 +9,7 @@
 // reads is at least that new and no later change goes untold (spec/models/workspace).
 import type { TaskView, WaitingView } from "../contract";
 
-export const WORKSPACE_KINDS = ["bots", "tasks", "memory", "waiting", "results"] as const;
+export const WORKSPACE_KINDS = ["bots", "tasks", "memory", "waiting", "results", "current"] as const;
 export type WorkspaceKind = (typeof WORKSPACE_KINDS)[number];
 
 /** The event the host is sent when the workspace changed; a plugin listens with `workspace.onChange`. */
@@ -52,6 +52,37 @@ export interface DoneDayView { day: string; done: number; manual: number }
 export interface ResultLink { label: string; url: string }
 export interface PendingApproval { tool: string; text: string; at: string | null }
 
+/**
+ * The chat the user has open in the main window (`workspace.current`; kind "current" in `onChange`, naming the bot
+ * shown before and the one shown now). The renderer says so (`chat.shown`); null until it has, or with no chat shown.
+ */
+export interface CurrentChat {
+  /** As in `bots` ("main": the main bot). */
+  botId: string;
+  /** Its primary head, as in `bots`. */
+  engine: "claude" | "codex" | "agy";
+  /** That head's session (Claude: the session id its log file is named by; Codex: the thread id); null: none started yet. */
+  sessionId: string | null;
+  /** Every head of the chat and its session, the primary first. */
+  heads: { engine: "claude" | "codex" | "agy"; sessionId: string | null }[];
+  /** What the main area shows of it: the chat, the Board, a plugin's tab, or a subagent's run. */
+  view: "chat" | "board" | "tab" | "subagent";
+  /** With view "tab": "<plugin>/<view id>"; otherwise null. */
+  tab: string | null;
+}
+
+/** What the main window last said it shows (`chat.shown`), by the core's bot id. */
+export interface ShownChat { botId: string; view: CurrentChat["view"]; tab: string | null }
+
+/** `workspace.current` for the bot shown (`botId` as plugins see it): its primary head's session first. */
+export function currentChat(shown: ShownChat, botId: string, primary: CurrentChat["engine"], sessions: CurrentChat["heads"]): CurrentChat {
+  const heads = [...sessions.filter((head) => head.engine === primary), ...sessions.filter((head) => head.engine !== primary)];
+  return {
+    botId, engine: primary, sessionId: heads[0]?.engine === primary ? heads[0].sessionId : null, heads,
+    view: shown.view, tab: shown.view === "tab" ? shown.tab : null,
+  };
+}
+
 /** What the core answers plugins' `workspace.*` asks with; a bot that is not there throws. */
 export interface WorkspaceSource {
   bots(): BotSummary[];
@@ -63,6 +94,8 @@ export interface WorkspaceSource {
   ignoreWaiting(botId: string, text: string): void;
   pendingApprovals(botId: string): PendingApproval[];
   face(botId: string, look: "original" | "cute"): string;
+  /** Absent: a world with no main window (tests, spec adapters); plugins are told null. */
+  current?(): CurrentChat | null;
 }
 
 /** What `onChange` tells. */

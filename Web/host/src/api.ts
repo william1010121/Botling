@@ -68,7 +68,7 @@ export interface MessageDecoration { key: string; fold?: string[]; after?: strin
 export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
 
 // ── The workspace (plugin-extraction.md §4.3): what the whiteboard reads, for any plugin, read only ──
-export type WorkspaceKind = "bots" | "tasks" | "memory" | "waiting" | "results";
+export type WorkspaceKind = "bots" | "tasks" | "memory" | "waiting" | "results" | "current";
 /** A bot as `workspace.bots` gives it (the main bot's id is "main"). */
 export interface BotSummary {
   id: string; name: string; role: "main" | "manager" | "bot"; parent: string | null;
@@ -102,6 +102,20 @@ export interface CommandRun {
   /** Epoch ms of the last run's end (or start, while the first runs). */
   ranAt: number | null;
 }
+/**
+ * The chat the user has open in Botling's main window (`workspace.current`). `sessionId`: its primary head's
+ * session (Claude: the id Claude Code names its session log by, `<sessionId>.jsonl`; Codex: the
+ * thread id); null until that head has started one. `heads`: every head of the chat, the primary first.
+ */
+export interface CurrentChat {
+  botId: string;
+  engine: "claude" | "codex" | "agy";
+  sessionId: string | null;
+  heads: { engine: "claude" | "codex" | "agy"; sessionId: string | null }[];
+  /** What the main area shows of it: the chat, the Board, a plugin's tab (`tab`: "<plugin>/<view id>"), or a subagent's run. */
+  view: "chat" | "board" | "tab" | "subagent";
+  tab: string | null;
+}
 export interface WorkspaceChange { stamp: string; botIds: string[]; kinds: WorkspaceKind[] }
 /** The event Botling sends the host when the workspace changed (`workspace.onChange`, not `events.on`). */
 export const WORKSPACE_EVENT = "workspace.changed";
@@ -126,6 +140,12 @@ export interface WorkspaceApi {
    * one given, else the component's own "Command:" line; null: it needs none). The library is read only.
    */
   component(botId: string, name: string, spec?: { data?: string; command?: string }): Promise<{ exists: boolean; command: string | null }>;
+  /**
+   * The chat open in the main window now, the bot as in `bots` ("main": the main bot); null: none (or the window
+   * has not said yet). A switch, a new session or another view is told by `onChange` with kind "current", naming
+   * the bot left and the bot opened.
+   */
+  current(): Promise<CurrentChat | null>;
   /** Told when anything the methods above answer changed, naming the bots and kinds. */
   onChange(fn: (change: WorkspaceChange) => void): Dispose;
 }
@@ -592,6 +612,7 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       ignoreWaiting: async (botId, text) => { await ask("workspace.ignoreWaiting", { bot: botId, text }); },
       pendingApprovals: async (botId) => (await ask("workspace.pendingApprovals", { bot: botId })) as never,
       face: async (botId, look) => (await ask("workspace.face", { bot: botId, look })) as string,
+      current: async () => (await ask("workspace.current")) as CurrentChat | null,
       component: async (botId, name, spec) => (await ask("workspace.component", { bot: botId, name, ...(spec?.data !== undefined ? { data: spec.data } : {}), ...(spec?.command !== undefined ? { command: spec.command } : {}) })) as never,
       onChange: (fn) => {
         const list = plugin.events.get(WORKSPACE_EVENT) ?? [];

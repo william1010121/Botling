@@ -2,9 +2,9 @@
 // its `forRole` names, and which tab each bot last showed is kept in settings.json (`mainTabs`), so
 // it shows again next time (the core's memory, in place of the whiteboard's own localStorage later).
 import { describe, expect, it } from "vitest";
-import { SettingsChange, type PluginsView } from "../../src/contract";
+import { Command, SettingsChange, type PluginsView } from "../../src/contract";
 import { applySetting, settingsView } from "../../src/core/settings";
-import { mainTabsFor, namedBot, rightPanelSectionsFor, shownTab, tabKey } from "../../src/renderer/main-tabs";
+import { mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey } from "../../src/renderer/main-tabs";
 
 const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 const PROJECT = "B0000000-0000-4000-8000-000000000001";
@@ -77,5 +77,17 @@ describe("remembering the tab (settings.json mainTabs)", () => {
     expect(SettingsChange.safeParse({ key: "mainTab", value: { botId: MAIN, tab: "x".repeat(400) } }).success).toBe(false);
     expect(SettingsChange.safeParse({ key: "mainTab", value: { botId: MAIN, tab: "" } }).success).toBe(false);
     expect(SettingsChange.safeParse({ key: "mainTab", value: { tab: "a/b" } }).success).toBe(false);
+  });
+});
+
+describe("what the main window says it shows (chat.shown, for workspace.current)", () => {
+  it("a subagent's run over a tab, a tab over the Board, the Board over the chat; no bot: none", () => {
+    const tab = plugins.mainTabs[2];
+    expect(shownChat(PROJECT, { subagent: true, tab, board: true })).toEqual({ type: "chat.shown", botId: PROJECT, view: "subagent", tab: null });
+    expect(shownChat(PROJECT, { subagent: false, tab, board: true })).toEqual({ type: "chat.shown", botId: PROJECT, view: "tab", tab: "notes/notes.page" });
+    expect(shownChat(MAIN, { subagent: false, tab: null, board: true })).toEqual({ type: "chat.shown", botId: MAIN, view: "board", tab: null });
+    expect(shownChat(MAIN, { subagent: false, tab: null, board: false })).toEqual({ type: "chat.shown", botId: MAIN, view: "chat", tab: null });
+    expect(shownChat(null, { subagent: false, tab, board: true })).toEqual({ type: "chat.shown", botId: null, view: "chat", tab: null });
+    for (const command of [shownChat(PROJECT, { subagent: false, tab, board: false }), shownChat(null, { subagent: false, tab: null, board: false })]) expect(Command.safeParse(command).success).toBe(true);
   });
 });

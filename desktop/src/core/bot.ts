@@ -1097,6 +1097,11 @@ export class Bot {
     throw new ContractError("not_found", "No such subagent.");
   }
 
+  /** Each head's session, this one first (null: none started yet), for plugins' `workspace.current`. */
+  headSessions(): { engine: Engine; sessionId: string | null }[] {
+    return this.members.map((bot) => ({ engine: bot.engine, sessionId: bot.session.started ? bot.session.sessionId : null }));
+  }
+
   /** Where this head's subagents live, for the agent registry. */
   hostFacts(): HostFacts {
     return { botId: this.owner.profile.id, engine: this.engine, sessionId: this.session.sessionId, folder: this.commandFolder, kind: hostKind(this.engine) };

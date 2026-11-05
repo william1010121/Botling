@@ -63,7 +63,7 @@ import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/im
 import { fromSwiftDate, isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
-import { WorkspaceWatch, type BotSummary, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
+import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
@@ -201,6 +201,8 @@ export class Core {
   private workspaceWatch: WorkspaceWatch | null = null;
   private workspaceTimer: NodeJS.Timeout | null = null;
   private workspaceClock: NodeJS.Timeout | null = null;
+  /** The chat the main window shows now, as it last said (`chat.shown`); null: none, or not said yet. */
+  private shownChat: ShownChat | null = null;
   readonly plugins: Plugins;
   /** Every bot's profile, in the left column's order (Maintainer last). */
   private profiles: BotProfile[] = [];
@@ -1862,7 +1864,16 @@ First write a test that shows this, then fix it.`;
         const waiting = view.approvals > 0 || this.waiting().items.some((item) => item.botId === bot.id);
         return botFace(view, look, { asleep: view.phase === "asleep", working: view.working, waiting });
       },
+      current: () => this.currentChat(),
     };
+  }
+
+  /** The chat the user has open in the main window, for plugins (`workspace.current`); null: none, or gone. */
+  private currentChat(): CurrentChat | null {
+    const shown = this.shownChat;
+    const bot = shown && !this.removed.has(shown.botId) ? this.bots.get(shown.botId) : undefined;
+    if (!shown || !bot) return null;
+    return currentChat(shown, this.outId(bot.id), bot.view().heads[0] ?? "claude", bot.headSessions());
   }
 
   /** What each workspace method would answer, by bot and kind: what a change is noticed by. */
@@ -1880,6 +1891,9 @@ First write a test that shows this, then fix it.`;
         results: JSON.stringify(this.resultLinks(bot, 100)),
       };
     }
+    // Only the bot shown has a "current": a switch names the one left and the one opened.
+    const current = this.currentChat();
+    if (current && out[current.botId]) out[current.botId].current = JSON.stringify(current);
     return out;
   }
 
@@ -2423,7 +2437,7 @@ First write a test that shows this, then fix it.`;
   }
 
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
-    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "link.authorize"]).has(cmd.type)) {
+    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "doctor.view", "attachment.file", "card.image", "link.authorize", "chat.shown"]).has(cmd.type)) {
       throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
     }
     switch (cmd.type) {
@@ -2552,6 +2566,12 @@ First write a test that shows this, then fix it.`;
       case "agent.stop": return this.agentStopCommand(cmd.botId, cmd.subagentId);
       case "agent.group": return this.groupAgents(cmd.botId, cmd.subagentIds, { kind: "newSubBot", name: cmd.name, ...(cmd.note ? { note: cmd.note } : {}) });
       case "subbot.close": return this.closeSubBot(cmd.botId);
+      case "chat.shown": {
+        // The main window says what it shows; plugins watching the workspace hear it (kind "current").
+        this.shownChat = cmd.botId ? { botId: cmd.botId, view: cmd.view, tab: cmd.tab } : null;
+        this.checkWorkspaceSoon();
+        return { shown: true };
+      }
       case "chat.read": {
         // You read it up to its newest line: plugins hear how much was unread before (`chatRead`).
         const bot = this.bot(cmd.botId);

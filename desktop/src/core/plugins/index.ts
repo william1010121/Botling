@@ -1158,6 +1158,9 @@ export class Plugins {
       }
       case "workspace.pendingApprovals":
         return world.workspace.pendingApprovals(this.asked(BotParams, params).data.bot);
+      case "workspace.current":
+        this.asked(PluginOnly, params);
+        return world.workspace.current?.() ?? null;
       case "workspace.face": {
         const { data } = this.asked(FaceParams, params);
         return world.workspace.face(data.bot, data.look);

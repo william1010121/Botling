@@ -179,7 +179,8 @@ export class Program {
   private startListening() {
     if (this.listening) return;
     // Listening starts before the next read (the host says so first), so nothing that changes after it goes untold.
-    this.listening = this.api.workspace.onChange(() => { this.dirty = true; });
+    // Which chat is open ("current") is nothing the board draws.
+    this.listening = this.api.workspace.onChange((change) => { if (change.kinds.some((kind) => kind !== "current")) this.dirty = true; });
     this.dirty = true;
   }
 

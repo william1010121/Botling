@@ -25,7 +25,7 @@ import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { boardOffered, mainTabsFor, namedBot, rightPanelSectionsFor, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { boardOffered, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
@@ -326,6 +326,15 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [botSettings, setBotSettings] = useState(false);
   useEffect(() => { setBotSettings(false); }, [bot?.id]);
   const openBotSettings = useCallback(() => { if (collapsed) toggleRight(); setBotSettings(true); }, [collapsed, toggleRight]);
+
+  // The core learns what the main window shows, for plugins' `workspace.current`; said again after every snapshot
+  // (a restarted core knows nothing). Botling Web's page never says it: it is not the main window.
+  const shownBoard = !!view.board && boardOffered(view.plugins);
+  const shownTabKey = tab ? tabKey(tab) : null;
+  useEffect(() => {
+    if (web || !view.ready) return;
+    void client.request(shownChat(bot?.id ?? null, { subagent: !!watching, tab, board: shownBoard })).catch(() => {});
+  }, [client, web, view.ready, view.resyncs, bot?.id, watching, shownTabKey, shownBoard]);
 
   // Reading a chat clears its unread count.
   useEffect(() => {
