@@ -284,7 +284,7 @@ document.documentElement.addEventListener('mouseleave', () => parent.postMessage
 
 /** The kits a template can ask for, by major version: a new major version is added beside the old ones. */
 const kits: Record<string, string> = { "1": kitV1 };
-/** The theme a kit page is drawn in (the chat is dark; tokens.css has the light set too). */
+/** The theme a kit page starts in; the kit then follows the chat's look (prefers-color-scheme, Web/kit/src/index.js). */
 const kitTheme = "dark";
 const kitMeta = /<meta\s+(?:name\s*=\s*["']ccb-kit["']\s+content\s*=\s*["']([^"']*)["']|content\s*=\s*["']([^"']*)["']\s+name\s*=\s*["']ccb-kit["'])\s*\/?>/i;
 

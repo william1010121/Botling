@@ -348,9 +348,14 @@ function Appearance({ settings, change }: { settings: SettingsView; change: (nex
   useEffect(() => { const el=input.current;el?.addEventListener("change",commit);return()=>el?.removeEventListener("change",commit); },[commit]);
   const width=draft ?? settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
   return <>
-  <Group title="Report pages" note="How result pages and their charts look in preview cards and the page viewer. Pages already open change when they are opened again.">
+  <Group title="App" note="The look of the whole app: chat, sidebar, Settings, Board and panels. It changes right away.">
+    <Row label="Appearance">
+      <Segmented label="App appearance" options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }, { id: "system", label: "Match system" }] as const} value={settings.appTheme ?? "dark"} onChange={(value) => void change({ key: "appTheme", value })} />
+    </Row>
+  </Group>
+  <Group title="Report pages" note="How result pages and their charts look in preview cards and the page viewer. Match app follows the app's look. Pages already open change when they are opened again.">
     <Row label="Report pages">
-      <Segmented label="Report pages" options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }, { id: "system", label: "Match system" }] as const} value={settings.reportTheme ?? "dark"} onChange={(value) => void change({ key: "reportTheme", value })} />
+      <Segmented label="Report pages" options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }, { id: "system", label: "Match app" }] as const} value={settings.reportTheme ?? "dark"} onChange={(value) => void change({ key: "reportTheme", value })} />
     </Row>
   </Group>
   <Group title="Message column" note="Drag either column edge to resize; double-click it to reset.">

@@ -36,6 +36,24 @@ const adoptedTokens = {
   "--raised": { dark: "#2C2C33", light: "#FFFFFF" }, "--link": { dark: "#8DB5FF", light: "#2F6FE0" },
   "--orange-line": { dark: "#6B4A1F", light: "#E8C79A" }, "--orange-text": { dark: "#F7C27F", light: "#9A5B00" },
 };
+// The light look (Botling 2's Settings → Appearance → App) moved the shell's and chat's remaining
+// hard-coded colours onto tokens; each dark value is the colour that was written there before.
+const lightLookTokens = {
+  "--selected": { dark: "#26262C", light: "#E2E2E8" }, "--user-bubble": { dark: "#2B2B31", light: "#E9E9EE" },
+  "--claude": { dark: "#D97757", light: "#C2603F" }, "--codex": { dark: "#6E9BFF", light: "#3D6FE0" },
+  "--popover": { dark: "#1F1F24", light: "#FFFFFF" }, "--strong-line": { dark: "#3A3A42", light: "#CFCFD6" },
+  "--active": { dark: "#2B3B5C", light: "#DCE7FB" }, "--info-bg": { dark: "#1A2233", light: "#E6EEFC" },
+  "--info-line": { dark: "#2B3B5C", light: "#B9CEF5" }, "--accent-bg": { dark: "#1E2A44", light: "#EAF1FF" },
+  "--accent-bg-hover": { dark: "#26375A", light: "#DCE7FB" }, "--accent-line": { dark: "#2F4F8F", light: "#B9CEF5" },
+  "--card": { dark: "#232328", light: "#FFFFFF" }, "--card-line": { dark: "#303037", light: "#DADADF" },
+  "--waiting-bg": { dark: "#2A2116", light: "#FFF4E2" }, "--done-bg": { dark: "#15291F", light: "#E3F4EA" },
+  "--stale-bg": { dark: "#2E1B1A", light: "#FCE8E6" }, "--verify": { dark: "#8FD9B6", light: "#1E8A55" },
+  "--verify-bg": { dark: "#16261E", light: "#E3F4EA" }, "--selection": { dark: "#33415E", light: "#CFDDF8" },
+  "--slash-bg": { dark: "#1C1C20", light: "#FFFFFF" }, "--slash-line": { dark: "#29292F", light: "#E3E3E8" },
+  "--hover-strong": { dark: "#33333B", light: "#E2E2E8" }, "--soft-text": { dark: "#C8C8CE", light: "#3F3F46" },
+  "--panel-ground": { dark: "#111318", light: "#FFFFFF" }, "--panel-text": { dark: "#E5E7EB", light: "#1C1C1F" },
+  "--panel-line": { dark: "#454850", light: "#DADADF" },
+};
 const chatBefore = {
   "--chat-avatar-size": "48px", "--ground": "#0E0E10", "--bubble": "#1B1B1F", "--user-bubble": "#2B2B31", "--notice": "#16161A",
   "--line": "#232327", "--text": "#EDEDF0", "--muted": "#A0A0A8", "--faint": "#8E8E96", "--chip": "#2A2A31", "--blue": "#4C8DFF",
@@ -69,7 +87,8 @@ describe("tokens.css", () => {
     const light = rootVars(css, ':root[data-theme="light"]');
     for (const [name, value] of Object.entries(chatLightBefore)) expect(light[name], name).toBe(value);
     // Tokens the chat did not have before are ones it never reads.
-    for (const name of Object.keys(vars)) if (!(name in chatBefore)) expect(used(own).has(name), name).toBe(false);
+    for (const name of Object.keys(vars)) if (!(name in chatBefore) && !(name in lightLookTokens)) expect(used(own).has(name), name).toBe(false);
+    for (const [name, { dark, light: lightValue }] of Object.entries(lightLookTokens)) { expect(vars[name], name).toBe(dark); expect(light[name], name).toBe(lightValue); }
     // Each colour is set once, in tokens.css.
     for (const name of Object.keys(rootVars(tokens))) expect(rootVars(own)[name], name).toBeUndefined();
   });
@@ -87,7 +106,7 @@ describe("tokens.css", () => {
       expect(light[name], name).toBe(lightValue);
     }
     // The shell reads only the tokens it always read (the whiteboard's own are the plugin's, builtin-plugins/botling.whiteboard); do not silently admit new token consumers.
-    for (const name of Object.keys(vars)) if (!(name in shellBefore) && !(name in adoptedTokens)) expect(used(own).has(name), name).toBe(false);
+    for (const name of Object.keys(vars)) if (!(name in shellBefore) && !(name in adoptedTokens) && !(name in lightLookTokens)) expect(used(own).has(name), name).toBe(false);
     for (const name of used(own)) if (name.startsWith("--") && !/^--(board|message|task|chat)-/.test(name)) expect(vars[name] ?? own.includes(`${name}:`), name).toBeTruthy();
   });
 });

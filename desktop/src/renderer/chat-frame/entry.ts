@@ -2,6 +2,7 @@
 // fed with state by the app page. On top of it the desktop adds what the page does not have yet:
 // a Stop button in the input box. KaTeX is the built-in ccb-latex plugin and summaries the built-in
 // botling.catchup, which arrive with the other plugins' web parts (Botling Web bundles them).
+import "../theme";
 import { unpackChatAvatars } from "../chat-avatar-wire";
 import { observeTraceEditor } from "./input-trace-chat";
 import { inputTrace } from "../input-trace";

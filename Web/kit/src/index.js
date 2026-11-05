@@ -19,6 +19,15 @@ style.setAttribute("data-ccb-kit", version);
 style.textContent = tokens + "\n" + blocksCSS;
 document.head.prepend(style);
 watchErrors();
+// The page's look follows the chat's (Botling 2: Settings → Appearance → App): a frame's
+// prefers-color-scheme is the color-scheme of the page that holds it. Dark when nothing says light.
+const lightScheme = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: light)") : null;
+const pageRoot = document.documentElement;
+if (lightScheme && pageRoot.hasAttribute("data-theme")) {
+  const follow = () => pageRoot.setAttribute("data-theme", lightScheme.matches ? "light" : "dark");
+  follow();
+  lightScheme.addEventListener("change", follow);
+}
 
 const build = htm.bind(h);
 /** htm's tagged template, checked first (check.js): a malformed one throws a MarkupError. */

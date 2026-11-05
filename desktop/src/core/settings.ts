@@ -57,6 +57,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
     messageColumnWidth: messageWidth(raw.messageColumnWidth),
+    appTheme: oneOf(["dark", "light", "system"] as const, raw.appTheme) ?? "dark",
     reportTheme: oneOf(["dark", "light", "system"] as const, raw.reportTheme) ?? "dark",
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
     subagentEffort: oneOf(EFFORTS_BY_ENGINE.claude, raw.subagentEffortDefault),
@@ -156,6 +157,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "botLook": set("botLookChoice", change.value); break;
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
     case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
+    case "appTheme": set("appTheme", change.value === "dark" ? null : change.value); break;
     case "reportTheme": set("reportTheme", change.value === "dark" ? null : change.value); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
     case "subagentEffort": set("subagentEffortDefault", change.value); break;

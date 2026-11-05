@@ -18,7 +18,8 @@ Put this meta tag anywhere in `template.html` (first line is customary):
 ```
 
 The app then puts the kit's script (about 47 KB, no network) into the page's `<head>`, right after
-the `ccb` runtime and before the template, and marks the page `<html data-theme="dark">`. The kit
+the `ccb` runtime and before the template, and marks the page `<html data-theme="dark">`; the kit
+then switches it to `light` while the chat is light (Botling 2's Settings → Appearance → App). The kit
 adds its stylesheet at the top of `<head>`, so the template's own `<style>` wins over it. Without the
 meta tag nothing changes: the page is exactly what it was before the kit. The frame's sandbox and
 CSP are the same either way (no network, no storage).
@@ -142,8 +143,8 @@ under 180 px tall, one row).
   `--bubble`, `--line`, `--border`, `--raised`, `--chip`, `--hover`, `--selected`, `--text`,
   `--muted`, `--faint`, `--blue`, `--link`, `--green`, `--orange`, `--orange-text`, `--error`,
   `--code`, `--claude`, `--codex`. Use them in the template's own CSS: `color: var(--muted)`.
-- Dark is what the app draws now; `[data-theme="light"]` has the light set, so a template that uses
-  tokens (and no fixed colours) is ready for both. Do not write `prefers-color-scheme` rules.
+- Dark is the default; `[data-theme="light"]` has the light set, which Botling 2 draws when the app
+  is light, so a template that uses tokens (and no fixed colours) is ready for both. Do not write `prefers-color-scheme` rules.
 - Override per block or anything around it: `--accent` (fills: ring arc, bars, sparkline, primary
   button, icon tint; wins over `tone`), `--ink` (the big value's text). Also `--ccb-ring-size`,
   `--ccb-bars-h`, `--ccb-spark-h`, `--ccb-min`, `--ccb-gap`, `--ccb-pad`, `--ccb-control-h`.

@@ -2,9 +2,10 @@
    the chat page (chat.css) and the component kit (Web/kit) all use. Change a colour here and all
    three follow. Each of those stylesheets imports this file on its first line; the
    builds put its text in place of that line (Web/kit/build.mjs inlineTokens), so nothing loads it
-   separately. Dark is the default and what the app draws; [data-theme="light"] is the light set
-   (component pages carry data-theme; the shell and chat do not set it yet). The values are the
-   Swift app's (Theme.swift). */
+   separately. Dark is the default; [data-theme="light"] is the light set (component pages carry
+   data-theme; Botling 2's app page and chat page set it from Settings → Appearance → App,
+   desktop/src/renderer/theme.ts). The values are the Swift app's (Theme.swift); the ones after
+   --codex are the shell's and chat's own surfaces, named so the light set can change them too. */
 :root {
   --ground: #0E0E10;
   --side: #141417;
@@ -30,6 +31,29 @@
   --raised: #2C2C33;
   --claude: #D97757;
   --codex: #6E9BFF;
+  --popover: #1F1F24;
+  --strong-line: #3A3A42;
+  --active: #2B3B5C;
+  --info-bg: #1A2233;
+  --info-line: #2B3B5C;
+  --accent-bg: #1E2A44;
+  --accent-bg-hover: #26375A;
+  --accent-line: #2F4F8F;
+  --card: #232328;
+  --card-line: #303037;
+  --waiting-bg: #2A2116;
+  --done-bg: #15291F;
+  --stale-bg: #2E1B1A;
+  --verify: #8FD9B6;
+  --verify-bg: #16261E;
+  --selection: #33415E;
+  --slash-bg: #1C1C20;
+  --slash-line: #29292F;
+  --hover-strong: #33333B;
+  --soft-text: #C8C8CE;
+  --panel-ground: #111318;
+  --panel-text: #E5E7EB;
+  --panel-line: #454850;
 }
 :root[data-theme="light"] {
   --ground: #F5F5F7;
@@ -56,4 +80,28 @@
   --raised: #FFFFFF;
   --claude: #C2603F;
   --codex: #3D6FE0;
+  --popover: #FFFFFF;
+  --strong-line: #CFCFD6;
+  --active: #DCE7FB;
+  --info-bg: #E6EEFC;
+  --info-line: #B9CEF5;
+  --accent-bg: #EAF1FF;
+  --accent-bg-hover: #DCE7FB;
+  --accent-line: #B9CEF5;
+  --card: #FFFFFF;
+  --card-line: #DADADF;
+  --waiting-bg: #FFF4E2;
+  --done-bg: #E3F4EA;
+  --stale-bg: #FCE8E6;
+  --verify: #1E8A55;
+  --verify-bg: #E3F4EA;
+  --selection: #CFDDF8;
+  --slash-bg: #FFFFFF;
+  --slash-line: #E3E3E8;
+  --hover-strong: #E2E2E8;
+  --soft-text: #3F3F46;
+  --panel-ground: #FFFFFF;
+  --panel-text: #1C1C1F;
+  --panel-line: #DADADF;
+  color-scheme: light;
 }

@@ -21,7 +21,7 @@
 .quick-usage h3 { font-size: 12px; font-weight: 400; color: var(--faint); margin: 8px 0 6px; }
 .quick-usage-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .quick-usage-cards.single { grid-template-columns: minmax(0, 1fr); }
-.quick-usage-card { display: flex; align-items: center; gap: 8px; padding: 10px 8px; background: #232328; border-radius: 8px; min-width: 0; }
+.quick-usage-card { display: flex; align-items: center; gap: 8px; padding: 10px 8px; background: var(--card); border-radius: 8px; min-width: 0; }
 .quick-usage-ring { position: relative; width: 41px; height: 41px; flex-shrink: 0; display: grid; place-items: center; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .quick-usage-ring svg { position: absolute; inset: 0; width: 41px; height: 41px; transform: rotate(-90deg); }
 .quick-usage-card strong { display: block; font-size: 13px; font-weight: 400; }

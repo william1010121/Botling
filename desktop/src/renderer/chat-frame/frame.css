@@ -1,7 +1,8 @@
 /* What the desktop adds to the reused Web/src chat page (chat.css comes first, unchanged). */
 
-/* The chat is dark, as 1.x's windows are (`preferredColorScheme(.dark)`): component frames, which take their
-   prefers-color-scheme from the page that holds them, draw their dark look (Phase 5c). */
+/* The chat is dark by default, as 1.x's windows are (`preferredColorScheme(.dark)`), and light with
+   data-theme="light" (Settings → Appearance → App; tokens.css sets color-scheme: light there): component
+   frames, which take their prefers-color-scheme from the page that holds them, draw the same look (Phase 5c). */
 :root { color-scheme: dark; }
 
 /* Keep the viewport's file-drop outline above floating cards and column resize handles.

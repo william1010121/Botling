@@ -8,7 +8,7 @@
   --control-radius: 10px;
   color-scheme: dark;
 }
-/* The chat is always dark; should it ever get a light theme, tokens.css has its colours. */
+/* Dark unless the page sets data-theme="light" (Botling 2 does, from its App appearance setting); tokens.css has both sets. */
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); }
@@ -77,7 +77,7 @@ button { font: inherit; color: inherit; }
 .speaker { font-size: 12px; color: var(--faint); padding-left: 4px; }
 .mention-list {
   position: absolute; bottom: calc(100% + 6px); left: 12px; z-index: 15; min-width: 200px; max-width: 320px;
-  padding: 4px; background: #1F1F24; border: 1px solid #2E2E35; border-radius: 12px;
+  padding: 4px; background: var(--popover); border: 1px solid var(--border); border-radius: 12px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
   max-height: 320px; overflow-y: auto;
 }
@@ -86,7 +86,7 @@ button { font: inherit; color: inherit; }
   display: block; width: 100%; padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
   color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
 }
-.mention-list button.active, .mention-list button:hover { background: #2B3B5C; }
+.mention-list button.active, .mention-list button:hover { background: var(--active); }
 .mention-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-hint { min-width: 0; flex: 0 1 auto; font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -95,7 +95,7 @@ button { font: inherit; color: inherit; }
    the description on a second faint line that wraps rather than being cut. */
 .mention-list.slash {
   width: max-content; min-width: min(360px, calc(100% - 24px)); max-width: calc(100% - 24px);
-  padding: 2px; border-color: #29292F; border-radius: 8px; box-shadow: none; background: #1C1C20;
+  padding: 2px; border-color: var(--slash-line); border-radius: 8px; box-shadow: none; background: var(--slash-bg);
 }
 .mention-list.slash button {
   flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 1px;
@@ -103,7 +103,7 @@ button { font: inherit; color: inherit; }
 }
 .mention-list.slash .mention-name { flex-shrink: 0; max-width: 100%; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; white-space: normal; }
 .mention-list.slash .mention-hint { max-width: 100%; overflow: visible; text-overflow: clip; white-space: normal; line-height: 1.35; }
-.mention-list.slash button.active, .mention-list.slash button:hover { background: #26262C; color: var(--text); }
+.mention-list.slash button.active, .mention-list.slash button:hover { background: var(--selected); color: var(--text); }
 /* A library component the bot does not have yet: a shade fainter, with a "library" hint. */
 .mention-list.slash button.library .mention-name { opacity: 0.75; }
 .composer { position: relative; }
@@ -137,7 +137,7 @@ button { font: inherit; color: inherit; }
 .markdown ul, .markdown ol { margin: 0 0 10px; padding-left: 22px; }
 .markdown li { margin: 2px 0; }
 .markdown li::marker { color: var(--muted); }
-.markdown blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid #3A3A40; color: var(--muted); }
+.markdown blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--strong-line); color: var(--muted); }
 .markdown code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: var(--code); padding: 1px 5px; border-radius: 5px; }
 .markdown pre { margin: 0 0 10px; padding: 12px; background: var(--code); border-radius: 10px; white-space: pre-wrap; }
 .markdown pre code { padding: 0; background: none; }
@@ -198,7 +198,7 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .updated { font-size: 11px; color: var(--green); white-space: nowrap; }
 .spinner {
   width: 16px; height: 16px; margin: 8px; border-radius: 50%;
-  border: 2px solid #3A3A40; border-top-color: var(--blue); animation: spin 0.8s linear infinite;
+  border: 2px solid var(--strong-line); border-top-color: var(--blue); animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -233,12 +233,12 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .choices { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; min-width: 280px; }
 .choice {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  min-height: 48px; padding: 10px 14px; border-radius: 12px; border: 1px solid #303037;
-  background: #232328; text-align: left; cursor: pointer;
+  min-height: 48px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--card-line);
+  background: var(--card); text-align: left; cursor: pointer;
 }
 .choice.recommended { border-color: var(--orange-line); }
 .choice.recommended .detail { color: var(--orange-text); }
-.choice.picked { border-color: var(--blue); background: #1E2A44; }
+.choice.picked { border-color: var(--blue); background: var(--accent-bg); }
 .choice.faded { opacity: 0.4; }
 .choice:disabled { cursor: default; }
 .choice .detail { font-size: 12px; color: var(--muted); white-space: nowrap; }
@@ -246,8 +246,8 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 /* An answered question, folded to what was picked */
 .folded-choice {
   display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin-top: 10px;
-  min-height: 34px; padding: 6px 12px; border-radius: 10px; border: 1px solid #2B3B5C;
-  background: #1A2233; color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
+  min-height: 34px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--info-line);
+  background: var(--info-bg); color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
 }
 .folded-choice .picked-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .folded-choice svg { flex-shrink: 0; color: var(--muted); }
@@ -262,13 +262,13 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 
 .report {
   position: fixed; z-index: 10; width: 300px; padding: 16px;
-  background: #1F1F24; border: 1px solid #2E2E35; border-radius: 14px;
+  background: var(--popover); border: 1px solid var(--border); border-radius: 14px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   display: flex; flex-direction: column; gap: 10px;
 }
 .report-title { font-size: 13px; font-weight: 600; }
 .report textarea {
-  width: 100%; resize: none; border-radius: 8px; border: 1px solid #3A3A40;
+  width: 100%; resize: none; border-radius: 8px; border: 1px solid var(--strong-line);
   background: var(--ground); color: var(--text); font: inherit; font-size: 14px; padding: 8px;
 }
 .report-actions { display: flex; align-items: center; gap: 8px; }
@@ -375,20 +375,20 @@ body.seen-heads .typing > .avatar { animation: head-working 1.8s ease-in-out inf
 .editor .cm-line { padding: 0; }
 .editor .cm-placeholder { color: var(--faint); }
 .editor .cm-cursor { border-left-color: var(--text); }
-.editor .cm-selectionBackground, .editor .cm-editor.cm-focused .cm-selectionBackground { background: #33415E !important; }
+.editor .cm-selectionBackground, .editor .cm-editor.cm-focused .cm-selectionBackground { background: var(--selection) !important; }
 
 /* A plugin's floating box above the input box (the formula preview) */
 .composer-popover {
   position: fixed; z-index: 20; max-width: min(560px, calc(100vw - 24px));
-  padding: 10px 14px; background: #1F1F24; border: 1px solid #2E2E35; border-radius: 12px;
+  padding: 10px 14px; background: var(--popover); border: 1px solid var(--border); border-radius: 12px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); pointer-events: none; overflow: hidden;
 }
 .plugin-component { margin-top: 10px; }
 
 /* Panel mode: one plugin's page in the right column instead of the chat */
 body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
-#panel-root { position: fixed; inset: 0; overflow: auto; padding: 16px 20px; color: #EDEDF0; }
-.panel-empty { color: #8E8E96; font-size: 13px; }
+#panel-root { position: fixed; inset: 0; overflow: auto; padding: 16px 20px; color: var(--text); }
+.panel-empty { color: var(--faint); font-size: 13px; }
 
 /* What a bot did on the way to a reply: folded above it, one line per step when open. */
 .steps { margin: -2px 0 8px; font-size: 13px; line-height: 1.5; }
@@ -522,7 +522,7 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .report-image img { width: 64px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; }
 .report-image .remove {
   position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; padding: 0; border: none; border-radius: 50%;
-  background: #3A3A40; color: var(--text); font-size: 12px; line-height: 18px; cursor: pointer;
+  background: var(--strong-line); color: var(--text); font-size: 12px; line-height: 18px; cursor: pointer;
 }
 .report-shot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
 .relay-column { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
@@ -551,16 +551,16 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 /* Plugins' commands for a reply ("⋯" in its hover column), drawn like the / list. */
 .message-menu {
   position: fixed; z-index: 20; min-width: 160px; max-width: 280px; padding: 4px;
-  background: #1F1F24; border: 1px solid #2E2E35; border-radius: 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  background: var(--popover); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
 }
 .message-menu button {
   display: block; width: 100%; padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
   color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
 }
-.message-menu button:hover, .message-menu button:focus-visible { background: #2B3B5C; }
+.message-menu button:hover, .message-menu button:focus-visible { background: var(--active); }
 /* A refresh menu's interval rows: Every [n] [sec|min], typed in place, and what is wrong under it. Theme tokens only. */
 .refresh-interval { position: relative; padding: 3px 10px 3px 24px; border-radius: 6px; font-size: 13px; cursor: pointer; }
-.refresh-interval:hover, .refresh-interval:focus-within { background: #2B2B31; }
+.refresh-interval:hover, .refresh-interval:focus-within { background: var(--user-bubble); }
 .refresh-interval.checked::before { content: "✓"; position: absolute; left: 8px; top: 7px; color: var(--blue); }
 .refresh-interval-line { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 .refresh-interval-count { width: 48px; height: 22px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--chip); color: var(--text); font: inherit; cursor: text; }
@@ -627,15 +627,15 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .preview-holder { position: relative; }
 .preview-bar {
   position: absolute; top: 18px; right: 8px; z-index: 3; display: flex; gap: 2px; padding: 2px;
-  background: #2B2B31; border: 1px solid #3A3A42; border-radius: 9px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 9px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
 }
 .preview-holder:hover > .preview-bar, .preview-bar:focus-within { opacity: 1; pointer-events: auto; }
 .preview-make {
   display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border: none; border-radius: 7px;
-  background: transparent; color: #C8C8CE; font-size: 12px; cursor: pointer;
+  background: transparent; color: var(--soft-text); font-size: 12px; cursor: pointer;
 }
-.preview-make:hover { background: #3A3A42; color: var(--text); }
+.preview-make:hover { background: var(--strong-line); color: var(--text); }
 
 /* In the chat a component is drawn wide and frameless, like a Board tile. A reply that shows one
    takes the whole message column (to the input box's right edge: its hover actions float over the
@@ -653,7 +653,7 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .row.wide > .message-actions, .row.wide > .reply-button { position: absolute; top: 6px; right: 6px; z-index: 4; }
 .row.wide > .message-actions { flex-direction: row; padding: 2px; border-radius: 9px; border: 1px solid transparent; }
 .row.wide:hover > .message-actions, .row.wide > .message-actions:focus-within {
-  background: #2B2B31; border-color: #3A3A42; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  background: var(--user-bubble); border-color: var(--strong-line); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
 }
 .bubble.wide > .wide-part { margin-left: 0; margin-right: 0; }
 .wide-part.command-card, .wide-part > .command-card { border: 0; border-radius: 0; padding: 0; }
@@ -689,7 +689,7 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
   border: none; border-radius: 8px; background: rgba(42, 42, 49, 0.9); color: var(--muted);
   font: inherit; font-size: 12px; padding: 5px 10px; cursor: pointer;
 }
-.lightbox-bar button:hover, .lightbox-bar button:focus-visible { background: #3A3A42; color: var(--text); outline: none; }
+.lightbox-bar button:hover, .lightbox-bar button:focus-visible { background: var(--strong-line); color: var(--text); outline: none; }
 .lightbox-bar .lightbox-close { width: 30px; height: 30px; padding: 0; font-size: 14px; margin-left: 4px; }
 .lightbox-stage {
   flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
@@ -706,16 +706,16 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 /* A claude.ai Artifact a reply links to: title, host, Open (in the browser, where the user is signed in). */
 .artifact-card {
   display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 8px 8px 8px 14px;
-  border: 1px solid #303037; border-radius: 14px; background: #232328;
+  border: 1px solid var(--card-line); border-radius: 14px; background: var(--card);
 }
 .artifact-names { flex: 1; min-width: 0; }
 .artifact-title { font-size: 14px; font-weight: 600; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-host { margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-open {
   flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px;
-  border-radius: 10px; border: 1px solid #2F4F8F; background: #1E2A44; color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+  border-radius: 10px; border: 1px solid var(--accent-line); background: var(--accent-bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
 }
-.artifact-open:hover { background: #26375A; }
+.artifact-open:hover { background: var(--accent-bg-hover); }
 .artifact-open:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
 /* Message feedback stays under the content, outside reply/card action toolbars. */
@@ -746,14 +746,14 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
    background-work pills); pressed, the right panel opens the task. Also beside a summary's bullet. */
 .message-footer > .task-card-chips { display: contents; }
 .task-card-chip {
-  --task-card-bg: #1A2233; --task-card-fg: var(--link);
+  --task-card-bg: var(--info-bg); --task-card-fg: var(--link);
   display: inline-flex; align-items: center; gap: 5px; height: 20px; max-width: 100%; min-width: 0; padding: 0 9px;
   border: none; border-radius: 10px; background: var(--task-card-bg); color: var(--task-card-fg);
   font: inherit; font-size: 11px; line-height: 20px; cursor: pointer; vertical-align: middle;
 }
 .task-card-chip.waiting { --task-card-bg: #2E2617; --task-card-fg: var(--orange-text); }
-.task-card-chip.done { --task-card-bg: #15291F; --task-card-fg: var(--green); }
-.task-card-chip.stale { --task-card-bg: #2E1B1A; --task-card-fg: var(--error); }
+.task-card-chip.done { --task-card-bg: var(--done-bg); --task-card-fg: var(--green); }
+.task-card-chip.stale { --task-card-bg: var(--stale-bg); --task-card-fg: var(--error); }
 .task-card-chip.pending, .task-card-chip.stopped { --task-card-bg: var(--chip); --task-card-fg: var(--faint); }
 .task-card-chip:hover { filter: brightness(1.2); }
 .task-card-chip.selected { box-shadow: inset 0 0 0 1px currentColor; }
@@ -771,7 +771,7 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
   flex: none; height: 32px; padding: 0 12px; border: none; border-radius: 8px; background: var(--chip); color: var(--text);
   font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
 }
-.history-button:hover { background: #33333B; }
+.history-button:hover { background: var(--hover-strong); }
 .history-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .history-button:disabled { opacity: .55; cursor: default; }
 .history-button[hidden] { display: none; }
@@ -845,3 +845,15 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 .model-footer { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 8px; color: var(--muted); font-size: 11px; }
 .model-footer button { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; }
 .model-effort > button { justify-self: start; padding: 4px 8px; border: 0; border-radius: 6px; background: color-mix(in srgb,var(--text) 8%,transparent); font-size: 11.5px; cursor: pointer; }
+
+/* The light look (data-theme="light", set by Botling 2 from Settings → Appearance → App) for what has no token. */
+:root[data-theme="light"] .component-frame { color-scheme: light; }
+:root[data-theme="light"] .task-card-chip.waiting { --task-card-bg: #FFF4E2; }
+:root[data-theme="light"] .make-component:hover { color: #6B4FD8; }
+:root[data-theme="light"] .wide-part .component:hover .flag { background: rgba(255, 255, 255, 0.92); }
+:root[data-theme="light"] .mention-file mark { color: #9A5B00; }
+:root[data-theme="light"] .file-preview { border-left-color: var(--border); }
+:root[data-theme="light"] .file-comment { color: #6A737D; }
+:root[data-theme="light"] .file-string { color: #22863A; }
+:root[data-theme="light"] .file-keyword { color: #6F42C1; }
+:root[data-theme="light"] .file-number { color: #B05A00; }

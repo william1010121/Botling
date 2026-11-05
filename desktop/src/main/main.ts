@@ -1,6 +1,6 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, systemPreferences, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
@@ -19,7 +19,8 @@ import { CHECK_EVERY_MS, Updater } from "./updates";
 import { reportPreviewURL, shellReportNavigation } from "./report-preview";
 import { markdownResponse, markdownStyles } from "./markdown-page";
 import { previewResponse } from "./preview-response";
-import { resolveReportTheme, themeHtml, type ReportTheme } from "./report-theme";
+import { reportNeedsMark, resolveReportTheme, themeHtml, type ReportTheme } from "./report-theme";
+import { themeSourceFor, windowBackground, type AppTheme } from "./app-theme";
 import {InputTraceWriter,syntheticTraceContext,acceptTraceIPC} from "./input-trace";
 import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
 import {directoryDefaults,packagedDataDir} from "./main-environment";
@@ -119,11 +120,13 @@ const APP_ORIGIN = "app://botling";
 const PAGE_PREFIX = "botling-card://page/";
 /** Settings → Appearance → Report pages (kept in step with the core's settings). */
 let reportTheme: ReportTheme = "dark";
-/** The system's appearance; the app's own nativeTheme is forced dark, so macOS is asked directly. */
-function systemDark(): boolean {
-  if (process.platform === "darwin") { try { return systemPreferences.getUserDefault("AppleInterfaceStyle", "string") === "Dark"; } catch { return true; } }
-  return nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ?? true;
+/** Settings → Appearance → App: drives nativeTheme (every page's prefers-color-scheme) live, no restart. */
+function applyAppTheme(setting: AppTheme | null | undefined) {
+  const source = themeSourceFor(setting);
+  if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source;
 }
+/** Whether the app is drawn dark now (the setting, or the system's look for "system"). */
+function appDark(): boolean { return nativeTheme.shouldUseDarkColors; }
 
 /** Result pages for preview cards (Phase 5c; core/page-preview.ts). */
 const PREVIEW_PREFIX = "botling-card://preview/";
@@ -190,7 +193,7 @@ const core: CoreClient = new CoreClient({
   ledgerFile: join(dataDir, "core", "children.json"),
   env: coreEnvironment(),
   onEvent: (event) => {
-    if (event.event.type === 'settings.updated') { applyMenu(event.event.settings.shortcuts); reportTheme = event.event.settings.reportTheme; }
+    if (event.event.type === 'settings.updated') { applyMenu(event.event.settings.shortcuts); reportTheme = event.event.settings.reportTheme; applyAppTheme(event.event.settings.appTheme); }
     broadcast(event);
   },
   audit: note,
@@ -667,7 +670,7 @@ function traceFrameIdentity(frame:{processId:number;routingId:number;frameTreeNo
 function createWindow() {
   const window = new BrowserWindow({
     width: 1120, height: 820, minWidth: 640, minHeight: 480,
-    title: "Botling", backgroundColor: "#0E0E10", show: false,
+    title: "Botling", backgroundColor: windowBackground(appDark()), show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: join(preloadDir, "preload.cjs"),
@@ -759,9 +762,9 @@ function serveApp() {
       try {
         // A Markdown result is drawn as the chat draws a reply (markdown-page.ts), never served as text.
         if (/\.(md|markdown)$/i.test(file)) return markdownResponse(file, markdownPageStyles(), request.method);
-        // Settings → Appearance → Report pages: a light look is asked for with data-theme (report-theme.ts).
-        const theme = resolveReportTheme(reportTheme, systemDark);
-        return await previewResponse(file, request, theme === "light" ? { html: (text) => themeHtml(text, "light") } : {});
+        // Settings → Appearance → Report pages: a look other than the app's is asked for with data-theme (report-theme.ts).
+        const theme = resolveReportTheme(reportTheme, appDark);
+        return await previewResponse(file, request, reportNeedsMark(theme, appDark()) ? { html: (text) => themeHtml(text, theme) } : {});
       } catch {
         return new Response("Not found", { status: 404 });
       }
@@ -805,10 +808,12 @@ app.whenReady().then(async () => {
   startup.mark("app.ready");
   applyMenu(shortcutOverrides);
   // The saved shortcuts: the menu starts on the defaults and is rebuilt once the core answers (and on every change).
-  void core.call({ type: "settings.get" }).then(settings => { applyMenu((settings as { shortcuts?: unknown }).shortcuts); reportTheme = (settings as { reportTheme?: ReportTheme }).reportTheme ?? "dark"; }, () => {});
-  // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
-  // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
+  void core.call({ type: "settings.get" }).then(settings => { applyMenu((settings as { shortcuts?: unknown }).shortcuts); reportTheme = (settings as { reportTheme?: ReportTheme }).reportTheme ?? "dark"; applyAppTheme((settings as { appTheme?: AppTheme }).appTheme); }, () => {});
+  // The app starts dark, as 1.x's windows (`preferredColorScheme(.dark)`), until the saved Settings → Appearance → App
+  // look arrives (above); pages and component frames that ask (prefers-color-scheme) follow it (Phase 5c).
   nativeTheme.themeSource = "dark";
+  // A window's background (seen while resizing, before its page draws) follows the look.
+  nativeTheme.on("updated", () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.setBackgroundColor(windowBackground(appDark())); });
   hardenSession(session.defaultSession);
   serveApp();
   if (shotMode) {

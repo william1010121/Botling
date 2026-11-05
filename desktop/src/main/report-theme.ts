@@ -1,16 +1,21 @@
-// The look a report page is drawn in (Settings → Appearance → Report pages). The app itself is always dark
-// (nativeTheme.themeSource = "dark"), so a page that follows prefers-color-scheme would always be dark too;
-// for a light look the page's <html> is marked data-theme="light", which Botling's report stylesheet (and
-// any page that uses the same convention) honours over the colour scheme. Dark needs no change.
+// The look a report page is drawn in (Settings → Appearance → Report pages). A page that follows
+// prefers-color-scheme gets the app's look (nativeTheme.themeSource, app-theme.ts); for any other look the
+// page's <html> is marked data-theme, which Botling's report stylesheet (and any page that uses the same
+// convention) honours over the colour scheme. "system" follows the app's look.
 
 export const REPORT_THEMES = ["dark", "light", "system"] as const;
 export type ReportTheme = (typeof REPORT_THEMES)[number];
 
-/** The look to draw: the setting, or the system's appearance for "system". */
-export function resolveReportTheme(setting: ReportTheme | null | undefined, systemDark: () => boolean): "dark" | "light" {
+/** The look to draw: the setting, or the app's look (`appDark`) for "system". */
+export function resolveReportTheme(setting: ReportTheme | null | undefined, appDark: () => boolean): "dark" | "light" {
   if (setting === "light") return "light";
-  if (setting === "system") return systemDark() ? "dark" : "light";
+  if (setting === "system") return appDark() ? "dark" : "light";
   return "dark";
+}
+
+/** Whether the page must be marked: a light page always, a dark one only while the app is light. */
+export function reportNeedsMark(theme: "dark" | "light", appDark: boolean): boolean {
+  return theme === "light" || !appDark;
 }
 
 /** Mark the page's <html> with data-theme; a page that already chooses its theme, or has no <html> tag near the top, is left as it is. */

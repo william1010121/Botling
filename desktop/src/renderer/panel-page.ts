@@ -12,6 +12,13 @@
 const json = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c").replace(new RegExp("\u2028", "g"), "\\u2028").replace(new RegExp("\u2029", "g"), "\\u2029");
 
 /**
+ * The page's look follows the app's (Settings → Appearance → App): a frame's prefers-color-scheme is the
+ * color-scheme of the page that holds it, and <html data-theme> switches the design tokens plugins put in
+ * (Web/src/tokens.css) and their own `[data-theme="light"]` rules. Runs first, before anything draws.
+ */
+export const PANEL_THEME_SCRIPT = `(() => { const q = matchMedia("(prefers-color-scheme: light)"), r = document.documentElement; const f = () => r.setAttribute("data-theme", q.matches ? "light" : "dark"); f(); q.addEventListener("change", f); })();`;
+
+/**
  * `fit`: the frame is a block of the app page's own (a page of Settings, a block in the gear's popover), not a panel:
  * no padding or background of its own, the app's text size, and its height told to the page (`resize`) as its content changes.
  */
@@ -27,13 +34,18 @@ export function panelPage(plugin: string, panel: string, source: string, setting
     : `html, body { margin: 0; background: #1B1B1F; color: #EDEDF0; font: 13px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif; }
   #panel-root { padding: 12px; overflow-wrap: anywhere; }`;
   return `<!doctype html>
-<html data-surface="panel"><head><meta charset="utf-8">
+<html data-surface="panel" data-theme="dark"><head><meta charset="utf-8">
+<script>${PANEL_THEME_SCRIPT}</script>
 <style>
   :root { color-scheme: dark; }
   ${look}
   pre { white-space: pre-wrap; }
   .panel-empty, .panel-failed { color: #8E8E96; }
   .panel-failed { color: #FF8A80; }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="light"] body { color: #1C1C1F;${fit ? "" : " background: #FFFFFF;"} }
+  :root[data-theme="light"] .panel-empty { color: #7A7A83; }
+  :root[data-theme="light"] .panel-failed { color: #D0342C; }
 </style></head>
 <body><div id="panel-root"></div>
 <script type="module">
