@@ -54,6 +54,7 @@ const plainTemplate = `<style>
 .g{font:13px -apple-system,"PingFang TC",sans-serif;color:#EDEDF0;border:1px solid #2A2A31;border-radius:12px;padding:8px 10px;background:#141417}
 .r{display:flex;gap:10px;padding:3px 0;align-items:baseline}.k{color:#8E8E96;min-width:84px;flex:none}.v{min-width:0;overflow-wrap:anywhere}
 .l{margin:2px 0 2px 12px;color:#C8C8CE}.e{color:#8E8E96}
+@media (prefers-color-scheme: light){.g{color:#1C1C1F;border-color:#E3E3E8;background:#FFFFFF}.k,.e{color:#7A7A83}.l{color:#3F3F46}}
 </style><div class="g" id="g"></div><script>
 (() => {
   const root = document.getElementById('g');
