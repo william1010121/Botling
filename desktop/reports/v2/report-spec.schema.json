@@ -24,7 +24,8 @@
         "comparison",
         "plan",
         "results",
-        "explainer"
+        "explainer",
+        "experiment"
       ]
     },
     "title": {
@@ -74,6 +75,34 @@
       "minLength": 1,
       "maxLength": 240,
       "description": "The answer first: ≤ 3 sentences. Shown in the verdict card and on the cover slide."
+    },
+    "impact": {
+      "description": "What the result means for the goal, in the reader's terms (users, time, money, the research question): \"so what\". Shown under the verdict.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "risk": {
+      "description": "The biggest risk and its response; shown on the first page, never only at the end.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "The biggest risk or open doubt, in plain words."
+        },
+        "plan": {
+          "description": "What is being done about it (road to green), with owner or date when known.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
     },
     "next": {
       "description": "≤ 3 one-line next steps, shown as numbered chips under the verdict.",
@@ -223,6 +252,200 @@
                   ],
                   "additionalProperties": false,
                   "description": "One highlighted message with a tone: info, warn, bad (risk), good (success) or neutral."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "glossary"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "items": {
+                      "minItems": 1,
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "term": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40,
+                            "description": "The term exactly as the report writes it, e.g. \"LOSO\" or \"κ\"; related names may share one entry (\"MAtt / SPDIM\")."
+                          },
+                          "plain": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120,
+                            "description": "One plain sentence: what it is and why it matters here."
+                          }
+                        },
+                        "required": [
+                          "term",
+                          "plain"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "items"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Plain one-sentence definitions of the acronyms, symbols and field terms the reader may not know."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "experiment"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "question": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120,
+                      "description": "What the experiment wants to know, in plain words."
+                    },
+                    "hypothesis": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 160,
+                      "description": "\"If we change X, metric Y improves by ≥ Z\" — falsifiable, with direction."
+                    },
+                    "success": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120,
+                      "description": "The success criterion fixed before running."
+                    },
+                    "baseline": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120,
+                      "description": "What the new method is compared against (previous version, paper score, chance level)."
+                    },
+                    "baselineTuned": {
+                      "description": "true = the baseline got the same tuning budget and training length.",
+                      "type": "boolean"
+                    },
+                    "runs": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 1000,
+                      "description": "Independent runs (seeds / folds) per setting."
+                    },
+                    "spread": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60,
+                      "description": "What the ± or error bar is: std or SE, across seeds or subjects, and n."
+                    },
+                    "result": {
+                      "type": "object",
+                      "properties": {
+                        "metric": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 24
+                        },
+                        "base": {
+                          "type": "number"
+                        },
+                        "new": {
+                          "type": "number"
+                        },
+                        "ci": {
+                          "description": "95% interval of the difference new − base.",
+                          "type": "array",
+                          "prefixItems": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ],
+                          "items": false,
+                          "minItems": 2,
+                          "maxItems": 2
+                        },
+                        "unit": {
+                          "description": "Unit of base and new, e.g. \"%\" (the difference is then shown in pp), \"ms\".",
+                          "type": "string",
+                          "maxLength": 8
+                        }
+                      },
+                      "required": [
+                        "metric",
+                        "base",
+                        "new"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "supported",
+                        "not_supported",
+                        "inconclusive"
+                      ],
+                      "description": "supported | not_supported | inconclusive (the gap is inside the noise or runs are missing)."
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "question",
+                    "hypothesis",
+                    "success",
+                    "baseline",
+                    "runs",
+                    "spread",
+                    "verdict"
+                  ],
+                  "additionalProperties": false,
+                  "description": "The experiment card: question, hypothesis, success criterion set beforehand, baseline, runs and what ± means, the result with its interval, and the verdict."
                 },
                 {
                   "type": "object",

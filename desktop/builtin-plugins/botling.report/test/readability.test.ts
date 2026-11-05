@@ -82,7 +82,10 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
     expect(posWithRef.errors).toEqual([]);
     const pd = new JSDOM(`<body>${posWithRef.html}</body>`).window.document;
     expect(pd.querySelector(".vb:not(.div)")).toBeTruthy();
-    expect(pd.querySelector(".brl em")?.textContent).toBe("隨機猜測 25%");
+    expect(pd.querySelector(".brl")).toBeTruthy();
+    // The label sits in the key line above the plot, never on top of the bars.
+    expect(pd.querySelector(".brl em")).toBeNull();
+    expect(pd.querySelector(".bri")?.textContent).toContain("隨機猜測 25%");
 
     const badStacked = api.registry.get("bar").schema.safeParse({
       type: "bar",
@@ -100,12 +103,13 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
 
     for (const kind of ["investigation", "explainer", "results", "comparison"] as const) {
       const blocks: any[] = [
+        { type: "glossary", items: [{ term: "EEG", plain: "腦波。" }, { term: "SESS", plain: "把每個人的腦波背景先拉齊。" }, { term: "MAtt", plain: "一種腦波分類模型。" }, { term: "Δκ", plain: "扣掉亂猜後的進步幅度。" }] },
         { type: "prose", text: termExplanation },
         { type: "table", title: "全體受試者明細", columns: ["受試者", "無對齊", "加 SESS"], rows: nineSubjects },
       ];
       if (kind === "investigation") blocks.push({ type: "flowchart", title: "因果鏈", nodes: [{ id: "a", label: "設定" }, { id: "b", label: "結果" }], edges: [{ from: "a", to: "b" }] });
       if (kind === "results") blocks.push({ type: "kpi", items: [{ label: "MAtt Δκ", value: "0.098" }] });
-      const { spec, errors } = api.validateSpec({ ...base, kind, asks: [], sections: [{ title: "實驗", takeaway, blocks }] });
+      const { spec, errors } = api.validateSpec({ ...base, kind, impact: "跨人增益沒有縮水，SESS 值得繼續做。", asks: [], sections: [{ title: "實驗", takeaway, blocks }] });
       expect(errors).toEqual([]);
       expect(api.lintSpec(spec, api.registry)).toEqual([]);
     }

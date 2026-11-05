@@ -6,20 +6,54 @@ A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick
 
 ## Rules
 
-1. **Answer first.** The first `tldr` sentence answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish the page: answer in chat. `tldr` ≤ 3 sentences states the conclusion; `next` ≤ 3 one-line steps.
-2. **Headline = takeaway.** Every section has `takeaway`: its conclusion as one sentence (≈ 22 CJK chars / 15 words in `status`/`plan`/`decision`; up to 48 units in `investigation`/`explainer`/`results`/`comparison`). Reading only takeaways gives the argument. `title` is the short topic label.
-3. **One idea per section, ≤ 2 charts per section, ≤ 8 in the report.** Visuals for data, prose for reasoning, bullets only for lists (≤ 6, ≤ 2 levels).
-4. **Every chart has an action title** (`title`: what it shows, not what it is) and direct labels; never repeat a KPI as a chart.
-5. **Evidence is short.** Give each claim a short source and a number when relevant; ≤ 4 `sources`. Keep long paths, hashes, and logs out of prose. Use short source references; keep full evidence in the internal handback. Never hide a risk or a decision in detail.
-6. **Explain uncertainty.** Separate verified facts from pending inferences. Give the reason for each inference and state what remains unchecked. Do not assign mechanical confidence percentages. Use numerical probabilities only when supported by a stated method and evidence.
-7. **End with `asks`** (what, who, by) — or `"asks": []` for "No action needed". `status.level` at_risk / off_track needs `status.reason` (cause + fix).
-8. **Forbidden:** topic-only headings, narrating your process chronologically, the conclusion at the end, evidence dumps, decorative charts, one-sided options, vague hedging, mixing report kinds.
-9. **Use ASD-STE100-informed plain language.** Use active voice, direct verbs, and consistent terms. Aim for at most 20 English words or 30 Chinese characters per sentence. Keep useful technical names. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese.
-10. **Explain causes visually.** For multistep causes, prefer a flowchart plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
-11. **Write for the reader.** Omit routine defensive boilerplate and internal coordination jargon. Keep research-only handback details, test commands, and preview-tool details in the internal handback. State material uncertainty and failed checks that affect the decision, with their practical effect. Never conceal defects or claim unperformed validation.
-12. **Plain language before jargon (先講人話再給術語).** In technical or scientific reports (`investigation`, `explainer`, `results`, `comparison`), state the plain question, setup, and everyday conclusion before listing numbers. Define every domain acronym or metric symbol (e.g. `Δκ`, `SESS`, whitening / 白化) in one plain sentence or everyday analogy the first time it appears; never stack 4–5 unexplained acronyms in `title`, `tldr`, or `takeaway`.
-13. **One question per chart + one-sentence reading guide (一張圖只回答一個問題＋一句看圖指南).** Never cram two incompatible scales, baselines, or questions into one figure; split them into separate blocks. Give every non-trivial chart a one-sentence reading guide (in `note` or a short `prose` block) stating what taller/shorter or right/left of `0` means.
-14. **Never hand-code data-chart SVGs (禁止手刻複雜數據圖 SVG).** Use native `bar` (supports negative/diverging values around `0` and optional `referenceLine` baselines), `table`, `kpi` (metrics), `trend`, `beforeafter`, and `flowchart` blocks for numbers and comparisons. Do not hand-write multi-panel data-chart `<svg>` images with guessed pixel coordinates (`> 10 <text>` tags triggers a lint warning because CJK glyphs overflow badges and collide with bars).
+Readers skim: most read only the verdict card and the section headlines. Write so that reading only those gives the answer, its meaning and what to decide; put the evidence below for whoever needs it.
+
+1. **Answer first (BLUF).** The first `tldr` sentence is the conclusion and answers the user's question ("You asked X; the answer is Y"); never background, never "this report…". If it cannot, do not publish the page: answer in chat. `tldr` ≤ 3 sentences.
+2. **The first page holds five things.** The verdict card shows (1) `tldr`: one-sentence status or result; (2) `impact`: what it means for the goal, in the reader's terms (users, time, money, the research question); (3) `asks` (what, who, by): the decision or help needed, shown right under the card — or `"asks": []` for "No action needed"; (4) `risk` (text, plan): the biggest risk and what is done about it; (5) `next`: ≤ 3 next steps, even tentative ones. Reading only the card, the reader can say the status, the impact and what they must decide.
+3. **Headline = takeaway.** Every section has `takeaway`: its conclusion as one sentence (≈ 22 CJK chars / 15 words in `status`/`plan`/`decision`; up to 48 units in `investigation`/`explainer`/`results`/`comparison`/`experiment`). Write "登入延後 1 週，原因是 API 限流", never a topic such as "進度說明" or "結果". `title` is the short topic label. Reading only the takeaways in order gives the whole argument.
+4. **Layer the detail.** Layer 1, for everyone: the verdict card. Layer 2, for the lead or PM: the sections — impact, options, evidence. Layer 3, for engineers: setup, per-run tables, reproducibility — the last section, `sources` or an appendix file. One idea per section; ≤ 2 charts per section, ≤ 8 in the report; visuals for data, prose for reasoning, bullets only for lists (≤ 6, ≤ 2 levels).
+5. **Plain language before jargon: define every term once (先講人話，術語首次定義).** Say the plain question, setup and everyday answer before the numbers. Each acronym, model or dataset name, and metric symbol (`κ`, `Δκ`, SESS, LOSO, whitening / 白化) gets one plain sentence or everyday analogy the first time it appears: a `glossary` block in the first section, or the plain words first with the term in brackets ("留一受試者驗證（LOSO）"). Use the same word for the same thing everywhere; prefer an everyday word to an acronym. Never stack unexplained acronyms in `title`, `tldr` or `takeaway`. Plain language is writing for your reader, not lowering the level.
+6. **Every number has a reference point and a meaning.** Give the comparison (plan, previous version, last week, chance level, the paper's score) and the unit, then say what the gap means in the reader's units: not "準確率 92%" but "92%（現行規則 85%）：每 100 張多抓對 7 張". Prefer "done / not done + expected date" to "80% done". Show what changed since the last report rather than repeating its history.
+7. **One question per chart + one-sentence reading guide (一張圖只回答一個問題＋一句看圖指南).** Every chart has an action title stating its conclusion and direct labels; never repeat a KPI as a chart. Never cram two scales, baselines or questions into one figure: split them. Give each non-trivial chart a one-sentence reading guide (`note` or a short `prose`) saying what taller / shorter or left / right of `0` means, and what n and the error bars are. Axes start at 0 for amounts; no decoration that carries no data.
+8. **Never hand-code data-chart SVGs (禁止手刻複雜數據圖 SVG).** Use native `bar` (signed / diverging values around `0`, optional `referenceLine` for chance or target), `table`, `kpi`, `trend`, `beforeafter` and `flowchart` for numbers and comparisons. Hand-written multi-panel `<svg>` charts with guessed coordinates make CJK labels collide (> 10 `<text>` tags triggers a warning).
+9. **Use ASD-STE100-informed plain language.** Active voice, direct verbs, "who does what", consistent terms. Prefer short sentences, but keep a cause and its effect in one sentence: "X 因為 Y，所以 Z" stays whole; never cut a causal chain into fragments or drop the "because" to save length, and never cut background the reader needs to follow the argument. Keep useful technical names. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese.
+10. **Explain uncertainty.** Separate verified facts from pending inferences. Give the reason for each inference and state what remains unchecked. Do not assign mechanical confidence percentages. Use numerical probabilities only when supported by a stated method and evidence.
+11. **Explain causes visually.** For multistep causes, prefer a flowchart plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
+12. **Be honest early.** Bad news and the biggest risk go on the first page, never the last line. Report outcomes, not activity ("讓客服一鍵查訂單，處理時間 6 → 4 分鐘", not "開了 5 場會、改了 30 個 PR"). A yellow or red `status` needs a road to green (who does what, by when), whether the team can recover alone, and an ask. Describe problems by activity and fix, never by naming a person (blameless). Do not paint red as amber.
+13. **Write for the reader.** Omit routine defensive boilerplate and internal coordination jargon. Keep research-only handback details, test commands, and preview-tool details in the internal handback. Evidence is short: a short source and a number per claim, ≤ 4 `sources`, no long paths, hashes or logs in prose. State material uncertainty and failed checks that affect the decision, with their practical effect. Never conceal defects or claim unperformed validation.
+14. **Experiments (ML / deep learning): see kind `experiment`.** State the question, a falsifiable hypothesis and the success criterion before the results. Compare with an equally tuned baseline on the same data split, preprocessing, seeds and training length; change one thing at a time. Run ≥ 3 seeds and give mean ± std, saying what ± is (std or SE, across seeds or subjects, n). A gap inside the variance, or an interval that crosses 0, is "not significant", never "an improvement". Report error analysis, ablations and negative results ("what we ruled out, what it saved, what next"); do not generalise beyond the data you tested.
+15. **Forbidden:** topic-only headings, narrating your process chronologically, the conclusion at the end, activity lists instead of outcomes, evidence dumps, decorative charts, numbers with no baseline, unexplained acronyms, best-seed-only results, one-sided options, vague hedging, mixing report kinds.
+
+## Checked by the renderer (warnings)
+
+These come back in `warnings` with a path; fix them before delivering:
+
+- the first `tldr` sentence opens with background ("本報告…", "為了…", "We ran…") instead of the answer;
+- a missing first-page item: `impact` (status, decision, investigation, results, experiment), `risk` (status, plan, experiment), `next` (status, plan, experiment); a yellow / red `status` without `status.reason` or with `"asks": []`;
+- a `takeaway` that is a topic ("結果", "進度說明", or the same as `title`), missing, or over the length budget;
+- a number in `tldr`, `impact` or a `takeaway` with nothing to compare it to (no baseline, change, target, chance level or sign);
+- an acronym, coined name (two or more capitals: LOSO, SESS, OpenBMI) or Greek symbol (κ, Δκ) used without a definition — in a `glossary` block, or written "plain words（TERM）" / "TERM（plain words）" where it first appears;
+- kind `experiment` without an `experiment` block; an experiment card with < 3 runs, no `baselineTuned: true`, no `result.ci`, or verdict "supported" while the interval crosses 0; a `tldr` that claims an improvement while a card is inconclusive; experiment KPIs without delta or target;
+- the budgets below (bullets, prose length, table rows, charts per section, chart titles, slides per section) and hand-coded SVG charts.
+
+## Not checked: rules only
+
+- whether the first sentence is really the answer to the user's question, and whether the `impact` is in the reader's terms;
+- cause and effect kept together, one idea per section, the takeaways read in order as a summary;
+- whether a definition is plain enough for a non-specialist to repeat it;
+- whether the baseline is fair (same tuning budget, split, preprocessing), the test set was used once, and normalisation or feature selection was fitted on training folds only (no leakage);
+- error analysis, per-group (per-subject) breakdown, ablations and negative results — the skeleton for `experiment` asks for them;
+- whether every number can be traced to a run or a data source.
+
+## Before you publish
+
+- [ ] Reading only the verdict card, a lead can say the status, the impact and what they must decide.
+- [ ] A reader outside the field can repeat the main point in their own words; every term is defined once.
+- [ ] Every number has a baseline and a unit; key metrics are translated into consequences ("每 100 件…").
+- [ ] ML results name the number of seeds and what the error bar is; gaps inside the variance are not called improvements.
+- [ ] Each chart makes one point, its title states it, nothing is decorative.
+- [ ] Bad news and the biggest risk are on the first page; yellow / red items have a road to green and an ask.
+- [ ] Negative results say what was ruled out and what comes next; every number traces to a run or source.
 
 ## Generate
 
@@ -43,11 +77,24 @@ The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "war
   "kind": "status",
   "title": "今天的交付狀態",
   "asOf": "2026-10-28 18:00",
-  "tldr": "任務面板 .11 已安裝；手機版 bot 清單受阻，今天修。",
+  "status": {
+    "level": "at_risk",
+    "reason": "手機版 bot 清單受阻；今天修，明天驗"
+  },
+  "tldr": "任務面板 .11 已安裝；手機版 bot 清單受阻，預計今天修好。",
+  "impact": "手機使用者今天仍看不到 bot 清單；桌面版不受影響。",
+  "risk": {
+    "text": "修法要動同步格式，可能影響桌面版",
+    "plan": "先在測試機跑 30 分鐘再發布"
+  },
+  "next": [
+    "修好手機清單",
+    "測試機驗證後發布"
+  ],
   "sections": [
     {
       "title": "進度",
-      "takeaway": "四條線裡一條受阻",
+      "takeaway": "四條線完成一條、受阻一條",
       "blocks": [
         {
           "type": "kpi",
@@ -66,13 +113,20 @@ The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "war
         }
       ]
     }
+  ],
+  "asks": [
+    {
+      "what": "確認今晚可以停機 10 分鐘",
+      "who": "你",
+      "by": "今天 18:00"
+    }
   ]
 }
 ```
 
 - `version`: 2
 - `lang?`: "zh-Hant" | "en"
-- `kind?`: "status" | "decision" | "investigation" | "comparison" | "plan" | "results" | "explainer" — One report type per report; picks the skeleton (see the prompt doc).
+- `kind?`: "status" | "decision" | "investigation" | "comparison" | "plan" | "results" | "explainer" | "experiment" — One report type per report; picks the skeleton (see the prompt doc).
 - `title`: string ≤40 — What this report is about, ≤ 22 CJK chars.
 - `subtitle?`: string ≤80
 - `asOf`: string ≤40 — When the evidence was taken, human readable.
@@ -80,13 +134,17 @@ The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "war
   - `level`: "on_track" | "at_risk" | "off_track" | "done" | "info"
   - `reason?`: string ≤60 — Required for at_risk / off_track: cause and fix in one line.
 - `tldr`: string ≤240 — The answer first: ≤ 3 sentences. Shown in the verdict card and on the cover slide.
+- `impact?`: string ≤160 — What the result means for the goal, in the reader's terms (users, time, money, the research question): "so what". Shown under the verdict.
+- `risk?`: { text, plan? } — The biggest risk and its response; shown on the first page, never only at the end.
+  - `text`: string ≤100 — The biggest risk or open doubt, in plain words.
+  - `plan?`: string ≤100 — What is being done about it (road to green), with owner or date when known.
 - `next?`: string ≤24[] (≥1 ≤3) — ≤ 3 one-line next steps, shown as numbered chips under the verdict.
 - `sections`: { id?, title, takeaway?, layout?, blocks }[] (≥1 ≤8)
   - `id?`: string ≤32
   - `title`: string ≤24 — Short topic label, shown small above the takeaway.
   - `takeaway?`: string ≤80 — The section's conclusion as one sentence; becomes the slide headline.
   - `layout?`: "auto" | "stack" | "split" | "grid"
-  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight?, referenceLine? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
+  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items } | { type, title?, note?, span?, question, hypothesis, success, baseline, baselineTuned?, runs, spread, result?, verdict } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight?, referenceLine? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
 - `asks?`: { what, who?, by? }[] (≤3) — What the reader must do (owner, deadline). [] renders "No action needed".
   - `what`: string ≤60
   - `who?`: string ≤20
@@ -99,35 +157,37 @@ Pick one `kind`; use its skeleton as the default section order (skip what you ha
 
 ### status
 
-Where things stand and what needs attention.
+Software progress / feature status: where things stand against the plan, what changed since last time, and what needs a decision. Outcomes, not activity.
 
-1. tldr + status.level (at_risk/off_track need status.reason: cause + fix)
-2. kpi (target vs actual, delta, spark) — stack:true for status counts
-3. checklist or table (Done / Next / Blocked) or flowchart (where each item is stuck)
-4. timeline (milestones) or roadmap (now/next/later) — optional
-5. asks (owner, deadline) — or [] for "No action needed"
+1. tldr = one-sentence status + why + the decision needed; `status.level` defined in advance: on_track = within tolerance, at_risk = at risk with a recovery plan, off_track = a commitment is broken or a decision above the team is needed; any blocking red makes the whole report red
+2. impact = the effect on the goal (release date, users, cost), planned vs now; risk = the biggest risk + road to green (who, what, by when) and whether the team can recover alone
+3. table (dimension | status | one-line reason with a number): schedule, scope, quality, resources — or kpi (target vs actual, delta, spark); stack:true for status counts
+4. table or timeline — planned vs actual per milestone: done / not done + expected date (never "80% done"); carry-overs and scope changes stated
+5. checklist — 2–5 outcomes since the last report, each "讓［誰］能［做什麼］→［可量測結果］", not activities; trend over 3–5 cycles when a rate matters (never one cycle alone; velocity plans, it does not grade the team)
+6. next (even tentative) + confidence in the milestone; asks (owner, deadline) — or [] for "No action needed"
+7. last section for engineers: technical details, alternatives considered, PR / issue references in sources ≤ 4
 
 ### decision
 
 "Decision needed: X by date" with a recommendation.
 
-1. tldr = the recommendation + the deadline
-2. prose: context in SCQA, 2–3 sentences
+1. tldr = the recommendation + the deadline; impact = what changes for the goal if we pick it
+2. prose: context in SCQA, 2–3 sentences, terms defined
 3. options (2–4 incl. "do nothing", same criteria: cost, risk, time, reversibility) with recommended + verdict
 4. proscons or quadrant (effort × impact) — why the others lose
-5. callout tone=warn: the main risk / assumption
+5. callout tone=warn: the main risk / assumption (or `risk`)
 6. asks: who decides, by when
 
 ### investigation
 
-What broke, why, and whether it is fixed.
+Investigation: what broke or what we found, why, and whether it is fixed.
 
-1. tldr = plain question + impact + fixed now? + the cause in plain language
-2. prose: experimental/system setup and one-sentence definitions of domain acronyms before metrics
+1. tldr = the finding or cause in plain language + impact + fixed now?; impact = who or what is affected and how much
+2. glossary or prose: the setup and one plain sentence per domain term, before any metric
 3. flowchart plus a table — show the multistep cause and the evidence for each link; mark pending inferences
 4. timeline (events) — only when timing explains the cause
-5. beforeafter, bar (including signed deltas / referenceLine), or trend — the metric before/after the fix
-6. checklist — actions with owners (blameless)
+5. beforeafter, bar (including signed deltas / referenceLine), or trend — the metric before/after the fix, against its baseline
+6. checklist — actions with owners (blameless: name the activity, not the person)
 7. sources ≤ 4
 
 ### comparison
@@ -135,7 +195,7 @@ What broke, why, and whether it is fixed.
 Which one, and "pick X if…, Y if…".
 
 1. tldr = plain question + the winner + when to pick the other
-2. prose: plain-language comparison criteria and baseline definitions (1–3 sentences)
+2. prose or glossary: plain-language criteria and baseline definitions (1–3 sentences)
 3. options or table with the winning cells toned good
 4. bar (one question per chart; supports negative deltas and referenceLine) — optional
 5. callout: caveats
@@ -144,18 +204,17 @@ Which one, and "pick X if…, Y if…".
 
 Goal, definition of done, path there.
 
-1. tldr = goal + definition of done + date
+1. tldr = goal + definition of done + date; risk = the top risk and its response
 2. timeline (gantt with lanes, today) or roadmap
 3. flowchart — dependencies / critical path
-4. callout tone=bad for the top risk
-5. steps — the first step; asks — decision needed
+4. steps — the first step; next; asks — decision needed
 
 ### results
 
-What the numbers say after a change.
+What the numbers say after a change (product or system metrics). For an ML / deep-learning experiment use kind `experiment`.
 
-1. tldr = plain question + headline answer + what it means
-2. prose: plain-language setup, baseline meaning, and 1-sentence definitions of domain acronyms
+1. tldr = plain question + headline answer against its baseline + what it means; impact = the consequence in the reader's units
+2. glossary or prose: plain-language setup, what the baseline is, one sentence per domain term
 3. kpi vs baseline (delta, target)
 4. trend with marks at the change, target line
 5. beforeafter or bar (supports negative values and referenceLine; add a 1-sentence reading guide) — segment breakdown
@@ -164,14 +223,27 @@ What the numbers say after a change.
 
 ### explainer
 
-What it is and how it works.
+Explainer: what it is and how it works, for a reader outside the field.
 
-1. tldr = one plain sentence what + why (no acronym stacking)
-2. prose: everyday analogy + 1-sentence definition of each technical term
+1. tldr = one plain sentence what + why it matters (no acronym stacking)
+2. glossary — everyday analogy + one plain sentence per technical term
 3. flowchart plus a table — show the multistep mechanism and explain each link
 4. steps — only for an ordered procedure
 5. bar / table / image — a worked example with a 1-sentence reading guide
 6. callout — limits
+
+### experiment
+
+ML / deep-learning experiment: did the change work, is the gap real, and what next. Scientific checks first, then the gain.
+
+1. tldr = the answer to the question in plain words + the key number against its baseline + whether the gap is real (n runs; "不顯著" when inside the noise) + the recommendation; impact = what it means for the research question or product decision; risk = the main doubt (underfitting, leakage, small n) and how it will be checked; next
+2. first section: glossary (every acronym, model, dataset and metric in plain words) + experiment card per main hypothesis (question, falsifiable hypothesis, success criterion set before running, equally tuned baseline, runs, what ± means, result with the 95% interval of the difference, verdict)
+3. sanity checks before any gain: chance level, the paper's score for the same model and protocol, convergence (training accuracy / epochs vs the paper's setting), a fair cross-dataset metric; when far below the paper, say "possible underfitting" before discussing gains
+4. main result: bar with referenceLine (chance or baseline) or table of mean ± std, one question per chart, with a reading guide; per-group (per-subject) breakdown when groups differ
+5. error analysis: failure modes with their share (≈ 100 wrong cases, or per subject / condition); a mode's share bounds what fixing it can gain
+6. ablation: remove one component at a time, Δ = full − without it; keep negative ablations (Δ ≈ 0 → the component can go); hyperparameter search is not an ablation
+7. what we learned and ruled out (negative results: what was ruled out, what it saved, what next) + limits (only the data tested); asks
+8. last section, reproducibility: commit, config, seeds, data version and split, hardware, run time, run links → sources ≤ 4 and an appendix file
 
 ## Blocks
 
@@ -181,6 +253,8 @@ Every block takes optional `title` (action title), `note` (faint caption: unit, 
 |---|---|
 | `prose` | A short paragraph or bullet list in restricted Markdown (**bold**, *italic*, `code`, - bullets, 1. numbers). |
 | `callout` | One highlighted message with a tone: info, warn, bad (risk), good (success) or neutral. |
+| `glossary` | Plain one-sentence definitions of the acronyms, symbols and field terms the reader may not know. |
+| `experiment` | The experiment card: question, hypothesis, success criterion set beforehand, baseline, runs and what ± means, the result with its interval, and the verdict. |
 | `kpi` | A row of 1–6 headline numbers, each with label and optional delta, target and sparkline. |
 | `bar` | Bar chart for comparing categories: one or more series, positive or signed/diverging values, optional referenceLine, vertical or horizontal (auto). |
 | `trend` | Line or area chart over time (or any ordered x) for 1–4 series, with direct end labels, optional target line and up to 3 event marks. |
@@ -231,6 +305,49 @@ One highlighted message with a tone: info, warn, bad (risk), good (success) or n
 
 ```json
 {"type":"callout","tone":"warn","title":"還沒在實機驗證","text":"數字來自開發機；裝到使用者電腦後要再量一次才算完成。"}
+```
+
+### `glossary`
+
+Plain one-sentence definitions of the acronyms, symbols and field terms the reader may not know.
+
+**When:** In the first section of any report that uses domain terms (acronyms, model or dataset names, metric symbols such as κ). Define each term once, in everyday words or with an analogy, then use it the same way everywhere. The renderer treats terms listed here as defined.
+
+- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
+- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
+- `items`: { term, plain }[] (≥1 ≤10)
+  - `term`: string ≤40 — The term exactly as the report writes it, e.g. "LOSO" or "κ"; related names may share one entry ("MAtt / SPDIM").
+  - `plain`: string ≤120 — One plain sentence: what it is and why it matters here.
+
+```json
+{"type":"glossary","title":"先看懂這三個詞","items":[{"term":"SESS","plain":"一種「先把每個人的腦波調到同一個基準」的前處理，像把不同麥克風的底噪先扣掉。"},{"term":"跨受試者","plain":"用其他人的資料訓練、拿沒看過的新人來考，最接近真實上線。"},{"term":"κ","plain":"扣掉亂猜後的分數：0 = 跟亂猜一樣，1 = 全對；類別數不同的資料集要用它比。"}]}
+```
+
+### `experiment`
+
+The experiment card: question, hypothesis, success criterion set beforehand, baseline, runs and what ± means, the result with its interval, and the verdict.
+
+**When:** Every experiment report (kind "experiment"), in the first section, once per main hypothesis. It answers "was the comparison fair and is the gap real?" before any chart. When the interval of the difference crosses 0 the card itself says "not significant"; never call that gap an improvement.
+
+- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
+- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
+- `question`: string ≤120 — What the experiment wants to know, in plain words.
+- `hypothesis`: string ≤160 — "If we change X, metric Y improves by ≥ Z" — falsifiable, with direction.
+- `success`: string ≤120 — The success criterion fixed before running.
+- `baseline`: string ≤120 — What the new method is compared against (previous version, paper score, chance level).
+- `baselineTuned?`: boolean — true = the baseline got the same tuning budget and training length.
+- `runs`: integer ≥1 ≤1000 — Independent runs (seeds / folds) per setting.
+- `spread`: string ≤60 — What the ± or error bar is: std or SE, across seeds or subjects, and n.
+- `result?`: { metric, base, new, ci?, unit? }
+  - `metric`: string ≤24
+  - `base`: number
+  - `new`: number
+  - `ci?`: [number, number] — 95% interval of the difference new − base.
+  - `unit?`: string ≤8 — Unit of base and new, e.g. "%" (the difference is then shown in pp), "ms".
+- `verdict`: "supported" | "not_supported" | "inconclusive" — supported | not_supported | inconclusive (the gap is inside the noise or runs are missing).
+
+```json
+{"type":"experiment","question":"加了 SESS 前處理，模型在沒看過的新受試者身上會不會更準？","hypothesis":"加 SESS 後，跨受試者準確率至少高 3 個百分點。","success":"9 人中至少 7 人變好，且差距的 95% 區間不含 0。","baseline":"同模型、同訓練長度、不加 SESS","baselineTuned":true,"runs":3,"spread":"受試者間標準差（9 人，每人 3 seeds 先平均）","result":{"metric":"準確率","base":41.9,"new":50.8,"ci":[2.2,15.6],"unit":"%"},"verdict":"supported"}
 ```
 
 ### `kpi`
@@ -671,7 +788,7 @@ Default (`status`, `plan`, `decision`):
 - `slidesPerSection`: 2
 - `svgTextTags`: 10
 
-Relaxed for technical/scientific kinds (`investigation`, `explainer`, `results`, `comparison`):
+Relaxed for technical/scientific kinds (`investigation`, `explainer`, `results`, `comparison`, `experiment`):
 
 - `takeawayUnits`: 48
 - `proseUnits`: 600

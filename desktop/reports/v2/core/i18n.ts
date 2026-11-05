@@ -9,8 +9,10 @@ export type Status = z.infer<typeof statusEnum>;
 export const toneEnum = z.enum(['good', 'warn', 'bad', 'info', 'neutral']);
 export type Tone = z.infer<typeof toneEnum>;
 
-export const kinds = ['status', 'decision', 'investigation', 'comparison', 'plan', 'results', 'explainer'] as const;
+export const kinds = ['status', 'decision', 'investigation', 'comparison', 'plan', 'results', 'explainer', 'experiment'] as const;
 export type Kind = typeof kinds[number];
+export const expVerdictEnum = z.enum(['supported', 'not_supported', 'inconclusive']);
+export type ExpVerdict = z.infer<typeof expVerdictEnum>;
 export const levelEnum = z.enum(['on_track', 'at_risk', 'off_track', 'done', 'info']);
 export type Level = z.infer<typeof levelEnum>;
 
@@ -22,8 +24,10 @@ const zh = {
   brokenBlock: '這個區塊的資料有誤，無法顯示', items: (n: number) => `${n} 項`, now: '現在', today: '今天',
   status: { done: '完成', active: '進行中', pending: '待處理', blocked: '受阻', risk: '有風險', unverified: '未驗證', skipped: '略過' } as Record<Status, string>,
   level: { on_track: '順利', at_risk: '有風險', off_track: '落後', done: '已完成', info: '說明' } as Record<Level, string>,
-  kind: { status: '進度報告', decision: '決策', investigation: '問題調查', comparison: '比較', plan: '計畫', results: '成果', explainer: '說明' } as Record<Kind, string>,
-  example: '範例',
+  kind: { status: '進度報告', decision: '決策', investigation: '問題調查', comparison: '比較', plan: '計畫', results: '成果', explainer: '說明', experiment: '實驗報告' } as Record<Kind, string>,
+  example: '範例', impact: '影響', risk: '最大風險', mitigation: '因應', glossary: '名詞解釋',
+  exp: { question: '要回答的問題', hypothesis: '假設', success: '成功標準（事先定）', baseline: '比較基準', tunedYes: '同等調參', tunedNo: '未確認同等調參', runs: '重複次數', runsN: (n: number) => `每個設定 ${n} 次`, spread: '「±」代表', result: '結果', diff: '差距', ci: '95% 信賴區間', noise: '差距在誤差範圍內：不顯著', verdict: '判定' },
+  expVerdict: { supported: '假設成立', not_supported: '假設不成立', inconclusive: '還不能判定' } as Record<ExpVerdict, string>,
 };
 const en: typeof zh = {
   report: 'Botling report', asOf: 'As of', verdict: 'Bottom line', next: 'Next', asks: 'Needs you', noAsk: 'No action needed.',
@@ -33,8 +37,10 @@ const en: typeof zh = {
   brokenBlock: 'This block has invalid data and cannot be shown', items: n => `${n} item${n === 1 ? '' : 's'}`, now: 'Now', today: 'Today',
   status: { done: 'Done', active: 'In progress', pending: 'Pending', blocked: 'Blocked', risk: 'At risk', unverified: 'Unverified', skipped: 'Skipped' },
   level: { on_track: 'On track', at_risk: 'At risk', off_track: 'Off track', done: 'Done', info: 'Info' },
-  kind: { status: 'Status', decision: 'Decision', investigation: 'Investigation', comparison: 'Comparison', plan: 'Plan', results: 'Results', explainer: 'Explainer' },
-  example: 'Example',
+  kind: { status: 'Status', decision: 'Decision', investigation: 'Investigation', comparison: 'Comparison', plan: 'Plan', results: 'Results', explainer: 'Explainer', experiment: 'Experiment' },
+  example: 'Example', impact: 'Impact', risk: 'Biggest risk', mitigation: 'Response', glossary: 'Terms',
+  exp: { question: 'Question', hypothesis: 'Hypothesis', success: 'Success criterion (set before)', baseline: 'Baseline', tunedYes: 'equally tuned', tunedNo: 'equal tuning not confirmed', runs: 'Runs', runsN: n => `${n} per setting`, spread: '"±" means', result: 'Result', diff: 'Difference', ci: '95% CI', noise: 'Within the noise: not significant', verdict: 'Verdict' },
+  expVerdict: { supported: 'Hypothesis supported', not_supported: 'Hypothesis not supported', inconclusive: 'Inconclusive' },
 };
 export const labels = { 'zh-Hant': zh, en };
 export type Labels = typeof zh;

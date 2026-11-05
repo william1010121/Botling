@@ -20,10 +20,12 @@ import { steps } from './steps';
 import { quote } from './quote';
 import { image } from './image';
 import { sources } from './sources';
+import { glossary } from './glossary';
+import { experiment } from './experiment';
 
 /** The block catalog. Adding a block = one file in blocks/ + one entry here. Order = prompt-doc order. */
 export const blocks: AnyBlockDef[] = [
-  prose, callout, kpi, bar, trend, donut, beforeafter, matrix, quadrant, timeline, roadmap,
+  prose, callout, glossary, experiment, kpi, bar, trend, donut, beforeafter, matrix, quadrant, timeline, roadmap,
   flowchart, flow, sequence, table, options, proscons, checklist, progress, steps, quote, image, sources,
 ];
 export const registry = new Map(blocks.map(b => [b.type, b]));

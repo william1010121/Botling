@@ -6,6 +6,7 @@
   "asOf": "2026-10-28 · 本機實測",
   "status": { "level": "info" },
   "tldr": "建議自己畫 SVG（d3-scale、d3-shape，流程圖用 elkjs）：它是唯一能在產生時畫好、輸出不帶 JavaScript 的方案。請在 10/30 前確認。",
+  "impact": "選定後 22 個區塊用同一套畫法，報告離線也能讀、不帶 JavaScript。",
   "next": ["確認方案", "完成 22 個區塊", "補實機截圖"],
   "sections": [
     {

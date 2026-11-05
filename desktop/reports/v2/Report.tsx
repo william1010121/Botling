@@ -23,8 +23,18 @@ function Verdict({ spec, t }: { spec: ReportSpec; t: Labels }) {
   return <section className={`verdict t-${tone}`} aria-label={t.verdict}>
     <p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p>
     <p className="vline">{spec.tldr}</p>
+    <FirstPage spec={spec} t={t}/>
     {spec.next && <NextChips next={spec.next} t={t}/>}
   </section>;
+}
+
+/** The rest of the first page under the bottom line: what it means for the goal, and the biggest risk with its response. */
+export function FirstPage({ spec, t }: { spec: ReportSpec; t: Labels }) {
+  if (!spec.impact && !spec.risk) return null;
+  return <dl className="vmore">
+    {spec.impact && <div className="vimpact"><dt>{t.impact}</dt><dd>{spec.impact}</dd></div>}
+    {spec.risk && <div className="vrisk"><dt>{t.risk}</dt><dd>{spec.risk.text}{spec.risk.plan && <span className="vplan">{t.mitigation}：{spec.risk.plan}</span>}</dd></div>}
+  </dl>;
 }
 
 export function NextChips({ next, t }: { next: string[]; t: Labels }) {
@@ -51,6 +61,7 @@ export function DocReport({ spec, prepared }: { spec: ReportSpec; prepared: Prep
   return <div className="rpt"><main className="rp" lang={spec.lang}>
     <header className="rp-head"><p className="eyebrow">{eyebrow(spec, t)}</p><h1>{spec.title}</h1>{spec.subtitle && <p className="subtitle">{spec.subtitle}</p>}</header>
     <Verdict spec={spec} t={t}/>
+    <Asks spec={spec} t={t}/>
     {spec.sections.map((sec, si) => {
       const rows = planLayout(layoutInputs(sec.blocks, registry), sec.layout);
       const id = sec.id ?? `s${si + 1}`;
@@ -63,7 +74,6 @@ export function DocReport({ spec, prepared }: { spec: ReportSpec; prepared: Prep
         </div>)}
       </section>;
     })}
-    <Asks spec={spec} t={t}/>
     <footer className="rp-foot">Botling · Report v2{spec.kind ? ` · ${spec.kind}` : ''}</footer>
   </main></div>;
 }
@@ -91,7 +101,7 @@ export function SlideDeck({ spec, slides, prepared }: { spec: ReportSpec; slides
           <p className="eyebrow">{eyebrow(spec, t)}</p>
           <h1>{spec.title}</h1>
           {spec.subtitle && <p className="subtitle">{spec.subtitle}</p>}
-          <div className={`verdict t-${tone}`}><p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p><p className="vline">{spec.tldr}</p></div>
+          <div className={`verdict t-${tone}`}><p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p><p className="vline">{spec.tldr}</p><FirstPage spec={spec} t={t}/></div>
         </SlideFrame>;
       }
       if (s.master === 'closing') {

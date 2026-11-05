@@ -37,6 +37,9 @@ body{background:var(--side)}
 .m-cover .verdict{margin-top:40px;padding:26px 32px 24px;border-radius:20px}
 .m-cover .vlabel{font-size:16px}
 .m-cover .vline{font-size:28px;line-height:1.45}
+.m-cover .vmore dt{font-size:15px}
+.m-cover .vmore dd{font-size:19px}
+.m-cover .vplan{font-size:16px}
 .m-cover .vreason{font-size:17px}
 .m-cover .pill{font-size:15px}
 

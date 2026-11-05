@@ -20,6 +20,12 @@ code{font:.85em var(--mono);background:var(--chip);border-radius:6px;padding:.1e
 .vlabel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:650;color:var(--tone);letter-spacing:.04em}
 .vreason{font-weight:500;color:var(--muted);letter-spacing:0;font-size:13px}
 .vline{font-size:20px;font-weight:600;line-height:1.45;margin-top:4px!important;text-wrap:pretty}
+.vmore{display:flex;flex-direction:column;gap:6px;margin:12px 0 0!important;padding-top:12px;border-top:1px solid var(--line)}
+.vmore>div{display:flex;gap:10px;align-items:baseline}
+.vmore dt{flex:none;min-width:4.5em;font-size:12px;font-weight:650;color:var(--faint);letter-spacing:.04em}
+.vmore dd{margin:0;font-size:15px;line-height:1.55;color:var(--text)}
+.vrisk dt{color:var(--orange)}
+.vplan{display:block;font-size:13.5px;color:var(--muted)}
 .plan{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:16px!important;padding-top:14px;border-top:1px solid var(--line)}
 .plabel{font-size:12.5px;color:var(--faint);margin-right:4px}
 .pstep-wrap{display:inline-flex;align-items:center;gap:8px}
@@ -37,7 +43,7 @@ code{font:.85em var(--mono);background:var(--chip);border-radius:6px;padding:.1e
 .r-split .cell>.blk-prose,.r-split .cell>.blk-callout,.r-split .cell>.blk-quote{flex:0 1 auto;align-self:stretch}
 .r-split{align-items:center}
 
-.asks{background:var(--bubble);border:1px solid var(--border);border-radius:16px;padding:18px 22px;margin-top:20px}
+.asks{background:var(--bubble);border:1px solid var(--border);border-radius:16px;padding:18px 22px;margin-top:14px}
 .asks h2{font-size:12.5px;font-weight:650;color:var(--blue);letter-spacing:.04em;margin-bottom:10px!important}
 .asks ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
 .asks li{display:flex;gap:10px;align-items:flex-start}

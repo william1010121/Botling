@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import type { Kind } from './core/i18n';
 import type { AnyBlockDef } from './core/registry';
 import { markdownBullets, textUnits } from './core/text';
+import { lintReadability } from './readability';
 import type { Issue, ReportSpec } from './spec';
 import type { SlidePlan } from './planner';
 
@@ -12,7 +13,7 @@ export const budgets = {
 };
 
 /** Relaxed budgets for technical/scientific reports that define terms, explain charts, and show full subject/cohort tables. */
-export const researchKinds = new Set<Kind>(['investigation', 'explainer', 'results', 'comparison']);
+export const researchKinds = new Set<Kind>(['investigation', 'explainer', 'results', 'comparison', 'experiment']);
 export const researchBudgets = {
   ...budgets,
   takeawayUnits: 48,
@@ -86,5 +87,5 @@ export function lintSpec(spec: ReportSpec, registry: Map<string, AnyBlockDef>, s
   if (spec.kind === 'decision' && !kindsUsed.has('options') && !kindsUsed.has('proscons')) warn('sections', 'Decision report without an options or proscons block; compare the options on the same criteria.');
   if ((spec.kind === 'investigation') && !kindsUsed.has('timeline') && !kindsUsed.has('flowchart') && !kindsUsed.has('flow') && !kindsUsed.has('sequence')) warn('sections', 'Investigation without a timeline, flowchart or sequence; show what happened and why.');
   if (spec.kind === 'results' && !kindsUsed.has('beforeafter') && !kindsUsed.has('bar') && !kindsUsed.has('trend') && !kindsUsed.has('kpi')) warn('sections', 'Results report without beforeafter, bar, trend, or kpi block; consider showing measured evidence when available; state missing measurements or baselines explicitly.');
-  return w;
+  return [...w, ...lintReadability(spec)];
 }

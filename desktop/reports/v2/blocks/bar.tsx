@@ -61,12 +61,13 @@ function BarChart({ block }: { block: Bar; ctx: Ctx }) {
     }
     return <>
       <Legend names={block.series.map(s => s.name)}/>
+      {ref && <p className="bri" aria-hidden="true"><i>──</i>{ref.label}（{fmt(ref.value, block.unit)}）</p>}
       <div className="vb div" aria-hidden="true" style={{ ['--n' as string]: rows.length }}>
         <div className="yl">{ticks.map(t => <span key={t} style={{ bottom: pos(t) }}>{fmt(t)}</span>)}</div>
         <div className="vp">
           {ticks.map(t => <i key={t} className={t === 0 ? 'zl' : 'gl'} style={{ bottom: pos(t) }}/>)}
           {!ticks.includes(0) && <i className="zl" style={{ bottom: pct(z0) }}/>}
-          {ref && <span className="brl" style={{ bottom: pos(ref.value) }}><em>{ref.label}</em></span>}
+          {ref && <span className="brl" style={{ bottom: pos(ref.value) }}/>}
           {rows.map((r, i) => <div key={i} className={`vc${block.highlight && r.label !== block.highlight ? ' dim' : ''}`}>
             {!multi
               ? <span className={`vs${r.values[0] < 0 ? ' neg' : ''}`} style={{ bottom: seg(r.values[0]).start, height: seg(r.values[0]).size }}><em>{fmtSigned(r.values[0], block.unit === '%' ? '%' : '')}</em><i className={colour(block, r, 0, true, r.values[0])} style={{ flexGrow: 1 }}/></span>
@@ -102,11 +103,12 @@ function BarChart({ block }: { block: Bar; ctx: Ctx }) {
   }
   return <>
     <Legend names={block.series.map(s => s.name)}/>
+    {ref && <p className="bri" aria-hidden="true"><i>──</i>{ref.label}（{fmt(ref.value, block.unit)}）</p>}
     <div className="vb" aria-hidden="true" style={{ ['--n' as string]: rows.length }}>
       <div className="yl">{ticks.map(t => <span key={t} style={{ bottom: at(t) }}>{fmt(t)}</span>)}</div>
       <div className="vp">
         {ticks.map(t => <i key={t} className="gl" style={{ bottom: at(t) }}/>)}
-        {ref && <span className="brl" style={{ bottom: at(ref.value) }}><em>{ref.label}</em></span>}
+        {ref && <span className="brl" style={{ bottom: at(ref.value) }}/>}
         {rows.map((r, i) => <div key={i} className={`vc${block.highlight && r.label !== block.highlight ? ' dim' : ''}`}>
           {block.stacked || !multi
             ? <span className="vs" style={{ height: at(totals[i]) }}><em>{fmt(totals[i], block.unit === '%' ? '%' : '')}</em>{[...r.values].reverse().map((v, k) => <i key={k} className={colour(block, r, r.values.length - 1 - k)} style={{ flexGrow: v }}/>)}</span>

@@ -113,7 +113,9 @@ describe("report writing guidance", () => {
     const line = reportPageLine(tool, "/x/artifacts");
     expect(line).toContain("status, decision, investigation, comparison, plan, results, explainer");
     expect(line).toContain("ASD-STE100-informed plain language: active voice, direct verbs, and consistent terms");
-    expect(line).toContain("20 English words or 30 Chinese characters");
+    expect(line).toContain("keep a cause and its effect in one sentence");
+    expect(line).not.toContain("30 Chinese characters");
+    expect(line).toContain("the first page carries the answer, its impact, the decision needed, the biggest risk and the next step");
     expect(line).toContain("writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese");
     expect(line).toContain("Keep useful technical names");
   });
@@ -155,7 +157,8 @@ describe("generated report writing guide", () => {
     expect(shipped).toContain("prefer a flowchart plus a table of evidence");
     expect(shipped).toContain("Distinguish observed links from pending inferences");
     expect(shipped).toContain("ASD-STE100-informed plain language");
-    expect(shipped).toContain("20 English words or 30 Chinese characters");
+    expect(shipped).toContain("keep a cause and its effect in one sentence");
+    expect(shipped).not.toContain("30 Chinese characters");
     expect(shipped).toContain("not renderer checks or formal ASD-STE100 compliance for Chinese");
     expect(shipped).toContain("State material uncertainty and failed checks that affect the decision");
     expect(shipped).toContain("Never conceal defects or claim unperformed validation");

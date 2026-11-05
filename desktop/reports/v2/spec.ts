@@ -20,6 +20,11 @@ function specShape<B extends z.ZodType>(block: B) {
       reason: line(60).optional().describe('Required for at_risk / off_track: cause and fix in one line.'),
     }).optional(),
     tldr: line(240).describe('The answer first: ≤ 3 sentences. Shown in the verdict card and on the cover slide.'),
+    impact: line(160).optional().describe('What the result means for the goal, in the reader\'s terms (users, time, money, the research question): "so what". Shown under the verdict.'),
+    risk: z.strictObject({
+      text: line(100).describe('The biggest risk or open doubt, in plain words.'),
+      plan: line(100).optional().describe('What is being done about it (road to green), with owner or date when known.'),
+    }).optional().describe('The biggest risk and its response; shown on the first page, never only at the end.'),
     next: z.array(line(24)).min(1).max(3).optional().describe('≤ 3 one-line next steps, shown as numbered chips under the verdict.'),
     sections: z.array(z.strictObject({
       id: z.string().regex(/^[a-z0-9-]+$/).max(32).optional(),
@@ -49,8 +54,13 @@ export function formatPath(path: ReadonlyArray<PropertyKey>): string {
 
 export const minimalExample = {
   version: 2, lang: 'zh-Hant', kind: 'status', title: '今天的交付狀態', asOf: '2026-10-28 18:00',
-  tldr: '任務面板 .11 已安裝；手機版 bot 清單受阻，今天修。',
-  sections: [{ title: '進度', takeaway: '四條線裡一條受阻', blocks: [{ type: 'kpi', items: [{ label: '完成', value: 1, status: 'done' }, { label: '受阻', value: 1, status: 'blocked' }] }] }],
+  status: { level: 'at_risk', reason: '手機版 bot 清單受阻；今天修，明天驗' },
+  tldr: '任務面板 .11 已安裝；手機版 bot 清單受阻，預計今天修好。',
+  impact: '手機使用者今天仍看不到 bot 清單；桌面版不受影響。',
+  risk: { text: '修法要動同步格式，可能影響桌面版', plan: '先在測試機跑 30 分鐘再發布' },
+  next: ['修好手機清單', '測試機驗證後發布'],
+  sections: [{ title: '進度', takeaway: '四條線完成一條、受阻一條', blocks: [{ type: 'kpi', items: [{ label: '完成', value: 1, status: 'done' }, { label: '受阻', value: 1, status: 'blocked' }] }] }],
+  asks: [{ what: '確認今晚可以停機 10 分鐘', who: '你', by: '今天 18:00' }],
 };
 
 /** Validate a spec. Top-level problems → no spec. Block problems → the block becomes an ErrorBlock. */

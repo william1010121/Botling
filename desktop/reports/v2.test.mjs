@@ -322,12 +322,12 @@ test('table explicit metadata controls status, strike and accessibility independ
 });
 
 test('results lint suggests evidence without claiming mandatory comparisons or inventing measurements', () => {
-  const { spec: s } = api.validateSpec(spec([{ type: 'prose', text: 'No baseline was measured; the cause remains uncertain.' }], { kind: 'results' }));
+  const { spec: s } = api.validateSpec(spec([{ type: 'prose', text: 'No baseline was measured; the cause remains uncertain.' }], { kind: 'results', impact: '還不知道對使用者有沒有影響。' }));
   const warnings = api.lintSpec(s, api.registry);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0].message, /when available/);
   assert.doesNotMatch(warnings[0].message, /must/);
-  const { spec: measured } = api.validateSpec(spec([{ type: 'kpi', items: [{ label: 'Observed latency', value: 12 }] }], { kind: 'results' }));
+  const { spec: measured } = api.validateSpec(spec([{ type: 'kpi', items: [{ label: 'Observed latency', value: 12 }] }], { kind: 'results', impact: '還不知道對使用者有沒有影響。' }));
   assert.deepEqual(api.lintSpec(measured, api.registry), []);
 });
 
@@ -337,7 +337,7 @@ test('flowchart and legacy flow share validation, rendering and investigation li
     nodes: [{ id: 'client', label: 'Client' }, { id: 'api', label: 'API' }, { id: 'db', label: 'Database' }],
     edges: [{ from: 'client', to: 'api', label: 'request' }, { from: 'api', to: 'db' }],
   };
-  const report = type => spec([{ type, ...payload }], { kind: 'investigation', asks: [] });
+  const report = type => spec([{ type, ...payload }], { kind: 'investigation', impact: 'Clients cannot save while the API is down.', asks: [] });
   for (const mode of ['doc', 'slide']) {
     const old = await api.renderV2(report('flow'), { mode });
     const current = await api.renderV2(report('flowchart'), { mode });
@@ -360,7 +360,7 @@ test('flowchart and legacy flow share validation, rendering and investigation li
       assert.equal(api.validateSpec(spec([invalid])).errors.length > 0, true, type);
     }
     const large = { ...valid, nodes: Array.from({ length: 13 }, (_, i) => ({ id: `n${i}`, label: `Node ${i}` })), edges: [] };
-    const result = await api.renderV2(spec([large], { kind: 'investigation', asks: [] }));
+    const result = await api.renderV2(spec([large], { kind: 'investigation', impact: 'Clients cannot save while the API is down.', asks: [] }));
     assert.equal(result.ok, true);
     assert.equal(result.warnings.length, 1);
     assert.match(result.warnings[0].message, /13 nodes/);
@@ -394,14 +394,82 @@ test('diverging bar, referenceLine, kind-aware research budgets, and dense-SVG l
   const rows10 = Array.from({ length: 10 }, (_, i) => [`A0${i + 1}`, i]);
   const longProse = '白話定義與圖表導讀說明文字。'.repeat(25);
   const { spec: resSpec, errors } = api.validateSpec(spec([
+    { type: 'glossary', items: [{ term: 'Δκ', plain: '扣掉亂猜後的分數差。' }] },
     { type: 'kpi', items: [{ label: 'Δκ', value: '0.098' }] },
     { type: 'prose', text: longProse },
     { type: 'table', title: '受試者明細', columns: ['受試者', '分數'], rows: rows10 },
     { type: 'image', title: '手刻圖', alt: '密集文字', src: denseSvg },
-  ], { kind: 'results', asks: [] }));
+  ], { kind: 'results', impact: '跨人增益在兩個資料集一樣大。', asks: [] }));
   assert.deepEqual(errors, []);
   const warnings = api.lintSpec(resSpec, api.registry);
   assert.equal(warnings.length, 1);
-  assert.equal(warnings[0].path, 'sections[0].blocks[3].src');
+  assert.equal(warnings[0].path, 'sections[0].blocks[4].src');
   assert.match(warnings[0].message, /11 <text> elements/);
+});
+
+test('readability lint: answer first, first-page items, conclusion headings, numbers with baselines, defined terms', () => {
+  const lint = extra => api.lintSpec(api.validateSpec({ ...base, sections: [{ title: '段落', takeaway: '這段的結論', blocks: [{ type: 'prose', text: '說明。' }] }], ...extra }).spec, api.registry);
+  const paths = extra => lint(extra).map(w => w.path);
+  // Background first → warned; the answer first → not.
+  assert.ok(paths({ tldr: '本報告整理上週的實驗。結果是有效。' }).includes('tldr'));
+  assert.ok(!paths({ tldr: '有效：新方法比舊方法高 3 分。' }).includes('tldr'));
+  // First-page items by kind.
+  assert.deepEqual(paths({ kind: 'status', asks: [] }).filter(p => ['impact', 'risk', 'next'].includes(p)).sort(), ['impact', 'next', 'risk']);
+  assert.deepEqual(paths({ kind: 'status', asks: [], impact: '使用者不受影響。', risk: { text: '可能延一天' }, next: ['修'] }).filter(p => ['impact', 'risk', 'next'].includes(p)), []);
+  assert.ok(paths({ status: { level: 'off_track', reason: '延了' }, asks: [] }).includes('asks'));
+  assert.ok(paths({ status: { level: 'at_risk', reason: '延了' }, asks: [] }).includes('risk.plan'));
+  assert.ok(!paths({ status: { level: 'at_risk', reason: '延了' }, asks: [], risk: { text: '延', plan: '明天補測' } }).includes('risk.plan'));
+  // Topic-only takeaways.
+  const topic = api.lintSpec(api.validateSpec({ ...base, sections: [{ title: '結果', takeaway: '結果', blocks: [{ type: 'prose', text: 'x' }] }, { title: 'b', takeaway: '進度說明', blocks: [{ type: 'prose', text: 'x' }] }] }).spec, api.registry);
+  assert.deepEqual(topic.filter(w => /names a topic/.test(w.message)).map(w => w.path), ['sections[0].takeaway', 'sections[1].takeaway']);
+  // A bare number is warned; a compared one is not.
+  assert.ok(paths({ tldr: '準確率 92%。' }).includes('tldr'));
+  for (const ok of ['準確率 92%（現行規則 85%）。', '準確率從 85% 升到 92%。', '增益 +0.3 pp，不顯著。', '準確率 92%，比亂猜高 42 pp。', '版本 2.1.3 已安裝。']) assert.ok(!paths({ tldr: ok }).includes('tldr'), ok);
+  // Undefined terms: listed once, at their first use; glossary and bracketed definitions count.
+  const undef = lint({ tldr: 'SESS 讓 MAtt 在 LOSO 上更好，κ 也升。' }).find(w => /without a plain definition/.test(w.message));
+  assert.ok(undef); assert.equal(undef.path, 'tldr'); assert.match(undef.message, /SESS, MAtt, LOSO, κ/);
+  assert.equal(lint({ tldr: '先對齊腦波基準（SESS）後，留一受試者驗證（LOSO）的分數從 41% 升到 50%。' }).filter(w => /plain definition/.test(w.message)).length, 0);
+  const glossed = { ...base, tldr: 'SESS 讓分數從 41% 升到 50%。', sections: [{ title: '名詞', takeaway: '先看懂一個詞', blocks: [{ type: 'glossary', items: [{ term: 'SESS', plain: '把每個人的腦波先調到同一基準。' }] }] }] };
+  assert.equal(api.lintSpec(api.validateSpec(glossed).spec, api.registry).filter(w => /plain definition/.test(w.message)).length, 0);
+  assert.equal(lint({ tldr: 'GPU 與 API 都正常，PR 已合併。' }).filter(w => /plain definition/.test(w.message)).length, 0);
+});
+
+test('experiment kind: card checks, noise-aware verdict, and no "improvement" inside the noise', async () => {
+  const card = { type: 'experiment', question: '加了 SESS 會不會更準？', hypothesis: '加 SESS 後準確率至少高 3 pp。', success: '區間不含 0。', baseline: '同模型、不加 SESS', baselineTuned: true, runs: 3, spread: '受試者間標準差（9 人）', result: { metric: '準確率', base: 74.9, new: 75.5, ci: [-1.2, 2.5], unit: '%' }, verdict: 'inconclusive' };
+  const exp = (blocks, extra = {}) => api.validateSpec({ ...base, kind: 'experiment', impact: '還不能把 SESS 當成跨 session 的改進。', risk: { text: '只有 9 人', plan: '補 OpenBMI 54 人' }, next: ['跑 OpenBMI'], asks: [], tldr: '跨 session 加 SESS 的差距在誤差內，不顯著（3 seeds）。', sections: [{ title: '實驗卡', takeaway: '差距在誤差內，假設還不能判定', blocks: [{ type: 'glossary', items: [{ term: 'SESS', plain: '把每個人的腦波先調到同一基準。' }, { term: 'OpenBMI', plain: '54 人的公開腦波資料集。' }] }, ...blocks] }], ...extra });
+  const { spec: good, errors } = exp([card]);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(api.lintSpec(good, api.registry), []);
+  const w = api.lintSpec(exp([{ ...card, runs: 1, baselineTuned: undefined, verdict: 'supported', result: { ...card.result } }], { tldr: 'SESS 讓準確率從 74.9% 提升到 75.5%。' }).spec, api.registry).map(x => `${x.path} ${x.message}`).join('\n');
+  for (const needle of ['blocks[1].runs Only 1 run', 'blocks[1].baselineTuned', 'blocks[1].verdict The 95% interval', 'tldr The bottom line claims an improvement']) assert.ok(w.includes(needle), `missing: ${needle}\n${w}`);
+  assert.ok(api.lintSpec(exp([{ type: 'prose', text: '沒有卡。' }]).spec, api.registry).some(x => /without an experiment block/.test(x.message)));
+  assert.ok(api.lintSpec(exp([card, { type: 'kpi', items: [{ label: '準確率', value: '75.5%' }] }]).spec, api.registry).some(x => /Experiment KPI without delta/.test(x.message)));
+  assert.equal(api.blocks.find(b => b.type === 'experiment').schema.safeParse({ ...card, result: { ...card.result, ci: [3, 1] } }).success, false);
+  for (const mode of ['doc', 'slide']) {
+    const r = await api.renderBlock(card, { mode });
+    assert.deepEqual(r.errors, []);
+    assert.match(r.html, /還不能判定/); assert.match(r.html, /不顯著/); assert.match(r.html, /\+0\.6 pp/); assert.match(r.html, /同等調參/);
+  }
+  const supported = await api.renderBlock({ ...card, result: { ...card.result, ci: [0.4, 2.5] }, verdict: 'supported' }, { mode: 'doc' });
+  assert.doesNotMatch(supported.html, /不顯著/);
+});
+
+test('first page: impact, biggest risk and the asks sit with the verdict, before the sections', async () => {
+  const r = await api.renderV2({ ...spec([{ type: 'glossary', items: [{ term: 'κ', plain: '扣掉亂猜後的分數。' }] }]), impact: '使用者不受影響。', risk: { text: '可能延一天', plan: '明天補測' }, asks: [{ what: '確認停機', who: '你', by: '今天' }] }, { mode: 'doc' });
+  assert.equal(r.ok, true);
+  const d = dom(r.html);
+  const verdict = d.querySelector('.verdict');
+  assert.match(verdict.querySelector('.vimpact').textContent, /使用者不受影響/);
+  assert.match(verdict.querySelector('.vrisk').textContent, /可能延一天.*明天補測/);
+  assert.equal(verdict.nextElementSibling.className, 'asks');
+  assert.ok(d.querySelector('.blk-glossary dt').textContent === 'κ');
+  const slides = dom((await api.renderV2({ ...spec([{ type: 'prose', text: 'x' }]), impact: '使用者不受影響。' }, { mode: 'slide' })).html);
+  assert.match(slides.querySelector('.m-cover .vimpact').textContent, /使用者不受影響/);
+});
+
+test('prompt doc: report-type templates, checked vs written rules, and causal sentences kept whole', () => {
+  const doc = api.promptDoc();
+  assert.ok(doc.includes('### experiment') && doc.includes('### status') && doc.includes('### investigation') && doc.includes('### explainer'));
+  for (const needle of ['The first page holds five things', 'define every term once', 'Every number has a reference point and a meaning', 'equally tuned baseline', 'not significant', 'road to green', '## Checked by the renderer (warnings)', '## Not checked: rules only', '## Before you publish', 'keep a cause and its effect in one sentence']) assert.ok(doc.includes(needle), needle);
+  assert.doesNotMatch(doc, /at most 20 English words or 30 Chinese characters/);
 });
