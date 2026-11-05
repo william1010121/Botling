@@ -134,6 +134,8 @@ export interface SessionStart {
   pluginEnv?: Record<string, string>;
   /** The plugins' MCP tools, used without asking (`pluginTools`). */
   pluginTools?: string[];
+  /** The plugins' skill folders, for Codex (`skills/extraRoots/set`) and Antigravity (`skills.json`); Claude has them in pluginDirs. */
+  skillRoots?: string[];
   /** The bot's model and effort (bot.json; null: the default), its subagents' model, their 1-hour cache. */
   model?: string | null;
   effort?: string | null;
@@ -208,7 +210,7 @@ export interface BotOptions {
   /** A reply's tags that plugins declared (`replyTags`), for the plugins to hear (the bot is the one whose reply it was). */
   pluginTags?: (bot: Bot, tags: PluginTag[]) => void;
   /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
-  plugins?: () => { dirs: string[]; env: Record<string, string>; tools?: string[] };
+  plugins?: () => { dirs: string[]; env: Record<string, string>; tools?: string[]; skillRoots?: string[] };
   /** What the plugins' Claude parts are now (`PluginRegistry.claudeStamp`, 1.x's `pluginStamp`). */
   pluginStamp?: () => string[];
   /** Rows for the sub bots under this bot (the core builds them from the bots whose `parent` is this one). */
@@ -3149,7 +3151,7 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
+        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
         { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
@@ -3200,7 +3202,7 @@ export class Bot {
     const choices = this.owner.choices();
     const launch = this.options.launch?.() ?? { subagentHourCache: false };
     return {
-      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env, pluginTools: plugins.tools ?? [],
+      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env, pluginTools: plugins.tools ?? [], skillRoots: plugins.skillRoots ?? [],
       model: choices.model, effort: choices.efforts[this.engine], subagentModel: choices.subagentModel,
       subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
       addDirs: this.owner.options.addDirs?.() ?? [],

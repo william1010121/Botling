@@ -119,6 +119,8 @@ export class PluginRegistry {
   private fingerprints: Record<string, string> = {};
   /** Each Claude part's content hash, by the fingerprint it was taken at (`claudeContents`). */
   private claudeContents = new Map<string, { fingerprint: string; hash: string }>();
+  /** Each plugin's skill folders (`skillRoots`), by the fingerprint they were read at. */
+  private skillFolders = new Map<string, { fingerprint: string; roots: { root: string; claude: boolean }[] }>();
   private reportedProblems: Record<string, string[]> = {};
   private crashes = new Map<string, number[]>();
   /** Web parts the chat page loaded without trouble (1.x's `lastGood`), and what was last handed to it. */
@@ -355,6 +357,36 @@ export class PluginRegistry {
       const mcp = read(".mcp.json");
       const servers = !mcp ? null : mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers) ? mcp.mcpServers as Record<string, unknown> : mcp;
       return [{ plugin: plugin.manifest.name, dir: join(plugin.folder, claude), hash: known.hash, mcpTools: servers ? Object.keys(servers).sort().map((server) => `mcp__plugin_${name}_${server}`) : [] }];
+    });
+  }
+
+  /**
+   * The folders that hold the skills (folders with a SKILL.md) of enabled plugins: a Claude part's `skills/` and
+   * `contributes.skills`, those that are there, in the plugins' order. `claude`: inside the Claude part (`ccb.claude`), which
+   * Claude already loads with --plugin-dir. Read again only when a plugin's fingerprint (its package.json among it) changes,
+   * since it is asked for on every message (agentStamp): a folder counts once it held a skill when it was read; skills added
+   * to a folder already listed need nothing new (engines read the folder itself).
+   */
+  skillRoots(): { plugin: string; root: string; claude: boolean }[] {
+    return this.plugins.flatMap((plugin) => {
+      if (!plugin.enabled || plugin.failure) return [];
+      const print = this.fingerprints[plugin.manifest.name] ?? "";
+      let known = this.skillFolders.get(plugin.manifest.name);
+      if (!known || known.fingerprint !== print) {
+        let roots: { root: string; claude: boolean }[] = [];
+        try {
+          const read = readManifest(JSON.parse(readFileSync(join(plugin.folder, "package.json"), "utf8")), diskFolder(plugin.folder));
+          for (const part of read.contributions) {
+            if (part.kind !== "agent") continue;
+            const claude = part.claude;
+            const dirs = new Set(part.skills.map((skill) => dirname(skill.dir)));
+            for (const dir of dirs) roots.push({ root: join(plugin.folder, dir), claude: !!claude && (dir === claude || dir.startsWith(`${claude}/`)) });
+          }
+        } catch { roots = []; }
+        known = { fingerprint: print, roots };
+        this.skillFolders.set(plugin.manifest.name, known);
+      }
+      return known.roots.map((entry) => ({ plugin: plugin.manifest.name, ...entry }));
     });
   }
 

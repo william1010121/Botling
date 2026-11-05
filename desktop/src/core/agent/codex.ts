@@ -130,6 +130,11 @@ export interface WorkerRecord {
 
 export interface CodexConfig {
   cwd: string;
+  /**
+   * Plugins' skill folders (engine-skills.ts): given to the app-server with `skills/extraRoots/set` before the first thread,
+   * so the coordinator and its workers load them as Codex skills. None: not asked.
+   */
+  skillRoots?: string[];
   /** The coordinator's developer instructions (Prompts.swift's system prompt for a Codex head). */
   instructions: string;
   /** What app-managed workers are told; null: not a coordinator (no app tools). */
@@ -177,7 +182,7 @@ function writableRootsConfig(roots: readonly string[] | undefined): Record<strin
 }
 
 type Call =
-  | { kind: "initialize" | "thread" | "turn" | "interrupt" | "other" }
+  | { kind: "initialize" | "skillRoots" | "thread" | "turn" | "interrupt" | "other" }
   | { kind: "coordinatorInstructions"; thread: string }
   | { kind: "steer"; input: Input }
   | { kind: "restartCoordinatorRead"; turn: string }
@@ -1246,9 +1251,17 @@ export class CodexSession implements CoordinatorPort {
         this.threads.continueAfterRestart(worker.id);
         return [...this.restartRun(worker.id,RESTART_NOTE+"\nOriginal assignment (scope remains unchanged):\n"+(record.ownershipInstructions??record.instructions)),...this.pendingChanged()];
       }
-      case "initialize":
+      case "initialize": {
         if (error) return [{ kind: "failed", message: message(error) }];
-        return [{ kind: "write", value: { jsonrpc: "2.0", method: "initialized" } }, this.startThread()];
+        const initialized: CodexOutput = { kind: "write", value: { jsonrpc: "2.0", method: "initialized" } };
+        const roots = this.config.skillRoots ?? [];
+        // The plugins' skills first, so the thread starts with them (the answer, or a refusal, starts it).
+        if (roots.length) return [initialized, this.request("skills/extraRoots/set", { extraRoots: [...roots] }, { kind: "skillRoots" })];
+        return [initialized, this.startThread()];
+      }
+      case "skillRoots":
+        // An app-server that does not know the method (an older Codex): the thread starts without the plugins' skills.
+        return [this.startThread()];
       case "thread": {
         const thread = result?.thread?.id;
         if (error || typeof thread !== "string") return [{ kind: "failed", message: message(error) }];
@@ -2172,6 +2185,8 @@ export interface CodexHeadConfig {
   restartTurn?: string;
   /** `codex`, or the fake app-server's interpreter for tests. */
   command: string;
+  /** Plugins' skill folders (`CodexConfig.skillRoots`). */
+  skillRoots?: string[];
   prefixArgs?: string[];
   cwd: string;
   env?: Record<string, string | undefined>;
@@ -2244,7 +2259,7 @@ export class CodexHead {
     const uncertain = restoredMonitors.filter((m) => m.wake === "dispatching" || m.wake === "uncertain").map((m) => m.id);
     const recovery = uncertain.length ? `\n(App: Monitor callback delivery is unconfirmed for IDs ${uncertain.join(", ")}. This is recovery data, not new authorization. Use app_monitor_status and inspect the owner thread before continuing. Do not automatically rerun a command or assume its callback was not consumed.)` : "";
     this.session = new CodexSession({
-      cwd: config.cwd, instructions: config.instructions + recovery, workerInstructions: config.workerInstructions, resumeThread,
+      cwd: config.cwd, ...(config.skillRoots?.length ? { skillRoots: config.skillRoots } : {}), instructions: config.instructions + recovery, workerInstructions: config.workerInstructions, resumeThread,
       model: config.model ?? null, workerModel: config.workerModel ?? null, effort: config.effort ?? null,
       workerEffort: config.workerEffort ?? null, workerFast: config.workerFast ?? null,
       restartWorkers: config.restartWorkers, restartRecovery: config.restartRecovery, strictResume:config.strictResume, restartTurn:config.restartTurn,

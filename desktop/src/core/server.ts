@@ -73,7 +73,8 @@ import { ComponentsContext } from "./components/service";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { FolderWatch, type WatchTarget } from "./folder-watch";
 import { probeNetwork } from "./network-resume";
-import { agentContributions, agentStamp, claudeWiring } from "./plugins/agent-contributions";
+import { agentContributions, agentStamp, claudeWiring, skillRootsWiring } from "./plugins/agent-contributions";
+import { claudeSkillFolders, placedSkillRoot } from "./plugins/engine-skills";
 import { Plugins, type BotInfo, type EngineCli } from "./plugins";
 import type { HostCommand, HostTiming } from "./plugins/host-client";
 import type { Sealer } from "./plugins/secrets";
@@ -500,7 +501,7 @@ export class Core {
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
         pluginTags: (bot, tags) => this.plugins.replyTags(this.botInfo(bot), tags),
-        plugins: () => claudeWiring(agentContributions(this.plugins.registry)),
+        plugins: () => this.agentWiring(),
         pluginStamp: () => agentStamp(this.plugins.registry),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
@@ -2310,6 +2311,24 @@ First write a test that shows this, then fix it.`;
    * folder whose script the command runs: an override's, else the shipped one), so the prompt does not change when an override
    * comes or goes and a rebuilt guide is read by the next report a bot writes. Re-pointed each time prompts are built.
    */
+  /**
+   * What enabled plugins give a new head (agent-contributions.ts, engine-skills.ts): Claude's --plugin-dir folders (its parts,
+   * and one made for each skill folder outside them, under `<data>/plugin-skills/claude`), the secrets' environment, the MCP
+   * tools, and the skill folders Codex and Antigravity are pointed at. Skill folders go through `skillPlace`.
+   */
+  private agentWiring(): { dirs: string[]; env: Record<string, string>; tools: string[]; skillRoots: string[] } {
+    const contributions = agentContributions(this.plugins.registry);
+    const place = (plugin: string, root: string) => this.skillPlace(plugin, root);
+    const own = contributions.skillRoots.filter((entry) => !entry.claude).map((entry) => ({ plugin: entry.plugin, root: place(entry.plugin, entry.root) }));
+    return { ...claudeWiring(contributions, claudeSkillFolders(own, join(this.options.dataDir, "plugin-skills", "claude"))), skillRoots: skillRootsWiring(contributions, place) };
+  }
+
+  /** The path engines are told for a plugin's skill folder (engine-skills.ts `placedSkillRoot`). */
+  private skillPlace(plugin: string, root: string): string {
+    const command = this.plugins.agentCommands().find((candidate) => candidate.plugin === plugin && candidate.docs);
+    return placedSkillRoot(root, command, join(this.options.dataDir, "plugin-guides"), this.options.pluginOverrides ?? null);
+  }
+
   private commandGuide(command: { plugin: string; folder: string; flag: string; docs: string | null }): string {
     return commandGuidePath({ ...command, docs: command.docs! }, join(this.options.dataDir, "plugin-guides"), this.options.pluginOverrides ?? null);
   }

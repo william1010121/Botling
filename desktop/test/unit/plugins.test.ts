@@ -8,7 +8,7 @@ import { tempDir, until } from "../helpers";
 import { checkPlugin, checkPluginIssues, CHECK_NEXT_STEPS, MAX_IMAGE_BYTES, compatible } from "../../src/core/plugins/manifest";
 import { checkReport } from "../../src/core/plugins/check-report";
 import { PluginRegistry } from "../../src/core/plugins/registry";
-import { agentContributions, claudeWiring } from "../../src/core/plugins/agent-contributions";
+import { agentContributions, agentStamp, claudeWiring, skillRootsWiring } from "../../src/core/plugins/agent-contributions";
 import { swiftPrettyJSON } from "../../src/core/swift-json";
 import { MemorySecretStore, SealedSecretStore, PortSealer, testSealer } from "../../src/core/plugins/secrets";
 import { PluginHostClient } from "../../src/core/plugins/host-client";
@@ -152,12 +152,25 @@ describe("the plugin registry", () => {
     // Secrets are kept by plugin (the Claude wiring still merges them as before).
     expect(list.secrets).toEqual([{ plugin: "gh", env: { GH_TOKEN: "ghs" } }, { plugin: "report", env: { REPORT_KEY: "rk" } }]);
     expect(claudeWiring(list)).toEqual({ dirs: [join(claude, "claude")], env: { GH_TOKEN: "ghs", REPORT_KEY: "rk" }, tools: ["mcp__plugin_gh_issues"] });
-    // Turning a plugin off takes its parts away; the stamp follows the Claude parts.
+    // The Claude plugin folders made for skills outside a Claude part come after the Claude parts.
+    expect(claudeWiring(list, ["/data/plugin-skills/claude/report"]).dirs).toEqual([join(claude, "claude"), "/data/plugin-skills/claude/report"]);
+    // The skill folders: the Claude part's (Claude has it already) and the other plugin's; every one for Codex and Antigravity.
+    expect(list.skillRoots).toEqual([
+      { plugin: "gh", root: join(claude, "claude", "skills"), claude: true },
+      { plugin: "report", root: join(other, "skills"), claude: false },
+    ]);
+    expect(skillRootsWiring(list)).toEqual([join(claude, "claude", "skills"), join(other, "skills")]);
+    expect(skillRootsWiring(list, (plugin, root) => (plugin === "report" ? "/data/plugin-guides/report/skills" : root))).toEqual([join(claude, "claude", "skills"), "/data/plugin-guides/report/skills"]);
+    // The stamp names the skill folder outside a Claude part too, so turning that plugin off restarts heads once free.
+    expect(list.stamp.some((entry) => entry === `skills:report:${join(other, "skills")}`)).toBe(true);
+    // Turning a plugin off takes its parts away; the stamp follows the Claude parts and the skill folders.
     registry.setEnabled("report", false);
     expect(agentContributions(registry).skills.map((skill) => skill.plugin)).toEqual(["gh"]);
     expect(agentContributions(registry).secrets.map((entry) => entry.plugin)).toEqual(["gh"]);
+    expect(skillRootsWiring(agentContributions(registry))).toEqual([join(claude, "claude", "skills")]);
+    expect(agentStamp(registry).some((entry) => entry.startsWith("skills:report:"))).toBe(false);
     registry.setEnabled("gh", false);
-    expect(agentContributions(registry)).toEqual({ skills: [], agents: [], claude: [], secrets: [], stamp: [] });
+    expect(agentContributions(registry)).toEqual({ skills: [], agents: [], skillRoots: [], claude: [], secrets: [], stamp: [] });
   });
 
   it("a broken plugin is off until its files change, said once; three crashes in ten minutes turn one off", () => {
