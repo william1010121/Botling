@@ -2,6 +2,7 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Traditional Chinese, as used in Taiwan (keys as in `en.ts`). */
 export const zhHant: Dictionary = {
+  "messages.attachmentMissing": "{name}（已移動或刪除）",
   "messages.ignoreQuestion": "忽略",
   "messages.ignoreQuestionHint": "保留為通知，不回答或授權任何操作",
   "messages.ignoredQuestion": "通知 · 已忽略，未回答",

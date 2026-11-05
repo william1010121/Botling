@@ -56,7 +56,7 @@ import { backgroundTaskOutput, backgroundTaskView, backgroundOutputFile } from "
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
-import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
+import { answerLabel, attachmentKind, attachmentList, attachmentMissing, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
 import { sameJSON } from "./same-json";
 import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
@@ -1912,13 +1912,15 @@ export class Bot {
    * showing; `decisionOwner`: a shared decision's answer, for the head that asked it only; `via`: a
    * plugin sent it (its title, shown on the line).
    */
-  send(text: string, { replyTo, to, appNote, decisionOwner, files, via }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; via?: string } = {}): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, via });
+  send(text: string, { replyTo, to, appNote, decisionOwner, files, originals, via }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[]; originals?: string[]; via?: string } = {}): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files, ...(originals ? { originals } : {}), via });
     this.refuseIfClosed();
     const words = text.trim();
     if (!words && !files?.length) throw new ContractError("bad_request", "Nothing to send.");
-    // Files are copied into the bot's own attachments folder so it can open them again later (`keep`).
-    const kept = (files ?? []).flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []);
+    // `originals`: the files among them the user picked or dropped from disk, attached where they are
+    // (unless in a temporary place); the rest are copied into the bot's own attachments folder (`keep`).
+    const own = new Set(originals ?? []);
+    const kept = (files ?? []).flatMap((file) => keep(file, attachmentsFolder(this.profile), new Date(), { original: own.has(file) }) ?? []);
     if (!words && !kept.length) throw new ContractError("bad_request", "The files could not be read.");
     const heads = this.headsSettings;
     const two = hasTwo(heads);
@@ -5905,6 +5907,8 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
       name: decodeURIComponent(file.url.split("/").pop() ?? "file").slice(0, 400),
       kind: file.kind === "image" || file.kind === "video" ? file.kind : "file",
       url: file.url.slice(0, 4_000),
+      // An original attached by its path may have been moved or deleted since.
+      ...(attachmentMissing(file.url) ? { missing: true as const } : {}),
     }));
   }
   if (typeof record.replyTo === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.replyTo)) view.replyTo = record.replyTo;

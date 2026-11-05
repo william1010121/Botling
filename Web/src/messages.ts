@@ -709,7 +709,8 @@ export function attachmentStrip(files: FileView[]): HTMLElement {
   const strip = document.createElement("div");
   strip.className = "attachments";
   for (const file of files) {
-    if (file.kind === "image") {
+    if (file.missing) strip.append(missingAttachment(file.name));
+    else if (file.kind === "image") {
       strip.insertAdjacentHTML("beforeend", `<img class="thumb" role="button" tabindex="0" aria-haspopup="dialog" aria-label="${escapeHTML(file.name || t("lightbox.picture"))}" src="${escapeHTML(mediaSrc(file.url))}" alt="${escapeHTML(file.name)}" data-url="${escapeHTML(file.url)}" data-label="${escapeHTML(file.name)}">`);
     } else if (file.kind === "video") {
       strip.insertAdjacentHTML("beforeend", mediaHTML(file.url, file.name));
@@ -717,7 +718,19 @@ export function attachmentStrip(files: FileView[]): HTMLElement {
       strip.insertAdjacentHTML("beforeend", `<a class="file-chip" href="#" data-url="${escapeHTML(file.url)}" data-label="${escapeHTML(file.name)}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>${escapeHTML(file.name)}</a>`);
     }
   }
+  // A picture or video that will not load (its original moved or deleted since): the missing chip.
+  for (const media of strip.querySelectorAll<HTMLImageElement | HTMLVideoElement>("img.thumb, video")) {
+    media.addEventListener("error", () => media.replaceWith(missingAttachment(media.getAttribute("alt") || media.getAttribute("aria-label") || "")), { once: true });
+  }
   return strip;
+}
+
+/** An attachment that is no longer where it was attached: its name, not openable. */
+function missingAttachment(name: string): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = "file-chip missing";
+  chip.textContent = t("messages.attachmentMissing", { name: name || t("lightbox.picture") });
+  return chip;
 }
 
 /** Scrolls to a message and flashes it, for a reply's quote. */

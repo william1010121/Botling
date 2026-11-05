@@ -233,7 +233,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       ignoredAt: message.ignoredAt,
       canIgnoreQuestion: !message.approval,
       open: !!choices && message.chosen == null && message.answer == null && !message.ignoredAt,
-      attachments: message.attachments?.map((file): FileView => ({ name: file.name, kind: file.kind, url: file.url.startsWith("file:") ? attachmentURL(bot.id, file.url) : file.url })) ?? null,
+      attachments: message.attachments?.map((file): FileView => ({ name: file.name, kind: file.kind, url: file.url.startsWith("file:") ? attachmentURL(bot.id, file.url) : file.url, ...(file.missing ? { missing: true } : {}) })) ?? null,
       replyTo: message.replyTo ?? null,
       replyPreview: message.replyPreview ?? null,
       ...(message.role === "user" && message.via ? { via: message.via } : {}),

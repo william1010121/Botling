@@ -164,6 +164,7 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
   display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 10px;
   background: var(--chip); border-radius: 10px; color: var(--text); font-size: 13px; text-decoration: none;
 }
+.file-chip.missing { color: var(--muted); text-decoration: line-through; cursor: default; }
 
 /* Plugins' chips above the box (composer.chips), and what one opens above it. */
 .composer-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px 0; }

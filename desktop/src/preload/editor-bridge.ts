@@ -1,7 +1,8 @@
 import {EDITOR_CHANNEL,isEditorPacket,isEditorStamp,type EditorStamp,type EditorPacket} from '../editor-host-wire';
 type Notice = EditorPacket|{stamp:EditorStamp;bound:true}|{stamp:EditorStamp;unbound:true}|{stamp:EditorStamp;snapshot:string|null;revision:number};
-interface Transport {on(channel:string,listener:(event:unknown,value:unknown)=>void):unknown;send(channel:string,value:unknown):void}
-export function editorBridge(ipc:Transport,role:'shell'|'editor'){
+interface Transport {on(channel:string,listener:(event:unknown,value:unknown)=>void):unknown;send(channel:string,value:unknown):void;invoke?(channel:string,value:unknown):Promise<unknown>}
+/** `pathForFile` (editor only): the on-disk path of a File the user dropped (webUtils.getPathForFile); '' when it has none. */
+export function editorBridge(ipc:Transport,role:'shell'|'editor',pathForFile?:(file:unknown)=>string){
  let stamp:EditorStamp|null=null;const listeners=new Set<(packet:Notice)=>void>();
  const incoming=role==='editor'?'down':'up',outgoing=role==='editor'?'up':'down';
  ipc.on(EDITOR_CHANNEL.bound,(_event,value)=>{if(!isEditorStamp(value))return;stamp=Object.freeze({...value});for(const listener of listeners)listener({stamp,bound:true});});
@@ -18,6 +19,13 @@ export function editorBridge(ipc:Transport,role:'shell'|'editor'){
   post(message:unknown){const packet={stamp,message};if(!stamp||!isEditorPacket(outgoing,packet))return false;ipc.send(EDITOR_CHANNEL[outgoing],packet);return true;},
   layout(bounds:unknown,occluded=false,revealImmediately=false){if(role!=='shell'||!stamp)return false;ipc.send(EDITOR_CHANNEL.layout,{stamp,bounds,...(occluded?{occluded:true,...(revealImmediately?{revealImmediately:true}:{})}:{})});return true;},
   snapshotReady(revision:number){if(role!=='shell'||!stamp||!Number.isSafeInteger(revision)||revision<0)return false;ipc.send(EDITOR_CHANNEL.layout,{stamp,snapshotReady:revision});return true;},
+  /** A dropped file attached by its own path (core keeps an original where it is). False: it has no path (pasted, made by the page), so the page reads it instead. */
+  attachFile(file:unknown,botID:unknown):Promise<boolean>{
+   if(role!=='editor'||!stamp||!pathForFile||typeof ipc.invoke!=='function'||typeof botID!=='string'||!botID||botID.length>160)return Promise.resolve(false);
+   let path:unknown;try{path=pathForFile(file);}catch{return Promise.resolve(false);}
+   if(typeof path!=='string'||!path.startsWith('/')||path.length>4096)return Promise.resolve(false);
+   return ipc.invoke(EDITOR_CHANNEL.drop,{stamp,botID,path}).then(ok=>ok===true,()=>false);
+  },
   subscribe(listener:(packet:Notice)=>void){if(typeof listener!=='function')throw new TypeError('subscribe takes a function');listeners.add(listener);if(stamp)listener({stamp,bound:true});return()=>{listeners.delete(listener);};},
  });
 }
