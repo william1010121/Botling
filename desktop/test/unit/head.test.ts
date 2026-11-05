@@ -129,7 +129,8 @@ describe("a bot's head", () => {
     const { event } = await turn(c, "/crash");
     expect(event).toMatchObject({ status: "failed" });
     expect(event.text).toBe("partial");
-    expect(c.stderr).toMatch(/exited \(3\) unexpectedly/);
+    // The core logs the exit on stderr, which can reach us after the failed event.
+    await until(() => /exited \(3\) unexpectedly/.test(c.stderr), { what: "the crash on the core's stderr" });
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     expect(starts(dir)).toHaveLength(1); // Not started again by itself.
     const next = (await turn(c, "/resume")).event.text;

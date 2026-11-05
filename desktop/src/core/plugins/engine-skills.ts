@@ -53,6 +53,6 @@ export function claudeSkillFolders(roots: readonly { plugin: string; root: strin
 export function placedSkillRoot(root: string, command: { plugin: string; folder: string; flag: string } | undefined, guides: string, overrides?: string | null): string {
   if (!command) return root;
   const inside = relative(command.folder, root);
-  if (!inside || inside === ".." || inside.startsWith("../") || isAbsolute(inside)) return root;
+  if (!inside || inside.split(/[\\/]/)[0] === ".." || isAbsolute(inside)) return root;
   return join(guideLink(join(guides, command.plugin), appCommandFolder(command.folder, command.plugin, command.flag, overrides)), inside);
 }

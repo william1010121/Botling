@@ -77,7 +77,7 @@ describe("writeAgySkills", () => {
     writeAgySkills(home, ["/data/plugin-guides/botling.report/skills"]);
     const file = join(home, "config", "skills.json");
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ entries: [{ path: "/data/plugin-guides/botling.report/skills" }] });
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600); // Windows has no POSIX modes
     writeAgySkills(home, []);
     expect(existsSync(file)).toBe(false);
   });

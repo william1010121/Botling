@@ -46,7 +46,7 @@ describe("originals attached by their own path", () => {
       join(home, "Library/Application Support/CleanShot/media/a.png")]) expect(isTemporaryPath(path), path).toBe(true);
     for (const path of [join(home, "Desktop/a.png"), join(home, "Documents/report.pdf"), "/Volumes/My-SSD/work/a.mov", join(home, "Library/Containers/com.x/Data/Documents/a.png"), "/tmpfile/a.png"])
       expect(isTemporaryPath(path), path).toBe(false);
-    expect(temporaryRoots("/Users/u", "/T")).toContain("/Users/u/Library/Caches");
+    expect(temporaryRoots("/Users/u", "/T")).toContain(join("/Users/u", "Library/Caches"));
   });
 
   it("a pasted file is copied, and its incoming copy goes; a picked original is never deleted", async () => {

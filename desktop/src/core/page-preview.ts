@@ -11,7 +11,7 @@
 // 2.0 differences: no pictures of the pages (1.x's PageShots): a card always runs its page in a frame; and a
 // page named by a `<show>` card outside an `artifacts` folder is not served (1.x serves that one file).
 import { readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { markdownTitle, PAGE_COMPONENT, previewURL } from "./preview-url";
 
@@ -26,11 +26,11 @@ export function filePath(text: string): string | null {
   const value = text.trim();
   if (value.toLowerCase().startsWith("file:")) { try { return resolve(fileURLToPath(value)); } catch { return null; } }
   if (value.startsWith("~/")) return resolve(process.env.HOME ?? "/", value.slice(2));
-  return value.startsWith("/") ? resolve(value) : null;
+  return isAbsolute(value) ? resolve(value) : null;
 }
 
 const inArtifacts = (path: string) => {
-  for (let folder = dirname(path); folder !== "/" && folder; folder = dirname(folder)) if (basename(folder) === "artifacts") return true;
+  for (let folder = dirname(path); folder && folder !== dirname(folder); folder = dirname(folder)) if (basename(folder) === "artifacts") return true;
   return false;
 };
 

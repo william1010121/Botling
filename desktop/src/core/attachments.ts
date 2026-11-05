@@ -109,7 +109,7 @@ export function temporaryRoots(home = homedir(), temp = tmpdir()): string[] {
 }
 
 /** Path patterns that are temporary wherever they sit (a sandboxed app's own temp and caches). */
-const TEMPORARY_PATTERNS = [/\/Library\/Containers\/[^/]+\/Data\/(tmp|Library\/Caches)\//];
+const TEMPORARY_PATTERNS = [/[\\/]Library[\\/]Containers[\\/][^\\/]+[\\/]Data[\\/](tmp|Library[\\/]Caches)[\\/]/];
 
 const inside = (path: string, root: string) => {
   const folder = root.endsWith(sep) ? root.slice(0, -1) : root;
@@ -120,7 +120,7 @@ const inside = (path: string, root: string) => {
 export function isTemporaryPath(path: string, roots = temporaryRoots()): boolean {
   const seen = [resolve(path)];
   try { seen.push(realpathSync(path)); } catch { /* A missing file: its path as written. */ }
-  const allRoots = roots.flatMap((root) => { try { return [root, realpathSync(root)]; } catch { return [root]; } });
+  const allRoots = roots.flatMap((root) => { try { return [resolve(root), realpathSync(root)]; } catch { return [resolve(root)]; } });
   return seen.some((candidate) => allRoots.some((root) => inside(candidate, root)) || TEMPORARY_PATTERNS.some((pattern) => pattern.test(candidate)));
 }
 

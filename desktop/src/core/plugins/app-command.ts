@@ -12,7 +12,7 @@
 // rules a bot reads match the renderer it runs. Bots are told one stable path for it (`guideLink`, a symlink the core points at the
 // override's plugin folder or the shipped one), so the system prompt stays the same when an override comes or goes, and a rebuilt
 // guide is what the next report a bot writes reads: no new app build, no restart, no new Claude session.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { insidePlugin } from "./contributions";
 
@@ -74,6 +74,8 @@ export function guideLink(link: string, target: string): string {
     symlinkSync(target, next, "dir");
     // A folder (not a link) in the way is left alone: bots are told the target instead.
     if (existsSync(link) && !lstatSync(link).isSymbolicLink()) { rmSync(next, { force: true }); return target; }
+    // Windows renames nothing onto an existing link: the old one goes first (not atomic there).
+    if (process.platform === "win32") { try { unlinkSync(link); } catch { /* none */ } }
     renameSync(next, link);
     return link;
   } catch {

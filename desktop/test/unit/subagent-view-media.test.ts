@@ -7,6 +7,7 @@
 //
 // The page here is the production one (Web/src/main) with the same media source chat-frame/entry.ts
 // installs, so the test survives moving the code between core, plugins and the chat page.
+import { pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { SubagentView } from "../../src/contract";
 import { subagentView } from "../../src/core/bot";
@@ -54,8 +55,10 @@ describe("a worker's view asks the chat origin for pictures as the bot that owns
     const image = document.querySelector<HTMLImageElement>("img.step-image");
     expect(image, "the opened Read step draws its picture").toBeTruthy();
     const seen = originSees(image!.src);
-    expect(seen.target).toEqual({ botId: OWNER, ref: `file://${PICTURE}` });
-    expect(seen.file).toBe(`file://${PICTURE}`);
+    // The step names a path, made a file URL as the platform makes one (Windows puts the current drive in front).
+    const ref = pathToFileURL(PICTURE).href;
+    expect(seen.target).toEqual({ botId: OWNER, ref });
+    expect(seen.file).toBe(ref);
   });
 
   it("localMediaSource names the owner, for a worker's composite chat id and for a plain one", () => {

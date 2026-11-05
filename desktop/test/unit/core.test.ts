@@ -118,8 +118,7 @@ describe("core process", () => {
     const response = await until(() => c.responses.get(waitId));
     expect(response).toMatchObject({ ok: false, error: { code: "cancelled" } });
     const before = c.of("turn.delta").length;
-    await sleep(200);
-    expect(c.of("turn.delta").length).toBeGreaterThan(before); // Still streaming.
+    await until(() => c.of("turn.delta").length > before, { what: "a delta after the wait was cancelled" }); // Still streaming.
     await c.call({ type: "turn.stop", botId: MAIN, turnId });
   });
 
