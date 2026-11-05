@@ -31,8 +31,28 @@ test('registry: every block is described, has examples that validate, and appear
   const json = JSON.stringify(schema);
   for (const t of types) assert.ok(json.includes(`"const":"${t}"`), t);
   const doc = api.promptDoc();
-  for (const t of types) assert.ok(doc.includes(`### \`${t}\``), t);
+  for (const t of types) assert.equal(doc.includes(`### \`${t}\``), !api.retiredCharts.has(t), t);
+  assert.deepEqual(api.guideBlocks.map(b => b.type), types.filter(t => !api.retiredCharts.has(t)));
   for (const kind of ['status', 'decision', 'investigation', 'comparison', 'plan', 'results', 'explainer']) assert.ok(doc.includes(`### ${kind}`));
+});
+
+test('data charts: the guide offers figure only; old chart blocks still render, each with a warning naming its path', async () => {
+  assert.deepEqual([...api.retiredCharts].sort(), ['bar', 'beforeafter', 'donut', 'quadrant', 'trend']);
+  const doc = api.promptDoc();
+  assert.match(doc, /Every data chart is a matplotlib `figure`/);
+  const old = api.blocks.filter(b => api.retiredCharts.has(b.type)).map(b => b.examples[0]);
+  const heat = api.registry.get('matrix').examples.find(e => e.cells.flat().some(c => typeof c === 'number'));
+  const place = api.registry.get('matrix').examples.find(e => !e.cells.flat().some(c => typeof c === 'number'));
+  const r = await api.renderV2(spec([...old, heat, place]), { mode: 'doc' });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  old.forEach((b, i) => {
+    const w = r.warnings.find(x => x.path === `sections[0].blocks[${i}]`);
+    assert.ok(w, b.type); assert.match(w.message, new RegExp(`^${b.type} is no longer a block to choose: draw every data chart as a figure block`));
+  });
+  assert.ok(r.warnings.some(x => x.path === `sections[0].blocks[${old.length}].cells` && /figure block/.test(x.message)), 'heatmap matrix');
+  assert.ok(!r.warnings.some(x => x.path.startsWith(`sections[0].blocks[${old.length + 1}]`)), 'placement matrix stays quiet');
+  const d = dom(r.html);
+  for (const t of [...api.retiredCharts, 'matrix']) assert.ok(d.querySelector(`[data-type="${t}"], .blk-${t}`), `${t} still renders`);
 });
 
 test('generated docs and JSON Schema are in sync with the registry', async () => {

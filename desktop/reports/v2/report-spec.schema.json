@@ -1195,7 +1195,8 @@
                             }
                           ]
                         }
-                      }
+                      },
+                      "description": "Arrays of short item names (or null). Numbers still render as a heatmap for older specs, with a warning: use a figure."
                     },
                     "scale": {
                       "default": "seq",
@@ -1218,7 +1219,7 @@
                     "cells"
                   ],
                   "additionalProperties": false,
-                  "description": "A grid of rows × columns: a heatmap of numbers, or a placement grid where each cell lists short item names."
+                  "description": "A placement grid of rows × columns where each cell lists short item names."
                 },
                 {
                   "type": "object",

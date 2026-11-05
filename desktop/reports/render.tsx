@@ -10,7 +10,7 @@ export { renderV2, renderBlock, css as v2css, PAGER } from './v2/render';
 export { validateSpec, reportSpecSchema, blockSchema, minimalExample } from './v2/spec';
 export { planLayout, planSlides, layoutInputs } from './v2/planner';
 export { lintSpec, budgets } from './v2/lint';
-export { blocks, registry } from './v2/blocks';
+export { blocks, registry, guideBlocks, retiredCharts } from './v2/blocks';
 export { promptDoc, jsonSchema } from './v2/promptdoc';
 
 /** v1: render once with React, deliver readable HTML even when scripts cannot run. */

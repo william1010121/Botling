@@ -34,8 +34,8 @@
       "title": "取捨",
       "takeaway": "代價是圖要自己做，但只做一次",
       "blocks": [
-        { "type": "bar", "title": "輸出要多帶的執行檔", "unit": "KB", "horizontal": true, "highlight": "自己畫 SVG", "series": [{ "name": "大小" }], "rows": [
-          { "label": "自己畫 SVG", "values": [0] }, { "label": "Vega-Lite", "values": [400] }, { "label": "Recharts", "values": [450] } ] },
+        { "type": "table", "title": "輸出要多帶的執行檔", "columns": ["方案", "多帶的執行檔"], "highlight": 0, "rows": [
+          [{ "text": "自己畫 SVG", "tone": "good", "strong": true }, "0 KB"], ["Vega-Lite", "400 KB"], ["Recharts", "450 KB"] ] },
         { "type": "proscons", "title": "自己畫 SVG 的得失", "pros": ["輸出零 JavaScript，預覽框一定能看", "快照測試穩定，畫面每次一樣", "顏色全部來自 App tokens"], "cons": ["每種圖都要自己寫", "做不到滑鼠提示這類互動"] }
       ]
     },

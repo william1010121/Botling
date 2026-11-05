@@ -74,7 +74,8 @@ if (inspectAt >= 0) {
 // command bots run (desktop/reports/cli.ts, bundled to the plugin's report.cjs), then exit; synchronous,
 // no window, no data folder.
 // The command is botling.report's (`contributes.agentCommands`), found in the plugins shipped with the app, or in
-// <data dir>/plugin-overrides/botling.report when that folder has one (a rebuilt renderer, used from the next call on: app-command.ts).
+// <data dir>/plugin-overrides/botling.report when that folder has one (a rebuilt renderer, used from the next call on, and its guide,
+// which the core links bots to: app-command.ts).
 // A bot runs this with the core's environment, where BOTLING_DATA_DIR is <data dir>/core and BOTLING_APP_DATA_DIR the data dir.
 const reportAt = process.argv.indexOf("--render-report");
 if (reportAt >= 0) {

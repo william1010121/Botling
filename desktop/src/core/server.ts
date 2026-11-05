@@ -19,6 +19,7 @@ import { MobileDesk, OFF as MOBILE_OFF } from '../mobile-bridge/desk';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve as resolvePath } from "node:path";
+import { commandGuidePath } from "./plugins/app-command";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./durable/atomic";
@@ -148,6 +149,11 @@ export interface CoreOptions {
    * for its script and the app's `flag`, null when this core has no way to (a section that names the command is then not told).
    */
   runCommand?: ((command: { script: string; flag: string }) => string | null) | null;
+  /**
+   * Where rebuilt shipped plugins go (`<data dir>/plugin-overrides`, app-command.ts) when the command `runCommand` gives runs the
+   * app's own flag, which takes an override's script from there; a command's guide then comes from there too (null: shipped only).
+   */
+  pluginOverrides?: string | null;
   /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
   firstSnapshotDelayMs?: number;
   /**
@@ -2271,8 +2277,17 @@ First write a test that shows this, then fix it.`;
       if (section.command === undefined) return [section];
       const command = commands.find((candidate) => candidate.plugin === section.plugin && candidate.id === section.command);
       const line = command ? this.options.runCommand?.(command) : null;
-      return command && line ? [{ ...section, tool: { command: line, docs: command.docs ?? "" } }] : [];
+      return command && line ? [{ ...section, tool: { command: line, docs: command.docs ? this.commandGuide(command) : "" } }] : [];
     });
+  }
+
+  /**
+   * The path bots are told for a command's guide: one that stays the same (`<data>/plugin-guides/<plugin>/…`, a link to the plugin
+   * folder whose script the command runs: an override's, else the shipped one), so the prompt does not change when an override
+   * comes or goes and a rebuilt guide is read by the next report a bot writes. Re-pointed each time prompts are built.
+   */
+  private commandGuide(command: { plugin: string; folder: string; flag: string; docs: string | null }): string {
+    return commandGuidePath({ ...command, docs: command.docs! }, join(this.options.dataDir, "plugin-guides"), this.options.pluginOverrides ?? null);
   }
 
   private event(event: Event) {

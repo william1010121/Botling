@@ -15,7 +15,7 @@ Readers skim: most read only the verdict card and the section headlines. Write s
 5. **Plain language before jargon: define every term once (先講人話，術語首次定義).** Say the plain question, setup and everyday answer before the numbers. Each acronym, model or dataset name, and metric symbol (`κ`, `Δκ`, SESS, LOSO, whitening / 白化) gets one plain sentence or everyday analogy the first time it appears: a `glossary` block in the first section, or the plain words first with the term in brackets ("留一受試者驗證（LOSO）"). Use the same word for the same thing everywhere; prefer an everyday word to an acronym. Never stack unexplained acronyms in `title`, `tldr` or `takeaway`. Plain language is writing for your reader, not lowering the level.
 6. **Every number has a reference point and a meaning.** Give the comparison (plan, previous version, last week, chance level, the paper's score) and the unit, then say what the gap means in the reader's units: not "準確率 92%" but "92%（現行規則 85%）：每 100 張多抓對 7 張". Prefer "done / not done + expected date" to "80% done". Show what changed since the last report rather than repeating its history.
 7. **One question per chart + one-sentence reading guide (一張圖只回答一個問題＋一句看圖指南).** Every chart has an action title stating its conclusion and direct labels; never repeat a KPI as a chart. Never cram two scales, baselines or questions into one figure: split them. Give each non-trivial chart a one-sentence reading guide (`note` or a short `prose`) saying what taller / shorter or left / right of `0` means, and what n and the error bars are. Axes start at 0 for amounts; no decoration that carries no data.
-8. **Data charts: native blocks or matplotlib, never hand-written SVG (禁止手刻數據圖 SVG).** Simple comparisons use native `bar` (signed values, `referenceLine` for chance or target), `table`, `kpi`, `trend`, `beforeafter`. Everything else — per-subject scores, small multiples, scatter, distributions, error bars, curves — is a `figure` block: your own matplotlib `.py` script that reads the data from the result files (never numbers typed into the script); the renderer runs it and embeds the chart (see "Figures (matplotlib)"). Hand-written `<svg>` charts with guessed coordinates make CJK labels collide (> 10 `<text>` tags in an image triggers a warning).
+8. **Every data chart is a matplotlib `figure`, never hand-written SVG (數據圖一律用 Python 畫，禁止手刻數據圖 SVG).** Every chart of data — comparisons, signed deltas against chance or a target, trends over time, before/after, shares, heatmaps, per-subject scores, small multiples, scatter, distributions, error bars, curves — is a `figure` block: your own matplotlib `.py` script that reads the data from the result files (never numbers typed into the script); the renderer runs it and embeds the chart (see "Figures (matplotlib)"). Exact values the reader looks up go in a `table`; headline numbers in `kpi` (its sparkline is fine). The old native chart blocks (`bar`, `trend`, `donut`, `beforeafter`, `quadrant`, a `matrix` of numbers) still render but come back with a warning. Hand-written `<svg>` charts with guessed coordinates make CJK labels collide (> 10 `<text>` tags in an image triggers a warning).
 9. **Use ASD-STE100-informed plain language.** Active voice, direct verbs, "who does what", consistent terms. Prefer short sentences, but keep a cause and its effect in one sentence: "X 因為 Y，所以 Z" stays whole; never cut a causal chain into fragments or drop the "because" to save length, and never cut background the reader needs to follow the argument. Keep useful technical names. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese.
 10. **Explain uncertainty.** Separate verified facts from pending inferences. Give the reason for each inference and state what remains unchecked. Do not assign mechanical confidence percentages. Use numerical probabilities only when supported by a stated method and evidence.
 11. **Explain causes visually.** For multistep causes, prefer a flowchart plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
@@ -35,6 +35,7 @@ These come back in `warnings` with a path; fix them before delivering:
 - an acronym, coined name (two or more capitals: LOSO, SESS, OpenBMI) or Greek symbol (κ, Δκ) used without a definition — in a `glossary` block, or written "plain words（TERM）" / "TERM（plain words）" where it first appears;
 - kind `experiment` without `overview` (its `complete` field is required), or whose first chart is not a `figure` with `perUnit: true`;
 - kind `experiment` without an `experiment` block; an experiment card with < 3 runs, no `baselineTuned: true`, no `result.ci`, or verdict "supported" while the interval crosses 0; a `tldr` that claims an improvement while a card is inconclusive; experiment KPIs without delta or target;
+- a native chart block (`bar`, `trend`, `donut`, `beforeafter`, `quadrant`) or a `matrix` of numbers: draw it as a `figure` instead;
 - the budgets below (bullets, prose length, table rows, charts per section, chart titles, slides per section) and hand-coded SVG charts.
 
 ## Not checked: rules only
@@ -179,7 +180,7 @@ Software progress / feature status: where things stand against the plan, what ch
 2. impact = the effect on the goal (release date, users, cost), planned vs now; risk = the biggest risk + road to green (who, what, by when) and whether the team can recover alone
 3. table (dimension | status | one-line reason with a number): schedule, scope, quality, resources — or kpi (target vs actual, delta, spark); stack:true for status counts
 4. table or timeline — planned vs actual per milestone: done / not done + expected date (never "80% done"); carry-overs and scope changes stated
-5. checklist — 2–5 outcomes since the last report, each "讓［誰］能［做什麼］→［可量測結果］", not activities; trend over 3–5 cycles when a rate matters (never one cycle alone; velocity plans, it does not grade the team)
+5. checklist — 2–5 outcomes since the last report, each "讓［誰］能［做什麼］→［可量測結果］", not activities; a figure of the rate over 3–5 cycles when a rate matters (never one cycle alone; velocity plans, it does not grade the team)
 6. next (even tentative) + confidence in the milestone; asks (owner, deadline) — or [] for "No action needed"
 7. last section for engineers: technical details, alternatives considered, PR / issue references in sources ≤ 4
 
@@ -190,7 +191,7 @@ Software progress / feature status: where things stand against the plan, what ch
 1. tldr = the recommendation + the deadline; impact = what changes for the goal if we pick it
 2. prose: context in SCQA, 2–3 sentences, terms defined
 3. options (2–4 incl. "do nothing", same criteria: cost, risk, time, reversibility) with recommended + verdict
-4. proscons or quadrant (effort × impact) — why the others lose
+4. proscons, or a figure of effort × impact — why the others lose
 5. callout tone=warn: the main risk / assumption (or `risk`)
 6. asks: who decides, by when
 
@@ -202,7 +203,7 @@ Investigation: what broke or what we found, why, and whether it is fixed.
 2. glossary or prose: the setup and one plain sentence per domain term, before any metric
 3. flowchart plus a table — show the multistep cause and the evidence for each link; mark pending inferences
 4. timeline (events) — only when timing explains the cause
-5. beforeafter, bar (including signed deltas / referenceLine), or trend — the metric before/after the fix, against its baseline
+5. figure (before/after, signed deltas or the metric over time, with the baseline drawn in) or a table — the metric before/after the fix, against its baseline
 6. checklist — actions with owners (blameless: name the activity, not the person)
 7. sources ≤ 4
 
@@ -213,7 +214,7 @@ Which one, and "pick X if…, Y if…".
 1. tldr = plain question + the winner + when to pick the other
 2. prose or glossary: plain-language criteria and baseline definitions (1–3 sentences)
 3. options or table with the winning cells toned good
-4. bar (one question per chart; supports negative deltas and referenceLine) — optional
+4. figure (one question per chart; signed deltas and a reference line drawn in) — optional
 5. callout: caveats
 
 ### plan
@@ -232,8 +233,8 @@ What the numbers say after a change (product or system metrics). For an ML / dee
 1. tldr = plain question + headline answer against its baseline + what it means; impact = the consequence in the reader's units
 2. glossary or prose: plain-language setup, what the baseline is, one sentence per domain term
 3. kpi vs baseline (delta, target)
-4. trend with marks at the change, target line
-5. beforeafter or bar (supports negative values and referenceLine; add a 1-sentence reading guide) — segment breakdown
+4. figure of the metric over time with marks at the change and the target line
+5. figure or table (before/after, signed values and a reference line; add a 1-sentence reading guide) — segment breakdown
 6. prose: verified facts and pending inferences, with the reason and what remains unchecked
 7. sources ≤ 4
 
@@ -245,7 +246,7 @@ Explainer: what it is and how it works, for a reader outside the field.
 2. glossary — everyday analogy + one plain sentence per technical term
 3. flowchart plus a table — show the multistep mechanism and explain each link
 4. steps — only for an ordered procedure
-5. bar / table / image — a worked example with a 1-sentence reading guide
+5. figure / table / image — a worked example with a 1-sentence reading guide
 6. callout — limits
 
 ### experiment
@@ -272,12 +273,7 @@ Every block takes optional `title` (action title), `note` (faint caption: unit, 
 | `glossary` | Plain one-sentence definitions of the acronyms, symbols and field terms the reader may not know. |
 | `experiment` | The experiment card: question, hypothesis, success criterion set beforehand, baseline, runs and what ± means, the result with its interval, and the verdict. |
 | `kpi` | A row of 1–6 headline numbers, each with label and optional delta, target and sparkline. |
-| `bar` | Bar chart for comparing categories: one or more series, positive or signed/diverging values, optional referenceLine, vertical or horizontal (auto). |
-| `trend` | Line or area chart over time (or any ordered x) for 1–4 series, with direct end labels, optional target line and up to 3 event marks. |
-| `donut` | Parts of one whole, 2–4 slices, with a centre figure and a value legend. |
-| `beforeafter` | Paired before/after bars per metric with the change in %, coloured by whether higher or lower is better. |
-| `matrix` | A grid of rows × columns: a heatmap of numbers, or a placement grid where each cell lists short item names. |
-| `quadrant` | 2×2 chart: items placed by two 0–1 scores (e.g. effort × impact), with the four quadrants named. |
+| `matrix` | A placement grid of rows × columns where each cell lists short item names. |
 | `timeline` | Either a vertical event log (items without end) or a gantt chart (items with start and end dates, optional lanes and a today line). |
 | `roadmap` | Two to four columns (e.g. Now / Next / Later) of short items with optional status. |
 | `flowchart` | Flowchart and architecture diagram: connected boxes and labelled arrows, laid out automatically. Supports status colours, decisions and start/end nodes. |
@@ -390,138 +386,22 @@ A row of 1–6 headline numbers, each with label and optional delta, target and 
 {"type":"kpi","items":[{"label":"冷啟動","value":1.4,"unit":"s","delta":"-42%","deltaDir":"down_good","spark":[2.6,2.5,2.4,2.1,1.6,1.4]},{"label":"閒置 CPU","value":"2.1%","delta":"-7.7pt","deltaDir":"down_good","target":"目標 ≤ 3%"},{"label":"記憶體","value":412,"unit":"MB","delta":"+6%","deltaDir":"down_good"}]}
 ```
 
-### `bar`
-
-Bar chart for comparing categories: one or more series, positive or signed/diverging values, optional referenceLine, vertical or horizontal (auto).
-
-**When:** Comparing amounts or signed gains/deltas across ≤15 categories (negative numbers render around a 0 baseline automatically; use referenceLine for chance/target baselines). Use highlight to point at the bar the title talks about. Time series → trend; parts of one whole → donut.
-
-- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
-- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
-- `series`: { name }[] (≥1 ≤4)
-  - `name`: string ≤20
-- `rows`: { label, values }[] (≥1 ≤15)
-  - `label`: string ≤24
-  - `values`: number[] (≥1 ≤4)
-- `stacked?`: boolean
-- `horizontal?`: boolean — Omit to choose automatically (horizontal for many or long labels).
-- `sort?`: boolean — Sort rows by size, largest first.
-- `unit?`: string ≤8
-- `highlight?`: string ≤24 — Row label to emphasise; other bars turn grey.
-- `referenceLine?`: { value, label } — Optional baseline or chance-level line (e.g. random guess 25%).
-  - `value`: number
-  - `label`: string ≤32
-
-```json
-{"type":"bar","title":"啟動時間主要花在載入聊天紀錄","unit":"ms","series":[{"name":"耗時"}],"highlight":"聊天紀錄","rows":[{"label":"主程序","values":[180]},{"label":"聊天紀錄","values":[620]},{"label":"外掛","values":[140]},{"label":"側欄","values":[90]}]}
-```
-
-### `trend`
-
-Line or area chart over time (or any ordered x) for 1–4 series, with direct end labels, optional target line and up to 3 event marks.
-
-**When:** Change over time, especially before/after an event (mark it). Title says the trend ("閒置 CPU 降了七成"). For two numbers only, use kpi or beforeafter.
-
-- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
-- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
-- `x?`: "date" | "num" | "cat" — date = "YYYY-MM-DD", "YYYY-MM-DD HH:MM" or "HH:MM"; num = numbers; cat = ordered labels.
-- `series`: { name, points }[] (≥1 ≤4)
-  - `name`: string ≤20
-  - `points`: [string ≤20 | number, number][] (≥2 ≤60)
-- `area?`: boolean
-- `zero?`: boolean — Start the y axis at zero.
-- `unit?`: string ≤8
-- `target?`: { value, label }
-  - `value`: number
-  - `label`: string ≤16
-- `marks?`: { x, label }[] (≤3)
-  - `x`: string ≤20 | number
-  - `label`: string ≤16
-
-```json
-{"type":"trend","title":"閒置 CPU 在 10/24 改版後降到 2%","unit":"%","x":"date","area":true,"target":{"value":3,"label":"目標 3%"},"marks":[{"x":"2026-10-24","label":"停掉背景輪詢"}],"series":[{"name":"閒置 CPU","points":[["2026-10-20",9.6],["2026-10-21",9.9],["2026-10-22",9.2],["2026-10-23",8.8],["2026-10-24",4.1],["2026-10-25",2.6],["2026-10-26",2.2],["2026-10-27",2.1]]}]}
-```
-
-### `donut`
-
-Parts of one whole, 2–4 slices, with a centre figure and a value legend.
-
-**When:** Only when the parts add up to a meaningful whole (time spent, share of crashes). More than 4 parts or comparing amounts → bar.
-
-- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
-- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
-- `parts`: { label, value }[] (≥2 ≤4)
-  - `label`: string ≤20
-  - `value`: number
-- `unit?`: string ≤8
-- `center?`: { value, label }
-  - `value`: string ≤8
-  - `label`: string ≤12
-
-```json
-{"type":"donut","title":"啟動時間一半花在聊天紀錄","unit":"ms","center":{"value":"1.4s","label":"冷啟動"},"parts":[{"label":"聊天紀錄","value":620},{"label":"主程序","value":380},{"label":"外掛與側欄","value":230},{"label":"其他","value":170}]}
-```
-
-### `beforeafter`
-
-Paired before/after bars per metric with the change in %, coloured by whether higher or lower is better.
-
-**When:** Results of a change: 1–6 metrics measured the same way before and after. Each row has its own scale, so mixed units are fine.
-
-- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
-- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
-- `labels?`: { before, after } — Defaults to 之前 / 之後.
-  - `before`: string ≤12
-  - `after`: string ≤12
-- `rows`: { label, before, after, unit?, better }[] (≥1 ≤6)
-  - `label`: string ≤20
-  - `before`: number ≥0
-  - `after`: number ≥0
-  - `unit?`: string ≤8
-  - `better`: "higher" | "lower"
-
-```json
-{"type":"beforeafter","title":"三項效能指標都變好","labels":{"before":".10","after":".11"},"rows":[{"label":"冷啟動","before":2.4,"after":1.4,"unit":"s","better":"lower"},{"label":"閒置 CPU","before":9.8,"after":2.1,"unit":"%","better":"lower"},{"label":"每秒訊息","before":140,"after":210,"better":"higher"}]}
-```
-
 ### `matrix`
 
-A grid of rows × columns: a heatmap of numbers, or a placement grid where each cell lists short item names.
+A placement grid of rows × columns where each cell lists short item names.
 
-**When:** Two dimensions at once: priority × status, module × platform failures, hour × weekday load. Cells hold numbers (heatmap) or arrays of ≤4 short names (placement). ≤30×30.
+**When:** Placing items on two dimensions at once: priority × status, module × platform. Cells hold arrays of ≤4 short names, or null. ≤30×30. Numbers (a heatmap) are a data chart: draw it in a `figure`.
 
 - `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
 - `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
 - `rows`: string ≤16 | { label, status? }[] (≥1 ≤30)
 - `cols`: string ≤16 | { label, status? }[] (≥1 ≤30) — A column with a status colours the item chips placed in it.
-- `cells`: number | any | string ≤14[] (≤4)[][]
+- `cells`: number | any | string ≤14[] (≤4)[][] — Arrays of short item names (or null). Numbers still render as a heatmap for older specs, with a warning: use a figure.
 - `scale?`: "seq" | "div" — seq = low→high; div = negative↔positive around 0.
 - `unit?`: string ≤8
 
 ```json
 {"type":"matrix","title":"P0 只剩一項，卡在安裝","rows":["P0","P1","P2"],"cols":[{"label":"受阻","status":"blocked"},{"label":"進行中","status":"active"},{"label":"完成","status":"done"}],"cells":[[["離線安裝"],null,null],[null,["Rust 後端","手機同步"],["任務面板"]],[null,["報告改版"],["CPU 降低"]]]}
-```
-
-### `quadrant`
-
-2×2 chart: items placed by two 0–1 scores (e.g. effort × impact), with the four quadrants named.
-
-**When:** Prioritising ≤12 items on two judgements. Scores are estimates, so say so in the note. Name quadrants by the action ("先做", "別做").
-
-- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
-- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
-- `x`: string ≤16 — X axis name, low → high (left → right).
-- `y`: string ≤16 — Y axis name, low → high (bottom → top).
-- `quadrants?`: [string ≤12, string ≤12, string ≤12, string ≤12] — [top-left, top-right, bottom-left, bottom-right]
-- `best?`: integer ≥0 ≤3 — Index of the quadrant to highlight as the good one (0=top-left…3=bottom-right).
-- `points`: { label, x, y, status? }[] (≥1 ≤12)
-  - `label`: string ≤16
-  - `x`: number ≥0 ≤1
-  - `y`: number ≥0 ≤1
-  - `status?`: "done" | "active" | "pending" | "blocked" | "risk" | "unverified" | "skipped" — done=完成(green) active=進行中(blue) pending=待處理(orange) blocked=受阻(red) risk=有風險(red) unverified=未驗證(grey) skipped=略過(faint)
-
-```json
-{"type":"quadrant","title":"先修手機清單：影響大又便宜","note":"估計值","x":"工作量","y":"影響","quadrants":["先做","排進計畫","順手做","別做"],"best":0,"points":[{"label":"手機 bot 清單","x":0.2,"y":0.9,"status":"blocked"},{"label":"Rust IPC","x":0.75,"y":0.8,"status":"active"},{"label":"報告動畫","x":0.6,"y":0.2},{"label":"側欄字距","x":0.15,"y":0.25}]}
 ```
 
 ### `timeline`
@@ -651,7 +531,7 @@ A compact table; cells can carry a status or tone dot. Numeric columns align rig
 
 A data chart drawn by your own matplotlib script (.py), run when the page is rendered and embedded in the page; follows the light and dark themes.
 
-**When:** Every data chart that the native blocks cannot draw well: per-subject scores, small multiples, scatter, distributions, error bars, curves. Prefer it to any hand-written SVG. The script draws with matplotlib (the current figure is saved; theme colours are C0 blue, C1 orange, C2 green, C3 purple, C4 red, C5 grey) and reads its data from files — never type numbers into the script. In an experiment report the first chart is a figure with perUnit: true: one panel per compared condition, units on the x axis, one colour per model as dots or grouped bars (no lines), each model's mean in the panel title, 未跑 for panels not run.
+**When:** Every data chart: comparisons, signed deltas, trends over time, before/after, shares, heatmaps, per-subject scores, small multiples, scatter, distributions, error bars, curves. Never a hand-written SVG. The script draws with matplotlib (the current figure is saved; theme colours are C0 blue, C1 orange, C2 green, C3 purple, C4 red, C5 grey) and reads its data from files — never type numbers into the script. In an experiment report the first chart is a figure with perUnit: true: one panel per compared condition, units on the x axis, one colour per model as dots or grouped bars (no lines), each model's mean in the panel title, 未跑 for panels not run.
 
 - `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
 - `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.

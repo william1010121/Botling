@@ -238,6 +238,8 @@ const checkNode: HostCommand | null = process.env.BOTLING_NODE_PATH ? { command:
 const appCommand = process.env.BOTLING_APP_COMMAND || null;
 const runCommand = ({ script, flag }: { script: string; flag: string }) => appCommand ? `${appCommand} ${flag}`
   : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(script)}` : null;
+// The app's flag takes a rebuilt plugin's script from <data dir>/plugin-overrides (main/main.ts); its guide comes from there too.
+const pluginOverrides = appCommand && process.env.BOTLING_APP_DATA_DIR ? join(process.env.BOTLING_APP_DATA_DIR, "plugin-overrides") : null;
 // The plugins shipped with the app (step M11): main names them, a headless core reads out/builtin-plugins.
 const builtinPlugins = process.env.BOTLING_BUILTIN_PLUGINS || join(__dirname, "..", "builtin-plugins");
 const checkCommand = process.env.BOTLING_CHECK_COMMAND ? process.env.BOTLING_CHECK_COMMAND : checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(checkScript)}` : null;
@@ -289,6 +291,7 @@ const core = new Core({
   checkCommand,
   shotCommand: process.env.BOTLING_SHOT_COMMAND || null,
   runCommand,
+  pluginOverrides,
   // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
   firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,

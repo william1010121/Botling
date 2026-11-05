@@ -692,11 +692,11 @@ export class Plugins {
   }
 
   /** The commands enabled, shipped plugins give the bots (`agentCommands`), with the script and guide as absolute paths. */
-  agentCommands(): { plugin: string; id: string; script: string; flag: string; docs: string | null }[] {
+  agentCommands(): { plugin: string; id: string; folder: string; script: string; flag: string; docs: string | null }[] {
     return ofKind(this.registry.contributions(), "agentCommand").flatMap((entry) => {
       const plugin = this.registry.plugin(entry.plugin);
       if (!plugin?.builtIn) return [];
-      return [{ plugin: entry.plugin, id: entry.id, script: join(plugin.folder, entry.script), flag: entry.flag, docs: entry.docs === null ? null : join(plugin.folder, entry.docs) }];
+      return [{ plugin: entry.plugin, id: entry.id, folder: plugin.folder, script: join(plugin.folder, entry.script), flag: entry.flag, docs: entry.docs === null ? null : join(plugin.folder, entry.docs) }];
     });
   }
 

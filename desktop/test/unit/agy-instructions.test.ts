@@ -8,7 +8,7 @@ it('delivers report rules and conditional permission instructions on new and res
  const system=desktopPrompts(botPrompts({profile,engine:'agy'}),profile,'claude',true,reportSections({command:'fixture --render-report',docs:'/fixture/report-blocks.md'})).system;
  expect(system).not.toContain('Every tool requires a single-action approval card');
  expect(system).toContain('Full permission');
- expect(system).toContain('ReportSpec v2');expect(system).toContain('ASD-STE100');
+ expect(system).toContain('ReportSpec v2');expect(system).toContain('before you write a spec, read');
  for(const resume of [false,true]) {
   const frames:any[]=[];
   const client=new AgyAcpProtocol({command:'unused',cwd:'/fixture',sessionId:'saved',resume,systemPrompt:system},m=>frames.push(m),()=>{},()=>{});

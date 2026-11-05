@@ -23,12 +23,12 @@ export function shade(v: number, lo: number, hi: number, scale: 'seq' | 'div'): 
 const head = z.union([z.string().trim().min(1).max(16), z.strictObject({ label: z.string().trim().min(1).max(16), status: statusEnum.optional() })]);
 export const matrix = defineBlock({
   type: 'matrix',
-  description: 'A grid of rows × columns: a heatmap of numbers, or a placement grid where each cell lists short item names.',
-  when: 'Two dimensions at once: priority × status, module × platform failures, hour × weekday load. Cells hold numbers (heatmap) or arrays of ≤4 short names (placement). ≤30×30.',
+  description: 'A placement grid of rows × columns where each cell lists short item names.',
+  when: 'Placing items on two dimensions at once: priority × status, module × platform. Cells hold arrays of ≤4 short names, or null. ≤30×30. Numbers (a heatmap) are a data chart: draw it in a `figure`.',
   fields: {
     rows: z.array(head).min(1).max(30),
     cols: z.array(head).min(1).max(30).describe('A column with a status colours the item chips placed in it.'),
-    cells: z.array(z.array(z.union([z.number(), z.null(), z.array(z.string().trim().min(1).max(14)).max(4)]))),
+    cells: z.array(z.array(z.union([z.number(), z.null(), z.array(z.string().trim().min(1).max(14)).max(4)]))).describe('Arrays of short item names (or null). Numbers still render as a heatmap for older specs, with a warning: use a figure.'),
     scale: z.enum(['seq', 'div']).default('seq').describe('seq = low→high; div = negative↔positive around 0.'),
     unit: z.string().trim().max(8).optional(),
   },

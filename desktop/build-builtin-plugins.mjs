@@ -17,7 +17,8 @@ const SOURCES_ONLY = new Set(["src", "test", "build.json", "node_modules"]);
 
 /**
  * `only` (plugin folder names): build just those, replacing only their folders in `outdir` and keeping the rest, e.g. botling.report
- * into <data dir>/plugin-overrides, which `Botling --render-report` uses from its next call on (src/core/plugins/app-command.ts).
+ * into <data dir>/plugin-overrides, which `Botling --render-report` uses from its next call on, and whose guide bots read from
+ * their next report on (src/core/plugins/app-command.ts).
  */
 export async function buildBuiltinPlugins({ root = here, outdir = join(root, "out/builtin-plugins"), browser = "chrome130", only = null } = {}) {
   root = resolve(root);

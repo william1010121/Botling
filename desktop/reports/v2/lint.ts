@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import type { Kind } from './core/i18n';
 import type { AnyBlockDef } from './core/registry';
+import { retiredCharts } from './blocks';
 import { markdownBullets, textUnits } from './core/text';
 import { lintReadability } from './readability';
 import type { Issue, ReportSpec } from './spec';
@@ -59,6 +60,8 @@ export function lintSpec(spec: ReportSpec, registry: Map<string, AnyBlockDef>, s
       const def = registry.get(b.type);
       if (!def) return;
       const any = b as Record<string, any>;
+      if (retiredCharts.has(b.type)) warn(bp, `${b.type} is no longer a block to choose: draw every data chart as a figure block (a matplotlib .py that reads the data from your result files; see "Figures (matplotlib)" in the guide), or use a table for exact values.`);
+      if (b.type === 'matrix' && (any.cells as unknown[][]).some(r => r.some(c => typeof c === 'number'))) warn(`${bp}.cells`, 'A matrix of numbers is a heatmap, a data chart: draw it as a figure block (matplotlib reading the data from your result files) and keep matrix for placing item names.');
       if (def.visual) { visuals++; total++; if (!any.title) warn(`${bp}.title`, `${b.type} has no title; charts need an action title that states what it shows.`); }
       if (b.type === 'callout') callouts++;
       if (b.type === 'prose') {
@@ -73,7 +76,7 @@ export function lintSpec(spec: ReportSpec, registry: Map<string, AnyBlockDef>, s
       if (b.type === 'options' && any.options.length < 2) warn(`${bp}.options`, 'Show at least two options (include "do nothing").');
       if (b.type === 'image' && typeof any.src === 'string') {
         const nText = svgTextCount(any.src);
-        if (nText > bBudget.svgTextTags) warn(`${bp}.src`, `SVG image has ${nText} <text> elements (> ${bBudget.svgTextTags}); hand-coded data-chart SVGs cause CJK text overlap — prefer native bar (supports negative values and referenceLine), table, flow/flowchart, or kpi metric blocks.`);
+        if (nText > bBudget.svgTextTags) warn(`${bp}.src`, `SVG image has ${nText} <text> elements (> ${bBudget.svgTextTags}); hand-coded data-chart SVGs cause CJK text overlap — draw data charts as a figure block (matplotlib), or use table, flow/flowchart or kpi blocks.`);
       }
     });
     if (visuals > bBudget.visualsPerSection) warn(`${p}.blocks`, `${visuals} charts in one section; keep ≤ ${bBudget.visualsPerSection} (one idea per section).`);
@@ -86,6 +89,6 @@ export function lintSpec(spec: ReportSpec, registry: Map<string, AnyBlockDef>, s
   if (total > bBudget.visualsPerReport) warn('sections', `${total} charts in the report; keep ≤ ${bBudget.visualsPerReport}. Too many visuals hide the point.`);
   if (spec.kind === 'decision' && !kindsUsed.has('options') && !kindsUsed.has('proscons')) warn('sections', 'Decision report without an options or proscons block; compare the options on the same criteria.');
   if ((spec.kind === 'investigation') && !kindsUsed.has('timeline') && !kindsUsed.has('flowchart') && !kindsUsed.has('flow') && !kindsUsed.has('sequence')) warn('sections', 'Investigation without a timeline, flowchart or sequence; show what happened and why.');
-  if (spec.kind === 'results' && !kindsUsed.has('beforeafter') && !kindsUsed.has('bar') && !kindsUsed.has('trend') && !kindsUsed.has('kpi')) warn('sections', 'Results report without beforeafter, bar, trend, or kpi block; consider showing measured evidence when available; state missing measurements or baselines explicitly.');
+  if (spec.kind === 'results' && !['figure', 'kpi', 'table', 'beforeafter', 'bar', 'trend'].some(t => kindsUsed.has(t))) warn('sections', 'Results report without a figure, kpi or table block; consider showing measured evidence when available; state missing measurements or baselines explicitly.');
   return [...w, ...lintReadability(spec)];
 }

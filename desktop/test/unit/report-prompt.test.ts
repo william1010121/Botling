@@ -32,7 +32,7 @@ describe("the report page rule as botling.report gives it", () => {
   }
   it("the manifest's command and the section agree, and shell-quotes the guide as the core did", () => {
     expect(REPORT_SECTION.after).toBe("results");
-    expect(reportPageLine(tool, "/x")).toContain(`read ${shellQuote(tool.docs)} for the format`);
+    expect(reportPageLine(tool, "/x")).toContain(`before you write a spec, read ${shellQuote(tool.docs)}:`);
   });
 });
 
@@ -109,26 +109,39 @@ describe("the report page line as a shell command", () => {
 
 
 describe("report writing guidance", () => {
-  it("keeps all report modes and gives direct, consistent wording guidance", () => {
+  // The prompt line is the contract only; the writing rules it used to carry live in the guide it says to read before every spec.
+  const guide = readFileSync(new URL("../../docs/report-blocks.md", import.meta.url), "utf8");
+  it("keeps the prompt line to the contract and sends the bot to the guide for every rule", () => {
     const line = reportPageLine(tool, "/x/artifacts");
     expect(line).toContain("status, decision, investigation, comparison, plan, results, explainer");
-    expect(line).toContain("ASD-STE100-informed plain language: active voice, direct verbs, and consistent terms");
-    expect(line).toContain("keep a cause and its effect in one sentence");
-    expect(line).not.toContain("30 Chinese characters");
-    expect(line).toContain("the first page carries the answer, its impact, the decision needed, the biggest risk and the next step");
-    expect(line).toContain("writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese");
-    expect(line).toContain("Keep useful technical names");
+    expect(line).toContain(`Each time, before you write a spec, read ${shellQuote(tool.docs)}`);
+    expect(line).toContain("all writing and chart rules");
+    for (const moved of ["ASD-STE100", "mechanical confidence", "first page carries", "flow plus a table"]) expect(line).not.toContain(moved);
+  });
+
+  it("keeps in the guide every writing rule the prompt line used to carry", () => {
+    expect(guide).toContain("ASD-STE100-informed plain language");
+    expect(guide).toMatch(/Active voice, direct verbs/);
+    expect(guide).toContain("consistent terms");
+    expect(guide).toContain("keep a cause and its effect in one sentence");
+    expect(guide).not.toContain("30 Chinese characters");
+    expect(guide).toContain("The first page holds five things");
+    expect(guide).toContain("writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese");
+    expect(guide).toContain("Keep useful technical names");
+    expect(guide).toContain("gets one plain sentence or everyday analogy the first time it appears");
+    expect(guide).toContain("Every number has a reference point and a meaning");
+    for (const kind of ["status", "experiment", "investigation", "explainer"]) expect(guide).toContain(`### ${kind}`);
   });
 
   it("explains uncertainty without inventing confidence or hiding failed checks", () => {
-    const line = reportPageLine(tool, "/x/artifacts");
-    expect(line).toContain("verified facts and pending inferences with their reasons");
-    expect(line).toContain("do not assign mechanical confidence percentages");
-    expect(line).toContain("Omit routine defensive boilerplate");
-    expect(line).toContain("material uncertainty and failed checks");
-    expect(line).toContain("never hide defects or claim unperformed validation");
-    expect(line).toContain("flow plus a table of evidence");
-    expect(line).toContain("outside the prose");
+    expect(guide).toContain("Separate verified facts from pending inferences");
+    expect(guide).toContain("Do not assign mechanical confidence percentages");
+    expect(guide).toContain("Omit routine defensive boilerplate");
+    expect(guide).toContain("material uncertainty and failed checks");
+    expect(guide).toContain("Never conceal defects or claim unperformed validation");
+    expect(guide).toContain("prefer a flowchart plus a table of evidence");
+    expect(guide).toContain("test commands, and preview-tool details in the internal handback");
+    expect(guide).toContain("no long paths, hashes or logs in prose");
   });
 
   it("separates internal evidence from user prose while preserving preview checks and scope", () => {

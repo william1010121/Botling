@@ -266,7 +266,7 @@ describe("Plugins: reply tags, prompt sections and approvals", () => {
     plugin(shipped, "botling.report", report, join(shipped, "app-plugins"));
     const builtIn = await setup(shipped, join(shipped, "app-plugins"));
     const folder = join(shipped, "app-plugins", "botling.report");
-    expect(builtIn.plugins.agentCommands()).toEqual([{ plugin: "botling.report", id: "botling.report.render", script: join(folder, "report.cjs"), flag: "--render-report", docs: join(folder, "skills/report/report-blocks.md") }]);
+    expect(builtIn.plugins.agentCommands()).toEqual([{ plugin: "botling.report", id: "botling.report.render", folder, script: join(folder, "report.cjs"), flag: "--render-report", docs: join(folder, "skills/report/report-blocks.md") }]);
     expect(builtIn.plugins.promptSections().map((section) => [section.id, section.command])).toEqual([["botling.report.page", "botling.report.render"], ["botling.report.note", undefined]]);
     // Turned off, the rule and the command go together.
     builtIn.plugins.setEnabled("botling.report", false);

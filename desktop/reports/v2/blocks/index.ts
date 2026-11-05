@@ -30,3 +30,11 @@ export const blocks: AnyBlockDef[] = [
   flowchart, flow, sequence, table, figure, options, proscons, checklist, progress, steps, quote, image, sources,
 ];
 export const registry = new Map(blocks.map(b => [b.type, b]));
+/**
+ * Native data-chart blocks that bots no longer pick: every data chart is a `figure` (matplotlib reading the result files). The
+ * renderer still draws them so older specs render, with a warning (lint.ts); the guide (promptdoc.ts) leaves them out. `matrix`
+ * stays for its placement grid; a matrix with numbers (a heatmap) gets the same warning.
+ */
+export const retiredCharts = new Set(['bar', 'trend', 'donut', 'beforeafter', 'quadrant']);
+/** The blocks the guide offers, in prompt-doc order. */
+export const guideBlocks: AnyBlockDef[] = blocks.filter(b => !retiredCharts.has(b.type));
