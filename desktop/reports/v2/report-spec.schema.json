@@ -71,7 +71,7 @@
       "additionalProperties": false
     },
     "overview": {
-      "description": "Experiment reports: \"what we are doing\", for a reader who is not in the loop. Shown first, before the first chart and the verdict.",
+      "description": "Experiment reports: \"what we are doing\", for a reader who is not in the loop. Shown collapsed right after the first section (the flowcharts), which already draws it.",
       "type": "object",
       "properties": {
         "question": {
@@ -191,6 +191,10 @@
               "split",
               "grid"
             ]
+          },
+          "collapsed": {
+            "description": "true = supporting detail (baseline checks, limitations, per-model breakdowns, exact-value tables, glossary, reproducibility): shown below the main part as a closed <details> the reader opens. The main part is charts with a short explanation under each.",
+            "type": "boolean"
           },
           "blocks": {
             "minItems": 1,
@@ -467,6 +471,61 @@
                       ],
                       "additionalProperties": false
                     },
+                    "figure": {
+                      "description": "The card's chart: a matplotlib .py reading the result files, run like a figure block.",
+                      "type": "object",
+                      "properties": {
+                        "script": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 400,
+                          "pattern": "\\.py$",
+                          "description": "Path to the .py file, absolute or relative to the spec file."
+                        },
+                        "args": {
+                          "description": "Command-line arguments for the script (data files, options); it runs with the spec's folder as working directory.",
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "maxLength": 400
+                          }
+                        },
+                        "format": {
+                          "default": "svg",
+                          "description": "svg (default: sharp, recoloured for dark mode) or png (very many points; drawn twice, once per theme).",
+                          "type": "string",
+                          "enum": [
+                            "svg",
+                            "png"
+                          ]
+                        },
+                        "timeout": {
+                          "default": 60,
+                          "description": "Seconds before the script is stopped and the block reports an error.",
+                          "type": "integer",
+                          "minimum": 5,
+                          "maximum": 300
+                        },
+                        "alt": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200,
+                          "description": "What the chart shows, for screen readers."
+                        },
+                        "caption": {
+                          "description": "One-sentence reading guide under the chart.",
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "required": [
+                        "script",
+                        "alt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "verdict": {
                       "type": "string",
                       "enum": [
@@ -488,7 +547,7 @@
                     "verdict"
                   ],
                   "additionalProperties": false,
-                  "description": "The experiment card: question, hypothesis, success criterion set beforehand, baseline, runs and what ± means, the result with its interval, and the verdict."
+                  "description": "The experiment card: the verdict and the result with its interval, its own chart (a .py figure) with a one-sentence reading guide, and the design (question, hypothesis, success criterion set beforehand, baseline, runs, what ± means) collapsed under it."
                 },
                 {
                   "type": "object",
@@ -567,6 +626,7 @@
                             "maxLength": 20
                           },
                           "spark": {
+                            "description": "Retired: sparklines are no longer drawn (older specs still validate). Draw a trend as a figure.",
                             "minItems": 2,
                             "maxItems": 40,
                             "type": "array",
@@ -605,7 +665,7 @@
                     "items"
                   ],
                   "additionalProperties": false,
-                  "description": "A row of 1–6 headline numbers, each with label and optional delta, target and sparkline."
+                  "description": "A row of 1–6 headline numbers, each with label and optional delta and target."
                 },
                 {
                   "type": "object",
@@ -1196,7 +1256,7 @@
                           ]
                         }
                       },
-                      "description": "Arrays of short item names (or null). Numbers still render as a heatmap for older specs, with a warning: use a figure."
+                      "description": "Arrays of short item names (or null). Numbers (older specs) are shown as plain values, no longer as a heatmap, with a warning: draw a heatmap as a figure."
                     },
                     "scale": {
                       "default": "seq",
@@ -2065,6 +2125,14 @@
                       "type": "string",
                       "minLength": 1,
                       "maxLength": 200
+                    },
+                    "role": {
+                      "description": "flowchart = a process diagram (the pipeline, how the data is split, what is compared), drawn in the clean-flowchart style from template flowchart.py: rounded boxes, right-angle arrows. One or more open the report. Default chart.",
+                      "type": "string",
+                      "enum": [
+                        "chart",
+                        "flowchart"
+                      ]
                     },
                     "perUnit": {
                       "description": "true = the complete results: one panel per compared condition, every unit (subject, sample, task…) on the x axis, one colour per model; the first chart of an experiment report.",

@@ -24,9 +24,6 @@ body{background:var(--side)}
 .m-kpi-grid .blk-kpi{font-size:30px}
 .m-kpi-grid .blk-kpi:not(.plain){padding:1.1em 1.3em}
 .m-kpi-grid .blk-kpi .kpis{gap:1.2em 1.6em}
-.sl .vb,.sl .tr{grid-template-rows:12.5em auto}
-.sl .qd{width:min(100%,25em)}
-.sl .dnc{width:11em;height:11em}
 .sl .fl-wrap{max-height:430px}
 
 /* cover */
@@ -79,7 +76,7 @@ body{background:var(--side)}
   .sv{width:1280px;break-after:page}
   .sl{border:0;border-radius:0}
 }
-.sl .ba{gap:.75em}.sl .bar-row{gap:.2em}.sl .bt{height:.6em}
+
 .m-cover .overview{margin-top:28px;padding:22px 30px}
 .m-cover .overview dd{font-size:19px}
 .m-cover .overview dt{font-size:15px}

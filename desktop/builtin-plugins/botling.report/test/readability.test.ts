@@ -7,7 +7,7 @@ import { JSDOM } from "jsdom";
 // @ts-expect-error ESM helper without d.ts
 import { loadReports, root } from "../../../reports/load.mjs";
 
-describe("botling.report readability, diverging bars, kind-aware budgets, and SVG hygiene", () => {
+describe("botling.report readability, retired native charts, kind-aware budgets, and disabled SVG", () => {
   let api: any;
   let temp: string;
 
@@ -29,63 +29,22 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
     rmSync(temp, { recursive: true, force: true });
   });
 
-  it("renders native horizontal and vertical diverging bars with 0-baseline, exact 3-decimal labels, and optional referenceLine", async () => {
-    const horiz = await api.renderBlock({
+  it("draws no native charts: a retired bar block shows its values as a plain table under a notice, with no SVG", async () => {
+    const bar = await api.renderBlock({
       type: "bar",
       title: "扣除隨機猜測後，MAtt 跨人增益兩資料集相等，SPDIM 跨人轉負",
       unit: "Δκ",
       series: [{ name: "BCI-IV-2a" }, { name: "OpenBMI" }],
       rows: [
         { label: "MAtt 跨受試者", values: [0.098, 0.096] },
-        { label: "MF 跨受試者", values: [0.136, 0.037] },
         { label: "SPDIM 跨受試者", values: [-0.032, -0.033] },
       ],
     }, { mode: "doc" });
-    expect(horiz.errors).toEqual([]);
-    const hd = new JSDOM(`<body>${horiz.html}</body>`).window.document;
-    expect(hd.querySelector(".hb.div")).toBeTruthy();
-    expect(hd.querySelectorAll(".hz").length).toBe(3);
-    expect(hd.querySelector(".hx span.z")?.textContent).toBe("0");
-    const valuesText = [...hd.querySelectorAll(".hr:not(.ha) .hv")].map((el: any) => el.textContent);
-    expect(valuesText).toEqual(["+0.098 Δκ · +0.096", "+0.136 Δκ · +0.037", "-0.032 Δκ · -0.033"]);
-
-    const vert = await api.renderBlock({
-      type: "bar",
-      title: "單一資料集加減 SESS 的準確率變化",
-      horizontal: false,
-      unit: "pp",
-      series: [{ name: "增益" }],
-      rows: [
-        { label: "MAtt", values: [7.3] },
-        { label: "MF", values: [10.2] },
-        { label: "SPDIM", values: [-2.4] },
-      ],
-    }, { mode: "doc" });
-    expect(vert.errors).toEqual([]);
-    const vd = new JSDOM(`<body>${vert.html}</body>`).window.document;
-    expect(vd.querySelector(".vb.div")).toBeTruthy();
-    expect(vd.querySelector(".zl")).toBeTruthy();
-    expect(vd.querySelector(".vs.neg em")?.textContent).toBe("-2.4");
-
-    const posWithRef = await api.renderBlock({
-      type: "bar",
-      title: "2a 跨受試者準確率均高於 25% 隨機猜測線",
-      horizontal: false,
-      unit: "%",
-      referenceLine: { value: 25, label: "隨機猜測 25%" },
-      series: [{ name: "無 SESS" }, { name: "加 SESS" }],
-      rows: [
-        { label: "MAtt", values: [41.7, 49.0] },
-        { label: "SPDIM", values: [52.6, 50.2] },
-      ],
-    }, { mode: "doc" });
-    expect(posWithRef.errors).toEqual([]);
-    const pd = new JSDOM(`<body>${posWithRef.html}</body>`).window.document;
-    expect(pd.querySelector(".vb:not(.div)")).toBeTruthy();
-    expect(pd.querySelector(".brl")).toBeTruthy();
-    // The label sits in the key line above the plot, never on top of the bars.
-    expect(pd.querySelector(".brl em")).toBeNull();
-    expect(pd.querySelector(".bri")?.textContent).toContain("隨機猜測 25%");
+    expect(bar.errors).toEqual([]);
+    const d = new JSDOM(`<body>${bar.html}</body>`).window.document;
+    expect(d.querySelector("svg")).toBeNull();
+    expect(d.querySelector(".rt-note")?.textContent).toContain("Python");
+    expect([...d.querySelectorAll("tbody tr")].map((r: any) => r.textContent)).toEqual(["MAtt 跨受試者0.098 Δκ0.096 Δκ", "SPDIM 跨受試者-0.032 Δκ-0.033 Δκ"]);
 
     const badStacked = api.registry.get("bar").schema.safeParse({
       type: "bar",
@@ -109,7 +68,8 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
       ];
       if (kind === "investigation") blocks.push({ type: "flowchart", title: "因果鏈", nodes: [{ id: "a", label: "設定" }, { id: "b", label: "結果" }], edges: [{ from: "a", to: "b" }] });
       if (kind === "results") blocks.push({ type: "kpi", items: [{ label: "MAtt Δκ", value: "0.098" }] });
-      const { spec, errors } = api.validateSpec({ ...base, kind, impact: "跨人增益沒有縮水，SESS 值得繼續做。", asks: [], sections: [{ title: "實驗", takeaway, blocks }] });
+      // The subject table is exact values: it sits in a collapsed section (a numeric table in the main part is warned).
+      const { spec, errors } = api.validateSpec({ ...base, kind, impact: "跨人增益沒有縮水，SESS 值得繼續做。", asks: [], sections: [{ title: "實驗", takeaway, collapsed: true, blocks }] });
       expect(errors).toEqual([]);
       expect(api.lintSpec(spec, api.registry)).toEqual([]);
     }
@@ -129,20 +89,20 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
     }
   });
 
-  it("warns on dense <text> hand-coded SVG images (local file via CLI and inline data URI) without blocking render", () => {
-    const denseSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200">${Array.from({ length: 12 }, (_, i) => `<text x="10" y="${15 * (i + 1)}">標籤${i}</text>`).join("")}</svg>`;
-    const svgPath = join(temp, "dense-chart.svg");
+  it("disables SVG images (local file via CLI and inline data URI): a warning, and the page shows the alt text instead", () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200"><text x="10" y="15">標籤</text></svg>`;
+    writeFileSync(join(temp, "chart.svg"), svg, "utf8");
     const specPath = join(temp, "spec.json");
     const outPath = join(temp, "artifacts", "svg-warn.html");
-    writeFileSync(svgPath, denseSvg, "utf8");
+    const inline = "data:image/svg+xml;base64," + Buffer.from(svg).toString("base64");
     writeFileSync(specPath, JSON.stringify({
       ...base,
       kind: "explainer",
       asks: [],
       sections: [{
         title: "圖表",
-        takeaway: "手刻 SVG 字數過多時應發出非阻斷警告",
-        blocks: [{ type: "image", title: "手刻長條圖", alt: "測試密集文字 SVG", src: "dense-chart.svg" }],
+        takeaway: "手刻 SVG 已停用，頁面只顯示替代文字",
+        blocks: [{ type: "image", title: "手刻長條圖", alt: "測試用 SVG", src: "chart.svg" }, { type: "image", title: "內嵌", alt: "內嵌 SVG", src: inline }],
       }],
     }), "utf8");
 
@@ -151,7 +111,10 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout);
     expect(parsed.ok).toBe(true);
-    expect(parsed.warnings.some((w: any) => w.path === "sections[0].blocks[0].src" && w.message.includes("12 <text> elements"))).toBe(true);
+    for (const at of [0, 1]) expect(parsed.warnings.some((w: any) => w.path === `sections[0].blocks[${at}].src` && w.message.includes("SVG images are disabled") && w.example?.type === "figure")).toBe(true);
+    const page = new JSDOM(readFileSync(outPath, "utf8")).window.document;
+    expect(page.querySelectorAll(".blk-image img").length).toBe(0);
+    expect(page.querySelector(".blk-image .fg-none")?.textContent).toBe("測試用 SVG");
   });
 
   it("ships plain-language, chart reading-guide, and no-handcoded-SVG rules in report-blocks.md", () => {
@@ -161,5 +124,8 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
     expect(shipped).toContain("One question per chart + one-sentence reading guide");
     expect(shipped).toContain("never hand-written SVG");
     expect(shipped).toContain("## Figures (matplotlib)");
+    expect(shipped).toContain("Charts first, detail collapsed");
+    expect(shipped).toContain("## Page template: charts first");
+    expect(shipped).toContain("Template for flowcharts: `flowchart.py`");
   });
 });

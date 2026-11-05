@@ -19,6 +19,14 @@
       "to": "skills/report/per_subject.py"
     },
     {
+      "from": "reports/v2/examples/figures/flowchart.py",
+      "to": "skills/report/flowchart.py"
+    },
+    {
+      "from": "reports/v2/examples/figures/paired.py",
+      "to": "skills/report/paired.py"
+    },
+    {
       "from": "reports/v2/NOTICE",
       "to": "NOTICE"
     }

@@ -4,55 +4,178 @@
   "kind": "results",
   "title": "Botling .11 的效能變化",
   "asOf": "2026-10-27 · 同一台 Mac，5 次取中位數",
-  "status": { "level": "on_track" },
+  "status": {
+    "level": "on_track"
+  },
   "tldr": "改成事件喚醒後，閒置 CPU 從 9.8% 降到 2.1%，冷啟動從 2.4 秒降到 1.4 秒。記憶體多了 6%，在可接受範圍。",
   "impact": "筆電閒置時更省電、開 App 少等 1 秒；代價是多用 24 MB 記憶體。",
-  "next": ["到使用者電腦再量一次", "記憶體再看一週"],
+  "next": [
+    "到使用者電腦再量一次",
+    "記憶體再看一週"
+  ],
   "sections": [
     {
       "title": "數字",
       "takeaway": "CPU 和啟動都大幅改善，記憶體略增",
       "blocks": [
-        { "type": "kpi", "items": [
-          { "label": "閒置 CPU", "value": "2.1%", "delta": "-79%", "deltaDir": "down_good", "target": "目標 ≤ 3%", "spark": [9.6, 9.9, 9.2, 8.8, 4.1, 2.6, 2.2, 2.1] },
-          { "label": "冷啟動", "value": 1.4, "unit": "s", "delta": "-42%", "deltaDir": "down_good", "spark": [2.5, 2.4, 2.4, 2.3, 1.7, 1.5, 1.4, 1.4] },
-          { "label": "記憶體", "value": 412, "unit": "MB", "delta": "+6%", "deltaDir": "down_good" }
-        ] }
+        {
+          "type": "kpi",
+          "items": [
+            {
+              "label": "閒置 CPU",
+              "value": "2.1%",
+              "delta": "-79%",
+              "deltaDir": "down_good",
+              "target": "目標 ≤ 3%"
+            },
+            {
+              "label": "冷啟動",
+              "value": 1.4,
+              "unit": "s",
+              "delta": "-42%",
+              "deltaDir": "down_good"
+            },
+            {
+              "label": "記憶體",
+              "value": 412,
+              "unit": "MB",
+              "delta": "+6%",
+              "deltaDir": "down_good"
+            }
+          ]
+        }
       ]
     },
     {
       "title": "趨勢",
       "takeaway": "閒置 CPU 在 10/24 改版當天就掉下來",
       "blocks": [
-        { "type": "table", "title": "閒置 CPU 降到目標以下", "note": "目標 3%", "columns": ["日期", "閒置 CPU", "事件"], "highlight": 4, "rows": [
-          ["10/20", "9.6%", ""], ["10/21", "9.9%", ""], ["10/22", "9.2%", ""], ["10/23", "8.8%", ""],
-          ["10/24", "4.1%", "改為事件喚醒"], ["10/25", { "text": "2.6%", "tone": "good" }, ""], ["10/26", { "text": "2.2%", "tone": "good" }, ""], ["10/27", { "text": "2.1%", "tone": "good" }, ""]
-        ] },
-        { "type": "prose", "text": "**很可能（80–95%）**是停掉背景輪詢的效果：下降正好落在改版當天，其他設定沒變。" }
+        {
+          "type": "figure",
+          "title": "閒置 CPU 在改版當天降到目標以下",
+          "script": "figures/line.py",
+          "args": [
+            "figures/idle_cpu.csv",
+            "idle_cpu",
+            "3",
+            "10/24",
+            "改為事件喚醒"
+          ],
+          "alt": "10/20 到 10/27 每天的閒置 CPU：10/24 從 8.8% 掉到 4.1%，之後低於 3% 目標",
+          "caption": "每點是一天的中位數；綠色虛線是 3% 目標，灰線是改版當天。"
+        },
+        {
+          "type": "prose",
+          "text": "**很可能（80–95%）**是停掉背景輪詢的效果：下降正好落在改版當天，其他設定沒變。"
+        }
       ]
     },
     {
       "title": "前後比較",
       "takeaway": "四項指標三項變好，記憶體多 24 MB",
       "blocks": [
-        { "type": "table", "title": ".10 與 .11 同條件比較", "columns": ["指標", ".10", ".11", "變化"], "rows": [
-          ["閒置 CPU", "9.8%", "2.1%", { "text": "−7.7%", "tone": "good" }],
-          ["冷啟動", "2.4 s", "1.4 s", { "text": "−1.0 s", "tone": "good" }],
-          ["每秒訊息", "140", "210", { "text": "+70", "tone": "good" }],
-          ["記憶體", "388 MB", "412 MB", { "text": "+24 MB", "tone": "warn" }]
-        ] },
-        { "type": "table", "title": "剩下的啟動時間一半在載入紀錄", "note": "冷啟動 1.4 s", "columns": ["部分", "時間", "佔比"], "highlight": 0, "rows": [
-          ["聊天紀錄", "620 ms", "44%"], ["主程序", "380 ms", "27%"], ["外掛與側欄", "230 ms", "16%"], ["其他", "170 ms", "12%"] ] }
-      ]
+        {
+          "type": "table",
+          "title": ".10 與 .11 同條件比較",
+          "columns": [
+            "指標",
+            ".10",
+            ".11",
+            "變化"
+          ],
+          "rows": [
+            [
+              "閒置 CPU",
+              "9.8%",
+              "2.1%",
+              {
+                "text": "−7.7%",
+                "tone": "good"
+              }
+            ],
+            [
+              "冷啟動",
+              "2.4 s",
+              "1.4 s",
+              {
+                "text": "−1.0 s",
+                "tone": "good"
+              }
+            ],
+            [
+              "每秒訊息",
+              "140",
+              "210",
+              {
+                "text": "+70",
+                "tone": "good"
+              }
+            ],
+            [
+              "記憶體",
+              "388 MB",
+              "412 MB",
+              {
+                "text": "+24 MB",
+                "tone": "warn"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "table",
+          "title": "剩下的啟動時間一半在載入紀錄",
+          "note": "冷啟動 1.4 s",
+          "columns": [
+            "部分",
+            "時間",
+            "佔比"
+          ],
+          "highlight": 0,
+          "rows": [
+            [
+              "聊天紀錄",
+              "620 ms",
+              "44%"
+            ],
+            [
+              "主程序",
+              "380 ms",
+              "27%"
+            ],
+            [
+              "外掛與側欄",
+              "230 ms",
+              "16%"
+            ],
+            [
+              "其他",
+              "170 ms",
+              "12%"
+            ]
+          ]
+        }
+      ],
+      "collapsed": true
     },
     {
       "title": "依據",
       "blocks": [
-        { "type": "sources", "items": [
-          { "ref": "perf-run:1027", "text": "同一台 Mac，各量 5 次取中位數" },
-          { "ref": "c41e9a2", "text": "背景輪詢改為事件喚醒" }
-        ] }
-      ]
+        {
+          "type": "sources",
+          "items": [
+            {
+              "ref": "perf-run:1027",
+              "text": "同一台 Mac，各量 5 次取中位數"
+            },
+            {
+              "ref": "c41e9a2",
+              "text": "背景輪詢改為事件喚醒"
+            }
+          ]
+        }
+      ],
+      "collapsed": true
     }
   ],
   "asks": []

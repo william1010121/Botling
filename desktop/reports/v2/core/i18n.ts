@@ -26,7 +26,8 @@ const zh = {
   level: { on_track: '順利', at_risk: '有風險', off_track: '落後', done: '已完成', info: '說明' } as Record<Level, string>,
   kind: { status: '進度報告', decision: '決策', investigation: '問題調查', comparison: '比較', plan: '計畫', results: '成果', explainer: '說明', experiment: '實驗報告' } as Record<Kind, string>,
   example: '範例', notRun: '未跑：', overview: '現在在做什麼', ov: { question: '研究問題', compare: '在比什麼', setup: '資料與設定', complete: '怎樣算訓練完成', why: '為什麼重要' }, impact: '影響', risk: '最大風險', mitigation: '因應', glossary: '名詞解釋',
-  exp: { question: '要回答的問題', hypothesis: '假設', success: '成功標準（事先定）', baseline: '比較基準', tunedYes: '同等調參', tunedNo: '未確認同等調參', runs: '重複次數', runsN: (n: number) => `每個設定 ${n} 次`, spread: '「±」代表', result: '結果', diff: '差距', ci: '95% 信賴區間', noise: '差距在誤差範圍內：不顯著', verdict: '判定' },
+  retiredChart: '這種內建圖表已停用：圖表改由 Python（matplotlib）繪製，這裡只列出原始數值。', moreDetail: '細節', overviewMore: '實驗設定：研究問題、比較對象、資料、怎樣算訓練完成', svgOff: 'SVG 圖片已停用：圖表請用 Python（matplotlib）繪製。',
+  exp: { design: '實驗設計：問題、假設、成功標準、基準、重複次數', question: '要回答的問題', hypothesis: '假設', success: '成功標準（事先定）', baseline: '比較基準', tunedYes: '同等調參', tunedNo: '未確認同等調參', runs: '重複次數', runsN: (n: number) => `每個設定 ${n} 次`, spread: '「±」代表', result: '結果', diff: '差距', ci: '95% 信賴區間', noise: '差距在誤差範圍內：不顯著', verdict: '判定' },
   expVerdict: { supported: '假設成立', not_supported: '假設不成立', inconclusive: '還不能判定' } as Record<ExpVerdict, string>,
 };
 const en: typeof zh = {
@@ -39,7 +40,8 @@ const en: typeof zh = {
   level: { on_track: 'On track', at_risk: 'At risk', off_track: 'Off track', done: 'Done', info: 'Info' },
   kind: { status: 'Status', decision: 'Decision', investigation: 'Investigation', comparison: 'Comparison', plan: 'Plan', results: 'Results', explainer: 'Explainer', experiment: 'Experiment' },
   example: 'Example', notRun: 'Not run: ', overview: 'What we are doing', ov: { question: 'Question', compare: 'Comparison', setup: 'Data and setup', complete: 'Complete training', why: 'Why it matters' }, impact: 'Impact', risk: 'Biggest risk', mitigation: 'Response', glossary: 'Terms',
-  exp: { question: 'Question', hypothesis: 'Hypothesis', success: 'Success criterion (set before)', baseline: 'Baseline', tunedYes: 'equally tuned', tunedNo: 'equal tuning not confirmed', runs: 'Runs', runsN: n => `${n} per setting`, spread: '"±" means', result: 'Result', diff: 'Difference', ci: '95% CI', noise: 'Within the noise: not significant', verdict: 'Verdict' },
+  retiredChart: 'This built-in chart is retired: charts are drawn with Python (matplotlib); the raw values are listed here.', moreDetail: 'Details', overviewMore: 'Setup: question, comparison, data, what counts as complete training', svgOff: 'SVG images are disabled: draw charts with Python (matplotlib).',
+  exp: { design: 'Design: question, hypothesis, success criterion, baseline, runs', question: 'Question', hypothesis: 'Hypothesis', success: 'Success criterion (set before)', baseline: 'Baseline', tunedYes: 'equally tuned', tunedNo: 'equal tuning not confirmed', runs: 'Runs', runsN: n => `${n} per setting`, spread: '"±" means', result: 'Result', diff: 'Difference', ci: '95% CI', noise: 'Within the noise: not significant', verdict: 'Verdict' },
   expVerdict: { supported: 'Hypothesis supported', not_supported: 'Hypothesis not supported', inconclusive: 'Inconclusive' },
 };
 export const labels = { 'zh-Hant': zh, en };

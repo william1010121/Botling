@@ -65,25 +65,46 @@ export function eyebrow(spec: ReportSpec, t: Labels) {
   return [t.report, spec.kind && t.kind[spec.kind], `${t.asOf} ${spec.asOf}`].filter(Boolean).join(' · ');
 }
 
+/** Main sections first (charts with a short explanation), then the collapsed ones; each keeps its original index. */
+export function orderedSections(spec: ReportSpec): number[] {
+  const idx = spec.sections.map((_, i) => i);
+  return [...idx.filter(i => !spec.sections[i].collapsed), ...idx.filter(i => spec.sections[i].collapsed)];
+}
+
+/**
+ * Document order: the answer (verdict card, asks) → the main sections, the first being the flowcharts → the setup
+ * (overview) collapsed after the first main section → the collapsed sections, closed <details> the reader opens.
+ */
 export function DocReport({ spec, prepared }: { spec: ReportSpec; prepared: Prepared }) {
   const t = labels[spec.lang];
   const ctx = (id: string): Omit<Ctx, 'prepared'> => ({ lang: spec.lang, t, mode: 'doc' as Mode, id });
+  const order = orderedSections(spec);
+  const firstMain = order.find(i => !spec.sections[i].collapsed);
+  const firstMore = order.find(i => spec.sections[i].collapsed);
+  const overview = spec.overview && <details className="more mo-overview"><summary><h2>{t.overviewMore}</h2></summary><Overview spec={spec} t={t}/></details>;
   return <div className="rpt"><main className="rp" lang={spec.lang}>
     <header className="rp-head"><p className="eyebrow">{eyebrow(spec, t)}</p><h1>{spec.title}</h1>{spec.subtitle && <p className="subtitle">{spec.subtitle}</p>}</header>
-    {spec.overview && <Overview spec={spec} t={t}/>}
-    {!spec.overview && <><Verdict spec={spec} t={t}/><Asks spec={spec} t={t}/></>}
-    {spec.sections.map((sec, si) => {
+    <Verdict spec={spec} t={t}/><Asks spec={spec} t={t}/>
+    {firstMain === undefined && overview}
+    {order.map(si => {
+      const sec = spec.sections[si];
       const rows = planLayout(layoutInputs(sec.blocks, registry), sec.layout);
       const id = sec.id ?? `s${si + 1}`;
-      const after = spec.overview && si === 0 ? <><Verdict spec={spec} t={t}/><Asks spec={spec} t={t}/></> : null;
-      return <Fragment key={si}><section className="sec" id={id} aria-labelledby={`${id}-h`}>
-        <header className={`sh${sec.blocks.every(b => b.type === 'sources') ? ' sr-only' : ''}`}>{sec.takeaway && <p className="kicker">{sec.title}</p>}<h2 id={`${id}-h`}>{sec.takeaway ?? sec.title}</h2></header>
+      const body = <section className="sec" id={id} aria-labelledby={`${id}-h`}>
+        {!sec.collapsed && <header className={`sh${sec.blocks.every(b => b.type === 'sources') ? ' sr-only' : ''}`}>{sec.takeaway && <p className="kicker">{sec.title}</p>}<h2 id={`${id}-h`}>{sec.takeaway ?? sec.title}</h2></header>}
         {rows.map((row, ri) => <div key={ri} className={`row r-${row.kind}`}>
           {row.cells.map(c => <div key={c.index} className="cell" style={row.cells.length > 1 ? { ['--span' as string]: c.span } : undefined}>
             <BlockView block={sec.blocks[c.index]} ctx={ctx(`${id}-b${c.index}`)} prepared={prepared}/>
           </div>)}
         </div>)}
-      </section>{after}</Fragment>;
+      </section>;
+      return <Fragment key={si}>
+        {si === firstMore && <p className="more-h">{t.moreDetail}</p>}
+        {sec.collapsed
+          ? <details className="more"><summary>{sec.takeaway && <span className="kicker">{sec.title}</span>}<h2 id={`${id}-h`}>{sec.takeaway ?? sec.title}</h2></summary>{body}</details>
+          : body}
+        {si === firstMain && overview}
+      </Fragment>;
     })}
     <footer className="rp-foot">Botling · Report v2{spec.kind ? ` · ${spec.kind}` : ''}</footer>
   </main></div>;
@@ -112,14 +133,11 @@ export function SlideDeck({ spec, slides, prepared }: { spec: ReportSpec; slides
           <p className="eyebrow">{eyebrow(spec, t)}</p>
           <h1>{spec.title}</h1>
           {spec.subtitle && <p className="subtitle">{spec.subtitle}</p>}
-          {spec.overview ? <Overview spec={spec} t={t}/> : <div className={`verdict t-${tone}`}><p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p><p className="vline">{spec.tldr}</p><FirstPage spec={spec} t={t}/></div>}
+          {<div className={`verdict t-${tone}`}><p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p><p className="vline">{spec.tldr}</p><FirstPage spec={spec} t={t}/></div>}
         </SlideFrame>;
       }
-      if (s.master === 'verdict') {
-        const tone = spec.status ? levelTone[spec.status.level] : 'info';
-        return <SlideFrame key={i} n={n} total={total} spec={spec} master="cover">
-          <div className={`verdict t-${tone}`}><p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p><p className="vline">{spec.tldr}</p><FirstPage spec={spec} t={t}/></div>
-        </SlideFrame>;
+      if (s.master === 'overview') {
+        return <SlideFrame key={i} n={n} total={total} spec={spec} master="cover"><Overview spec={spec} t={t}/></SlideFrame>;
       }
       if (s.master === 'closing') {
         return <SlideFrame key={i} n={n} total={total} spec={spec} master="closing">

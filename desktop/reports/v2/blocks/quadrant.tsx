@@ -1,11 +1,14 @@
+// Retired native chart: the renderer no longer draws it. Older specs still validate and show the data as a
+// plain table with a notice (and a lint warning); new charts are `figure` blocks drawn by a matplotlib script.
 import { z } from 'zod';
 import { defineBlock } from '../core/registry';
-import { statusEnum, statusTone, type Status } from '../core/i18n';
-import { Card, SrTable } from '../core/ui';
-import { pct } from '../core/text';
+import { RetiredChart, type Tab } from '../core/ui';
+import type { Labels } from '../core/i18n';
+import { fmt } from '../core/text';
+import { statusEnum } from '../core/i18n';
 
-type Pt = { label: string; x: number; y: number; status?: Status };
-type Quad = { best?: number; x: string; y: string; quadrants?: [string, string, string, string]; points: Pt[]; title?: string };
+type Quad = { x: string; y: string; points: { label: string; x: number; y: number }[] };
+const toTable = (b: unknown, _t?: Labels): Tab => { const q = b as Quad; return { columns: ['', q.x, q.y], rows: q.points.map(p => [p.label, fmt(p.x), fmt(p.y)]) }; };
 
 export const quadrant = defineBlock({
   type: 'quadrant',
@@ -21,16 +24,6 @@ export const quadrant = defineBlock({
   examples: [{ title: '先修手機清單：影響大又便宜', note: '估計值', x: '工作量', y: '影響', quadrants: ['先做', '排進計畫', '順手做', '別做'], best: 0, points: [{ label: '手機 bot 清單', x: 0.2, y: 0.9, status: 'blocked' }, { label: 'Rust IPC', x: 0.75, y: 0.8, status: 'active' }, { label: '報告動畫', x: 0.6, y: 0.2 }, { label: '側欄字距', x: 0.15, y: 0.25 }] }],
   fit: 'visual',
   visual: true,
-  Doc: ({ block, ctx }) => {
-    const q = block as Quad;
-    return <Card type="quadrant" block={block} ctx={ctx}>
-      <div className="qd" aria-hidden="true">
-        <div className="qg">{(q.quadrants ?? ['', '', '', '']).map((name, i) => <span key={i} className={`q${i}${q.best === i ? ' best' : ''}`}>{name}</span>)}</div>
-        <div className="qa">{q.points.map((p, i) => <span key={i} className={`qp t-${p.status ? statusTone[p.status] : 'info'}${p.x > 0.68 ? ' left' : ''}`} style={{ left: pct(p.x), bottom: pct(p.y) }}><i/><em>{p.label}</em></span>)}</div>
-        <span className="qy">↑ {q.y}</span><span className="qx">{q.x} →</span>
-      </div>
-      <SrTable caption={q.title ?? `${q.x} × ${q.y}`} columns={['', q.x, q.y]} rows={q.points.map(p => [p.label, p.x, p.y])}/>
-    </Card>;
-  },
-  slide: { weight: () => 0.85 },
+  Doc: ({ block, ctx }) => <RetiredChart type="quadrant" block={block} ctx={ctx} {...toTable(block, ctx.t)}/>,
+  slide: { weight: b => 0.2 + b.points.length * 0.07 },
 });

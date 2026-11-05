@@ -43,7 +43,7 @@ export function planLayout(items: LayoutInput[], layout: 'auto' | 'stack' | 'spl
   return rows;
 }
 
-export type Master = 'cover' | 'verdict' | 'kpi-grid' | 'assertion-evidence' | 'split' | 'table' | 'quote' | 'statement' | 'closing';
+export type Master = 'cover' | 'overview' | 'kpi-grid' | 'assertion-evidence' | 'split' | 'table' | 'quote' | 'statement' | 'closing';
 const TEXT = new Set(['prose', 'callout', 'quote']);
 export type SlidePlan = { master: Master; headline: string; kicker?: string; section?: number; main: AnyBlock[]; side: AnyBlock[]; continued?: boolean };
 
@@ -56,7 +56,10 @@ export function planSlides(spec: ReportSpec, registry: Map<string, AnyBlockDef>,
   const slides: SlidePlan[] = [{ master: 'cover', headline: spec.title, main: [], side: [] }];
   const weight = (b: AnyBlock) => registry.get(b.type)?.slide.weight(b) ?? 0.3;
   let sourcesBlock: AnyBlock | undefined;
-  spec.sections.forEach((sec: Section, si) => {
+  // Main sections first, collapsed (supporting) ones after them, as in the document.
+  const order = [...spec.sections.keys()].sort((a, b) => Number(!!spec.sections[a].collapsed) - Number(!!spec.sections[b].collapsed));
+  order.forEach(si => {
+    const sec: Section = spec.sections[si];
     const pieces: AnyBlock[] = [];
     for (const b of sec.blocks) {
       if (b.type === 'sources') { sourcesBlock = b; continue; }
@@ -92,10 +95,11 @@ export function planSlides(spec: ReportSpec, registry: Map<string, AnyBlockDef>,
     else if (s.main.every(b => b.type === 'kpi')) s.master = 'kpi-grid';
     else if (s.main.some(b => b.type === 'table' || b.type === 'options')) s.master = 'table';
   }
-  // Experiment reports open with the overview (on the cover) and the first chart; the verdict follows them.
+  // The cover carries the answer; the setup (overview) follows the first section (the flowcharts).
   if (spec.overview) {
-    const last = slides.reduce((at, sl, i) => (sl.section === 0 ? i : at), 0);
-    slides.splice(last + 1, 0, { master: 'verdict', headline: '', main: [], side: [] });
+    const first = order[0];
+    const last = slides.reduce((at, sl, i) => (sl.section === first ? i : at), 0);
+    slides.splice(last + 1, 0, { master: 'overview', headline: '', main: [], side: [] });
   }
   if (spec.asks || spec.next || sourcesBlock) {
     slides.push({ master: 'closing', headline: '', main: sourcesBlock ? [sourcesBlock] : [], side: [] });

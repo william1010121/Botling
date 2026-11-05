@@ -36,3 +36,20 @@ export function SrTable({ caption, columns, rows }: { caption: string; columns: 
 export function Md({ html, className }: { html: string; className?: string }) {
   return <div className={className ?? 'md'} dangerouslySetInnerHTML={{ __html: html }}/>;
 }
+
+export type Tab = { columns: string[]; rows: string[][] };
+/**
+ * A retired native chart (bar, trend, donut, beforeafter, quadrant). The renderer draws no data charts of its own any more:
+ * every chart is a `figure` (matplotlib). Older specs still open: the block shows its data as a plain table under a notice.
+ */
+export function RetiredChart({ type, block, ctx, columns, rows }: { type: string; block: { title?: string; note?: string }; ctx: Ctx } & Tab) {
+  return <Card type={type} block={block} ctx={ctx} className="retired">
+    <p className="rt-note">{ctx.t.retiredChart}</p>
+    <div className="tbl-scroll" role="region" aria-label={block.title ?? type} tabIndex={0}>
+      <table className="tbl">
+        <thead><tr>{columns.map((c, j) => <th key={j} scope="col" className={j ? 'r' : undefined}>{c}</th>)}</tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => j === 0 ? <th key={j} scope="row">{c}</th> : <td key={j} className="r">{c}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  </Card>;
+}

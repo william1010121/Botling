@@ -18,7 +18,8 @@ import { isAbsolute, join, resolve } from 'node:path';
 
 export type FigureFormat = 'svg' | 'png';
 export type FigureInput = { script: string; args?: string[]; format?: FigureFormat; timeout?: number };
-export type FigureOutput = { svg?: string; png?: { light: string; dark: string } };
+/** `width`: the widest the figure is shown, in CSS px (its drawn size × 1.25), so a small figure is not blown up to the column. */
+export type FigureOutput = { svg?: string; png?: { light: string; dark: string }; width?: number };
 
 /** Theme colours, mirrored from theme/tokens.css (light, dark). Index = matplotlib C0…C5. */
 const PALETTE = {
@@ -54,7 +55,7 @@ plt.rcParams.update({
     "figure.facecolor": "none", "axes.facecolor": "none", "savefig.facecolor": "none", "savefig.transparent": True,
     "text.color": pal["text"], "axes.labelcolor": pal["text"], "axes.titlecolor": pal["text"], "xtick.color": pal["muted"], "ytick.color": pal["muted"],
     "xtick.labelcolor": pal["text"], "ytick.labelcolor": pal["text"], "axes.edgecolor": pal["line"], "grid.color": pal["line"], "legend.labelcolor": pal["text"],
-    "legend.frameon": False, "axes.spines.top": False, "axes.spines.right": False, "axes.grid": True, "grid.linewidth": 0.6,
+    "legend.frameon": False, "axes.axisbelow": True, "axes.spines.top": False, "axes.spines.right": False, "axes.grid": True, "grid.linewidth": 0.6,
     "axes.prop_cycle": cycler(color=pal["c"]), "patch.edgecolor": "none", "lines.linewidth": 1.6, "font.size": 10.5, "axes.titlesize": 11.5, "axes.titleweight": "bold",
 })
 script = sys.argv[1]
@@ -108,7 +109,11 @@ export function runFigure(input: FigureInput, baseDir: string, salt: string): Fi
   if (!/\.py$/i.test(file)) throw Error(`script must be a .py file: ${input.script}`);
   if (!existsSync(file)) throw Error(`figure script not found: ${file}`);
   const format = input.format ?? 'svg';
-  if (format === 'svg') return { svg: cleanSvg(runOnce(file, input, baseDir, SENTINEL_PALETTE, 'svg', salt).toString('utf8')) };
+  if (format === 'svg') {
+    const raw = runOnce(file, input, baseDir, SENTINEL_PALETTE, 'svg', salt).toString('utf8');
+    const pt = /<svg[^>]*\swidth="([\d.]+)pt"/.exec(raw);
+    return { svg: cleanSvg(raw), ...(pt ? { width: Math.round(+pt[1] * 4 / 3 * 1.25) } : {}) };
+  }
   const png = (theme: 'light' | 'dark') => `data:image/png;base64,${runOnce(file, input, baseDir, PALETTE[theme], 'png', salt).toString('base64')}`;
   return { png: { light: png('light'), dark: png('dark') } };
 }

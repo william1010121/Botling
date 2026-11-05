@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {"id": "raw", "x": 0, "y": 40, "w": 150, "h": 60, "text": "原始腦波\n資料集 A / B"},
+    {"id": "none", "x": 200, "y": 0, "w": 150, "h": 50, "text": "不加 SESS"},
+    {"id": "sess", "x": 200, "y": 90, "w": 150, "h": 50, "text": "加 SESS", "color": "C0"},
+    {"id": "model", "x": 400, "y": 40, "w": 150, "h": 60, "text": "同一個模型\n同設定、3 seeds"},
+    {"id": "eval", "x": 600, "y": 40, "w": 150, "h": 60, "text": "兩種考法\n跨人 / 跨天"},
+    {"id": "cmp", "x": 800, "y": 40, "w": 150, "h": 60, "text": "每人配對比較\n95% 區間"}
+  ],
+  "edges": [
+    {"from": ["raw", "right", 0.3], "to": ["none", "left"], "route": "hvh"},
+    {"from": ["raw", "right", 0.7], "to": ["sess", "left"], "route": "hvh"},
+    {"from": ["none", "right"], "to": ["model", "left", 0.3], "route": "hvh"},
+    {"from": ["sess", "right"], "to": ["model", "left", 0.7], "route": "hvh"},
+    {"from": ["model", "right"], "to": ["eval", "left"]},
+    {"from": ["eval", "right"], "to": ["cmp", "left"]}
+  ],
+  "legend": [{"color": "C0", "label": "兩條路只差這一步"}]
+}

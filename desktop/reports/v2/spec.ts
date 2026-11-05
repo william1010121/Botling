@@ -25,7 +25,7 @@ function specShape<B extends z.ZodType>(block: B) {
       setup: line(280).describe('Data and settings: datasets (size, chance level), the compared conditions (e.g. cross-subject / cross-session), runs.'),
       complete: line(200).describe('What counts as complete training (the formal results) and what does not, e.g. "350 epochs = fully trained; 30-epoch runs are under-trained".'),
       why: line(200).optional().describe('Why it matters, in one or two sentences.'),
-    }).optional().describe('Experiment reports: "what we are doing", for a reader who is not in the loop. Shown first, before the first chart and the verdict.'),
+    }).optional().describe('Experiment reports: "what we are doing", for a reader who is not in the loop. Shown collapsed right after the first section (the flowcharts), which already draws it.'),
     tldr: line(240).describe('The answer first: ≤ 3 sentences. Shown in the verdict card and on the cover slide.'),
     impact: line(160).optional().describe('What the result means for the goal, in the reader\'s terms (users, time, money, the research question): "so what". Shown under the verdict.'),
     risk: z.strictObject({
@@ -38,6 +38,7 @@ function specShape<B extends z.ZodType>(block: B) {
       title: line(24).describe('Short topic label, shown small above the takeaway.'),
       takeaway: line(80).optional().describe('The section\'s conclusion as one sentence; becomes the slide headline.'),
       layout: z.enum(['auto', 'stack', 'split', 'grid']).default('auto'),
+      collapsed: z.boolean().optional().describe('true = supporting detail (baseline checks, limitations, per-model breakdowns, exact-value tables, glossary, reproducibility): shown below the main part as a closed <details> the reader opens. The main part is charts with a short explanation under each.'),
       blocks: z.array(block).min(1).max(8),
     })).min(1).max(8),
     asks: z.array(z.strictObject({ what: line(60), who: line(20).optional(), by: line(20).optional() })).max(3).optional()

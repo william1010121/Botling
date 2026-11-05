@@ -43,7 +43,7 @@ function prepare(spec: ReportSpec, mode: Mode, baseDir = process.cwd()): { prepa
       const def = registry.get(b.type);
       if (!def?.prepare) continue;
       try { prepared.set(b, def.prepare(b, mode, { baseDir, id: `s${si}b${bi}` })); } catch (e) {
-        const path = `sections[${si}].blocks[${bi}]`, message = `${b.type === 'figure' ? 'figure' : 'layout'} failed: ${(e as Error).message}`;
+        const path = `sections[${si}].blocks[${bi}]`, message = `${b.type === 'figure' || b.type === 'experiment' ? 'figure' : 'layout'} failed: ${(e as Error).message}`;
         errors.push({ path, message });
         sec.blocks[bi] = { type: '__error', original: b.type, path, message } satisfies BrokenBlock;
       }
@@ -64,7 +64,7 @@ export function renderV2(input: unknown, opts: { mode?: Mode; baseDir?: string }
   const { prepared, errors: layoutErrors } = prepare(spec, mode, opts.baseDir);
   errors.push(...layoutErrors);
   const slides: SlidePlan[] = planSlides(spec, registry, labels[spec.lang].continued);
-  const warnings = lintSpec(spec, registry, slides);
+  const warnings = lintSpec(spec, registry, slides, opts.baseDir);
   const body = renderToStaticMarkup(mode === 'doc' ? <DocReport spec={spec} prepared={prepared}/> : <SlideDeck spec={spec} slides={slides} prepared={prepared}/>);
   const zoom = body.includes('data-zoom') ? LIGHTBOX : '';
   const html = mode === 'doc'

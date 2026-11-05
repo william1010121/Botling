@@ -10,16 +10,6 @@ type Matrix = { rows: Head[]; cols: Head[]; cells: Cell[][]; scale: 'seq' | 'div
 const label = (h: Head) => (typeof h === 'string' ? h : h.label);
 const status = (h: Head) => (typeof h === 'string' ? undefined : h.status);
 
-/** Map a number to one of 6 (seq) or 7 (div, centred on 0) theme shades. */
-export function shade(v: number, lo: number, hi: number, scale: 'seq' | 'div'): string {
-  if (scale === 'div') {
-    const m = Math.max(Math.abs(lo), Math.abs(hi)) || 1;
-    const k = Math.round((v / m) * 3);
-    return k === 0 ? 'h0' : k > 0 ? `hp${k}` : `hn${-k}`;
-  }
-  return `h${hi === lo ? 3 : Math.round(((v - lo) / (hi - lo)) * 5)}`;
-}
-
 const head = z.union([z.string().trim().min(1).max(16), z.strictObject({ label: z.string().trim().min(1).max(16), status: statusEnum.optional() })]);
 export const matrix = defineBlock({
   type: 'matrix',
@@ -28,7 +18,7 @@ export const matrix = defineBlock({
   fields: {
     rows: z.array(head).min(1).max(30),
     cols: z.array(head).min(1).max(30).describe('A column with a status colours the item chips placed in it.'),
-    cells: z.array(z.array(z.union([z.number(), z.null(), z.array(z.string().trim().min(1).max(14)).max(4)]))).describe('Arrays of short item names (or null). Numbers still render as a heatmap for older specs, with a warning: use a figure.'),
+    cells: z.array(z.array(z.union([z.number(), z.null(), z.array(z.string().trim().min(1).max(14)).max(4)]))).describe('Arrays of short item names (or null). Numbers (older specs) are shown as plain values, no longer as a heatmap, with a warning: draw a heatmap as a figure.'),
     scale: z.enum(['seq', 'div']).default('seq').describe('seq = low→high; div = negative↔positive around 0.'),
     unit: z.string().trim().max(8).optional(),
   },
@@ -45,8 +35,6 @@ export const matrix = defineBlock({
   visual: true,
   Doc: ({ block, ctx }) => {
     const m = block as Matrix;
-    const nums = m.cells.flat().filter((c): c is number => typeof c === 'number');
-    const lo = Math.min(...nums), hi = Math.max(...nums);
     return <Card type="matrix" block={block} ctx={ctx}>
       <div className="mx-scroll">
         <table className={`mx${m.cols.length > 8 ? ' dense' : ''}`} style={{ ['--cols' as string]: m.cols.length }}>
@@ -54,12 +42,11 @@ export const matrix = defineBlock({
           <tbody>{m.rows.map((r, i) => <tr key={i}><th scope="row">{label(r)}</th>{m.cols.map((h, j) => {
             const c = m.cells[i]?.[j] ?? null;
             if (Array.isArray(c)) return <td key={j} className={`mc${c.length ? ' on' : ''}`}>{c.map((n, k) => <span key={k} className={`chip t-${status(h) ? statusTone[status(h)!] : 'info'}`}>{n}</span>)}</td>;
-            if (typeof c === 'number') return <td key={j} className={`mc num ${shade(c, lo, hi, m.scale)}`}>{fmt(c)}</td>;
+            if (typeof c === 'number') return <td key={j} className="mc num">{fmt(c, m.unit)}</td>;
             return <td key={j} className="mc"><span className="sr-only">–</span></td>;
           })}</tr>)}</tbody>
         </table>
       </div>
-      {nums.length > 0 && <p className="mx-key" aria-hidden="true"><span>{fmt(lo, m.unit)}</span><i className={`ramp ${m.scale}`}/><span>{fmt(hi, m.unit)}</span></p>}
     </Card>;
   },
   slide: { weight: b => 0.2 + b.rows.length * 0.1 },
