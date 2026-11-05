@@ -1,11 +1,18 @@
 // Main owns the native input surface and establishes it before the opening window is revealed.
-import {WebContentsView,ipcMain,type BrowserWindow,type WebContents,type IpcMainEvent,type WebFrameMain} from 'electron';
-import {join} from 'node:path';
+import {WebContentsView,ipcMain,type BrowserWindow,type WebContents,type IpcMainEvent,type IpcMainInvokeEvent,type WebFrameMain} from 'electron';
+import {isAbsolute,join} from 'node:path';
 import {EditorHostBoundary} from './editor-host-boundary';
 import {EDITOR_CHANNEL,EDITOR_URL} from '../editor-host-wire';
 import type {ChatLayer} from './window-capture';
 const hosts=new Map<WebContents,{loaded:boolean}>(),owners=new Set<WebContents>(),reloaders=new Map<WebContents,()=>Promise<boolean>>(),layers=new Map<WebContents,()=>ChatLayer|null>();
 export const hasNativeEditorHost=(owner:WebContents)=>owners.has(owner);
+/** Each editor's dropped-file handler; one invoke handler for the channel serves them all (by sender). */
+const droppers=new Map<WebContents,(event:IpcMainInvokeEvent,value:unknown)=>Promise<boolean>>();let dropChannel=false;
+const listenForDrops=()=>{if(dropChannel||typeof ipcMain.handle!=='function')return;dropChannel=true;ipcMain.handle(EDITOR_CHANNEL.drop,(event,value)=>droppers.get(event.sender)?.(event,value)??false);};
+export interface NativeEditorOptions {
+ /** A file dropped on the chat, by the path the editor's preload read from the dropped File; true once it waits in the input box. */
+ onDroppedFile?:(botId:string,path:string)=>Promise<boolean>;
+}
 /** Reload Chat Page: a fresh chat document (new chat.js/css, new preload) in the same native view.
  * The shell sees unbound, then bound with a new document generation, and pushes state again. */
 export const reloadNativeEditor=(owner:WebContents):Promise<boolean>=>reloaders.get(owner)?.()??Promise.resolve(false);
@@ -32,7 +39,7 @@ export function editorBounds(value:unknown,size:{width:number;height:number},zoo
 }
 /** One unprivileged root editor, bound to its shell. No renderer-callable mount or key replay.
  * The caller uses revealWhenReady to gate window reveal on editor state and authenticated layout. */
-export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,ownerReady:Promise<void>,preloadDirectory=join(desktopRoot,'out/preload')){
+export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,ownerReady:Promise<void>,preloadDirectory=join(desktopRoot,'out/preload'),options:NativeEditorOptions={}){
  if(owner.isVisible())throw new Error('Prepare the native editor before window reveal');
  const view=new WebContentsView({webPreferences:{preload:join(preloadDirectory,'editor-host.cjs'),additionalArguments:['--botling-editor-host=1'],sandbox:true,contextIsolation:true,nodeIntegration:false,nodeIntegrationInSubFrames:false,nodeIntegrationInWorker:false,webSecurity:true,allowRunningInsecureContent:false,navigateOnDragDrop:false,spellcheck:false}});
  let laidOut=false,initialized=false,closed=false,occluded=false,snapshotRevision=0;
@@ -108,6 +115,14 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
   }
  };
 
+ // Only the bound editor's own root frame (its preload) can attach a dropped file, and only by an absolute path.
+ const dropped=async(event:IpcMainInvokeEvent,value:unknown):Promise<boolean>=>{
+  const v=value as {stamp?:unknown;botID?:unknown;path?:unknown}|null;
+  if(closed||!v||typeof v!=='object'||Object.keys(v).length!==3||boundary.receiver('up',event,v.stamp)!==ownerContents)return false;
+  if(typeof v.botID!=='string'||!v.botID||v.botID.length>160||typeof v.path!=='string'||!isAbsolute(v.path)||v.path.length>4096||!options.onDroppedFile)return false;
+  try{return (await options.onDroppedFile(v.botID,v.path))===true;}catch{return false;}
+ };
+ droppers.set(contents,dropped);listenForDrops();
  ipcMain.on(EDITOR_CHANNEL.up,up);ipcMain.on(EDITOR_CHANNEL.down,down);ipcMain.on(EDITOR_CHANNEL.layout,layout);
  let surfaceId:string|undefined,lastStamp:import('../editor-host-wire').EditorStamp|undefined;
  const invalidateOwner=()=>{boundary.revoke(owner.webContents);if(lastStamp&&!contents.isDestroyed())contents.send(EDITOR_CHANNEL.unbound,lastStamp);};
@@ -115,7 +130,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  const ownerNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame){stopSnapshots();occluded=false;laidOut=false;initialized=false;view.setBounds({x:0,y:0,width:0,height:0});view.setVisible(false);if(owner.isVisible()&&contents.isFocused())owner.webContents.focus();invalidateOwner();}};
  const editorNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame&&host.loaded)dispose();};
  const ownerLoaded=()=>{if(host.loaded){try{bindOwner();}catch{dispose();}}};
- const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);hosts.delete(contents);owners.delete(ownerContents);reloaders.delete(ownerContents);layers.delete(ownerContents);ownerContents.removeListener('did-start-navigation',ownerNavigation);ownerContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
+ const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);hosts.delete(contents);droppers.delete(contents);owners.delete(ownerContents);reloaders.delete(ownerContents);layers.delete(ownerContents);ownerContents.removeListener('did-start-navigation',ownerNavigation);ownerContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
  owner.webContents.on('did-start-navigation',ownerNavigation);owner.webContents.on('did-finish-load',ownerLoaded);contents.on('did-start-navigation',editorNavigation);
  owner.once('closed',dispose);contents.once('render-process-gone',dispose);contents.once('destroyed',dispose);
  const ready=Promise.all([ownerReady,contents.loadURL(EDITOR_URL)]).then(()=>{if(closed||owner.isDestroyed())throw new Error('Editor owner closed before binding');host.loaded=true;return bindOwner()!;});

@@ -1,16 +1,17 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, it, vi } from 'vitest';
 import type { ShellMessage } from '../../src/renderer/chat-frame/protocol';
-const port = vi.hoisted(() => ({ receive: (_message: ShellMessage) => {}, sent: [] as any[] }));
+const port = vi.hoisted(() => ({ receive: (_message: ShellMessage) => {}, sent: [] as any[], native: undefined as undefined | { attachFile: (file: File, botID: string) => Promise<boolean> } }));
 vi.mock('../../src/renderer/chat-frame/transport', () => ({
   onTransportDisconnect: () => () => {},
   fromShell: (receive: typeof port.receive) => { port.receive = receive; return () => {}; },
   toShell: (message: unknown) => { port.sent.push(message); return true; },
+  get nativeChat() { return port.native; },
 }));
 import { composerHost } from '../../../Web/src/composer-host';
 import { readOriginal } from '../../src/renderer/chat-frame/composer-transport';
 beforeEach(() => {
-  port.sent.length = 0; document.body.innerHTML = '<div class="composer"></div>';
+  port.sent.length = 0; port.native = undefined; document.body.innerHTML = '<div class="composer"></div>';
   document.documentElement.dataset.chat = 'A';
   port.receive({ botling: 'state', state: { botID: 'A' } } as ShellMessage);
 });
@@ -45,4 +46,16 @@ it('measures a bounded image read/encode without altering the original', async (
   const encoded = await readOriginal(new File([bytes], 'large.png', { type: 'image/png' }));
   expect(atob(encoded).length).toBe(bytes.length); expect(atob(encoded).charCodeAt(0)).toBe(91);
   console.log(`1 MiB asynchronous FileReader/base64: ${(performance.now() - start).toFixed(1)} ms`);
+});
+it('a dropped file on disk is attached by its path (nothing read); one without a path is read as before', async () => {
+  const attachFile = vi.fn(async (file: File) => file.name === 'on-disk.mov');
+  port.native = { attachFile };
+  composerHost!.upload!(new File([new Uint8Array([1])], 'on-disk.mov'));
+  await vi.waitFor(() => expect(attachFile).toHaveBeenCalledTimes(1));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(port.sent).toHaveLength(0);
+  composerHost!.upload!(new File([new Uint8Array([0, 1, 2, 254, 255])], 'Pasted image.png', { type: 'image/png' }));
+  await vi.waitFor(() => expect(port.sent).toHaveLength(1));
+  expect(port.sent[0].action).toMatchObject({ type: 'addFileData', name: 'Pasted image.png', base64: 'AAEC/v8=' });
+  reply(port.sent[0]);
 });

@@ -1,5 +1,5 @@
 import { setComposerHost, DeliveryUncertain } from '../../../../Web/src/composer-host';
-import { fromShell, toShell, onTransportDisconnect } from './transport';
+import { fromShell, toShell, onTransportDisconnect, nativeChat } from './transport';
 import { UploadQueue } from './upload-queue';
 import { ComposerRequests, ACCEPTANCE_TIMEOUT_MS } from './composer-requests';
 import { pageDraftStore } from './draft-keep';
@@ -38,6 +38,17 @@ fromShell(message => {
   if(message.error) pending?.reject(new Error(message.error)); else pending?.resolve(message.value);
 });
 const sending = new Set<string>();
+// Dropped files being attached by their path (no size limit: nothing is read here).
+const attaching = new Map<string, number>();
+async function attachByPath(botID: string, file: File): Promise<void> {
+  attaching.set(botID, (attaching.get(botID) ?? 0) + 1);
+  let attached = false;
+  try { attached = await nativeChat!.attachFile(file, botID); } catch { attached = false; }
+  finally { const left = (attaching.get(botID) ?? 1) - 1; if (left) attaching.set(botID, left); else attaching.delete(botID); }
+  // No path (a pasted picture, a file the page made) or refused: read it here as before.
+  if (!attached) { try { uploads.add(botID, file); } catch (error) { warning = error instanceof Error ? error.message : String(error); } }
+  render();
+}
 let selected: string | undefined;
 let picker = false;
 let warning = '';
@@ -118,7 +129,7 @@ setComposerHost({
     const unknown = requests.unknown(action.botID).find(item => item.type === 'send');
     if (unknown) throw new DeliveryUncertain(unknown.requestID);
     if (requests.unknown(action.botID).length) throw new Error('Check the unconfirmed attachments before sending.');
-    if (uploads.blocked(action.botID) || picker) throw new Error('Finish or remove the pending attachments before sending.');
+    if (uploads.blocked(action.botID) || attaching.has(action.botID) || picker) throw new Error('Finish or remove the pending attachments before sending.');
     if (sending.has(action.botID)) throw new Error('Still waiting for acceptance.');
     sending.add(action.botID);
     try { await requests.request(action, lateResult); } finally { sending.delete(action.botID); }
@@ -127,7 +138,9 @@ setComposerHost({
     const botID = document.documentElement.dataset.chat;
     try {
       if (!botID || sending.has(botID)) throw new Error('Wait for message acceptance before adding attachments.');
-      warning = ''; uploads.add(botID, file);
+      warning = '';
+      if (nativeChat && typeof nativeChat.attachFile === 'function') void attachByPath(botID, file);
+      else uploads.add(botID, file);
     } catch (error) { warning = error instanceof Error ? error.message : String(error); render(); }
   },
 });

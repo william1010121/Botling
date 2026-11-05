@@ -3,6 +3,7 @@
 export type Word = string | readonly [one: string, other: string];
 
 export const en = {
+  "messages.attachmentMissing": "{name} (moved or deleted)",
   "messages.ignoreQuestion": "Ignore",
   "messages.ignoreQuestionHint": "Keep as a notification without answering or authorizing anything",
   "messages.ignoredQuestion": "Notification · ignored, not answered",

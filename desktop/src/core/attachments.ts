@@ -1,16 +1,21 @@
-// Attachments as 1.x keeps them (Models.swift `Attachment`, Bot.swift `keep`): files you send are
-// copied into the bot's own attachments folder (the main bot's `attachments/`, any other bot's
-// `.bot/attachments/`) as `yyyyMMdd-HHmmss-<name>` (`-2-`, `-3-`… when taken), listed for the bot as
-// "(Attachments:\n- path)", and pictures go to the head too (claude: base64 blocks; Codex: localImage).
+// Attachments (Models.swift `Attachment`, Bot.swift `keep`): a file you picked or dropped that lives on
+// disk at a stable place is attached where it is, by its own path, and not copied (`original`). Anything
+// else (pasted pictures, a component's pictures, files the app or a plugin hands over, and originals in a
+// temporary place: see `isTemporaryPath`) is copied into the bot's own attachments folder (the main bot's
+// `attachments/`, any other bot's `.bot/attachments/`) as `yyyyMMdd-HHmmss-<name>` (`-2-`, `-3-`… when
+// taken), as 1.x does. Either way the message lists it for the bot as "(Attachments:\n- path)", and
+// pictures go to the head too (claude: base64 blocks; Codex: localImage). Nothing here ever deletes an
+// original: only the incoming copies below are removed.
 //
 // Before you send, files wait in the input box (1.x's `ChatPayload.Pending`): picked ones by their
 // path (main's dialog chose them), pasted or dropped ones written to `<core>/incoming/` first (1.x:
 // the temp folder's `ccb-incoming`), which is emptied as they are sent or removed.
-import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, open, rm } from "node:fs/promises";
 import { ContractError } from "../contract";
-import { basename, extname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import type { PendingFileView } from "../contract";
 
@@ -89,19 +94,70 @@ export function stamp(date = new Date()): string {
   return `${date.getFullYear()}${two(date.getMonth() + 1)}${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}${two(date.getSeconds())}`;
 }
 
-/** Copies a file into the attachments folder (`Bot.keep`); null when it cannot be read. */
-export function keep(file: string, folder: string, date = new Date()): { path: string; url: string; kind: AttachmentKind } | null {
+/**
+ * Folders whose files may vanish soon after you drop them, so an attachment from there is copied:
+ * the system temp folder (`os.tmpdir()`, on macOS inside `/var/folders/…/T/`), all of `/var/folders`
+ * (per-user temp and caches: `TemporaryItems`, the screenshot thumbnail's drag file
+ * `NSIRD_screencaptureui_*`, Electron's and other apps' drag files), `/tmp`, `/var/tmp` (and their
+ * `/private/…` real paths), `~/Library/Caches`, the Trash (`~/.Trash`), a sandboxed app's own `tmp` and
+ * `Library/Caches` (`~/Library/Containers/<app>/Data/…`, CleanShot X's temporary captures among them)
+ * and CleanShot's own capture folder in Application Support.
+ */
+export function temporaryRoots(home = homedir(), temp = tmpdir()): string[] {
+  return [temp, "/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/var/folders", "/private/var/folders",
+    join(home, "Library/Caches"), join(home, ".Trash"), join(home, "Library/Application Support/CleanShot")];
+}
+
+/** Path patterns that are temporary wherever they sit (a sandboxed app's own temp and caches). */
+const TEMPORARY_PATTERNS = [/\/Library\/Containers\/[^/]+\/Data\/(tmp|Library\/Caches)\//];
+
+const inside = (path: string, root: string) => {
+  const folder = root.endsWith(sep) ? root.slice(0, -1) : root;
+  return !!folder && (path === folder || path.startsWith(folder + sep));
+};
+
+/** Whether a file sits in a temporary place (`temporaryRoots`), as written or through symlinks. */
+export function isTemporaryPath(path: string, roots = temporaryRoots()): boolean {
+  const seen = [resolve(path)];
+  try { seen.push(realpathSync(path)); } catch { /* A missing file: its path as written. */ }
+  const allRoots = roots.flatMap((root) => { try { return [root, realpathSync(root)]; } catch { return [root]; } });
+  return seen.some((candidate) => allRoots.some((root) => inside(candidate, root)) || TEMPORARY_PATTERNS.some((pattern) => pattern.test(candidate)));
+}
+
+export interface KeepOptions {
+  /** The user picked or dropped this file from disk: attached where it is unless it is temporary. */
+  original?: boolean;
+  /** What counts as temporary (tests): `temporaryRoots()` by default. */
+  temporary?: string[];
+}
+
+/**
+ * A file for a message: an original attached by its own path (`copied: false`), or a copy in the
+ * attachments folder (`Bot.keep`); null when it cannot be read.
+ */
+export function keep(file: string, folder: string, date = new Date(), options: KeepOptions = {}): { path: string; url: string; kind: AttachmentKind; copied: boolean } | null {
   try {
+    if (options.original && isAbsolute(file) && !isTemporaryPath(file, options.temporary)) {
+      const path = resolve(file);
+      if (!statSync(path).isFile()) return null;
+      return { path, url: pathToFileURL(path).href, kind: attachmentKind(path), copied: false };
+    }
     mkdirSync(folder, { recursive: true });
     const name = basename(file);
     const at = stamp(date);
     let target = join(folder, `${at}-${name}`);
     for (let counter = 2; existsSync(target); counter++) target = join(folder, `${at}-${counter}-${name}`);
     copyFileSync(file, target);
-    return { path: target, url: pathToFileURL(target).href, kind: attachmentKind(target) };
+    return { path: target, url: pathToFileURL(target).href, kind: attachmentKind(target), copied: true };
   } catch {
     return null;
   }
+}
+
+/** Whether a line's file:// attachment is no longer there (an original moved or deleted, say). */
+export function attachmentMissing(url: string): boolean {
+  if (!url.startsWith("file:")) return false;
+  try { return !statSync(fileURLToPath(url)).isFile(); } catch { return true; }
 }
 
 /** Writes a picture a page handed over (`{name, base64}`) to the incoming folder; null when empty. */
@@ -130,7 +186,10 @@ export function safeName(name: string): string {
   return (cleaned || "file").slice(0, 200);
 }
 
-/** The files waiting in each bot's input box. */
+/**
+ * The files waiting in each bot's input box. `incoming: true` files are this app's own copies (pasted or
+ * read by the page) and are deleted once sent or removed; any other is the user's file on disk, never deleted.
+ */
 export class PendingFiles {
   private readonly byBot = new Map<string, PendingFile[]>();
   private readonly writes = new Map<string, number>();
@@ -155,10 +214,11 @@ export class PendingFiles {
     this.onChange(botId, this.views(botId));
   }
 
-  /** Files main's picker chose (paths that exist and are files). */
+  /** Files main's picker chose or the chat page had dropped on it (paths that exist and are files). */
   addPaths(botId: string, paths: string[]): PendingFileView[] {
     const added: PendingFile[] = [];
     for (const path of paths) {
+      if (!isAbsolute(path)) continue;
       try { if (!statSync(path).isFile()) continue; } catch { continue; }
       added.push({ id: randomUUID().toUpperCase(), name: basename(path), path, kind: attachmentKind(path), incoming: false });
     }

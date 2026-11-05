@@ -3,7 +3,7 @@
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, writeSync, existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
@@ -459,6 +459,16 @@ async function pickFiles(botId: string, sender: WebContents): Promise<unknown> {
 }
 
 /**
+ * A file dropped on the chat, by its path on disk: it waits in the input box like a picked one, so the
+ * message attaches the original where it is (copied only from a temporary place). A folder is refused.
+ */
+async function droppedFile(botId: string, path: string): Promise<boolean> {
+  try { if (!statSync(path).isFile()) return false; } catch { return false; }
+  const answer = await core.request({ type: "files.add", botId, paths: [path] });
+  return answer.ok;
+}
+
+/**
  * "Add project": main's folder picker (1.x's NSOpenPanel, "Add as project"), then the core makes it a
  * project (or finds the one it already is). Tests (unpackaged only) answer with BOTLING_TEST_PICK_FOLDER.
  */
@@ -691,7 +701,7 @@ function createWindow() {
   window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
   window.webContents.once('did-finish-load',()=>startup.mark('window.loaded'));
   const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);
-  const editor=prepareNativeEditorHost(window,root,ownerReady,preloadDir);
+  const editor=prepareNativeEditorHost(window,root,ownerReady,preloadDir,{onDroppedFile:droppedFile});
   const opening=editor.revealWhenReady(hidden);
   // First paint: the window revealed (with the chat's input ready, or after the reveal gate's timeout).
   void opening.then(shown=>{if(shown)startup.mark('window.shown');},()=>{});

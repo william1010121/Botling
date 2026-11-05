@@ -168,7 +168,8 @@ export type SubagentView = z.infer<typeof SubagentView>;
 export const Engine = z.enum(["claude", "codex", "agy"]);
 export const AnswerTarget = z.enum(["claude", "codex", "agy", "both"]);
 
-export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000) });
+export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000),
+  /** The file is no longer where it was attached (an original moved or deleted). */ missing: z.literal(true).optional() });
 /** A file waiting in the input box for your next message (1.x's `ChatPayload.Pending`). */
 export const PendingFileView = z.strictObject({ id, name: z.string().max(400), kind: z.enum(["image", "video", "file"]) });
 

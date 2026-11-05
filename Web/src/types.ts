@@ -18,6 +18,8 @@ export interface FileView {
   kind: "image" | "video" | "file";
   /** A file:// URL. */
   url: string;
+  /** No longer where it was attached (an original moved or deleted): shown as a missing file. */
+  missing?: boolean;
 }
 
 /**

@@ -3,7 +3,7 @@
 // component's pictures with its answer, which files the chat origin may serve) and plugins' web
 // parts for the chat page (specs, the last version that worked, which of their files are served).
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { tempDir, until } from "../helpers";
@@ -87,22 +87,26 @@ describe("attachments (Models.swift Attachment, Bot.keep)", () => {
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "see" });
     await until(() => c.of("turn.finished").find((e) => (e.event as any).turnId === turnId));
     const folder = join(dir, "main", "attachments");
-    // Copies can cross a timestamp boundary; compare logical names without reordering the
-    // actual attachment input, which is checked independently below.
-    const logicalName=(name:string)=>name.replace(/^\d{8}-\d{6}-/, "");
-    const kept = readdirSync(folder).sort((a,b)=>logicalName(a).localeCompare(logicalName(b)));
-    expect(kept.map((name) => name.replace(/^\d{8}-\d{6}-/, ""))).toEqual(["notes.md", "shot.png"]);
+    // Picked files on disk (not in a temporary place) are attached where they are: no copies.
+    expect(existsSync(folder) ? readdirSync(folder) : []).toEqual([]);
     const input = logged(join(dir, "claude-input.log")).at(-1);
-    expect(input.text.endsWith(`see\n\n(Attachments:\n- ${join(folder, kept[1]!)}\n- ${join(folder, kept[0]!)})`)).toBe(true);
+    expect(input.text.endsWith(`see\n\n(Attachments:\n- ${join(outside, "shot.png")}\n- ${join(outside, "notes.md")})`)).toBe(true);
     expect(input.images).toEqual(["image/png"]);
     const chat = await c.chat();
     const mine = chat.messages.find((message: any) => message.role === "user");
-    expect(mine.attachments.map((file: any) => file.kind)).toEqual(["image", "file"]);
+    expect(mine.attachments.map((file: any) => [file.name, file.kind, file.missing])).toEqual([["shot.png", "image", undefined], ["notes.md", "file", undefined]]);
     expect(chat.pendingFiles).toEqual([]);
     expect(c.of("files.updated").at(-1)!.event).toMatchObject({ botId: MAIN, files: [] });
-    // Now the kept file is the chat's, so it may be served; the original is not.
-    expect((await c.call({ type: "attachment.file", botId: MAIN, ref: mine.attachments[1].url })).path).toBe(join(folder, kept[0]!));
-    await expect(c.call({ type: "attachment.file", botId: MAIN, ref: pathToFileURL(join(outside, "shot.png")).href })).rejects.toThrow("not_found");
+    // The originals are the chat's now, so exactly they may be served; another file beside them is not.
+    expect(mine.attachments[1].url).toBe(pathToFileURL(join(outside, "notes.md")).href);
+    expect((await c.call({ type: "attachment.file", botId: MAIN, ref: mine.attachments[1].url })).path).toBe(join(outside, "notes.md"));
+    writeFileSync(join(outside, "secret.txt"), "no");
+    await expect(c.call({ type: "attachment.file", botId: MAIN, ref: pathToFileURL(join(outside, "secret.txt")).href })).rejects.toThrow("not_found");
+    // Sending never deletes an original; one moved away later shows as missing, and the chat still loads.
+    expect(existsSync(join(outside, "shot.png")) && existsSync(join(outside, "notes.md"))).toBe(true);
+    renameSync(join(outside, "notes.md"), join(outside, "moved.md"));
+    const after = (await c.chat()).messages.find((message: any) => message.role === "user");
+    expect(after.attachments.map((file: any) => file.missing)).toEqual([undefined, true]);
     // Only a file, no words.
     await c.call({ type: "files.data", botId: MAIN, name: "Pasted image.png", base64: PNG.toString("base64") });
     const second = await c.call({ type: "chat.send", botId: MAIN, text: "" });

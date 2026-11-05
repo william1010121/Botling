@@ -15,13 +15,13 @@ vi.mock('electron',async()=>{
   });});
   setWindowOpenHandler=vi.fn();isDestroyed(){return this.dead;}close(){this.dead=true;this.emit('destroyed');}}
  class View {webContents=new Contents();setBounds=vi.fn();setVisible=vi.fn();constructor(readonly options:unknown){}}
- return{ipcMain:new EventEmitter(),WebContentsView:View};
+ return{ipcMain:Object.assign(new EventEmitter(),{handle:vi.fn()}),WebContentsView:View};
 });
 const disposers:(()=>void)[]=[];afterEach(()=>{for(const dispose of disposers.splice(0))dispose();});
-function fixture(ownerReady:Promise<void>=Promise.resolve()){
+function fixture(ownerReady:Promise<void>=Promise.resolve(),options:Parameters<typeof prepareNativeEditorHost>[4]={}){
  const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn(),getZoomFactor:()=>1});
  const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:():boolean=>false,isDestroyed:():boolean=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
- const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',ownerReady);disposers.push(result.dispose);return{owner,...result};
+ const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',ownerReady,undefined,options);disposers.push(result.dispose);return{owner,...result};
 }
 it('creates only a sandboxed separate native root with narrow preload, no focus/reveal, and rejects navigation escapes',async()=>{
  const f=fixture(),contents=f.view.webContents,root=contents.mainFrame;
@@ -388,4 +388,18 @@ it('keeps Quick settings revealed after capture failure and rejects forged immed
  expect(f.snapshots()).toHaveLength(0);
  f.layout({occluded:false});
  expect(visibility).toHaveBeenLastCalledWith(true);
+});
+
+it('a dropped file reaches the core only from the bound editor root, by an absolute path',async()=>{
+ const onDroppedFile=vi.fn(async()=>true),f=fixture(Promise.resolve(),{onDroppedFile}),stamp=await f.ready,contents=f.view.webContents;
+ const handle=(ipcMain as any).handle.mock.calls.find((call:any[])=>call[0]===EDITOR_CHANNEL.drop)![1];
+ const editor={sender:contents,senderFrame:contents.mainFrame},shell={sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame};
+ expect(await handle(editor,{stamp,botID:'MAIN',path:'/Users/u/Desktop/a.png'})).toBe(true);
+ expect(onDroppedFile).toHaveBeenCalledExactlyOnceWith('MAIN','/Users/u/Desktop/a.png');
+ expect(await handle(shell,{stamp,botID:'MAIN',path:'/a'})).toBe(false);
+ expect(await handle({sender:contents,senderFrame:{url:'botling-card://page/x'}},{stamp,botID:'MAIN',path:'/a'})).toBe(false);
+ expect(await handle(editor,{stamp:{...stamp,documentGeneration:'old'},botID:'MAIN',path:'/a'})).toBe(false);
+ expect(await handle(editor,{stamp,botID:'MAIN',path:'relative.png'})).toBe(false);
+ expect(await handle(editor,{stamp,botID:'MAIN',path:'/a',extra:1})).toBe(false);
+ expect(onDroppedFile).toHaveBeenCalledTimes(1);
 });

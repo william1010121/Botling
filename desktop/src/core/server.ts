@@ -2214,7 +2214,8 @@ First write a test that shows this, then fix it.`;
     // The files waiting in its input box go with the message (1.x sends them all).
     const files = this.pending.take(botId);
     try {
-      const result = await this.sendWith(bot, text, { ...options, files: files.map((file) => file.path) });
+      // Picked or dropped files on disk go by their own path; the incoming copies are copied (`keep`).
+      const result = await this.sendWith(bot, text, { ...options, files: files.map((file) => file.path), originals: files.filter((file) => !file.incoming).map((file) => file.path) });
       if (result.stoppedBy) this.pending.restore(botId, files);
       else this.pending.done(files);
       return result;
@@ -2224,7 +2225,7 @@ First write a test that shows this, then fix it.`;
     }
   }
 
-  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files: string[] }): Promise<ResultOf<"chat.send">> {
+  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" | "agy"; files: string[]; originals?: string[] }): Promise<ResultOf<"chat.send">> {
     if (!text.trim() && !options.files.length) throw new ContractError("bad_request", "Nothing to send.");
     const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
     if ("stoppedBy" in outcome) {
