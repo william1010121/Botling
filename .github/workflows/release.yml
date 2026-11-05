@@ -161,6 +161,7 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --prefix ../Web
       - run: npm run typecheck
       - name: Package Windows installer and the update feed (never publishes)
         run: npm run dist:win
@@ -207,6 +208,7 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
       - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund --prefix ../Web
       - run: npm run typecheck
       - name: Package Linux x64 AppImage and deb (never publishes)
         run: npm run dist:linux

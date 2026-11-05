@@ -142,7 +142,7 @@ test('validation: top-level errors carry paths and a valid example; broken block
 
 test('every block example renders in doc and slide mode, deterministically, with no script or remote resource', async () => {
   for (const b of api.blocks) for (const ex of b.examples) for (const mode of ['doc', 'slide']) {
-    if (b.type === 'figure' && !hasMatplotlib) continue;
+    if (!hasMatplotlib && JSON.stringify(ex).includes('"figure"')) continue;
     const one = await api.renderBlock(ex, { mode, baseDir: exDir });
     assert.deepEqual(one.errors, [], b.type);
     const again = await api.renderBlock(ex, { mode, baseDir: exDir });
