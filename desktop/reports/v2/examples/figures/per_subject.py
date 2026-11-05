@@ -1,76 +1,81 @@
-"""Template: the complete results of an experiment, the first chart of an experiment report.
+"""Template: the complete results of an experiment, every unit before -> after, as small multiples.
 
-usage: per_subject.py DATA.csv [ROW/COL ...] [--ylabel=TEXT]
+usage: per_subject.py DATA.csv [--ylabel=TEXT] [--chance=ROWPREFIX:VALUE ...]
 DATA.csv columns: row, col, unit, model, variant, value
-  row, col  the compared conditions (e.g. dataset × evaluation setting): one panel per row × col
-  unit      the individual (subject, sample, task…): the x axis, one position per unit
-  model     one colour per model
-  variant   optional; the first variant met is drawn hollow (the baseline), the second filled (the method)
+  row, col  the compared condition (e.g. dataset x evaluation setting): one row of panels per condition that has data
+  model     one panel per model in that row (shared y axis, so panels compare directly)
+  unit      the individual (subject, sample, task...): one thin line per unit
+  variant   exactly two values; the first met is the baseline (left), the second the method (right)
   value     the score
-Extra ROW/COL arguments force panels that have no data; every empty panel says 未跑.
-Units are categories, so marks are dots, never lines between units or between variants.
-The panel title gives each model's mean (baseline → method).
+Inside a panel each unit is a line from baseline to method: blue = better with the method, orange = worse.
+The thick line is the mean, its two ends labelled with the value. No legend: the key is one line of
+coloured words at the top. Conditions without data are not drawn (say so in the caption, never as an
+empty panel). --chance draws a labelled reference line in the rows whose name starts with ROWPREFIX.
 """
-import csv, sys
-from collections import defaultdict
+import csv
+import sys
+
 import matplotlib.pyplot as plt
 
-args = [a for a in sys.argv[2:] if not a.startswith("--")]
-ylabel = next((a.split("=", 1)[1] for a in sys.argv[2:] if a.startswith("--ylabel=")), "")
-rows = list(csv.DictReader(open(sys.argv[1], newline="", encoding="utf-8")))
-R = list(dict.fromkeys(r["row"] for r in rows))
-C = list(dict.fromkeys(r["col"] for r in rows))
-for extra in args:
-    r, c = extra.split("/", 1)
-    R += [r] if r not in R else []
-    C += [c] if c not in C else []
+TEXT, MUTED = plt.rcParams["text.color"], plt.rcParams["xtick.color"]
+path = sys.argv[1]
+opts = [a for a in sys.argv[2:] if a.startswith("--")]
+ylabel = next((a.split("=", 1)[1] for a in opts if a.startswith("--ylabel=")), "")
+chance = [a.split("=", 1)[1].rsplit(":", 1) for a in opts if a.startswith("--chance=")]
+rows = list(csv.DictReader(open(path, newline="", encoding="utf-8")))
+groups = list(dict.fromkeys((r["row"], r["col"]) for r in rows))
 models = list(dict.fromkeys(r["model"] for r in rows))
-variants = list(dict.fromkeys(r.get("variant") or "" for r in rows))
-colour = {m: f"C{i % 6}" for i, m in enumerate(models)}
+variants = list(dict.fromkeys(r["variant"] for r in rows))[:2]
+val = {(r["row"], r["col"], r["model"], r["unit"], r["variant"]): float(r["value"]) for r in rows}
+values = [float(r["value"]) for r in rows]
+lo, hi = min(values), max(values)
+pad = (hi - lo) * 0.08
+levels = [float(v) for p, v in chance if any(r.startswith(p) for r, _ in groups)]
+if levels and min(levels) - pad < lo:  # leave room under the lowest reference line for its label
+    lo = min(levels) - pad * 1.2
 
-fig, axes = plt.subplots(len(R), len(C), figsize=(4.8 * len(C), 3.6 * len(R)), squeeze=False)
-for i, r in enumerate(R):
-    for j, c in enumerate(C):
+fig, axes = plt.subplots(len(groups), len(models), figsize=(3.0 * len(models) + 0.6, 2.9 * len(groups) + 0.5),
+                         sharey=True, squeeze=False)
+for i, (row, col) in enumerate(groups):
+    for j, model in enumerate(models):
         ax = axes[i][j]
-        cell = [x for x in rows if x["row"] == r and x["col"] == c]
-        if not cell:
-            ax.set_title(f"{r} · {c}", loc="left")
-            ax.text(0.5, 0.5, "未跑", transform=ax.transAxes, ha="center", va="center", fontsize=18, fontweight="bold", color="C5")
-            ax.set_xticks([]); ax.set_yticks([])
+        units = list(dict.fromkeys(u for (r, c, m, u, v) in val if (r, c, m) == (row, col, model)))
+        pairs = [(val[(row, col, model, u, variants[0])], val[(row, col, model, u, variants[1])]) for u in units
+                 if (row, col, model, u, variants[0]) in val and (row, col, model, u, variants[1]) in val]
+        if not pairs:
+            ax.axis("off")
             continue
-        units = list(dict.fromkeys(x["unit"] for x in cell))
-        pos = {u: k for k, u in enumerate(units)}
-        width = 0.8 / max(len(models), 1)
-        means = []
-        for mi, m in enumerate(models):
-            vals = defaultdict(list)
-            for x in cell:
-                if x["model"] == m:
-                    vals[x.get("variant") or ""].append((pos[x["unit"]], float(x["value"])))
-            if not vals:
-                continue
-            off = -0.4 + width * (mi + 0.5)
-            parts = []
-            for vi, v in enumerate(variants):
-                if not vals.get(v):
-                    continue
-                xs, ys = zip(*vals[v])
-                filled = vi > 0 or len(variants) == 1
-                ax.scatter([x + off for x in xs], ys, s=34 if len(units) <= 20 else 14, color=colour[m] if filled else "none",
-                           edgecolors=colour[m], linewidths=1.2, zorder=3, label=f"{m}{' · ' + v if v else ''}")
-                parts.append(f"{sum(ys) / len(ys):.1f}")
-            means.append(f"{m} {' → '.join(parts)}")
-        ax.set_title(f"{r} · {c}\n" + ("\n" if len(means) > 2 else "　").join(means), loc="left", fontsize=10)
-        step = 1 if len(units) <= 20 else 5
-        ax.set_xticks(range(0, len(units), step), [units[k] for k in range(0, len(units), step)])
-        ax.set_xlim(-0.6, len(units) - 0.4)
+        many = len(pairs) > 20
+        for a, b in pairs:
+            ax.plot([0, 1], [a, b], color="C0" if b > a else "C1", lw=0.9 if many else 1.3, alpha=0.35 if many else 0.6,
+                    solid_capstyle="round", zorder=2)
+        ma, mb = sum(a for a, _ in pairs) / len(pairs), sum(b for _, b in pairs) / len(pairs)
+        ax.plot([0, 1], [ma, mb], color=TEXT, lw=3, marker="o", ms=6, zorder=4, solid_capstyle="round")
+        ax.text(-0.07, ma, f"{ma:.1f}", ha="right", va="center", fontsize=12, fontweight="bold")
+        ax.text(1.07, mb, f"{mb:.1f}", ha="left", va="center", fontsize=12, fontweight="bold")
+        for prefix, level in chance:
+            if row.startswith(prefix):
+                ax.axhline(float(level), color=MUTED, lw=0.9, ls=(0, (4, 3)), zorder=1)
+                if j == 0:
+                    ax.text(-0.4, float(level), f"亂猜 {float(level):g}%", ha="left", va="top", fontsize=10.5, color=MUTED)
+        up, down = sum(b > a for a, b in pairs), sum(b < a for a, b in pairs)
+        ax.set_xlabel(f"{up} 變好 · {down} 變差", fontsize=11, color=MUTED, labelpad=4)
+        ax.set_xlim(-0.42, 1.42)
+        ax.set_xticks([0, 1], variants)
+        ax.set_ylim(lo - pad, hi + pad)
         ax.grid(axis="x", visible=False)
-        if ylabel and j == 0:
-            ax.set_ylabel(ylabel)
-handles, labels = [], []
-for ax in axes.flat:
-    for h, l in zip(*ax.get_legend_handles_labels()):
-        if l not in labels:
-            handles.append(h); labels.append(l)
-fig.legend(handles, labels, loc="lower center", ncol=min(len(labels), 3), bbox_to_anchor=(0.5, -0.01))
-fig.tight_layout(rect=(0, 0.07, 1, 1))
+        if i == 0:
+            ax.set_title(model, fontsize=13)
+        if j == 0:
+            # Row heading: the condition, short (the part before a bracket); details belong in the caption.
+            name = col if len({r for r, _ in groups}) == 1 else f"{row.split('（')[0].split('(')[0].strip()} · {col}"
+            ax.set_ylabel(f"{name}\n{ylabel}" if ylabel else name, fontsize=12, fontweight="bold")
+fig.tight_layout(h_pad=1.6, w_pad=1.2, rect=(0, 0, 1, 1 - 0.35 / fig.get_figheight()))
+# The key: one line of coloured words above the panels, each placed right after the previous one.
+# Text stays in ink; the coloured stroke in front of each word carries the identity.
+prev = fig.text(0.01, 1 - 0.3 / fig.get_figheight(), "每條細線是一個個體：", ha="left", va="bottom", fontsize=12)
+for glyph, colour, word in (("━━", "C0", "變好"), ("━━", "C1", "變差"), ("━━", TEXT, "平均（粗線）")):
+    prev = axes[0][0].annotate(glyph, xy=(1, 0), xycoords=prev, xytext=(12, 0), textcoords="offset points",
+                               ha="left", va="bottom", fontsize=12, color=colour, fontweight="bold")
+    prev = axes[0][0].annotate(word, xy=(1, 0), xycoords=prev, xytext=(4, 0), textcoords="offset points",
+                               ha="left", va="bottom", fontsize=12)

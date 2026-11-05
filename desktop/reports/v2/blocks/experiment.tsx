@@ -55,7 +55,7 @@ export const experiment = defineBlock({
     spread: '受試者間標準差（9 人，每人 3 seeds 先平均）',
     result: { metric: '準確率', base: 41.9, new: 50.8, ci: [2.2, 15.6], unit: '%' },
     verdict: 'supported',
-    figure: { script: 'figures/paired.py', args: ['figures/per_subject.csv', '資料集 A', '條件 1', '模型 X'], alt: '每位受試者不加與加 SESS 的準確率，一人一欄', caption: '每一欄是一位受試者：空心 = 基準、實心 = 方法；綠色線段 = 變好。' },
+    figure: { script: 'figures/paired.py', args: ['figures/per_subject.csv', '資料集 A', '條件 1', '模型 X'], alt: '每位受試者加 SESS 後的準確率變化，依大小排序，上方是平均與 95% 區間', caption: '每個點是一位受試者的變化（藍 = 變好、橘 = 變差）；粗線是平均與 95% 區間，整段在 0 右邊才算真的變好。' },
   }],
   fit: 'full',
   visual: false,

@@ -169,6 +169,10 @@ test('lightbox: images and flow figures open enlarged; script is inline, only pr
     assert.match(scripts, /lightbox|data-zoom/); assert.match(scripts, /Escape/); assert.match(scripts, /Enter/);
     assert.doesNotMatch(r.html, /<script[^>]*src=/);
     assert.match(r.html, /\[data-zoom\][^{]*\{[^}]*cursor:zoom-in/); assert.match(r.html, /\.lb[^{]*\{[^}]*object-fit|object-fit:contain/);
+    // An enlarged figure fills the window: its box is sized to the viewport and the SVG / PNG scales inside it.
+    assert.match(r.html, /\.lb \.fg\.lb-fig\{[^}]*width:92vw;height:90vh/);
+    assert.match(r.html, /\.lb \.fg\.lb-fig svg\{width:100%;height:100%/);
+    assert.match(r.html, /\.lb \.fg\.lb-fig img\{[^}]*object-fit:contain/);
   }
   const plain = await api.renderV2(spec([{ type: 'prose', text: 'x' }]), { mode: 'doc' });
   assert.equal(dom(plain.html).querySelectorAll('script').length, 0);
@@ -545,9 +549,11 @@ test('figure: runs the matplotlib script, inlines a theme-aware SVG or two PNGs,
   assert.ok(el && el.getAttribute('viewBox'));
   assert.equal(el.hasAttribute('width'), false);
   assert.match(svg.html, /var\(--text\)/); assert.match(svg.html, /var\(--blue\)/); assert.match(svg.html, /var\(--orange\)/);
-  assert.doesNotMatch(svg.html, /<path[^>]*class="?line|<polyline/, 'units are categories: dots, no lines');
+  // Small multiples, no empty panels: the example has 3 conditions with data and 2 models → 6 axes at most, none blank.
+  assert.ok((svg.html.match(/id="axes_/g) ?? []).length >= 3);
   assert.doesNotMatch(svg.html, /#0b0b/i);
-  assert.match(svg.html, /未跑/);
+  assert.doesNotMatch(el.outerHTML, /未跑/, 'conditions not run are not drawn');
+  assert.match(d.querySelector('.fg-miss').textContent, /未跑/, 'they are one line under the chart');
   assert.equal(d.querySelectorAll('script').length, 0);
   const png = api.renderBlock({ ...fig, format: 'png' }, { mode: 'doc', baseDir: exDir });
   assert.deepEqual(png.errors, []);

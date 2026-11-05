@@ -4,7 +4,8 @@ import { Readable } from 'node:stream';
 import { PREVIEW_CSP, PREVIEW_TYPES } from './card-page';
 
 /** How a file is served when it is not a preview card's: its type, its page policy, and whether a symlink is followed. */
-export interface ServeOptions { type?: string; csp?: string; follow?: boolean }
+/** `html`: rewrites an HTML page before it is sent (whole, never in byte ranges), e.g. the report theme. */
+export interface ServeOptions { type?: string; csp?: string; follow?: boolean; html?: (text: string) => string }
 
 /** Streaming local preview response. Sniff at most 64 KiB of text, tolerating only a cut-off trailing code point. */
 export async function previewResponse(file: string, request: Request, options: ServeOptions = {}): Promise<Response> {
@@ -21,6 +22,12 @@ export async function previewResponse(file: string, request: Request, options: S
       try { new TextDecoder('utf-8', {fatal:true}).decode(bytes.subarray(0, bytesRead), {stream:bytesRead < size}); contentType += '; charset=utf-8'; } catch { /* use the page's own encoding */ }
     }
     const headers = new Headers({'Content-Type':contentType,'Content-Security-Policy':options.csp ?? PREVIEW_CSP,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Accept-Ranges':'bytes'});
+    if (options.html && type === 'text/html' && size <= 64 << 20) {
+      const text = new TextDecoder('utf-8').decode((await handle.readFile()));
+      const body = new TextEncoder().encode(options.html(text));
+      headers.set('Content-Type', 'text/html; charset=utf-8'); headers.delete('Accept-Ranges'); headers.set('Content-Length', String(body.byteLength));
+      return new Response(request.method === 'HEAD' ? null : body, { status: 200, headers });
+    }
     let start=0,end=size-1,status=200;
     const range=request.headers.get('range');
     if (range) {

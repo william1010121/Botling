@@ -28,7 +28,7 @@ export function budgetsFor(kind?: Kind) {
 }
 
 /** A valid figure block, the example warnings point to. */
-export const figureExample = { type: 'figure', title: '加 SESS 後 9 人中 9 人變好', script: 'figures/paired.py', args: ['results/per_subject.csv', '2a', '跨受試者', 'MAtt', '25'], alt: '每位受試者不加與加 SESS 的準確率', caption: '一欄一人：空心 = 不加、實心 = 加；綠色線段 = 變好；虛線 = 亂猜。' };
+export const figureExample = { type: 'figure', title: '加 SESS 後 9 人中 9 人變好', script: 'figures/paired.py', args: ['results/per_subject.csv', '2a', '跨受試者', 'MAtt', '--range=-10:30'], alt: '每位受試者不加與加 SESS 的準確率', caption: '每個點是一位受試者加 SESS 後的變化（藍 = 變好、橘 = 變差）；粗線是平均與 95% 區間。' };
 export const flowchartExample = { type: 'figure', role: 'flowchart', title: '同一份資料，只差有沒有先做 SESS', script: 'figures/flowchart.py', args: ['figures/pipeline.json'], alt: '流程：原始腦波 → 不加 / 加 SESS → 同一模型 → 兩種考法 → 配對比較', caption: '兩條路只差藍色那一步，其餘完全相同。' };
 export const collapsedExample = { title: '精確數值', takeaway: '每格的平均與 95% 區間', collapsed: true, blocks: [{ type: 'table', columns: ['設定', '不加 → 加', '差距（95% 區間）'], rows: [['2a · 跨受試者 · MAtt', '41.9 → 50.8', '+8.9（2.2～15.6）']] }] };
 

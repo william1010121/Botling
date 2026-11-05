@@ -29,7 +29,7 @@ export type SettingsSection = CoreSection | `${string}/${string}`;
 type Section = SettingsSection;
 const SECTIONS: { id: CoreSection; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
-  { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
+  { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset report pages theme light dark system" },
   { id: "engines", title: "Engines and subagents", terms: "default engines models primary recipient apply all bots reasoning effort thinking antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast component editor" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
@@ -347,7 +347,13 @@ function Appearance({ settings, change }: { settings: SettingsView; change: (nex
   },[change,cancel]);
   useEffect(() => { const el=input.current;el?.addEventListener("change",commit);return()=>el?.removeEventListener("change",commit); },[commit]);
   const width=draft ?? settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
-  return <Group title="Message column" note="Drag either column edge to resize; double-click it to reset.">
+  return <>
+  <Group title="Report pages" note="How result pages and their charts look in preview cards and the page viewer. Pages already open change when they are opened again.">
+    <Row label="Report pages">
+      <Segmented label="Report pages" options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }, { id: "system", label: "Match system" }] as const} value={settings.reportTheme ?? "dark"} onChange={(value) => void change({ key: "reportTheme", value })} />
+    </Row>
+  </Group>
+  <Group title="Message column" note="Drag either column edge to resize; double-click it to reset.">
     <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null && draft===null ? " (default)" : ""}`}>
       <input ref={input} type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
         onInput={event=>{const value=Number(event.currentTarget.value);editing.current={before:editing.current?.before ?? latest.current,value};setDraft(value);previewWidth(value);}}
@@ -357,7 +363,8 @@ function Appearance({ settings, change }: { settings: SettingsView; change: (nex
     </Row>
     <div className="settings-actions"><button type="button" disabled={settings.messageColumnWidth === null && draft===null}
       onClick={()=>{cancel();void change({key:"messageColumnWidth",value:null});}}>Use default width</button></div>
-  </Group>;
+  </Group>
+  </>;
 }
 
 /** The built-in plugin that writes chat summaries; its settings are set here, not on the Plugins page. */

@@ -2135,11 +2135,11 @@
                       ]
                     },
                     "perUnit": {
-                      "description": "true = the complete results: one panel per compared condition, every unit (subject, sample, task…) on the x axis, one colour per model; the first chart of an experiment report.",
+                      "description": "true = the complete results: every unit before → after, one panel per model and condition (template per_subject.py); the first chart of an experiment report.",
                       "type": "boolean"
                     },
                     "missing": {
-                      "description": "Conditions with no results, shown as \"未跑\" under the chart (also draw an empty, labelled panel).",
+                      "description": "Conditions with no results, shown as one \"未跑\" line under the chart; never draw them as empty panels.",
                       "maxItems": 12,
                       "type": "array",
                       "items": {

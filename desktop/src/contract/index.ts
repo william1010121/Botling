@@ -603,6 +603,8 @@ export const SettingsView = z.strictObject({
   chatAvatarSize: z.number().int().min(32).max(96).nullable(),
   /** Botling 2 only: null uses the default 640px column. */
   messageColumnWidth: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable().default(null),
+  /** How report pages (result previews) are drawn: dark like the app, light, or the system's appearance. */
+  reportTheme: z.enum(["dark", "light", "system"]).default("dark"),
   subagentModel: BotModel.nullable(),
   /** The Claude subagents' (app-managed workers') thinking effort new bots start with; null: each bot's own effort. */
   subagentEffort: Effort.nullable().default(null),
@@ -651,6 +653,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("botLook"), value: z.enum(["original", "cute"]) }),
   z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
   z.strictObject({ key: z.literal("messageColumnWidth"), value: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable() }),
+  z.strictObject({ key: z.literal("reportTheme"), value: z.enum(["dark", "light", "system"]) }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
   z.strictObject({ key: z.literal("subagentEffort"), value: Effort.nullable() }),
   z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),

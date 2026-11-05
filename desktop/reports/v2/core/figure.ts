@@ -24,7 +24,7 @@ export type FigureOutput = { svg?: string; png?: { light: string; dark: string }
 /** Theme colours, mirrored from theme/tokens.css (light, dark). Index = matplotlib C0…C5. */
 const PALETTE = {
   light: { text: '#1C1C1F', muted: '#5F5F68', line: '#DADADF', c: ['#2F6FE0', '#B26A00', '#1E8A55', '#7A4FD6', '#D0342C', '#8A8A93'] },
-  dark: { text: '#EDEDF0', muted: '#A0A0A8', line: '#2E2E35', c: ['#4C8DFF', '#F2A64A', '#4CC38A', '#B18CFF', '#FF8A80', '#6C6C75'] },
+  dark: { text: '#EDEDF0', muted: '#A0A0A8', line: '#2E2E35', c: ['#4C8DFF', '#C97A1E', '#4CC38A', '#B18CFF', '#FF8A80', '#6C6C75'] },
 };
 /** SVG runs draw with these unlikely colours; each becomes a CSS variable afterwards. */
 const SENTINEL: Record<string, string> = {
@@ -56,7 +56,7 @@ plt.rcParams.update({
     "text.color": pal["text"], "axes.labelcolor": pal["text"], "axes.titlecolor": pal["text"], "xtick.color": pal["muted"], "ytick.color": pal["muted"],
     "xtick.labelcolor": pal["text"], "ytick.labelcolor": pal["text"], "axes.edgecolor": pal["line"], "grid.color": pal["line"], "legend.labelcolor": pal["text"],
     "legend.frameon": False, "axes.axisbelow": True, "axes.spines.top": False, "axes.spines.right": False, "axes.grid": True, "grid.linewidth": 0.6,
-    "axes.prop_cycle": cycler(color=pal["c"]), "patch.edgecolor": "none", "lines.linewidth": 1.6, "font.size": 10.5, "axes.titlesize": 11.5, "axes.titleweight": "bold",
+    "axes.prop_cycle": cycler(color=pal["c"]), "patch.edgecolor": "none", "lines.linewidth": 1.6, "font.size": 12, "axes.titlesize": 12.5, "axes.titleweight": "bold", "axes.labelsize": 12, "xtick.labelsize": 11.5, "ytick.labelsize": 11.5, "legend.fontsize": 11.5,
 })
 script = sys.argv[1]
 sys.argv = sys.argv[1:]
