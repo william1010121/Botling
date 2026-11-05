@@ -68,7 +68,7 @@ export function firstParagraph(text: string): string {
 
 export function fmt(value: number, unit = ''): string {
   const abs = Math.abs(value);
-  const digits = abs >= 100 || Number.isInteger(value) ? 0 : abs >= 10 ? 1 : 2;
+  const digits = abs >= 100 || Number.isInteger(value) ? 0 : abs >= 10 ? 1 : abs >= 1 ? 2 : 3;
   const s = value.toLocaleString('en-US', { maximumFractionDigits: digits });
   return unit ? (unit === '%' ? `${s}%` : `${s} ${unit}`) : s;
 }

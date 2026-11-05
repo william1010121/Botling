@@ -19,7 +19,7 @@ function CellView({ cell, ctx }: { cell: Cell; ctx: Ctx }) {
 export const table = defineBlock({
   type: 'table',
   description: 'A compact table; cells can carry a status or tone dot. Numeric columns align right.',
-  when: 'Exact values the reader will look up, or a few rows × few attributes. ≤8 rows in the body of a report; larger data goes to an appendix file. Strings never imply status, regardless of wording or column heading. Supply cell objects with explicit status or tone; status="skipped" strikes the text. strong controls bold text.',
+  when: 'Exact values the reader will look up, or a few rows × few attributes. ≤8 rows in status/plan/decision reports (≤16 in investigation/results/comparison/explainer); larger data goes to an appendix file. Strings never imply status, regardless of wording or column heading. Supply cell objects with explicit status or tone; status="skipped" strikes the text. strong controls bold text.',
   fields: {
     columns: z.array(z.string().trim().min(1).max(24)).min(2).max(6),
     rows: z.array(z.array(z.union([z.string().trim().max(60), z.number(), z.strictObject({

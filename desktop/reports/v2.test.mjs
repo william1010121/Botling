@@ -371,3 +371,37 @@ test('flowchart and legacy flow share validation, rendering and investigation li
   const d = dom(mixed.html);
   assert.equal(d.querySelectorAll('.blk-flow, .blk-flowchart').length, 2);
 });
+
+
+test('diverging bar, referenceLine, kind-aware research budgets, and dense-SVG lint hygiene', async () => {
+  const barRes = await api.renderBlock({
+    type: 'bar',
+    title: '扣除隨機猜測後 MAtt 跨人增益相等，SPDIM 轉負',
+    unit: 'Δκ',
+    series: [{ name: '2a' }, { name: 'OpenBMI' }],
+    rows: [
+      { label: 'MAtt 跨受試者', values: [0.098, 0.096] },
+      { label: 'SPDIM 跨受試者', values: [-0.032, -0.033] },
+    ],
+  }, { mode: 'doc' });
+  assert.deepEqual(barRes.errors, []);
+  const bd = dom(`<body>${barRes.html}</body>`);
+  assert.ok(bd.querySelector('.hb.div .hz'));
+  assert.match(barRes.html, /\+0\.098/);
+  assert.match(barRes.html, /-0\.032/);
+
+  const denseSvg = 'data:image/svg+xml;base64,' + Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg">${Array.from({ length: 11 }, (_, i) => `<text y="${i * 10}">t${i}</text>`).join('')}</svg>`).toString('base64');
+  const rows10 = Array.from({ length: 10 }, (_, i) => [`A0${i + 1}`, i]);
+  const longProse = '白話定義與圖表導讀說明文字。'.repeat(25);
+  const { spec: resSpec, errors } = api.validateSpec(spec([
+    { type: 'kpi', items: [{ label: 'Δκ', value: '0.098' }] },
+    { type: 'prose', text: longProse },
+    { type: 'table', title: '受試者明細', columns: ['受試者', '分數'], rows: rows10 },
+    { type: 'image', title: '手刻圖', alt: '密集文字', src: denseSvg },
+  ], { kind: 'results', asks: [] }));
+  assert.deepEqual(errors, []);
+  const warnings = api.lintSpec(resSpec, api.registry);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].path, 'sections[0].blocks[3].src');
+  assert.match(warnings[0].message, /11 <text> elements/);
+});

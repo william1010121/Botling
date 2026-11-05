@@ -7,7 +7,7 @@ A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick
 ## Rules
 
 1. **Answer first.** The first `tldr` sentence answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish the page: answer in chat. `tldr` ≤ 3 sentences states the conclusion; `next` ≤ 3 one-line steps.
-2. **Headline = takeaway.** Every section has `takeaway`: its conclusion as one sentence (≈ 22 CJK chars / 15 words). Reading only takeaways gives the argument. `title` is the short topic label.
+2. **Headline = takeaway.** Every section has `takeaway`: its conclusion as one sentence (≈ 22 CJK chars / 15 words in `status`/`plan`/`decision`; up to 48 units in `investigation`/`explainer`/`results`/`comparison`). Reading only takeaways gives the argument. `title` is the short topic label.
 3. **One idea per section, ≤ 2 charts per section, ≤ 8 in the report.** Visuals for data, prose for reasoning, bullets only for lists (≤ 6, ≤ 2 levels).
 4. **Every chart has an action title** (`title`: what it shows, not what it is) and direct labels; never repeat a KPI as a chart.
 5. **Evidence is short.** Give each claim a short source and a number when relevant; ≤ 4 `sources`. Keep long paths, hashes, and logs out of prose. Use short source references; keep full evidence in the internal handback. Never hide a risk or a decision in detail.
@@ -17,6 +17,9 @@ A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick
 9. **Use ASD-STE100-informed plain language.** Use active voice, direct verbs, and consistent terms. Aim for at most 20 English words or 30 Chinese characters per sentence. Keep useful technical names. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese.
 10. **Explain causes visually.** For multistep causes, prefer a flowchart plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
 11. **Write for the reader.** Omit routine defensive boilerplate and internal coordination jargon. Keep research-only handback details, test commands, and preview-tool details in the internal handback. State material uncertainty and failed checks that affect the decision, with their practical effect. Never conceal defects or claim unperformed validation.
+12. **Plain language before jargon (先講人話再給術語).** In technical or scientific reports (`investigation`, `explainer`, `results`, `comparison`), state the plain question, setup, and everyday conclusion before listing numbers. Define every domain acronym or metric symbol (e.g. `Δκ`, `SESS`, whitening / 白化) in one plain sentence or everyday analogy the first time it appears; never stack 4–5 unexplained acronyms in `title`, `tldr`, or `takeaway`.
+13. **One question per chart + one-sentence reading guide (一張圖只回答一個問題＋一句看圖指南).** Never cram two incompatible scales, baselines, or questions into one figure; split them into separate blocks. Give every non-trivial chart a one-sentence reading guide (in `note` or a short `prose` block) stating what taller/shorter or right/left of `0` means.
+14. **Never hand-code data-chart SVGs (禁止手刻複雜數據圖 SVG).** Use native `bar` (supports negative/diverging values around `0` and optional `referenceLine` baselines), `table`, `kpi` (metrics), `trend`, `beforeafter`, and `flowchart` blocks for numbers and comparisons. Do not hand-write multi-panel data-chart `<svg>` images with guessed pixel coordinates (`> 10 <text>` tags triggers a lint warning because CJK glyphs overflow badges and collide with bars).
 
 ## Generate
 
@@ -81,9 +84,9 @@ The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "war
 - `sections`: { id?, title, takeaway?, layout?, blocks }[] (≥1 ≤8)
   - `id?`: string ≤32
   - `title`: string ≤24 — Short topic label, shown small above the takeaway.
-  - `takeaway?`: string ≤60 — The section's conclusion as one sentence; becomes the slide headline.
+  - `takeaway?`: string ≤80 — The section's conclusion as one sentence; becomes the slide headline.
   - `layout?`: "auto" | "stack" | "split" | "grid"
-  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
+  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight?, referenceLine? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
 - `asks?`: { what, who?, by? }[] (≤3) — What the reader must do (owner, deadline). [] renders "No action needed".
   - `what`: string ≤60
   - `who?`: string ≤20
@@ -119,21 +122,23 @@ Where things stand and what needs attention.
 
 What broke, why, and whether it is fixed.
 
-1. tldr = impact + fixed now? + the cause in one sentence
-2. flowchart plus a table — show the multistep cause and the evidence for each link; mark pending inferences
-3. timeline (events) — only when timing explains the cause
-4. beforeafter or trend — the metric before/after the fix
-5. checklist — actions with owners (blameless)
-6. sources ≤ 4
+1. tldr = plain question + impact + fixed now? + the cause in plain language
+2. prose: experimental/system setup and one-sentence definitions of domain acronyms before metrics
+3. flowchart plus a table — show the multistep cause and the evidence for each link; mark pending inferences
+4. timeline (events) — only when timing explains the cause
+5. beforeafter, bar (including signed deltas / referenceLine), or trend — the metric before/after the fix
+6. checklist — actions with owners (blameless)
+7. sources ≤ 4
 
 ### comparison
 
 Which one, and "pick X if…, Y if…".
 
-1. tldr = the winner + when to pick the other
-2. options or table with the winning cells toned good
-3. bar (small multiples via one bar per criterion) — optional
-4. callout: caveats
+1. tldr = plain question + the winner + when to pick the other
+2. prose: plain-language comparison criteria and baseline definitions (1–3 sentences)
+3. options or table with the winning cells toned good
+4. bar (one question per chart; supports negative deltas and referenceLine) — optional
+5. callout: caveats
 
 ### plan
 
@@ -149,22 +154,24 @@ Goal, definition of done, path there.
 
 What the numbers say after a change.
 
-1. tldr = headline number + what it means
-2. kpi vs baseline (delta, target)
-3. trend with marks at the change, target line
-4. beforeafter or bar — segment breakdown
-5. prose: verified facts and pending inferences, with the reason and what remains unchecked
-6. sources ≤ 4
+1. tldr = plain question + headline answer + what it means
+2. prose: plain-language setup, baseline meaning, and 1-sentence definitions of domain acronyms
+3. kpi vs baseline (delta, target)
+4. trend with marks at the change, target line
+5. beforeafter or bar (supports negative values and referenceLine; add a 1-sentence reading guide) — segment breakdown
+6. prose: verified facts and pending inferences, with the reason and what remains unchecked
+7. sources ≤ 4
 
 ### explainer
 
 What it is and how it works.
 
-1. tldr = one sentence what + why
-2. flowchart plus a table — show the multistep mechanism and explain each link
-3. steps — only for an ordered procedure
-4. image — a worked example
-5. callout — limits
+1. tldr = one plain sentence what + why (no acronym stacking)
+2. prose: everyday analogy + 1-sentence definition of each technical term
+3. flowchart plus a table — show the multistep mechanism and explain each link
+4. steps — only for an ordered procedure
+5. bar / table / image — a worked example with a 1-sentence reading guide
+6. callout — limits
 
 ## Blocks
 
@@ -175,7 +182,7 @@ Every block takes optional `title` (action title), `note` (faint caption: unit, 
 | `prose` | A short paragraph or bullet list in restricted Markdown (**bold**, *italic*, `code`, - bullets, 1. numbers). |
 | `callout` | One highlighted message with a tone: info, warn, bad (risk), good (success) or neutral. |
 | `kpi` | A row of 1–6 headline numbers, each with label and optional delta, target and sparkline. |
-| `bar` | Bar chart for comparing categories: one or more series, grouped or stacked, vertical or horizontal (auto). |
+| `bar` | Bar chart for comparing categories: one or more series, positive or signed/diverging values, optional referenceLine, vertical or horizontal (auto). |
 | `trend` | Line or area chart over time (or any ordered x) for 1–4 series, with direct end labels, optional target line and up to 3 event marks. |
 | `donut` | Parts of one whole, 2–4 slices, with a centre figure and a value legend. |
 | `beforeafter` | Paired before/after bars per metric with the change in %, coloured by whether higher or lower is better. |
@@ -251,9 +258,9 @@ A row of 1–6 headline numbers, each with label and optional delta, target and 
 
 ### `bar`
 
-Bar chart for comparing categories: one or more series, grouped or stacked, vertical or horizontal (auto).
+Bar chart for comparing categories: one or more series, positive or signed/diverging values, optional referenceLine, vertical or horizontal (auto).
 
-**When:** Comparing amounts across ≤15 categories. Use highlight to point at the bar the title talks about. Time series → trend; parts of one whole → donut.
+**When:** Comparing amounts or signed gains/deltas across ≤15 categories (negative numbers render around a 0 baseline automatically; use referenceLine for chance/target baselines). Use highlight to point at the bar the title talks about. Time series → trend; parts of one whole → donut.
 
 - `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
 - `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
@@ -261,12 +268,15 @@ Bar chart for comparing categories: one or more series, grouped or stacked, vert
   - `name`: string ≤20
 - `rows`: { label, values }[] (≥1 ≤15)
   - `label`: string ≤24
-  - `values`: number ≥0[] (≥1 ≤4)
+  - `values`: number[] (≥1 ≤4)
 - `stacked?`: boolean
 - `horizontal?`: boolean — Omit to choose automatically (horizontal for many or long labels).
 - `sort?`: boolean — Sort rows by size, largest first.
 - `unit?`: string ≤8
 - `highlight?`: string ≤24 — Row label to emphasise; other bars turn grey.
+- `referenceLine?`: { value, label } — Optional baseline or chance-level line (e.g. random guess 25%).
+  - `value`: number
+  - `label`: string ≤32
 
 ```json
 {"type":"bar","title":"啟動時間主要花在載入聊天紀錄","unit":"ms","series":[{"name":"耗時"}],"highlight":"聊天紀錄","rows":[{"label":"主程序","values":[180]},{"label":"聊天紀錄","values":[620]},{"label":"外掛","values":[140]},{"label":"側欄","values":[90]}]}
@@ -491,7 +501,7 @@ Sequence diagram: 2–5 actors as columns, numbered messages between them (call,
 
 A compact table; cells can carry a status or tone dot. Numeric columns align right.
 
-**When:** Exact values the reader will look up, or a few rows × few attributes. ≤8 rows in the body of a report; larger data goes to an appendix file. Strings never imply status, regardless of wording or column heading. Supply cell objects with explicit status or tone; status="skipped" strikes the text. strong controls bold text.
+**When:** Exact values the reader will look up, or a few rows × few attributes. ≤8 rows in status/plan/decision reports (≤16 in investigation/results/comparison/explainer); larger data goes to an appendix file. Strings never imply status, regardless of wording or column heading. Supply cell objects with explicit status or tone; status="skipped" strikes the text. strong controls bold text.
 
 - `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
 - `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
@@ -645,6 +655,8 @@ Up to four one-line sources: a short reference (commit, file, run id) and what i
 
 ## Lint budgets
 
+Default (`status`, `plan`, `decision`):
+
 - `takeawayUnits`: 30
 - `tldrSentences`: 3
 - `bullets`: 6
@@ -657,3 +669,10 @@ Up to four one-line sources: a short reference (commit, file, run id) and what i
 - `timelineItems`: 12
 - `flowNodes`: 12
 - `slidesPerSection`: 2
+- `svgTextTags`: 10
+
+Relaxed for technical/scientific kinds (`investigation`, `explainer`, `results`, `comparison`):
+
+- `takeawayUnits`: 48
+- `proseUnits`: 600
+- `tableRows`: 16

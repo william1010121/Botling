@@ -9,7 +9,9 @@ export const PW = 1000;
 export function niceY(values: number[], opts: { zero?: boolean; ticks?: number } = {}) {
   const lo = Math.min(...values), hi = Math.max(...values);
   const pad = (hi - lo || Math.abs(hi) || 1) * 0.08;
-  const domain: [number, number] = opts.zero || lo >= 0 && lo < (hi - lo) * 0.6 ? [Math.min(0, lo), hi + pad] : [lo - pad, hi + pad];
+  const domain: [number, number] = opts.zero || lo >= 0 && lo < (hi - lo) * 0.6
+    ? [lo < 0 ? lo - pad : 0, hi > 0 || lo === 0 ? hi + pad : 0]
+    : [lo - pad, hi + pad];
   const y = scaleLinear().domain(domain).nice(opts.ticks ?? 4);
   return { y, ticks: y.ticks(opts.ticks ?? 4) };
 }

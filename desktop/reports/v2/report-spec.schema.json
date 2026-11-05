@@ -108,7 +108,7 @@
             "description": "The section's conclusion as one sentence; becomes the slide headline.",
             "type": "string",
             "minLength": 1,
-            "maxLength": 60
+            "maxLength": 80
           },
           "layout": {
             "default": "auto",
@@ -404,8 +404,7 @@
                             "maxItems": 4,
                             "type": "array",
                             "items": {
-                              "type": "number",
-                              "minimum": 0
+                              "type": "number"
                             }
                           }
                         },
@@ -435,6 +434,25 @@
                       "description": "Row label to emphasise; other bars turn grey.",
                       "type": "string",
                       "maxLength": 24
+                    },
+                    "referenceLine": {
+                      "description": "Optional baseline or chance-level line (e.g. random guess 25%).",
+                      "type": "object",
+                      "properties": {
+                        "value": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 32
+                        }
+                      },
+                      "required": [
+                        "value",
+                        "label"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -443,7 +461,7 @@
                     "rows"
                   ],
                   "additionalProperties": false,
-                  "description": "Bar chart for comparing categories: one or more series, grouped or stacked, vertical or horizontal (auto)."
+                  "description": "Bar chart for comparing categories: one or more series, positive or signed/diverging values, optional referenceLine, vertical or horizontal (auto)."
                 },
                 {
                   "type": "object",

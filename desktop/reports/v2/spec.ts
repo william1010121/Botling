@@ -24,7 +24,7 @@ function specShape<B extends z.ZodType>(block: B) {
     sections: z.array(z.strictObject({
       id: z.string().regex(/^[a-z0-9-]+$/).max(32).optional(),
       title: line(24).describe('Short topic label, shown small above the takeaway.'),
-      takeaway: line(60).optional().describe('The section\'s conclusion as one sentence; becomes the slide headline.'),
+      takeaway: line(80).optional().describe('The section\'s conclusion as one sentence; becomes the slide headline.'),
       layout: z.enum(['auto', 'stack', 'split', 'grid']).default('auto'),
       blocks: z.array(block).min(1).max(8),
     })).min(1).max(8),
