@@ -1,4 +1,4 @@
-import { agyPromptRequest } from "../token-speed";
+import { AgyTurnClock, agyPromptRequest } from "../token-speed";
 import { parseAntigravityUsage, quotaError, quotaUnavailable, registerAntigravityQuotaReader } from "../antigravity-quota";
 import type { AntigravityQuotaView } from "../../contract";
 import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
@@ -52,6 +52,8 @@ export class AgyAcpProtocol {
   private turnFailure: "permission_denied" | "cancelled" | "tool_failed" | undefined;
   /** This turn's tools that failed (ACP's own and the bridge's mirrored ones), for classifyRun. */
   private failedTools = new Set<string>();
+  /** This turn's model time: the turn minus the time a tool (with its approval) was open. */
+  private turnClock?: AgyTurnClock;
   private confirmed = false;
   private submitting = false;
   private readonly mode: "default" | "yolo";
@@ -197,8 +199,10 @@ export class AgyAcpProtocol {
       this.submitting = true;
       this.transport.onPolicy?.("active", `${this.mode === "yolo" ? "Full permission" : "Approval mode"} active for this turn.`);
       const promptStart = Date.now();
+      const clock = this.turnClock = new AgyTurnClock(promptStart);
       const result = await this.call("session/prompt", { sessionId: this.sessionId, prompt }, 30 * 60_000);
       const promptEnd = Date.now();
+      this.turnClock = undefined;
       this.cancelApprovals();
       const usage = obj(result.usage);
       const count = (key: string) => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] as number : 0;
@@ -209,14 +213,16 @@ export class AgyAcpProtocol {
       const how = this.ended(stop), error = `Antigravity stopped: ${reason || "unknown reason"}`, failedTools = this.failedTools.size;
       // The one rule for every engine (classifyRun): a turn that ended normally with a reply succeeds, whatever failed on the way.
       const ok = classifyRun({ end: { how, finalText: null, error, detail: reason }, reply: this.text, stoppedByApp: false, interruptedBy: null, requireReply: false, failedTools, engine: "agy" }).status === "done";
-      // ACP gives one usage block per prompt and no per-request timing: the whole prompt turn, an estimate.
-      const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, ok);
+      // ACP gives one usage block per prompt and no per-request timing: the turn's tokens over its model time (tool runs
+      // and approval waits taken out), an estimate. A turn that ended with its usage is timed whatever its verdict, as a
+      // Claude or Codex request is; only a cancelled one is not.
+      const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, how !== "cancelled", clock.finish(promptEnd));
       if (request) this.emit({ kind: "request", request });
       this.emit({ kind: "result", ok, how, failedTools, text: this.text, error: ok ? "" : error, subtype: reason });
       return ok;
     } catch (error) {
       this.fail(error as Error);
-    } finally { this.submitting = false; this.transport.revoke?.(); this.busy = false; if (!this.closed) this.transport.onPolicy?.("ready", this.confirmed ? `${this.mode === "yolo" ? "Full permission" : "Approval mode"} confirmed; no active turn.` : "Tools revoked. The next turn must confirm its permission mode again."); }
+    } finally { this.turnClock = undefined; this.submitting = false; this.transport.revoke?.(); this.busy = false; if (!this.closed) this.transport.onPolicy?.("ready", this.confirmed ? `${this.mode === "yolo" ? "Full permission" : "Approval mode"} confirmed; no active turn.` : "Tools revoked. The next turn must confirm its permission mode again."); }
   }
   receive(value: unknown) {
     if (this.closed) return;
@@ -253,6 +259,11 @@ export class AgyAcpProtocol {
       }
       if (["tool_call", "tool_call_update"].includes(u.sessionUpdate)) {
         const id = str(u.toolCallId); if (!id) throw new Error("ACP tool has no identity.");
+        if (this.turnClock) {
+          const at = Date.now();
+          this.turnClock.toolOpened(id, at);
+          if (["completed", "failed"].includes(u.status)) this.turnClock.toolClosed(id, at);
+        }
         if (this.transport.localToolEvents && AGY_LOCAL_TOOLS.some(tool => u.title === `botling_${tool.name}`)) this.bridgeTools.add(id);
         if (this.bridgeTools.has(id)) {
           // Keep ACP's conservative turn/permission failure semantics, but never
@@ -299,6 +310,8 @@ export class AgyAcpProtocol {
     const requestId = `acp:${String(message.id)}`;
     if (this.approvals.has(requestId)) throw new Error("Duplicate ACP approval.");
     const tool = obj(p.toolCall);
+    // The approval waits inside its tool's span; a tool announced only by its approval opens here.
+    if (str(tool.toolCallId)) this.turnClock?.toolOpened(str(tool.toolCallId), Date.now());
     this.approvals.set(requestId, { id: message.id, allow: allow.optionId, deny: deny.optionId, title: str(tool.title), input: obj(tool.rawInput) });
     this.emit({ kind: "permission", requestId, tool: str(tool.kind) || "Antigravity tool", summary: str(tool.title) + "\n" + json(tool.rawInput), input: obj(tool.rawInput) });
   }

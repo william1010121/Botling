@@ -18,8 +18,10 @@
  * - Codex: `thread/tokenUsage/updated` `last.outputTokens` is one request; its start is the
  *   boundary that fed the model (turn start, or the last tool item that completed).
  * - Antigravity (ACP): only `session/prompt` -> result with ONE usage block for the whole prompt
- *   turn. ACP gives no per-request timing, so the sample is the whole prompt turn (tool time
- *   included) and is marked `estimated`; nothing finer is invented.
+ *   turn, and no per-request timing. Its generation time is the turn minus the time a tool (with its
+ *   approval) was open: the model segments between tool rounds (AgyTurnClock). Each segment is held to
+ *   MAX_REQUEST_SECONDS, not the turn, so a long worker turn of many tool rounds is still timed. The
+ *   tokens are the turn's, so the value is marked `estimated`; there is never a live value mid-turn.
  */
 
 /**
@@ -49,6 +51,12 @@ export interface SpeedSample {
   endMs: number;
   /** False: no final usage / interrupted. Never timed. */
   complete: boolean;
+  /**
+   * The model's own segments inside start..end, in milliseconds, when the sample spans tool runs
+   * (Antigravity's whole prompt turn). Their sum is the generation time; each one is held to
+   * MAX_REQUEST_SECONDS as a request is. Absent: the sample is one request, start..end.
+   */
+  segmentsMs?: number[];
 }
 
 /** A request as a stream reports it. `scope` null is the head turn; a string is a subagent id. */
@@ -85,6 +93,12 @@ export function generationSeconds(sample: SpeedSample): number | null {
   if (!sample.complete) return null;
   if (!Number.isFinite(sample.outputTokens) || sample.outputTokens <= 0) return null;
   if (!Number.isFinite(sample.startMs) || !Number.isFinite(sample.endMs)) return null;
+  if (sample.segmentsMs) {
+    const segments = sample.segmentsMs;
+    if (!segments.every((ms) => Number.isFinite(ms) && ms >= 0 && ms <= MAX_REQUEST_SECONDS * 1000)) return null;
+    const total = segments.reduce((sum, ms) => sum + ms, 0) / 1000;
+    return total > 0 ? total : null;
+  }
   const seconds = (sample.endMs - sample.startMs) / 1000;
   return seconds > 0 && seconds <= MAX_REQUEST_SECONDS ? seconds : null;
 }
@@ -254,13 +268,39 @@ export class CodexRequestTracker {
 }
 
 /**
- * Antigravity: ACP reports ONE usage block for a whole `session/prompt` and no per-request timing.
- * The sample is that prompt turn (tool and approval waits inside it count), so it is an estimate.
+ * Antigravity's model time inside one prompt turn. ACP marks every tool with `tool_call` (opened) and a
+ * `tool_call_update` with status completed / failed (closed); an approval waits inside that span. The
+ * model is generating whenever no tool is open: the segments between tool rounds.
  */
-export function agyPromptRequest(id: string, usage: unknown, startMs: number, endMs: number, completed: boolean): RequestEvent | null {
+export class AgyTurnClock {
+  private open = new Set<string>();
+  private since: number;
+  private segments: number[] = [];
+  constructor(startMs: number) { this.since = startMs; }
+  toolOpened(id: string, atMs: number) {
+    if (!id || this.open.has(id)) return;
+    if (this.open.size === 0) this.segments.push(Math.max(0, atMs - this.since));
+    this.open.add(id);
+  }
+  toolClosed(id: string, atMs: number) {
+    if (!this.open.delete(id)) return;
+    if (this.open.size === 0) this.since = atMs;
+  }
+  /** The model segments of the turn that ended at `endMs` (a tool still open at the end adds none). */
+  finish(endMs: number): number[] {
+    return this.open.size === 0 ? [...this.segments, Math.max(0, endMs - this.since)] : [...this.segments];
+  }
+}
+
+/**
+ * Antigravity: ACP reports ONE usage block for a whole `session/prompt` and no per-request timing.
+ * The sample is that prompt turn; with `segmentsMs` (AgyTurnClock) its time is the model's segments
+ * only, without tool runs and approval waits. Output + thought tokens, marked estimated.
+ */
+export function agyPromptRequest(id: string, usage: unknown, startMs: number, endMs: number, completed: boolean, segmentsMs?: number[]): RequestEvent | null {
   if (!usage || typeof usage !== "object") return null;
   const raw = usage as Record<string, unknown>;
   const count = (key: string) => (typeof raw[key] === "number" && Number.isSafeInteger(raw[key]) && (raw[key] as number) >= 0 ? (raw[key] as number) : 0);
   const outputTokens = count("outputTokens") + count("thoughtTokens");
-  return { scope: null, id, estimated: true, sample: { outputTokens, startMs, endMs, complete: completed } };
+  return { scope: null, id, estimated: true, sample: { outputTokens, startMs, endMs, complete: completed, ...(segmentsMs ? { segmentsMs } : {}) } };
 }

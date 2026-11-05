@@ -150,6 +150,14 @@ describe("Antigravity: ACP has one usage block per prompt and no per-request tim
     expect(agyPromptRequest("u", undefined, 0, 1000, true)).toBeNull();
     expect(computeTokenSpeed([agyPromptRequest("u", { outputTokens: 9 }, 0, 1000, false)!.sample]).tokPerSec).toBeNull();
   });
+  it("with model segments, times only them; each segment, not the turn, is held to 300 s", () => {
+    // A 20-minute turn: three model segments of 30 s, the rest tool runs.
+    const long = agyPromptRequest("u", { outputTokens: 900, thoughtTokens: 0 }, 0, 1_200_000, true, [30_000, 30_000, 30_000])!;
+    expect(generationSeconds(long.sample)).toBe(90);
+    expect(computeTokenSpeed([long.sample]).tokPerSec).toBe(10);
+    expect(generationSeconds(agyPromptRequest("u", { outputTokens: 9 }, 0, 400_000, true, [301_000])!.sample)).toBeNull();
+    expect(generationSeconds(agyPromptRequest("u", { outputTokens: 9 }, 0, 1000, true, [0])!.sample)).toBeNull();
+  });
 });
 
 describe("consistency: the app's number against the token-speed CLI on the same fixture", () => {
