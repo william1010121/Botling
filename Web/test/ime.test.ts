@@ -8,8 +8,10 @@ import { attachmentStrip } from "../src/messages";
 import { Composer } from "../src/composer";
 import { componentPage } from "../src/components";
 import { compositionGrace, imeGuardScript, installImeGuard, isComposingEnter, isComposingKey } from "../src/ime";
-import { SpecPanel } from "../src/spec";
-import type { ChatState, SpecState } from "../src/types";
+import type { ChatState } from "../src/types";
+// The spec workspace moved into the component studio plugin; its text boxes use the chat page's IME guard.
+import { SpecPanel, type PanelIO } from "../../desktop/builtin-plugins/botling.component-studio/src/panel";
+import type { SpecState } from "../../desktop/builtin-plugins/botling.component-studio/src/types";
 
 // CodeMirror measures text after a key; jsdom has no layout.
 Range.prototype.getClientRects ??= (() => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] })) as unknown as Range["getClientRects"];
@@ -197,10 +199,19 @@ function specState(overrides: Partial<SpecState> = {}): SpecState {
   } as SpecState;
 }
 
+/** What the spec panel asked of its plugin. */
+const asked: Record<string, unknown>[] = [];
+const io: PanelIO = {
+  act: (method, params = {}) => { asked.push({ method, ...params }); },
+  testRun: () => {}, preview: () => null, keepFrames: (_old, fresh) => fresh, media: () => "", mediaClicks: () => {},
+};
+
 describe("the spec panel", () => {
+  beforeEach(() => { asked.length = 0; });
+
   it("Ask for changes… does not send on the Return that commits a candidate; plain Return sends; Shift-Return does not", () => {
     const root = document.body.appendChild(document.createElement("div"));
-    new SpecPanel(root).update(specState({ version: 2 }));
+    new SpecPanel(root, io).update(specState({ version: 2 }));
     const box = root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!;
     expect(box.placeholder).toBe("Ask for changes…");
     box.value = "失敗的要列名字";
@@ -208,18 +219,18 @@ describe("the spec panel", () => {
       later();
       commitWithReturn(box, kind);
     }
-    expect(sent).toEqual([]);
+    expect(asked).toEqual([]);
     later();
     const shift = key(box, { key: "Enter", shiftKey: true, keyCode: 13 });
     expect(shift.defaultPrevented).toBe(false);
-    expect(sent).toEqual([]);
+    expect(asked).toEqual([]);
     key(box, { key: "Enter", keyCode: 13 });
-    expect(sent).toEqual([{ type: "specSay", id: "S1", text: "失敗的要列名字", request: expect.any(String) }]);
+    expect(asked).toEqual([{ method: "say", id: "S1", text: "失敗的要列名字", request: expect.any(String) }]);
   });
 
   it("a field keeps focus on the Return that commits a candidate, and is done on plain Return", () => {
     const root = document.body.appendChild(document.createElement("div"));
-    new SpecPanel(root).update(specState());
+    new SpecPanel(root, io).update(specState());
     const input = root.querySelector<HTMLInputElement>("input.spec-input")!;
     input.focus();
     commitWithReturn(input, "webkit");

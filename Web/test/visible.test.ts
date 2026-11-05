@@ -3,7 +3,7 @@ import { sent } from "../src/bridge";
 import { refreshDueCards } from "../src/components";
 import { messageElement } from "../src/messages";
 import { setWindowVisible } from "../src/visible";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../src/types";
+import type { ChatState, ComponentInfo, DisplayView, MessageView } from "../src/types";
 
 // One rule for every card that refreshes by itself: it reruns only while the user can see it,
 // in a window that is shown (Swift says so: not minimized, hidden or covered), scrolled into view.
@@ -26,23 +26,19 @@ function message(displays: DisplayView[]): MessageView {
   };
 }
 
-function pin(overrides: Partial<PinView> = {}): PinView {
-  return { id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "interval", minutes: 15, seconds: 5, display: card({ every: null }), ...overrides };
-}
-
 function state(overrides: Partial<ChatState> = {}): ChatState {
-  return { botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides } as ChatState;
+  return { botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, board: false, ...overrides } as ChatState;
 }
 
 function box(element: Element, top: number, height = 100): void {
   (element as HTMLElement).getBoundingClientRect = () => ({ top, bottom: top + height, left: 0, right: 300, width: 300, height, x: 0, y: top, toJSON() {} }) as DOMRect;
 }
 
-const runs = () => sent.filter((action) => action.type === "componentCommand" || action.type === "pinCommand");
+const runs = () => sent.filter((action) => action.type === "componentCommand");
 
 beforeEach(() => {
   sent.length = 0;
-  document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
+  document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="composer-slot"></div>`;
   document.body.className = "";
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1000 });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });

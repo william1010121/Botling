@@ -28,7 +28,7 @@ function message(displays: DisplayView[], overrides: Partial<MessageView> = {}):
 function state(overrides: Partial<ChatState> = {}): ChatState {
   return {
     botID: "b1", botName: "ClaudeCodeBot", messages: [], working: false, avatar: "", placeholder: "",
-    replyingTo: null, pendingFiles: [], components, pins: [], pinChoices: [], board: false, ...overrides,
+    replyingTo: null, pendingFiles: [], components, board: false, ...overrides,
   };
 }
 

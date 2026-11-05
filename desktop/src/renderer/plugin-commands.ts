@@ -2,7 +2,6 @@
 // made from the core's one list (PluginsView `keybindings`, `slash`, `menus`), and a command the chat page
 // asks for runs only when a key, the / menu or that menu offers it now. The chat page is one realm with the
 // plugins' web parts, so this is no wall against them; it keeps it from running any other command.
-import { bottomPanelToggledBy } from "./BottomPanels";
 import type { PluginsView } from "../contract";
 import { legacyKey, type PluginKeybinding } from "../contract/shortcuts";
 import latex from "../../builtin-plugins/ccb-latex/package.json";
@@ -22,6 +21,13 @@ const STANDALONE: PluginsView = {
   keybindings: latex.ccb.contributes.commands.flatMap(({ id, title, key }) => { const combo = legacyKey(key); return combo ? [{ command: id, key: combo, plugin: latex.name, title }] : []; }),
   slash: design.ccb.contributes.slash.map((entry) => ({ ...entry, plugin: design.name })),
 };
+export type BottomPanel = NonNullable<PluginsView["bottomPanels"]>[number];
+
+/** The bottom panel whose toggle command is `command`, or null. */
+export function bottomPanelToggledBy(plugins: PluginsView | null | undefined, command: string): BottomPanel | null {
+  return plugins?.bottomPanels?.find((panel) => panel.toggle === command) ?? null;
+}
+
 const viewOf = (plugins: PluginsView | null | undefined): PluginsView => plugins ?? STANDALONE;
 
 /** Every plugin key, built-in plugins' first (the core lists them first). */

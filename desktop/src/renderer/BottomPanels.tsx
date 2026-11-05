@@ -6,20 +6,17 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { frameEvent } from "../../../Web/src/frame-protocol";
-import type { PluginsView } from "../contract";
 import type { Client } from "./client";
 import { BottomPanelFrame, type BuiltinRunner, type FrameServices } from "./Plugins";
 import { ShellOverlay } from "./ShellOverlay";
 
-export type BottomPanel = NonNullable<PluginsView["bottomPanels"]>[number];
+import { bottomPanelToggledBy, type BottomPanel } from "./plugin-commands";
+
+// Plain TypeScript in plugin-commands.ts, so the chat page's tests (Web, no JSX) can import the command routing.
+export { bottomPanelToggledBy, type BottomPanel };
 
 /** The page-wide signal that a bottom panel's toggle command ran (key, menu or palette): the command's id. */
 export const TOGGLE_BOTTOM_PANEL = "botling:bottom-panel-toggle";
-
-/** The bottom panel whose toggle command is `command`, or null. */
-export function bottomPanelToggledBy(plugins: PluginsView | null | undefined, command: string): BottomPanel | null {
-  return plugins?.bottomPanels?.find((panel) => panel.toggle === command) ?? null;
-}
 
 /** A panel that streams (a terminal's keys and acknowledgements) calls far more often than the 10 a second most frames get. */
 const STREAMING_RATE = { burst: 400, perSecond: 400 };
