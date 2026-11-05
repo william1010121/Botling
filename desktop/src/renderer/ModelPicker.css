@@ -22,7 +22,7 @@
   .model-picker-controls select::picker-icon { display: none; }
   .model-picker-controls select::picker(select) {
     background: var(--ground); color: var(--text); border: 1px solid var(--line);
-    border-radius: 10px; padding: 5px; box-shadow: 0 12px 32px #0005;
+    border-radius: 10px; padding: 5px; box-shadow: 0 12px 32px rgb(0 0 0 / calc(0.33 * var(--shade, 1)));
     max-height: 290px; overflow-y: auto; margin-top: 5px;
   }
   .model-picker-controls option { padding: 7px 9px; border-radius: 6px; font: 12px/1.4 -apple-system, sans-serif; }

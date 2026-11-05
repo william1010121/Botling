@@ -3,12 +3,12 @@
 .pin-holder { position: relative; }
 .pin-bar {
   position: absolute; top: -6px; right: 44px; z-index: 3; display: flex; gap: 2px; padding: 2px;
-  background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 9px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 9px; box-shadow: 0 6px 16px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
 }
 .pin-holder:hover > .pin-bar, .pin-bar:focus-within { opacity: 1; pointer-events: auto; }
 .pin-holder.pinned > .pin-bar { opacity: 1; pointer-events: auto; background: transparent; border-color: transparent; box-shadow: none; }
-.pin-holder.pinned:hover > .pin-bar { background: var(--user-bubble); border-color: var(--strong-line); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45); }
+.pin-holder.pinned:hover > .pin-bar { background: var(--user-bubble); border-color: var(--strong-line); box-shadow: 0 6px 16px rgb(0 0 0 / calc(0.45 * var(--shade, 1))); }
 .pin-holder.pinned > .pin-bar > .pin-tool { display: none; }
 .pin-holder.pinned:hover > .pin-bar > .pin-tool { display: inline-flex; }
 .pin-tool {
@@ -25,7 +25,7 @@
 .pin-popup { position: fixed; z-index: 40; }
 .pin-dialog {
   width: 320px; padding: 16px; background: var(--bubble); border: 1px solid var(--strong-line); border-radius: 14px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6); font-size: 13px; line-height: 1.5;
+  box-shadow: 0 18px 48px rgb(0 0 0 / calc(0.6 * var(--shade, 1))); font-size: 13px; line-height: 1.5;
 }
 .pin-dialog-title { font-size: 14px; font-weight: 600; }
 .pin-dialog-note { margin-top: 4px; font-size: 12px; color: var(--muted); }
@@ -41,12 +41,12 @@
 .pin-toast {
   position: fixed; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 45;
   display: flex; align-items: center; gap: 14px; padding: 10px 14px; font-size: 13px;
-  background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 10px; box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+  background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 10px; box-shadow: 0 10px 26px rgb(0 0 0 / calc(0.5 * var(--shade, 1)));
 }
 .pin-toast button { border: none; background: transparent; color: #7FAEFF; font-weight: 600; cursor: pointer; padding: 0; }
 .pin-menu {
   min-width: 180px; padding: 4px; background: var(--popover); border: 1px solid var(--border); border-radius: 10px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column;
+  box-shadow: 0 10px 28px rgb(0 0 0 / calc(0.5 * var(--shade, 1))); display: flex; flex-direction: column;
 }
 .pin-menu button { text-align: left; border: none; background: transparent; padding: 6px 10px 6px 24px; border-radius: 6px; font-size: 13px; cursor: pointer; position: relative; }
 .pin-menu button:hover:not(:disabled) { background: var(--user-bubble); }
@@ -58,10 +58,10 @@
 .pin-menu-note { padding: 0 10px 4px 24px; font-size: 11.5px; color: var(--faint); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pin-menu-note.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 /* The picker */
-.pin-picker-backdrop { inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
+.pin-picker-backdrop { inset: 0; background: rgb(0 0 0 / calc(0.45 * var(--shade, 1))); display: flex; align-items: center; justify-content: center; }
 .pin-picker {
   width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 64px); display: flex; flex-direction: column;
-  padding: 18px; background: var(--bubble); border: 1px solid var(--strong-line); border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  padding: 18px; background: var(--bubble); border: 1px solid var(--strong-line); border-radius: 16px; box-shadow: 0 24px 60px rgb(0 0 0 / calc(0.6 * var(--shade, 1)));
 }
 .pin-picker-head { display: flex; align-items: baseline; gap: 10px; }
 .pin-picker-title { flex: 1; font-size: 15px; font-weight: 600; }
@@ -176,7 +176,7 @@
 .pin-sheet {
   position: absolute; left: 24px; right: 24px; bottom: calc(100% + 8px); z-index: 10; max-height: min(560px, 62vh);
   display: flex; flex-direction: column; background: var(--bubble);
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55); overflow: visible; isolation: isolate;
+  box-shadow: 0 -10px 40px rgb(0 0 0 / calc(0.55 * var(--shade, 1))); overflow: visible; isolation: isolate;
 }
 .pin-fill { flex: 1; }
 /* The body clips the component to the card's bottom corners (its radius less the border), so the
@@ -197,7 +197,7 @@
 .board-card.resizing > .board-card-tools { opacity: 1; }
 /* A tile being moved follows the pointer above the others by its transform alone, on a layer of
    its own (no layout, no repaint of its component while it moves); the others stay put. */
-.board-card.moving { z-index: 6; cursor: grabbing; opacity: 0.92; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); outline: 2px solid var(--blue); outline-offset: 1px; transition: none; will-change: transform; }
+.board-card.moving { z-index: 6; cursor: grabbing; opacity: 0.92; box-shadow: 0 18px 40px rgb(0 0 0 / calc(0.55 * var(--shade, 1))); outline: 2px solid var(--blue); outline-offset: 1px; transition: none; will-change: transform; }
 /* Let go, it glides the last few px into its cells. */
 .board-card.landing { z-index: 6; transition: transform 0.14s ease-out; will-change: transform; }
 /* Where a moved tile will go: its cells, snapped to the grid. Blue on free cells; amber where it
@@ -269,7 +269,7 @@ body.board .editor .cm-scroller { max-height: 72px; }
    while its command runs, so the turning ↻ says so). */
 .board-card-tools {
   position: absolute; top: 8px; right: 8px; z-index: 2; display: flex; align-items: center; gap: 1px; padding: 2px;
-  background: rgba(43, 43, 49, 0.94); border: 1px solid var(--strong-line); border-radius: 10px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  background: rgba(43, 43, 49, 0.94); border: 1px solid var(--strong-line); border-radius: 10px; box-shadow: 0 6px 16px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
 }
@@ -316,7 +316,7 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .float-card {
   position: fixed; pointer-events: auto; display: flex; flex-direction: column; min-width: 0;
   background: rgba(27, 27, 31, 0.86); overflow: hidden; isolation: isolate;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  box-shadow: 0 12px 34px rgb(0 0 0 / calc(0.5 * var(--shade, 1))); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
   transition: left 0.18s ease, top 0.18s ease, bottom 0.18s ease, opacity 0.12s;
 }
 .float-card.moving { transition: none; opacity: 0.9; outline: 2px solid var(--blue); outline-offset: 1px; cursor: grabbing; }
@@ -348,3 +348,16 @@ body.spec-mode .float-layer { display: none; }
 :root[data-theme="light"] .pin-tag.command { color: var(--green); }
 :root[data-theme="light"] .board-ghost > span { color: var(--orange-text); }
 :root[data-theme="light"] .pin-size-grid button.hint { border-color: var(--faint); }
+:root[data-theme="light"] .pin-badge { color: var(--link); }
+:root[data-theme="light"] .pin-head { border-bottom-color: var(--line); }
+:root[data-theme="light"] .pin-head-status { background: var(--chip); }
+:root[data-theme="light"] .board-resize { background: linear-gradient(135deg, transparent 55%, rgba(28, 28, 31, 0.35) 55%, rgba(28, 28, 31, 0.35) 61%, transparent 61%, transparent 70%, rgba(28, 28, 31, 0.35) 70%, rgba(28, 28, 31, 0.35) 76%, transparent 76%); }
+:root[data-theme="light"] .board-move::before, :root[data-theme="light"] .pin-sheet-resize::before { background: rgba(28, 28, 31, 0.3); }
+:root[data-theme="light"] .float-resize::before { border-color: rgba(28, 28, 31, 0.4); }
+:root[data-theme="light"] .board-ghost[data-mode="home"] { border-color: rgba(28, 28, 31, 0.25); }
+:root[data-theme="light"] .board-ghost[data-mode="swap"], :root[data-theme="light"] .board-ghost[data-mode="push"] { border-color: var(--orange); }
+:root[data-theme="light"] .board-card.drop-hit { outline-color: var(--orange); }
+:root[data-theme="light"] .board-card-body .component:hover .flag, :root[data-theme="light"] .board-card.hovered .flag { background: rgba(255, 255, 255, 0.92); }
+:root[data-theme="light"] .board-card-tools { background: rgba(255, 255, 255, 0.94); }
+:root[data-theme="light"] .pin-live-note, :root[data-theme="light"] .float-card { background: rgba(255, 255, 255, 0.86); }
+:root[data-theme="light"] .float-head .pin-chip-dot { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9); }

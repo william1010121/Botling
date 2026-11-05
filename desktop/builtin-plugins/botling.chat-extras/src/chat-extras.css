@@ -32,7 +32,7 @@
 .paste-remove:hover, .paste-x:hover { background: var(--hover-strong); color: var(--text); }
 .paste-panel {
   display: flex; flex-direction: column; overflow: hidden;
-  background: var(--bubble); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  background: var(--bubble); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 32px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
 }
 .paste-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .paste-title { font-size: 13px; font-weight: 600; }
@@ -45,6 +45,7 @@
   font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; color: var(--text);
 }
 .paste-veil { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; background: rgba(14, 14, 16, 0.62); }
+:root[data-theme="light"] .paste-veil { background: rgba(245, 245, 247, 0.7); }
 .paste-dialog { width: min(560px, calc(100vw - 32px)); height: min(400px, calc(100vh - 32px)); }
 .paste-dialog .paste-body { flex: 1; height: auto; }
 

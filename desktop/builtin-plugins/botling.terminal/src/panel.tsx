@@ -151,6 +151,16 @@ export function TerminalPanel({ ccb, botId }: { ccb: PanelCcb; botId: string }) 
   </section>;
 }
 
+/** The shell's colours for the frame's look (<html data-theme>): dark as it always was, or a light set whose ANSI colours read on white. */
+export function terminalTheme(light = document.documentElement.dataset.theme === 'light') {
+  if (!light) return { background: '#111318', foreground: '#e5e7eb' };
+  return {
+    background: '#FFFFFF', foreground: '#1C1C1F', cursor: '#1C1C1F', cursorAccent: '#FFFFFF', selectionBackground: '#CFDDF8',
+    black: '#1C1C1F', red: '#C4302B', green: '#1E7F3C', yellow: '#946200', blue: '#1F5FD1', magenta: '#A1309F', cyan: '#0F7C8C', white: '#6E6E78',
+    brightBlack: '#5F5F68', brightRed: '#D0342C', brightGreen: '#1E8A55', brightYellow: '#9A5B00', brightBlue: '#2F6FE0', brightMagenta: '#8A3FD1', brightCyan: '#0A8599', brightWhite: '#8E8E96',
+  };
+}
+
 function TerminalTab({ ccb, bridge, tab, visible, onError, onExit }: { ccb: PanelCcb; bridge: TerminalBridge; tab: TerminalState; visible: boolean; onError: (e: unknown) => void; onExit: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
@@ -160,9 +170,12 @@ function TerminalTab({ ccb, bridge, tab, visible, onError, onExit }: { ccb: Pane
   const [waiting, setWaiting] = useState<'starting' | 'slow' | null>('starting');
   useEffect(() => { if (tab.exitCode !== null) onExitRef.current(); }, []);
   useEffect(() => {
-    const term = new Terminal({ allowProposedApi: true, cursorBlink: true, fontSize: 13, fontFamily: '"Botling Terminal", "MesloLGS NF", "SFMono-Regular", Menlo, monospace', scrollback: 5000, theme: { background: '#111318', foreground: '#e5e7eb' } });
+    const term = new Terminal({ allowProposedApi: true, cursorBlink: true, fontSize: 13, fontFamily: '"Botling Terminal", "MesloLGS NF", "SFMono-Regular", Menlo, monospace', scrollback: 5000, theme: terminalTheme() });
     const fitter = new FitAddon(); term.loadAddon(fitter); term.loadAddon(new Unicode11Addon()); term.unicode.activeVersion = '11';
     terminal.current = term; fit.current = fitter;
+    // The app's look can change while the shell runs (Settings → Appearance → App): the frame's <html data-theme> follows it.
+    const look = new MutationObserver(() => { term.options.theme = terminalTheme(); });
+    look.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     term.open(host.current!);
     void fontLoading.then(() => document.fonts.load('13px "Botling Terminal"')).then(() => { if (terminal.current === term) { term.refresh(0, term.rows - 1); if (host.current?.offsetHeight) fitter.fit(); } });
     const send = lane(bridge, tab.botId, tab.sessionId, onError);
@@ -198,7 +211,7 @@ function TerminalTab({ ccb, bridge, tab, visible, onError, onExit }: { ccb: Pane
       event.stopPropagation(); return true;
     });
     const observer = new ResizeObserver(() => { if (host.current?.offsetHeight) fitter.fit(); }); observer.observe(host.current!);
-    return () => { clearTimeout(slow); disposed = true; terminal.current = null; observer.disconnect(); unsub(); input.dispose(); binaryInput.dispose(); resize.dispose(); term.dispose(); };
+    return () => { clearTimeout(slow); disposed = true; terminal.current = null; look.disconnect(); observer.disconnect(); unsub(); input.dispose(); binaryInput.dispose(); resize.dispose(); term.dispose(); };
   }, [tab.sessionId]);
   useEffect(() => { if (visible) { fit.current?.fit(); terminal.current?.focus(); } }, [visible]);
   return <div className="terminal-tab" hidden={!visible}>

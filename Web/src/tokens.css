@@ -54,6 +54,8 @@
   --panel-ground: #111318;
   --panel-text: #E5E7EB;
   --panel-line: #454850;
+  /* How strong black shadows and dimming backdrops are: rgb(0 0 0 / calc(.45 * var(--shade))). */
+  --shade: 1;
 }
 :root[data-theme="light"] {
   --ground: #F5F5F7;
@@ -103,5 +105,6 @@
   --panel-ground: #FFFFFF;
   --panel-text: #1C1C1F;
   --panel-line: #DADADF;
+  --shade: 0.35;
   color-scheme: light;
 }

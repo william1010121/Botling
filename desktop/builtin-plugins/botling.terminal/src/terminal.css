@@ -1,7 +1,7 @@
 /* Inside the panel's frame: the page around it draws the border, the divider and the resize; this is the toolbar and the shells. */
-html, body { height: 100%; margin: 0; overflow: hidden; background: #111318; color: #e5e7eb; }
+html, body { height: 100%; margin: 0; overflow: hidden; background: var(--panel-ground); color: var(--panel-text); }
 #panel-root { height: 100%; padding: 0; overflow: hidden; }
-.terminal-panel { height: 100%; overflow: hidden; display: flex; flex-direction: column; background: #111318; color: #e5e7eb; }
+.terminal-panel { height: 100%; overflow: hidden; display: flex; flex-direction: column; background: var(--panel-ground); color: var(--panel-text); }
 .terminal-toolbar { display: flex; gap: 4px; align-items: center; min-width: 0; padding: 4px 8px; flex-shrink: 0; border-bottom: 1px solid var(--line); }
 .terminal-toolbar [role=tablist] { display: flex; flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; scrollbar-width: thin; }
 .terminal-toolbar [role=tablist] > span { display: inline-flex; flex-shrink: 0; align-items: center; }

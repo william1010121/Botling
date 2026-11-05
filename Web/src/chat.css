@@ -78,7 +78,7 @@ button { font: inherit; color: inherit; }
 .mention-list {
   position: absolute; bottom: calc(100% + 6px); left: 12px; z-index: 15; min-width: 200px; max-width: 320px;
   padding: 4px; background: var(--popover); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 10px 28px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
   max-height: 320px; overflow-y: auto;
 }
 .mention-list[hidden] { display: none; }
@@ -264,7 +264,7 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .report {
   position: fixed; z-index: 10; width: 300px; padding: 16px;
   background: var(--popover); border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 32px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
   display: flex; flex-direction: column; gap: 10px;
 }
 .report-title { font-size: 13px; font-weight: 600; }
@@ -309,7 +309,7 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
   display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
 }
 .answer-chip:hover { color: var(--text); }
-.answer-chip.picked { color: var(--text); background: var(--raised); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
+.answer-chip.picked { color: var(--text); background: var(--raised); box-shadow: 0 1px 2px rgb(0 0 0 / calc(0.25 * var(--shade, 1))); }
 .answer-chip.picked::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .answer-chip[data-head="claude"].picked::before { background: var(--claude); }
 .answer-chip[data-head="codex"].picked::before { background: var(--codex); }
@@ -382,7 +382,7 @@ body.seen-heads .typing > .avatar { animation: head-working 1.8s ease-in-out inf
 .composer-popover {
   position: fixed; z-index: 20; max-width: min(560px, calc(100vw - 24px));
   padding: 10px 14px; background: var(--popover); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); pointer-events: none; overflow: hidden;
+  box-shadow: 0 10px 28px rgb(0 0 0 / calc(0.45 * var(--shade, 1))); pointer-events: none; overflow: hidden;
 }
 .plugin-component { margin-top: 10px; }
 
@@ -552,7 +552,7 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 /* Plugins' commands for a reply ("⋯" in its hover column), drawn like the / list. */
 .message-menu {
   position: fixed; z-index: 20; min-width: 160px; max-width: 280px; padding: 4px;
-  background: var(--popover); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  background: var(--popover); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 28px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
 }
 .message-menu button {
   display: block; width: 100%; padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
@@ -583,7 +583,7 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
   --task-agent: #B79CFF; --task-waiting: var(--orange-text); --task-done: var(--green); --task-failed: var(--error);
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 4px; min-width: 0; max-width: 100%;
 }
-/* The chat is always dark; should it ever get a light theme, these read on white. */
+/* The light look (data-theme="light"): these read on white. */
 :root[data-theme="light"] .task-chips { --task-agent: #6B4FD8; --task-waiting: #B26A00; --task-done: #1E8A55; --task-failed: #D0342C; }
 .task-summary { display: inline-flex; align-items: center; gap: 2px; }
 .task-group {
@@ -628,7 +628,7 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .preview-holder { position: relative; }
 .preview-bar {
   position: absolute; top: 18px; right: 8px; z-index: 3; display: flex; gap: 2px; padding: 2px;
-  background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 9px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  background: var(--user-bubble); border: 1px solid var(--strong-line); border-radius: 9px; box-shadow: 0 6px 16px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
 }
 .preview-holder:hover > .preview-bar, .preview-bar:focus-within { opacity: 1; pointer-events: auto; }
@@ -654,7 +654,7 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .row.wide > .message-actions, .row.wide > .reply-button { position: absolute; top: 6px; right: 6px; z-index: 4; }
 .row.wide > .message-actions { flex-direction: row; padding: 2px; border-radius: 9px; border: 1px solid transparent; }
 .row.wide:hover > .message-actions, .row.wide > .message-actions:focus-within {
-  background: var(--user-bubble); border-color: var(--strong-line); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  background: var(--user-bubble); border-color: var(--strong-line); box-shadow: 0 6px 16px rgb(0 0 0 / calc(0.45 * var(--shade, 1)));
 }
 .bubble.wide > .wide-part { margin-left: 0; margin-right: 0; }
 .wide-part.command-card, .wide-part > .command-card { border: 0; border-radius: 0; padding: 0; }
@@ -698,7 +698,7 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 }
 .lightbox-image {
   max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5); cursor: zoom-in; background: #fff1;
+  box-shadow: 0 10px 40px rgb(0 0 0 / calc(0.5 * var(--shade, 1))); cursor: zoom-in; background: #fff1;
 }
 .lightbox.actual .lightbox-stage { overflow: auto; align-items: flex-start; justify-content: flex-start; }
 .lightbox.actual .lightbox-image { max-width: none; max-height: none; margin: auto; cursor: zoom-out; }
@@ -793,14 +793,14 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 
 /* The menu uses the chip's existing 20px horizontal padding budget. */
 .answer-segment { position: relative; display: inline-flex; height: calc(var(--control-h) - 6px); border-radius: 8px; }
-.answer-segment.picked { background: var(--raised); box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.answer-segment.picked { background: var(--raised); box-shadow: 0 1px 2px rgb(0 0 0 / calc(.25 * var(--shade, 1))); }
 .answer-segment .answer-chip { padding-left: 4px; padding-right: 0; margin-right: 16px; }
 .answer-segment .answer-chip.picked { background: transparent; box-shadow: none; }
 .answer-menu { position: absolute; right: 0; top: -2px; width: 16px; height: calc(var(--control-h) - 2px); padding: 0; display: grid; place-items: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
 .answer-menu:hover { color: var(--text); background: color-mix(in srgb,var(--text) 8%,transparent); }
 .answer-menu:focus-visible { outline: 2px solid var(--codex); outline-offset: -2px; }
 /* Model + effort popover: a compact menu. Selection is a quiet check, not a filled block. */
-.model-popover { position: absolute; z-index: 30; bottom: 49px; left: 8px; width: 288px; max-width: calc(100% - 16px); padding: 6px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--raised); color: var(--text); font-size: 13px; line-height: 1.3; box-shadow: 0 0 0 .5px color-mix(in srgb,var(--text) 6%,transparent), 0 2px 6px #0003, 0 14px 36px #0006; animation: model-pop .14s ease-out; }
+.model-popover { position: absolute; z-index: 30; bottom: 49px; left: 8px; width: 288px; max-width: calc(100% - 16px); padding: 6px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: var(--raised); color: var(--text); font-size: 13px; line-height: 1.3; box-shadow: 0 0 0 .5px color-mix(in srgb,var(--text) 6%,transparent), 0 2px 6px rgb(0 0 0 / calc(0.2 * var(--shade, 1))), 0 14px 36px rgb(0 0 0 / calc(0.4 * var(--shade, 1))); animation: model-pop .14s ease-out; }
 @keyframes model-pop { from { opacity: 0; transform: translateY(4px) scale(.985); } }
 @media (prefers-reduced-motion: reduce) { .model-popover { animation: none; } .effort-stops b, .effort-stops span { transition: none !important; } }
 .model-popover button:focus-visible { outline: none; box-shadow: inset 0 0 0 1.5px color-mix(in srgb,var(--codex) 55%,transparent); }
@@ -838,8 +838,8 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 .effort-track:has(input:disabled) { opacity: .5; }
 .effort-track input:disabled { cursor: default; }
 .effort-stops { position: absolute; inset: 2px; display: grid; grid-template-columns: repeat(var(--n),1fr); align-items: center; pointer-events: none; }
-.effort-stops b { position: absolute; top: 0; bottom: 0; left: 0; width: calc(100% / var(--n)); border-radius: 7px; background: color-mix(in srgb,var(--text) 13%,var(--raised)); box-shadow: 0 0 0 1px color-mix(in srgb,var(--text) 8%,transparent), 0 1px 3px #0005; transform: translateX(calc(var(--i) * 100%)); transition: transform .2s cubic-bezier(.3,.9,.3,1), opacity .15s; }
-:root[data-theme="light"] .effort-stops b { background: #fff; box-shadow: 0 0 0 .5px #0002, 0 1px 3px #0002; }
+.effort-stops b { position: absolute; top: 0; bottom: 0; left: 0; width: calc(100% / var(--n)); border-radius: 7px; background: color-mix(in srgb,var(--text) 13%,var(--raised)); box-shadow: 0 0 0 1px color-mix(in srgb,var(--text) 8%,transparent), 0 1px 3px rgb(0 0 0 / calc(0.33 * var(--shade, 1))); transform: translateX(calc(var(--i) * 100%)); transition: transform .2s cubic-bezier(.3,.9,.3,1), opacity .15s; }
+:root[data-theme="light"] .effort-stops b { background: #fff; box-shadow: 0 0 0 .5px rgb(0 0 0 / calc(0.13 * var(--shade, 1))), 0 1px 3px rgb(0 0 0 / calc(0.13 * var(--shade, 1))); }
 .effort-track[data-unset] .effort-stops b { opacity: 0; }
 .effort-stops span { position: relative; text-align: center; font-size: 11.5px; font-weight: 500; color: var(--muted); transition: color .15s; }
 .effort-stops span.on { color: var(--text); font-weight: 600; }
@@ -858,3 +858,8 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 :root[data-theme="light"] .file-string { color: #22863A; }
 :root[data-theme="light"] .file-keyword { color: #6F42C1; }
 :root[data-theme="light"] .file-number { color: #B05A00; }
+:root[data-theme="light"] .pending .remove { color: #fff; }
+/* The picture viewer dims the chat with the page's own ground instead of black. */
+:root[data-theme="light"] .lightbox { background: rgba(245, 245, 247, 0.94); }
+:root[data-theme="light"] .lightbox-bar button { background: var(--chip); }
+:root[data-theme="light"] .lightbox-image { background: transparent; }

@@ -53,6 +53,8 @@ const lightLookTokens = {
   "--hover-strong": { dark: "#33333B", light: "#E2E2E8" }, "--soft-text": { dark: "#C8C8CE", light: "#3F3F46" },
   "--panel-ground": { dark: "#111318", light: "#FFFFFF" }, "--panel-text": { dark: "#E5E7EB", light: "#1C1C1F" },
   "--panel-line": { dark: "#454850", light: "#DADADF" },
+  // Not a colour: how strong black shadows and backdrops are (light pages get softer ones).
+  "--shade": { dark: "1", light: "0.35" },
 };
 const chatBefore = {
   "--chat-avatar-size": "48px", "--ground": "#0E0E10", "--bubble": "#1B1B1F", "--user-bubble": "#2B2B31", "--notice": "#16161A",
