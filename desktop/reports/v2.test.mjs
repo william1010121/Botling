@@ -13,6 +13,8 @@ const exDir = join(root, 'reports/v2/examples');
 const base = { version: 2, lang: 'zh-Hant', title: '測試', asOf: '2026-10-28', tldr: '結論先講。' };
 const spec = (blocks, extra = {}) => ({ ...base, sections: [{ title: '段落', takeaway: '這段的結論', blocks }], ...extra });
 const dom = html => new JSDOM(html).window.document;
+/** Figure tests need matplotlib for the python the renderer uses (user site-packages included, as the renderer does). */
+const hasMatplotlib = spawnSync(process.env.BOTLING_PYTHON || 'python3', ['-I', '-c', 'import site; site.addsitedir(site.getusersitepackages()); import matplotlib'], { encoding: 'utf8' }).status === 0;
 before(async () => { api = await loadReports(); temp = await mkdtemp(join(tmpdir(), 'report-v2-test-')); await mkdir(join(temp, 'artifacts')); });
 after(async () => { await rm(temp, { recursive: true, force: true }); });
 
@@ -117,9 +119,10 @@ test('validation: top-level errors carry paths and a valid example; broken block
 
 test('every block example renders in doc and slide mode, deterministically, with no script or remote resource', async () => {
   for (const b of api.blocks) for (const ex of b.examples) for (const mode of ['doc', 'slide']) {
-    const one = await api.renderBlock(ex, { mode });
+    if (b.type === 'figure' && !hasMatplotlib) continue;
+    const one = await api.renderBlock(ex, { mode, baseDir: exDir });
     assert.deepEqual(one.errors, [], b.type);
-    const again = await api.renderBlock(ex, { mode });
+    const again = await api.renderBlock(ex, { mode, baseDir: exDir });
     assert.equal(one.html, again.html, `${b.type} ${mode} is not deterministic`);
     const d = dom(`<body>${one.html}</body>`);
     assert.ok(d.querySelector(`.blk-${b.type}`), `${b.type} ${mode} root`);
@@ -436,12 +439,14 @@ test('readability lint: answer first, first-page items, conclusion headings, num
 
 test('experiment kind: card checks, noise-aware verdict, and no "improvement" inside the noise', async () => {
   const card = { type: 'experiment', question: '加了 SESS 會不會更準？', hypothesis: '加 SESS 後準確率至少高 3 pp。', success: '區間不含 0。', baseline: '同模型、不加 SESS', baselineTuned: true, runs: 3, spread: '受試者間標準差（9 人）', result: { metric: '準確率', base: 74.9, new: 75.5, ci: [-1.2, 2.5], unit: '%' }, verdict: 'inconclusive' };
-  const exp = (blocks, extra = {}) => api.validateSpec({ ...base, kind: 'experiment', impact: '還不能把 SESS 當成跨 session 的改進。', risk: { text: '只有 9 人', plan: '補 OpenBMI 54 人' }, next: ['跑 OpenBMI'], asks: [], tldr: '跨 session 加 SESS 的差距在誤差內，不顯著（3 seeds）。', sections: [{ title: '實驗卡', takeaway: '差距在誤差內，假設還不能判定', blocks: [{ type: 'glossary', items: [{ term: 'SESS', plain: '把每個人的腦波先調到同一基準。' }, { term: 'OpenBMI', plain: '54 人的公開腦波資料集。' }] }, ...blocks] }], ...extra });
+  const fig = { type: 'figure', title: '每位受試者的準確率', script: 'figures/per_subject.py', args: ['figures/per_subject.csv'], alt: '每位受試者加不加 SESS', perUnit: true };
+  const overview = { question: '加 SESS 會不會更準？', compare: '同模型加與不加 SESS', setup: '2a，9 人，3 個種子', complete: '350 代算訓練完成' };
+  const exp = (blocks, extra = {}) => api.validateSpec({ ...base, kind: 'experiment', overview, impact: '還不能把 SESS 當成跨 session 的改進。', risk: { text: '只有 9 人', plan: '補 OpenBMI 54 人' }, next: ['跑 OpenBMI'], asks: [], tldr: '跨 session 加 SESS 的差距在誤差內，不顯著（3 seeds）。', sections: [{ title: '每位受試者', takeaway: '每位受試者加 SESS 前後的準確率', blocks: [fig] }, { title: '實驗卡', takeaway: '差距在誤差內，假設還不能判定', blocks: [{ type: 'glossary', items: [{ term: 'SESS', plain: '把每個人的腦波先調到同一基準。' }, { term: 'OpenBMI', plain: '54 人的公開腦波資料集。' }] }, ...blocks] }], ...extra });
   const { spec: good, errors } = exp([card]);
   assert.deepEqual(errors, []);
   assert.deepEqual(api.lintSpec(good, api.registry), []);
   const w = api.lintSpec(exp([{ ...card, runs: 1, baselineTuned: undefined, verdict: 'supported', result: { ...card.result } }], { tldr: 'SESS 讓準確率從 74.9% 提升到 75.5%。' }).spec, api.registry).map(x => `${x.path} ${x.message}`).join('\n');
-  for (const needle of ['blocks[1].runs Only 1 run', 'blocks[1].baselineTuned', 'blocks[1].verdict The 95% interval', 'tldr The bottom line claims an improvement']) assert.ok(w.includes(needle), `missing: ${needle}\n${w}`);
+  for (const needle of ['sections[1].blocks[1].runs Only 1 run', 'sections[1].blocks[1].baselineTuned', 'sections[1].blocks[1].verdict The 95% interval', 'tldr The bottom line claims an improvement']) assert.ok(w.includes(needle), `missing: ${needle}\n${w}`);
   assert.ok(api.lintSpec(exp([{ type: 'prose', text: '沒有卡。' }]).spec, api.registry).some(x => /without an experiment block/.test(x.message)));
   assert.ok(api.lintSpec(exp([card, { type: 'kpi', items: [{ label: '準確率', value: '75.5%' }] }]).spec, api.registry).some(x => /Experiment KPI without delta/.test(x.message)));
   assert.equal(api.blocks.find(b => b.type === 'experiment').schema.safeParse({ ...card, result: { ...card.result, ci: [3, 1] } }).success, false);
@@ -472,4 +477,79 @@ test('prompt doc: report-type templates, checked vs written rules, and causal se
   assert.ok(doc.includes('### experiment') && doc.includes('### status') && doc.includes('### investigation') && doc.includes('### explainer'));
   for (const needle of ['The first page holds five things', 'define every term once', 'Every number has a reference point and a meaning', 'equally tuned baseline', 'not significant', 'road to green', '## Checked by the renderer (warnings)', '## Not checked: rules only', '## Before you publish', 'keep a cause and its effect in one sentence']) assert.ok(doc.includes(needle), needle);
   assert.doesNotMatch(doc, /at most 20 English words or 30 Chinese characters/);
+});
+
+test('experiment order: overview first, the per-subject chart next, then the verdict; lint asks for both', async () => {
+  const fig = { type: 'figure', title: '每位受試者的準確率', script: 'figures/per_subject.py', args: ['figures/per_subject.csv'], alt: '每位受試者基準與方法', perUnit: true, missing: ['資料集 B · 條件 2'] };
+  const s = { ...base, kind: 'experiment', overview: { question: '方法會不會比基準準？', compare: '同模型、同資料，只差方法', setup: '兩個資料集、兩種條件，各 3 個種子', complete: '訓練 350 代才算完成；30 代不算', why: '新使用者不用重收資料' }, impact: '可以進下一步。', risk: { text: '人數少' }, next: ['補跑'], asks: [],
+    sections: [{ title: '每位受試者', takeaway: '多數受試者用了方法後變好', blocks: [fig] }, { title: '細節', takeaway: '差距大於誤差', blocks: [{ type: 'prose', text: '說明。' }] }] };
+  const paths = spec => api.lintSpec(api.validateSpec(spec).spec, api.registry).map(w => w.path);
+  assert.ok(!paths(s).includes('overview'));
+  assert.ok(paths({ ...s, overview: undefined }).includes('overview'));
+  assert.ok(api.validateSpec({ ...s, overview: { ...s.overview, complete: undefined } }).errors.some(e => e.path === 'overview.complete'), 'what counts as complete training is required');
+  const barFirst = { ...s, sections: [{ title: '總結', takeaway: '方法平均高 3 分', blocks: [{ type: 'bar', title: '方法平均高 3 分', series: [{ name: 'x' }], rows: [{ label: 'a', values: [1] }] }, fig] }] };
+  assert.ok(api.lintSpec(api.validateSpec(barFirst).spec, api.registry).some(w => w.path === 'sections[0].blocks[0]' && /complete results/.test(w.message)));
+  assert.ok(api.lintSpec(api.validateSpec({ ...s, sections: [{ title: '圖', takeaway: '多數變好', blocks: [{ ...fig, perUnit: undefined }] }] }).spec, api.registry).some(w => /complete results/.test(w.message)));
+  if (!hasMatplotlib) return;
+  const r = api.renderV2(s, { mode: 'doc', baseDir: exDir });
+  assert.deepEqual(r.errors, []);
+  const d = dom(r.html);
+  const order = [...d.querySelectorAll('.rp > *')].map(e => e.className.split(' ')[0]);
+  assert.deepEqual(order.slice(0, 6), ['rp-head', 'overview', 'sec', 'verdict', 'asks', 'sec']);
+  assert.match(d.querySelector('.overview').textContent, /研究問題.*在比什麼.*資料與設定.*怎樣算訓練完成.*為什麼重要/);
+  assert.match(d.querySelector('.fg-miss').textContent, /未跑：資料集 B · 條件 2/);
+  const slides = api.renderV2(s, { mode: 'slide', baseDir: exDir });
+  const sd = dom(slides.html);
+  assert.ok(sd.querySelector('.sv:first-child .overview'));
+  assert.ok(sd.querySelector('.sv:nth-child(3) .verdict'), 'verdict slide after the first section');
+});
+
+test('figure: runs the matplotlib script, inlines a theme-aware SVG or two PNGs, and reports failures as errors', { skip: !hasMatplotlib && 'matplotlib not installed' }, async () => {
+  const fig = api.blocks.find(b => b.type === 'figure').examples[0];
+  const svg = api.renderBlock(fig, { mode: 'doc', baseDir: exDir });
+  assert.deepEqual(svg.errors, []);
+  const d = dom(`<body>${svg.html}</body>`);
+  const el = d.querySelector('.blk-figure .fg svg');
+  assert.ok(el && el.getAttribute('viewBox'));
+  assert.equal(el.hasAttribute('width'), false);
+  assert.match(svg.html, /var\(--text\)/); assert.match(svg.html, /var\(--blue\)/); assert.match(svg.html, /var\(--orange\)/);
+  assert.doesNotMatch(svg.html, /<path[^>]*class="?line|<polyline/, 'units are categories: dots, no lines');
+  assert.doesNotMatch(svg.html, /#0b0b/i);
+  assert.match(svg.html, /未跑/);
+  assert.equal(d.querySelectorAll('script').length, 0);
+  const png = api.renderBlock({ ...fig, format: 'png' }, { mode: 'doc', baseDir: exDir });
+  assert.deepEqual(png.errors, []);
+  const pd = dom(`<body>${png.html}</body>`);
+  assert.match(pd.querySelector('img.fg-l').src, /^data:image\/png;base64,/);
+  assert.match(pd.querySelector('img.fg-d').src, /^data:image\/png;base64,/);
+  assert.notEqual(pd.querySelector('img.fg-l').src, pd.querySelector('img.fg-d').src);
+  // Failures: missing script, Python error, nothing drawn, timeout, not a .py file.
+  const scripts = await mkdtemp(join(tmpdir(), 'figure-test-'));
+  await writeFile(join(scripts, 'boom.py'), 'raise ValueError("bad data file")\n');
+  await writeFile(join(scripts, 'empty.py'), 'x = 1\n');
+  await writeFile(join(scripts, 'slow.py'), 'import time\ntime.sleep(30)\n');
+  await writeFile(join(scripts, 'args.py'), 'import sys, matplotlib.pyplot as plt\nplt.title(sys.argv[1])\nplt.plot([0, 1], [0, 1])\n');
+  const run = extra => api.renderBlock({ type: 'figure', alt: 'x', ...extra }, { mode: 'doc', baseDir: scripts });
+  assert.match(run({ script: 'missing.py' }).errors[0].message, /figure failed: figure script not found/);
+  assert.match(run({ script: 'boom.py' }).errors[0].message, /figure script failed.*ValueError: bad data file/);
+  assert.match(run({ script: 'empty.py' }).errors[0].message, /drew no figure/);
+  assert.match(run({ script: 'slow.py', timeout: 5 }).errors[0].message, /timed out after 5 s/);
+  assert.match(run({ script: 'x.sh' }).errors[0].message, /\.py/);
+  const withArgs = run({ script: 'args.py', args: ['標題參數'] });
+  assert.deepEqual(withArgs.errors, []); assert.match(withArgs.html, /標題參數/);
+  const page = api.renderV2({ ...base, sections: [{ title: 'x', takeaway: '圖壞了', blocks: [{ type: 'figure', alt: 'x', script: 'boom.py' }] }] }, { baseDir: scripts });
+  assert.equal(page.ok, false); assert.equal(page.errors[0].path, 'sections[0].blocks[0]');
+  await rm(scripts, { recursive: true, force: true });
+});
+
+test('figure: the CLI resolves scripts next to the spec', { skip: !hasMatplotlib && 'matplotlib not installed' }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'figure-cli-'));
+  await mkdir(join(dir, 'artifacts'));
+  await writeFile(join(dir, 'artifacts', 'plot.py'), 'import matplotlib.pyplot as plt\nplt.bar(["a", "b"], [1, 2])\n');
+  await writeFile(join(dir, 'artifacts', 'spec.json'), JSON.stringify({ ...base, sections: [{ title: 'x', takeaway: 'b 比 a 高', blocks: [{ type: 'figure', title: 'b 比 a 高', alt: 'a 與 b 的長條', script: 'plot.py' }] }] }));
+  const r = spawnSync(process.execPath, [join(root, 'scripts/report.mjs'), join(dir, 'artifacts', 'spec.json'), join(dir, 'artifacts', 'out.html')], { encoding: 'utf8', cwd: tmpdir() });
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.ok, true, r.stdout);
+  assert.match(await readFile(join(dir, 'artifacts', 'out.html'), 'utf8'), /class="fg"[^>]*><svg/);
+  await rm(dir, { recursive: true, force: true });
 });

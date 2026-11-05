@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import { registry } from './blocks';
 import { labels, levelTone, type Labels } from './core/i18n';
 import type { Ctx, Mode } from './core/registry';
@@ -51,6 +51,16 @@ export function Asks({ spec, t }: { spec: ReportSpec; t: Labels }) {
   </section>;
 }
 
+/** Experiment reports: what is being done, for a reader not in the loop; shown before the first chart and the verdict. */
+export function Overview({ spec, t }: { spec: ReportSpec; t: Labels }) {
+  const o = spec.overview;
+  if (!o) return null;
+  return <section className="overview" aria-label={t.overview}>
+    <h2>{t.overview}</h2>
+    <dl>{(['question', 'compare', 'setup', 'complete', 'why'] as const).filter(k => o[k]).map(k => <div key={k}><dt>{t.ov[k]}</dt><dd>{o[k]}</dd></div>)}</dl>
+  </section>;
+}
+
 export function eyebrow(spec: ReportSpec, t: Labels) {
   return [t.report, spec.kind && t.kind[spec.kind], `${t.asOf} ${spec.asOf}`].filter(Boolean).join(' · ');
 }
@@ -60,19 +70,20 @@ export function DocReport({ spec, prepared }: { spec: ReportSpec; prepared: Prep
   const ctx = (id: string): Omit<Ctx, 'prepared'> => ({ lang: spec.lang, t, mode: 'doc' as Mode, id });
   return <div className="rpt"><main className="rp" lang={spec.lang}>
     <header className="rp-head"><p className="eyebrow">{eyebrow(spec, t)}</p><h1>{spec.title}</h1>{spec.subtitle && <p className="subtitle">{spec.subtitle}</p>}</header>
-    <Verdict spec={spec} t={t}/>
-    <Asks spec={spec} t={t}/>
+    {spec.overview && <Overview spec={spec} t={t}/>}
+    {!spec.overview && <><Verdict spec={spec} t={t}/><Asks spec={spec} t={t}/></>}
     {spec.sections.map((sec, si) => {
       const rows = planLayout(layoutInputs(sec.blocks, registry), sec.layout);
       const id = sec.id ?? `s${si + 1}`;
-      return <section key={si} className="sec" id={id} aria-labelledby={`${id}-h`}>
+      const after = spec.overview && si === 0 ? <><Verdict spec={spec} t={t}/><Asks spec={spec} t={t}/></> : null;
+      return <Fragment key={si}><section className="sec" id={id} aria-labelledby={`${id}-h`}>
         <header className={`sh${sec.blocks.every(b => b.type === 'sources') ? ' sr-only' : ''}`}>{sec.takeaway && <p className="kicker">{sec.title}</p>}<h2 id={`${id}-h`}>{sec.takeaway ?? sec.title}</h2></header>
         {rows.map((row, ri) => <div key={ri} className={`row r-${row.kind}`}>
           {row.cells.map(c => <div key={c.index} className="cell" style={row.cells.length > 1 ? { ['--span' as string]: c.span } : undefined}>
             <BlockView block={sec.blocks[c.index]} ctx={ctx(`${id}-b${c.index}`)} prepared={prepared}/>
           </div>)}
         </div>)}
-      </section>;
+      </section>{after}</Fragment>;
     })}
     <footer className="rp-foot">Botling · Report v2{spec.kind ? ` · ${spec.kind}` : ''}</footer>
   </main></div>;
@@ -101,6 +112,12 @@ export function SlideDeck({ spec, slides, prepared }: { spec: ReportSpec; slides
           <p className="eyebrow">{eyebrow(spec, t)}</p>
           <h1>{spec.title}</h1>
           {spec.subtitle && <p className="subtitle">{spec.subtitle}</p>}
+          {spec.overview ? <Overview spec={spec} t={t}/> : <div className={`verdict t-${tone}`}><p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p><p className="vline">{spec.tldr}</p><FirstPage spec={spec} t={t}/></div>}
+        </SlideFrame>;
+      }
+      if (s.master === 'verdict') {
+        const tone = spec.status ? levelTone[spec.status.level] : 'info';
+        return <SlideFrame key={i} n={n} total={total} spec={spec} master="cover">
           <div className={`verdict t-${tone}`}><p className="vlabel"><span>{t.verdict}</span>{spec.status && <span className={`pill t-${tone}`}>{t.level[spec.status.level]}</span>}{spec.status?.reason && <span className="vreason">{spec.status.reason}</span>}</p><p className="vline">{spec.tldr}</p><FirstPage spec={spec} t={t}/></div>
         </SlideFrame>;
       }

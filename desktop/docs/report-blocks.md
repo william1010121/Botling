@@ -9,19 +9,19 @@ A report is JSON: header + `tldr` + `sections[] → blocks[]` + `asks`. You pick
 Readers skim: most read only the verdict card and the section headlines. Write so that reading only those gives the answer, its meaning and what to decide; put the evidence below for whoever needs it.
 
 1. **Answer first (BLUF).** The first `tldr` sentence is the conclusion and answers the user's question ("You asked X; the answer is Y"); never background, never "this report…". If it cannot, do not publish the page: answer in chat. `tldr` ≤ 3 sentences.
-2. **The first page holds five things.** The verdict card shows (1) `tldr`: one-sentence status or result; (2) `impact`: what it means for the goal, in the reader's terms (users, time, money, the research question); (3) `asks` (what, who, by): the decision or help needed, shown right under the card — or `"asks": []` for "No action needed"; (4) `risk` (text, plan): the biggest risk and what is done about it; (5) `next`: ≤ 3 next steps, even tentative ones. Reading only the card, the reader can say the status, the impact and what they must decide.
+2. **The first page holds five things.** The verdict card shows (1) `tldr`: one-sentence status or result; (2) `impact`: what it means for the goal, in the reader's terms (users, time, money, the research question); (3) `asks` (what, who, by): the decision or help needed, shown right under the card — or `"asks": []` for "No action needed"; (4) `risk` (text, plan): the biggest risk and what is done about it; (5) `next`: ≤ 3 next steps, even tentative ones. Reading only the card, the reader can say the status, the impact and what they must decide. In an `experiment` report the card comes third, after the `overview` and the per-subject chart (see that kind).
 3. **Headline = takeaway.** Every section has `takeaway`: its conclusion as one sentence (≈ 22 CJK chars / 15 words in `status`/`plan`/`decision`; up to 48 units in `investigation`/`explainer`/`results`/`comparison`/`experiment`). Write "登入延後 1 週，原因是 API 限流", never a topic such as "進度說明" or "結果". `title` is the short topic label. Reading only the takeaways in order gives the whole argument.
 4. **Layer the detail.** Layer 1, for everyone: the verdict card. Layer 2, for the lead or PM: the sections — impact, options, evidence. Layer 3, for engineers: setup, per-run tables, reproducibility — the last section, `sources` or an appendix file. One idea per section; ≤ 2 charts per section, ≤ 8 in the report; visuals for data, prose for reasoning, bullets only for lists (≤ 6, ≤ 2 levels).
 5. **Plain language before jargon: define every term once (先講人話，術語首次定義).** Say the plain question, setup and everyday answer before the numbers. Each acronym, model or dataset name, and metric symbol (`κ`, `Δκ`, SESS, LOSO, whitening / 白化) gets one plain sentence or everyday analogy the first time it appears: a `glossary` block in the first section, or the plain words first with the term in brackets ("留一受試者驗證（LOSO）"). Use the same word for the same thing everywhere; prefer an everyday word to an acronym. Never stack unexplained acronyms in `title`, `tldr` or `takeaway`. Plain language is writing for your reader, not lowering the level.
 6. **Every number has a reference point and a meaning.** Give the comparison (plan, previous version, last week, chance level, the paper's score) and the unit, then say what the gap means in the reader's units: not "準確率 92%" but "92%（現行規則 85%）：每 100 張多抓對 7 張". Prefer "done / not done + expected date" to "80% done". Show what changed since the last report rather than repeating its history.
 7. **One question per chart + one-sentence reading guide (一張圖只回答一個問題＋一句看圖指南).** Every chart has an action title stating its conclusion and direct labels; never repeat a KPI as a chart. Never cram two scales, baselines or questions into one figure: split them. Give each non-trivial chart a one-sentence reading guide (`note` or a short `prose`) saying what taller / shorter or left / right of `0` means, and what n and the error bars are. Axes start at 0 for amounts; no decoration that carries no data.
-8. **Never hand-code data-chart SVGs (禁止手刻複雜數據圖 SVG).** Use native `bar` (signed / diverging values around `0`, optional `referenceLine` for chance or target), `table`, `kpi`, `trend`, `beforeafter` and `flowchart` for numbers and comparisons. Hand-written multi-panel `<svg>` charts with guessed coordinates make CJK labels collide (> 10 `<text>` tags triggers a warning).
+8. **Data charts: native blocks or matplotlib, never hand-written SVG (禁止手刻數據圖 SVG).** Simple comparisons use native `bar` (signed values, `referenceLine` for chance or target), `table`, `kpi`, `trend`, `beforeafter`. Everything else — per-subject scores, small multiples, scatter, distributions, error bars, curves — is a `figure` block: your own matplotlib `.py` script that reads the data from the result files (never numbers typed into the script); the renderer runs it and embeds the chart (see "Figures (matplotlib)"). Hand-written `<svg>` charts with guessed coordinates make CJK labels collide (> 10 `<text>` tags in an image triggers a warning).
 9. **Use ASD-STE100-informed plain language.** Active voice, direct verbs, "who does what", consistent terms. Prefer short sentences, but keep a cause and its effect in one sentence: "X 因為 Y，所以 Z" stays whole; never cut a causal chain into fragments or drop the "because" to save length, and never cut background the reader needs to follow the argument. Keep useful technical names. These are writing guidelines, not renderer checks or formal ASD-STE100 compliance for Chinese.
 10. **Explain uncertainty.** Separate verified facts from pending inferences. Give the reason for each inference and state what remains unchecked. Do not assign mechanical confidence percentages. Use numerical probabilities only when supported by a stated method and evidence.
 11. **Explain causes visually.** For multistep causes, prefer a flowchart plus a table of evidence. Show how each step leads to the next. Distinguish observed links from pending inferences; do not invent links to complete the diagram.
 12. **Be honest early.** Bad news and the biggest risk go on the first page, never the last line. Report outcomes, not activity ("讓客服一鍵查訂單，處理時間 6 → 4 分鐘", not "開了 5 場會、改了 30 個 PR"). A yellow or red `status` needs a road to green (who does what, by when), whether the team can recover alone, and an ask. Describe problems by activity and fix, never by naming a person (blameless). Do not paint red as amber.
 13. **Write for the reader.** Omit routine defensive boilerplate and internal coordination jargon. Keep research-only handback details, test commands, and preview-tool details in the internal handback. Evidence is short: a short source and a number per claim, ≤ 4 `sources`, no long paths, hashes or logs in prose. State material uncertainty and failed checks that affect the decision, with their practical effect. Never conceal defects or claim unperformed validation.
-14. **Experiments (ML / deep learning): see kind `experiment`.** State the question, a falsifiable hypothesis and the success criterion before the results. Compare with an equally tuned baseline on the same data split, preprocessing, seeds and training length; change one thing at a time. Run ≥ 3 seeds and give mean ± std, saying what ± is (std or SE, across seeds or subjects, n). A gap inside the variance, or an interval that crosses 0, is "not significant", never "an improvement". Report error analysis, ablations and negative results ("what we ruled out, what it saved, what next"); do not generalise beyond the data you tested.
+14. **Experiments (ML / deep learning): see kind `experiment`.** The order is fixed: `overview` (question, method vs baseline, data and settings, what counts as complete training) → the complete-results chart (one panel per compared condition, units on the x axis, one colour per model as dots or grouped bars, never lines, each model's mean in the panel title, 未跑 for panels not run, fully trained runs only) → the verdict, impact and decision → details (under-trained runs go here as a contrast). State the question, a falsifiable hypothesis and the success criterion before the results. Compare with an equally tuned baseline on the same data split, preprocessing, seeds and training length; change one thing at a time. Run ≥ 3 seeds and give mean ± std, saying what ± is (std or SE, across seeds or subjects, n). A gap inside the variance, or an interval that crosses 0, is "not significant", never "an improvement". Report error analysis, ablations and negative results ("what we ruled out, what it saved, what next"); do not generalise beyond the data you tested.
 15. **Forbidden:** topic-only headings, narrating your process chronologically, the conclusion at the end, activity lists instead of outcomes, evidence dumps, decorative charts, numbers with no baseline, unexplained acronyms, best-seed-only results, one-sided options, vague hedging, mixing report kinds.
 
 ## Checked by the renderer (warnings)
@@ -33,6 +33,7 @@ These come back in `warnings` with a path; fix them before delivering:
 - a `takeaway` that is a topic ("結果", "進度說明", or the same as `title`), missing, or over the length budget;
 - a number in `tldr`, `impact` or a `takeaway` with nothing to compare it to (no baseline, change, target, chance level or sign);
 - an acronym, coined name (two or more capitals: LOSO, SESS, OpenBMI) or Greek symbol (κ, Δκ) used without a definition — in a `glossary` block, or written "plain words（TERM）" / "TERM（plain words）" where it first appears;
+- kind `experiment` without `overview` (its `complete` field is required), or whose first chart is not a `figure` with `perUnit: true`;
 - kind `experiment` without an `experiment` block; an experiment card with < 3 runs, no `baselineTuned: true`, no `result.ci`, or verdict "supported" while the interval crosses 0; a `tldr` that claims an improvement while a card is inconclusive; experiment KPIs without delta or target;
 - the budgets below (bullets, prose length, table rows, charts per section, chart titles, slides per section) and hand-coded SVG charts.
 
@@ -51,9 +52,18 @@ These come back in `warnings` with a path; fix them before delivering:
 - [ ] A reader outside the field can repeat the main point in their own words; every term is defined once.
 - [ ] Every number has a baseline and a unit; key metrics are translated into consequences ("每 100 件…").
 - [ ] ML results name the number of seeds and what the error bar is; gaps inside the variance are not called improvements.
+- [ ] An experiment report opens with what is being done and what counts as complete training, then the complete results per condition (units on the x axis, dots or bars, no lines; panels not run say 未跑).
 - [ ] Each chart makes one point, its title states it, nothing is decorative.
 - [ ] Bad news and the biggest risk are on the first page; yellow / red items have a road to green and an ask.
 - [ ] Negative results say what was ruled out and what comes next; every number traces to a run or source.
+
+## Figures (matplotlib)
+
+A `figure` block names a `.py` script (absolute, or relative to the spec file) and optional `args`. When the page is rendered the script runs as `python3 -I` (or `$BOTLING_PYTHON`) with the spec's folder as working directory; your user site-packages (`pip3 install --user matplotlib`) is available, the script's own folder is not on `sys.path`, so keep it self-contained.
+Draw with matplotlib (`import matplotlib.pyplot as plt`, no `plt.show()`); the current figure is saved for you, or save it yourself to `os.environ["BOTLING_FIGURE_OUT"]`. The theme is already applied: CJK fonts, transparent background, text and grid colours; use `C0`…`C5` (blue, orange, green, purple, red, grey) for colours that follow light and dark mode — other colours stay fixed.
+Read the data from files (CSV, JSON, logs) passed in `args`; never type result numbers into the script. Draw every condition that should exist; one without results is an empty panel labelled 未跑, and list it in `missing`.
+`format`: `svg` (default; inline, sharp, recoloured for dark mode) or `png` (very many points; drawn once per theme). `timeout`: seconds (default 60). A missing script, a Python error, no figure or a timeout comes back in `errors` with the last lines of stderr; fix the script and render again.
+Template for the complete-results chart: `per_subject.py` in the same folder as this guide. Write a long CSV (columns row, col, unit, model, variant, value) from the raw result files and pass it; extra `ROW/COL` arguments force panels with no data (drawn 未跑). It draws one panel per row × col, units on the x axis, one colour per model, hollow = first variant (baseline) and filled = second (method), each model's means in the panel title. Usually it works as is; copy and adapt it only when it does not fit.
 
 ## Generate
 
@@ -133,6 +143,12 @@ The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "war
 - `status?`: { level, reason? }
   - `level`: "on_track" | "at_risk" | "off_track" | "done" | "info"
   - `reason?`: string ≤60 — Required for at_risk / off_track: cause and fix in one line.
+- `overview?`: { question, compare, setup, complete, why? } — Experiment reports: "what we are doing", for a reader who is not in the loop. Shown first, before the first chart and the verdict.
+  - `question`: string ≤200 — The research question in plain words.
+  - `compare`: string ≤200 — What is compared: the method vs the baseline, and what is held equal.
+  - `setup`: string ≤280 — Data and settings: datasets (size, chance level), the compared conditions (e.g. cross-subject / cross-session), runs.
+  - `complete`: string ≤200 — What counts as complete training (the formal results) and what does not, e.g. "350 epochs = fully trained; 30-epoch runs are under-trained".
+  - `why?`: string ≤200 — Why it matters, in one or two sentences.
 - `tldr`: string ≤240 — The answer first: ≤ 3 sentences. Shown in the verdict card and on the cover slide.
 - `impact?`: string ≤160 — What the result means for the goal, in the reader's terms (users, time, money, the research question): "so what". Shown under the verdict.
 - `risk?`: { text, plan? } — The biggest risk and its response; shown on the first page, never only at the end.
@@ -144,7 +160,7 @@ The CLI prints one JSON line: `{"ok", "errors": [{path, message, example}], "war
   - `title`: string ≤24 — Short topic label, shown small above the takeaway.
   - `takeaway?`: string ≤80 — The section's conclusion as one sentence; becomes the slide headline.
   - `layout?`: "auto" | "stack" | "split" | "grid"
-  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items } | { type, title?, note?, span?, question, hypothesis, success, baseline, baselineTuned?, runs, spread, result?, verdict } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight?, referenceLine? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
+  - `blocks`: { type, title?, note?, span?, text, slide? } | { type, title?, note?, span?, tone?, text } | { type, title?, note?, span?, items } | { type, title?, note?, span?, question, hypothesis, success, baseline, baselineTuned?, runs, spread, result?, verdict } | { type, title?, note?, span?, items, stack? } | { type, title?, note?, span?, series, rows, stacked?, horizontal?, sort?, unit?, highlight?, referenceLine? } | { type, title?, note?, span?, x?, series, area?, zero?, unit?, target?, marks? } | { type, title?, note?, span?, parts, unit?, center? } | { type, title?, note?, span?, labels?, rows } | { type, title?, note?, span?, rows, cols, cells, scale?, unit? } | { type, title?, note?, span?, x, y, quadrants?, best?, points } | { type, title?, note?, span?, items, today? } | { type, title?, note?, span?, columns } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, dir?, nodes, edges } | { type, title?, note?, span?, actors, steps } | { type, title?, note?, span?, columns, rows, highlight? } | { type, title?, note?, span?, script, args?, format?, timeout?, alt, caption?, perUnit?, missing? } | { type, title?, note?, span?, criteria, options, verdict? } | { type, title?, note?, span?, pros, cons, verdict? } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, items } | { type, title?, note?, span?, text, source? } | { type, title?, note?, span?, src, alt, caption?, annotations? } | { type, title?, note?, span?, items }[] (≥1 ≤8)
 - `asks?`: { what, who?, by? }[] (≤3) — What the reader must do (owner, deadline). [] renders "No action needed".
   - `what`: string ≤60
   - `who?`: string ≤20
@@ -234,16 +250,16 @@ Explainer: what it is and how it works, for a reader outside the field.
 
 ### experiment
 
-ML / deep-learning experiment: did the change work, is the gap real, and what next. Scientific checks first, then the gain.
+ML / deep-learning experiment: what we are doing, every individual result, then whether the change worked, is the gap real, and what next.
 
-1. tldr = the answer to the question in plain words + the key number against its baseline + whether the gap is real (n runs; "不顯著" when inside the noise) + the recommendation; impact = what it means for the research question or product decision; risk = the main doubt (underfitting, leakage, small n) and how it will be checked; next
-2. first section: glossary (every acronym, model, dataset and metric in plain words) + experiment card per main hypothesis (question, falsifiable hypothesis, success criterion set before running, equally tuned baseline, runs, what ± means, result with the 95% interval of the difference, verdict)
-3. sanity checks before any gain: chance level, the paper's score for the same model and protocol, convergence (training accuracy / epochs vs the paper's setting), a fair cross-dataset metric; when far below the paper, say "possible underfitting" before discussing gains
-4. main result: bar with referenceLine (chance or baseline) or table of mean ± std, one question per chart, with a reading guide; per-group (per-subject) breakdown when groups differ
-5. error analysis: failure modes with their share (≈ 100 wrong cases, or per subject / condition); a mode's share bounds what fixing it can gain
-6. ablation: remove one component at a time, Δ = full − without it; keep negative ablations (Δ ≈ 0 → the component can go); hyperparameter search is not an ablation
-7. what we learned and ruled out (negative results: what was ruled out, what it saved, what next) + limits (only the data tested); asks
-8. last section, reproducibility: commit, config, seeds, data version and split, hardware, run time, run links → sources ≤ 4 and an appendix file
+1. `overview` (shown first, before everything else) — a reader not in the loop must understand it: question = the research question in plain words; compare = which method against which baseline and what is held equal; setup = the data (units such as subjects, classes, chance level) and the compared conditions; complete = what counts as complete training (the formal results) and which runs do not count; why = why it matters. Plain words, terms explained in brackets
+2. first section = the complete results, before any average or conclusion: find the compared conditions in the experiment design (e.g. dataset × evaluation setting) and draw one panel per condition in a `figure` with `perUnit: true`; inside each panel the units (subjects, samples, tasks…) are the x axis and each model has one colour, as dots or grouped bars — never lines, because units are categories; each panel title gives every model's mean; only fully trained runs; a panel without such results says 未跑 and is listed in `missing`; caption = how to read it
+3. the verdict card follows automatically: tldr = the answer in plain words + the key number against its baseline + whether the gap is real (n runs; "不顯著" when inside the noise) + the decision; impact = what it means for the research question; risk = the main doubt (underfitting, leakage, small n) and how it will be checked; next; asks
+4. glossary (every acronym, model, dataset and metric in plain words) + an experiment card per main hypothesis (question, falsifiable hypothesis, success criterion, equally tuned baseline, runs, what ± means, 95% interval of the difference, verdict)
+5. sanity checks before any gain: chance level, the paper's score for the same model and protocol, convergence (training accuracy / epochs vs the paper's setting), a fair cross-dataset metric; when far below the paper, say "possible underfitting" before discussing gains
+6. summary of the gaps: table or figure of mean ± std / 95% intervals per condition, one question per chart; under-trained or exploratory runs (e.g. a shorter training) go here as a labelled contrast, never in the first chart
+7. error analysis (failure modes with their share), ablation (one component at a time; keep negative ablations), what we ruled out and what is missing (cells not run, runs still underfitting)
+8. last section, reproducibility: data files, the figure and extraction scripts, how numbers are computed, commit / config / seeds → sources ≤ 4
 
 ## Blocks
 
@@ -268,6 +284,7 @@ Every block takes optional `title` (action title), `note` (faint caption: unit, 
 | `flow` | Compatibility alias for flowchart. Existing reports remain supported; use flowchart for new reports. |
 | `sequence` | Sequence diagram: 2–5 actors as columns, numbered messages between them (call, dashed reply, or a note on one actor). |
 | `table` | A compact table; cells can carry a status or tone dot. Numeric columns align right. |
+| `figure` | A data chart drawn by your own matplotlib script (.py), run when the page is rendered and embedded in the page; follows the light and dark themes. |
 | `options` | Options compared on the same criteria (2–4 options incl. "do nothing", 2–7 criteria), each cell rated good / warn / bad, with the recommended option marked. |
 | `proscons` | Two lists, pros and cons of one option, with an optional one-line verdict. |
 | `checklist` | A list of items with a status each, plus a done-count and a status bar. |
@@ -628,6 +645,27 @@ A compact table; cells can carry a status or tone dot. Numeric columns align rig
 
 ```json
 {"type":"table","title":"四條工作線，一條受阻","columns":["工作線","狀態","下一步"],"rows":[["任務面板 .11",{"text":"已安裝","status":"done"},"收集回饋"],["Rust 遷移",{"text":"進行中","status":"active"},"補完 IPC"],["手機版對齊",{"text":"受阻","status":"blocked"},"修 bot 清單"],["報告改版",{"text":"進行中","status":"active"},"定稿區塊"]]}
+```
+
+### `figure`
+
+A data chart drawn by your own matplotlib script (.py), run when the page is rendered and embedded in the page; follows the light and dark themes.
+
+**When:** Every data chart that the native blocks cannot draw well: per-subject scores, small multiples, scatter, distributions, error bars, curves. Prefer it to any hand-written SVG. The script draws with matplotlib (the current figure is saved; theme colours are C0 blue, C1 orange, C2 green, C3 purple, C4 red, C5 grey) and reads its data from files — never type numbers into the script. In an experiment report the first chart is a figure with perUnit: true: one panel per compared condition, units on the x axis, one colour per model as dots or grouped bars (no lines), each model's mean in the panel title, 未跑 for panels not run.
+
+- `title?`: string ≤80 — Action title: the point of this block, not its topic ("啟動時間少了 42%", not "啟動時間").
+- `note?`: string ≤60 — Faint caption on the right of the title: unit, scope or source.
+- `script`: string ≤400 — Path to the .py file, absolute or relative to the spec file.
+- `args?`: string ≤400[] (≤20) — Command-line arguments for the script (data files, options); it runs with the spec's folder as working directory.
+- `format?`: "svg" | "png" — svg (default: sharp, recoloured for dark mode) or png (very many points; drawn twice, once per theme).
+- `timeout?`: integer ≥5 ≤300 — Seconds before the script is stopped and the block reports an error.
+- `alt`: string ≤200 — What the chart shows, for screen readers and as the fallback text.
+- `caption?`: string ≤200 — One-sentence reading guide: what each mark is and what higher / further right means.
+- `perUnit?`: boolean — true = the complete results: one panel per compared condition, every unit (subject, sample, task…) on the x axis, one colour per model; the first chart of an experiment report.
+- `missing?`: string ≤60[] (≤12) — Conditions with no results, shown as "未跑" under the chart (also draw an empty, labelled panel).
+
+```json
+{"type":"figure","title":"每位受試者在每個條件下的準確率","script":"figures/per_subject.py","args":["figures/per_subject.csv"],"alt":"2×2 格：資料集 A / B × 條件 1 / 2；橫軸是受試者，每個模型一種顏色，空心是基準、實心是方法","caption":"每一欄是一位受試者；同色的空心點是基準、實心點是方法；格子標題是各模型的平均（基準 → 方法）。","perUnit":true,"missing":["資料集 B · 條件 2"]}
 ```
 
 ### `options`

@@ -61,9 +61,10 @@ export function runCli(args: string[], io: CliIO = defaultIO): number {
     const [input, output, ...extra] = args.filter(a => !a.startsWith('--'));
     if ([...flags].some(f => !['--force', '--slides', '--check'].includes(f)) || extra.length || !input || (!flags.has('--check') && !output)) throw Error(USAGE);
     const data = JSON.parse(readFileSync(resolve(input), 'utf8'));
-    inlineImages(data, realpathSync(dirname(resolve(input))));
+    const baseDir = realpathSync(dirname(resolve(input)));
+    inlineImages(data, baseDir);
     const mode = flags.has('--slides') ? 'slide' : 'doc';
-    const result = renderAny(data, { mode });
+    const result = renderAny(data, { mode, baseDir });
     const report = { ok: result.ok, errors: result.errors, warnings: result.warnings };
     if (flags.has('--check') || !result.html) { print(report); return result.ok ? 0 : 1; }
     // Everything is checked before anything is created; only a missing artifacts folder itself is made.

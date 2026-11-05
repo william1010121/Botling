@@ -19,6 +19,13 @@ function specShape<B extends z.ZodType>(block: B) {
       level: levelEnum,
       reason: line(60).optional().describe('Required for at_risk / off_track: cause and fix in one line.'),
     }).optional(),
+    overview: z.strictObject({
+      question: line(200).describe('The research question in plain words.'),
+      compare: line(200).describe('What is compared: the method vs the baseline, and what is held equal.'),
+      setup: line(280).describe('Data and settings: datasets (size, chance level), the compared conditions (e.g. cross-subject / cross-session), runs.'),
+      complete: line(200).describe('What counts as complete training (the formal results) and what does not, e.g. "350 epochs = fully trained; 30-epoch runs are under-trained".'),
+      why: line(200).optional().describe('Why it matters, in one or two sentences.'),
+    }).optional().describe('Experiment reports: "what we are doing", for a reader who is not in the loop. Shown first, before the first chart and the verdict.'),
     tldr: line(240).describe('The answer first: ≤ 3 sentences. Shown in the verdict card and on the cover slide.'),
     impact: line(160).optional().describe('What the result means for the goal, in the reader\'s terms (users, time, money, the research question): "so what". Shown under the verdict.'),
     risk: z.strictObject({

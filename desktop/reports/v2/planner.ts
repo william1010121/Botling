@@ -43,7 +43,7 @@ export function planLayout(items: LayoutInput[], layout: 'auto' | 'stack' | 'spl
   return rows;
 }
 
-export type Master = 'cover' | 'kpi-grid' | 'assertion-evidence' | 'split' | 'table' | 'quote' | 'statement' | 'closing';
+export type Master = 'cover' | 'verdict' | 'kpi-grid' | 'assertion-evidence' | 'split' | 'table' | 'quote' | 'statement' | 'closing';
 const TEXT = new Set(['prose', 'callout', 'quote']);
 export type SlidePlan = { master: Master; headline: string; kicker?: string; section?: number; main: AnyBlock[]; side: AnyBlock[]; continued?: boolean };
 
@@ -91,6 +91,11 @@ export function planSlides(spec: ReportSpec, registry: Map<string, AnyBlockDef>,
     else if (s.main.every(b => TEXT.has(b.type))) s.master = 'statement';
     else if (s.main.every(b => b.type === 'kpi')) s.master = 'kpi-grid';
     else if (s.main.some(b => b.type === 'table' || b.type === 'options')) s.master = 'table';
+  }
+  // Experiment reports open with the overview (on the cover) and the first chart; the verdict follows them.
+  if (spec.overview) {
+    const last = slides.reduce((at, sl, i) => (sl.section === 0 ? i : at), 0);
+    slides.splice(last + 1, 0, { master: 'verdict', headline: '', main: [], side: [] });
   }
   if (spec.asks || spec.next || sourcesBlock) {
     slides.push({ master: 'closing', headline: '', main: sourcesBlock ? [sourcesBlock] : [], side: [] });

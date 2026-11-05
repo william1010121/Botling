@@ -5,6 +5,8 @@ import type { Labels, Lang } from './i18n';
 /** Where a block prefers to sit when the planner builds rows (never coordinates). */
 export type Fit = 'full' | 'visual' | 'half' | 'text' | 'kpi';
 export type Mode = 'doc' | 'slide';
+/** Where the spec lives (relative paths resolve against it) and a stable id for the block. */
+export type PrepareEnv = { baseDir: string; id: string };
 
 export interface Ctx {
   lang: Lang;
@@ -34,8 +36,8 @@ export interface BlockDef<S extends z.ZodType = z.ZodType> {
   fit: Fit | ((block: z.output<S>) => Fit);
   /** Charts and diagrams count against the visual budget and need a title. */
   visual: boolean;
-  /** Work done once before the React render (graph layout). */
-  prepare?: (block: z.output<S>, mode: Mode) => unknown;
+  /** Work done once before the React render (graph layout, figure scripts). Throwing turns the block into an error. */
+  prepare?: (block: z.output<S>, mode: Mode, env: PrepareEnv) => unknown;
   Doc: (props: { block: z.output<S>; ctx: Ctx }) => ReactNode;
   Slide?: (props: { block: z.output<S>; ctx: Ctx }) => ReactNode;
   slide: {
@@ -60,7 +62,7 @@ export function defineBlock<T extends string, F extends z.ZodRawShape>(def: {
   examples: Array<Record<string, unknown>>;
   fit: Fit | ((block: any) => Fit);
   visual: boolean;
-  prepare?: (block: any, mode: Mode) => unknown;
+  prepare?: (block: any, mode: Mode, env: PrepareEnv) => unknown;
   Doc: (props: { block: any; ctx: Ctx }) => ReactNode;
   Slide?: (props: { block: any; ctx: Ctx }) => ReactNode;
   slide?: { weight?: (block: any) => number; split?: (block: any) => any[]; side?: boolean };

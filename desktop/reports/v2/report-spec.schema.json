@@ -70,6 +70,49 @@
       ],
       "additionalProperties": false
     },
+    "overview": {
+      "description": "Experiment reports: \"what we are doing\", for a reader who is not in the loop. Shown first, before the first chart and the verdict.",
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "The research question in plain words."
+        },
+        "compare": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "What is compared: the method vs the baseline, and what is held equal."
+        },
+        "setup": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280,
+          "description": "Data and settings: datasets (size, chance level), the compared conditions (e.g. cross-subject / cross-session), runs."
+        },
+        "complete": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "What counts as complete training (the formal results) and what does not, e.g. \"350 epochs = fully trained; 30-epoch runs are under-trained\"."
+        },
+        "why": {
+          "description": "Why it matters, in one or two sentences.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "question",
+        "compare",
+        "setup",
+        "complete"
+      ],
+      "additionalProperties": false
+    },
     "tldr": {
       "type": "string",
       "minLength": 1,
@@ -1950,6 +1993,100 @@
                   ],
                   "additionalProperties": false,
                   "description": "A compact table; cells can carry a status or tone dot. Numeric columns align right."
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "figure"
+                    },
+                    "title": {
+                      "description": "Action title: the point of this block, not its topic (\"啟動時間少了 42%\", not \"啟動時間\").",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "note": {
+                      "description": "Faint caption on the right of the title: unit, scope or source.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 60
+                    },
+                    "span": {
+                      "description": "Layout hint only. full = take the whole row.",
+                      "type": "string",
+                      "enum": [
+                        "auto",
+                        "full"
+                      ]
+                    },
+                    "script": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 400,
+                      "pattern": "\\.py$",
+                      "description": "Path to the .py file, absolute or relative to the spec file."
+                    },
+                    "args": {
+                      "description": "Command-line arguments for the script (data files, options); it runs with the spec's folder as working directory.",
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 400
+                      }
+                    },
+                    "format": {
+                      "default": "svg",
+                      "description": "svg (default: sharp, recoloured for dark mode) or png (very many points; drawn twice, once per theme).",
+                      "type": "string",
+                      "enum": [
+                        "svg",
+                        "png"
+                      ]
+                    },
+                    "timeout": {
+                      "default": 60,
+                      "description": "Seconds before the script is stopped and the block reports an error.",
+                      "type": "integer",
+                      "minimum": 5,
+                      "maximum": 300
+                    },
+                    "alt": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200,
+                      "description": "What the chart shows, for screen readers and as the fallback text."
+                    },
+                    "caption": {
+                      "description": "One-sentence reading guide: what each mark is and what higher / further right means.",
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "perUnit": {
+                      "description": "true = the complete results: one panel per compared condition, every unit (subject, sample, task…) on the x axis, one colour per model; the first chart of an experiment report.",
+                      "type": "boolean"
+                    },
+                    "missing": {
+                      "description": "Conditions with no results, shown as \"未跑\" under the chart (also draw an empty, labelled panel).",
+                      "maxItems": 12,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 60
+                      }
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "script",
+                    "alt"
+                  ],
+                  "additionalProperties": false,
+                  "description": "A data chart drawn by your own matplotlib script (.py), run when the page is rendered and embedded in the page; follows the light and dark themes."
                 },
                 {
                   "type": "object",

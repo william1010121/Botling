@@ -159,6 +159,7 @@ describe("botling.report readability, diverging bars, kind-aware budgets, and SV
     expect(shipped).toBe(api.promptDoc());
     expect(shipped).toContain("Plain language before jargon");
     expect(shipped).toContain("One question per chart + one-sentence reading guide");
-    expect(shipped).toContain("Never hand-code data-chart SVGs");
+    expect(shipped).toContain("never hand-written SVG");
+    expect(shipped).toContain("## Figures (matplotlib)");
   });
 });

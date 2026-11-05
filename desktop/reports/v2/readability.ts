@@ -34,6 +34,8 @@ const KNOWN = new Set(('AI API APIs UI UX URL URLs CPU GPU GPUs RAM SSD HDD PR P
 /** Acronyms and coined names (two or more capitals: LOSO, SESS, MAtt, OpenBMI) and Greek metric symbols (κ, Δκ). */
 const TERM = /(?<![A-Za-z0-9_])(?:[A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z]{2,})(?![A-Za-z0-9_])|[Α-Ωα-ω]+[A-Za-z0-9]*/g;
 const LONE_SYMBOL = new Set(['Δ', 'Σ']);
+/** Blocks that show data as a chart or a grid of numbers. */
+const CHARTS = new Set(['figure', 'bar', 'trend', 'donut', 'beforeafter', 'matrix', 'quadrant', 'kpi', 'table', 'image', 'progress']);
 
 type Piece = { path: string; text: string };
 
@@ -41,11 +43,13 @@ type Piece = { path: string; text: string };
 function readingOrder(spec: ReportSpec): Piece[] {
   const out: Piece[] = [];
   const add = (path: string, text: unknown) => { if (typeof text === 'string' && text.trim()) out.push({ path, text: text.replace(/`[^`]*`/g, ' ').replace(/https?:\/\/\S+/g, ' ') }); };
-  add('title', spec.title); add('subtitle', spec.subtitle); add('tldr', spec.tldr); add('impact', spec.impact);
+  add('title', spec.title); add('subtitle', spec.subtitle);
+  for (const k of ['question', 'compare', 'setup', 'complete', 'why'] as const) add(`overview.${k}`, spec.overview?.[k]);
+  add('tldr', spec.tldr); add('impact', spec.impact);
   add('risk.text', spec.risk?.text); add('risk.plan', spec.risk?.plan);
   spec.next?.forEach((n, i) => add(`next[${i}]`, n));
   spec.asks?.forEach((a, i) => add(`asks[${i}].what`, a.what));
-  const SKIP = new Set(['type', 'src', 'ref', 'id', 'from', 'to', 'span', 'spark', 'stack', 'tone', 'status', 'deltaDir', 'dir', 'layout', 'verdict', 'scale', 'sort', 'horizontal', 'stacked', 'highlight', 'best', 'recommended']);
+  const SKIP = new Set(['type', 'src', 'script', 'args', 'format', 'ref', 'id', 'from', 'to', 'span', 'spark', 'stack', 'tone', 'status', 'deltaDir', 'dir', 'layout', 'verdict', 'scale', 'sort', 'horizontal', 'stacked', 'highlight', 'best', 'recommended']);
   const walk = (path: string, v: unknown) => {
     if (typeof v === 'string') add(path, v);
     else if (Array.isArray(v)) v.forEach((x, i) => walk(`${path}[${i}]`, x));
@@ -113,6 +117,14 @@ export function lintReadability(spec: ReportSpec): Issue[] {
   if (undefinedTerms.length) {
     const list = undefinedTerms.slice(0, 8).map(t => t.text).join(', ') + (undefinedTerms.length > 8 ? ` (+${undefinedTerms.length - 8})` : '');
     warn(undefinedTerms[0].path, `Terms used without a plain definition: ${list}. Define each once: add a glossary block in the first section, or write the plain words first with the term in brackets ("留一受試者驗證（LOSO）").`);
+  }
+
+  // 6a. Experiment reports open with "what we are doing" and then every subject's scores.
+  if (kind === 'experiment') {
+    if (!spec.overview) warn('overview', 'Experiment report without "overview": before any result, say what is being done for a reader not in the loop — the question, what is compared (method vs baseline), the data and settings, and what counts as complete training.');
+    const charts = spec.sections.flatMap((s, si) => s.blocks.map((b, bi) => ({ b: b as Record<string, any>, path: `sections[${si}].blocks[${bi}]` }))).filter(x => CHARTS.has(x.b.type));
+    const first = charts[0];
+    if (!first || first.b.type !== 'figure' || first.b.perUnit !== true) warn(first?.path ?? 'sections[0]', 'The first chart of an experiment report must lay out the complete results (a figure block with perUnit: true): one panel per compared condition you find in the experiment design (e.g. dataset × evaluation setting); inside it the units (subjects, samples, tasks…) on the x axis, one colour per model as dots or grouped bars — never lines, units are categories; each panel title gives every model\'s mean; only fully trained runs; a panel not run says 未跑. Averages and conclusions come after it.');
   }
 
   // 6. Experiment reports: fair baseline, repeated runs, the interval, and no "improvement" inside the noise.

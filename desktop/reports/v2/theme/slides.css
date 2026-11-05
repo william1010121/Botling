@@ -80,3 +80,6 @@ body{background:var(--side)}
   .sl{border:0;border-radius:0}
 }
 .sl .ba{gap:.75em}.sl .bar-row{gap:.2em}.sl .bt{height:.6em}
+.m-cover .overview{margin-top:28px;padding:22px 30px}
+.m-cover .overview dd{font-size:19px}
+.m-cover .overview dt{font-size:15px}

@@ -397,3 +397,13 @@
 .blk-experiment .xg dd{margin:.1em 0 0;line-height:1.55}
 .blk-experiment .xt{margin-left:.5em;font-size:.8em;font-weight:600;color:var(--tone)}
 @container blk (max-width:560px){.blk-experiment .xg{grid-template-columns:1fr}.blk-glossary .gi{grid-template-columns:1fr}}
+/* figure: a matplotlib chart; SVG inline (theme colours via CSS variables), PNG in a light and a dark copy */
+.blk-figure .fg{cursor:zoom-in}
+.blk-figure .fg svg,.blk-figure .fg img,.lb-fig svg{display:block;width:100%;height:auto;max-width:100%}
+.fg-d{display:none}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .fg-l{display:none}:root:not([data-theme="light"]) .fg-d{display:block}}
+:root[data-theme="dark"] .fg-l{display:none}:root[data-theme="dark"] .fg-d{display:block}
+.blk-figure figcaption{margin-top:.6em;font-size:.9em;color:var(--muted);line-height:1.6}
+.blk-figure figcaption p{margin:0}
+.blk-figure .fg-miss{margin-top:.3em!important;color:var(--orange);font-weight:600}
+.blk-figure .fg-none{color:var(--faint)}

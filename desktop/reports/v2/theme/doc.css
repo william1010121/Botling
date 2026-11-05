@@ -20,6 +20,12 @@ code{font:.85em var(--mono);background:var(--chip);border-radius:6px;padding:.1e
 .vlabel{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;font-weight:650;color:var(--tone);letter-spacing:.04em}
 .vreason{font-weight:500;color:var(--muted);letter-spacing:0;font-size:13px}
 .vline{font-size:20px;font-weight:600;line-height:1.45;margin-top:4px!important;text-wrap:pretty}
+.overview{background:var(--bubble);border:1px solid var(--border);border-left:4px solid var(--blue);border-radius:16px;padding:18px 24px 16px;margin-bottom:18px}
+.overview h2{font-size:12.5px;font-weight:650;color:var(--blue);letter-spacing:.04em;margin-bottom:10px!important}
+.overview dl{margin:0;display:flex;flex-direction:column;gap:10px}
+.overview dl>div{display:grid;grid-template-columns:6.5em 1fr;gap:12px;align-items:baseline}
+.overview dt{font-size:12.5px;font-weight:650;color:var(--faint)}
+.overview dd{margin:0;font-size:15.5px;line-height:1.65;color:var(--text)}
 .vmore{display:flex;flex-direction:column;gap:6px;margin:12px 0 0!important;padding-top:12px;border-top:1px solid var(--line)}
 .vmore>div{display:flex;gap:10px;align-items:baseline}
 .vmore dt{flex:none;min-width:4.5em;font-size:12px;font-weight:650;color:var(--faint);letter-spacing:.04em}
@@ -59,6 +65,8 @@ code{font:.85em var(--mono);background:var(--chip);border-radius:6px;padding:.1e
   .rp h1{font-size:24px}
   .verdict{padding:16px 18px}
   .vline{font-size:17px}
+  .overview{padding:16px 18px}
+  .overview dl>div{grid-template-columns:1fr;gap:2px}
   .plan{flex-direction:column;align-items:stretch;gap:6px}
   .pstep-wrap{display:flex}.parr{display:none}
   .sh h2{font-size:17px}
@@ -71,6 +79,6 @@ code{font:.85em var(--mono);background:var(--chip);border-radius:6px;padding:.1e
 @media print{
   :root{color-scheme:light}
   .rp{max-width:none;padding:0}
-  .blk,.verdict,.asks{break-inside:avoid}
+  .blk,.verdict,.asks,.overview{break-inside:avoid}
   .sh{break-after:avoid}
 }
