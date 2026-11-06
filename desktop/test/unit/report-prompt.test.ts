@@ -74,7 +74,8 @@ describe("the report page rule", () => {
         const text = ours.system.split("\n").find((l) => l.includes("ReportSpec v2 JSON, never hand-written HTML")) ?? "";
         expect(text).toContain("--render-report");
         expect(text).toMatch(/settled result that needs visuals or comparison/);
-        expect(text).toContain("still being discussed or explained goes into a .md file");
+        expect(text).toContain("still being discussed or explained stays short in chat");
+        expect(text).not.toContain("a .md file");
         expect(text).toContain("opens with one sentence that answers the user's question");
         expect(text).toMatch(/chat reply (carries|has) only a brief conclusion and the link/);
         expect(text).toMatch(/never paste the report body/);

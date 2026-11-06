@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botPrompts, DEFAULT_HEADS, headsRule, isPlainOK, markdownRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, WAKE_LEAD, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { botPrompts, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, WAKE_LEAD, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -53,13 +53,13 @@ function withDesktopReportGuidance(swift: string, worker: boolean): string {
 }
 
 // Approved desktop-only routing rules (2026-11-04): discuss in chat when asked, restate a doubtful question first,
-// long text still being discussed goes into a .md file, and a worker's follow-ups go to that same worker.
+// long text still being discussed stays short in chat (no .md results), and a worker's follow-ups go to that same worker.
 const MAINTAINER_ROUTE = "application source work must not be redirected to Maintainer as a plugin.";
 const OLD_FOLLOW_UP = "Use app_send_message with task_id and message for that follow-up; do not append a separate feature, rename, or policy fix to it merely to reuse context or keep one writer.";
 function withApprovedRouting(swift: string): string {
   let expected = swift.replace(/(only the conclusion and the next step)\.\n/, `$1; when the user asks to discuss or think something through together, discuss it in chat.\n${RESTATE_RULE}\n`);
   expected = expected.replace(/saved to ([^\n]+?)\/<english-file-name>\.html([\s\S]*?)Pictures and videos shown inline stay file:\/\/ links\./g,
-    (_all, folder: string, between: string) => `saved to ${folder}/<english-file-name>.html${between}Pictures and videos shown inline stay file:// links. ${markdownRule(folder)}`);
+    (_all, folder: string, between: string) => `saved to ${folder}/<english-file-name>.html${between}Pictures and videos shown inline stay file:// links. ${reportOnlyRule(folder)}`);
   // Approved 2026-11-06 (Math): a verbatim request hands over its source, after the coordinator's Maintainer sentence.
   expected = expected.replace(MAINTAINER_ROUTE, `${MAINTAINER_ROUTE} ${VERBATIM_HANDOFF_RULE}`);
   return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
