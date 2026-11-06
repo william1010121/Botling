@@ -37,6 +37,19 @@ it('stop clears live worker dependencies; restart retains identity without claim
  const newChat=harness(h.home,false);await expect(newChat.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'resume'})).rejects.toThrow('Unknown');
 });
 
+it('a worker\'s agy session, named after its opening items, reaches its row (and the registry) once',async()=>{
+ const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
+ expect(h.events.find(e=>e.kind==='subagentStarted')).toMatchObject({id:a.task_id,execution:{threadId:null}});
+ w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+ expect(h.events.filter(e=>e.kind==='subagentExecution')).toEqual([{kind:'subagentExecution',id:a.task_id,execution:{run:1,ownerSessionId:'owner',threadId:'11111111-2222-4333-8444-555555555555',turnId:null}}]);
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ h.m.beginReport(a.task_id,1);await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
+ await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'again'});
+ h.starts[1]!.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});
+ // A resumed run comes back in the conversation the row already has: nothing more to tell.
+ expect(h.events.filter(e=>e.kind==='subagentExecution')).toHaveLength(1);
+});
+
 it('durably queues correlated reports until the matching run is acknowledged',async()=>{
  const h=harness(),a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]!;
  w.h.onItem({kind:'init',sessionId:'11111111-2222-4333-8444-555555555555'});

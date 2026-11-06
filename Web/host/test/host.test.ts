@@ -361,6 +361,8 @@ describe("workspace (plan W1)", () => {
       [api.workspace.pendingApprovals("B1"), "workspace.pendingApprovals", { bot: "B1" }, []],
       [api.workspace.face("B1", "cute"), "workspace.face", { bot: "B1", look: "cute" }, "data:image/svg+xml;base64,AA"],
       [api.workspace.agyUsage("S1"), "workspace.agyUsage", { sessionId: "S1" }, null],
+      [api.workspace.agyWorkers("S1"), "workspace.agyWorkers", { sessionId: "S1" }, []],
+      [api.workspace.agyWorkerUsage("W1"), "workspace.agyWorkerUsage", { workerId: "W1" }, null],
       [api.workspace.agyQuota(), "workspace.agyQuota", {}, { status: "unavailable", source: "antigravity_acp", reason: "no_connection" }],
     ];
     for (const [promise, method, params, result] of cases) {

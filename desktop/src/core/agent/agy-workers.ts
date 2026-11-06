@@ -49,10 +49,15 @@ export class AgyAcpAdapter implements WorkerAdapter {
   /** Per worker: words its last run ended before reading. */
   private carried=new Map<string,string[]>();
   private startTime:(pid:number)=>string|null;
-  /** `processStartTime`: a process's start time (identity); a replay maps its recorded processes. */
-  constructor(private config:AgyConfig,private factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead,options:{processStartTime?(pid:number):string|null}={}){
+  private sink?:(item:CodexItem)=>void;
+  /**
+   * `processStartTime`: a process's start time (identity); a replay maps its recorded processes. `item`: the head's item
+   * sink, told a worker's conversation once ACP names it (after the run's opening items, which had none).
+   */
+  constructor(private config:AgyConfig,private factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead,options:{processStartTime?(pid:number):string|null;item?(item:CodexItem):void}={}){
     if(!config.acpHome)throw new Error('Worker profile required.');
     this.startTime=options.processStartTime??processStartTime;
+    this.sink=options.item;
   }
   /** An Antigravity coordinator's workers run over ACP; agy-worker-router.ts decides which engines may. */
   prepare(request:HandoffRequest){
@@ -104,7 +109,11 @@ export class AgyAcpAdapter implements WorkerAdapter {
       case 'init':
         // A resumed worker must come back in its own conversation.
         if(record.conversationId&&record.conversationId!==item.sessionId)return end({how:'error',finalText:null,error:'Worker changed its saved conversation identity.',detail:'init'});
-        return emit({type:'session',conversationId:item.sessionId});
+        {const named=!record.conversationId;
+        emit({type:'session',conversationId:item.sessionId});
+        // Its row (and so the agent registry) learns the agy session its usage is in: agy-session handle.sessionId.
+        if(named)this.sink?.({kind:'subagentExecution',id:record.id,execution:{run:record.run,ownerSessionId:this.config.sessionId||record.ownerSessionId||null,threadId:item.sessionId,turnId:null}});
+        return;}
       case 'delta':live.sawText=true;return emit({type:'textDelta',text:item.text});
       case 'textBlock':return emit({type:'textBreak'});
       case 'toolUse':return emit({type:'toolUse',id:item.id,tool:item.tool,title:item.title,detail:item.detail,input:item.input});
@@ -191,7 +200,7 @@ export class AgyWorkers {
   private adapter:AgyAcpAdapter;
   /** `core`: the member's (the bot's worker ledger and projections), which lists only this conversation's workers. */
   constructor(config:AgyConfig,emit:(i:CodexItem)=>void,report:(id:string,text:string,run:number)=>void,factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead,core?:WorkerCoreFactory){
-    this.adapter=new AgyAcpAdapter(config,factory);
+    this.adapter=new AgyAcpAdapter(config,factory,{item:emit});
     const acpHome=config.acpHome!;
     // ACP names a new conversation at its start (config.sessionId changes once): the journal always carries the current one.
     const store:WorkerStore={

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { AgentRecord } from "./agent-registry";
 
 /**
  * Antigravity's own record of what each model call used: `<GEMINI_HOME>/antigravity-acp/conversations/<sessionId>.db`,
@@ -271,14 +272,85 @@ export function agyUsage(home: string, sessionId: string): AgyUsage | null {
   return usage;
 }
 
-/** The session's usage from whichever Botling agy profile (`<dataDir>/agy-acp/<profile>`) holds its conversation. */
+const safeId = (id: string) => /^[A-Za-z0-9._-]+$/.test(id) && !id.startsWith(".");
+const list = (dir: string): string[] => { try { return readdirSync(dir); } catch { return []; } };
+
+/**
+ * The agy homes (GEMINI_HOME) Botling keeps: each head profile `<dataDir>/agy-acp/<profile>` and each of its workers'
+ * own `<profile>/workers/<workerId>`.
+ */
+function agyHomes(dataDir: string): string[] {
+  const root = join(dataDir, "agy-acp"), homes: string[] = [];
+  for (const profile of list(root)) {
+    homes.push(join(root, profile));
+    for (const worker of list(join(root, profile, "workers"))) homes.push(join(root, profile, "workers", worker));
+  }
+  return homes;
+}
+
+/** The session's usage from whichever Botling agy home holds its conversation: a head's profile or a worker's folder. */
 export function agyUsageInProfiles(dataDir: string, sessionId: string): AgyUsage | null {
-  const root = join(dataDir, "agy-acp");
-  let profiles: string[];
-  try { profiles = readdirSync(root); } catch { return null; }
-  for (const profile of profiles) {
-    const file = agyConversationFile(join(root, profile), sessionId);
-    if (file && existsSync(file)) return agyUsage(join(root, profile), sessionId);
+  if (!safeId(sessionId)) return null;
+  for (const home of agyHomes(dataDir)) {
+    const file = agyConversationFile(home, sessionId);
+    if (file && existsSync(file)) return agyUsage(home, sessionId);
   }
   return null;
+}
+
+/**
+ * An agy worker's folder (`<dataDir>/agy-acp/<profile>/workers/<workerId>`, `workerId` its registry `nativeId`) and the
+ * conversation it holds (the newest, should a run have started another); null: no such worker or no conversation yet.
+ */
+export function agyWorkerConversation(dataDir: string, workerId: string): { home: string; sessionId: string } | null {
+  if (!safeId(workerId)) return null;
+  const root = join(dataDir, "agy-acp");
+  for (const profile of list(root)) {
+    const home = join(root, profile, "workers", workerId);
+    const dir = join(home, "antigravity-acp", "conversations");
+    let newest: { sessionId: string; at: number } | null = null;
+    for (const name of list(dir)) {
+      if (!name.endsWith(".db")) continue;
+      const sessionId = name.slice(0, -3);
+      if (!safeId(sessionId)) continue;
+      let at = 0;
+      try { at = statSync(join(dir, name)).mtimeMs; } catch { continue; }
+      if (!newest || at > newest.at) newest = { sessionId, at };
+    }
+    if (newest) return { home, sessionId: newest.sessionId };
+  }
+  return null;
+}
+
+/** An agy worker's usage by its registry `nativeId` (its folder's name), whether or not the registry knows its session id. */
+export function agyWorkerUsage(dataDir: string, workerId: string): AgyUsage | null {
+  const found = agyWorkerConversation(dataDir, workerId);
+  return found ? agyUsage(found.home, found.sessionId) : null;
+}
+
+/** An agy worker an agy head started (`workspace.agyWorkers`). */
+export interface AgyWorker {
+  /** Its registry id (`ag-…`). */
+  id: string;
+  /** Its worker id: the folder its agy home is (`workers/<nativeId>`), what `agyWorkerUsage` takes. */
+  nativeId: string;
+  /** Its agy conversation (the registry's, else the one its folder holds); null: none started yet. */
+  sessionId: string | null;
+  name: string;
+  state: AgentRecord["state"];
+  model: string | null;
+  createdAt: number;
+  endedAt: number | null;
+}
+
+/** The agy workers the registry lists under the agy head session `sessionId`, oldest first. */
+export function agyWorkerList(records: readonly AgentRecord[], sessionId: string, dataDir: string): AgyWorker[] {
+  return records
+    .filter((record) => record.engine === "agy" && record.host.kind === "agy-acp" && record.host.sessionId === sessionId)
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .map((record) => ({
+      id: record.id, nativeId: record.nativeId,
+      sessionId: (record.handle.kind === "agy-session" ? record.handle.sessionId : null) ?? agyWorkerConversation(dataDir, record.nativeId)?.sessionId ?? null,
+      name: record.summary.description, state: record.state, model: record.model, createdAt: record.createdAt, endedAt: record.endedAt,
+    }));
 }

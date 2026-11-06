@@ -42,6 +42,7 @@ import {
   type SettingsChange, type SettingsView, type SubagentRowView, type AgentTargetView,
 } from "../contract";
 import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type AgentPort, type AgentRecord, type ApprovalAnswerer, type HostFacts, type MoveIntent, type ReconcileReport, type WorkerApproval } from "./agent-registry";
+import { agyWorkerList } from "./agy-usage-db";
 import { AgentStore, migrationRecords } from "./store/agent-store";
 import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } from "./agent-moves";
 import { agentMessageNotice, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotClosedNotice, subBotGroupFirstMessage } from "./agent-relay";
@@ -1866,6 +1867,7 @@ First write a test that shows this, then fix it.`;
         return botFace(view, look, { asleep: view.phase === "asleep", working: view.working, waiting });
       },
       current: () => this.currentChat(),
+      agyWorkers: (sessionId) => agyWorkerList(this.agents.all, sessionId, this.options.dataDir),
     };
   }
 

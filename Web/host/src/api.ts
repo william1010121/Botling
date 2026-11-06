@@ -130,6 +130,21 @@ export interface AgyUsage {
   retries: number;
   models: string[];
 }
+/** An agy worker an agy head started (`workspace.agyWorkers`). */
+export interface AgyWorker {
+  /** Its id in Botling's agent registry (`ag-…`). */
+  id: string;
+  /** Its worker id (the registry's `nativeId`, its folder's name): what `agyWorkerUsage` takes. */
+  nativeId: string;
+  /** Its agy conversation (for `agyUsage`); null: it has not started one yet. */
+  sessionId: string | null;
+  name: string;
+  state: "running" | "idle" | "reportPending" | "completed" | "failed" | "stopped" | "interrupted" | "lost";
+  model: string | null;
+  /** Epoch ms. */
+  createdAt: number;
+  endedAt: number | null;
+}
 /** A quota bucket: a family (Gemini, Claude & GPT…) and its window, 0…1 left, when it starts over (ms). */
 export interface AgyQuotaBucket { group: string; label: string; remainingFraction?: number; remainingAmount?: string; resetsAt?: number; disabled?: boolean }
 export type AgyQuota =
@@ -181,6 +196,13 @@ export interface WorkspaceApi {
    * conversation in Botling's agy profiles, or a file this Botling cannot read. Agy reports no prices.
    */
   agyUsage(sessionId: string): Promise<AgyUsage | null>;
+  /**
+   * The agy workers the agy head session `sessionId` started (as in `current().heads`), oldest first, from Botling's
+   * agent registry; [] for none. Each one's usage: `agyUsage(worker.sessionId)`, or `agyWorkerUsage(worker.nativeId)`.
+   */
+  agyWorkers(sessionId: string): Promise<AgyWorker[]>;
+  /** An agy worker's usage by its worker id (`AgyWorker.nativeId`), read from its own folder; null: no conversation yet. */
+  agyWorkerUsage(workerId: string): Promise<AgyUsage | null>;
   /** Antigravity's quota (Google's cloudcode-pa quota summary), reused for five minutes; never a token. */
   agyQuota(): Promise<AgyQuota>;
   /** Told when anything the methods above answer changed, naming the bots and kinds. */
@@ -651,6 +673,8 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       face: async (botId, look) => (await ask("workspace.face", { bot: botId, look })) as string,
       current: async () => (await ask("workspace.current")) as CurrentChat | null,
       agyUsage: async (sessionId) => (await ask("workspace.agyUsage", { sessionId })) as AgyUsage | null,
+      agyWorkers: async (sessionId) => (await ask("workspace.agyWorkers", { sessionId })) as AgyWorker[],
+      agyWorkerUsage: async (workerId) => (await ask("workspace.agyWorkerUsage", { workerId })) as AgyUsage | null,
       agyQuota: async () => (await ask("workspace.agyQuota")) as AgyQuota,
       component: async (botId, name, spec) => (await ask("workspace.component", { bot: botId, name, ...(spec?.data !== undefined ? { data: spec.data } : {}), ...(spec?.command !== undefined ? { command: spec.command } : {}) })) as never,
       onChange: (fn) => {
