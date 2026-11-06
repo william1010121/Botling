@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { Command, SettingsChange, type PluginsView } from "../../src/contract";
 import { applySetting, settingsView } from "../../src/core/settings";
-import { mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey } from "../../src/renderer/main-tabs";
+import { composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey } from "../../src/renderer/main-tabs";
 
 const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 const PROJECT = "B0000000-0000-4000-8000-000000000001";
@@ -19,6 +19,11 @@ const plugins = {
   rightPanelSections: [
     { plugin: "trees", id: "trees.block", title: "Worktrees", forRole: "bots" },
     { plugin: "board", id: "board.side", title: "Side", forRole: "main" },
+  ],
+  composerBarViews: [
+    { plugin: "usage", id: "usage.main", title: "Usage", width: 200, forRole: "main" },
+    { plugin: "usage", id: "usage.bots", title: "Usage", width: 260, forRole: "bots" },
+    { plugin: "other", id: "other.any", title: "Other", width: 240, forRole: "any" },
   ],
 } satisfies PluginsView;
 
@@ -35,6 +40,14 @@ describe("main-area tabs", () => {
     expect(rightPanelSectionsFor(plugins, { role: "main" }).map((block) => block.id)).toEqual(["board.side"]);
     for (const bot of [{ role: "manager" as const }, { role: "bot" as const }, { role: "bot" as const, parent: PROJECT }]) expect(rightPanelSectionsFor(plugins, bot).map((block) => block.id)).toEqual(["trees.block"]);
     expect(rightPanelSectionsFor(null, { role: "manager" })).toEqual([]);
+  });
+
+  it("the row above the input box shows one composerBar view: the first for the bot's role, or none", () => {
+    expect(composerBarFor(plugins, { role: "main" })?.id).toBe("usage.main");
+    expect(composerBarFor(plugins, { role: "manager" })?.id).toBe("usage.bots");
+    expect(composerBarFor(plugins, { role: "bot", parent: PROJECT })?.id).toBe("usage.bots");
+    expect(composerBarFor({ ...plugins, composerBarViews: [plugins.composerBarViews[0]!] }, { role: "bot" })).toBeNull();
+    expect(composerBarFor(null, { role: "main" })).toBeNull();
   });
 
   it("shows the tab remembered for the bot while it is offered; otherwise none (Chat or Board)", () => {

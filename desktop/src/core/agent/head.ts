@@ -94,6 +94,8 @@ export const AGENT_GUARD_HOOK = "botling-agent-guard";
 const NATIVE_AGENT_TOOLS = ["Agent", "Task"];
 /** The PreToolUse hook that keeps a worker not on a spec writer's model out of spec/. */
 export const SPEC_GUARD_HOOK = "botling-spec-guard";
+/** How long the CLI has to answer the policy `initialize` before the head fails closed. Under load it took ~20 s (2026-11-06). */
+export const POLICY_INIT_TIMEOUT_MS = 60_000;
 
 /** The hook's answer: every Agent/Task call is denied with `reason` (shown to the model as "PreToolUse:Agent hook error: <reason>"). */
 export function agentGuardDecision(input: any, reason: string): Record<string, unknown> {
@@ -228,7 +230,7 @@ export class ClaudeHead {
     const spec = !this.config.harmless && !!this.config.specGuard;
     if (monitor || guard || app || spec) {
       this.monitorInit = `monitor-policy-${randomUUID()}`;
-      this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), 10_000);
+      this.monitorInitTimer = setTimeout(() => this.failMonitorPolicy(), POLICY_INIT_TIMEOUT_MS);
       this.monitorInitTimer.unref();
       const hooks = [...(monitor ? [{ matcher: "^Monitor$", hookCallbackIds: [MONITOR_HOOK] }] : []), ...(guard ? [{ matcher: "^(Agent|Task)$", hookCallbackIds: [AGENT_GUARD_HOOK] }] : []),
         ...(spec ? [{ matcher: "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$", hookCallbackIds: [SPEC_GUARD_HOOK] }] : [])];

@@ -23,10 +23,12 @@ export interface FolderView {
  * under the chat, one frame per bot that stays alive while hidden, with a toggle button in the chat header (and `toggle`, one of the
  * plugin's own commands, that the page runs itself: it shows or hides the panel of the bot on screen); `chatHeader`: a button in the chat
  * header (its title) that opens a popover under it with the plugin's frame for the bot on screen; `rightPanel.takeover`: a page that takes the
- * whole right panel's place for one bot while its program part has it open (`ui.takeover`: the component studio's spec).
+ * whole right panel's place for one bot while its program part has it open (`ui.takeover`: the component studio's spec); `composerBar`: a
+ * one-line frame at the right end of the row above the input box (the pins' row) for the chat on screen, `width` px wide (a hint, at most
+ * about half the row), whose click opens a card above it with the plugin's frame again (`ccb.context.surface`: "compact" or "expanded").
  */
-export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings", "rightPanel.section", "bottomPanel", "chatHeader", "rightPanel.takeover"] as const;
-/** Which bots a `mainTab` view is a tab for, or a `rightPanel.section` view a block of (a fixed field, not a when-clause): "project" is a project bot. */
+export const VIEW_SLOTS = ["rightPanel", "main", "window", "mainTab", "settings.section", "quickSettings", "rightPanel.section", "bottomPanel", "chatHeader", "rightPanel.takeover", "composerBar"] as const;
+/** Which bots a `mainTab` view is a tab for, or a `rightPanel.section` / `composerBar` view shows for (a fixed field, not a when-clause): "project" is a project bot. */
 export const VIEW_ROLES = ["main", "project", "bots", "any"] as const;
 export const TILE_SURFACES = ["board", "whiteboard", "pin"] as const;
 export const STATUS_SLOTS = ["chatHeader", "botRow"] as const;
@@ -60,6 +62,8 @@ const PLUGIN_TAG = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/;
 export type ViewSlot = (typeof VIEW_SLOTS)[number];
 export type ViewRole = (typeof VIEW_ROLES)[number];
 export type TileSurface = (typeof TILE_SURFACES)[number];
+/** A `composerBar` view's width (px): the default and the range a manifest may ask for. */
+export const COMPOSER_BAR_WIDTH = { default: 240, min: 80, max: 480 } as const;
 
 /** The component folder (`template.html`, `about.md`) a card or tile comes from; `name` is what `<show name>` uses. */
 export interface ComponentRef { name: string; dir: string }
@@ -69,8 +73,11 @@ export type Contribution = { plugin: string } & (
   | { kind: "keybinding"; command: string; key: string }
   /** Without `command` the name goes into the message as words, which the bots' rules read (`/design`). */
   | { kind: "slash"; name: string; about: string; command?: string }
-  /** `terms`, `after` and `link` are for `settings.section`: the words its search finds it by, the core page it follows, and the popover's link that opens it. */
-  | { kind: "view"; id: string; title: string; icon?: string; where: ViewSlot; forRole?: ViewRole; terms?: string; after?: string; link?: string; toggle?: string }
+  /**
+   * `terms`, `after` and `link` are for `settings.section`: the words its search finds it by, the core page it follows, and the popover's link that opens it.
+   * `width` is for `composerBar`: how wide its one-line frame is (px).
+   */
+  | { kind: "view"; id: string; title: string; icon?: string; where: ViewSlot; forRole?: ViewRole; terms?: string; after?: string; link?: string; toggle?: string; width?: number }
   | { kind: "tile"; id: string; title: string; sizes: string[]; surfaces: TileSurface[]; component?: ComponentRef }
   | { kind: "card"; id: string; title: string; component?: ComponentRef }
   | { kind: "statusItem"; id: string; where: (typeof STATUS_SLOTS)[number] }
@@ -170,17 +177,23 @@ export function readContributions(plugin: string, contributes: unknown, claude: 
     if (!f) return;
     const where = oneOf(VIEW_SLOTS, f.where, "rightPanel");
     if (!where) { problems.push(`View "${f.id}": where "${f.where}" must be ${named(VIEW_SLOTS)}.`); return; }
-    const rolled = where === "mainTab" || where === "rightPanel.section";
-    if (!rolled && f.forRole !== undefined) { problems.push(`View "${f.id}": forRole is only for where "mainTab" or "rightPanel.section".`); return; }
+    const rolled = where === "mainTab" || where === "rightPanel.section" || where === "composerBar";
+    if (!rolled && f.forRole !== undefined) { problems.push(`View "${f.id}": forRole is only for where "mainTab", "rightPanel.section" or "composerBar".`); return; }
     const forRole = rolled ? oneOf(VIEW_ROLES, f.forRole, "any") : null;
     if (rolled && !forRole) { problems.push(`View "${f.id}": forRole "${f.forRole}" must be ${named(VIEW_ROLES)}.`); return; }
     if (where !== "settings.section" && (f.terms !== undefined || f.after !== undefined || f.link !== undefined)) { problems.push(`View "${f.id}": terms, after and link are only for where "settings.section".`); return; }
     if (where !== "bottomPanel" && f.toggle !== undefined) { problems.push(`View "${f.id}": toggle is only for where "bottomPanel".`); return; }
     if (f.toggle !== undefined && !f.toggle.startsWith(`${plugin}.`)) { problems.push(`View "${f.id}": toggle "${f.toggle}" must be a command of this plugin ("${plugin}.…").`); return; }
+    const width = entry.width;
+    if (width != null && where !== "composerBar") { problems.push(`View "${f.id}": width is only for where "composerBar".`); return; }
+    if (width != null && !(typeof width === "number" && Number.isInteger(width) && width >= COMPOSER_BAR_WIDTH.min && width <= COMPOSER_BAR_WIDTH.max)) {
+      problems.push(`View "${f.id}": width must be a whole number of pixels from ${COMPOSER_BAR_WIDTH.min} to ${COMPOSER_BAR_WIDTH.max}.`); return;
+    }
     if (ownId("View", f.id)) out.push({
       kind: "view", plugin, id: f.id, title: f.title, ...(f.icon !== undefined ? { icon: f.icon } : {}), where, ...(forRole ? { forRole } : {}),
       ...(f.toggle !== undefined ? { toggle: f.toggle } : {}),
       ...(f.terms !== undefined ? { terms: f.terms } : {}), ...(f.after !== undefined ? { after: f.after } : {}), ...(f.link !== undefined ? { link: f.link } : {}),
+      ...(typeof width === "number" ? { width } : {}),
     });
   });
   list("tiles").forEach((entry, index) => {

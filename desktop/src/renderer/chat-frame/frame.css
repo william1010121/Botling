@@ -48,3 +48,26 @@ body.board .message-width-handle, body.panel-mode .message-width-handle { displa
 .composer-submission-status:empty, .composer-upload-status:empty { display: none; }
 .composer-submission-status, .composer-upload-status { font-size: 12px; padding: 4px 10px; overflow-wrap: anywhere; }
 .composer-upload-status button { margin-left: 8px; }
+
+/* A plugin's `composerBar` view (composer-bar.ts): a one-line frame at the right end of the pins' row, as tall as a
+   pin chip, its width the plugin's hint up to about half the row; the pins keep the rest and scroll in it. The row
+   shows with no pins too. A click opens a card above it with the view again, bigger. */
+#pin-area.has-composer-bar { min-height: calc(var(--control-h) + 6px); }
+#pin-area.has-composer-bar > .dock-row { margin-right: calc(min(var(--composer-bar-width), 45%) + 8px); }
+.composer-bar {
+  position: absolute; bottom: 0; right: 24px; height: var(--control-h); width: min(var(--composer-bar-width), 45%);
+  border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--bubble); overflow: hidden;
+}
+.composer-bar:hover, .composer-bar.open { border-color: var(--muted); }
+.composer-bar-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; }
+.composer-bar-open { position: absolute; inset: 0; margin: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.composer-bar-open:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; border-radius: var(--control-radius); }
+.composer-bar-card {
+  position: fixed; z-index: 40; overflow-y: auto; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bubble);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
+}
+.composer-bar-card-frame { display: block; width: 100%; border: 0; background: transparent; }
+body.board .composer-bar, body.board .composer-bar-card, body.panel-mode .composer-bar { display: none; }
+body.board #pin-area.has-composer-bar { min-height: 0; }
+@media (width < 480px) { .composer-bar { right: 16px; } }
