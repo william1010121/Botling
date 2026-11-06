@@ -2787,13 +2787,13 @@ export class Bot {
     if (head instanceof CodexHead) {
       if (!head.steer(this.compose(next, false))) return false;
     } else {
-      // claude reads it into the turn under way at its next step; if that turn ends first, it begins
-      // a turn of its own for it (`steeredStarted`).
+      // claude reads it into the turn under way at once (priority "now"; a foreground subagent at work goes to the
+      // background first, so it is not stopped); if that turn ends first, it begins a turn of its own for it (`steeredStarted`).
       const id = next.userId ?? next.messageId;
       next.head = head;
       next.sent = true;
       this.steered.set(id.toLowerCase(), next);
-      head.send(this.compose(next, false), id, this.turnImages(next));
+      head.send(this.compose(next, false), id, this.turnImages(next), { now: true });
     }
     this.joinTurn(current, next);
     this.log(head instanceof CodexHead ? "you wrote while Codex worked: your message joined its turn (turn/steer)" : "you wrote while claude worked: your message went into its turn");

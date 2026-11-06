@@ -184,6 +184,11 @@ export class ClaudeHead {
   private monitorPolicyFailed = false;
   private monitorInitTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedMessages: unknown[] = [];
+  /**
+   * Its foreground subagents at work, by the id of the top-level Agent/Task call that started each: a message sent
+   * `now` moves them to the background first (`background_tasks`), as claude would otherwise wait for one and then stop it.
+   */
+  private foregroundAgents = new Set<string>();
   /** Control requests the app waits on (`set_model`, …): resolved with whether claude answered success. */
   private controls = new Map<string, { resolve(ok: boolean): void; timer: ReturnType<typeof setTimeout> }>();
 
@@ -294,6 +299,7 @@ export class ClaudeHead {
       return;
     }
     if (message?.type === "control_request" && message.request?.subtype === "mcp_message") { void this.appMcp(message); return; }
+    this.trackForegroundAgents(message);
     for (const request of this.speed.observe(message, Date.now())) this.handlers.onItem({ kind: "request", request });
     for (const item of parseLine(line)) {
       if (item.kind === "unsupportedRequest") {
@@ -336,6 +342,18 @@ export class ClaudeHead {
     }
   }
 
+  /** Its own Agent/Task calls (not a subagent's, not one in the background) from the call until its result, or the turn's end. */
+  private trackForegroundAgents(message: any) {
+    if (message?.type === "result") { this.foregroundAgents.clear(); return; }
+    if (message?.parent_tool_use_id) return;
+    const content = message?.message?.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      if (message.type === "assistant" && block?.type === "tool_use" && NATIVE_AGENT_TOOLS.includes(block.name) && typeof block.id === "string" && block.input?.run_in_background !== true) this.foregroundAgents.add(block.id);
+      if (message.type === "user" && block?.type === "tool_result" && typeof block.tool_use_id === "string") this.foregroundAgents.delete(block.tool_use_id);
+    }
+  }
+
   private write(value: unknown) {
     if (this.closed || !this.process) return;
     this.process.child.stdin.write(`${JSON.stringify(value)}\n`);
@@ -345,8 +363,11 @@ export class ClaudeHead {
    * A user message. `uuid` lets claude report its progress under that id. Pictures go in as base64
    * blocks so the model sees them (AgentProcess.swift's `write`); one claude does not take (another
    * type, over 4.5 MB, unreadable) is left to the path the text already names.
+   *
+   * `now`: words for the turn under way (`priority: "now"`): claude reads them in at once instead of after the step at
+   * work. Its foreground subagents go to the background first, so they keep working (else it waits for one, then stops it).
    */
-  send(text: string, uuid: string, images: string[] = []) {
+  send(text: string, uuid: string, images: string[] = [], options: { now?: boolean } = {}) {
     if (this.monitorPolicyFailed) return;
     const blocks: Record<string, unknown>[] = [];
     for (const path of images) {
@@ -359,8 +380,14 @@ export class ClaudeHead {
     }
     this.speed.boundary(null, Date.now());
     const content = blocks.length ? [{ type: "text", text }, ...blocks] : text;
-    const message = { type: "user", message: { role: "user", content }, uuid: uuid.toLowerCase() };
-    if (this.monitorInit) this.queuedMessages.push(message); else this.write(message);
+    const message = { type: "user", message: { role: "user", content }, uuid: uuid.toLowerCase(), ...(options.now ? { priority: "now" } : {}) };
+    const outgoing: unknown[] = [];
+    if (options.now) {
+      for (const toolUseId of this.foregroundAgents) outgoing.push({ type: "control_request", request_id: `background-${randomUUID()}`, request: { subtype: "background_tasks", tool_use_id: toolUseId } });
+      this.foregroundAgents.clear();
+    }
+    outgoing.push(message);
+    for (const value of outgoing) if (this.monitorInit) this.queuedMessages.push(value); else this.write(value);
   }
 
   /** Answers a permission request: run it (with its input unchanged), or not (`message` says why to claude). */
