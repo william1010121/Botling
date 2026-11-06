@@ -12,6 +12,7 @@ import { agyWorkerRuntimeEnabled } from "./agent/agy-capabilities";
 import { join } from "node:path";
 import { CODEX_NOTE } from "./prompts-codex-text";
 import { DELEGATION_CAPS, delegationPolicy } from "./prompts/delegation";
+export { VERBATIM_HANDOFF_RULE } from "./prompts/delegation";
 import type { BotProfile } from "./store/workspace";
 import { displayName, otherHead, type Engine } from "./heads";
 
