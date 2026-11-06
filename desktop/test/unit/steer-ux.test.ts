@@ -7,10 +7,10 @@ import {join} from 'node:path';
 const fixture=vi.hoisted(()=>{
  const heads:any[]=[];
  class Head {
-  running=false;pid=0;exited=Promise.resolve();completionDependencies:any[]=[];sent:string[]=[];steered:string[]=[];
+  running=false;pid=0;exited=Promise.resolve();completionDependencies:any[]=[];sent:string[]=[];sentOptions:any[]=[];steered:string[]=[];
   constructor(readonly config:any,readonly handlers:any){heads.push(this);}
   start(){this.running=true;queueMicrotask(()=>this.handlers.onItem({kind:'init',sessionId:this.config.sessionId}));}
-  send(text:string){this.sent.push(text);}
+  send(text:string,_id?:string,_images?:string[],options?:any){this.sent.push(text);this.sentOptions.push(options);}
   steer(text:string){this.steered.push(text);return true;}
   endTurn(){this.handlers.onItem({kind:'result',ok:true,text:'Finished',subtype:'end_turn'});}
   finish(){this.running=false;this.handlers.onExit({code:0,signal:null,stderr:'',expected:true,silent:false});}
@@ -49,6 +49,13 @@ it('baseline: Claude takes a message into its turn',async()=>{
  const {b,head}=await working('claude');
  b.send('second');await settle();
  expect(head.sent).toHaveLength(2);
+});
+
+it('Claude takes your message in at once (priority now), the first one as an ordinary message',async()=>{
+ const {b,head}=await working('claude');
+ b.send('second');await settle();
+ expect(head.sentOptions[0]?.now).toBeFalsy();
+ expect(head.sentOptions[1]).toEqual({now:true});
 });
 
 it('Claude takes a message into its turn even with an approval open',async()=>{
