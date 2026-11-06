@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AntigravityQuotaView } from "../../src/contract";
-import { AGY_QUOTA_TTL_MS, modelBuckets, readAgyQuota, readAgyQuotaInProfiles, resetAgyQuotaCache, summaryBuckets } from "../../src/core/agy-quota-api";
+import { AGY_QUOTA_TTL_MS, agySignInEnv, agyTokenFile, modelBuckets, readAgyQuota, readAgyQuotaInProfiles, resetAgyQuotaCache, summaryBuckets } from "../../src/core/agy-quota-api";
 import { refreshAntigravityQuota } from "../../src/core/antigravity-quota";
 
 const dirs: string[] = [];
@@ -109,4 +109,29 @@ it("keeps an untouched bucket's rolling reset out, and ignores malformed buckets
     .toEqual([{ group: "Gemini", label: "5-hour", remainingFraction: 1 }]);
   expect(summaryBuckets(null, at)).toEqual([]);
   expect(modelBuckets({ models: { "gemini-a": { quotaInfo: { remainingFraction: 2 } } } })).toEqual([{ group: "Gemini", label: "Reported quota", remainingFraction: 1 }]);
+});
+
+it("puts Botling's agy profiles in file sign-in mode, sharing one sign-in and opening one sign-in at a time", () => {
+  const root = join(temp(), "agy-acp"), bare = (id: string) => { const home = join(root, id); mkdirSync(join(home, "antigravity-acp"), { recursive: true }); return home; };
+  // None signed in with a file yet: one profile signs in (file mode, agy opens the browser); the others keep agy's default.
+  const a = bare("A"), b = bare("B");
+  const first = agySignInEnv(a);
+  expect(first.env).toEqual({ AGY_ACP_FORCE_FILE_STORAGE: "1" });
+  expect(agySignInEnv(a).env).toEqual({ AGY_ACP_FORCE_FILE_STORAGE: "1" });
+  expect(agySignInEnv(b).env).toEqual({});
+  first.release();
+  expect(agySignInEnv(b).env).toEqual({ AGY_ACP_FORCE_FILE_STORAGE: "1" });
+  resetAgyQuotaCache();
+  // Once one profile has the file, a profile (or a bot's worker) without one gets a private copy of the newest.
+  profile(a);
+  const worker = join(root, "B", "workers", "w1"); mkdirSync(join(worker, "antigravity-acp"), { recursive: true });
+  expect(agySignInEnv(worker).env).toEqual({ AGY_ACP_FORCE_FILE_STORAGE: "1" });
+  expect(readFileSync(agyTokenFile(worker), "utf8")).toBe(readFileSync(agyTokenFile(a), "utf8"));
+  expect(statSync(agyTokenFile(worker)).mode & 0o777).toBe(0o600);
+  expect(agySignInEnv(b).env).toEqual({ AGY_ACP_FORCE_FILE_STORAGE: "1" });
+  expect(existsSync(agyTokenFile(b))).toBe(true);
+  // A profile's own file is kept as it is.
+  writeFileSync(agyTokenFile(b), "{\"own\":1}");
+  expect(agySignInEnv(b).env).toEqual({ AGY_ACP_FORCE_FILE_STORAGE: "1" });
+  expect(readFileSync(agyTokenFile(b), "utf8")).toBe("{\"own\":1}");
 });
