@@ -8,6 +8,7 @@
 // host says so before the listener's plugin can ask anything (host.ts `announceNow`), so whatever it
 // reads is at least that new and no later change goes untold (spec/models/workspace).
 import type { TaskView, WaitingView } from "../contract";
+import type { AgyWorker } from "./agy-usage-db";
 
 export const WORKSPACE_KINDS = ["bots", "tasks", "memory", "waiting", "results", "current"] as const;
 export type WorkspaceKind = (typeof WORKSPACE_KINDS)[number];
@@ -96,6 +97,8 @@ export interface WorkspaceSource {
   face(botId: string, look: "original" | "cute"): string;
   /** Absent: a world with no main window (tests, spec adapters); plugins are told null. */
   current?(): CurrentChat | null;
+  /** The agy workers the agy head session `sessionId` started; absent: a world with no registry (plugins get []). */
+  agyWorkers?(sessionId: string): AgyWorker[];
 }
 
 /** What `onChange` tells. */

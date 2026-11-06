@@ -35,7 +35,7 @@ import { PendingTags } from "./pending-tags";
 import { SessionFolders, cleanFolder, type SessionFolder } from "./session-folders";
 import { AppBriefingParams, AppCardParams, AppInstallParams, AppTellParams, BriefingBook, installCommandOK, type AppWorld } from "./app-seam";
 import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./studio-seam";
-import { agyUsageInProfiles } from "../agy-usage-db";
+import { agyUsageInProfiles, agyWorkerUsage } from "../agy-usage-db";
 import { refreshAntigravityQuota } from "../antigravity-quota";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
@@ -211,6 +211,7 @@ const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200),
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
 const PluginOnly = z.object({ plugin: str(214) });
 const AgyUsageParams = z.object({ plugin: str(214), sessionId: str(200) });
+const AgyWorkerParams = z.object({ plugin: str(214), workerId: str(200) });
 const RoutinesListParams = z.object({ plugin: str(214), bot: str(64) });
 const RoutinesChangeParams = RoutinesListParams.extend({ operation: z.enum(["pause", "resume", "cancel"]), id: str(2_200).min(1) });
 const CardKey = z.string().min(1).max(110).regex(/^pin\/[A-Za-z0-9-]{1,100}$/);
@@ -1167,6 +1168,12 @@ export class Plugins {
       case "workspace.agyUsage":
         // agy's own record of an Antigravity conversation (its calls, retries and models); null: none here.
         return agyUsageInProfiles(this.options.dataDir, this.asked(AgyUsageParams, params).data.sessionId);
+      case "workspace.agyWorkers":
+        // The agy workers an agy head session started (the registry's), each with the conversation its usage is in.
+        return world.workspace.agyWorkers?.(this.asked(AgyUsageParams, params).data.sessionId) ?? [];
+      case "workspace.agyWorkerUsage":
+        // A worker's usage by its folder (registry nativeId): found even when the registry never learned its session id.
+        return agyWorkerUsage(this.options.dataDir, this.asked(AgyWorkerParams, params).data.workerId);
       case "workspace.agyQuota":
         this.asked(PluginOnly, params);
         return refreshAntigravityQuota(this.options.dataDir);

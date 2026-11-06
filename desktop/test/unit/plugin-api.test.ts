@@ -73,6 +73,7 @@ function fakeWorld() {
       pendingApprovals: (botId) => { known(botId); return [{ tool: "Bash", text: "ls", at: null }]; },
       face: (botId, look) => { known(botId); return `data:image/svg+xml;base64,${look}`; },
       current: () => ({ botId: "main", engine: "claude", sessionId: "S1", heads: [{ engine: "claude", sessionId: "S1" }], view: "tab", tab: "botling.whiteboard/board" }),
+      agyWorkers: (sessionId: string) => sessionId === "agy-s1" ? [{ id: "ag-1", nativeId: "w-1", sessionId: "agy-w1", name: "job", state: "completed", model: null, createdAt: 1, endedAt: 2 }] : [],
     },
     workspaceWatch: (on) => { log.watching.push(on); },
   };
@@ -426,6 +427,15 @@ describe("workspace for plugins (plan W1)", () => {
     const { ask } = await setup(dir);
     expect(await ask("workspace.agyUsage", { plugin: "meter", sessionId: "agy-s1" })).toMatchObject({ sessionId: "agy-s1", retries: 0, models: ["gemini-3.8-flash-high"], total: { input: 40, output: 9, cacheRead: 100, cacheWrite: 0, reasoning: 0 } });
     expect(await ask("workspace.agyUsage", { plugin: "meter", sessionId: "../agy-s1" })).toBeNull();
+    // A worker's conversation lives in its own folder: found by session id, and by worker id.
+    const w = conversation(join(dir, "agy-acp", "profile-1", "workers", "w-1"), "agy-w1");
+    w.add(generation({ usage: usage({ input: 12, output: 3 }) }));
+    w.db.close();
+    expect(await ask("workspace.agyUsage", { plugin: "meter", sessionId: "agy-w1" })).toMatchObject({ sessionId: "agy-w1", total: { input: 12, output: 3 } });
+    expect(await ask("workspace.agyWorkerUsage", { plugin: "meter", workerId: "w-1" })).toMatchObject({ sessionId: "agy-w1", total: { input: 12, output: 3 } });
+    expect(await ask("workspace.agyWorkerUsage", { plugin: "meter", workerId: "w-none" })).toBeNull();
+    expect(await ask("workspace.agyWorkers", { plugin: "meter", sessionId: "agy-s1" })).toEqual([{ id: "ag-1", nativeId: "w-1", sessionId: "agy-w1", name: "job", state: "completed", model: null, createdAt: 1, endedAt: 2 }]);
+    expect(await ask("workspace.agyWorkers", { plugin: "meter", sessionId: "other" })).toEqual([]);
     expect(await ask("workspace.agyQuota", { plugin: "meter" })).toEqual({ status: "unavailable", reason: "unsupported_connection", source: "antigravity_acp" });
     await expect(ask("workspace.agyUsage", { plugin: "ghost", sessionId: "agy-s1" })).rejects.toThrow("not running");
   });

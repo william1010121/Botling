@@ -1,10 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync } from "node:fs";
 import { conversation, generation, pb, usage } from "./agy-db-fixture";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
-import { AgyTurnUsage, agyConversationFile, agyUsage, agyUsageInProfiles, callTokens, readAgyDatabase } from "../../src/core/agy-usage-db";
+import { AgyTurnUsage, agyConversationFile, agyUsage, agyUsageInProfiles, agyWorkerConversation, agyWorkerList, agyWorkerUsage, callTokens, readAgyDatabase } from "../../src/core/agy-usage-db";
+import type { AgentRecord } from "../../src/core/agent-registry";
 
 const dirs: string[] = [];
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "agy-usage-")); dirs.push(dir); return dir; };
@@ -88,4 +89,43 @@ it("finds a session in Botling's agy profiles and reuses a reading until the fil
   expect(agyUsageInProfiles(data, "s6")?.total.input).toBe(11);
   expect(agyUsageInProfiles(data, "missing")).toBeNull();
   expect(agyUsageInProfiles(join(data, "nowhere"), "s6")).toBeNull();
+});
+
+it("finds a worker's conversation in its own folder under a head profile", () => {
+  const data = temp(), profile = join(data, "agy-acp", "bot-1");
+  conversation(profile, "head-s").db.close();
+  const c = conversation(join(profile, "workers", "w-1"), "worker-s");
+  c.add(generation({ usage: usage({ input: 30, output: 4 }) }));
+  c.db.close();
+  expect(agyUsageInProfiles(data, "worker-s")).toMatchObject({ sessionId: "worker-s", total: { input: 30, output: 4 } });
+  expect(agyUsageInProfiles(data, "head-s")?.sessionId).toBe("head-s");
+  expect(agyUsageInProfiles(data, "../worker-s")).toBeNull();
+});
+
+it("reads a worker's usage by its worker id, the newest conversation in its folder, with no session id known", () => {
+  const data = temp(), worker = join(data, "agy-acp", "bot-1", "workers", "w-2");
+  const old = conversation(worker, "first"); old.add(generation({ usage: usage({ input: 1, output: 1 }) })); old.db.close();
+  const now = conversation(worker, "second"); now.add(generation({ usage: usage({ input: 70, output: 8 }) })); now.db.close();
+  utimesSync(join(worker, "antigravity-acp", "conversations", "first.db"), new Date(1_000_000), new Date(1_000_000));
+  expect(agyWorkerConversation(data, "w-2")).toEqual({ home: worker, sessionId: "second" });
+  expect(agyWorkerUsage(data, "w-2")).toMatchObject({ sessionId: "second", total: { input: 70, output: 8 } });
+  expect(agyWorkerUsage(data, "w-none")).toBeNull();
+  expect(agyWorkerUsage(data, "../bot-1")).toBeNull();
+});
+
+it("lists an agy head session's workers, taking a null registry session id from the worker's folder", () => {
+  const data = temp();
+  conversation(join(data, "agy-acp", "bot-1", "workers", "w-old"), "found-s").db.close();
+  const record = (nativeId: string, sessionId: string | null, host: string, createdAt: number, engine: "agy" | "codex" = "agy") => ({
+    id: `ag-${nativeId}`, nativeId, engine, createdAt, endedAt: null, model: null, state: "completed",
+    host: { botId: "bot-1", engine: "agy", kind: "agy-acp", sessionId: host, folder: "/x" },
+    handle: { kind: "agy-session", sessionId, acpHome: "", run: 1 },
+    summary: { description: `job ${nativeId}` },
+  }) as unknown as AgentRecord;
+  const list = agyWorkerList([record("w-new", "known-s", "head", 2), record("w-old", null, "head", 1), record("w-x", "x", "other", 0), record("w-c", "c", "head", 3, "codex"), record("w-none", null, "head", 4)], "head", data);
+  expect(list.map(({ nativeId, sessionId, name }) => ({ nativeId, sessionId, name }))).toEqual([
+    { nativeId: "w-old", sessionId: "found-s", name: "job w-old" },
+    { nativeId: "w-new", sessionId: "known-s", name: "job w-new" },
+    { nativeId: "w-none", sessionId: null, name: "job w-none" },
+  ]);
 });
