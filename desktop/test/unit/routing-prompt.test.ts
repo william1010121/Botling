@@ -3,7 +3,7 @@
 // opens by answering the question, and a worker's follow-ups go to that same worker with the user's own words.
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../src/core/agent/agy-capabilities", async (original) => ({ ...await original<any>(), agyWorkerRuntimeEnabled: () => true }));
-import { botPrompts, desktopPrompts, reportOnlyRule, resultsRule, RESTATE_RULE } from "../../src/core/prompts";
+import { AGY_BREVITY_RULE, botPrompts, desktopPrompts, reportOnlyRule, resultsRule, RESTATE_RULE } from "../../src/core/prompts";
 
 const profile = (role: "main" | "manager" | "bot") => ({ name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null });
 const ENGINES = ["claude", "codex", "agy"] as const;
@@ -17,6 +17,11 @@ describe("routing rules", () => {
     expect(rule).not.toContain("<english-file-name>.md");
     expect(rule).not.toContain("still discussing, a .md file");
     for (const choice of ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const) expect(resultsRule(choice, "/a")).toContain(reportOnlyRule("/a"));
+  });
+
+  it("points long text to a report page, not a .md file", () => {
+    expect(AGY_BREVITY_RULE).toContain("they go into a report page (see the results rule)");
+    expect(AGY_BREVITY_RULE).not.toContain(".md");
   });
 
   for (const engine of ENGINES) {
