@@ -93,3 +93,17 @@ it('routes state deltas only down the authenticated pair and rejects stale stamp
  expect(bridge.post(delta)).toBe(true);
  expect(send).toHaveBeenCalledExactlyOnceWith(EDITOR_CHANNEL.down,{stamp,message:delta});
 });
+it('passes a composerBar view through the native chat: its spec and replies down, its frames\' messages and the ask up, in their shapes only',()=>{
+ const bar={plugin:'ccb-session-usage',view:'ccb-session-usage.bar',title:'Session usage',width:260,compact:'botling-card://page/aa',expanded:'botling-card://page/bb'};
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar:null})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar:{...bar,compact:'https://evil.example/'}})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar:{...bar,width:9999}})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'composerBarReply',frame:'compact',data:{ccb:'reply',id:1,ok:true,value:3}})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'composerBarReply',frame:'other',data:{}})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'composerBarAsk'})).toBe(true);
+ expect(editorMessageAllowed('up',{botling:'composerBarAsk',extra:1})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'composerBarFrame',frame:'expanded',data:{ccb:'call',id:1,method:'usage',params:null}})).toBe(true);
+ expect(editorMessageAllowed('up',{botling:'composerBarFrame',frame:'expanded',data:{},more:1})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'composerBarFrame',frame:'nope',data:{}})).toBe(false);
+});
