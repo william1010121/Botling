@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, copyFileSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { AntigravityQuotaView } from "../contract";
 import { quotaError, quotaUnavailable } from "./antigravity-quota";
 
@@ -9,8 +9,8 @@ import { quotaError, quotaUnavailable } from "./antigravity-quota";
  * with the sign-in agy already has, so no chat turn is spent on it. Ported from T3 Code's antigravityUsageLimits.
  *
  * The sign-in is read only from agy's file store, `<GEMINI_HOME>/antigravity-acp/acp_token.json`. On macOS agy keeps it in
- * the Keychain instead unless that is unavailable (or AGY_ACP_FORCE_FILE_STORAGE is set); Botling does not read the
- * Keychain, which would ask the user, so the quota is then unknown. Read only: a token is refreshed in memory and never
+ * the Keychain (service "gemini") unless AGY_ACP_FORCE_FILE_STORAGE is set, which Botling sets for its own agy profiles
+ * (agySignInEnv); Botling never reads the Keychain, which would ask the user, so without the file the quota is unknown. Read only: a token is refreshed in memory and never
  * written back, logged or put in an error. Every failure is quiet and becomes "unavailable"/"error".
  */
 
@@ -78,10 +78,60 @@ export function modelBuckets(response: unknown): Bucket[] {
 
 const lessLeft = (a: Bucket, b: Bucket) => (a.remainingFraction ?? 1) < (b.remainingFraction ?? 1);
 
+/** agy's file store for the consumer sign-in (agy_acp_server 1.4.3: `os.path.join(acp_dir(), "acp_token.json")`). */
+export const agyTokenFile = (home: string) => join(home, "antigravity-acp", "acp_token.json");
+const mtime = (file: string) => { try { return statSync(file).mtimeMs; } catch { return -1; } };
+
+/** The agy-acp root above a profile (`<dataDir>/agy-acp/<id>`, a worker's `<…>/<id>/workers/<worker>`), else its parent. */
+function profilesRoot(home: string) {
+  for (let at = dirname(home); at !== dirname(at); at = dirname(at)) if (basename(at) === "agy-acp") return at;
+  return dirname(home);
+}
+/** Every Botling agy profile's sign-in file under a root that exists, newest first. */
+function tokenFiles(root: string) {
+  const out: { file: string; at: number }[] = [];
+  const add = (home: string) => { const file = agyTokenFile(home), at = mtime(file); if (at >= 0) out.push({ file, at }); };
+  let profiles: string[] = [];
+  try { profiles = readdirSync(root); } catch { /* none yet */ }
+  for (const profile of profiles) {
+    add(join(root, profile));
+    let workers: string[] = [];
+    try { workers = readdirSync(join(root, profile, "workers")); } catch { /* no workers */ }
+    for (const worker of workers) add(join(root, profile, "workers", worker));
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
+/** The single profile allowed to start without a sign-in file in file mode (agy then opens the browser to sign in). */
+let signingIn: string | null = null;
+/**
+ * The environment Botling's own agy process for a profile (GEMINI_HOME) gets so its sign-in is a file Botling can read.
+ * A profile without the file is given the newest one another Botling profile has (one sign-in serves every bot). When
+ * there is none yet, one profile at a time is put in file mode, where agy signs in through the browser; the others keep
+ * agy's default (the Keychain sign-in they share), so a start of many bots does not open many sign-in pages.
+ * `release` ends that one's turn (call when its process ends).
+ */
+export function agySignInEnv(home: string): { env: Record<string, string>; release: () => void } {
+  const force = { AGY_ACP_FORCE_FILE_STORAGE: "1" }, none = () => {};
+  const own = agyTokenFile(home);
+  if (mtime(own) >= 0) return { env: force, release: none };
+  const newest = tokenFiles(profilesRoot(home))[0];
+  if (newest) {
+    try {
+      const temp = `${own}.botling-${process.pid}.tmp`;
+      copyFileSync(newest.file, temp); chmodSync(temp, 0o600); renameSync(temp, own);
+      return { env: force, release: none };
+    } catch { /* fall through */ }
+  }
+  if (signingIn !== null && signingIn !== home) return { env: {}, release: none };
+  signingIn = home;
+  return { env: force, release: () => { if (signingIn === home) signingIn = null; } };
+}
+
 interface Token { clientId: string; clientSecret: string; refreshToken: string; project?: string }
 function readToken(home: string): Token | null {
   try {
-    const raw = obj(JSON.parse(readFileSync(join(home, "antigravity-acp", "acp_token.json"), "utf8")));
+    const raw = obj(JSON.parse(readFileSync(agyTokenFile(home), "utf8")));
     const clientId = str(raw.client_id), clientSecret = str(raw.client_secret), refreshToken = str(raw.refresh_token);
     if (!clientId || !clientSecret || !refreshToken) return null;
     return { clientId, clientSecret, refreshToken, ...(str(raw.project_id) ? { project: str(raw.project_id) } : {}) };
@@ -93,7 +143,7 @@ const readings = new Map<string, { at: number; value: AntigravityQuotaView }>();
 const pending = new Map<string, Promise<AntigravityQuotaView>>();
 
 /** Forget cached tokens and readings (tests). */
-export function resetAgyQuotaCache() { access.clear(); readings.clear(); pending.clear(); }
+export function resetAgyQuotaCache() { access.clear(); readings.clear(); pending.clear(); signingIn = null; }
 
 export interface AgyQuotaOptions { fetch?: Fetch; now?: () => number; platform?: string; arch?: string }
 
@@ -160,7 +210,7 @@ export function readAgyQuotaInProfiles(dataDir: string, options: AgyQuotaOptions
   try { profiles = readdirSync(root); } catch { return Promise.resolve(quotaUnavailable()); }
   for (const profile of profiles) {
     const home = join(root, profile);
-    try { const mtime = statSync(join(home, "antigravity-acp", "acp_token.json")).mtimeMs; if (!best || mtime > best.mtime) best = { home, mtime }; } catch { /* not signed in with a file */ }
+    const at = mtime(agyTokenFile(home)); if (at >= 0 && (!best || at > best.mtime)) best = { home, mtime: at };
   }
   return best ? readAgyQuota(best.home, options) : Promise.resolve(quotaUnavailable("unsupported_connection"));
 }

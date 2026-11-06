@@ -15,7 +15,7 @@ it('labels retained quota with its original read time while busy, without invent
  const host = document.createElement('div'), root = createRoot(host);
  try {
   await act(async () => root.render(createElement(AntigravityQuota, {quota:busy})));
-  expect(host.querySelectorAll('.quick-usage-card')).toHaveLength(2);
+  expect(host.querySelectorAll('.quick-usage-card')).toHaveLength(1);
   expect(host.textContent).toContain('Antigravity is busy');
   expect(host.textContent).not.toContain('%');
   await act(async () => root.render(createElement(AntigravityQuota, {quota:available})));
@@ -121,65 +121,73 @@ it('bounds repeated manual retries while busy', async () => {
  } finally {await act(async () => root.unmount());}
 });
 
-it('shows only Gemini quotas as used-percent ring cards in the Claude/Codex layout', async () => {
+it('shows one used-percent ring per Gemini bucket, named by its group and window, with its reset time', async () => {
  const now = Date.parse('2026-10-29T16:00:00Z');
  const quota: AntigravityQuotaView = { status:'available', source:'antigravity_acp', seen:now, buckets:[
-  {group:'Gemini Models', label:'Weekly Limit Remaining', remainingFraction:.88, resetsAt:Date.parse('2026-11-04T12:42:00Z')},
-  {group:'Gemini Models', label:'Five Hour Limit Remaining', remainingFraction:.91, resetsAt:now + 103*60_000},
-  {group:'Claude and GPT models', label:'Weekly Limit Remaining', remainingFraction:.5},
-  {group:'Claude and GPT models', label:'Five Hour Limit Remaining', remainingFraction:.4}]};
+  {group:'Gemini', label:'Weekly', remainingFraction:.88, resetsAt:Date.parse('2026-11-04T12:42:00Z')},
+  {group:'Gemini', label:'5-hour', remainingFraction:.91, resetsAt:now + 103*60_000},
+  {group:'Gemini Argon', label:'Weekly', remainingFraction:.6},
+  {group:'Claude & GPT (shared)', label:'Weekly', remainingFraction:.5},
+  {group:'Claude & GPT (shared)', label:'5-hour', remainingFraction:.4}]};
  const host = document.createElement('div'), root = createRoot(host);
  try {
   await act(async () => root.render(createElement(AntigravityQuota, {quota, now})));
   const cards = [...host.querySelectorAll('.quick-usage-card')];
-  expect(cards).toHaveLength(2);
-  expect(cards[0].textContent).toBe('9%5 hoursin 1h 43m');
-  expect(cards[1].textContent).toMatch(/^12%Week/);
-  expect(host.textContent).not.toContain('remaining');
-  expect(host.textContent).not.toContain('50%');
-  expect(host.textContent).not.toContain('60%');
-  expect(host.textContent).not.toContain('Read ');
+  expect(cards.map(c => c.querySelector('strong')!.textContent)).toEqual(['Gemini 5-hour', 'Gemini Weekly', 'Gemini Argon Weekly']);
+  expect(cards[0].textContent).toBe('9%Gemini 5-hourin 1h 43m');
+  expect(cards[1].textContent).toMatch(/^12%Gemini Weekly(Tue|Wed) /);
+  expect(cards[2].textContent).toBe('40%Gemini Argon Weekly');
+  expect(host.textContent).not.toMatch(/5 hours|Week(?!ly)|Claude|50%|60%/);
+  expect(host.querySelector('.quick-usage-note')).toBeNull();
  } finally { await act(async () => root.unmount()); }
 });
-it('degrades gracefully for missing, disabled and amount-only Gemini buckets', async () => {
+it('degrades gracefully for disabled and amount-only Gemini buckets, and says when Google reports none', async () => {
  const now = Date.now();
  const quota: AntigravityQuotaView = { status:'available', source:'antigravity_acp', seen:now, buckets:[
-  {group:'Gemini Models', label:'Five Hour Limit Remaining', disabled:true},
-  {group:'Claude and GPT models', label:'Weekly Limit Remaining', remainingFraction:.5}]};
- const host = document.createElement('div'), root = createRoot(host);
- try {
-  await act(async () => root.render(createElement(AntigravityQuota, {quota, now})));
-  const cards = [...host.querySelectorAll('.quick-usage-card')];
-  expect(cards[0].textContent).toBe('–5 hoursdisabled');
-  expect(cards[1].textContent).toBe('–Weekunavailable');
- } finally { await act(async () => root.unmount()); }
+  {group:'Gemini', label:'5-hour', disabled:true}, {group:'Gemini', label:'Weekly', remainingAmount:'42'},
+  {group:'Claude & GPT (shared)', label:'Weekly', remainingFraction:.5}]};
+ let {host, done} = await renderOnce({quota, now});
+ expect([...host.querySelectorAll('.quick-usage-card')].map(c => c.textContent)).toEqual(['–Gemini 5-hourdisabled', '–Gemini Weekly42 units left']);
+ await done();
+ ({host, done} = await renderOnce({quota:{...quota, buckets:[quota.buckets[2]]}, now}));
+ expect([...host.querySelectorAll('.quick-usage-card')].map(c => c.textContent)).toEqual(['–Gemininot reported']);
+ expect(host.querySelector('.quick-usage-note')!.textContent).toBe('Google reported no Gemini quota');
+ await done();
+});
+it('gives a one-line reason for each unavailable quota', async () => {
+ for (const [reason, text] of [['unsupported_connection', 'Sign in to Antigravity again in a Botling chat to read quota'], ['no_connection', 'Connect Antigravity to read quota'], ['missing_data', 'Google reported no Gemini quota']] as const) {
+  const {host, done} = await renderOnce({quota:{status:'unavailable', reason, source:'antigravity_acp'}});
+  expect(host.querySelector('.quick-usage-note')!.textContent).toBe(text);
+  expect([...host.querySelectorAll('.quick-usage-card')].map(c => c.textContent)).toEqual(['–Gemininot read yet']);
+  await done();
+ }
 });
 
-const geminiBuckets = [{group:'Gemini Models', label:'Five Hour Limit Remaining', remainingFraction:.91}, {group:'Gemini Models', label:'Weekly Limit Remaining', remainingFraction:.88}];
+const geminiBuckets = [{group:'Gemini', label:'5-hour', remainingFraction:.91}, {group:'Gemini', label:'Weekly', remainingFraction:.88}];
 async function renderOnce(props: any) {
  const host = document.createElement('div'), root = createRoot(host);
  await act(async () => root.render(createElement(AntigravityQuota, props)));
  return {host, done: () => act(async () => root.unmount())};
 }
-it('keeps both Gemini ring cards with an updated-ago note when busy or a later read fails', async () => {
+it('keeps the Gemini ring cards with an updated-ago note when busy or a later read fails', async () => {
  const now = 10_000_000, seen = now - 12*60_000;
  const lastKnown = {seen, buckets: geminiBuckets};
  for (const props of [{quota:{...busy, lastKnown}}, {quota:{...busy, lastKnown}, failed:true}, {quota:{status:'error'} as any, failed:true}]) {
   const {host, done} = await renderOnce({...props, now, onRetry:()=>{}});
   const cards = [...host.querySelectorAll('.quick-usage-card')];
-  if ((props.quota as any).status === 'error') { expect(cards).toHaveLength(2); expect(host.textContent).toContain('–'); }
-  else { expect(cards.map(c => c.textContent)).toEqual(expect.arrayContaining([expect.stringMatching(/^9%5 hours/), expect.stringMatching(/^12%Week/)])); expect(host.textContent).toContain('Updated 12 min ago'); }
+  if ((props.quota as any).status === 'error') { expect(cards).toHaveLength(1); expect(host.textContent).toContain('–'); }
+  else { expect(cards.map(c => c.textContent)).toEqual([expect.stringMatching(/^9%Gemini 5-hour/), expect.stringMatching(/^12%Gemini Weekly/)]); expect(host.textContent).toContain('Updated 12 min ago'); }
   expect(host.querySelector('.quick-usage-note')!.textContent).toMatch(/busy|failed/);
   await done();
  }
 });
-it('shows empty ring-card shells (dash, no percent) when nothing was ever read, with a styled retry that disables while loading', async () => {
+it('shows one empty Gemini card (dash, no percent) when nothing was ever read, with a styled retry that disables while loading', async () => {
  for (const props of [{quota:busy}, {failed:true}, {quota:{status:'unavailable',reason:'no_connection',source:'antigravity_acp'} as any}, {loading:true}]) {
   const retry = vi.fn();
   const {host, done} = await renderOnce({...props, onRetry:retry});
   const cards = [...host.querySelectorAll('.quick-usage-card')];
-  expect(cards).toHaveLength(2);
-  expect(cards[0].textContent).toMatch(/^–5 hours/);
+  expect(cards).toHaveLength(1);
+  expect(cards[0].textContent).toMatch(/^–Gemini/);
   expect(host.textContent).not.toContain('%');
   expect(host.querySelector('p.quick-usage-note')).not.toBeNull();
   expect(host.querySelector('.quick-usage-note button')).not.toBeNull();

@@ -218,7 +218,7 @@ it("shows the missing Antigravity connection without invented windows or percent
   const quota = host.querySelector('[aria-label="Antigravity quota"]')!;
   expect(quota.querySelector(".quick-usage-note")!.textContent).toContain("Connect Antigravity to read quota");
   expect(quota.textContent).not.toMatch(/%|tokens|sign-in/);
-  expect([...quota.querySelectorAll(".quick-usage-ring")].map(ring => ring.textContent)).toEqual(["–", "–"]);
+  expect([...quota.querySelectorAll(".quick-usage-ring")].map(ring => ring.textContent)).toEqual(["–"]);
   expect(ui.cards()).toHaveLength(3);
 });
 
@@ -242,15 +242,15 @@ it("shows loading, failure, retry, then unavailable for Antigravity", async () =
 it("renders only the Gemini quota as used-percent cards, converting what remains", async () => {
   const value = limits();
   value.antigravity = { status: "available", source: "antigravity_acp", seen: now, buckets: [
-    {group: "Gemini Models", label: "Weekly", remainingFraction: .91, resetsAt: now + 3600000},
-    {group: "Claude and GPT models", label: "Weekly", remainingFraction: .5},
-    {group: "Claude and GPT models", label: "Daily", remainingAmount: "9007199254740993"},
+    {group: "Gemini", label: "Weekly", remainingFraction: .91, resetsAt: now + 3600000},
+    {group: "Claude & GPT (shared)", label: "Weekly", remainingFraction: .5},
+    {group: "Claude & GPT (shared)", label: "Daily", remainingAmount: "9007199254740993"},
   ] };
   const ui = await mount(vi.fn(async () => value)); await ui.toggle();
   const group = host.querySelector('[aria-label="Antigravity quota"]')!;
   const text = group.textContent!;
-  expect(group.querySelectorAll(".quick-usage-card")).toHaveLength(2);
-  expect(text).toContain("9%"); expect(text).toContain("Week");
+  expect(group.querySelectorAll(".quick-usage-card")).toHaveLength(1);
+  expect(text).toContain("9%"); expect(text).toContain("Gemini Weekly");
   expect(text).not.toContain("50%"); expect(text).not.toContain("9007199254740993");
   expect(text).not.toContain("remaining"); expect(text).not.toContain("Read");
 });

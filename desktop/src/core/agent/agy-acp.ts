@@ -1,6 +1,6 @@
 import { AgyTurnClock, agyPromptRequest } from "../token-speed";
 import { registerAntigravityQuotaReader } from "../antigravity-quota";
-import { readAgyQuota } from "../agy-quota-api";
+import { agySignInEnv, readAgyQuota } from "../agy-quota-api";
 import { AgyTurnUsage, callTokens } from "../agy-usage-db";
 import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
@@ -411,7 +411,9 @@ export class AgyAcpHead {
     // App-owned profile only. Never import the user's CLI/global hooks, policies, or allow caches.
     writeFileSync(join(home, "antigravity-acp/settings.json"), JSON.stringify({ auth: { type: "oauth-personal" } }), { mode: 0o600 });
     writeFileSync(join(home, "antigravity-acp/trusted_workspaces.json"), JSON.stringify({ trusted: [], untrusted: [cwd] }), { mode: 0o600 });
-    const env: NodeJS.ProcessEnv = { GEMINI_HOME: home };
+    // The sign-in as a file in this profile (not the Keychain), so Botling can read the quota (agy-quota-api.ts).
+    const signIn = agySignInEnv(home);
+    const env: NodeJS.ProcessEnv = { ...signIn.env, GEMINI_HOME: home };
     for (const key of ["HOME", "USER", "PATH", "TMPDIR", "LANG"]) if (process.env[key]) env[key] = process.env[key];
     const mcpServers = this.connectTools(cwd, home);
     void mcpServers.catch(() => {});
@@ -437,7 +439,7 @@ export class AgyAcpHead {
     });
     let reported = false;
     const report = (code: number | null, signal: NodeJS.Signals | null) => {
-      if (reported) return; reported = true; this.running = false;
+      if (reported) return; reported = true; this.running = false; signIn.release();
       this.protocol?.close(); this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined;
       void Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs: 500 })]).then(results => {
         if (results.some(result => result.status === "rejected")) this.failure ||= "ACP cleanup incomplete.";
