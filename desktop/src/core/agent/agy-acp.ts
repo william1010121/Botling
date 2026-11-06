@@ -1,6 +1,7 @@
 import { AgyTurnClock, agyPromptRequest } from "../token-speed";
-import { parseAntigravityUsage, quotaError, quotaUnavailable, registerAntigravityQuotaReader } from "../antigravity-quota";
-import type { AntigravityQuotaView } from "../../contract";
+import { registerAntigravityQuotaReader } from "../antigravity-quota";
+import { readAgyQuota } from "../agy-quota-api";
+import { AgyTurnUsage, callTokens } from "../agy-usage-db";
 import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
 import { createHash, randomUUID } from "node:crypto";
@@ -45,9 +46,9 @@ type Pending = { resolve(value: Obj): void; reject(error: Error): void; timer: R
 
 /** Tested independently from process launch: no prompt is sent before the entire handshake. */
 export class AgyAcpProtocol {
-  private quotaPending?: Promise<AntigravityQuotaView>;
-  private quotaCapture?: { text: string; invalid: boolean };
   private releaseQuota?: () => void;
+  /** What agy's conversation file says each turn used (its calls, retries and models), when there is one. */
+  private dbUsage?: AgyTurnUsage;
   private seq = 0;
   private pending = new Map<number, Pending>();
   private approvals = new Map<string, { id: string | number; allow: string; deny: string; title: string; input: Obj }>();
@@ -118,7 +119,9 @@ export class AgyAcpProtocol {
     await this.verifyMode();
     if (this.closed) throw new Error("ACP cancelled during startup.");
     this.ready = true;
-    if (this.config.acpHome && !this.config.worker) this.releaseQuota = registerAntigravityQuotaReader(dirname(dirname(this.config.acpHome)), () => this.readQuota());
+    const home = this.config.acpHome;
+    if (home) this.dbUsage = new AgyTurnUsage(home, () => this.sessionId);
+    if (home && !this.config.worker) this.releaseQuota = registerAntigravityQuotaReader(dirname(dirname(home)), () => readAgyQuota(home));
     this.emit({ kind: "init", sessionId: this.sessionId });
   }
   private async verifyMode() {
@@ -135,23 +138,6 @@ export class AgyAcpProtocol {
       throw new Error(`Antigravity did not confirm ${this.mode === "yolo" ? "Full permission (yolo)" : "default approval mode"}. No task submitted; runtime or administrator policy may refuse this mode.`);
     }
   }
-  /** Official pinned server intercepts /usage before model execution. Read only
-   * from an initialized idle session: no login, mode changes or chat events. */
-  readQuota(): Promise<AntigravityQuotaView> {
-    if (this.quotaPending) return this.quotaPending;
-    if (!this.ready || this.closed) return Promise.resolve(quotaUnavailable());
-    if (this.busy) return Promise.resolve(quotaUnavailable("busy"));
-    const capture = this.quotaCapture = { text: "", invalid: false };
-    this.quotaPending = this.call("session/prompt", { sessionId: this.sessionId, prompt: [{ type: "text", text: "/usage" }] }, 15_000)
-      .then(result => result.stopReason === "end_turn" && !capture.invalid ? parseAntigravityUsage(capture.text) : quotaError())
-      .catch(error => {
-        // ACP chunks have no turn ID. Close the idle connection after timeout
-        // rather than letting late quota output enter the next user's turn.
-        if (error instanceof Error && error.message.includes("timed out")) this.fail(new Error("Antigravity quota request timed out; connection closed to isolate late responses."));
-        return quotaError();
-      }).finally(() => { this.quotaCapture = undefined; this.quotaPending = undefined; });
-    return this.quotaPending;
-  }
   /**
    * Its model and effort from its next turn on, in this same conversation (`session/set_model`, the
    * `thinking_level` option, as at startup). Only between turns of an initialized conversation; false (and
@@ -160,7 +146,7 @@ export class AgyAcpProtocol {
    */
   canApplySettings(target: HotSettings): boolean {
     const change = settingsChange(target, this.config);
-    if (!this.ready || this.closed || this.busy || this.quotaPending || this.settingsPending) return false;
+    if (!this.ready || this.closed || this.busy || this.settingsPending) return false;
     return !("model" in change && (!change.model || !this.models.includes(change.model))) && !("effort" in change && (!change.effort || !["low", "medium", "high"].includes(change.effort)));
   }
   applySettings(target: HotSettings): Promise<boolean> {
@@ -183,11 +169,6 @@ export class AgyAcpProtocol {
   }
   async send(text: string, uuid: string, images: string[] = []) {
     if (this.settingsPending) await this.settingsPending;
-    if (this.quotaPending) {
-      const queuedEpoch = this.cancelEpoch;
-      await this.quotaPending;
-      if (this.closed || queuedEpoch !== this.cancelEpoch) return false;
-    }
     if (this.busy) throw new Error("ACP does not support in-turn steering; wait for this turn to finish.");
     if (/^\s*\/(logout|usage)\b/i.test(text)) throw new Error("ACP account slash commands are not available through Botling.");
     this.busy = true;
@@ -210,6 +191,7 @@ export class AgyAcpProtocol {
       this.emit({ kind: "command", id: uuid, state: "started" });
       this.submitting = true;
       this.transport.onPolicy?.("active", `${this.mode === "yolo" ? "Full permission" : "Approval mode"} active for this turn.`);
+      this.dbUsage?.mark();
       const promptStart = Date.now();
       const clock = this.turnClock = new AgyTurnClock(promptStart);
       const result = await this.call("session/prompt", { sessionId: this.sessionId, prompt }, 30 * 60_000);
@@ -218,7 +200,10 @@ export class AgyAcpProtocol {
       this.cancelApprovals();
       const usage = obj(result.usage);
       const count = (key: string) => Number.isSafeInteger(usage[key]) && usage[key] >= 0 ? usage[key] as number : 0;
-      if (result.usage) this.emit({kind:"usage",totalCost:0,tokens:{input:Math.max(0,count("inputTokens")-count("cachedReadTokens")),output:count("outputTokens")+count("thoughtTokens"),cacheRead:count("cachedReadTokens"),cacheWrite:count("cachedWriteTokens")}});
+      // agy's own record of the turn's calls (retries included) when it has one; else the prompt's one usage block.
+      const recorded = callTokens(this.dbUsage?.take() ?? []);
+      if (recorded) this.emit({ kind: "usage", totalCost: 0, tokens: recorded });
+      else if (result.usage) this.emit({kind:"usage",totalCost:0,tokens:{input:Math.max(0,count("inputTokens")-count("cachedReadTokens")),output:count("outputTokens")+count("thoughtTokens"),cacheRead:count("cachedReadTokens"),cacheWrite:count("cachedWriteTokens")}});
       const stop = epoch !== this.cancelEpoch ? "cancelled" : str(result.stopReason);
       // tool_failed means "ended its turn normally after a failed tool"; it never hides another stop.
       const reason = this.turnFailure && (this.turnFailure !== "tool_failed" || stop === "end_turn") ? this.turnFailure : stop;
@@ -228,7 +213,7 @@ export class AgyAcpProtocol {
       // ACP gives one usage block per prompt and no per-request timing: the turn's tokens over its model time (tool runs
       // and approval waits taken out), an estimate. A turn that ended with its usage is timed whatever its verdict, as a
       // Claude or Codex request is; only a cancelled one is not.
-      const request = agyPromptRequest(uuid, result.usage, promptStart, promptEnd, how !== "cancelled", clock.finish(promptEnd));
+      const request = agyPromptRequest(uuid, recorded ? { outputTokens: recorded.output } : result.usage, promptStart, promptEnd, how !== "cancelled", clock.finish(promptEnd));
       if (request) this.emit({ kind: "request", request });
       this.emit({ kind: "result", ok, how, failedTools, text: this.text, error: ok ? "" : error, subtype: reason });
       return ok;
@@ -259,13 +244,6 @@ export class AgyAcpProtocol {
       if (p.sessionId !== this.sessionId) throw new Error("ACP update for another session.");
       if (u.sessionUpdate === "current_mode_update" && u.currentModeId !== this.mode) throw new Error("ACP changed approval mode unexpectedly.");
       if (u.sessionUpdate === "config_option_update" && u.configOptions?.some((o: Obj) => o.id === "mode" && o.currentValue !== this.mode)) throw new Error("ACP changed approval policy unexpectedly.");
-      if (this.quotaCapture) {
-        if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") {
-          this.quotaCapture.text += str(u.content.text);
-          if (this.quotaCapture.text.length > 256_000) throw new Error("ACP quota response exceeds limit.");
-        } else if (["tool_call", "tool_call_update", "agent_thought_chunk"].includes(u.sessionUpdate)) this.quotaCapture.invalid = true;
-        return;
-      }
       if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") {
         const text = str(u.content.text); this.text += text; this.emit({ kind: "delta", text });
       }
@@ -306,11 +284,6 @@ export class AgyAcpProtocol {
     return this.turnFailure === "permission_denied" && !this.config.worker ? "error" : "normal";
   }
   private permission(message: Obj) {
-    if (this.quotaCapture) {
-      this.quotaCapture.invalid = true;
-      this.write({ jsonrpc: "2.0", id: message.id, result: { outcome: { outcome: "cancelled" } } });
-      return;
-    }
     const p = obj(message.params), options = Array.isArray(p.options) ? p.options : [];
     const allow = options.find((o: Obj) => o.kind === "allow_once" && o.optionId === "allow");
     const deny = options.find((o: Obj) => o.kind === "reject_once" && o.optionId === "deny");
@@ -343,7 +316,6 @@ export class AgyAcpProtocol {
     this.approvals.clear();
   }
   interrupt() {
-    if (this.quotaCapture) this.quotaCapture.invalid = true;
     this.submitting = false; this.confirmed = false; this.transport.revoke?.();
     this.cancelEpoch++;
     if (this.busy) { this.turnCancelled = true; if (!this.turnFailure || this.turnFailure === "tool_failed") this.turnFailure = "cancelled"; }

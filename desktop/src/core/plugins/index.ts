@@ -35,6 +35,8 @@ import { PendingTags } from "./pending-tags";
 import { SessionFolders, cleanFolder, type SessionFolder } from "./session-folders";
 import { AppBriefingParams, AppCardParams, AppInstallParams, AppTellParams, BriefingBook, installCommandOK, type AppWorld } from "./app-seam";
 import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./studio-seam";
+import { agyUsageInProfiles } from "../agy-usage-db";
+import { refreshAntigravityQuota } from "../antigravity-quota";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -208,6 +210,7 @@ const ComponentParams = BotParams.extend({ name: str(200).min(1), data: z.string
 const RoutineParams = z.object({ plugin: str(214), bot: str(64), cron: str(200), task: str(2_000) });
 const CreateParams = z.object({ plugin: str(214) }).passthrough();
 const PluginOnly = z.object({ plugin: str(214) });
+const AgyUsageParams = z.object({ plugin: str(214), sessionId: str(200) });
 const RoutinesListParams = z.object({ plugin: str(214), bot: str(64) });
 const RoutinesChangeParams = RoutinesListParams.extend({ operation: z.enum(["pause", "resume", "cancel"]), id: str(2_200).min(1) });
 const CardKey = z.string().min(1).max(110).regex(/^pin\/[A-Za-z0-9-]{1,100}$/);
@@ -1161,6 +1164,12 @@ export class Plugins {
       case "workspace.current":
         this.asked(PluginOnly, params);
         return world.workspace.current?.() ?? null;
+      case "workspace.agyUsage":
+        // agy's own record of an Antigravity conversation (its calls, retries and models); null: none here.
+        return agyUsageInProfiles(this.options.dataDir, this.asked(AgyUsageParams, params).data.sessionId);
+      case "workspace.agyQuota":
+        this.asked(PluginOnly, params);
+        return refreshAntigravityQuota(this.options.dataDir);
       case "workspace.face": {
         const { data } = this.asked(FaceParams, params);
         return world.workspace.face(data.bot, data.look);

@@ -49,16 +49,14 @@ it('validates real isolated agy denial, report identity and same-session continu
   }));
  try{
   // Supported read-only provider status on an initialized private session.
-  // /usage is intercepted by ACP, never sent to a model; do not authenticate.
+  // An initialized session is the account check: Botling no longer sends /usage (quota comes from cloudcode-pa).
   let statusReady=false;
   statusHead=new AgyAcpHead({command,cwd,acpHome:join(root,'status-profile'),sessionId:randomUUID(),resume:false,worker:true,bypassPermissions:false},{onItem:item=>{
    if(item.kind==='init')statusReady=true;
    if(item.kind==='permission')statusHead!.answer(item.requestId,false,item.input);
   },onExit(){}});
   statusHead.start();await wait(()=>statusReady);
-  const quota=await (statusHead as any).protocol.readQuota();
-  evidence.authStatus={sessionInitialized:true,readOnlyUsage:quota.status,modelTaskSubmitted:false};
-  if(quota.status!=='available')throw Error('Official read-only /usage did not confirm usable ACP account status. No model task submitted.');
+  evidence.authStatus={sessionInitialized:true,modelTaskSubmitted:false};
   await statusHead.terminate();statusHead=undefined;
   const denied=await manager.tool('app_handoff',{instructions:'Use botling write_file exactly once to create deny-marker.txt containing DENIED. If denied, stop immediately and report the denial. Do not use any other tool.'});
   const plain=await manager.tool('app_handoff',{instructions:'Reply exactly AGY_ISOLATED_READY. Do not use tools.'});

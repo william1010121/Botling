@@ -360,6 +360,8 @@ describe("workspace (plan W1)", () => {
       [api.workspace.ignoreWaiting("B1", "Pick one"), "workspace.ignoreWaiting", { bot: "B1", text: "Pick one" }, null],
       [api.workspace.pendingApprovals("B1"), "workspace.pendingApprovals", { bot: "B1" }, []],
       [api.workspace.face("B1", "cute"), "workspace.face", { bot: "B1", look: "cute" }, "data:image/svg+xml;base64,AA"],
+      [api.workspace.agyUsage("S1"), "workspace.agyUsage", { sessionId: "S1" }, null],
+      [api.workspace.agyQuota(), "workspace.agyQuota", {}, { status: "unavailable", source: "antigravity_acp", reason: "no_connection" }],
     ];
     for (const [promise, method, params, result] of cases) {
       expect(await answer(host, written, method, result)).toEqual({ ...params, plugin: "p" });
