@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { Client } from "./client";
 import { RequestFailed } from "./client";
 import type { ApprovalAskView, Command, PluginsView } from "../contract";
-import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
+import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 
 export function TakeoverPage({ client, plugin, view, title, botId, wide, plugins, onError, onAsk }: {
   client: Client; plugin: string; view: string; title: string; botId: string; wide: boolean;
@@ -107,7 +107,7 @@ export function TakeoverPage({ client, plugin, view, title, botId, wide, plugins
 
   return (
     <aside className={`takeover-panel${wide ? " wide" : ""}`} aria-label={title} data-plugin={plugin} data-view={view}>
-      <iframe ref={frame} className="takeover-frame" src={`${CHAT_PAGE}?panel=${encodeURIComponent(`${plugin}/${view}`)}`} sandbox={CHAT_SANDBOX} title={title} />
+      <iframe ref={frame} className="takeover-frame" src={`${CHAT_PAGE}?panel=${encodeURIComponent(`${plugin}/${view}`)}`} sandbox={CHAT_SANDBOX} allow={CHAT_FRAME_ALLOW} title={title} />
     </aside>
   );
 }

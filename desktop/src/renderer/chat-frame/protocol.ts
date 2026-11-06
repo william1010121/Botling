@@ -22,6 +22,8 @@ export const CHAT_TARGET = WEB ? "*" : CHAT_ORIGIN;
 export const CHAT_PAGE = WEB ? `${served}/mobile/chat.html` : `${CHAT_ORIGIN}/chat.html`;
 /** The chat frame's sandbox on the web (none on the desktop, whose scheme already isolates it). */
 export const CHAT_SANDBOX: string | undefined = WEB ? "allow-scripts" : undefined;
+/** The chat frame's permissions policy (`allow`): fullscreen lets a video in a message use its fullscreen button. */
+export const CHAT_FRAME_ALLOW = WEB ? "clipboard-write; fullscreen" : "fullscreen";
 
 /** Frame → shell. */
 export type FrameMessage =

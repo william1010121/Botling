@@ -23,7 +23,7 @@ import { chatState, subagentState } from "./payload";
 import { commandRoute, keybindingsOf, menuItems, offered, type PluginMenu } from "./plugin-commands";
 import { ChatStateChannel } from "./chat-state-channel";
 import { faceURL } from "./avatars";
-import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
+import { CHAT_ORIGIN, CHAT_PAGE, CHAT_FRAME_ALLOW, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
 import { boardOffered, composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
@@ -1340,5 +1340,5 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
   if (nativeEditor()) return <>{viewer}<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
     {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
   </div></>;
-  return <>{viewer}<iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} sandbox={CHAT_SANDBOX} allow={CHAT_SANDBOX ? "clipboard-write" : undefined} title="Chat" /></>;
+  return <>{viewer}<iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} sandbox={CHAT_SANDBOX} allow={CHAT_FRAME_ALLOW} title="Chat" /></>;
 }
