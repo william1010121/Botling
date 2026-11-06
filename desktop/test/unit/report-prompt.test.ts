@@ -1,15 +1,18 @@
 // The report page rule (2.0 only): every bot, the main bot and Codex workers are told to build
-// report pages as ReportSpec v2 with the app's report command, right after the results rule,
-// which stays exactly as it was. Without the command (headless tests) nothing is added.
+// report pages as ReportSpec v2 with the app's report command, right after the results rule, whose hand-written
+// page is then for other pages only (reports go the ReportSpec way: Math, 2026-11-06); nothing else changes.
+// Without the command (headless tests) nothing is added.
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { promptDoc } from "../../reports/v2/promptdoc";
 import { AGY_DELEGATION_POLICY } from "../../src/core/prompts-agy";
-import { botPrompts, desktopPrompts, codexLocalReportRule, codexWorkerInstructions, shellQuote, type ReportTool } from "../../src/core/prompts";
+import { botPrompts, desktopPrompts, HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE, codexLocalReportRule, codexWorkerInstructions, shellQuote, type ReportTool } from "../../src/core/prompts";
 import { legacyReportPageLine, REPORT_SECTION, reportPageLine, reportSections } from "../report-section";
 
 const tool: ReportTool = { command: "env -u ELECTRON_RUN_AS_NODE '/Applications/Botling 2.app/Contents/MacOS/Botling 2' --render-report", docs: "/Applications/Botling 2.app/Contents/Resources/report/report-blocks.md" };
+/** The prompts without the report rule, their results rule pointing report pages at it (what the rule changes besides its line). */
+const reportFirst = (text: string) => text.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE);
 const profile = (role: "main" | "manager" | "bot") => ({ name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null });
 
 describe("the report page rule as botling.report gives it", () => {
@@ -26,8 +29,8 @@ describe("the report page rule as botling.report gives it", () => {
       const bare = desktopPrompts(plain, profile(role));
       const anchor = role === "main" ? "- You are the single point of contact." : "Results meant for the user";
       const insert = (text: string, anchorText: string) => { const lines = text.split("\n"); lines.splice(lines.findIndex((l) => l.includes(anchorText)) + 1, 0, legacyReportPageLine(tool, artifacts)); return lines.join("\n"); };
-      expect(got.system).toBe(insert(bare.system, anchor));
-      expect(got.codexWorkerSystem).toBe(insert(bare.codexWorkerSystem, "Results meant for the user"));
+      expect(got.system).toBe(insert(reportFirst(bare.system), anchor));
+      expect(got.codexWorkerSystem).toBe(insert(reportFirst(bare.codexWorkerSystem), "Results meant for the user"));
     });
   }
   it("the manifest's command and the section agree, and shell-quotes the guide as the core did", () => {
@@ -49,7 +52,7 @@ describe("the report page rule", () => {
         expect(at).toBeGreaterThan(0);
         expect(lines[at - 1]).toContain(role === "main" ? "You are the single point of contact." : "Results meant for the user");
         // Nothing else moves: removing the line gives the prompts without it.
-        expect(lines.filter((l) => l !== line).join("\n")).toBe(desktopPrompts(plain, profile(role)).system);
+        expect(lines.filter((l) => l !== line).join("\n")).toBe(reportFirst(desktopPrompts(plain, profile(role)).system));
         expect(ours.codexWorkerSystem.split("\n")).toContain(line);
         expect(line).toContain(`${tool.command} spec.json '${artifacts}/<english-name>.html' exactly as quoted`);
         expect(line).toContain(`read '${tool.docs}'`);
@@ -68,7 +71,7 @@ describe("the report page rule", () => {
     it(`sends long reports to a ReportSpec v2 page and keeps chat to a brief conclusion plus link (${engine})`, () => {
       for (const role of ["main", "manager", "bot"] as const) {
         const ours = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), "claude", true, reportSections(tool));
-        const text = ours.system.split("\n").find((l) => l.includes("ReportSpec v2")) ?? "";
+        const text = ours.system.split("\n").find((l) => l.includes("ReportSpec v2 JSON, never hand-written HTML")) ?? "";
         expect(text).toContain("--render-report");
         expect(text).toMatch(/settled result that needs visuals or comparison/);
         expect(text).toContain("still being discussed or explained goes into a .md file");
