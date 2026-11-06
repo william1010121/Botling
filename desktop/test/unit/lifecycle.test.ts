@@ -240,7 +240,7 @@ describe("the chat archive", () => {
     expect(files).toEqual([expect.stringMatching(/^\d{4}-\d{2}\.md$/)]);
     const text = readFileSync(join(folder, files[0]!), "utf8");
     expect(text).toMatch(/\] User: keep this\n\n/);
-    expect(text).toMatch(/\] You: You said: keep this\n\n/);
+    expect(text).toMatch(/\] You \(Claude\): You said: keep this\n\n/);
   });
 });
 

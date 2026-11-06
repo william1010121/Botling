@@ -2147,9 +2147,13 @@ export class Bot {
           this.deliverTo(action.head, action.text + this.decisionContext(action.handoffId ? this.handoffDecisions.get(action.handoffId) ?? new Set() : new Set()), null,
             { origin: "app", conducted: !!action.handoffId, handoffId: action.handoffId });
           break;
-        case "line":
-          this.add({ id: newId(), role: "divider", text: action.text, date: toSwiftDate() });
+        case "line": {
+          // The chat shows a hand-off's first line; the archive keeps all of it, for whoever reads the discussion later.
+          const record: ChatRecord = { id: newId(), role: "divider", text: action.text, date: toSwiftDate() };
+          this.add(record, { archive: !action.archive });
+          if (action.archive) archiveLine(this.paths.archive, { ...record, text: action.archive });
           break;
+        }
         case "card": {
           const record: ChatRecord = { id: newId(), role: "notice", text: action.text, date: toSwiftDate(), choices: action.choices.map((choice, index) => ({ label: choice.label, recommended: index === 0 })) };
           this.cardPicks.set(record.id, action.choices.map((choice) => choice.pick));

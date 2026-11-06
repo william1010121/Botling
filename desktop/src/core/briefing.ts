@@ -122,7 +122,17 @@ export function archiveEntry(record: ChatRecord, { timeZone }: { timeZone?: stri
   if (record.choices?.length) text += ` [options: ${record.choices.map((choice) => choice.label).join(" / ")}]`;
   if (record.interrupted === true && text) text += " (interrupted)";
   if (!text) return null;
-  return `[${longStamp(record.date, timeZone)}] ${speaker(record.role)}: ${text}`;
+  return `[${longStamp(record.date, timeZone)}] ${archiveSpeaker(record)}: ${text}`;
+}
+
+/**
+ * Who said an archived line: a reply names its head ("You (Claude)"), so a reader of a two-head bot's archive tells the
+ * heads apart (Math, 2026-11-06: Claude's rounds were archived as "You:", like Antigravity's own). No engine: "You".
+ */
+function archiveSpeaker(record: ChatRecord): string {
+  const names: Record<string, string> = { claude: "Claude", codex: "Codex", agy: "Antigravity" };
+  const name = record.role === "bot" && record.engine ? names[record.engine] : undefined;
+  return name ? `${speaker("bot")} (${name})` : speaker(record.role);
 }
 
 /** Adds a line to this month's archive file (`Bot.archive`). */

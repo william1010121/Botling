@@ -178,7 +178,8 @@ export const isActive = (record: HandoffRecord) => record.state === "running" ||
 export type CardPick = { goWith: Engine } | { oneMoreRound: true };
 export type ConductorAction =
   | { type: "ask"; head: Engine; text: string; handoffId: string | null }
-  | { type: "line"; text: string }
+  /** A divider in the chat; `archive`: the whole line for the chat archive when the chat shows less (a hand-off's first line). */
+  | { type: "line"; text: string; archive?: string }
   | { type: "card"; text: string; choices: { label: string; pick: CardPick }[] }
   | { type: "progress"; progress: RoundsProgress | null };
 
@@ -359,7 +360,8 @@ export class Conductor {
     }
     (this.pendingRecords[handoff.to] ??= []).push(id);
     return [
-      { type: "line", text: `${displayName(from)} → ${displayName(handoff.to)}: ${firstLine(handoff.task)}` },
+      { type: "line", text: `${displayName(from)} → ${displayName(handoff.to)}: ${firstLine(handoff.task)}`,
+        ...(firstLine(handoff.task) !== handoff.task.trim() ? { archive: `${displayName(from)} → ${displayName(handoff.to)}: ${handoff.task.trim()}` } : {}) },
       { type: "progress", progress },
       { type: "ask", head: handoff.to, text: handedNote(from, handoff, this.total, totalLimit), handoffId: id },
     ];
