@@ -486,7 +486,9 @@ export class AgyAcpHead {
     }
     this.sending = true;
     if (request.taskId) this.handlers.onItem({kind:"backgroundTurn", taskId:request.taskId});
-    try { const completed = await this.protocol.send(request.text, request.uuid, request.images);
+    // Read as the turn goes out, not when it was queued: a worker may have reported in between.
+    const atWork = this.stillAtWorkNote(request.taskId);
+    try { const completed = await this.protocol.send(atWork ? `${atWork}\n\n${request.text}` : request.text, request.uuid, request.images);
       if (request.taskId && request.taskRun !== undefined) this.workers?.finishReport(request.taskId, request.taskRun, completed === true);
     }
     catch (error) { this.failure = (error as Error).message; await this.terminate(); }
@@ -495,6 +497,18 @@ export class AgyAcpHead {
       this.handlers.onItem({kind:"managedPending",pending:!!this.workers?.hostedLive.length || this.queue.some(q=>!!q.taskId)});
       void this.drain();
     }
+  }
+  /**
+   * Its own workers still at work (`reportingTask`, the one whose report this turn carries, left out). Without it a
+   * turn says nothing of them, and the model took a worker it had just sent off for done: "already written", of a
+   * file that held only the worker's write probe. Never shown or archived, like AGY_REPLY_REMINDER.
+   */
+  private stillAtWorkNote(reportingTask?: string): string {
+    if (this.config.worker || !this.workers) return "";
+    const busy = this.workers.list().filter(w => w.state === "running" && !w.owner && w.id !== reportingTask);
+    if (!busy.length) return "";
+    const names = busy.map(w => `"${w.name}" (task_id ${w.id})`).join(", ");
+    return `(App: ${busy.length === 1 ? "1 of your workers is" : `${busy.length} of your workers are`} still at work; no app_task_result yet: ${names}. Until its app_task_result arrives, its deliverable is not done: do not say it is written, recorded or finished, or that all workers have stopped; say it is still in progress.)`;
   }
   answer(id: string, allow: boolean, input: Record<string, unknown>, message?: string) {
     if (id.startsWith("worker:")) this.workers?.answer(id,allow,input,message);

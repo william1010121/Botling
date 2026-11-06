@@ -502,6 +502,9 @@ function insertAfterLine(text: string, anchor: string, line: string): string {
   return lines.join("\n");
 }
 const RESULTS_ANCHOR = "Results meant for the user";
+const REPORT_SECTION_ID = "botling.report.page";
+export const HAND_WRITTEN_PAGE = `one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset="utf-8">,`;
+export const REPORT_FIRST_PAGE = `one HTML page (a report page is built from a ReportSpec v2 JSON with the report command, as the report page rule says, never written by hand; any other page is a single file with its styles inline, starting with <!doctype html><meta charset="utf-8">),`;
 const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
 /**
@@ -542,6 +545,12 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // The sections that follow the results rule (botling.report's report page rule), in order: the main bot's results rule has its
   // own first line, and Codex workers get them too.
   const artifacts = profile.folder ? join(profile.folder, profile.role === "main" ? "artifacts" : ".bot/artifacts") : "<your artifacts folder>";
+  // With botling.report's rule told, the results rule's hand-written page is for other pages only: read first, it sent
+  // reports there, and an Antigravity head briefed its worker to hand-write the report's HTML (Math, 2026-11-06).
+  if (told.some((section) => section.id === REPORT_SECTION_ID && section.after === "results" && section.tool)) {
+    system = system.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE);
+    codexWorkerSystem = codexWorkerSystem.replaceAll(HAND_WRITTEN_PAGE, REPORT_FIRST_PAGE);
+  }
   for (const section of told.filter((entry) => entry.after === "results").reverse()) {
     const line = fillSection(section.text, section.tool, artifacts);
     system = insertAfterLine(system, profile.role === "main" ? MAIN_RESULTS_ANCHOR : RESULTS_ANCHOR, line);
