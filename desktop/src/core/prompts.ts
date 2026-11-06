@@ -158,15 +158,15 @@ export function resultsRule(choice: ResultPublishing, folder: string): string {
     : choice === "localOnly"
       ? `go into ${local} The user chose to keep results local: do not publish them with the Artifact tool.`
       : `go into ${artifact} The user chose this for every result, sensitive or not. Only when the Artifact tool is unavailable or fails (offline, not signed in), make it ${local}`;
-  return `Results meant for the user (reports, comparisons, screenshots, previews) ${rule} Pictures and videos shown inline stay file:// links. ${markdownRule(folder)}`;
+  return `Results meant for the user (reports, comparisons, screenshots, previews) ${rule} Pictures and videos shown inline stay file:// links. ${reportOnlyRule(folder)}`;
 }
 
 /**
- * Where long text goes (approved 2026-11-04): what is still being discussed or explained goes into one .md file in the
- * artifacts folder (the app draws it as a preview card); pages are for settled results that need visuals.
+ * Where text goes (2026-11-06, the user: everyone on ReportSpec v2): what is still being discussed stays short in
+ * chat; every result page is a ReportSpec v2 report (also the local fallback).
  */
-export function markdownRule(folder: string): string {
-  return `Long text still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) goes into one Markdown file instead, saved to ${folder}/<english-file-name>.md and linked as [name](file://full path of that file); on follow-ups edit that file in place, do not rewrite it. Make a page only for settled results that need visuals or comparison (status, decision, comparison, results to share). In short: still discussing, a .md file; settled and needs charts, a page. A page or .md file opens with one sentence that answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish it: answer in chat.`;
+export function reportOnlyRule(_folder: string): string {
+  return `Text still being discussed or explained (explanations, how to read a figure, research reasoning, drafts, translations) stays short in chat. Every result page, the local fallback included, is one report built from a ReportSpec v2 JSON with the report command. A page opens with one sentence that answers the user's question ("You asked X; the answer is Y"); if it cannot, do not publish it: answer in chat.`;
 }
 
 /** What a bot does first when the user's message signals confusion or doubt (approved 2026-11-04). */

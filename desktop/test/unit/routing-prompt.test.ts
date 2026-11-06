@@ -1,31 +1,35 @@
 // The routing rules approved 2026-11-04 reach every engine: discuss in chat when asked, restate a doubtful question
-// first, long text still being discussed goes into one .md file (pages only for settled visual results), a page or .md
+// first, text still being discussed stays short in chat (every page is a ReportSpec v2 report), a page
 // opens by answering the question, and a worker's follow-ups go to that same worker with the user's own words.
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../../src/core/agent/agy-capabilities", async (original) => ({ ...await original<any>(), agyWorkerRuntimeEnabled: () => true }));
-import { botPrompts, desktopPrompts, markdownRule, resultsRule, RESTATE_RULE } from "../../src/core/prompts";
+import { botPrompts, desktopPrompts, reportOnlyRule, resultsRule, RESTATE_RULE } from "../../src/core/prompts";
 
 const profile = (role: "main" | "manager" | "bot") => ({ name: "P", role, folder: "/tmp/p", memoryPath: role === "main" ? "memory.md" : ".bot/memory.md", job: role === "bot" ? "News" : null });
 const ENGINES = ["claude", "codex", "agy"] as const;
 
 describe("routing rules", () => {
-  it("sends long text still under discussion to one .md in the artifacts folder, edited in place", () => {
-    const rule = markdownRule("/tmp/p/.bot/artifacts");
-    expect(rule).toContain("saved to /tmp/p/.bot/artifacts/<english-file-name>.md and linked as [name](file://full path of that file)");
-    expect(rule).toContain("edit that file in place");
-    expect(rule).toContain("still discussing, a .md file; settled and needs charts, a page");
+  it("keeps text under discussion short in chat and requires ReportSpec v2 report pages and offers no .md file", () => {
+    const rule = reportOnlyRule("/tmp/p/.bot/artifacts");
+    expect(rule).toContain("stays short in chat.");
+    expect(rule).toContain("is one report built from a ReportSpec v2 JSON with the report command");
     expect(rule).toContain('opens with one sentence that answers the user\'s question ("You asked X; the answer is Y"); if it cannot, do not publish it');
-    for (const choice of ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const) expect(resultsRule(choice, "/a")).toContain(markdownRule("/a"));
+    expect(rule).not.toContain("<english-file-name>.md");
+    expect(rule).not.toContain("still discussing, a .md file");
+    for (const choice of ["artifactUnlessSensitive", "localOnly", "artifactAlways"] as const) expect(resultsRule(choice, "/a")).toContain(reportOnlyRule("/a"));
   });
 
   for (const engine of ENGINES) {
-    it(`reaches a ${engine} bot and manager: discuss in chat when asked, restate first, .md routing`, () => {
+    it(`reaches a ${engine} bot and manager: discuss in chat when asked, restate first, ReportSpec v2 only`, () => {
       for (const role of ["bot", "manager"] as const) {
         const { system } = desktopPrompts(botPrompts({ profile: profile(role), engine }), profile(role), engine, true);
         expect(system).toContain("when the user asks to discuss or think something through together, discuss it in chat");
         expect(system).toContain(RESTATE_RULE.slice(2));
         expect(system).toContain("怪怪的, 為什麼, 看不懂");
-        expect(system).toContain("goes into one Markdown file instead");
+        expect(system).toContain("stays short in chat.");
+        expect(system).toContain("one report built from a ReportSpec v2 JSON");
+        expect(system).not.toContain("Markdown file instead");
+        expect(system).not.toContain("<english-file-name>.md");
       }
     });
 

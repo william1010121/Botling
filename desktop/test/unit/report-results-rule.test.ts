@@ -22,9 +22,9 @@ for(const engine of ['agy','codex','claude'] as const) it(`${engine}: the result
  }
 });
 
-it('without the report plugin the results rule is left as it was',()=>{
+it('without the report plugin the results rule keeps the hand-written page wording (but still no .md results)',()=>{
  const profile={name:'Math',role:'bot' as const,folder:'/Users/x/docs/Math',memoryPath:'.bot/memory.md',job:null};
  const base=botPrompts({profile,engine:'agy'});
  expect(desktopPrompts(base,profile,'agy',true,reportSections(null)).system).toContain('Results meant for the user');
- expect(desktopPrompts(base,profile,'agy',true,reportSections(null)).system).not.toContain('ReportSpec v2');
+ expect(desktopPrompts(base,profile,'agy',true,reportSections(null)).system).not.toContain('a report page is built from a ReportSpec v2 JSON');
 });
