@@ -32,6 +32,12 @@ export function rightPanelSectionsFor(plugins: PluginsView | null | undefined, b
   return (plugins?.rightPanelSections ?? []).filter((section) => section.forRole === "any" || section.forRole === role || (section.forRole === "bots" && bot.role !== "main"));
 }
 
+/** The one view at the right end of the row above a bot's input box (`composerBar` views): the first for its role, by the same `forRole`; null: none. */
+export function composerBarFor(plugins: PluginsView | null | undefined, bot: Pick<BotView, "role" | "parent">): NonNullable<PluginsView["composerBarViews"]>[number] | null {
+  const role = bot.role === "main" ? "main" : bot.role === "manager" || bot.parent ? "project" : null;
+  return (plugins?.composerBarViews ?? []).find((view) => view.forRole === "any" || view.forRole === role || (view.forRole === "bots" && bot.role !== "main")) ?? null;
+}
+
 /** The tab shown: the one remembered for the bot, while it is offered; null: Chat or Board. */
 export function shownTab(tabs: MainTab[], remembered: string | undefined): MainTab | null {
   return (remembered && tabs.find((tab) => tabKey(tab) === remembered)) || null;

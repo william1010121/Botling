@@ -178,7 +178,7 @@ describe("botling manifests", () => {
     ]);
     expect(read.problems).toEqual([
       'View "board.odd": forRole "everyone" must be main, project, bots or any.',
-      'View "board.side": forRole is only for where "mainTab" or "rightPanel.section".',
+      'View "board.side": forRole is only for where "mainTab", "rightPanel.section" or "composerBar".',
     ]);
   });
 
@@ -197,7 +197,26 @@ describe("botling manifests", () => {
     expect(read.problems).toEqual([
       'View "botling.terminal.steal": toggle "other.toggle" must be a command of this plugin ("botling.terminal.…").',
       'View "botling.terminal.odd": toggle is only for where "bottomPanel".',
-      'View "botling.terminal.role": forRole is only for where "mainTab" or "rightPanel.section".',
+      'View "botling.terminal.role": forRole is only for where "mainTab", "rightPanel.section" or "composerBar".',
+    ]);
+  });
+
+  it("a view can sit at the right end of the row above the input box (composerBar), with a width hint and forRole; width is for nothing else", () => {
+    const read = readManifest({ name: "usage", version: "1.0.0", botling: { ui: "ui.js", contributes: { views: [
+      { id: "usage.bar", title: "Session usage", where: "composerBar", width: 260, forRole: "bots" },
+      { id: "usage.plain", title: "Plain", where: "composerBar" },
+      { id: "usage.wide", title: "Wide", where: "composerBar", width: 2000 },
+      { id: "usage.odd", title: "Odd", where: "composerBar", width: "260" },
+      { id: "usage.tab", title: "Tab", where: "mainTab", width: 260 },
+    ] } } }, empty);
+    expect(ofKind(read.contributions, "view")).toEqual([
+      { kind: "view", plugin: "usage", id: "usage.bar", title: "Session usage", where: "composerBar", forRole: "bots", width: 260 },
+      { kind: "view", plugin: "usage", id: "usage.plain", title: "Plain", where: "composerBar", forRole: "any" },
+    ]);
+    expect(read.problems).toEqual([
+      'View "usage.wide": width must be a whole number of pixels from 80 to 480.',
+      'View "usage.odd": width must be a whole number of pixels from 80 to 480.',
+      'View "usage.tab": width is only for where "composerBar".',
     ]);
   });
 
@@ -257,7 +276,7 @@ describe("botling manifests", () => {
       'Command "other.steal" must start with "mine.".',
       'Command "mine.ok" is declared twice.',
       "contributes.commands.3 is missing id.",
-      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel, chatHeader or rightPanel.takeover.',
+      'View "mine.v": where "sidebar" must be rightPanel, main, window, mainTab, settings.section, quickSettings, rightPanel.section, bottomPanel, chatHeader, rightPanel.takeover or composerBar.',
       'Tile "mine.t": size "9x9" is not a Board size (for example 2x1).',
       'Setting "on" must start with "mine.".',
       'Menu "toolbar" is not one of message/context, bot/context, composer/plus, commandPalette, message/preview.',
