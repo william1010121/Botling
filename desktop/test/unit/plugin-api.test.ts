@@ -8,6 +8,7 @@ import { tempDir, until } from "../helpers";
 import { Plugins, type AppQuestion, type AppAnswer, type PluginWorld } from "../../src/core/plugins";
 import type { HostCommand, HostHandlers } from "../../src/core/plugins/host-client";
 import { testSealer } from "../../src/core/plugins/secrets";
+import { conversation, generation, usage } from "./agy-db-fixture";
 
 function plugin(dir: string, name: string, ccb: Record<string, unknown> = {}) {
   const folder = join(dir, "plugins", name);
@@ -414,6 +415,19 @@ describe("workspace for plugins (plan W1)", () => {
     await expect(ask("workspace.face", { plugin: "board", bot: "main", look: "scary" })).rejects.toThrow(/Not a request/);
     await expect(ask("workspace.memory", { plugin: "board", bot: "B9" })).rejects.toThrow("No such bot.");
     await expect(ask("workspace.bots", { plugin: "ghost" })).rejects.toThrow("not running");
+  });
+
+  it("agyUsage reads an Antigravity conversation from Botling's agy profiles; agyQuota says unknown without a file sign-in", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "meter");
+    const c = conversation(join(dir, "agy-acp", "profile-1"), "agy-s1");
+    c.add(generation({ usage: usage({ input: 40, output: 9, cacheRead: 100 }), slug: "gemini-3.8-flash-high" }));
+    c.db.close();
+    const { ask } = await setup(dir);
+    expect(await ask("workspace.agyUsage", { plugin: "meter", sessionId: "agy-s1" })).toMatchObject({ sessionId: "agy-s1", retries: 0, models: ["gemini-3.8-flash-high"], total: { input: 40, output: 9, cacheRead: 100, cacheWrite: 0, reasoning: 0 } });
+    expect(await ask("workspace.agyUsage", { plugin: "meter", sessionId: "../agy-s1" })).toBeNull();
+    expect(await ask("workspace.agyQuota", { plugin: "meter" })).toEqual({ status: "unavailable", reason: "unsupported_connection", source: "antigravity_acp" });
+    await expect(ask("workspace.agyUsage", { plugin: "ghost", sessionId: "agy-s1" })).rejects.toThrow("not running");
   });
 
   it("ignoreWaiting sets an item aside, as the app's own I-know does (not an answer)", async () => {

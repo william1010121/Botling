@@ -107,6 +107,35 @@ export interface CommandRun {
  * session (Claude: the id Claude Code names its session log by, `<sessionId>.jsonl`; Codex: the
  * thread id); null until that head has started one. `heads`: every head of the chat, the primary first.
  */
+/** One model call of an Antigravity conversation (`workspace.agyUsage`). */
+export interface AgyCall {
+  /** ms since 1970; null: the row has no time. */
+  at: number | null;
+  model: string;
+  /** Input tokens not read from the cache. */
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** Thinking tokens, part of `output`. */
+  reasoning: number;
+  /** An attempt that was tried again (its tokens were still spent). */
+  retry: boolean;
+  key: string;
+}
+export interface AgyUsage {
+  sessionId: string;
+  calls: AgyCall[];
+  total: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number };
+  retries: number;
+  models: string[];
+}
+/** A quota bucket: a family (Gemini, Claude & GPT…) and its window, 0…1 left, when it starts over (ms). */
+export interface AgyQuotaBucket { group: string; label: string; remainingFraction?: number; remainingAmount?: string; resetsAt?: number; disabled?: boolean }
+export type AgyQuota =
+  | { status: "available"; source: string; seen: number; buckets: AgyQuotaBucket[] }
+  | { status: "unavailable" | "error"; source: string; reason: string; lastKnown?: { seen: number; buckets: AgyQuotaBucket[] } };
+
 export interface CurrentChat {
   botId: string;
   engine: "claude" | "codex" | "agy";
@@ -146,6 +175,14 @@ export interface WorkspaceApi {
    * the bot left and the bot opened.
    */
   current(): Promise<CurrentChat | null>;
+  /**
+   * What an Antigravity conversation used, from agy's own conversation file (`sessionId`: an agy head's, as in
+   * `current().heads`): each model call (a retry is a call of its own) with its exact tokens and model. null: no such
+   * conversation in Botling's agy profiles, or a file this Botling cannot read. Agy reports no prices.
+   */
+  agyUsage(sessionId: string): Promise<AgyUsage | null>;
+  /** Antigravity's quota (Google's cloudcode-pa quota summary), reused for five minutes; never a token. */
+  agyQuota(): Promise<AgyQuota>;
   /** Told when anything the methods above answer changed, naming the bots and kinds. */
   onChange(fn: (change: WorkspaceChange) => void): Dispose;
 }
@@ -613,6 +650,8 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       pendingApprovals: async (botId) => (await ask("workspace.pendingApprovals", { bot: botId })) as never,
       face: async (botId, look) => (await ask("workspace.face", { bot: botId, look })) as string,
       current: async () => (await ask("workspace.current")) as CurrentChat | null,
+      agyUsage: async (sessionId) => (await ask("workspace.agyUsage", { sessionId })) as AgyUsage | null,
+      agyQuota: async () => (await ask("workspace.agyQuota")) as AgyQuota,
       component: async (botId, name, spec) => (await ask("workspace.component", { bot: botId, name, ...(spec?.data !== undefined ? { data: spec.data } : {}), ...(spec?.command !== undefined ? { command: spec.command } : {}) })) as never,
       onChange: (fn) => {
         const list = plugin.events.get(WORKSPACE_EVENT) ?? [];
