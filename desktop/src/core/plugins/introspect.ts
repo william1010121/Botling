@@ -35,6 +35,8 @@ const SLOT_ABOUT: Record<string, string> = {
   "settings.section": "A page of Settings.", quickSettings: "A block in the sidebar gear's popover.", "rightPanel.section": "A block in a bot's right panel overview.",
   bottomPanel: "A panel under the chat, with a toggle in the chat header.", chatHeader: "A button in the chat header that opens a popover (a view) or a status item (statusItem).",
   botRow: "A status item on a bot's row in the left column.",
+  "rightPanel.takeover": "A page that takes the right panel's place while the program part has it open (ui.takeover).",
+  composerBar: "A one-line frame at the right end of the row above the input box (the pins' row), for the chat on screen (forRole; width: 80-480 px, default 240); a click opens a card above it with the same view bigger. ccb.context.surface is \"compact\" or \"expanded\", ccb.context.botId the bot.",
   "message/context": "The right-click menu of a message.", "bot/context": "The right-click menu of a bot.", "composer/plus": "The + menu of the input box.", commandPalette: "The command palette.",
 };
 

@@ -1,5 +1,6 @@
 import { BottomPanels, TOGGLE_BOTTOM_PANEL } from "./BottomPanels";
 import { ChatHeaderViews } from "./ChatHeaderViews";
+import { composerBarMessage, useComposerBar } from "./ComposerBar";
 import { ownsCommand } from "../../../Web/src/frame-protocol";
 // The app page: React chrome around the reused chat page. The left column lists the bots (as the
 // Swift app's sidebar); the chat area hosts Web/src's chat page in a same-origin frame
@@ -25,7 +26,7 @@ import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, CHAT_SANDBOX, CHAT_TARGET, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { MainTabFrame, PanelFrame, PluginsButton, SlotFrame, type BuiltinRunner } from "./Plugins";
 import { TakeoverPage } from "./TakeoverPage";
-import { boardOffered, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
+import { boardOffered, composerBarFor, mainTabsFor, namedBot, rightPanelSectionsFor, shownChat, shownTab, tabKey, WHITEBOARD_PLUGIN, type MainTab } from "./main-tabs";
 import { UpdateEntry } from "./UpdateEntry";
 import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
@@ -313,6 +314,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     setWhiteboardOn(false);
     selectBot(botId);
   }, [client, store, fail, chooseTab, setWhiteboardOn, selectBot]);
+  // A plugin's view at the right end of the row above the input box (`composerBar`), drawn in the chat page.
+  useComposerBar({ client, view: bot && !web ? composerBarFor(view.plugins, bot) : null, botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
 
   // A result opens in the browser or with its own app; main checks it is one of this chat's links.
   const openResult = useCallback((result: ResultView) => {
@@ -1011,6 +1014,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         for (const run of runs) void client.request({ type: "turn.stop", botId: chat!.botId, turnId: run.turnId }).catch(onError);
         return;
       }
+      if (composerBarMessage(message)) return;
       if (message.botling === "page") {
         // A component frame's page: main serves it from botling-card://page/ under its own CSP.
         const answer = (url: string | null) => {

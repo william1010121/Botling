@@ -812,6 +812,11 @@ export const PluginsView = z.strictObject({
   bottomPanels: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), toggle: PluginCommandId.optional() })).max(5).optional(),
   /** Plugin views that are buttons in the chat header, each opening a popover with its frame for the bot on screen (`where: "chatHeader"`). */
   chatHeaderViews: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(5).optional(),
+  /**
+   * Plugin views at the right end of the row above the input box (`where: "composerBar"`), for the bots its `forRole` names: a one-line frame
+   * `width` px wide whose click opens a card above it with the frame again (`ccb.context.surface` "compact" / "expanded"). The page shows the first one.
+   */
+  composerBarViews: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200), width: z.number().int().min(80).max(480), forRole: z.enum(["main", "project", "bots", "any"]) })).max(5).optional(),
   /** Pages that take the whole right panel's place for a bot while a plugin's program part has one open (`rightPanel.takeover` views, `ui.takeover`). */
   takeovers: z.array(z.strictObject({ plugin: PluginName, id: z.string().max(100), title: z.string().max(200) })).max(5).optional(),
   /** The takeover open now (null: none): which view, for which bot, and whether it is wide. */

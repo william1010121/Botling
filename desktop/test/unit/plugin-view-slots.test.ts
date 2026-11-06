@@ -19,6 +19,8 @@ it("sorts the views by where; a plugin without a web part draws none", () => {
     view("term", "term.panel", "bottomPanel", { toggle: "term.toggle" }),
     view("clock", "clock.panel", "chatHeader"),
     view("lab", "lab.spec", "rightPanel.takeover"),
+    view("usage", "usage.bar", "composerBar", { forRole: "bots", width: 260 }),
+    view("usage", "usage.plain", "composerBar"),
   ];
   const surfaces = viewSurfaces(list, (name) => name !== "mute");
   expect(surfaces).toEqual({
@@ -29,6 +31,10 @@ it("sorts the views by where; a plugin without a web part draws none", () => {
     bottomPanels: [{ plugin: "term", id: "term.panel", title: "term.panel", toggle: "term.toggle" }],
     chatHeaderViews: [{ plugin: "clock", id: "clock.panel", title: "clock.panel" }],
     takeovers: [{ plugin: "lab", id: "lab.spec", title: "lab.spec" }],
+    composerBarViews: [
+      { plugin: "usage", id: "usage.bar", title: "usage.bar", width: 260, forRole: "bots" },
+      { plugin: "usage", id: "usage.plain", title: "usage.plain", width: 240, forRole: "any" },
+    ],
   });
   const view_ = { plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null, ...surfaces };
   expect(PluginsView.safeParse(view_).success).toBe(true);

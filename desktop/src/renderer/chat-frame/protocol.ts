@@ -37,10 +37,23 @@ export type FrameMessage =
   /** The native editor has applied state without replacing its EditorView. */
   | { botling: "hostObservation"; chatId: string | null; intentEpoch: number; revision: number }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
-  | { botling: "page"; id: number; html: string };
+  | { botling: "page"; id: number; html: string }
+  /** The page is up: what the row above the input box shows again (composer-bar.ts). */
+  | { botling: "composerBarAsk" }
+  /** What a `composerBar` view's frame posted (its window and opaque origin checked here); the shell answers it as a plugin frame's. */
+  | { botling: "composerBarFrame"; frame: ComposerBarFrame; data: unknown };
+
+/** The `composerBar` view's two frames: the one-line one in the row, and the card a click opens above it. */
+export type ComposerBarFrame = "compact" | "expanded";
+/** A `composerBar` view for the chat on screen: its pages (botling-card://page/…, made by the shell) and its width (px). */
+export interface ComposerBarSpec { plugin: string; view: string; title: string; width: number; compact: string; expanded: string }
 
 /** Shell → frame. */
 export type ShellMessage =
+  /** The `composerBar` view at the right end of the row above the input box (null: none). */
+  | { botling: "composerBar"; bar: ComposerBarSpec | null }
+  /** A reply or push for one of its frames, passed on to that frame as it is. */
+  | { botling: "composerBarReply"; frame: ComposerBarFrame; data: unknown }
   | { botling: "composerModelsResult"; requestID: number; value?: unknown; error?: string }
   | { botling: "projectFilesResult"; requestID: number; value?: unknown; error?: string }
   | { botling: "composerResult"; requestID: string; ok: boolean; error?: string }

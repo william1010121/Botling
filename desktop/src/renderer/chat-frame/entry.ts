@@ -8,6 +8,7 @@ import { observeTraceEditor } from "./input-trace-chat";
 import { inputTrace } from "../input-trace";
 import "./shim";
 import "./component-frames";
+import "./composer-bar";
 import { installInputRecovery } from "./input-focus";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
