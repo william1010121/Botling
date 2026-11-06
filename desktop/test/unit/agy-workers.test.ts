@@ -403,3 +403,41 @@ it('round 4 #4 a cleanup decides by a live check: a stale "still alive" answer n
  gone=true;
  expect(await adapter.cleanup(record)).toEqual({cleaned:true});
 });
+
+// app_send_message to a running Antigravity worker: the words ride on its next tool result (agy-mid-turn-insert.test.ts),
+// once; a run that ends before another tool call carries them into its next run.
+function withInsert(h:ReturnType<typeof harness>){
+ const original=(h.m as any).adapter.factory;
+ (h.m as any).adapter.factory=(config:AgyConfig,handlers:HeadHandlers)=>{
+  const head=original(config,handlers) as any;const state=h.starts.at(-1) as any;state.offered=[];
+  head.offerInsert=(id:string,text:string)=>{state.offered.push({id,text});return true;};
+  state.deliver=()=>{for(const {id} of state.offered.splice(0))handlers.onItem({kind:'inserted',id} as any);};
+  return head;
+ };
+}
+it('app_send_message to a running Antigravity worker joins its run at its next tool call',async()=>{
+ const h=harness();withInsert(h);
+ const a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]! as any;
+ const sent=await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'also check the README'});
+ expect(sent).toMatchObject({accepted:true,task_id:a.task_id,run:1});
+ expect(w.offered).toHaveLength(1);expect(w.offered[0].text).toBe('also check the README');
+ w.deliver();
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ h.m.beginReport(a.task_id,1);await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
+ await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'});
+ expect(h.starts[1]!.sent[0][0]).not.toContain('also check the README');
+});
+it('a steered message the run ended before reading goes into the worker\'s next run, once',async()=>{
+ const h=harness();withInsert(h);
+ const a=await h.m.tool('app_handoff',{instructions:'task'}),w=h.starts[0]! as any;
+ await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'also check the README'});
+ w.h.onItem({kind:'result',ok:true,text:'report',error:'',subtype:'end_turn'});await settle();
+ h.m.beginReport(a.task_id,1);await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:1,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
+ await h.m.tool('app_send_message',{task_id:a.task_id,run:1,message:'next'});
+ const words=h.starts[1]!.sent[0][0] as string;
+ expect(words).toContain('also check the README');expect(words).toContain('next');
+ (h.starts[1] as any).h.onItem({kind:'result',ok:true,text:'report 2',error:'',subtype:'end_turn'});await settle();
+ h.m.beginReport(a.task_id,2);await h.m.tool('app_task_checkpoint',{task_id:a.task_id,run:2,outcome:'blocked',evidence:'fixture report reviewed; next authorized step explicit'});
+ await h.m.tool('app_send_message',{task_id:a.task_id,run:2,message:'third'});
+ expect(h.starts[2]!.sent[0][0]).not.toContain('also check the README');
+});

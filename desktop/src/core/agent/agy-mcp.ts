@@ -130,6 +130,11 @@ export class AgyMcpBridge {
       this.onToolEvent!({kind:'permission',requestId,tool:name,summary:`botling_${name}\n${JSON.stringify(args)}`,input:args});
     });
   }
+  /** Words to add to a tool result of the turn under way (`AgyAcpHead.offerInsert`); none: undefined. */
+  attach?: () => string | undefined;
+  private calls = 0;
+  /** A tool call is at work (its result, when it comes, carries any offered words). */
+  get busy() { return this.calls > 0; }
   beginTurn() { this.revoke(); if (!this.stopped) this.fullTurn = true; }
   revoke() {
     this.fullTurn = false; this.grants.clear(); this.epoch++;
@@ -172,10 +177,13 @@ export class AgyMcpBridge {
       this.onToolEvent!({kind:'toolUse',id,tool:'other',title:`botling_${name}`,detail:JSON.stringify(args),input:args,parent:null});
     }
     let output: string, failed: boolean;
+    this.calls++;
     try { const result=await this.invoke(name,args);failed=name==='run_command'&&(result as {exitCode:number|null}).exitCode!==0;output=typeof result==='string'?result:JSON.stringify(result); }
     catch(error){failed=true;output=(error as Error).message;}
+    finally{this.calls--;}
     if (observed) this.onToolEvent!({kind:'toolResult',id,output,failed,parent:null,launch:null});
-    return {isError:failed,content:[{type:'text',text:output}]};
+    const extra = this.stopped ? undefined : this.attach?.();
+    return {isError:failed,content:[{type:'text',text:output},...(extra ? [{type:'text',text:extra}] : [])]};
   }
   /** Exact grants by default; local tools alone may use this head's negotiated active-turn capability. */
   async invoke(name:string,args:Args):Promise<unknown> {

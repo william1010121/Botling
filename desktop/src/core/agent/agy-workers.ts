@@ -19,6 +19,8 @@ import {AgyLegacyStore,WorkerCore,wireStatus,type HandoffRequest,type RecoverRes
 
 export interface AgyWorkerHead {
   start():void;send(text:string,uuid:string):void;
+  /** Words into the run under way, at its next tool result (AgyAcpHead.offerInsert); absent or false: it cannot take them. */
+  offerInsert?(id:string,text:string):boolean;
   answer(id:string,allow:boolean,input:Record<string,unknown>,message?:string):void;
   terminate(graceMs?:number):Promise<TerminateResult>;
   /** Whether its process tree is gone, checked now (absent or undefined: only terminate's answer tells). */
@@ -28,17 +30,24 @@ export interface AgyWorkerHead {
 const canonical=(v:any):string=>v&&typeof v==='object'?Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
 const CLEANUP_INCOMPLETE='Worker cleanup incomplete; task remains blocked.';
 const CRASH_UNVERIFIED='Worker crash cleanup has not been verified; process registration is missing or an owned group may survive. Cancellation and continuation remain blocked.';
-const BUSY='This ACP worker is busy or cleaning up; in-turn steering is unsupported.';
+const BUSY='This ACP worker is busy or cleaning up; try again after its report.';
 
 /** One run's head, and the approvals it asked (by ACP's request id, without its `acp:` prefix). */
-interface AgyRun {handle:RunHandle;head?:AgyWorkerHead;approvals:Map<string,Record<string,unknown>>;sawText:boolean;ended:boolean}
+interface AgyRun {handle:RunHandle;head?:AgyWorkerHead;approvals:Map<string,Record<string,unknown>>;sawText:boolean;ended:boolean;
+  /** Words steered into the run and not read yet (by offer id). */
+  offered:Map<string,string>}
+/** Heads the words a run ended before reading, at the start of the worker's next run. */
+const CARRIED_NOTE='(App: Messages sent to you while your last run was at work, which it ended before reading:)';
 
 /** Antigravity's WorkerAdapter: one ACP process per run, ended (and its process group checked) when the run ends. */
 export class AgyAcpAdapter implements WorkerAdapter {
   readonly kind='agy-acp' as const;
   readonly engine='agy' as const;
-  readonly steersRunning=false;
+  /** Words go into a run at its next tool result (AgyAcpHead.offerInsert); what it ends before reading opens its next run. */
+  readonly steersRunning=true;
   private runs=new Map<string,AgyRun>();
+  /** Per worker: words its last run ended before reading. */
+  private carried=new Map<string,string[]>();
   private startTime:(pid:number)=>string|null;
   /** `processStartTime`: a process's start time (identity); a replay maps its recorded processes. */
   constructor(private config:AgyConfig,private factory:(c:AgyConfig,h:HeadHandlers)=>AgyWorkerHead,options:{processStartTime?(pid:number):string|null}={}){
@@ -52,10 +61,15 @@ export class AgyAcpAdapter implements WorkerAdapter {
     return {engine:engine as 'agy'|'codex'};
   }
   start(record:Readonly<WorkerLedgerRecord>,words:string,handle:RunHandle){
-    const live:AgyRun={handle,approvals:new Map(),sawText:false,ended:false};
+    const live:AgyRun={handle,approvals:new Map(),sawText:false,ended:false,offered:new Map()};
     this.runs.set(record.id,live);
     const current=()=>this.runs.get(record.id)===live&&!live.ended;
-    const end=(end:RunEnd)=>{if(!current())return;live.ended=true;live.approvals.clear();handle.emit({type:'end',end});};
+    const end=(end:RunEnd)=>{if(!current())return;live.ended=true;live.approvals.clear();
+      // Unread words go to its next run (a stopped run's go nowhere: stop() ends it without this).
+      if(live.offered.size){this.carried.set(record.id,[...this.carried.get(record.id)??[],...live.offered.values()]);live.offered.clear();}
+      handle.emit({type:'end',end});};
+    const carried=this.carried.get(record.id);this.carried.delete(record.id);
+    if(carried?.length)words=`${CARRIED_NOTE}\n${carried.join('\n\n')}\n\n${words}`;
     const config:AgyConfig={...this.config,worker:true,workerEngine:record.engine==='codex'?'codex':'agy',processStarted:pid=>{
       // A process the app cannot identify could outlive it unseen: refused (the head then stops it).
       if(!current())throw Error('Stale worker process registration.');
@@ -71,10 +85,22 @@ export class AgyAcpAdapter implements WorkerAdapter {
       throw error;
     }
   }
+  /** Words into the run under way, read at its next tool result; false: it cannot take them now (the core answers busy). */
+  steer(record:Readonly<WorkerLedgerRecord>,words:string):boolean{
+    const live=this.runs.get(record.id);
+    if(!live||live.ended||!live.head?.offerInsert)return false;
+    const id=randomUUID();
+    if(!live.head.offerInsert(id,words))return false;
+    live.offered.set(id,words);
+    return true;
+  }
+  /** Whether its run under way can take words now. */
+  canSteer(id:string):boolean{const live=this.runs.get(id);return !!live&&!live.ended&&!!live.head?.offerInsert;}
   /** ACP's items as WorkerEvents (`current` checked). */
-  private item(record:Readonly<WorkerLedgerRecord>,live:AgyRun,item:StreamItem,end:(end:RunEnd)=>void){
+  private item(record:Readonly<WorkerLedgerRecord>,live:AgyRun,item:StreamItem|CodexItem,end:(end:RunEnd)=>void){
     const emit=(event:WorkerEvent)=>live.handle.emit(event);
     switch(item.kind){
+      case 'inserted':live.offered.delete(item.id);return;
       case 'init':
         // A resumed worker must come back in its own conversation.
         if(record.conversationId&&record.conversationId!==item.sessionId)return end({how:'error',finalText:null,error:'Worker changed its saved conversation identity.',detail:'init'});
@@ -205,7 +231,8 @@ export class AgyWorkers {
       case 'app_task_checkpoint':return this.core.checkpoint(args);
       case 'app_cancel_task':{const {status}=await this.core.cancel(r.id,r.run);return {task_id:r.id,run:r.run,status:status==='done'?wireStatus(status):status};}
       case 'app_send_message':{
-        if(r.status==='running'||r.cleanup==='pending')throw new Error(BUSY);
+        // A run under way takes the words at its next tool call (AgyAcpAdapter.steer).
+        if(r.cleanup==='pending'||(r.status==='running'&&!this.adapter.canSteer(r.id)))throw new Error(BUSY);
         const sent=await this.core.message(args);return {accepted:true,task_id:sent.task_id,run:sent.run};
       }
     }

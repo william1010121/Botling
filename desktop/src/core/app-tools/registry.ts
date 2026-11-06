@@ -80,7 +80,7 @@ const APP_TOOLS: readonly AppToolDef[] = [
   { name: "app_send_message", forms: {
     claude: { description: "Send words to one of your workers by task_id: joined into its run while it works, or the start of its next run (same session, same task) once it has reported. Its next report comes as an app message.",
       params: ["task_id", "message", "run"], required: ["task_id", "message"] },
-    agy: { description: "Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.",
+    agy: { description: "Send words to an existing worker task by task_id and run: a busy worker reads them at its next tool call (if its run ends first, at the start of its next run); an idle worker starts its next run. Does not authorize a new deliverable.",
       params: ["task_id", "run", "message"], required: ["task_id", "run", "message"] },
     codex: { description: "Send a follow-up within the same worker task/session; never append a new independent deliverable. Busy workers receive steering; idle workers start a new turn. Returns acceptance, not the completed result. Continue other eligible dispatches and required report decisions before ending the dispatch phase. Only continuation of the active report task_id resolves that report.",
       params: ["task_id", "message"], required: ["task_id", "message"] },

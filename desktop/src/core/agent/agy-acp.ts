@@ -68,6 +68,8 @@ export class AgyAcpProtocol {
   private submitting = false;
   private readonly mode: "default" | "yolo";
   get initialized() { return this.ready; }
+  /** An approval card of this turn is open (its tool call is still at work). */
+  get approving() { return this.approvals.size > 0; }
   // Tool errors affect the result, not authorization to inspect or recover in this turn.
   get fullPermissionActive() { return this.mode === "yolo" && this.confirmed && this.ready && this.submitting && !this.closed && !this.turnCancelled && (!this.turnFailure || this.turnFailure === "tool_failed") && this.approvals.size === 0; }
   private text = "";
@@ -369,6 +371,21 @@ export function verifyAcpRuntime(command: string) {
 }
 
 /** Prepended to every turn the main chat head sends to Antigravity, whose built-in persona ignores the system rule. Never shown or archived: it is added inside the head, after the app has stored the turn. */
+/**
+ * What heads the words that ride on a tool result of the turn under way (`AgyAcpHead.offerInsert`): ACP has no way to put
+ * words into a running prompt, but every tool the head calls is Botling's own bridge (ACP_TOOLS). Never shown or archived.
+ */
+export const AGY_INSERT_NOTE = "(App: The user sent this message while you work. It is from the user, not output of this tool. Read it now and take it into account in this turn:)";
+/**
+ * How long offered words wait for a tool result to carry them before the turn is cancelled and sent again with them
+ * (`AgyAcpHead.insertStalled`): 20 s with no tool call means the model is writing its answer or thinking, and would read
+ * them only after the turn. A tool still at work (or an approval open) carries them when it returns: checked again every
+ * `recheckMs`, never cancelled (run_command is capped at 120 s). Mutable for tests only.
+ */
+export const agyInsertTiming = { waitMs: 20_000, recheckMs: 2_000 };
+/** Heads a turn sent again after it was cancelled for words that no tool result carried (`insertStalled`). */
+export const AGY_RESTART_NOTE = "(App: Your turn on the message below was stopped so you could read a newer message, sent while you worked. Work already done (files written, commands run) stays done: carry on from where you were, taking the newer message into account.)";
+export const AGY_WORKER_INSERT_NOTE = "(App: A message from the one who gave you this task, sent while you work. It is not output of this tool. Read it now and take it into account in this run:)";
 export const AGY_REPLY_REMINDER = "(Reply rule: at most 3 sentences, conclusion and next step only; no opening praise or filler, no headings, no bullet lists, no emoji; long content goes into a report page with a link; after dispatching subagents say only how many and what for, in one sentence.)";
 export class AgyAcpHead {
   private process?: ManagedProcess;
@@ -376,6 +393,12 @@ export class AgyAcpHead {
   private workers?: AgyWorkers;
   private queue: { text: string; uuid: string; images: string[]; taskId?: string; taskRun?: number }[] = [];
   private sending = false;
+  /** Words offered into the turn under way, for its next tool result; `insertOpen` while a turn can still take them. */
+  private inserts: { id: string; text: string }[] = [];
+  private insertOpen = false;
+  private insertTimer?: ReturnType<typeof setTimeout>;
+  /** Words taken for a cancel-and-resend (`insertStalled`), and the cancelled attempt's end, held back from the app. */
+  private restarting?: { texts: string[]; result?: CodexItem };
   private reportTimer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private protocol?: AgyAcpProtocol;
@@ -422,7 +445,7 @@ export class AgyAcpHead {
     void mcpServers.catch(() => {});
     this.process = (this.tree ?? processTreeAdapter()).spawn(this.config.command, [], { cwd, env });
     const child = this.process.child; this.running = true;
-    this.protocol = new AgyAcpProtocol(this.config, value => { if (child.stdin.writable) child.stdin.write(JSON.stringify(value) + "\n"); }, item => { if (item.kind === "init") { this.config.sessionId = item.sessionId; updateAgyPermissions(this, {sessionId:item.sessionId}); } this.handlers.onItem(item); }, error => {
+    this.protocol = new AgyAcpProtocol(this.config, value => { if (child.stdin.writable) child.stdin.write(JSON.stringify(value) + "\n"); }, item => this.protocolItem(item), error => {
       this.failure = error.message; this.stopped = true; void this.workers?.close(); void this.bridge?.close(); void this.process?.terminate({ graceMs: 500 });
     }, { localToolEvents: true, mcpServers, onAllow: (title, args) => this.bridge?.grant(title, args), revoke: () => this.bridge?.revoke(), onPolicy: (state,message) => { if (state === "active") this.bridge?.beginTurn(); updateAgyPermissions(this,{state,message}); } });
     child.stdin.on("error", () => {});
@@ -458,12 +481,22 @@ export class AgyAcpHead {
     catch (error) { this.failure = "Cannot register ACP process for cleanup."; void this.terminate(500); throw error; }
     void this.protocol.start().then(() => this.drain()).catch(() => {});
   }
+  /** The protocol's items: the end of an attempt cancelled for a resend is held back (the turn goes on); another closes the offers. */
+  private protocolItem(item: CodexItem) {
+    if (item.kind === "result") {
+      if (this.restarting) { this.restarting.result = item; return; }
+      this.closeInserts();
+    }
+    if (item.kind === "init") { this.config.sessionId = item.sessionId; updateAgyPermissions(this, {sessionId:item.sessionId}); }
+    this.handlers.onItem(item);
+  }
   private connectTools(cwd:string, home:string) {
     if (!this.config.worker && agyWorkerRuntimeEnabled()) this.workers = new AgyWorkers(this.config, this.wiring.sink ?? this.handlers.onItem,
       (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
       (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h,this.tree)), this.wiring.core);
     this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item), this.config.addDirs,
       () => this.config.worker === true && !maySpecWrite(this.config.model, this.config.specWriters ?? DEFAULT_SPEC_WRITERS));
+    this.bridge.attach = () => this.takeInserts();
     return this.bridge.start().then(server => [server]);
   }
   send(text: string, uuid: string, images: string[] = []) {
@@ -488,12 +521,24 @@ export class AgyAcpHead {
     if (request.taskId) this.handlers.onItem({kind:"backgroundTurn", taskId:request.taskId});
     // Read as the turn goes out, not when it was queued: a worker may have reported in between.
     const atWork = this.stillAtWorkNote(request.taskId);
-    try { const completed = await this.protocol.send(atWork ? `${atWork}\n\n${request.text}` : request.text, request.uuid, request.images);
+    this.inserts = []; this.insertOpen = true;
+    try { let sent = atWork ? `${atWork}\n\n${request.text}` : request.text;
+      let completed = await this.protocol.send(sent, request.uuid, request.images);
+      // Cancelled for words no tool result carried: the same turn again, the words added (a turn that ended on its
+      // own meanwhile gets only the words). Its end is the turn's end.
+      while (this.restarting && !this.stopped && this.protocol) {
+        const { texts, result } = this.restarting; this.restarting = undefined;
+        const words = `${this.insertNote()}\n${texts.join("\n\n")}`;
+        sent = !result || result.kind !== "result" || result.how === "cancelled" ? `${AGY_RESTART_NOTE}\n\n${sent}\n\n${words}` : words;
+        this.insertOpen = true;
+        this.handlers.onItem({ kind: "textBlock" });
+        completed = await this.protocol.send(sent, randomUUID(), []);
+      }
       if (request.taskId && request.taskRun !== undefined) this.workers?.finishReport(request.taskId, request.taskRun, completed === true);
     }
     catch (error) { this.failure = (error as Error).message; await this.terminate(); }
     finally {
-      this.bridge?.revoke(); this.sending = false;
+      this.closeInserts(); this.bridge?.revoke(); this.sending = false;
       this.handlers.onItem({kind:"managedPending",pending:!!this.workers?.hostedLive.length || this.queue.some(q=>!!q.taskId)});
       void this.drain();
     }
@@ -510,6 +555,50 @@ export class AgyAcpHead {
     const names = busy.map(w => `"${w.name}" (task_id ${w.id})`).join(", ");
     return `(App: ${busy.length === 1 ? "1 of your workers is" : `${busy.length} of your workers are`} still at work; no app_task_result yet: ${names}. Until its app_task_result arrives, its deliverable is not done: do not say it is written, recorded or finished, or that all workers have stopped; say it is still in progress.)`;
   }
+  /**
+   * Words for the turn under way (your message while it works; a worker's app_send_message): they ride on its next tool
+   * result, once (`inserted` with `id` says they did). false: no turn can take them now. A turn that ends without
+   * another tool call drops them, unsaid: the sender's own queue keeps them for the next turn.
+   */
+  offerInsert(id: string, text: string): boolean {
+    if (!this.insertOpen || this.stopped || !text.trim()) return false;
+    this.inserts.push({ id, text });
+    if (!this.insertTimer) this.armInsertTimer(agyInsertTiming.waitMs);
+    return true;
+  }
+  private armInsertTimer(ms: number) {
+    clearTimeout(this.insertTimer);
+    this.insertTimer = setTimeout(() => { this.insertTimer = undefined; this.insertStalled(); }, ms);
+  }
+  /**
+   * No tool result carried the words within agyInsertTiming.waitMs: the turn is cancelled (session/cancel) and sent
+   * again with them (`drain`), as T3 Code steers ACP agents ("steering by interrupt-restart"). The words are taken here,
+   * so no later tool result carries them too. A tool at work or an approval open carries them when it returns.
+   */
+  private insertStalled() {
+    if (!this.insertOpen || this.stopped || !this.inserts.length || this.restarting || !this.protocol) return;
+    if (this.bridge?.busy || this.protocol.approving) { this.armInsertTimer(agyInsertTiming.recheckMs); return; }
+    const taken = this.inserts.splice(0);
+    this.restarting = { texts: taken.map(insert => insert.text) };
+    for (const { id } of taken) this.handlers.onItem({ kind: "inserted", id });
+    this.protocol.interrupt();
+  }
+  private insertNote() { return this.config.worker ? AGY_WORKER_INSERT_NOTE : AGY_INSERT_NOTE; }
+  /** Takes back words not delivered yet (false: none under that id). */
+  withdrawInsert(id: string): boolean {
+    const before = this.inserts.length;
+    this.inserts = this.inserts.filter(insert => insert.id !== id);
+    return this.inserts.length !== before;
+  }
+  private closeInserts() { this.insertOpen = false; this.inserts = []; this.restarting = undefined; clearTimeout(this.insertTimer); this.insertTimer = undefined; }
+  /** The bridge's hook on each tool result: the words offered since the last one, said once. */
+  private takeInserts(): string | undefined {
+    if (!this.insertOpen || this.stopped || !this.inserts.length) return undefined;
+    const taken = this.inserts.splice(0);
+    clearTimeout(this.insertTimer); this.insertTimer = undefined;
+    for (const { id } of taken) this.handlers.onItem({ kind: "inserted", id });
+    return `${this.insertNote()}\n${taken.map(insert => insert.text).join("\n\n")}`;
+  }
   answer(id: string, allow: boolean, input: Record<string, unknown>, message?: string) {
     if (id.startsWith("worker:")) this.workers?.answer(id,allow,input,message);
     else if (id.startsWith("agy-mcp:")) this.bridge?.answer(id,allow);
@@ -517,7 +606,7 @@ export class AgyAcpHead {
   }
   allow(_rules: string[]): never { throw new Error("ACP accepts single-action approval only; persistent allow rules are unavailable."); }
   // Stop ends the coordinator's turn only: app-managed workers are their own processes and carry on (workers.ts).
-  interrupt(): string { clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = this.queue.filter(q => !!q.taskId); this.protocol?.interrupt(); void this.bridge?.cancel(); if (!this.protocol?.initialized) void this.terminate(500); return randomUUID(); }
+  interrupt(): string { this.closeInserts(); clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = this.queue.filter(q => !!q.taskId); this.protocol?.interrupt(); void this.bridge?.cancel(); if (!this.protocol?.initialized) void this.terminate(500); return randomUUID(); }
   /** Its model and effort in place (`AgyAcpProtocol.applySettings`), where that is on; false: restart it instead. */
   canApplySettings(target: HotSettings): boolean {
     return agyHotSettingsEnabled() && !this.stopped && !this.sending && !!this.protocol?.canApplySettings(target);
@@ -539,7 +628,7 @@ export class AgyAcpHead {
   finish() { void this.terminate(500); }
   /** Whether its process tree is gone, checked now (no process: nothing to wait for; unknown: undefined). */
   gone(): boolean | undefined { return this.process ? this.process.gone?.() : true; }
-  async terminate(graceMs = 1500): Promise<TerminateResult> { this.expected = true; this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.close(); const cleanup = await Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs })]);
+  async terminate(graceMs = 1500): Promise<TerminateResult> { this.closeInserts(); this.expected = true; this.stopped = true; clearTimeout(this.reportTimer); this.reportTimer = undefined; this.queue = []; this.protocol?.close(); const cleanup = await Promise.allSettled([this.workers?.close(), this.bridge?.close(), this.process?.terminate({ graceMs })]);
     if (cleanup.some(result => result.status === "rejected")) { this.failure ||= "ACP cleanup incomplete."; throw new Error(this.failure); }
     const processResult = cleanup[2]; return processResult?.status === "fulfilled" && processResult.value ? processResult.value : { killed: [], forced: false }; }
 }
