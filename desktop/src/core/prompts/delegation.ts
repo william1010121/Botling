@@ -78,7 +78,7 @@ const SECTIONS: PolicySection[] = [
   {
     id: "runDispatch",
     when: (caps) => !caps.steerWorkerRun,
-    text: (_caps, { engine }) => `Use app_handoff for each independent authorized scope. The default worker engine is ${engine}; use another engine only when its tool schema exposes it and the user authorized it. An acceptance receipt contains task_id and run; it is not a result. Use app_send_message with task_id, run and message only for the same task; a follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. Busy workers reject steering; do not poll or retry to keep the turn alive. Preserve all approval cards and denials; delegation never grants file or command permission.`,
+    text: (_caps, { engine }) => `Use app_handoff for each independent authorized scope. The default worker engine is ${engine}; use another engine only when its tool schema exposes it and the user authorized it. An acceptance receipt contains task_id and run; it is not a result. Use app_send_message with task_id, run and message only for the same task; a follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. A busy worker reads a message at its next tool call (if its run ends first, at the start of its next run); do not poll or retry to keep the turn alive. Preserve all approval cards and denials; delegation never grants file or command permission.`,
   },
   {
     id: "reports",

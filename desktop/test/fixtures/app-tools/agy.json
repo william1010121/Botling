@@ -94,7 +94,7 @@
  },
  {
   "name": "app_send_message",
-  "description": "Continue an existing idle worker task using task_id. Busy workers reject steering; wait for their report. Does not authorize a new deliverable.",
+  "description": "Send words to an existing worker task by task_id and run: a busy worker reads them at its next tool call (if its run ends first, at the start of its next run); an idle worker starts its next run. Does not authorize a new deliverable.",
   "inputSchema": {
    "type": "object",
    "properties": {

@@ -213,9 +213,12 @@ describe.each(registrations.map((registration) => [registration.label ?? registr
   contract("C6", "steer: words into the run under way keep its run and its one end (engines that steer)", "failed-tool-then-success", async (fixtures) => {
     const mid = fixtures[0]!.lines[Math.floor(fixtures[0]!.lines.length / 2)]!.t;
     let steered: unknown = null;
-    const r = await run(fixtures, { at: [{ t: mid, run: async (c) => { if (c.core.steersRunning) steered = await c.core.sendToWorker(c.workers[0]!, "Also mention the folder name."); } }] });
+    // Antigravity's words ride on a tool result of the app's own MCP bridge, which a recording has none of (its tools
+    // come mirrored on ACP): agy-mid-turn-insert.test.ts and agy-workers.test.ts cover its steering.
+    const steers = (c: { core: { steersRunning: boolean } }) => c.core.steersRunning && engine !== "agy";
+    const r = await run(fixtures, { at: [{ t: mid, run: async (c) => { if (steers(c)) steered = await c.core.sendToWorker(c.workers[0]!, "Also mention the folder name."); } }] });
     const [id] = r.workers;
-    if (!r.core.steersRunning) return; // Antigravity: words wait for the next run (C6 follow-up covers it)
+    if (!steers(r)) return;
     expect(steered).toEqual({ ok: true, how: "steered", run: 1 });
     expect(record(r, id!)).toMatchObject({ run: 1, status: "done" });
     expect(kinds(r.items, "subagentEnded").filter((item) => item.id === id)).toHaveLength(1);

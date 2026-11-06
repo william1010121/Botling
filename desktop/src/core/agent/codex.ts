@@ -80,6 +80,8 @@ export type CodexItem =
   | { kind: "backgroundTurn"; taskId: string | null }
   /** Workers at work or reports waiting: the bot must not sleep. */
   | { kind: "managedPending"; pending: boolean }
+  /** Antigravity read words offered into its turn (`AgyAcpHead.offerInsert`) with a tool result. */
+  | { kind: "inserted"; id: string }
   /** A run report of a worker another bot owns (workers.ts `setWorkerOwner`): the app routes it to that bot, never to this coordinator. */
   | { kind: "workerReport"; id: string; run: number; engine: "claude" | "codex" | "agy"; status: string; report: string }
   /** A monitored command ended: its step (from an earlier turn) is done. */

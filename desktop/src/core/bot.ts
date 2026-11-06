@@ -487,6 +487,8 @@ export class Bot {
   private contextSent = new Set<string>();
   /** Your lines written to claude while its turn ran, by message uuid: one claude begins a turn of its own for is answered there. */
   private steered = new Map<string, Turn>();
+  /** Your lines offered into an Antigravity turn (`offerInsert`), by id: in the queue ("Queued") until it reads them. */
+  private inserting = new Map<string, Turn>();
   /** Our turn that claude has not begun yet, set aside while it answers the other head's words first. */
   private deferred: Turn | null = null;
   /** Its routines (the primary's): routines.cron, the app-owned schedules, when each cron job last ran. */
@@ -2656,6 +2658,11 @@ export class Bot {
     if (current && this.modelSettingsPending) { this.queue.push(turn); return turn; }
     if (current && this.canPause(current, turn)) return this.pause(current, turn);
     if (current && this.canSteer(current, turn) && this.steerInto(current, turn)) return current;
+    if (current && this.offerInsert(current, turn)) {
+      this.queue.push(turn);
+      this.log("you wrote while Antigravity worked: your message goes into its turn with its next tool result (queued until then)");
+      return turn;
+    }
     this.queue.push(turn);
     this.log("a message waits for the turn under way");
     return turn;
@@ -2726,6 +2733,53 @@ export class Bot {
     return current.origin === "user" || (!this.approvals.size && !this.subagents.running.some((subagent) => !subagent.background));
   }
 
+  /**
+   * An Antigravity head cannot take words into a running prompt (ACP has no steer), but every tool it calls is the
+   * app's: your line `next` is offered to the turn under way and rides on its next tool result (`AgyAcpHead.offerInsert`).
+   * It stays in the queue, "Queued", until the head says it was read (`insertDelivered`); a turn that ends without
+   * another tool call drops the offer and the queue sends it as the next turn. The same gates as claude's steering.
+   */
+  private offerInsert(current: Turn, next: Turn): boolean {
+    const head = this.head;
+    if (!(head instanceof AgyAcpHead) || typeof head.offerInsert !== "function") return false;
+    if (next.origin !== "user" || current.origin === "tidy" || current.conducted || !current.open || !current.sent) return false;
+    if (current.head !== head || !head.running || this.draining || this.ignoreResults || this.ending.has(head)) return false;
+    // Behind a message that waits for the next turn it would jump the order.
+    const offered = new Set(this.inserting.values());
+    if (this.queue.some((turn) => !offered.has(turn))) return false;
+    if (current.origin !== "user" && this.approvals.size) return false;
+    if (this.turnImages(next).length) return false;
+    const id = (next.userId ?? next.messageId).toLowerCase();
+    if (!head.offerInsert(id, next.words)) return false;
+    this.inserting.set(id, next);
+    return true;
+  }
+
+  /** Antigravity read your line with a tool result of its turn: it joins that turn, as a steered line does. */
+  private insertDelivered(head: AgentHead, id: string) {
+    const next = this.inserting.get(id);
+    if (!next) return;
+    this.inserting.delete(id);
+    const current = this.turn;
+    const at = this.queue.indexOf(next);
+    if (at < 0 || !next.open || next.sent || !current?.open || current.head !== head) return;
+    this.queue.splice(at, 1);
+    next.head = head;
+    next.sent = true;
+    this.joinTurn(current, next);
+    this.redrawQueued(next);
+    this.log("Antigravity read your message with a tool result: it joined its turn");
+  }
+
+  /** A line offered into an Antigravity turn leaves the queue another way (taken back, sent as a turn): the offer goes. */
+  private withdrawInsert(turn: Turn) {
+    const id = (turn.userId ?? turn.messageId).toLowerCase();
+    if (this.inserting.get(id) !== turn) return;
+    this.inserting.delete(id);
+    const head = this.head;
+    if (head instanceof AgyAcpHead && typeof head.withdrawInsert === "function") head.withdrawInsert(id);
+  }
+
   /** Steers `next` into `current`: the reply now answers your latest words, and shows after them. */
   private steerInto(current: Turn, next: Turn): boolean {
     const head = this.head;
@@ -2741,6 +2795,13 @@ export class Bot {
       this.steered.set(id.toLowerCase(), next);
       head.send(this.compose(next, false), id, this.turnImages(next));
     }
+    this.joinTurn(current, next);
+    this.log(head instanceof CodexHead ? "you wrote while Codex worked: your message joined its turn (turn/steer)" : "you wrote while claude worked: your message went into its turn");
+    return true;
+  }
+
+  /** `next`, already read into `current`: their cards join, the turn is yours, and the reply so far moves below your line. */
+  private joinTurn(current: Turn, next: Turn) {
     // Your two messages are one piece of work: their cards join (1.x leaves the first card as it was).
     if (current.origin === "user" && current.userId && next.userId) { this.tasks.join(current.userId, next.userId); this.saveTasks(); }
     current.origin = "user";
@@ -2764,8 +2825,6 @@ export class Bot {
       }
     }
     void current.done.then(next.resolve);
-    this.log(head instanceof CodexHead ? "you wrote while Codex worked: your message joined its turn (turn/steer)" : "you wrote while claude worked: your message went into its turn");
-    return true;
   }
 
   /**
@@ -3324,6 +3383,7 @@ export class Bot {
       else if (this.turn?.open && this.turn.head === head) this.turn.lostConnection = true;
       return;
     }
+    if (item.kind === "inserted") return this.insertDelivered(head, item.id);
     if (item.kind !== "rateLimits") this.noteProgressOf(item);
     if (item.kind === "managedPending") return this.onItemPending(item.pending);
     if (item.kind === "monitorState") return this.monitorState(item.record);
@@ -3876,6 +3936,7 @@ export class Bot {
     if (this.queue.some((turn) => turn.open) && this.switchReady) { void this.handOver(); return; }
     const waiting = this.queue.shift();
     if (waiting) {
+      this.withdrawInsert(waiting);
       if (!waiting.open) return this.next();
       this.begin(waiting);
       return;
@@ -3917,6 +3978,7 @@ export class Bot {
       const waiting = this.queue.find((candidate) => candidate.id === turnId);
       if (waiting) {
         this.queue.splice(this.queue.indexOf(waiting), 1);
+        this.withdrawInsert(waiting);
         waiting.open = false;
         this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: waiting.messageId, status: "stopped", text: "" });
         this.finished.set(turnId, "stopped");
