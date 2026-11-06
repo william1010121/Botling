@@ -93,3 +93,30 @@ it('routes state deltas only down the authenticated pair and rejects stale stamp
  expect(bridge.post(delta)).toBe(true);
  expect(send).toHaveBeenCalledExactlyOnceWith(EDITOR_CHANNEL.down,{stamp,message:delta});
 });
+it('passes a composerBar view through the native chat: its spec and replies down, its frames\' messages and the ask up, in their shapes only',()=>{
+ const bar={plugin:'ccb-session-usage',view:'ccb-session-usage.bar',title:'Session usage',width:260,compact:'botling-card://page/aa',expanded:'botling-card://page/bb'};
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar:null})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar:{...bar,compact:'https://evil.example/'}})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'composerBar',bar:{...bar,width:9999}})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'composerBarReply',frame:'compact',data:{ccb:'reply',id:1,ok:true,value:3}})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'composerBarReply',frame:'other',data:{}})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'composerBarAsk'})).toBe(true);
+ expect(editorMessageAllowed('up',{botling:'composerBarAsk',extra:1})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'composerBarFrame',frame:'expanded',data:{ccb:'call',id:1,method:'usage',params:null}})).toBe(true);
+ expect(editorMessageAllowed('up',{botling:'composerBarFrame',frame:'expanded',data:{},more:1})).toBe(false);
+ expect(editorMessageAllowed('up',{botling:'composerBarFrame',frame:'nope',data:{}})).toBe(false);
+});
+it('passes a plugin command the shell asks the chat page to run, and how a page approval ended, in their shapes only',()=>{
+ // App.tsx runPluginCommand → chat-frame/entry.ts window.ccb.runCommand (a key, menu or palette run in the app page for a web part's command).
+ expect(editorMessageAllowed('down',{botling:'runCommand',id:'ccb-teams.open'})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'runCommand',id:'bad id with spaces'})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'runCommand',id:'x.y',args:['a']})).toBe(false);
+ // App.tsx approvalRequest → chat-frame/entry.ts window.ccb.approvalReply (botling.board's pin commands wait for it).
+ expect(editorMessageAllowed('down',{botling:'approvalReply',requestId:3,allowed:true})).toBe(true);
+ expect(editorMessageAllowed('down',{botling:'approvalReply',requestId:3,allowed:'yes'})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'approvalReply',requestId:-1,allowed:false})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'approvalReply',requestId:3,allowed:true,extra:1})).toBe(false);
+ // Sent only to an iframe chat page (the takeover's), never across this wire: still refused.
+ expect(editorMessageAllowed('down',{botling:'pluginEvent',plugin:'x',name:'y',data:null})).toBe(false);
+});

@@ -43,6 +43,22 @@ export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolea
   return typeof result.text==='string'&&result.text.length<=32768&&['text','truncated','binary','unavailable'].includes(result.status);
  }
  if(direction==='down'&&value.botling==='composerResult')return Object.keys(value).every(key=>['botling','requestID','ok','error'].includes(key))&&typeof value.requestID==='string'&&value.requestID.length>0&&value.requestID.length<=80&&typeof value.ok==='boolean'&&(value.error===undefined||typeof value.error==='string'&&value.error.length<=4096);
+ // A plugin's composerBar view (chat-frame/composer-bar.ts): down, which view and its two card pages, and replies to its frames;
+ // up, the page asking for it again and what its frames posted (the shell checks those as any plugin frame's).
+ const barFrame=(v:unknown)=>v==='compact'||v==='expanded';
+ const keys=(v:Record<string,any>,allowed:string[])=>Object.keys(v).every(key=>allowed.includes(key));
+ if(direction==='down'&&value.botling==='composerBar'){
+  const bar=value.bar;if(!keys(value,['botling','bar']))return false;if(bar===null)return true;
+  return object(bar)&&keys(bar,['plugin','view','title','width','compact','expanded'])&&['plugin','view','title'].every(key=>typeof bar[key]==='string'&&bar[key].length<=200)
+   &&Number.isInteger(bar.width)&&bar.width>=80&&bar.width<=480&&['compact','expanded'].every(key=>typeof bar[key]==='string'&&bar[key].startsWith('botling-card://page/')&&bar[key].length<=200);
+ }
+ if(direction==='down'&&value.botling==='composerBarReply')return keys(value,['botling','frame','data'])&&barFrame(value.frame);
+ if(direction==='up'&&value.botling==='composerBarAsk')return keys(value,['botling']);
+ if(direction==='up'&&value.botling==='composerBarFrame')return keys(value,['botling','frame','data'])&&barFrame(value.frame);
+ // A plugin command a web part in the chat page registered, run from the app page (a key, menu or the palette: App.tsx runPluginCommand).
+ if(direction==='down'&&value.botling==='runCommand')return keys(value,['botling','id'])&&typeof value.id==='string'&&/^[A-Za-z0-9_.:-]{1,200}$/.test(value.id);
+ // How the app page's ApprovalSheet ended for a web part's ask (botling.board's pin commands: App.tsx approvalRequest).
+ if(direction==='down'&&value.botling==='approvalReply')return keys(value,['botling','requestId','allowed'])&&Number.isSafeInteger(value.requestId)&&value.requestId>=0&&typeof value.allowed==='boolean';
  if(direction==='down')return ['widthRejected','widthPreview','shortcuts','state','stateDelta','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);
