@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Bot, GuestAnswer } from "./bot";
 import { writeFileAtomic } from "./durable/atomic";
 import {
-  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botCallInPrompt, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
+  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
   isPass, mentionBody, mentioned, quoteName, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
@@ -325,8 +325,8 @@ export class Conversations {
       entry.state = "answering";
       this.trace("Start", chat.id, { to: member.id, outcome: "answering" });
       const prompt = caller
-        ? botCallInPrompt({ member, host, chat: chat.lines(), transcript: before, body: caller.body, speakerName: this.speakerName })
-        : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName, mentionNote: this.mentionNote });
+        ? botCallInPrompt({ member, host, chat: chat.lines(), transcript: before, body: caller.body, speakerName: this.speakerName }) + "\n" + botCallInWorkNote()
+        : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName, mentionNote: this.mentionNote }) + "\n" + callInWorkNote();
       this.speak(chat.id, member.id, member.id);
       const askedAt = toSwiftDate();
       const asked = ask ?? (caller ? `@${member.name} ${caller.body}` : (newest ? chat.lines().find((line) => line.id === newest)?.text : undefined) ?? "");

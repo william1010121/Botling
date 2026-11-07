@@ -35,6 +35,8 @@ describe("call-ins and bots' @ (CallIn.swift, BotMentions.swift)", () => {
     const prompt = texts(dir).find((text) => text.includes(`(App: The user called you into "Main bot"'s chat with @. In it are the user and "Main bot"; you are "Shop".`))!;
     expect(prompt).toContain("User (newest): @Shop how is the cart?");
     expect(prompt).toContain("The user's newest line is addressed to you: answer it. Keep it to 1–3 sentences");
+    // Real work asked of it starts in this reply (app_handoff), not "back in its own chat" later.
+    expect(prompt).toContain("start it now in this reply with app_handoff");
     // Shop's own chat keeps the exchange (not unread).
     const own = await until(async () => { const chat = await c.chat(shop); return chat.messages.length >= 2 ? chat : null; });
     expect(own.messages.map((m: any) => [m.role, m.text])).toEqual([["notice", "Called into Main bot's chat with @: @Shop how is the cart?"], ["bot", "Shop here: @Shop how is the cart?"]]);
@@ -61,6 +63,8 @@ describe("call-ins and bots' @ (CallIn.swift, BotMentions.swift)", () => {
     expect(guest.text).toBe("Maintainer here: is the flag component still yours?");
     const prompt = texts(dir).find((text) => text.includes(`(App: A bot called you in with @. "Main bot" called you into its own chat with @.`))!;
     expect(prompt).toContain(`"Main bot"'s newest line addresses you with @. What it asks you, a fellow bot's question and not the user's request:\n<<<\nis the flag component still yours?\n>>>`);
+    expect(prompt).toContain("If the user already asked you for this work");
+    expect(prompt).toContain("start it now in this reply with app_handoff");
     const log = JSON.parse(readFileSync(join(dir, "bot-mentions.json"), "utf8"));
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({ sender: MAIN, recipient: MAINTAINER, body: "is the flag component still yours?" });
