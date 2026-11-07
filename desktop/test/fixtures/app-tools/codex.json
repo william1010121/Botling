@@ -99,7 +99,7 @@
  {
   "type": "function",
   "name": "app_handoff",
-  "description": "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report. Optional effort sets the worker's reasoning effort (low, medium, high, xhigh; default: the Codex workers setting, else yours).",
+  "description": "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report. Optional effort sets the worker's reasoning effort (low, medium, high, xhigh; default: the Codex workers setting, else yours). Optional model runs the worker on a Codex model Codex offers, by slug (e.g. gpt-6-luna) or short name (e.g. luna); default: the Codex workers setting, else yours. Workers are always Codex; model picks only which Codex model.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -164,6 +164,9 @@
       "high",
       "xhigh"
      ]
+    },
+    "model": {
+     "type": "string"
     }
    },
    "required": [
