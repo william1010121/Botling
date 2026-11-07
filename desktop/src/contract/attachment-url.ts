@@ -79,3 +79,8 @@ export function localMediaSource(shown: string | undefined, url: string, line?: 
 export function cardImageToken(path: string): string | null {
   return /^\/card-image\/([0-9a-f]{40})$/.exec(path)?.[1] ?? null;
 }
+
+/** The card picture token of the URL a lightbox shows (`botling-chat://chat/card-image/<token>`), so its buttons may open that file; else null. */
+export function cardImageOf(url: unknown): string | null {
+  return typeof url === "string" && url.startsWith(`${ORIGIN}/card-image/`) ? cardImageToken(url.slice(ORIGIN.length)) : null;
+}

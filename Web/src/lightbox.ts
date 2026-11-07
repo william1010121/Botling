@@ -55,9 +55,9 @@ export function openLightbox(url: string, label: string, shown?: string): void {
     } else if (target.closest(".lightbox-close")) {
       closeLightbox();
     } else if (target.closest(".lightbox-open")) {
-      post({ type: "openExternal", url });
+      post({ type: "openExternal", url, ...(shown ? { shown } : {}) });
     } else if (target.closest(".lightbox-reveal")) {
-      post({ type: "revealFile", url });
+      post({ type: "revealFile", url, ...(shown ? { shown } : {}) });
     } else if (!target.closest(".lightbox-bar, .lightbox-caption")) {
       closeLightbox();
     }

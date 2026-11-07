@@ -414,8 +414,8 @@ export type Action =
   | { type: "stopRounds" }
   | { type: "stopHandoff"; botID: string; handoffID: string }
   | { type: "openURL"; url: string; label: string }
-  | { type: "openExternal"; url: string }
-  | { type: "revealFile"; url: string }
+  | { type: "openExternal"; url: string; shown?: string }
+  | { type: "revealFile"; url: string; shown?: string }
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
   | { type: "taskOutput"; messageID: string; taskID: string }
