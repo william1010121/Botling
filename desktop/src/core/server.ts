@@ -2522,6 +2522,9 @@ First write a test that shows this, then fix it.`;
           const shown=line.displays?.some(display=>display.name===PAGE_COMPONENT&&same(pageInCard(display.data)??""));
           if(match||shown){if(line.role==="bot")result=true;if(cmd.source==="user"||line.role==="bot"&&author(line)===owner)linked=true;}
         }
+        // A card's picture in the lightbox (its Open in Preview / Show in Finder): exactly the file its token
+        // stands for, a picture some component's data named (what the chat origin's card-image route serves).
+        if(cmd.cardImage&&this.components.images.covers(cmd.cardImage,cmd.url)){result=true;linked=true;}
         // A file attached in this chat (yours, a relayed report's, a reply's): the app copied it into
         // the bot's folder and the chat shows it, so your click on it opens it (a component's does not).
         if(cmd.source==="user"&&!cmd.messageId&&!cmd.pinId&&lines.some(line=>line.attachments?.some(file=>typeof file?.url==="string"&&same(file.url))))linked=true;

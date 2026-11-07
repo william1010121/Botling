@@ -61,6 +61,14 @@ export class ImageRegistry {
     return found;
   }
 
+  /** Whether `url` (a file URL or path) is the picture this token stands for: a lightbox's buttons open only that file. */
+  covers(token: string, url: string): boolean {
+    const shown = this.byToken.get(token);
+    const file = shown ? fileFrom(url) : null;
+    if (!shown || !file) return false;
+    try { return realpathSync(file) === shown.path; } catch { return false; }
+  }
+
   /** Only a picture some component's data named. */
   file(token: string): { path: string; type: string } | null {
     return this.byToken.get(token) ?? null;

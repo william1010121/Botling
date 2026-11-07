@@ -13,6 +13,7 @@ import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { cardImageOf } from "../contract/attachment-url";
 import { status, statusText } from "../contract/bot-status";
 import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
 import { setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
@@ -1204,7 +1205,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         case "openExternal":
         case "openURL":
         case "revealFile":
-          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(message.reportPreview === true && action.type === "openURL" ? {preview: true} : {}), ...(action.type === "revealFile" ? { reveal: true } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).then(result => { if (result.previewURL && store.getChatView().chat?.botId === chat.botId) setReport({botId: chat.botId, url: result.previewURL}); }).catch(onError);
+          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", ...(message.reportPreview === true && action.type === "openURL" ? {preview: true} : {}), ...(action.type === "revealFile" ? { reveal: true } : {}), ...(cardImageOf(action.shown) ? { cardImage: cardImageOf(action.shown)! } : {}), source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), ...(typeof message.linkPinId === "string" ? {pinId:message.linkPinId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).then(result => { if (result.previewURL && store.getChatView().chat?.botId === chat.botId) setReport({botId: chat.botId, url: result.previewURL}); }).catch(onError);
           return;
         // "Not right" on a reply (developer mode): main adds the chat frame as you saw it.
         case "feedback": {
