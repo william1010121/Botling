@@ -20,7 +20,8 @@ let current: { box: HTMLElement; restore: Element | null; cleanup: () => void } 
  * Shows a picture over the chat, dimmed behind it: fit to the window with its caption below.
  * Clicking the picture toggles full size; Esc, ✕ or a click outside it closes it.
  */
-export function openLightbox(url: string, label: string): void {
+/** `shown`: where the picture clicked was loaded from (its line's copy), when that is known. */
+export function openLightbox(url: string, label: string, shown?: string): void {
   closeLightbox();
   const box = document.createElement("div");
   box.className = "lightbox";
@@ -40,7 +41,7 @@ export function openLightbox(url: string, label: string): void {
     <div class="lightbox-stage"><img class="lightbox-image" alt=""></div>
     <div class="lightbox-caption"></div>`;
   const image = box.querySelector<HTMLImageElement>(".lightbox-image")!;
-  image.src = mediaSrc(url);
+  image.src = shown || mediaSrc(url);
   image.alt = label;
   const caption = box.querySelector<HTMLElement>(".lightbox-caption")!;
   caption.textContent = label;
@@ -115,8 +116,8 @@ export function closeLightbox(restoreFocus = true): void {
 }
 
 /** Opens a picture in the lightbox; anything else (a page, a file, a link) goes to Swift as before. */
-export function openMedia(url: string, label: string): void {
-  if (isImageURL(url)) openLightbox(url, label);
+export function openMedia(url: string, label: string, shown?: string): void {
+  if (isImageURL(url)) openLightbox(url, label, shown);
   else post({ type: "openURL", url, label });
 }
 
@@ -132,7 +133,8 @@ export function handleMediaClicks(root: Document): void {
     event.preventDefault();
     const url = target.dataset.url!;
     const label = target.dataset.label || target.textContent?.trim() || "";
-    openMedia(url, label);
+    // A picture in the chat opens as the one it shows (its line's), not whatever the path holds now.
+    openMedia(url, label, target instanceof HTMLImageElement ? target.getAttribute("src") ?? undefined : undefined);
   });
   root.addEventListener("keydown", (event) => {
     if (isComposingKey(event) || isComposingEnter(event)) return;

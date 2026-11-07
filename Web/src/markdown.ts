@@ -26,7 +26,7 @@ export function createMarkdown(): MarkdownIt {
     return `<a class="chip" href="#" data-url="${escapeHTML(href)}">`;
   };
 
-  md.renderer.rules.image = (tokens, index) => {
+  md.renderer.rules.image = (tokens, index, _options, env: MarkdownEnv | undefined) => {
     const token = tokens[index];
     // A linked image is the link's label, not another control inside it.
     // Preserve the enclosing destination; standalone images retain preview access.
@@ -35,7 +35,7 @@ export function createMarkdown(): MarkdownIt {
       if (tokens[i].type === "link_close") break;
       if (tokens[i].type === "link_open") { linked = true; break; }
     }
-    return mediaHTML(token.attrGet("src") ?? "", token.content, !linked);
+    return mediaHTML(token.attrGet("src") ?? "", token.content, !linked, env?.line);
   };
 
   // A table too wide for one line per row gets column widths from its text, so a short column
@@ -64,25 +64,30 @@ export function resetMarkdown(): MarkdownIt {
   return md;
 }
 
-let mediaSource: (url: string) => string = (url) => url;
+/** What a render knows about where its text is: `line`, the chat line it belongs to. */
+export interface MarkdownEnv { line?: string }
+
+let mediaSource: (url: string, line?: string) => string = (url) => url;
 
 /**
  * Where a picture or video is loaded from. The Swift app loads the page from file://, so a file://
  * URL (or a bare absolute path) loads as it is; a host whose page has an origin of its own (the
  * desktop app's botling-chat://chat) maps local ones to a URL it serves. The element's `data-url`
- * keeps the URL the bot wrote.
+ * keeps the URL the bot wrote. `line`, the chat line showing it, lets the host show the picture as it
+ * was when that line was posted, under a URL of its own (a file rewritten at the same path is not the
+ * picture an earlier line already loaded).
  */
-export function setMediaSource(source: (url: string) => string): void {
+export function setMediaSource(source: (url: string, line?: string) => string): void {
   mediaSource = source;
 }
 
-export function mediaSrc(url: string): string {
-  return mediaSource(url);
+export function mediaSrc(url: string, line?: string): string {
+  return mediaSource(url, line);
 }
 
-export function mediaHTML(src: string, label: string, interactive = true): string {
+export function mediaHTML(src: string, label: string, interactive = true, line?: string): string {
   const url = escapeHTML(src);
-  const shown = escapeHTML(mediaSrc(src));
+  const shown = escapeHTML(mediaSrc(src, line));
   const name = escapeHTML(label);
   if (videoExtensions.test(src.split("?")[0])) {
     return `<video class="media" src="${shown}" ${interactive ? "controls" : ""} preload="metadata" aria-label="${name || escapeHTML(t("markdown.video"))}"></video>`;
@@ -132,6 +137,6 @@ function textUnits(text: string): number {
   return units;
 }
 
-export function renderMarkdown(text: string): string {
-  return md.render(text);
+export function renderMarkdown(text: string, line?: string): string {
+  return md.render(text, line ? ({ line } satisfies MarkdownEnv) : {});
 }

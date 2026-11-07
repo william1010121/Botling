@@ -22,11 +22,24 @@ function decode(text: string): string | null {
   }
 }
 
-export function attachmentURL(botId: string, ref: string): string {
+/**
+ * `line`: the chat line that shows the picture. The origin then serves the picture as it was when that
+ * line was posted (the core keeps a copy per line, chat-media.ts), and each line's picture has a URL of
+ * its own: a file rewritten at the same path never shows as the copy the page already loaded for an
+ * earlier line (the page reuses a loaded picture by its URL, whatever the response's Cache-Control).
+ */
+export function attachmentURL(botId: string, ref: string, line?: string): string {
   const url = `${ORIGIN}/attachment/${encodeURIComponent(botId)}/${encode(ref)}`;
   // A file URL's last part is its (already escaped) name.
   const name = ref.startsWith("file:") ? ref.split(/[?#]/)[0]!.split("/").pop() : "";
-  return name && /^[^/\\]{1,400}$/.test(name) ? `${url}/${name}` : url;
+  const query = line ? `?line=${encodeURIComponent(line)}` : "";
+  return (name && /^[^/\\]{1,400}$/.test(name) ? `${url}/${name}` : url) + query;
+}
+
+/** The line a chat-origin attachment URL's picture belongs to (`attachmentURL`'s `line`), if it names a valid one. */
+export function attachmentLine(search: URLSearchParams): string | undefined {
+  const line = search.get("line");
+  return line && /^[A-Za-z0-9_.:-]{1,64}$/.test(line) ? line : undefined;
 }
 
 /** The chat origin's path of an attachment: whose chat, and the file (or waiting file) it names. */
@@ -49,12 +62,12 @@ export function attachmentFile(url: string, botId: string): string | null {
  * A picture or video as the chat page loads it: a local one (a file:// URL, or an absolute path, which
  * 1.x's file:// page loads as one) from the chat origin, for the chat shown; anything else unchanged.
  */
-export function localMediaSource(shown: string | undefined, url: string): string {
+export function localMediaSource(shown: string | undefined, url: string, line?: string): string {
   if (!shown) return url;
   // A worker's own view is named "<bot>/<subagent>" (payload.ts subagentState); the origin serves its
   // pictures as its bot's (the bot holds the worker's steps), so it is that bot the page asks as.
   const botId = shown.split("/")[0]!;
-  if (/^file:\/\//i.test(url)) return attachmentURL(botId, url);
-  if (url.startsWith("/") && !url.startsWith("//")) return attachmentURL(botId, `file://${url}`);
+  if (/^file:\/\//i.test(url)) return attachmentURL(botId, url, line);
+  if (url.startsWith("/") && !url.startsWith("//")) return attachmentURL(botId, `file://${url}`, line);
   return url;
 }

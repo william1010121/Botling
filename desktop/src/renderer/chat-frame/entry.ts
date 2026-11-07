@@ -34,7 +34,7 @@ declare const __BOARD_SOURCE__: string;
 observeTraceEditor();
 // Local media comes from the currently shown chat's authenticated origin.
 let shownChat: string | undefined;
-setMediaSource((url) => localMediaSource(shownChat, url));
+setMediaSource((url, line) => localMediaSource(shownChat, url, line));
 installNativeShellCommands((id) => window.ccb?.runLocalCommand?.(id) ?? false);
 // Reload Chat Page: the drafts this tab kept come back (the chat itself comes back from the core
 // through the shell's next state). The one being typed is kept as the old document goes away, so the

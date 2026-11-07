@@ -2251,11 +2251,12 @@ First write a test that shows this, then fix it.`;
   }
 
   /** A file the chat origin may serve for this bot: one of its lines' attachments, or one waiting in its input box. */
-  private attachmentFile(botId: string, ref: string): ResultOf<"attachment.file"> {
+  /** `line`: the line showing it, whose copy of the picture (as it was when the line was posted) is served when there is one. */
+  private attachmentFile(botId: string, ref: string, line?: string): ResultOf<"attachment.file"> {
     const bot = this.bot(botId);
     let path: string | null = null;
     if (ref.startsWith("pending:")) path = this.pending.get(botId, ref.slice(8))?.path ?? null;
-    else path = bot.attachmentPath(ref);
+    else path = bot.attachmentPath(ref, line);
     if (!path) throw new ContractError("not_found", "No such attachment.");
     return { path, type: servedType(path) };
   }
@@ -2559,7 +2560,7 @@ First write a test that shows this, then fix it.`;
         if (!profile) throw new ContractError("not_found", "No project.");
         return this.projectFiles.preview(profile.folder, cmd.path);
       }
-      case "attachment.file": return this.attachmentFile(cmd.botId, cmd.ref);
+      case "attachment.file": return this.attachmentFile(cmd.botId, cmd.ref, cmd.line);
       case "plugins.loaded": this.plugins.webLoaded(cmd.name); return {};
       case "plugins.failed": this.plugins.webFailed(cmd.name, cmd.message); return {};
       case "plugins.notice": this.plugins.webNotice(cmd.name, cmd.text); return {};
