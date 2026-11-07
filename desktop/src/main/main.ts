@@ -34,7 +34,7 @@ import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
 import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
-import { attachmentFile, attachmentLine, attachmentTarget } from "../contract/attachment-url";
+import { attachmentFile, attachmentLine, attachmentTarget, cardImageToken } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import {
@@ -732,6 +732,17 @@ async function chatFile(url: URL, request: Request): Promise<Response | null> {
     if (!answer.ok) return null;
     const { path: file, type } = answer.result as { path: string; type: string };
     try { return new Response(readFileSync(file), { headers: { "Content-Type": type, ...NO_SNIFF, "Cache-Control": "no-store" } }); } catch { return null; }
+  }
+  // A component card's picture opened full size (the lightbox): only one some component's data named,
+  // by the token its card already loads it with (`botling-card://image/<token>`), never by path.
+  const cardToken = cardImageToken(path);
+  if (cardToken) {
+    const answer = await core.request({ type: "card.image", token: cardToken });
+    if (!answer.ok) return null;
+    const { path: file, type } = answer.result as { path: string; type: string };
+    try {
+      return new Response(readFileSync(file), { headers: { "Content-Type": type, "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'", ...NO_SNIFF, "Cache-Control": "no-store" } });
+    } catch { return null; }
   }
   // A file a message (or the input box) in this bot's chat has attached, or a picture or video a line
   // shows by its local path; never any other path.

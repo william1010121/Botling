@@ -8,6 +8,7 @@ import { acceptPictures } from "./pictures";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { onScreen, whenShownAgain } from "./visible";
 import { escapeHTML } from "./util";
+import { mediaSrc } from "./markdown";
 import { frameOf } from "./frame-protocol";
 import { kitV1 } from "../kit/generated/kit-v1";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
@@ -394,7 +395,7 @@ export type SaveHandler = (json: string) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null };
+type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbStatus?: StatusHandler | null; ccbIncoming?: ComponentFrame | null; ccbImages?: Record<string, string> };
 
 /** What a frame's `ccb.setStatus(...)` is told to: `{clear}` or `{text, tone}` as the frame sent them. */
 export type StatusHandler = (message: { clear?: unknown; text?: unknown; tone?: unknown }) => void;
@@ -636,7 +637,9 @@ window.addEventListener("message", (event) => {
     else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
   } else if (message.ccb === "open" && typeof message.url === "string" && message.url !== "") {
     // Opened full-size the way a link chip is: a picture in the lightbox, a page in a window of its own.
-    openMedia(message.url, typeof message.label === "string" ? message.label : "");
+    // A picture the card shows (its data names it): the lightbox shows that one, loaded as the card loads it.
+    const card = cardPicture(frame.ccbImages, message.url);
+    openMedia(message.url, typeof message.label === "string" ? message.label : "", card ? mediaSrc(card) : undefined);
   } else if (message.ccb === "status") {
     // Only a copy with a chip to set (a pin's) has somewhere for it to go.
     frame.ccbStatus?.(message as { clear?: unknown; text?: unknown; tone?: unknown });
@@ -654,6 +657,25 @@ window.addEventListener("message", (event) => {
     runDetail(frame, event.source, message.id, message.values, (message as { save?: unknown }).save === true);
   }
 });
+
+/** The path a file URL or absolute path names, else null. */
+function localPath(text: string): string | null {
+  const value = text.trim();
+  if (/^file:/i.test(value)) {
+    try { return decodeURIComponent(new URL(value).pathname); } catch { return null; }
+  }
+  return value.startsWith("/") && !value.startsWith("//") ? value : null;
+}
+
+/** The URL a card loads a picture its data names from (`images`, by the data's text), for the file URL or path it opens; else null. */
+export function cardPicture(images: Record<string, string> | undefined, url: string): string | null {
+  if (!images) return null;
+  if (images[url]) return images[url]!;
+  const path = localPath(url);
+  if (!path) return null;
+  for (const [named, shown] of Object.entries(images)) if (localPath(named) === path) return shown;
+  return null;
+}
 
 /** The pictures in a component's answer that are well formed; anything else is dropped. */
 export function answerImages(value: unknown): AnswerImage[] {
@@ -707,6 +729,7 @@ export function componentElement(
   frame.ccbAnswer = onAnswer;
   frame.ccbSave = onSave;
   frame.ccbDetail = detail ?? null;
+  frame.ccbImages = images ?? {};
   if (key) {
     frame.ccbKey = `${key}/${name}`;
     const height = frameHeights.get(frame.ccbKey);
