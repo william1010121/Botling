@@ -10,7 +10,7 @@ import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import { permissionAllowed } from "./permissions";
-import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
+import {nativeEditorNavigation,hasNativeEditorHost,isNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor,nativeEditorLayer} from "./editor-host";
 import {captureScale,composeWindow} from "./window-capture";
 import {appMenuTemplate} from "./app-menu";
 import {bindingsFor} from "../contract/shortcuts";
@@ -350,16 +350,18 @@ function broadcast(event: EventEnvelope) {
 }
 
 const hardened = new WeakSet<Session>();
+/** The app's own pages: its windows' shells, and the native chat view (the main chat) in them. */
+const ownedContents = (contents: WebContents | null | undefined) => !!contents && (appContents.has(contents.id) || isNativeEditorHost(contents));
 function hardenSession(target: Session) {
   if (hardened.has(target)) return;
   hardened.add(target);
   target.setPermissionRequestHandler((contents, permission, callback, details) => {
-    const ok = permissionAllowed({ permission, owned: !!contents && appContents.has(contents.id), requestingUrl: details?.requestingUrl ?? contents?.getURL() ?? "" });
+    const ok = permissionAllowed({ permission, owned: ownedContents(contents), requestingUrl: details?.requestingUrl ?? contents?.getURL() ?? "" });
     if (!ok) note(`denied permission ${permission} for ${contents?.getURL() ?? "?"}`);
     callback(ok);
   });
   target.setPermissionCheckHandler((contents, permission, requestingOrigin) =>
-    permissionAllowed({ permission, owned: !!contents && appContents.has(contents.id), requestingUrl: requestingOrigin }));
+    permissionAllowed({ permission, owned: ownedContents(contents), requestingUrl: requestingOrigin }));
   target.on("will-download", (event) => { event.preventDefault(); note("blocked a download"); });
 }
 

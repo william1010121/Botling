@@ -6,6 +6,8 @@ import {EDITOR_CHANNEL,EDITOR_URL} from '../editor-host-wire';
 import type {ChatLayer} from './window-capture';
 const hosts=new Map<WebContents,{loaded:boolean}>(),owners=new Set<WebContents>(),reloaders=new Map<WebContents,()=>Promise<boolean>>(),layers=new Map<WebContents,()=>ChatLayer|null>();
 export const hasNativeEditorHost=(owner:WebContents)=>owners.has(owner);
+/** The native chat view's own contents (the main chat, botling-chat://chat): one of the app's own pages, as the shell is. */
+export const isNativeEditorHost=(contents:WebContents)=>hosts.has(contents);
 /** Each editor's dropped-file handler; one invoke handler for the channel serves them all (by sender). */
 const droppers=new Map<WebContents,(event:IpcMainInvokeEvent,value:unknown)=>Promise<boolean>>();let dropChannel=false;
 const listenForDrops=()=>{if(dropChannel||typeof ipcMain.handle!=='function')return;dropChannel=true;ipcMain.handle(EDITOR_CHANNEL.drop,(event,value)=>droppers.get(event.sender)?.(event,value)??false);};
@@ -100,7 +102,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
   }
   const bounds=editorBounds(value.bounds,owner.getContentBounds(),ownerContents.getZoomFactor());if(!bounds)return;
   const boundsChanged=!lastBounds||(['x','y','width','height'] as const).some(key=>lastBounds![key]!==bounds[key]);
-  lastBounds=bounds;view.setBounds(bounds);
+  lastBounds=bounds;if(!htmlFullscreen)view.setBounds(bounds);
   if(value.occluded===true){
    // Quick settings must be usable before capture/PNG decode (or the 1s capture budget).
    // The snapshot fills the background asynchronously; other overlays keep their handoff.
@@ -122,6 +124,13 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
   if(typeof v.botID!=='string'||!v.botID||v.botID.length>160||typeof v.path!=='string'||!isAbsolute(v.path)||v.path.length>4096||!options.onDroppedFile)return false;
   try{return (await options.onDroppedFile(v.botID,v.path))===true;}catch{return false;}
  };
+ // A video in the chat going fullscreen: the view, laid out over the chat column, fills the window
+ // (Electron makes the window itself fullscreen) and goes back to its layout when the video leaves it.
+ let htmlFullscreen=false;
+ const fillWindow=()=>{if(htmlFullscreen&&!owner.isDestroyed()){const {width,height}=owner.getContentBounds();view.setBounds({x:0,y:0,width,height});}};
+ const enterFullscreen=()=>{htmlFullscreen=true;fillWindow();};
+ const leaveFullscreen=()=>{if(!htmlFullscreen)return;htmlFullscreen=false;if(lastBounds)view.setBounds(lastBounds);};
+ contents.on('enter-html-full-screen',enterFullscreen);contents.on('leave-html-full-screen',leaveFullscreen);owner.on('resize',fillWindow);
  droppers.set(contents,dropped);listenForDrops();
  ipcMain.on(EDITOR_CHANNEL.up,up);ipcMain.on(EDITOR_CHANNEL.down,down);ipcMain.on(EDITOR_CHANNEL.layout,layout);
  let surfaceId:string|undefined,lastStamp:import('../editor-host-wire').EditorStamp|undefined;
@@ -130,7 +139,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
  const ownerNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame){stopSnapshots();occluded=false;laidOut=false;initialized=false;view.setBounds({x:0,y:0,width:0,height:0});view.setVisible(false);if(owner.isVisible()&&contents.isFocused())owner.webContents.focus();invalidateOwner();}};
  const editorNavigation=(details:{isMainFrame:boolean})=>{if(details.isMainFrame&&host.loaded)dispose();};
  const ownerLoaded=()=>{if(host.loaded){try{bindOwner();}catch{dispose();}}};
- const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);hosts.delete(contents);droppers.delete(contents);owners.delete(ownerContents);reloaders.delete(ownerContents);layers.delete(ownerContents);ownerContents.removeListener('did-start-navigation',ownerNavigation);ownerContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
+ const dispose=()=>{if(closed)return;closed=true;stopSnapshots();settleInitial(false);if(lastStamp&&!ownerContents.isDestroyed())ownerContents.send(EDITOR_CHANNEL.unbound,lastStamp);boundary.revoke(contents);owner.removeListener('closed',dispose);owner.removeListener('resize',fillWindow);hosts.delete(contents);droppers.delete(contents);owners.delete(ownerContents);reloaders.delete(ownerContents);layers.delete(ownerContents);ownerContents.removeListener('did-start-navigation',ownerNavigation);ownerContents.removeListener('did-finish-load',ownerLoaded);ipcMain.removeListener(EDITOR_CHANNEL.up,up);ipcMain.removeListener(EDITOR_CHANNEL.down,down);ipcMain.removeListener(EDITOR_CHANNEL.layout,layout);if(!owner.isDestroyed())owner.contentView.removeChildView(view);if(!contents.isDestroyed())contents.close();};
  owner.webContents.on('did-start-navigation',ownerNavigation);owner.webContents.on('did-finish-load',ownerLoaded);contents.on('did-start-navigation',editorNavigation);
  owner.once('closed',dispose);contents.once('render-process-gone',dispose);contents.once('destroyed',dispose);
  const ready=Promise.all([ownerReady,contents.loadURL(EDITOR_URL)]).then(()=>{if(closed||owner.isDestroyed())throw new Error('Editor owner closed before binding');host.loaded=true;return bindOwner()!;});

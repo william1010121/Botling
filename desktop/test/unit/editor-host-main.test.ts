@@ -2,7 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {EventEmitter} from 'node:events';
 import {join} from 'node:path';
 import {ipcMain} from 'electron';
-import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds,reloadNativeEditor,nativeEditorLayer} from '../../src/main/editor-host';
+import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds,reloadNativeEditor,nativeEditorLayer,isNativeEditorHost} from '../../src/main/editor-host';
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
 vi.mock('electron',async()=>{
  const {EventEmitter}=await import('node:events');
@@ -402,4 +402,20 @@ it('a dropped file reaches the core only from the bound editor root, by an absol
  expect(await handle(editor,{stamp,botID:'MAIN',path:'relative.png'})).toBe(false);
  expect(await handle(editor,{stamp,botID:'MAIN',path:'/a',extra:1})).toBe(false);
  expect(onDroppedFile).toHaveBeenCalledTimes(1);
+});
+
+// The main chat is this native view, not the app page's iframe: a video's fullscreen button there asks
+// from the view's own contents (botling-chat://chat), which the session must count as the app's own, and
+// the view, laid out over the chat column only, fills the window while the video is fullscreen.
+it('the native chat view counts as the app\'s own and fills the window while a video is fullscreen',async()=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents,setBounds=(f.view as any).setBounds;
+ expect(isNativeEditorHost(contents as any)).toBe(true);expect(isNativeEditorHost(f.owner.webContents as any)).toBe(false);
+ const bounds={x:200,y:60,width:600,height:600},full={x:0,y:0,width:1120,height:820};
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds});
+ contents.emit('enter-html-full-screen');expect(setBounds).toHaveBeenLastCalledWith(full);
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{...bounds,width:500}});
+ expect(setBounds).toHaveBeenLastCalledWith(full);
+ f.owner.getContentBounds=()=>({x:0,y:0,width:1512,height:982});f.owner.emit('resize');expect(setBounds).toHaveBeenLastCalledWith({x:0,y:0,width:1512,height:982});
+ contents.emit('leave-html-full-screen');expect(setBounds).toHaveBeenLastCalledWith({...bounds,width:500});
+ f.dispose();expect(isNativeEditorHost(contents as any)).toBe(false);
 });

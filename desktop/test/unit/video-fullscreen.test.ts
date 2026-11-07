@@ -28,6 +28,13 @@ describe("chat video fullscreen", () => {
     }
   });
 
+  it("the session counts the native chat view (where the main chat's videos are) as the app's own", () => {
+    const main = readFileSync(join(desktop, "src/main/main.ts"), "utf8");
+    const handlers = main.slice(main.indexOf("function hardenSession"), main.indexOf("will-download"));
+    expect(handlers.match(/owned: ownedContents\(contents\)/g) ?? []).toHaveLength(2);
+    expect(main).toMatch(/const ownedContents = [^\n]*appContents\.has\([^\n]*isNativeEditorHost\(/);
+  });
+
   it("everything else stays refused", () => {
     const ok = { permission: "fullscreen", owned: true, requestingUrl: "botling-chat://chat/chat.html" };
     for (const change of [{ owned: false }, { requestingUrl: "botling-card://page/1" }, { requestingUrl: "https://example.com/" },
