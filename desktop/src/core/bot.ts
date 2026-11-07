@@ -271,6 +271,8 @@ interface Turn {
   tasks?: BackgroundTask[];
   /** It ended on an API error with no answer from the API (1.x's `turnLostConnection`). */
   lostConnection?: boolean;
+  /** claude was sent a line of yours into this turn with priority "now": it may cut the turn off for it (`error_during_execution`). */
+  steeredNow?: boolean;
   /** Work the other head handed over (its reply goes back), and the hand-off it is. */
   conducted: boolean;
   handoffId: string | null;
@@ -2796,6 +2798,7 @@ export class Bot {
       next.sent = true;
       this.steered.set(id.toLowerCase(), next);
       head.send(this.compose(next, false), id, this.turnImages(next), { now: true });
+      current.steeredNow = true;
     }
     this.joinTurn(current, next);
     this.log(head instanceof CodexHead ? "you wrote while Codex worked: your message joined its turn (turn/steer)" : "you wrote while claude worked: your message went into its turn");
@@ -3579,6 +3582,9 @@ export class Bot {
           this.bumpUnread();
           return;
         }
+        // claude cut this turn off to take your line (priority "now"): the app's doing, not an error. It ends stopped,
+        // with the words it wrote so far or, with none, no bubble at all; the raw subtype never shows.
+        if (!item.ok && item.subtype === "error_during_execution" && turn.steeredNow) { this.finishTurn(turn, "stopped"); return; }
         this.finishTurn(turn, end.status, end.error);
         return;
       }
@@ -3811,7 +3817,8 @@ export class Bot {
     if (status === "done" && parsed.pluginTags) this.options.pluginTags?.(this.owner, parsed.pluginTags);
     // Nothing for the user, whoever started the turn: no bubble (`headTurnContent` says what the head keeps out).
     const content = headTurnContent({ status, origin: turn.origin, sharesChat: this.sharesChat, raw, parsed, body: tags.body, handoff: !!tags.handoff, steps: turn.steps.length, error: error ?? null });
-    if (!hasVisibleContent(content)) {
+    // A turn cut off with no words of its own (`steeredNow`) shows nothing either: an interrupted reply has no bubble.
+    if (!hasVisibleContent(content) || (status === "stopped" && !tags.body.trim())) {
       if (turn.record) this.remove(turn.record);
       this.keepTasks(turn, null);
       this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
