@@ -34,7 +34,7 @@ import { readLockHolder } from "../core/store/data-dir-lock";
 import { copyDoctorFix } from "./doctor-copy";
 import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
-import { attachmentFile, attachmentTarget } from "../contract/attachment-url";
+import { attachmentFile, attachmentLine, attachmentTarget } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import {
@@ -735,7 +735,8 @@ async function chatFile(url: URL, request: Request): Promise<Response | null> {
   // shows by its local path; never any other path.
   const attached = attachmentTarget(path);
   if (attached) {
-    const answer = await core.request({ type: "attachment.file", botId: attached.botId, ref: attached.ref });
+    const line = attachmentLine(url.searchParams);
+    const answer = await core.request({ type: "attachment.file", botId: attached.botId, ref: attached.ref, ...(line ? { line } : {}) });
     if (!answer.ok) return null;
     const { path: file, type } = answer.result as { path: string; type: string };
     // Streamed, with byte ranges, so a video plays and seeks as in 1.x.

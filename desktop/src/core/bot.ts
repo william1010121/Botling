@@ -57,6 +57,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentKind, attachmentList, attachmentMissing, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
+import { dropLineMedia, keepLineMedia, lineMediaCopy } from "./chat-media";
 import { sameJSON } from "./same-json";
 import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
@@ -848,6 +849,7 @@ export class Bot {
     if (at < 0) return;
     this.records.splice(at, 1);
     this.persist();
+    dropLineMedia(this.lineMediaStore, record.id);
     this.emit({ type: "message.removed", botId: this.id, messageId: record.id });
   }
 
@@ -3073,8 +3075,24 @@ export class Bot {
   }
 
   /** A file this bot's chat shows as an attachment (the chat origin serves only these). */
-  attachmentPath(url: string): string | null {
-    if (this.options.primary) return this.options.primary.attachmentPath(url);
+  /** The chat's copies of the pictures its lines show (chat-media.ts): the main bot's store, whichever head wrote the line. */
+  private get lineMediaStore(): string {
+    return (this.options.primary ?? this).store.directory;
+  }
+
+  /**
+   * The file the chat origin serves for a file URL a line names, or null. `line`: the line showing it;
+   * its copy of the picture, as it was when it was posted, when it has one (chat-media.ts).
+   */
+  attachmentPath(url: string, line?: string): string | null {
+    if (this.options.primary) return this.options.primary.attachmentPath(url, line);
+    const path = this.namedAttachmentPath(url);
+    if (!path || !line) return path;
+    const record = this.records.find((candidate) => candidate.id === line);
+    return (record && namesPath(record.text, path) && lineMediaCopy(this.lineMediaStore, line, path)) || path;
+  }
+
+  private namedAttachmentPath(url: string): string | null {
     if (!url.startsWith("file:")) return null;
     const named = this.records.some((record) => record.attachments?.some((file) => file.url === url));
     let path: string;
@@ -3843,6 +3861,8 @@ export class Bot {
     if (status === "failed" && !text && error) text = error;
     record.text = text;
     record.state = status;
+    // The pictures it shows by path, as they are now: a later reply that rewrites the file leaves this one's alone (chat-media.ts).
+    keepLineMedia(this.lineMediaStore, record.id, text);
     record.session = this.session.sessionId.toUpperCase();
     if (turn.steps.length) record.steps = turn.steps;
     if (status !== "done") record.interrupted = true;

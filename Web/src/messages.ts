@@ -473,7 +473,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     if (!piece.trim()) return;
     const text = document.createElement("div");
     text.className = "markdown";
-    text.innerHTML = renderMarkdown(piece);
+    text.innerHTML = renderMarkdown(piece, message.id);
     bubble.append(text);
   };
   // A component in it spans the reply edge to edge, and the reply the whole message column: the

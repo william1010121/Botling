@@ -850,7 +850,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("files.data"), botId, name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) }),
   z.strictObject({ type: z.literal("files.remove"), botId, id }),
   /** Main only: a file the chat shows (an attachment of one of the bot's lines, or one waiting: `pending:<id>`). */
-  z.strictObject({ type: z.literal("attachment.file"), botId, ref: z.string().min(1).max(5_000) }),
+  z.strictObject({ type: z.literal("attachment.file"), botId, ref: z.string().min(1).max(5_000), line: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/).optional() }),
   /** One head or two (Claude, Codex). Leaving out the head it runs on runs it on the other, through a handoff (Phase 5c). */
   z.strictObject({ type: z.literal("heads.set"), botId, engines: z.array(Engine).min(1).max(3) }),
   /** Who new messages go to (the composer's Both / Claude / Codex). */
