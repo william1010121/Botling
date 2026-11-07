@@ -27,6 +27,8 @@ export type BotRequest =
    * inside the tag); without it (`subagent` is ""), a new empty sub bot whose first task is `note`, on `engine` if one was named.
    */
   | { kind: "subBot"; name: string; subagent: string; note: string; engine?: string; subagents?: string[] }
+  /** A project bot removes one of its own sub bots (`<remove-sub-bot name="…"/>`), as the UI's "Close sub bot" does. */
+  | { kind: "removeSubBot"; name: string }
   /** The owner's follow-up for an agent it owns (`<agent-message to="agent id">words</agent-message>`). */
   | { kind: "agentMessage"; to: string; text: string }
   /** The owner stops an agent it owns (`<agent-stop to="agent id"/>`). */
@@ -69,6 +71,7 @@ const quotedHTMLRegion = () => /<(pre|code|blockquote)\b[^>]*>[\s\S]*?<\/\1\s*>|
 const choicesBlock = () => /<choices>\s*([\s\S]*?)\s*<\/choices>/g;
 const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*([\s\S]*?)\s*<\/\1>/g;
 const subBotTag = () => /<sub-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/sub-bot>)/g;
+const removeSubBotTag = () => /<remove-sub-bot\s+name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/remove-sub-bot>)/g;
 const pluginTag = () => /<plugin>\s*([\s\S]*?)\s*<\/plugin>/g;
 const agentMessageTag = () => /<agent-message\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*([\s\S]*?)\s*<\/agent-message>/g;
 const agentStopTag = () => /<agent-stop\s+to\s*=\s*(?:"([^"]*)"|'([^']*)')\s*\/?>(?:\s*<\/agent-stop>)?/g;
@@ -257,6 +260,12 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
     if (name && (moving || trimWS(note ?? ""))) subBots.unshift({ kind: "subBot", name, subagent, note: note ?? "", ...(!moving && engine ? { engine } : {}), ...(subagents.length ? { subagents } : {}) });
   });
   requests.push(...subBots);
+  const removals: BotRequest[] = [];
+  take(removeSubBotTag, ([double, single]) => {
+    const name = trimWS(double || single || "");
+    if (name) removals.unshift({ kind: "removeSubBot", name });
+  });
+  requests.push(...removals);
   const agentCommands: BotRequest[] = [];
   take(agentMessageTag, ([double, single, words]) => {
     const to = trimWS(double || single || "");
@@ -349,6 +358,7 @@ export function unsupportedRequest(request: BotRequest): string {
     case "install": return "installing a plugin";
     case "newBot": return `a new bot ("${request.name}")`;
     case "subBot": return `a sub bot ("${request.name}"): this bot cannot make one here, so nothing was moved`;
+    case "removeSubBot": return `removing the sub bot "${request.name}"`;
     case "agentMessage": return `a message to the agent "${request.to}"`;
     case "agentStop": return `stopping the agent "${request.to}"`;
     case "newProject": return `a new project (${request.folder})`;

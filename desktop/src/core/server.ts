@@ -967,6 +967,16 @@ First write a test that shows this, then fix it.`;
     }
   }
 
+  /** A project bot's <remove-sub-bot name="…"/>: one of its own sub bots is closed exactly as the UI's "Close sub bot" does. */
+  private async removeSubBotRequested(bot: Bot, request: { name: string }): Promise<void> {
+    const refuse = (why: string) => { bot.appNotice(`No sub bot was removed: ${why}`); bot.queueNote(`(App: No sub bot was removed: ${why})`); };
+    const wanted = request.name.trim().toLowerCase();
+    const sub = this.profiles.find((profile) => profile.parent === bot.id && !this.removed.has(profile.id) && profile.name.trim().toLowerCase() === wanted);
+    if (!sub) return refuse(`you have no sub bot named "${request.name}".`);
+    try { await this.closeSubBot(sub.id); this.log(`sub bot ${sub.name} removed by ${bot.profile.name}`); }
+    catch (error) { refuse((error as Error).message); }
+  }
+
   /** An agent a bot names in a tag (its agent id, its task id, or the id it reaches it by), if that bot owns it. */
   private tagAgent(bot: Bot, key: string): AgentRecord | undefined {
     const record = this.agents.get(key) ?? this.agents.byHostBot(bot.id, key) ?? this.agents.movedIn(bot.id).find((candidate) => candidate.nativeId === key);
@@ -2000,6 +2010,7 @@ First write a test that shows this, then fix it.`;
       if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
       else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
+      else if (request.kind === "removeSubBot") later.push(() => { void this.removeSubBotRequested(bot, request); });
       else if (request.kind === "agentMessage" || request.kind === "agentStop") later.push(() => { void this.agentTag(bot, request); });
       else rest.push(request);
     }
