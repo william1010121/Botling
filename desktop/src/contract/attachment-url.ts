@@ -67,7 +67,15 @@ export function localMediaSource(shown: string | undefined, url: string, line?: 
   // A worker's own view is named "<bot>/<subagent>" (payload.ts subagentState); the origin serves its
   // pictures as its bot's (the bot holds the worker's steps), so it is that bot the page asks as.
   const botId = shown.split("/")[0]!;
+  // A component card's own picture (opened full size, `ccb.open`): by its token, as its frame loads it.
+  const card = /^botling-card:\/\/image\/([0-9a-f]{40})$/.exec(url);
+  if (card) return `${ORIGIN}/card-image/${card[1]}`;
   if (/^file:\/\//i.test(url)) return attachmentURL(botId, url, line);
   if (url.startsWith("/") && !url.startsWith("//")) return attachmentURL(botId, `file://${url}`, line);
   return url;
+}
+
+/** The token of a card picture the chat origin serves (`/card-image/<token>`, what `localMediaSource` maps a card's `botling-card://image/<token>` to); else null. */
+export function cardImageToken(path: string): string | null {
+  return /^\/card-image\/([0-9a-f]{40})$/.exec(path)?.[1] ?? null;
 }
