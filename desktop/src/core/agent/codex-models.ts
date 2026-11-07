@@ -1,6 +1,9 @@
 // The models the local Codex offers (1.x's `CodexModels`): asked of `codex app-server` (`model/list`)
 // once per app run, so the Codex model menu lists what this Codex and this account have.
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { childEnvironment } from "./runner";
 import { resolveExecutable } from "../process/executable";
 import { killTree } from "../process/kill-tree";
@@ -71,4 +74,34 @@ export function cachedModels(ask: () => Promise<CodexModel[]>): () => Promise<Co
     if (found.length) known = found;
     return found;
   };
+}
+
+// The Codex models a coordinator may start a worker on (app_handoff's `model`): the ones Codex lists in its models
+// cache (CODEX_HOME/models_cache.json, else ~/.codex), by slug ("gpt-6-luna"), display name ("GPT-6-Luna") or short
+// name ("luna": the newest listed model whose slug ends in it). Read synchronously: a handoff answers at once.
+
+export interface CodexModelEntry { slug: string; displayName: string | null; listed: boolean }
+
+/** Codex's models cache for this environment; null: none or unreadable. */
+export function readCodexModels(env: NodeJS.ProcessEnv = process.env): CodexModelEntry[] | null {
+  try {
+    const data = JSON.parse(readFileSync(join(env.CODEX_HOME || join(homedir(), ".codex"), "models_cache.json"), "utf8"));
+    const models = Array.isArray(data?.models) ? data.models : [];
+    const entries = models.flatMap((m: any): CodexModelEntry[] => typeof m?.slug === "string" && m.slug
+      ? [{ slug: m.slug, displayName: typeof m.display_name === "string" ? m.display_name : null, listed: m.visibility !== "hide" }] : []);
+    return entries.length ? entries : null;
+  } catch { return null; }
+}
+
+const SLUG = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** The model slug `wanted` names, or why it names none (`models` null: no list to check, a slug-shaped name is taken). */
+export function resolveCodexModel(wanted: string, models: readonly CodexModelEntry[] | null): { model: string } | { error: string } {
+  const name = wanted.trim().toLowerCase();
+  if (!models) return SLUG.test(name) ? { model: name } : { error: `Unknown Codex model "${wanted}".` };
+  const exact = models.find((m) => m.slug.toLowerCase() === name || m.displayName?.toLowerCase().replace(/\s+/g, "-") === name.replace(/\s+/g, "-"));
+  if (exact) return { model: exact.slug };
+  const short = models.find((m) => m.listed && name.length > 0 && new RegExp(`[-.]${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`).test(m.slug.toLowerCase()));
+  if (short) return { model: short.slug };
+  return { error: `Unknown Codex model "${wanted}". Codex offers: ${models.filter((m) => m.listed).map((m) => m.slug).join(", ")}.` };
 }

@@ -464,6 +464,39 @@ it("takes an effort on app_handoff: the handoff's, else the Codex workers' setti
   expect(started.writes.find((write) => write.method === "turn/start").params.effort).toBe("medium");
 });
 
+it("takes a Codex model on app_handoff (a listed slug, or a short name like luna); the worker's thread starts on it", () => {
+  const models = () => [
+    { slug: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", listed: true },
+    { slug: "gpt-reserve", displayName: "GPT-Reserve", listed: false },
+    { slug: "gpt-6-luna", displayName: "GPT-6-Luna", listed: true },
+    { slug: "gpt-5.6-luna", displayName: "GPT-5.6-Luna", listed: true },
+  ];
+  const session = new CodexSession(config({ model: "coordinator", workerModel: "gpt-6.1-sol", workerModels: models }));
+  ready(session);
+  session.send("Review");
+  session.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+  const hand = (args: Record<string, unknown>) => {
+    const handed = new Out(session.receive(toolCall("app_handoff", { instructions: "Work", ...args })));
+    return { answer: receipt(handed), start: handed.writes.find((write) => write.method === "thread/start") };
+  };
+  const exact = hand({ model: "gpt-6-luna" });
+  expect(exact.start.params.model).toBe("gpt-6-luna");
+  expect(exact.answer).toMatchObject({ status: "accepted", model: "gpt-6-luna" });
+  // The short name: the newest listed model it names.
+  const alias = hand({ model: "Luna" });
+  expect(alias.start.params.model).toBe("gpt-6-luna");
+  expect(alias.answer).toMatchObject({ status: "accepted", model: "gpt-6-luna" });
+  expect(hand({ model: "GPT-5.6-Luna" }).start.params.model).toBe("gpt-5.6-luna");
+  // None: the Codex workers' setting.
+  const plain = hand({});
+  expect(plain.start.params.model).toBe("gpt-6.1-sol");
+  expect(plain.answer.notice).toBeUndefined();
+  // A model Codex does not offer: refused, no worker starts.
+  const unknown = hand({ model: "opus" });
+  expect(unknown.start).toBeUndefined();
+  expect(unknown.answer.error).toContain("gpt-6-luna");
+});
+
 describe("monitor owner authorization", () => {
   it("rejects worker start/status/cancel with intent, without approval, command or coordinator wake", () => {
     const s = new CodexSession(config()); ready(s); s.send("authorized work");

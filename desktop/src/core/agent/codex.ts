@@ -58,6 +58,7 @@ import { movedTaskError, type WorkerHost, type WorkerInfo, type WorkerOwner, typ
 import { ComponentEditorAdapter, EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
 import { appTools, codexDynamicTools } from "../app-tools/registry";
 import { EFFORTS_BY_ENGINE } from "../../contract/efforts";
+import { readCodexModels, resolveCodexModel, type CodexModelEntry } from "./codex-models";
 
 /** `value` as a level Codex's `effort` takes; null: none, or one it does not take. */
 export const codexEffort = (value: unknown): string | null => (EFFORTS_BY_ENGINE.codex as readonly unknown[]).includes(value) ? value as string : null;
@@ -145,6 +146,8 @@ export interface CodexConfig {
   resumeThread: string | null;
   model: string | null;
   workerModel: string | null;
+  /** The models app_handoff's `model` may name (default: Codex's models cache; null: no list, a slug-shaped name is taken). */
+  workerModels?: () => readonly CodexModelEntry[] | null;
   /** "low" … "xhigh". */
   effort: string | null;
   /** Workers' own effort and Fast mode (settings' Codex workers; null: as the coordinator / config.toml). */
@@ -405,6 +408,8 @@ interface ThreadWorker {
   runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
   /** The model its thread runs on, as the app-server said (spec-guard.ts). */
   model?: string | null;
+  /** The model its handoff asked for (null: the Codex workers' setting, else the coordinator's). */
+  chosenModel?: string | null;
   /** Restart: the original turn had completed with these messages (adopted, nothing is sent). */
   adopt?: { said: { text: string; phase: string | null }[]; turn: string };
   /** Restart: the run continues the original one (its scope and Git grant stay). */
@@ -440,6 +445,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
     w.thread ??= record.conversationId;
     w.isolatedGit = record.engineData.isolatedGit as IsolatedGitOwnership | undefined;
     w.effort = codexEffort(record.engineData.effort);
+    w.chosenModel = typeof record.engineData.model === "string" && record.engineData.model ? record.engineData.model : null;
     return w;
   }
 
@@ -507,7 +513,8 @@ export class CodexThreadAdapter implements WorkerAdapter {
   prepare(request: HandoffRequest) {
     const isolatedGit = request.args.isolatedGit;
     const effort = codexEffort(request.args.effort);
-    return { engineData: { ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}) } };
+    const model = typeof request.args.model === "string" && request.args.model ? request.args.model : null;
+    return { engineData: { ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}), ...(model ? { model } : {}) } };
   }
 
   /** A worker's turn effort: its handoff's, else the Codex workers' setting, else the coordinator's. */
@@ -553,7 +560,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
       // The workers write where the coordinator may, as in 1.x (`writable_roots`).
       config: { "features.multi_agent": false, "agents.enabled": false, ...codexAutoRiskConfig(c.autoMode, c.bypassPermissions), ...writableRootsConfig(c.writableRoots) },
     };
-    const model = c.workerModel ?? c.model;
+    const model = w.chosenModel ?? c.workerModel ?? c.model;
     if (model) params.model = model;
     // Fast mode: the priority service tier (`CodexWorkerDefaults.fast`).
     if (typeof c.workerFast === "boolean") params.serviceTier = c.workerFast ? "priority" : "default";
@@ -772,7 +779,7 @@ export class CodexThreadAdapter implements WorkerAdapter {
   /** Whether this worker's model may not write spec/ (spec-guard.ts); unknown counts as not. */
   private specLocked(w: ThreadWorker): boolean {
     const c = this.o.config;
-    return !maySpecWrite(w.model ?? c.workerModel ?? c.model, c.specWriters ?? DEFAULT_SPEC_WRITERS);
+    return !maySpecWrite(w.model ?? w.chosenModel ?? c.workerModel ?? c.model, c.specWriters ?? DEFAULT_SPEC_WRITERS);
   }
 
   private specNote(w: ThreadWorker): string {
@@ -1954,6 +1961,17 @@ export class CodexSession implements CoordinatorPort {
         this.toolReplies.set(cacheKey, { intent, response: refused });
         return [{ kind: "write", value: refused }];
       }
+      // A model names one Codex offers (slug, display name or short name such as "luna"); any other is refused.
+      let model: string | null = null;
+      if (args.role !== "component-editor" && typeof args.model === "string" && args.model.trim()) {
+        const resolved = resolveCodexModel(args.model, (this.config.workerModels ?? readCodexModels)());
+        if ("error" in resolved) {
+          const refused = reply({ error: `${resolved.error} No worker was started.` }, false);
+          this.toolReplies.set(cacheKey, { intent, response: refused });
+          return [{ kind: "write", value: refused }];
+        }
+        model = resolved.model;
+      }
       const task = randomUUID().toLowerCase();
       const name = typeof args.name === "string" && args.name ? args.name : firstLine(args.instructions);
       let isolatedGit = args.role === "component-editor" ? undefined : isolatedGitOwnership(args.isolated_git, this.config.cwd,
@@ -1974,11 +1992,11 @@ export class CodexSession implements CoordinatorPort {
         : `Effort "${wantedEffort}" ignored: Codex takes ${EFFORTS_BY_ENGINE.codex.join(", ")}. The worker runs at ${this.config.workerEffort ?? this.config.effort ?? "the model's default"} effort.`) : null;
       // The core makes the worker and starts its run now (its adapters are synchronous); the receipt goes first.
       this.nextTask = task;
-      void this.core.handoff(editor ? "component-editor" : "codex-thread", { instructions, name, ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}) }).catch(() => undefined);
+      void this.core.handoff(editor ? "component-editor" : "codex-thread", { instructions, name, ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}), ...(model ? { model } : {}) }).catch(() => undefined);
       this.nextTask = null;
       out.push(...this.take());
       const effective = editor ? null : effort ?? this.config.workerEffort ?? this.config.effort ?? null;
-      response = reply({ task_id: task, status: "accepted", ...(editor ? {} : { effort: effective }), ...(effortNotice ? { notice: effortNotice } : {}), isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
+      response = reply({ task_id: task, status: "accepted", ...(editor ? {} : { effort: effective, model: model ?? this.config.workerModel ?? this.config.model ?? null }), ...(effortNotice ? { notice: effortNotice } : {}), isolated_git_approval: isolatedGit && this.config.bypassPermissions ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
     } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.core.get(args.task_id)) {
       // Into its turn at work, else its next run (a report the coordinator was not shown yet is dropped, as before).
       // Not the core's `message()`: its checkpoint rule refuses a follow-up until an unshown or uncertain report is
