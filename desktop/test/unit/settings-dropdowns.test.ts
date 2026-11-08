@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-// Every model and reasoning-effort choice in Settings (and a bot's own settings) is a dropdown. Codex models
-// come from `codex.models` (the local Codex's `model/list`); a saved model the list lacks stays as an option.
+// Settings' model, effort and permission choices (Settings → Models & workers, Permissions) and a bot's own settings
+// panel. Models are dropdowns; in Settings efforts are segmented controls with only the engine's levels, in the bot panel
+// dropdowns. Codex models come from `codex.models` (the local Codex's `model/list`); a saved model the list lacks stays.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it } from "vitest";
@@ -24,7 +25,7 @@ const MODELS = [
   { id: "gpt-6-sol", name: "GPT-6 Sol", isDefault: false, efforts: null },
 ];
 
-function fakeClient(raw: Record<string, unknown>, sent: unknown[], botView?: BotSettingsView) {
+function fakeClient(raw: Record<string, unknown>, sent: unknown[], botView?: BotSettingsView, extra: Partial<SettingsView> = {}) {
   let settings = raw;
   let bot = botView;
   return {
@@ -33,8 +34,8 @@ function fakeClient(raw: Record<string, unknown>, sent: unknown[], botView?: Bot
       if (cmd.type === "engine.models") return {status:"ready", models:cmd.engine === "claude" ? ["haiku","sonnet","opus"].map(id=>({id,name:id,isDefault:false,efforts:null})) : MODELS,source:cmd.engine,message:"Runtime catalog"};
       if (cmd.type === "codex.models") return { models: MODELS };
       if (cmd.type === "agy.runtime.check") return { saved: null, override: null, effective: null, valid: false, message: "Runtime not configured." };
-      if (cmd.type === "settings.get") return settingsView(settings);
-      if (cmd.type === "settings.set") { settings = applySetting(settings, cmd.change as SettingsChange); return settingsView(settings); }
+      if (cmd.type === "settings.get") return { ...settingsView(settings), ...extra };
+      if (cmd.type === "settings.set") { settings = applySetting(settings, cmd.change as SettingsChange); return { ...settingsView(settings), ...extra }; }
       if (cmd.type === "bot.settings") return bot;
       if (cmd.type === "plugins.setting") return plugins({ [cmd.key]: cmd.value });
       if (cmd.type === "heads.set") { bot = { ...bot!, engines: cmd.engines }; return {}; }
@@ -59,75 +60,109 @@ const select = (host: HTMLElement, label: string) => {
   return found;
 };
 const options = (element: HTMLSelectElement) => [...element.options].map((option) => option.value);
+const radios = (host: HTMLElement, label: string) => {
+  const group = host.querySelector(`[role="radiogroup"][aria-label="${label}"]`);
+  if (!group) throw new Error(`no radiogroup ${label}`);
+  return [...group.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+};
+const pick = async (host: HTMLElement, label: string, text: string) => act(async () => radios(host, label).find((radio) => radio.textContent === text)!.click());
+const tab = async (host: HTMLElement, name: string) => act(async () => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((one) => one.textContent?.startsWith(name))!.click());
+const headings = (host: HTMLElement) => [...host.querySelectorAll(".settings-group-head > h3")].map((heading) => heading.textContent);
 async function choose(element: HTMLSelectElement, value: string) {
   await act(async () => { element.value = value; element.dispatchEvent(new Event("change", { bubbles: true })); });
 }
 
-describe("Settings' model and effort choices are dropdowns", () => {
-  it("saves independent permission switches and explains running-session behavior", async () => {
+describe("Settings' model, effort and permission choices", () => {
+  it("Permissions: one two-step choice per engine, saved independently, with what each step means", async () => {
     const sent: any[] = [];
-    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot: null, plugins: null, initialSection: "engines", onClose() {} }));
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot: null, plugins: null, initialSection: "permissions", onClose() {} }));
     try {
-      const claude = host.querySelector<HTMLInputElement>('input[aria-label="Claude: bypass permission checks"]')!;
-      const codex = host.querySelector<HTMLInputElement>('input[aria-label="Codex: bypass approvals and sandbox"]')!;
-      expect(claude.checked).toBe(false);
-      expect(codex.checked).toBe(false);
-      await act(async () => claude.click());
-      expect(claude.checked).toBe(true);
-      expect(codex.checked).toBe(false);
-      await act(async () => codex.click());
-      expect(codex.checked).toBe(true);
-      await act(async () => claude.click());
-      expect(codex.checked).toBe(true);
+      expect(radios(host, "Claude permission").map((radio) => radio.textContent)).toEqual(["Auto", "Full access"]);
+      expect(radios(host, "Codex permission").map((radio) => radio.textContent)).toEqual(["Auto", "Full access"]);
+      expect(radios(host, "Antigravity permission").map((radio) => radio.textContent)).toEqual(["Ask", "Full access"]);
+      const on = (label: string) => radios(host, label).find((radio) => radio.getAttribute("aria-checked") === "true")!.textContent;
+      expect(on("Claude permission")).toBe("Auto");
+      await pick(host, "Claude permission", "Full access");
+      expect(on("Claude permission")).toBe("Full access");
+      expect(on("Codex permission")).toBe("Auto");
+      await pick(host, "Codex permission", "Full access");
+      await pick(host, "Claude permission", "Auto");
+      expect(on("Codex permission")).toBe("Full access");
       expect(sent.filter(c => c.type === "settings.set").map(c => c.change)).toEqual([
         { key: "claudeBypassPermissions", value: true }, { key: "codexBypassPermissions", value: true }, { key: "claudeBypassPermissions", value: false },
       ]);
-      expect(host.textContent).toContain("Running sessions keep their current mode");
-      expect(host.textContent).toContain("filesystem/network sandbox");
+      expect(host.textContent).toContain("Running sessions keep their mode");
+      expect(host.textContent).toContain("file or network sandbox");
+      expect(host.querySelector('section[aria-label="Codex permissions"]')!.textContent).toContain("In effect: Full access");
     } finally { await done(); }
   });
 
-  it("Engines: subagents, Codex workers, verification and component editor", async () => {
+  it("Models & workers: Claude's and Codex's workers, the component editor", async () => {
     const sent: any[] = [];
     const raw = { codexWorkersFollow: false, codexWorkerChoice: { model: "gpt-5-old", effort: null, fast: null } };
-    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient(raw, sent), settings: null, bot: null, plugins: null, initialSection: "engines", onClose() {} }));
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient(raw, sent, undefined, { claudeAutoCompactWindow: 300_000 }), settings: null, bot: null, plugins: null, initialSection: "models", onClose() {} }));
     try {
-      expect(host.querySelectorAll(".segmented")).toHaveLength(0);
-      expect(host.querySelector('input[type="text"]:not([aria-label="Official ACP runtime path"])')).toBeNull();
-      expect(options(select(host, "Subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
-      expect(options(select(host, "Subagents' thinking effort"))).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
-      await choose(select(host, "Subagents' thinking effort"), "high");
+      expect(host.querySelector('input[type="text"]')).toBeNull();
+      expect(options(select(host, "Claude workers model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(radios(host, "Claude workers effort").map((radio) => radio.textContent)).toEqual(["Same", "Low", "Medium", "High", "Extra high", "Max"]);
+      await pick(host, "Claude workers effort", "High");
       expect(sent.at(-1)).toMatchObject({ type: "settings.set", change: { key: "subagentEffort", value: "high" } });
-      // The Codex list, after "Same as bot", and the saved model it does not have.
-      const workers = select(host, "Workers' model");
+      // The auto-compact window from ~/.claude/settings.json, read-only.
+      expect(host.querySelector('[aria-label="Auto-compact window"]')?.textContent).toBe("300K");
+      await tab(host, "Codex");
+      // The Codex list, after "Same as head", and the saved model it does not have.
+      const workers = select(host, "Codex workers model");
       expect(options(workers)).toEqual(["", "gpt-6-luna", "gpt-6-sol", "gpt-5-old"]);
       expect(workers.value).toBe("gpt-5-old");
       expect(workers.options[1].textContent).toBe("GPT-6 Luna (default)");
       await choose(workers, "gpt-6-sol");
       expect(sent.at(-1)).toMatchObject({ type: "settings.set", change: { key: "codexWorkers", value: { model: "gpt-6-sol" } } });
-      expect(select(host, "Workers' model").value).toBe("gpt-6-sol");
-      const effort = select(host, "Workers' reasoning effort");
-      expect(options(effort)).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
-      await choose(effort, "xhigh");
+      expect(select(host, "Codex workers model").value).toBe("gpt-6-sol");
+      expect(radios(host, "Codex workers effort").map((radio) => radio.textContent)).toEqual(["Same", "Low", "Medium", "High", "Extra high"]);
+      await pick(host, "Codex workers effort", "Extra high");
       expect(sent.at(-1)).toMatchObject({ change: { key: "codexWorkers", value: { model: "gpt-6-sol", effort: "xhigh" } } });
+      await act(async () => host.querySelector<HTMLInputElement>('input[aria-label="Codex workers fast mode"]')!.click());
+      expect(sent.at(-1)).toMatchObject({ change: { key: "codexWorkers", value: { model: "gpt-6-sol", effort: "xhigh", fast: true } } });
       expect(options(select(host, "Component editor's model"))).toEqual(["haiku", "sonnet", "opus"]);
       await choose(select(host, "Component editor's model"), "opus");
       expect(sent.at(-1)).toMatchObject({ change: { key: "componentEditorModel", value: "opus" } });
     } finally { await done(); }
   });
 
-  it("following the Codex config file disables the workers' choices", async () => {
-    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({ codexWorkersFollow: true }, []), settings: null, bot: null, plugins: null, initialSection: "engines", onClose() {} }));
+  it("Models & workers: following config.toml shows what it says, read-only, instead of the workers' choices", async () => {
+    const sent: any[] = [];
+    const file = { model: "gpt-6-sol", effort: "high" as const, fast: true };
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({ codexWorkersFollow: true }, sent, undefined, { codexConfigFile: file }), settings: null, bot: null, plugins: null, initialSection: "models", onClose() {} }));
     try {
-      expect(select(host, "Workers' model").disabled).toBe(true);
-      expect(select(host, "Workers' reasoning effort").disabled).toBe(true);
+      await tab(host, "Codex");
+      expect(host.querySelector('select[aria-label="Codex workers model"]')).toBeNull();
+      expect(host.querySelector('[aria-label="Codex workers effort"]')).toBeNull();
+      expect([...host.querySelectorAll('[aria-label="From config.toml"]')].map((cell) => cell.textContent)).toEqual(["gpt-6-sol", "High", "Fast"]);
+      await act(async () => host.querySelector<HTMLInputElement>('input[aria-label="Follow ~/.codex/config.toml"]')!.click());
+      expect(sent.at(-1)).toMatchObject({ change: { key: "codexWorkersFollow", value: false } });
+      expect(host.querySelector('select[aria-label="Codex workers model"]')).not.toBeNull();
     } finally { await done(); }
   });
 
-  it("General: the summary model is picked from every engine's models, grouped by engine", async () => {
+  it("Models & workers: Antigravity's workers have their own model and effort (Antigravity's levels only)", async () => {
+    const sent: any[] = [];
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot: null, plugins: null, initialSection: "models", onClose() {} }));
+    try {
+      await tab(host, "Antigravity");
+      expect(host.textContent).toContain("Workers: Preview");
+      expect(radios(host, "Antigravity workers effort").map((radio) => radio.textContent)).toEqual(["Same", "Low", "Medium", "High"]);
+      await pick(host, "Antigravity workers effort", "Low");
+      expect(sent.at(-1)).toMatchObject({ type: "settings.set", change: { key: "agyWorkerEffort", value: "low" } });
+      await pick(host, "Antigravity workers effort", "Same");
+      expect(sent.at(-1)).toMatchObject({ type: "settings.set", change: { key: "agyWorkerEffort", value: null } });
+      expect(select(host, "Antigravity workers model").options[0].textContent).toBe("Same as head");
+    } finally { await done(); }
+  });
+
+  it("Models & workers: the summary model is picked from every engine's models, grouped by engine", async () => {
     const sent: any[] = [];
     const client = fakeClient({}, sent);
-    const sheet = (values: Record<string, unknown> = {}) => createElement(SettingsSheet, { client, settings: null, bot: null, plugins: plugins(values), initialSection: "general", onClose() {} });
+    const sheet = (values: Record<string, unknown> | null = {}) => createElement(SettingsSheet, { client, settings: null, bot: null, plugins: values ? plugins(values) : null, initialSection: "models", onClose() {} });
     const { host, done, rerender } = await render(sheet());
     try {
       const summary = select(host, "Summary model");
@@ -145,15 +180,15 @@ describe("Settings' model and effort choices are dropdowns", () => {
       await rerender(sheet({ "botling.catchup.model": "sonnet", "botling.catchup.engine": "claude" }));
       expect(select(host, "Summary model").value).toBe("claude:sonnet");
       // Off, the plugin's settings are not drawn.
-      await rerender(createElement(SettingsSheet, { client, settings: null, bot: null, plugins: null, initialSection: "general", onClose() {} }));
+      await rerender(sheet(null));
       expect(host.querySelector('select[aria-label="Summary model"]')).toBeNull();
     } finally { await done(); }
   });
 
-  it("General: with a bot to ask, Antigravity's models are listed but disabled, with the reason", async () => {
+  it("Models & workers: with a bot to ask, Antigravity's models are listed for summaries but disabled, with the reason", async () => {
     const sent: any[] = [];
     const bot = { id: "11111111-1111-4111-8111-111111111111", heads: ["claude", "codex", "agy"] } as unknown as BotView;
-    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot, plugins: plugins(), initialSection: "general", onClose() {} }));
+    const { host, done } = await render(createElement(SettingsSheet, { client: fakeClient({}, sent), settings: null, bot, plugins: plugins(), initialSection: "models", onClose() {} }));
     try {
       const summary = select(host, "Summary model");
       const agy = [...summary.options].filter((option) => option.value.startsWith("agy:"));
@@ -164,48 +199,87 @@ describe("Settings' model and effort choices are dropdowns", () => {
     } finally { await done(); }
   });
 
-  it("a bot's own model, effort, subagents' model and Codex model", async () => {
+  it("Chat & reports: the summaries' options, or how to turn them on", async () => {
+    const sent: any[] = [];
+    const client = fakeClient({}, sent);
+    const sheet = (on: boolean) => createElement(SettingsSheet, { client, settings: null, bot: null, plugins: on ? plugins() : null, initialSection: "chat", onClose() {} });
+    const { host, done, rerender } = await render(sheet(true));
+    try {
+      await act(async () => host.querySelector<HTMLInputElement>('input[aria-label="Summarize between your messages"]')!.click());
+      expect(sent.at(-1)).toMatchObject({ type: "plugins.setting", key: "botling.catchup.interval", value: true });
+      expect(select(host, "Publish as")).toBeDefined();
+      await rerender(sheet(false));
+      expect(host.querySelector('input[aria-label="Summarize between your messages"]')).toBeNull();
+      expect(host.textContent).toContain("Turn on the Chat summaries plugin");
+    } finally { await done(); }
+  });
+
+  it("a bot's own head and workers' model and effort, per engine", async () => {
     const sent: any[] = [];
     const bot = { id: "main", name: "Main bot", heads: ["claude", "codex"], phase: "asleep" } as unknown as BotView;
     const view: BotSettingsView = { botId: "main", engines: ["claude", "codex"], model: null, effort: "high", subagentModel: null, codexModel: "gpt-5-old" };
     const { host, done } = await render(createElement(BotSettings, { client: fakeClient({}, sent, view), bot }));
     try {
       expect(host.querySelectorAll(".segmented")).toHaveLength(0);
-      expect([...host.querySelectorAll(".settings-group > h3")].map((heading) => heading.textContent))
-        .toEqual(["Engines in this bot", "Primary engine", "Claude", "Codex"]);
-      expect(select(host, "Claude's model").closest("section")?.getAttribute("aria-label")).toBe("Claude");
-      expect(select(host, "Claude subagents' model").closest("section")?.getAttribute("aria-label")).toBe("Claude");
-      expect(select(host, "Codex's model").closest("section")?.getAttribute("aria-label")).toBe("Codex");
-      expect(select(host, "Claude thinking effort").closest("section")?.getAttribute("aria-label")).toBe("Claude");
-      expect(select(host, "Codex thinking effort").closest("section")?.getAttribute("aria-label")).toBe("Codex");
-      expect(options(select(host, "Codex thinking effort"))).toEqual(["", "low", "medium", "high", "xhigh"]);
-      expect(options(select(host, "Claude's model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(headings(host)).toEqual(["Engines in this bot", "Primary engine", "Claude", "Codex"]);
+      const where = (label: string) => select(host, label).closest("section")?.getAttribute("aria-label");
+      expect(where("Claude head model")).toBe("Claude");
+      expect(where("Claude workers' model")).toBe("Claude");
+      expect(where("Codex head model")).toBe("Codex");
+      expect(where("Codex workers' model")).toBe("Codex");
+      expect(where("Claude head effort")).toBe("Claude");
+      expect(where("Codex head effort")).toBe("Codex");
+      expect(options(select(host, "Codex head effort"))).toEqual(["", "low", "medium", "high", "xhigh"]);
+      expect(options(select(host, "Claude head model"))).toEqual(["", "haiku", "sonnet", "opus"]);
       // The old single effort shows for each engine that has none of its own.
-      expect(select(host, "Claude thinking effort").value).toBe("high");
-      expect(select(host, "Codex thinking effort").value).toBe("high");
-      expect(options(select(host, "Claude subagents' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
-      expect(options(select(host, "Codex's model"))).toEqual(["", "gpt-5-old", "gpt-6-luna", "gpt-6-sol"]);
-      await choose(select(host, "Claude's model"), "opus");
+      expect(select(host, "Claude head effort").value).toBe("high");
+      expect(select(host, "Codex head effort").value).toBe("high");
+      expect(options(select(host, "Claude workers' model"))).toEqual(["", "haiku", "sonnet", "opus"]);
+      expect(options(select(host, "Codex head model"))).toEqual(["", "gpt-5-old", "gpt-6-luna", "gpt-6-sol"]);
+      await choose(select(host, "Claude head model"), "opus");
       expect(sent.at(-1)).toMatchObject({ type: "bot.configure", model: "opus" });
-      await choose(select(host, "Claude subagents' model"), "sonnet");
+      await choose(select(host, "Claude workers' model"), "sonnet");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentModel: "sonnet" });
-      await choose(select(host, "Claude subagents' model"), "");
+      await choose(select(host, "Claude workers' model"), "");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentModel: null });
-      await choose(select(host, "Codex's model"), "gpt-6-sol");
+      await choose(select(host, "Codex head model"), "gpt-6-sol");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexModel: "gpt-6-sol" });
-      await choose(select(host, "Codex's model"), "");
+      await choose(select(host, "Codex head model"), "");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexModel: null });
-      await choose(select(host, "Codex thinking effort"), "");
+      await choose(select(host, "Codex head effort"), "");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { codex: null } });
-      await choose(select(host, "Claude thinking effort"), "max");
+      await choose(select(host, "Claude head effort"), "max");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { claude: "max" } });
-      // The Claude subagents' (workers') own effort, from Claude's levels.
-      expect(select(host, "Claude subagents' thinking effort").closest("section")?.getAttribute("aria-label")).toBe("Claude");
-      expect(options(select(host, "Claude subagents' thinking effort"))).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
-      await choose(select(host, "Claude subagents' thinking effort"), "xhigh");
+      expect(options(select(host, "Claude workers' effort"))).toEqual(["", "low", "medium", "high", "xhigh", "max"]);
+      await choose(select(host, "Claude workers' effort"), "xhigh");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentEffort: "xhigh" });
-      await choose(select(host, "Claude subagents' thinking effort"), "");
+      await choose(select(host, "Claude workers' effort"), "");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", subagentEffort: null });
+      // The Codex workers' own choice, as one value.
+      await choose(select(host, "Codex workers' model"), "gpt-6-luna");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexWorkers: { model: "gpt-6-luna", effort: null, fast: null } });
+      await choose(select(host, "Codex workers' fast mode"), "fast");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", codexWorkers: { model: "gpt-6-luna", effort: null, fast: true } });
+    } finally { await done(); }
+  });
+
+  it("a bot's Antigravity workers' model and effort (Preview)", async () => {
+    const sent: any[] = [];
+    const bot = { id: "main", name: "Main bot", heads: ["agy"], phase: "asleep" } as unknown as BotView;
+    const view: BotSettingsView = { botId: "main", engines: ["agy"], model: null, effort: null, subagentModel: null, codexModel: null, agyModel: null };
+    const { host, done } = await render(createElement(BotSettings, { client: fakeClient({ agyWorkerEffortDefault: "high" }, sent, view), bot }));
+    try {
+      const section = host.querySelector('section[aria-label="Antigravity"]')!;
+      expect(section.textContent).toContain("Workers: Preview");
+      expect(options(select(host, "Antigravity workers' effort"))).toEqual(["", "low", "medium", "high"]);
+      // The app gives workers High; this bot has none, so it is its own choice against that default.
+      expect(select(host, "Antigravity workers' effort").closest(".settings-row")!.textContent).toContain("Own · app default: High");
+      await choose(select(host, "Antigravity workers' effort"), "low");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", agyWorkerEffort: "low" });
+      await choose(select(host, "Antigravity workers' model"), "gpt-6-sol");
+      expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", agyWorkerModel: "gpt-6-sol" });
+      await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Antigravity: use app defaults"]')!.click());
+      expect(sent.at(-1)).toMatchObject({ type: "bot.configure", botId: "main", agyModel: null, agyWorkerModel: null, agyWorkerEffort: "high", efforts: { agy: null } });
     } finally { await done(); }
   });
 
@@ -217,15 +291,14 @@ describe("Settings' model and effort choices are dropdowns", () => {
     const view: BotSettingsView = { botId: "main", engines: [engine], model: "opus", effort: "medium", subagentModel: null, codexModel: null };
     const { host, done } = await render(createElement(BotSettings, { client: fakeClient({}, sent, view), bot }));
     try {
-      expect([...host.querySelectorAll(".settings-group > h3")].map((heading) => heading.textContent))
-        .toEqual(["Engines in this bot", name(engine)]);
+      expect(headings(host)).toEqual(["Engines in this bot", name(engine)]);
       const active = host.querySelector<HTMLInputElement>(`input[aria-label="${name(engine)}"]`)!;
       const inactive = host.querySelector<HTMLInputElement>(`input[aria-label="${name(other)}"]`)!;
       expect(active.checked).toBe(true);
       expect(active.disabled).toBe(true);
       expect(inactive.checked).toBe(false);
       expect(inactive.disabled).toBe(false);
-      await choose(select(host, `${name(engine)} thinking effort`), "high");
+      await choose(select(host, `${name(engine)} head effort`), "high");
       expect(sent.at(-1)).toEqual({ type: "bot.configure", botId: "main", efforts: { [engine]: "high" } });
       await act(async () => inactive.click());
       expect(sent).toContainEqual({ type: "heads.set", botId: "main", engines: [engine, other] });

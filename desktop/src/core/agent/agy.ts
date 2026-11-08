@@ -21,6 +21,11 @@ export interface AgyConfig {
   resume: boolean;
   model?: string | null;
   effort?: string | null;
+  /**
+   * The bot's own choice for its Antigravity workers, read as each one starts (settings: Antigravity workers' model
+   * and effort). A value left null is the head's (`model`, `effort`). Codex workers of this head do not use it.
+   */
+  workerChoice?: () => { model?: string | null; effort?: string | null };
   systemPrompt?: string;
   /**
    * Plugins' skill folders (engine-skills.ts): written as the profile's `config/skills.json`, so this head and its workers

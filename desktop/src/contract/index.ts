@@ -607,7 +607,7 @@ export const SettingsView = z.strictObject({
   /** The whole app's look (Settings → Appearance → App): dark (1.x's look, the default), light, or the system's appearance. */
   appTheme: z.enum(["dark", "light", "system"]).default("dark"),
   /** How report pages (result previews) are drawn: dark, light, or "system": the app's look (appTheme). */
-  reportTheme: z.enum(["dark", "light", "system"]).default("dark"),
+  reportTheme: z.enum(["dark", "light", "system"]).default("system"),
   subagentModel: BotModel.nullable(),
   /** The Claude subagents' (app-managed workers') thinking effort new bots start with; null: each bot's own effort. */
   subagentEffort: Effort.nullable().default(null),
@@ -620,6 +620,16 @@ export const SettingsView = z.strictObject({
   claudeWorkerLimit: z.number().int().min(1).max(16).default(4),
   codexWorkersFollow: z.boolean(),
   codexWorkers: z.strictObject({ model: z.string().max(200).nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }),
+  /** Antigravity workers' model new bots start with (settings.json `agyWorkerModelDefault`); null: the same as the head. */
+  agyWorkerModel: z.string().max(200).nullable().default(null),
+  /** Antigravity workers' effort new bots start with (`agyWorkerEffortDefault`; low, medium or high); null: the head's. */
+  agyWorkerEffort: Effort.nullable().default(null),
+  /** Read-only, from ~/.claude/settings.json `autoCompactWindow` (tokens); null: not set there (Claude Code's own default). */
+  claudeAutoCompactWindow: z.number().int().positive().nullable().optional(),
+  /** Read-only, the top-level model, effort and service tier of ~/.codex/config.toml (what workers use while following it). */
+  codexConfigFile: z.strictObject({ model: z.string().max(200).nullable(), effort: z.string().max(40).nullable(), fast: z.boolean().nullable() }).nullable().optional(),
+  /** Read-only, settings.json `specWriters`: model families whose workers may write spec/. */
+  specWriters: z.array(z.string().max(200)).max(50).optional(),
   componentEditorModel: BotModel,
   /** Engines and models: what a new bot starts with, the primary a bot without its own follows, and what "Apply to all bots" writes. */
   engineDefaults: z.strictObject({
@@ -667,6 +677,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("agyBypassPermissions"), value: z.boolean() }),
   z.strictObject({ key: z.literal("codexWorkersFollow"), value: z.boolean() }),
   z.strictObject({ key: z.literal("codexWorkers"), value: z.strictObject({ model: ModelId.nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }) }),
+  z.strictObject({ key: z.literal("agyWorkerModel"), value: ModelId.nullable() }),
+  z.strictObject({ key: z.literal("agyWorkerEffort"), value: Effort.nullable() }),
   z.strictObject({ key: z.literal("componentEditorModel"), value: BotModel }),
   z.strictObject({ key: z.literal("defaultEngines"), value: z.array(Engine).min(1).max(3) }),
   z.strictObject({ key: z.literal("defaultPrimaryEngine"), value: Engine.nullable() }),
@@ -776,6 +788,11 @@ export const BotSettingsView = z.strictObject({
   subagentEffort: Effort.nullable().optional(),
   codexModel: z.string().max(200).nullable(),
   agyModel: z.string().max(200).nullable().optional(),
+  /** Its Codex workers' own model, effort and Fast mode (bot.json `codexWorkers`); null: ~/.codex/config.toml's. */
+  codexWorkers: z.strictObject({ model: z.string().max(200).nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }).nullable().optional(),
+  /** Its Antigravity workers' model and effort (bot.json `agyWorkerModel`, `agyWorkerEffort`); null: the same as its Antigravity head. */
+  agyWorkerModel: z.string().max(200).nullable().optional(),
+  agyWorkerEffort: Effort.nullable().optional(),
 });
 export type BotSettingsView = z.infer<typeof BotSettingsView>;
 
@@ -1020,6 +1037,10 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({
     type: z.literal("bot.configure"), botId, model: ModelId.nullable().optional(), effort: Effort.nullable().optional(),
     subagentModel: ModelId.nullable().optional(), subagentEffort: Effort.nullable().optional(), codexModel: ModelId.nullable().optional(), agyModel: ModelId.nullable().optional(),
+    /** Its Antigravity workers' model and effort (null: the same as its Antigravity head). */
+    agyWorkerModel: ModelId.nullable().optional(), agyWorkerEffort: Effort.nullable().optional(),
+    /** Its Codex workers' model, effort and Fast mode (null: ~/.codex/config.toml's); used from a Codex head's next wake. */
+    codexWorkers: z.strictObject({ model: ModelId.nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }).nullable().optional(),
     /** The bot's own primary engine (null: follow the app's default). */
     primary: Engine.nullable().optional(),
     /** An engine's own effort (null: back to the old single effort, else the engine's default); only the keys given change. */

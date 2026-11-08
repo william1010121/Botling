@@ -58,7 +58,8 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
     messageColumnWidth: messageWidth(raw.messageColumnWidth),
     appTheme: oneOf(["dark", "light", "system"] as const, raw.appTheme) ?? "dark",
-    reportTheme: oneOf(["dark", "light", "system"] as const, raw.reportTheme) ?? "dark",
+    // Report pages follow the app's look unless one is chosen (an old "dark" chosen before this was left out: it follows the app, dark by default).
+    reportTheme: oneOf(["dark", "light", "system"] as const, raw.reportTheme) ?? "system",
     subagentModel: oneOf(BOT_MODELS, raw.subagentModelDefault),
     subagentEffort: oneOf(EFFORTS_BY_ENGINE.claude, raw.subagentEffortDefault),
     subagentHourCache: bool(raw.subagentHourCacheChoice, false),
@@ -69,6 +70,9 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     agyPermissionSessions: [],
     codexWorkersFollow: bool(raw.codexWorkersFollow, true),
     codexWorkers: codexWorkerDefaults(raw.codexWorkerChoice),
+    agyWorkerModel: text(raw.agyWorkerModelDefault)?.trim().slice(0, 200) ?? null,
+    agyWorkerEffort: oneOf(EFFORTS_BY_ENGINE.agy, raw.agyWorkerEffortDefault),
+    specWriters: specWriters(raw).slice(0, 50).map((writer) => writer.slice(0, 200)),
     componentEditorModel: oneOf(BOT_MODELS, raw.componentEditorModel) ?? "sonnet",
     engineDefaults: engineDefaultsFor(raw),
     resultPublishing: oneOf(RESULT_PUBLISHING, raw.resultPublishingChoice) ?? "artifactUnlessSensitive",
@@ -158,7 +162,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
     case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
     case "appTheme": set("appTheme", change.value === "dark" ? null : change.value); break;
-    case "reportTheme": set("reportTheme", change.value === "dark" ? null : change.value); break;
+    case "reportTheme": set("reportTheme", change.value === "system" ? null : change.value); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;
     case "subagentEffort": set("subagentEffortDefault", change.value); break;
     case "claudeBypassPermissions": set("claudeBypassPermissions", change.value); break;
@@ -173,6 +177,9 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
       break;
     }
     case "defaultEngines": case "defaultPrimaryEngine": case "defaultEngineModel": case "defaultEffort": return changeEngineDefaults(raw, change);
+    case "agyWorkerModel": set("agyWorkerModelDefault", change.value?.trim() || null); break;
+    // Antigravity takes low, medium or high only; another level is refused (kept as it was).
+    case "agyWorkerEffort": if (change.value === null || (EFFORTS_BY_ENGINE.agy as readonly string[]).includes(change.value)) set("agyWorkerEffortDefault", change.value); break;
     case "componentEditorModel": set("componentEditorModel", change.value); break;
     case "resultPublishing": set("resultPublishingChoice", change.value); break;
     case "stallReminderMinutes": set("stallReminderMinutes", change.value); break;
@@ -249,6 +256,9 @@ export function seedEngineDefaults(raw: RawSettings, setSetting: (key: string, v
   if (effort) setSetting("subagentEffort", effort);
   const workers = codexWorkersJSON(appliedCodexWorkers(raw));
   if (workers) setSetting("codexWorkers", workers);
+  const view = settingsView(raw);
+  if (view.agyWorkerModel) setSetting("agyWorkerModel", view.agyWorkerModel);
+  if (view.agyWorkerEffort) setSetting("agyWorkerEffort", view.agyWorkerEffort);
   // Engines, primary, models and effort (Settings → Engines and models).
   seedBotChoices(raw, setSetting);
 }

@@ -64,7 +64,7 @@ function DoctorRow({ check, client, refresh }: { check: DoctorCheck; client: Cli
         <p className="settings-hint">Install verified ACP 1.4.3 and the Botling helper to ~/Library/Application Support/Botling/runtimes/antigravity/1.4.3 on the local disk, then save this path. Google sign-in remains separate.</p>
         <button type="button" disabled={installing} onClick={() => {
           setInstalling(true); setInstallError(null);
-          void client.request({ type: 'agy.runtime.install' }).then(refresh, error => setInstallError(error instanceof Error ? error.message : 'Installation failed. Retry from Doctor.')).finally(() => setInstalling(false));
+          void client.request({ type: 'agy.runtime.install' }).then(refresh, error => setInstallError(error instanceof Error ? error.message : 'Installation failed. Retry.')).finally(() => setInstalling(false));
         }}>{installing ? 'Installing…' : 'Install locally and configure'}</button>
         {installError && <p role="alert">{installError}</p>}
       </div>}

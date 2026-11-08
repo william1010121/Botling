@@ -57,3 +57,27 @@ it('validates and routes discovery IPC without changing bot settings',async()=>{
   expect((await call({type:'engine.models',botId,engine:'invented'},'bad')).ok).toBe(false);
  }finally{await core.shutdown();}
 });
+
+it('keeps a bot\'s own Antigravity workers\' model and effort and Codex workers\' choice in bot.json',async()=>{
+ const dir=tempDir('agy-worker-persistence'),profile=mainProfile(dir);mkdirSync(profile.storeDir,{recursive:true});
+ const file=join(profile.storeDir,'bot.json');
+ writeFileSync(file,JSON.stringify({engine:'agy',heads:{engines:['agy','codex']}}));
+ const make=()=>new Bot({profile,deferStartup:true,ledger:new ProcessLedger(join(dir,'ledger.json')),headConfig(){throw Error('No inference authorized');},prompts:()=>({system:''}) as any,emit(){},log(){},approvalTimeoutMs:100,idleMs:60000,interruptGraceMs:10});
+ let bot=make();
+ try {
+  expect(bot.settingsView()).toMatchObject({agyWorkerModel:null,agyWorkerEffort:null,codexWorkers:null});
+  expect(Command.safeParse({type:'bot.configure',botId:profile.id,agyWorkerModel:'gemini-flash',agyWorkerEffort:'low',codexWorkers:{model:'gpt-6-sol',effort:null,fast:true}}).success).toBe(true);
+  bot.configure({agyWorkerModel:'gemini-flash',agyWorkerEffort:'low',codexWorkers:{model:'gpt-6-sol',effort:null,fast:true}});
+  expect(JSON.parse(readFileSync(file,'utf8'))).toMatchObject({agyWorkerModel:'gemini-flash',agyWorkerEffort:'low',codexWorkers:{model:'gpt-6-sol',fast:true}});
+  await bot.shutdown({tidy:false});bot=make();
+  expect(bot.settingsView()).toMatchObject({agyWorkerModel:'gemini-flash',agyWorkerEffort:'low',codexWorkers:{model:'gpt-6-sol',effort:null,fast:true}});
+  expect(()=>bot.configure({agyWorkerEffort:'xhigh'})).toThrow('Antigravity has no xhigh effort');
+  // The app's default reaching every bot (Settings → Models & workers) writes the same keys.
+  bot.applyEngineDefaults({agyWorkerEffort:'high'});
+  expect(bot.settingsView()).toMatchObject({agyWorkerEffort:'high'});
+  bot.configure({agyWorkerModel:null,agyWorkerEffort:null,codexWorkers:null});
+  expect(bot.settingsView()).toMatchObject({agyWorkerModel:null,agyWorkerEffort:null,codexWorkers:null});
+  const saved=JSON.parse(readFileSync(file,'utf8'));
+  expect('agyWorkerModel' in saved||'agyWorkerEffort' in saved||'codexWorkers' in saved).toBe(false);
+ } finally {await bot.shutdown({tidy:false});}
+});

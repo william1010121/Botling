@@ -14,8 +14,8 @@ it("keeps the app's look: dark by default, light and the system's look on reques
   expect(settingsView(applySetting(light, { key: "appTheme", value: "system" })).appTheme).toBe("system");
   expect("appTheme" in applySetting(light, { key: "appTheme", value: "dark" })).toBe(false);
   expect(settingsView({ appTheme: "sepia" }).appTheme).toBe("dark");
-  // The app theme and the report theme are separate settings.
-  expect(settingsView(light).reportTheme).toBe("dark");
+  // The app theme and the report theme are separate settings; report pages match the app unless one is chosen.
+  expect(settingsView(light).reportTheme).toBe("system");
 });
 
 it("takes appTheme in the contract, and only its three looks", () => {

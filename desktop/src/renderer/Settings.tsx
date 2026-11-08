@@ -1,66 +1,34 @@
-import { ModelPicker, SummaryModelPicker, useModelDiscovery } from "./ModelPicker";
 import { DoctorSection } from "./Doctor";
 import { ShellOverlay } from "./ShellOverlay";
-import { workerLimitWords } from "./worker-limit-text";
 import { PhoneSettings } from "./PhoneSettings";
 import { postToChat } from "./editor-surface";
 import { UpdateActions } from "./Updates";
-// The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
-// and words, for what 2.0's core does. Everything here is global (settings.json); the shown bot's own
-// choices (its bot.json) are `BotSettings`, in the right panel one level in, as in 1.x. Each
-// control shows what the core saved: a change goes out, the answer (or `settings.updated`) comes back.
+// The Settings window as a sheet over the app, in four groups (settings-pages.ts): App (General, Appearance,
+// Shortcuts), Bots (Models & workers, Permissions, Chat & reports), Connect (Engine setup, Plugins and their pages,
+// Phone) and Advanced (Updates, Developer). Everything here is global (settings.json); the shown bot's own choices (its
+// bot.json) are `BotSettings`, in the right panel one level in. Each control shows what the core saved: a change goes
+// out, the answer (or `settings.updated`) comes back.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView } from "../contract";
+import type { BotView, PluginsView, SettingsChange, SettingsView, UpdateView } from "../contract";
 import { MESSAGE_WIDTH_DEFAULT, MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX } from "../contract/message-width";
-import { Client, RequestFailed } from "./client";
+import { Client } from "./client";
 import { PanelFrame, PluginsPanel, SlotFrame } from "./Plugins";
 import { faceURL } from "./avatars";
-import { EFFORTS_BY_ENGINE } from "../contract/efforts";
 import { FIXED_SHORTCUTS, SHORTCUTS, bindingsFor, comboFromEvent, findConflict, formatCombo, normalizeOverrides, pluginBindings, resetBinding, setBinding, type Conflict } from "../contract/shortcuts";
 import { keybindingsOf } from "./plugin-commands";
 import { say, shellPlatform } from "./shortcut-labels";
 import type { Key } from "../../../Web/src/locales/en";
-
-const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
-
-type CoreSection = "general" | "appearance" | "engines" | "permissions" | "plugins" | "doctor" | "updates" | "shortcuts" | "phone" | "developer";
-/** A page of Settings: a core one, or a plugin's (`settings.section` view: "<plugin>/<view id>"). */
-export type SettingsSection = CoreSection | `${string}/${string}`;
-type Section = SettingsSection;
-const SECTIONS: { id: CoreSection; title: string; terms: string }[] = [
-  { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
-  { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset report pages theme light dark system" },
-  { id: "engines", title: "Engines and subagents", terms: "default engines models primary recipient apply all bots reasoning effort thinking antigravity full permission bypass agy acp runtime path claude subagents model prompt cache hour codex workers config effort fast component editor" },
-  { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
-  { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
-  { id: "doctor", title: "Doctor", terms: "command-line tools claude codex antigravity install version login sign in check health" },
-  { id: "updates", title: "Updates", terms: "updates version release github check new" },
-  { id: "shortcuts", title: "Shortcuts", terms: "keyboard shortcuts keys keybindings hotkeys rebind reset cmd ctrl terminal search reload 鍵盤 快速鍵 快捷鍵" },
-  { id: "phone", title: "Phone", terms: "phone mobile pair pairing qr code scan devices revoke route lan tailscale tunnel 手機 配對 撤銷" },
-  { id: "developer", title: "Developer", terms: "developer mode source project feedback not right" },
-];
-
-type Page = { id: Section; title: string; terms: string; plugin?: string; view?: string };
-/** The core pages with the plugins' (`settings.section` views) placed after the page each names (the end when it names none here). */
-function withPluginSections(plugins: PluginsView | null): Page[] {
-  const pages: Page[] = [...SECTIONS];
-  for (const entry of plugins?.settingsSections ?? []) {
-    const page: Page = { id: `${entry.plugin}/${entry.id}`, title: entry.title, terms: entry.terms, plugin: entry.plugin, view: entry.id };
-    const at = entry.after ? pages.findIndex((candidate) => candidate.id === entry.after) : -1;
-    pages.splice(at === -1 ? pages.length : at + 1, 0, page);
-  }
-  return pages;
-}
+import { Group, Row, Segmented, Toggle, why } from "./settings-controls";
+import { resolveSection, settingsNav, type SettingsSection } from "./settings-pages";
+import { ModelsWorkers } from "./ModelsWorkers";
+import { ChatSummaries, type CodexModelOption } from "./chat-summaries";
+export { BotSettings } from "./BotPanelSettings";
+export type { SettingsSection } from "./settings-pages";
 
 const LANGUAGES: { id: SettingsView["language"]; label: string }[] = [
   { id: null, label: "System default" }, { id: "en", label: "English" }, { id: "zh-Hant", label: "繁體中文" },
 ];
-const MODELS = [{ id: "haiku", label: "Haiku" }, { id: "sonnet", label: "Sonnet" }, { id: "opus", label: "Opus" }] as const;
-const EFFORTS = [{ id: "low", label: "Low" }, { id: "medium", label: "Medium" }, { id: "high", label: "High" }, { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" }] as const;
 const STALL = [5, 10, 15, 30, 60, 0];
-/** settings.json `claudeWorkerLimit`: 1–16 Claude workers of one bot at work at once. */
-const WORKER_LIMITS = Array.from({ length: 16 }, (_, i) => i + 1);
-type CodexModelOption = { id: string; name: string; isDefault: boolean };
 
 /** The models the local Codex lists (`codex.models`, asked of `codex app-server` once per run); empty until it answers. */
 function useCodexModels(client: Client, wanted = true) {
@@ -73,10 +41,9 @@ function useCodexModels(client: Client, wanted = true) {
   }, [client, wanted]);
   return models;
 }
-const codexOptions = (models: CodexModelOption[]) => models.map((model) => ({ id: model.id, label: `${model.name}${model.isDefault ? " (default)" : ""}` }));
 
-export function SettingsSheet({ client, settings, bot, bots = [], plugins, initialSection = "general", onClose }: { client: Client; settings: SettingsView | null; bot: BotView | null; bots?: BotView[]; plugins: PluginsView | null; initialSection?: SettingsSection; onClose: () => void }) {
-  const [section, setSection] = useState<Section>(initialSection);
+export function SettingsSheet({ client, settings, bot, bots = [], plugins, initialSection = "general", onClose, onOpenBot }: { client: Client; settings: SettingsView | null; bot: BotView | null; bots?: BotView[]; plugins: PluginsView | null; initialSection?: SettingsSection; onClose: () => void; onOpenBot?: (botId: string) => void }) {
+  const [section, setSection] = useState<SettingsSection>(resolveSection(initialSection));
   const [search, setSearch] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [shown, setShown] = useState<SettingsView | null>(settings);
@@ -92,20 +59,26 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  const sections = useMemo(() => {
-    const words = search.trim().toLowerCase();
-    return withPluginSections(plugins).filter((entry) => (!words || `${entry.title} ${entry.terms}`.toLowerCase().includes(words)));
-  }, [search, plugins]);
-  const current = sections.find((entry) => entry.id === section) ?? sections[0];
+  const groups = useMemo(() => settingsNav(plugins, search), [search, plugins]);
+  const pages = groups.flatMap((group) => group.pages);
+  const wanted = resolveSection(section);
+  const current = pages.find((entry) => entry.id === wanted) ?? pages[0];
+  const go = useCallback((next: SettingsSection) => { setSearch(""); setSection(resolveSection(next)); }, []);
+  const modelBotId = bot?.id ?? bots[0]?.id ?? null;
   return (
     <ShellOverlay><div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="settings" role="dialog" aria-label="Settings" aria-modal="true">
-        <nav className="settings-side">
+        <nav className="settings-side" aria-label="Settings sections">
           <input className="settings-search" type="search" placeholder="Search settings" aria-label="Search settings" value={search} onChange={(event) => setSearch(event.target.value)} />
-          {sections.map((entry) => (
-            <button key={entry.id} type="button" className={`settings-tab${current?.id === entry.id ? " on" : ""}`} aria-current={current?.id === entry.id ? "page" : undefined} onClick={() => setSection(entry.id)}>
-              {entry.title}{entry.id === "engines" && <span className="settings-new">New</span>}
-            </button>
+          {groups.map((group) => (
+            <div key={group.title} className="settings-nav-group" role="group" aria-label={group.title}>
+              <div className="settings-nav-title">{group.title}</div>
+              {group.pages.map((entry) => (
+                <button key={entry.id} type="button" className={`settings-tab${entry.indent ? " indent" : ""}${current?.id === entry.id ? " on" : ""}`} aria-current={current?.id === entry.id ? "page" : undefined} onClick={() => setSection(entry.id)}>
+                  {entry.title}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
         <section className="settings-main">
@@ -115,22 +88,255 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
           </header>
           {problem && <p className="settings-problem" role="alert">{problem}</p>}
           <div className="settings-body">
-            {shown && current?.id === "general" && <General client={client} settings={shown} change={change} bot={bot} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} plugins={plugins} onProblem={setProblem} />}
-            {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
-            {shown && current?.id === "engines" && <Engines client={client} settings={shown} change={change} codexModels={codexModels} modelBotId={bot?.id ?? bots[0]?.id ?? null} botCount={bots.length} />}
-            {current?.plugin && <SlotFrame key={current.id} client={client} plugin={current.plugin} view={current.view ?? current.id} title={current.title} fontSize={15} />}
-            {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
-            {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
-            {current?.id === "doctor" && <DoctorSection client={client} />}
-            {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
+            {shown && current?.id === "general" && <General settings={shown} change={change} onNavigate={go} />}
+            {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} bot={bot} />}
             {shown && current?.id === "shortcuts" && <Shortcuts settings={shown} change={change} plugins={plugins} />}
+            {shown && current?.id === "models" && <ModelsWorkers client={client} settings={shown} change={change} bots={bots} modelBotId={modelBotId} codexModels={codexModels} plugins={plugins} onProblem={setProblem} onNavigate={go}
+              onOpenBot={onOpenBot ? (botId) => { onOpenBot(botId); onClose(); } : undefined} />}
+            {shown && current?.id === "permissions" && <Permissions client={client} settings={shown} change={change} />}
+            {shown && current?.id === "chat" && <ChatAndReports client={client} settings={shown} change={change} plugins={plugins} onProblem={setProblem} onNavigate={go} />}
+            {current?.id === "setup" && <EngineSetup client={client} settings={shown} change={change} />}
+            {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
+            {current?.plugin && <SlotFrame key={current.id} client={client} plugin={current.plugin} view={current.view ?? current.id} title={current.title} fontSize={15} />}
             {shown && current?.id === "phone" && <PhoneSettings client={client} bots={bots} lang={shown.effectiveLanguage} />}
+            {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
             {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
           </div>
         </section>
       </div>
     </div></ShellOverlay>
   );
+}
+
+/** Settings → General: language, the bots' look, and when a stuck bot reminds you; where the settings that left it went. */
+function General({ settings, change, onNavigate }: { settings: SettingsView; change: (next: SettingsChange) => void; onNavigate: (section: SettingsSection) => void }) {
+  return (
+    <>
+      <Group title="Language">
+        <Row label="App language" hint="The app’s words and what bots reply in.">
+          <select aria-label="App language" value={settings.language ?? ""} onChange={(event) => change({ key: "language", value: (event.target.value || null) as SettingsView["language"] })}>
+            {LANGUAGES.map((language) => <option key={language.id ?? ""} value={language.id ?? ""}>{language.id === null ? `System default (${LANGUAGES.find((entry) => entry.id === settings.effectiveLanguage)?.label ?? "English"})` : language.label}</option>)}
+          </select>
+        </Row>
+      </Group>
+      <Group title="Bots">
+        <Row label="Bot look">
+          <Segmented label="Bot look" options={[{ id: "original", label: "Original" }, { id: "cute", label: "Cute" }] as const} value={settings.botLook} onChange={(value) => change({ key: "botLook", value })} />
+        </Row>
+        <Row label="Remind me when a bot is stuck" hint="After no new step from a bot or worker for this long, you get a reminder in its chat.">
+          <select aria-label="Remind after no new step for" value={settings.stallReminderMinutes} onChange={(event) => change({ key: "stallReminderMinutes", value: Number(event.target.value) })}>
+            {[...new Set([...STALL, settings.stallReminderMinutes])].map((minutes) => <option key={minutes} value={minutes}>{minutes === 0 ? "Never" : `${minutes} min`}</option>)}
+          </select>
+        </Row>
+      </Group>
+      <Group title="Moved from here">
+        <Row label="Chat avatar size"><button type="button" className="settings-link" onClick={() => onNavigate("appearance")}>Appearance</button></Row>
+        <Row label="Chat summaries"><button type="button" className="settings-link" onClick={() => onNavigate("chat")}>Chat &amp; reports</button></Row>
+        <Row label="Summary model"><button type="button" className="settings-link" onClick={() => onNavigate("models")}>Models &amp; workers</button></Row>
+      </Group>
+    </>
+  );
+}
+
+function previewWidth(value: number | null | undefined) {
+  postToChat({botling:"widthPreview",value});
+}
+
+/** The theme cards: a small picture of the app in each look, drawn with the app's own ground and side colours. */
+const THEMES = [
+  { id: "light", label: "Light" },
+  { id: "dark", label: "Dark" },
+  { id: "system", label: "Match system" },
+] as const;
+
+/** Settings → Appearance: the app's theme, report pages, and the chat's avatar size and message column width. */
+function Appearance({ settings, change, bot }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; bot: BotView | null }) {
+  const input = useRef<HTMLInputElement>(null);
+  const latest = useRef(settings.messageColumnWidth); latest.current = settings.messageColumnWidth;
+  const editing = useRef<{before: number | null; value: number} | null>(null);
+  const [draft,setDraft] = useState<number | null>(null);
+  const cancel = useCallback(() => { editing.current=null;setDraft(null);previewWidth(undefined); },[]);
+  // External updates win over an unfinished local drag, while unrelated settings pushes do not.
+  const previous = useRef(settings.messageColumnWidth);
+  useEffect(() => { if (previous.current !== settings.messageColumnWidth) { previous.current=settings.messageColumnWidth;cancel(); } },[settings.messageColumnWidth,cancel]);
+  useEffect(() => () => previewWidth(undefined),[]);
+  const commit = useCallback(() => {
+    const edit=editing.current;if(!edit)return;editing.current=null;
+    void change({key:"messageColumnWidth",value:edit.value}).then(ok=>{if(!ok)cancel();});
+  },[change,cancel]);
+  useEffect(() => { const el=input.current;el?.addEventListener("change",commit);return()=>el?.removeEventListener("change",commit); },[commit]);
+  const width=draft ?? settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
+  const size = settings.chatAvatarSize ?? 48;
+  const preview = { avatar: bot?.avatar ?? "circle", heads: bot?.heads ?? ["claude"] };
+  const theme = settings.appTheme ?? "dark";
+  return <>
+  <section className="settings-group" aria-label="Theme">
+    <div className="settings-group-head"><h3>Theme</h3></div>
+    <div className="theme-cards" role="radiogroup" aria-label="App appearance">
+      {THEMES.map((option) => (
+        <button key={option.id} type="button" role="radio" aria-checked={theme === option.id} className={`theme-card${theme === option.id ? " on" : ""}`} onClick={() => void change({ key: "appTheme", value: option.id })}>
+          <span className={`theme-thumb theme-thumb-${option.id}`} aria-hidden="true"><span className="theme-thumb-side" /><span className="theme-thumb-main"><span /><span /></span></span>
+          {option.label}
+        </button>
+      ))}
+    </div>
+    <div className="settings-card">
+      <Row label="Report pages" hint="Result pages and their charts. Pages already open change when they are opened again.">
+        <Segmented label="Report pages" options={[{ id: "system", label: "Match app" }, { id: "light", label: "Light" }, { id: "dark", label: "Dark" }] as const} value={settings.reportTheme ?? "system"} onChange={(value) => void change({ key: "reportTheme", value })} />
+      </Row>
+    </div>
+    <p className="settings-note">The look of the whole app: chat, sidebar, Settings, Board and panels. It changes right away.</p>
+  </section>
+  <Group title="Chat">
+    <Row label="Avatar size" hint={`${size} px${settings.chatAvatarSize === null ? " (default)" : ""}`}>
+      <img className="settings-avatar-preview" src={faceURL(preview, settings.botLook)} alt="Preview" width={28} height={28} />
+      <input type="range" aria-label="Chat avatar size" min={32} max={96} value={size} onChange={(event) => void change({ key: "chatAvatarSize", value: Number(event.target.value) })} />
+    </Row>
+    <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null && draft===null ? " (default)" : ""} · or drag a column edge in chat (double-click it to reset)`}>
+      <input ref={input} type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
+        onInput={event=>{const value=Number(event.currentTarget.value);editing.current={before:editing.current?.before ?? latest.current,value};setDraft(value);previewWidth(value);}}
+        onChange={()=>{}} onPointerUp={commit} onPointerCancel={cancel} onBlur={commit}
+        onKeyUp={event=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(event.key))commit();}}
+        onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();cancel();}}} />
+    </Row>
+  </Group>
+  <div className="settings-actions settings-actions-end">
+    <button type="button" disabled={settings.messageColumnWidth === null && settings.chatAvatarSize === null && draft === null}
+      onClick={() => { cancel(); void change({ key: "messageColumnWidth", value: null }).then(() => change({ key: "chatAvatarSize", value: null })); }}>Reset chat sizes</button>
+  </div>
+  </>;
+}
+
+/** The engines' permission choice: the same two-step control for each, with what each step means for that engine. */
+const PERMISSION_ENGINES = [
+  { engine: "claude", name: "Claude", key: "claudeBypassPermissions", safe: "Auto",
+    safeText: "Claude checks each tool use; risky ones come to you as an approval card.",
+    fullText: "Skips Claude’s permission checks for bots and Claude workers. Protected paths, explicit tool limits, managed policy and OS protections still apply." },
+  { engine: "codex", name: "Codex", key: "codexBypassPermissions", safe: "Auto",
+    safeText: "Codex runs in its sandbox and asks before risky commands.",
+    fullText: "No approval prompts, no auto review, no file or network sandbox for bots and Codex workers. Commands run with your Mac user’s access." },
+  { engine: "agy", name: "Antigravity", key: "agyBypassPermissions", safe: "Ask",
+    safeText: "Every action comes to you as a single approval card.",
+    fullText: "Reads, writes and shell commands are allowed, also outside the project, with your Mac user’s access; removes Botling’s command sandbox. Stops running Antigravity sessions to apply." },
+] as const;
+
+/** Settings → Permissions: how much bots and their workers may do without asking, per engine; and where results go. */
+function Permissions({ client, settings, change }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
+  return <>
+    <p className="settings-lead">How much a bot and its workers may do without asking you. Applies to every bot, when an engine process next starts.</p>
+    {PERMISSION_ENGINES.map((entry) => {
+      const full = settings[entry.key];
+      return (
+        <section key={entry.engine} className="permission-card" aria-label={`${entry.name} permissions`}>
+          <div className="permission-head">
+            <h3>{entry.name}</h3>
+            <Segmented label={`${entry.name} permission`} options={[{ id: "safe", label: entry.safe }, { id: "full", label: "Full access" }] as const} value={full ? "full" : "safe"}
+              onChange={(value) => void change({ key: entry.key, value: value === "full" })} />
+          </div>
+          <div className="permission-choices">
+            <div className="permission-choice"><strong>{entry.safe}</strong> · {entry.safeText}</div>
+            <div className="permission-choice full"><strong>Full access</strong> · {entry.fullText}</div>
+          </div>
+          {entry.engine === "agy"
+            ? <AntigravitySessions client={client} settings={settings} />
+            : <p className="settings-hint">In effect: {full ? "Full access" : entry.safe} · for bots and {entry.name} workers, from the next engine start</p>}
+        </section>
+      );
+    })}
+    <p className="settings-note">Auto lets the engine allow low- and medium-risk actions and ask you for high-risk ones; its judgment is not guaranteed. Unknown risk, review failures and OS or sandbox blocks are not auto-approved. Protected paths, managed policies and OS protections always apply. Running sessions keep their mode until they restart: let work finish, then restart the app. No new conversation is needed.</p>
+    <Group title="Where results go">
+      <Row label="Reports and pages" hint="An Artifact is a private claude.ai page; a local page stays on this Mac.">
+        <PublishAs settings={settings} change={change} />
+      </Row>
+    </Group>
+  </>;
+}
+
+function PublishAs({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => void }) {
+  return (
+    <select aria-label="Publish as" value={settings.resultPublishing} onChange={(event) => change({ key: "resultPublishing", value: event.target.value as SettingsView["resultPublishing"] })}>
+      <option value="artifactUnlessSensitive">Artifact, sensitive ones local</option>
+      <option value="localOnly">Always a local HTML page</option>
+      <option value="artifactAlways">Always an Artifact</option>
+    </select>
+  );
+}
+
+/** Antigravity's live permission state: what its running sessions confirmed (selection and effect are kept apart). */
+function AntigravitySessions({ client, settings }: { client: Client; settings: SettingsView }) {
+  const [sessions,setSessions]=useState(settings.agyPermissionSessions);
+  const [error,setError]=useState("");
+  useEffect(()=>{
+    let live=true;
+    const refresh=async()=>{try{const view=await client.request({type:"settings.get"});if(live){setSessions(view.agyPermissionSessions ?? []);setError("");}}catch{if(live){setSessions([]);setError("Cannot read effective Antigravity permission status.");}}};
+    void refresh();const timer=setInterval(()=>void refresh(),2000);
+    return ()=>{live=false;clearInterval(timer);};
+  },[client,settings.agyBypassPermissions]);
+  return <>
+    <p className="settings-hint">Selected: {settings.agyBypassPermissions ? "Full access (yolo)" : "Ask for approval (default)"}. It is in effect once the runtime confirms it; continue the conversation to apply, no app restart needed.</p>
+    {error ? <p className="settings-problem" role="alert">{error}</p> : sessions.length ? sessions.map((s,i)=><p key={s.sessionId+":"+i} className={s.state==="error"?"settings-problem":"settings-hint"} role={s.state==="error"?"alert":"status"}>Session {s.sessionId.slice(0,8)} — {s.state}: {s.message}</p>) : <p className="settings-hint" role="status">No Antigravity session running · nothing to apply</p>}
+  </>;
+}
+
+/** Antigravity's full-permission switch on its own (kept for places that show only it). */
+export function AntigravityPermissions({client,settings,change}: {client:Client;settings:SettingsView;change:(next:SettingsChange)=>Promise<boolean>}) {
+  return <Group title="Antigravity permissions" note="Changing this setting stops Antigravity session processes and their active tools. Continue the conversation to apply the new mode; no app restart is required.">
+    <Toggle label="Antigravity: Full permission" hint="Automatically allows file reads, writes and shell commands, including outside the project, with the app user's OS access. Removes Botling's command sandbox. This does not authorize work outside your task. App install/update confirmations and runtime administrator restrictions remain." checked={settings.agyBypassPermissions} onChange={value=>change({key:"agyBypassPermissions",value})}/>
+    <AntigravitySessions client={client} settings={settings} />
+  </Group>;
+}
+
+/** Settings → Chat & reports: chat summaries (botling.catchup) and how reports are published. */
+function ChatAndReports({ client, settings, change, plugins, onProblem, onNavigate }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void; plugins: PluginsView | null; onProblem: (problem: string | null) => void; onNavigate: (section: SettingsSection) => void }) {
+  return <>
+    <ChatSummaries client={client} plugins={plugins} onProblem={onProblem} onModel={() => onNavigate("models")} />
+    <Group title="Reports and results" note="What a bot does with a report or a page it made.">
+      <Row label="Publish as"><PublishAs settings={settings} change={change} /></Row>
+    </Group>
+  </>;
+}
+
+/** Settings → Engine setup: each engine's command-line tool (installed, version, signed in) and Antigravity's runtime path. */
+function EngineSetup({ client, settings, change }: { client: Client; settings: SettingsView | null; change: (next: SettingsChange) => Promise<boolean> }) {
+  return <>
+    <DoctorSection client={client} />
+    {settings && <AntigravityRuntime client={client} settings={settings} change={change} />}
+  </>;
+}
+
+function AntigravityRuntime({ client, settings, change }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
+  const [path, setPath] = useState(settings.agyAcpPath ?? "");
+  const [status, setStatus] = useState<import("../contract").ResultOf<"agy.runtime.check"> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setPath(settings.agyAcpPath ?? ""); }, [settings.agyAcpPath]);
+  useEffect(() => {
+    let live = true;
+    void client.request({ type: "agy.runtime.check" }).then(value => { if (live) setStatus(value); }, failure => { if (live) setError(why(failure)); });
+    return () => { live = false; };
+  }, [client, settings.agyAcpPath]);
+  const run = async (save: boolean) => {
+    setBusy(true); setError(null); setStatus(null);
+    try {
+      if (save && !await change({ key: "agyAcpPath", value: path.trim() || null })) return;
+      setStatus(await client.request({ type: "agy.runtime.check" }));
+    } catch (failure) { setError(why(failure)); }
+    finally { setBusy(false); }
+  };
+  return <Group title="Antigravity runtime" note="Official ACP 1.4.3 for macOS arm64. Requires agy_acp_server.par, localharness_external and the verified Botling file helper in the same folder, outside your projects. Antigravity above can install it locally and set this path for you. This path editor does not download or launch files.">
+    <Row label="Official ACP runtime path">
+      <input aria-label="Official ACP runtime path" type="text" value={path} disabled={busy} placeholder="/absolute/path/agy_acp_server.par" onChange={event => { setPath(event.target.value); setStatus(null); }} />
+    </Row>
+    <p className="settings-hint">Takes effect on the next Antigravity launch. BOTLING_AGY_ACP_PATH takes priority over this saved path. Clear the field and save to remove the saved choice.</p>
+    <div className="settings-actions agy-runtime-actions">
+      <button type="button" className="settings-done" disabled={busy} onClick={() => void run(true)}>{busy ? "Verifying…" : "Save and verify"}</button>
+      <button type="button" disabled={busy} onClick={() => void run(false)}>Check active runtime</button>
+    </div>
+    {status?.override && <p className="settings-hint">Environment override active: {status.override}. To use the saved path, remove BOTLING_AGY_ACP_PATH and restart the app.</p>}
+    {status?.effective && <p className="settings-hint">Active path: {status.effective}</p>}
+    {status?.message && <p className={status.valid ? "settings-hint" : "settings-problem"} role={status.valid ? "status" : "alert"}>{status.message}</p>}
+    {error && <p className="settings-problem" role="alert">{error}</p>}
+  </Group>;
 }
 
 /** Settings → Updates: discovery (electron-updater), explicit download and restart. */
@@ -269,506 +475,6 @@ function Developer({ settings, change, bots }: { settings: SettingsView; change:
           onChange={(event) => change({ key: "developerProject", value: event.target.value || null })}>
           <option value="">Pick a project…</option>
           {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-        </select>
-      </Row>
-    </Group>
-  );
-}
-
-function Group({ title, children, note }: { title: string; children: React.ReactNode; note?: string }) {
-  return (
-    <section className="settings-group" aria-label={title}>
-      <h3>{title}</h3>
-      <div className="settings-card">{children}</div>
-      {note && <p className="settings-note">{note}</p>}
-    </section>
-  );
-}
-
-function Row({ label, children, hint }: { label: string; children?: React.ReactNode; hint?: string }) {
-  return (
-    <div className="settings-row">
-      <div className="settings-label">{label}{hint && <div className="settings-hint">{hint}</div>}</div>
-      <div className="settings-control">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({ label, checked, onChange, disabled, hint }: { label: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean; hint?: string }) {
-  return (
-    <Row label={label} hint={hint}>
-      <input type="checkbox" role="switch" aria-label={label} checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
-    </Row>
-  );
-}
-
-function Segmented<T extends string>({ label, options, value, onChange, disabled }: { label: string; options: readonly { id: T; label: string }[]; value: T | null; onChange: (value: T) => void; disabled?: boolean }) {
-  return (
-    <div className="segmented" role="radiogroup" aria-label={label}>
-      {options.map((option) => (
-        <button key={option.id} type="button" role="radio" aria-checked={value === option.id} disabled={disabled} className={value === option.id ? "on" : ""} onClick={() => onChange(option.id)}>{option.label}</button>
-      ))}
-    </div>
-  );
-}
-
-/**
- * A dropdown of choices; `blank` is the first option, for no choice (null). A saved value the list does not
- * have (an older setting, or a model the CLI no longer lists) stays as an extra option, so it is not lost.
- */
-function SelectSetting({ label, options, value, onChange, blank, disabled }: { label: string; options: readonly { id: string; label: string }[]; value: string | null; onChange: (value: string | null) => void; blank?: string; disabled?: boolean }) {
-  const extra = value !== null && value !== "" && !options.some((option) => option.id === value);
-  return (
-    <select aria-label={label} value={value ?? ""} disabled={disabled} onChange={(event) => onChange(event.target.value || null)}>
-      {blank !== undefined && <option value="">{blank}</option>}
-      {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-      {extra && <option value={value}>{value}</option>}
-    </select>
-  );
-}
-
-function previewWidth(value: number | null | undefined) {
-  postToChat({botling:"widthPreview",value});
-}
-function Appearance({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
-  const input = useRef<HTMLInputElement>(null);
-  const latest = useRef(settings.messageColumnWidth); latest.current = settings.messageColumnWidth;
-  const editing = useRef<{before: number | null; value: number} | null>(null);
-  const pending = useRef<number | undefined>(undefined);
-  const [draft,setDraft] = useState<number | null>(null);
-  const cancel = useCallback(() => { editing.current=null;pending.current=undefined;setDraft(null);previewWidth(undefined); },[]);
-  // External updates win over an unfinished local drag, while unrelated settings pushes do not.
-  const previous = useRef(settings.messageColumnWidth);
-  useEffect(() => { if (previous.current !== settings.messageColumnWidth) { previous.current=settings.messageColumnWidth;cancel(); } },[settings.messageColumnWidth,cancel]);
-  useEffect(() => () => previewWidth(undefined),[]);
-  const commit = useCallback(() => {
-    const edit=editing.current;if(!edit)return;editing.current=null;pending.current=edit.value;
-    void change({key:"messageColumnWidth",value:edit.value}).then(ok=>{if(!ok)cancel();});
-  },[change,cancel]);
-  useEffect(() => { const el=input.current;el?.addEventListener("change",commit);return()=>el?.removeEventListener("change",commit); },[commit]);
-  const width=draft ?? settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
-  return <>
-  <Group title="App" note="The look of the whole app: chat, sidebar, Settings, Board and panels. It changes right away.">
-    <Row label="Appearance">
-      <Segmented label="App appearance" options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }, { id: "system", label: "Match system" }] as const} value={settings.appTheme ?? "dark"} onChange={(value) => void change({ key: "appTheme", value })} />
-    </Row>
-  </Group>
-  <Group title="Report pages" note="How result pages and their charts look in preview cards and the page viewer. Match app follows the app's look. Pages already open change when they are opened again.">
-    <Row label="Report pages">
-      <Segmented label="Report pages" options={[{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }, { id: "system", label: "Match app" }] as const} value={settings.reportTheme ?? "dark"} onChange={(value) => void change({ key: "reportTheme", value })} />
-    </Row>
-  </Group>
-  <Group title="Message column" note="Drag either column edge to resize; double-click it to reset.">
-    <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null && draft===null ? " (default)" : ""}`}>
-      <input ref={input} type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
-        onInput={event=>{const value=Number(event.currentTarget.value);editing.current={before:editing.current?.before ?? latest.current,value};setDraft(value);previewWidth(value);}}
-        onChange={()=>{}} onPointerUp={commit} onPointerCancel={cancel} onBlur={commit}
-        onKeyUp={event=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(event.key))commit();}}
-        onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();cancel();}}} />
-    </Row>
-    <div className="settings-actions"><button type="button" disabled={settings.messageColumnWidth === null && draft===null}
-      onClick={()=>{cancel();void change({key:"messageColumnWidth",value:null});}}>Use default width</button></div>
-  </Group>
-  </>;
-}
-
-/** The built-in plugin that writes chat summaries; its settings are set here, not on the Plugins page. */
-const SUMMARIES = "botling.catchup";
-
-/**
- * Settings → General → Chat summaries: botling.catchup's settings (hidden on the Plugins page), drawn as
- * they were when the core kept them. Nothing shows while that plugin is off.
- */
-function ChatSummaries({ client, plugins, codexModels, modelBotId, onProblem }: { client: Client; plugins: PluginsView | null; codexModels: CodexModelOption[]; modelBotId: string | null; onProblem: (problem: string | null) => void }) {
-  const summaryDiscovery = useSummaryDiscovery(client, modelBotId, codexModels);
-  const plugin = plugins?.plugins.find((candidate) => candidate.name === SUMMARIES && candidate.enabled && !candidate.failure);
-  const setting = (key: string) => plugin?.settings.find((entry) => entry.key === `${SUMMARIES}.${key}`);
-  const value = (key: string) => setting(key)?.value ?? setting(key)?.default ?? null;
-  const defaultPrompt = typeof setting("prompt")?.default === "string" ? setting("prompt")!.default as string : "";
-  const saved = typeof value("prompt") === "string" && value("prompt") !== defaultPrompt ? value("prompt") as string : null;
-  const [prompt, setPrompt] = useState(saved ?? defaultPrompt);
-  useEffect(() => setPrompt(saved ?? defaultPrompt), [saved, defaultPrompt]);
-  if (!plugin) return null;
-  const set = (key: string, next: boolean | number | string | null) => {
-    onProblem(null);
-    void client.request({ type: "plugins.setting", name: SUMMARIES, key: `${SUMMARIES}.${key}`, value: next }).catch((failure) => onProblem(why(failure)));
-  };
-  const threshold = (key: string) => (typeof value(key) === "number" ? Math.min(50, Math.max(1, Math.round(value(key) as number))) : 3);
-  const model = typeof value("model") === "string" && (value("model") as string).trim() ? (value("model") as string).trim() : null;
-  const engine = model && (value("engine") === "claude" || value("engine") === "agy") ? value("engine") as EngineId : "codex";
-  const chosen = { engine, model: model ?? String(setting("model")?.default ?? "") };
-  return (
-    <Group title="Chat summaries">
-      <Toggle label="Summarize unread messages" checked={value("unread") !== false} onChange={(next) => set("unread", next)} />
-      <Toggle label="Summarize between your messages" checked={value("interval") === true} onChange={(next) => set("interval", next)} />
-      {value("customThresholds") === true ? (
-        <>
-          <Row label="Unread threshold"><input type="number" aria-label="Unread threshold" min={1} max={50} value={threshold("unreadThreshold")} onChange={(event) => { const next = Number(event.target.value); if (next >= 1 && next <= 50) set("unreadThreshold", Math.round(next)); }} /></Row>
-          <Row label="Interval threshold"><input type="number" aria-label="Interval threshold" min={1} max={50} value={threshold("intervalThreshold")} onChange={(event) => { const next = Number(event.target.value); if (next >= 1 && next <= 50) set("intervalThreshold", Math.round(next)); }} /></Row>
-          <div className="settings-actions"><button type="button" onClick={() => { set("customThresholds", false); set("unreadThreshold", null); set("intervalThreshold", null); }}>Use default thresholds</button></div>
-        </>
-      ) : (
-        <Row label="Default thresholds: unread > 3, interval ≥ 3 bot replies">
-          <button type="button" onClick={() => set("customThresholds", true)}>Adjust individually</button>
-        </Row>
-      )}
-      <Row label="Summary model" hint={`Current summary model: ${ENGINE_NAMES[chosen.engine]} · ${chosen.model}`}>
-        <SummaryModelPicker label="Summary model" value={chosen} discovery={summaryDiscovery} unavailable={["agy"]}
-          unavailableNote="Antigravity models can't write summaries: it has no read-only one-shot mode."
-          onChange={(next) => { const id = next?.model.trim(); set("model", id || null); set("engine", id ? next!.engine : null); }} />
-      </Row>
-      <div className="settings-prompt">
-        <div className="settings-label">Summary prompt <span className="settings-tag">{saved ? "Custom" : "Default"}</span></div>
-        <textarea aria-label="Summary prompt" rows={4} value={prompt} onChange={(event) => setPrompt(event.target.value)}
-          onBlur={() => { const next = prompt.trim() && prompt !== defaultPrompt ? prompt : null; if (next !== saved) set("prompt", next); }} />
-        <div className="settings-actions"><button type="button" disabled={!saved} onClick={() => set("prompt", null)}>Restore default prompt</button></div>
-      </div>
-    </Group>
-  );
-}
-
-/**
- * The model lists of every engine for the summary picker. With a bot to ask, the engines report their own (as the
- * pickers elsewhere do); without one, Codex's own list and Claude's three aliases stand in, and Antigravity has none.
- */
-function useSummaryDiscovery(client: Client, botId: string | null, codexModels: CodexModelOption[]) {
-  const asked = {
-    claude: useModelDiscovery(client, botId ?? "", "claude", !!botId),
-    codex: useModelDiscovery(client, botId ?? "", "codex", !!botId),
-    agy: useModelDiscovery(client, botId ?? "", "agy", !!botId),
-  };
-  if (botId) return asked;
-  const ready = (models: { id: string; name: string; isDefault: boolean }[], source: string) => ({ status: "ready" as const, source, message: "", models: models.map((model) => ({ ...model, efforts: null })) });
-  return {
-    claude: { ...asked.claude, result: ready(MODELS.map((model) => ({ id: model.id, name: model.label, isDefault: false })), "Claude Code") },
-    codex: { ...asked.codex, result: ready(codexModels, "Codex") },
-    agy: asked.agy,
-  };
-}
-
-function General({ client, settings, change, bot, codexModels, modelBotId, plugins, onProblem }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null; codexModels: CodexModelOption[]; modelBotId: string | null; plugins: PluginsView | null; onProblem: (problem: string | null) => void }) {
-  const size = settings.chatAvatarSize ?? 48;
-  const preview = { avatar: bot?.avatar ?? "circle", heads: bot?.heads ?? ["claude"] };
-  return (
-    <>
-      <Group title="Language">
-        <Row label="App language" hint="The chat page's words and what the bots reply in.">
-          <select aria-label="App language" value={settings.language ?? ""} onChange={(event) => change({ key: "language", value: (event.target.value || null) as SettingsView["language"] })}>
-            {LANGUAGES.map((language) => <option key={language.id ?? ""} value={language.id ?? ""}>{language.id === null ? `System default (${LANGUAGES.find((entry) => entry.id === settings.effectiveLanguage)?.label ?? "English"})` : language.label}</option>)}
-          </select>
-        </Row>
-      </Group>
-      <Group title="Bot look">
-        <Row label="Bot look">
-          <Segmented label="Bot look" options={[{ id: "original", label: "Original" }, { id: "cute", label: "Cute" }] as const} value={settings.botLook} onChange={(value) => change({ key: "botLook", value })} />
-        </Row>
-        <div className="settings-preview" aria-label="Preview">
-          <img src={faceURL(preview, "original")} alt="Original" width={40} height={40} />
-          <img src={faceURL(preview, "cute")} alt="Cute" width={40} height={40} />
-        </div>
-      </Group>
-      <Group title="Chat avatars">
-        <Row label="Chat avatar size" hint={`${size} px`}>
-          <input type="range" aria-label="Chat avatar size" min={32} max={96} value={size} onChange={(event) => change({ key: "chatAvatarSize", value: Number(event.target.value) })} />
-        </Row>
-        <div className="settings-preview"><img src={faceURL(preview, settings.botLook)} alt="Preview" width={size} height={size} /></div>
-        <div className="settings-actions"><button type="button" disabled={settings.chatAvatarSize === null} onClick={() => change({ key: "chatAvatarSize", value: null })}>Use default size</button></div>
-      </Group>
-      <ChatSummaries client={client} plugins={plugins} codexModels={codexModels} modelBotId={modelBotId} onProblem={onProblem} />
-      <Group title="Reminders" note="When a running bot or subagent shows no new step for this long, you get a reminder in its chat. Never turns it off.">
-        <Row label="Remind after no new step for">
-          <select aria-label="Remind after no new step for" value={settings.stallReminderMinutes} onChange={(event) => change({ key: "stallReminderMinutes", value: Number(event.target.value) })}>
-            {[...new Set([...STALL, settings.stallReminderMinutes])].map((minutes) => <option key={minutes} value={minutes}>{minutes === 0 ? "Never" : `${minutes} min`}</option>)}
-          </select>
-        </Row>
-      </Group>
-    </>
-  );
-}
-
-function AntigravityRuntime({ client, settings, change }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
-  const [path, setPath] = useState(settings.agyAcpPath ?? "");
-  const [status, setStatus] = useState<import("../contract").ResultOf<"agy.runtime.check"> | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => { setPath(settings.agyAcpPath ?? ""); }, [settings.agyAcpPath]);
-  useEffect(() => {
-    let live = true;
-    void client.request({ type: "agy.runtime.check" }).then(value => { if (live) setStatus(value); }, failure => { if (live) setError(why(failure)); });
-    return () => { live = false; };
-  }, [client, settings.agyAcpPath]);
-  const run = async (save: boolean) => {
-    setBusy(true); setError(null); setStatus(null);
-    try {
-      if (save && !await change({ key: "agyAcpPath", value: path.trim() || null })) return;
-      setStatus(await client.request({ type: "agy.runtime.check" }));
-    } catch (failure) { setError(why(failure)); }
-    finally { setBusy(false); }
-  };
-  return <Group title="Antigravity" note="Official ACP 1.4.3 for macOS arm64. Requires agy_acp_server.par, localharness_external and the verified Botling file helper in the same folder, outside your projects. Use Settings → Doctor to install locally and configure automatically. This path editor does not download or launch files.">
-    <Row label="Official ACP runtime path">
-      <input aria-label="Official ACP runtime path" type="text" value={path} disabled={busy} placeholder="/absolute/path/agy_acp_server.par" onChange={event => { setPath(event.target.value); setStatus(null); }} />
-    </Row>
-    <p className="settings-hint">Takes effect on the next Antigravity launch. BOTLING_AGY_ACP_PATH takes priority over this saved path. Clear the field and save to remove the saved choice.</p>
-    <div className="settings-actions agy-runtime-actions">
-      <button type="button" className="settings-done" disabled={busy} onClick={() => void run(true)}>{busy ? "Verifying…" : "Save and verify"}</button>
-      <button type="button" disabled={busy} onClick={() => void run(false)}>Check active runtime</button>
-    </div>
-    {status?.override && <p className="settings-hint">Environment override active: {status.override}. To use the saved path, remove BOTLING_AGY_ACP_PATH and restart the app.</p>}
-    {status?.effective && <p className="settings-hint">Active path: {status.effective}</p>}
-    {status?.message && <p className={status.valid ? "settings-hint" : "settings-problem"} role={status.valid ? "status" : "alert"}>{status.message}</p>}
-    {error && <p className="settings-problem" role="alert">{error}</p>}
-  </Group>;
-}
-
-/** Selection and effective runtime state are deliberately distinct. */
-export function AntigravityPermissions({client,settings,change}: {client:Client;settings:SettingsView;change:(next:SettingsChange)=>Promise<boolean>}) {
-  const [sessions,setSessions]=useState(settings.agyPermissionSessions);
-  const [error,setError]=useState("");
-  useEffect(()=>{
-    let live=true;
-    const refresh=async()=>{try{const view=await client.request({type:"settings.get"});if(live){setSessions(view.agyPermissionSessions ?? []);setError("");}}catch{if(live){setSessions([]);setError("Cannot read effective Antigravity permission status.");}}};
-    void refresh();const timer=setInterval(()=>void refresh(),2000);
-    return ()=>{live=false;clearInterval(timer);};
-  },[client,settings.agyBypassPermissions]);
-  return <Group title="Antigravity permissions" note="Changing this setting stops Antigravity session processes and their active tools. Continue the conversation to apply the new mode; no app restart is required.">
-    <Toggle label="Antigravity: Full permission" hint="Automatically allows file reads, writes and shell commands, including outside the project, with the app user's OS access. Removes Botling's command sandbox. This does not authorize work outside your task. App install/update confirmations and runtime administrator restrictions remain." checked={settings.agyBypassPermissions} onChange={value=>change({key:"agyBypassPermissions",value})}/>
-    <p className="settings-hint">Selected: {settings.agyBypassPermissions ? "Full permission (yolo)" : "Ask for approval (default)"}. Selection becomes effective only after the runtime confirms it.</p>
-    {error ? <p className="settings-problem" role="alert">{error}</p> : sessions.length ? sessions.map((s,i)=><p key={s.sessionId+":"+i} className={s.state==="error"?"settings-problem":"settings-hint"} role={s.state==="error"?"alert":"status"}>Session {s.sessionId.slice(0,8)} — {s.state}: {s.message}</p>) : <p className="settings-hint" role="status">No Antigravity session process. No active tool permission.</p>}
-  </Group>;
-}
-
-/** Only the levels the engine's own control takes (`EFFORTS_BY_ENGINE`). */
-const effortOptions = (engine: "claude" | "codex" | "agy") => EFFORTS.filter((effort) => (EFFORTS_BY_ENGINE[engine] as readonly string[]).includes(effort.id));
-const ENGINE_NAMES = { claude: "Claude", codex: "Codex", agy: "Antigravity" } as const;
-type EngineId = keyof typeof ENGINE_NAMES;
-
-/**
- * Settings → Engines and models: the engines a bot has, which one gets a message unless the bot says otherwise, each
- * engine's model and one reasoning effort. New bots start with these; "Apply to all bots" writes them into every
- * existing bot (after a confirmation, as it overwrites each bot's own choices).
- */
-function EngineDefaults({ client, settings, change, botId, botCount }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; botId: string | null; botCount: number }) {
-  const defaults = settings.engineDefaults;
-  const [open, setOpen] = useState(true);
-  const [confirming, setConfirming] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [outcome, setOutcome] = useState<{ ok: boolean; text: string } | null>(null);
-  const id = botId ?? "";
-  const discovery = {
-    claude: useModelDiscovery(client, id, "claude", !!botId && defaults.engines.includes("claude") && open),
-    codex: useModelDiscovery(client, id, "codex", !!botId && defaults.engines.includes("codex") && open),
-    agy: useModelDiscovery(client, id, "agy", !!botId && defaults.engines.includes("agy") && open),
-  };
-  const toggle = (engine: EngineId, wanted: boolean) => {
-    const next = wanted ? [...defaults.engines, engine] : defaults.engines.filter((candidate) => candidate !== engine);
-    void change({ key: "defaultEngines", value: next as EngineId[] });
-  };
-  const apply = async () => {
-    setApplying(true);
-    setOutcome(null);
-    try {
-      const result = await client.request({ type: "engineDefaults.applyAll", confirmed: true });
-      setOutcome(result.failed.length
-        ? { ok: false, text: `Applied to ${result.applied} bots. Could not change: ${result.failed.map((failure) => `${failure.name} (${failure.reason})`).join("; ")}` }
-        : { ok: true, text: `Applied to ${result.applied} bots.` });
-    } catch (failure) {
-      setOutcome({ ok: false, text: why(failure) });
-    } finally { setApplying(false); setConfirming(false); }
-  };
-  const primaryName = defaults.primary ? ENGINE_NAMES[defaults.primary] : null;
-  return (
-    <section className="settings-group" aria-label="Engines and models">
-      <h3><button type="button" className="settings-fold" aria-expanded={open} onClick={() => setOpen(!open)}><span aria-hidden="true">{open ? "▾" : "▸"}</span> Engines and models</button></h3>
-      {open && <>
-        <div className="settings-card">
-          {(["claude", "codex", "agy"] as const).map((engine) => {
-            const on = defaults.engines.includes(engine);
-            return <Toggle key={engine} label={ENGINE_NAMES[engine]} checked={on} disabled={on && defaults.engines.length === 1} onChange={(wanted) => toggle(engine, wanted)} />;
-          })}
-          <Row label="Primary engine" hint={primaryName ? undefined : "Each bot's first engine"}>
-            <SelectSetting label="Primary engine" blank="First engine of each bot" options={defaults.engines.map((engine) => ({ id: engine, label: ENGINE_NAMES[engine] }))} value={defaults.primary}
-              onChange={(value) => change({ key: "defaultPrimaryEngine", value: value as EngineId | null })} />
-          </Row>
-          {defaults.engines.map((engine) => (
-            <React.Fragment key={engine}>
-            <Row label={`${ENGINE_NAMES[engine]} model`}>
-              {botId
-                ? <ModelPicker label={`${ENGINE_NAMES[engine]}'s default model`} discovery={discovery[engine]} value={defaults.models[engine]} onChange={(model) => change({ key: "defaultEngineModel", value: { engine, model } })} />
-                : <SelectSetting label={`${ENGINE_NAMES[engine]}'s default model`} blank="Engine default" options={[]} value={defaults.models[engine]} onChange={(model) => change({ key: "defaultEngineModel", value: { engine, model } })} />}
-            </Row>
-            <Row label={`${ENGINE_NAMES[engine]} thinking effort`}>
-              <SelectSetting label={`${ENGINE_NAMES[engine]} default thinking effort`} blank="Engine default" options={effortOptions(engine)} value={defaults.efforts[engine]}
-                onChange={(value) => change({ key: "defaultEffort", value: { engine, effort: value as SettingsView["engineDefaults"]["efforts"]["claude"] } })} />
-            </Row>
-            </React.Fragment>
-          ))}
-          <Row label="Apply to all bots" hint="Sets every bot's engines, models, effort and primary engine to these. Overwrites each bot's own choices.">
-            {!confirming
-              ? <button type="button" disabled={applying} onClick={() => { setOutcome(null); setConfirming(true); }}>Apply to all bots…</button>
-              : <span className="settings-confirm" role="alertdialog" aria-label="Confirm apply to all bots">
-                  <span>Overwrite the engines, models, effort and primary engine of {botCount ? `all ${botCount} bots` : "every bot"}? Their own choices are lost.</span>
-                  <button type="button" disabled={applying} onClick={() => void apply()}>{applying ? "Applying…" : "Overwrite all bots"}</button>
-                  <button type="button" disabled={applying} onClick={() => setConfirming(false)}>Cancel</button>
-                </span>}
-          </Row>
-        </div>
-        <p className="settings-note">New bots start with these. A bot's own settings can override the primary engine, which is who a message goes to unless you pick another in the composer. Running heads switch model at their next wake.</p>
-        {outcome && <p className={outcome.ok ? "settings-hint" : "settings-problem"} role={outcome.ok ? "status" : "alert"}>{outcome.text}</p>}
-      </>}
-    </section>
-  );
-}
-
-function Engines({ client, settings, change, codexModels, modelBotId, botCount }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => Promise<boolean>; codexModels: CodexModelOption[]; modelBotId: string | null; botCount: number }) {
-  const workers = settings.codexWorkers;
-  const following = settings.codexWorkersFollow;
-  const limit = workerLimitWords(settings.effectiveLanguage);
-  return (
-    <>
-      <EngineDefaults client={client} settings={settings} change={change} botId={modelBotId} botCount={botCount} />
-      <AntigravityRuntime client={client} settings={settings} change={change} />
-      <Group title="Engine permissions" note="Applies when an engine process next starts, including resumed sessions and its workers. Running sessions keep their current mode: let work finish, then restart the app to apply changes. No new conversation is required. App-specific approvals and server policies remain in force.">
-        <p className="settings-hint">Auto mode instructs the engines to allow low/medium-risk actions automatically and ask for human approval of high-risk actions. Engine classification is not guaranteed; hard denies and managed policies still apply. Unknown risk, review failures and OS/sandbox blocks are not auto-approved.</p>
-        <Toggle label="Claude: bypass permission checks" hint="Skips Claude tool permission checks for sessions and Claude workers. Protected paths, explicit tool restrictions, managed policy and OS protections still apply." checked={settings.claudeBypassPermissions} onChange={(value) => change({ key: "claudeBypassPermissions", value })} />
-        <Toggle label="Codex: bypass approvals and sandbox" hint="Disables Codex approval prompts, auto review and its filesystem/network sandbox for sessions and Codex workers. Commands run with the app user's OS access." checked={settings.codexBypassPermissions} onChange={(value) => change({ key: "codexBypassPermissions", value })} />
-      </Group>
-      <AntigravityPermissions client={client} settings={settings} change={change} />
-      <Group title="Claude subagents" note="Model and cache take effect when a bot next wakes; thinking effort and the worker limit, for the next worker that starts.">
-        <Row label="Model">
-          <SelectSetting label="Subagents' model" blank="Same as bot" options={MODELS} value={settings.subagentModel}
-            onChange={(value) => change({ key: "subagentModel", value: value as SettingsView["subagentModel"] })} />
-        </Row>
-        <Row label="Thinking effort">
-          <SelectSetting label="Subagents' thinking effort" blank="Same as bot" options={effortOptions("claude")} value={settings.subagentEffort ?? null}
-            onChange={(value) => change({ key: "subagentEffort", value: value as SettingsView["subagentEffort"] })} />
-        </Row>
-        <Toggle label="Keep subagents' prompt cache for 1 hour" checked={settings.subagentHourCache} onChange={(value) => change({ key: "subagentHourCache", value })} />
-        <Row label={limit.label} hint={limit.hint}>
-          <select aria-label={limit.label} value={settings.claudeWorkerLimit} onChange={(event) => change({ key: "claudeWorkerLimit", value: Number(event.target.value) })}>
-            {WORKER_LIMITS.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </Row>
-      </Group>
-      <Group title="Codex workers" note="Takes effect when a Codex head next wakes.">
-        <p className="settings-hint">In effect: {following ? "as ~/.codex/config.toml says" : `${workers.model ?? "same as bot"} · ${EFFORTS.find((effort) => effort.id === workers.effort)?.label ?? "default effort"} · ${workers.fast ? "Fast" : "Standard"}`}</p>
-        <Toggle label="Follow Codex config file" hint="~/.codex/config.toml" checked={following} onChange={(value) => change({ key: "codexWorkersFollow", value })} />
-        <Row label="Model">
-          <SelectSetting label="Workers' model" blank="Same as bot" options={codexOptions(codexModels)} value={workers.model} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, model: value } })} />
-        </Row>
-        <Row label="Reasoning effort">
-          <SelectSetting label="Workers' reasoning effort" blank="Default effort" options={EFFORTS} value={workers.effort} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, effort: value as SettingsView["codexWorkers"]["effort"] } })} />
-        </Row>
-        <Toggle label="Fast mode" hint="service_tier = priority: faster replies, uses more of your limits" checked={!!workers.fast} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, fast: value } })} />
-      </Group>
-      <Group title="Component editor" note="Maintainer's component editor; written into the plugin library when the app next starts.">
-        <Row label="Model">
-          <SelectSetting label="Component editor's model" options={MODELS} value={settings.componentEditorModel} onChange={(value) => { if (value) change({ key: "componentEditorModel", value: value as SettingsView["componentEditorModel"] }); }} />
-        </Row>
-      </Group>
-    </>
-  );
-}
-
-/** The shown bot's own choices, for the right panel's settings page (1.x's SettingsPage in DetailPanel). */
-export function BotSettings({ client, bot }: { client: Client; bot: BotView }) {
-  const [problem, setProblem] = useState<string | null>(null);
-  return (
-    <>
-      {problem && <p className="settings-problem" role="alert">{problem}</p>}
-      <ThisBot key={bot.id} client={client} bot={bot} onProblem={setProblem} />
-    </>
-  );
-}
-
-function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onProblem: (problem: string | null) => void }) {
-  const [view, setView] = useState<BotSettingsView | null>(null);
-  const claudeModels = useModelDiscovery(client, bot.id, "claude", (view?.engines ?? bot.heads).includes("claude"));
-  const codexModels = useModelDiscovery(client, bot.id, "codex", (view?.engines ?? bot.heads).includes("codex"));
-  const agyModels = useModelDiscovery(client, bot.id, "agy", (view?.engines ?? bot.heads).includes("agy"));
-  useEffect(() => { void client.request({ type: "bot.settings", botId: bot.id }).then(setView, (failure) => onProblem(why(failure))); }, [client, bot.id, bot.heads.length, onProblem]);
-  const configure = (change: Omit<Extract<import("../contract").Command, { type: "bot.configure" }>, "type" | "botId">) => {
-    onProblem(null);
-    void client.request({ type: "bot.configure", botId: bot.id, ...change }).then(setView, (failure) => onProblem(why(failure)));
-  };
-  const setHeads = (engines: ("claude" | "codex" | "agy")[]) => {
-    onProblem(null);
-    void client.request({ type: "heads.set", botId: bot.id, engines }).then(() => client.request({ type: "bot.settings", botId: bot.id })).then(setView, (failure) => onProblem(why(failure)));
-  };
-  if (!view) return null;
-  const two = view.engines.length > 1;
-  const hasClaude = view.engines.includes("claude");
-  const hasCodex = view.engines.includes("codex");
-  const hasAgy = view.engines.includes("agy");
-  // Each engine has its own effort (the old single one shows for an engine that has none of its own).
-  const effortRow = (engine: "claude" | "codex" | "agy") => (
-    <Row label="Thinking effort">
-      <SelectSetting label={`${ENGINE_NAMES[engine]} thinking effort`} blank="Default" options={effortOptions(engine)} value={view.efforts?.[engine] ?? view.effort ?? null}
-        onChange={(value) => configure({ efforts: { [engine]: value as BotSettingsView["effort"] } })} />
-    </Row>
-  );
-  return (
-    <>
-      <Group title="Engines in this bot" note="Choose a primary recipient in the composer. Enabled engines can collaborate when needed. Antigravity requires the verified official ACP runtime and Google sign-in.">
-        {(["claude", "codex", "agy"] as const).map((engine) => {
-          const on = view.engines.includes(engine);
-          const name = engine === "agy" ? "Antigravity" : engine === "claude" ? "Claude" : "Codex";
-          // 1.x's "Engines in this bot": the only head cannot go; turning off the first of two runs the bot on the other, through a handoff.
-          return (
-            <Toggle key={engine} label={name} checked={on} disabled={bot.phase === "switching" || (on && !two)}
-              onChange={(wanted) => setHeads(wanted ? [...view.engines, engine] : view.engines.filter((candidate) => candidate !== engine))} />
-          );
-        })}
-      </Group>
-      {two && (
-        <Group title="Primary engine" note="Who a message goes to unless you pick another in the composer. By default a bot follows the app's setting (Settings → Engines and models).">
-          <Row label="Primary engine">
-            <SelectSetting label="Primary engine" blank={`Follow app default (${ENGINE_NAMES[view.primaryEffective ?? view.engines[0]!]})`} options={view.engines.map((engine) => ({ id: engine, label: ENGINE_NAMES[engine] }))} value={view.primary ?? null}
-              onChange={(value) => configure({ primary: value as BotSettingsView["engines"][number] | null })} />
-          </Row>
-        </Group>
-      )}
-      {hasClaude && (
-        <Group title="Claude">
-          <Row label="Model">
-            <ModelPicker label="Claude's model" discovery={claudeModels} value={view.model} onChange={(model) => configure({ model })} />
-          </Row>
-          {effortRow("claude")}
-          <Row label="Subagents' model">
-            <ModelPicker label="Claude subagents' model" blank="Inherit bot" discovery={claudeModels} value={view.subagentModel} subagents onChange={(subagentModel) => configure({ subagentModel })} />
-          </Row>
-          <Row label="Subagents' effort">
-            <SelectSetting label="Claude subagents' thinking effort" blank="Inherit bot" options={effortOptions("claude")} value={view.subagentEffort ?? null}
-              onChange={(value) => configure({ subagentEffort: value as BotSettingsView["effort"] })} />
-          </Row>
-        </Group>
-      )}
-      {hasCodex && (
-        <Group title="Codex">
-          <Row label="Model">
-            <ModelPicker label="Codex's model" discovery={codexModels} value={view.codexModel} onChange={(codexModel) => configure({ codexModel })} />
-          </Row>
-          {effortRow("codex")}
-        </Group>
-      )}
-      {hasAgy && <Group title="Antigravity" note="ACP uses single-action approval cards and app-managed tools. Native agents, workflows and global plugins are disabled.">
-        <Row label="Model">
-          <ModelPicker label="Antigravity model" discovery={agyModels} value={view.agyModel ?? null} onChange={(agyModel) => configure({ agyModel })} />
-        </Row>
-        {effortRow("agy")}
-      </Group>}
-    </>
-  );
-}
-
-function Results({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => void }) {
-  return (
-    <Group title="Reports and results" note="What a bot does with a report or a page it made.">
-      <Row label="Publish as">
-        <select aria-label="Publish as" value={settings.resultPublishing} onChange={(event) => change({ key: "resultPublishing", value: event.target.value as SettingsView["resultPublishing"] })}>
-          <option value="artifactUnlessSensitive">Artifact, sensitive ones local</option>
-          <option value="localOnly">Always a local HTML page</option>
-          <option value="artifactAlways">Always an Artifact</option>
         </select>
       </Row>
     </Group>

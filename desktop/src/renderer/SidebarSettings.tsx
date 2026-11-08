@@ -87,7 +87,7 @@ export function SidebarSettings({ client, settings, plugins, doctor, compact = f
         </label>
         {problem && <p className="settings-problem" role="alert">{problem}</p>}
         <div className="sidebar-settings-links">
-          {doctor?.needsAttention && <button type="button" style={{ color: "var(--error)" }} onClick={() => openSection("doctor")}>Claude Code needs attention<span>Doctor ›</span></button>}
+          {doctor?.needsAttention && <button type="button" style={{ color: "var(--error)" }} onClick={() => openSection("setup")}>Claude Code needs attention<span>Engine setup ›</span></button>}
           <button type="button" aria-label="Plugins" onClick={() => openSection("plugins")}><span>Plugins</span><span aria-hidden="true">{plugins ? `${plugins.plugins.filter(plugin => plugin.enabled).length} on` : "›"}</span></button>
           {(plugins?.settingsSections ?? []).filter((page) => page.link).map((page) => <button key={`${page.plugin}/${page.id}`} type="button" onClick={() => openSection(`${page.plugin}/${page.id}`)}>{page.link}<span aria-hidden="true">›</span></button>)}
           <button type="button" onClick={() => openSection("developer")}>Developer settings…<span aria-hidden="true">›</span></button>
