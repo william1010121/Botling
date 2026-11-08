@@ -2,6 +2,7 @@ import { AgyTurnClock, agyPromptRequest } from "../token-speed";
 import { registerAntigravityQuotaReader } from "../antigravity-quota";
 import { agySignInEnv, readAgyQuota } from "../agy-quota-api";
 import { AgyTurnUsage, callTokens } from "../agy-usage-db";
+import { recordAgyWindow } from "../agy-window";
 import { registerAgyPermissions, updateAgyPermissions, forgetAgyPermissions } from "./agy-permissions";
 // ACP is a separate transport. The legacy headless path in agy.ts stays blocked.
 import { createHash, randomUUID } from "node:crypto";
@@ -239,6 +240,8 @@ export class AgyAcpProtocol {
       if (message.id !== undefined) { this.write({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Client capability unavailable." } }); return; }
       if (message.method !== "session/update") return;
       const p = obj(message.params), u = obj(p.update);
+      // The model's full window (`size`), kept for workspace.agyUsage; not `used`. Wanted at any time, also between turns.
+      if (u.sessionUpdate === "usage_update") { if (this.sessionId && p.sessionId === this.sessionId) recordAgyWindow(this.sessionId, u.size); return; }
       // load replays old text before returning; do not render it as this turn's output.
       if (!this.ready) return;
       if (p.sessionId !== this.sessionId) throw new Error("ACP update for another session.");

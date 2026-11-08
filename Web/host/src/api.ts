@@ -129,6 +129,12 @@ export interface AgyUsage {
   total: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number };
   retries: number;
   models: string[];
+  /**
+   * The model's full context window in tokens (about 1M), from agy's ACP `usage_update`; null until agy has reported one
+   * (e.g. a conversation not run since Botling started). It is NOT where agy compacts (earlier, around 290k).
+   * Only from `agyUsage`; `agyWorkerUsage` leaves it out.
+   */
+  window?: number | null;
 }
 /** An agy worker an agy head started (`workspace.agyWorkers`). */
 export interface AgyWorker {

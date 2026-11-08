@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { AgentRecord } from "./agent-registry";
+import { agyWindowOf } from "./agy-window";
 
 /**
  * Antigravity's own record of what each model call used: `<GEMINI_HOME>/antigravity-acp/conversations/<sessionId>.db`,
@@ -34,6 +35,8 @@ export interface AgyUsage {
   retries: number;
   /** The models the calls used, in the order first seen. */
   models: string[];
+  /** The model's full context window from agy's ACP `usage_update` (`workspace.agyUsage` only); null: none reported yet. */
+  window?: number | null;
 }
 
 type FieldValue = number | bigint | Uint8Array;
@@ -293,7 +296,8 @@ export function agyUsageInProfiles(dataDir: string, sessionId: string): AgyUsage
   if (!safeId(sessionId)) return null;
   for (const home of agyHomes(dataDir)) {
     const file = agyConversationFile(home, sessionId);
-    if (file && existsSync(file)) return agyUsage(home, sessionId);
+    // The window is live ACP state, not in the file (and the file's usage is cached): added to a copy.
+    if (file && existsSync(file)) { const found = agyUsage(home, sessionId); return found && { ...found, window: agyWindowOf(sessionId)?.size ?? null }; }
   }
   return null;
 }
