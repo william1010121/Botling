@@ -67,6 +67,7 @@ import { botFace } from "./faces";
 import { status, statusText } from "../contract/bot-status";
 import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
+import { notePath } from "./bot-note";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
@@ -312,6 +313,10 @@ export class Core {
         // Straight to the app page, not through `event()`: no plugin, workspace or phone listener has anything to do with it.
         frameEvent: (plugin, name, botId, data) => this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "plugins.emit", plugin, name, ...(botId ? { forBot: botId === "main" ? MAIN_BOT_ID : botId } : {}), data } }),
         botFolder: (botId) => this.pluginBot(botId)?.profile.folder ?? null,
+        botNote: (botId) => {
+          const bot = this.pluginBot(botId);
+          return bot ? notePath(bot.profile) : null;
+        },
         appSettings: () => {
           const settings = settingsView(readSettings(Layout.settings(this.options.dataDir)));
           return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };

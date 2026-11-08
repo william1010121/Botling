@@ -37,6 +37,7 @@ import { AppBriefingParams, AppCardParams, AppInstallParams, AppTellParams, Brie
 import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./studio-seam";
 import { agyUsageInProfiles, agyWorkerUsage } from "../agy-usage-db";
 import { refreshAntigravityQuota } from "../antigravity-quota";
+import { NOTE_MAX, NoteWatcher, readNote, writeNote } from "../bot-note";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -82,6 +83,8 @@ export interface PluginWorld {
   frameEvent?(plugin: string, name: string, botId: string | undefined, data: unknown): void;
   /** A bot's working folder as the core keeps it, the main bot's too (null: no such bot). */
   botFolder?(botId: string): string | null;
+  /** Where a bot's note is (bot-note.ts `notePath`, the Note tab's file; null: no such bot). The only file `notes.*` touches. */
+  botNote?(botId: string): string | null;
   /** Botling's own settings plugins may read (`settings.app`). */
   appSettings(): Record<string, JSONValue>;
   /** The keys the user chose (settings.json `shortcutBindings`: Botling's shortcuts and plugin commands). */
@@ -179,6 +182,7 @@ const NotifyMore = z.object({
 });
 const SendParams = z.object({ plugin: str(214), bot: str(64), text: z.string().min(1).max(100_000), as: z.enum(["plugin", "user"]).default("plugin") });
 const BotParams = z.object({ plugin: str(214), bot: str(64) });
+const NoteWriteParams = BotParams.extend({ text: z.string().max(NOTE_MAX), base: z.number().finite().optional() });
 const WakeParams = BotParams.extend({ prompt: z.string().min(1).max(100_000).optional() });
 const PickParams = z.object({
   plugin: str(214), title: str(400).optional(),
@@ -200,7 +204,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -260,6 +264,8 @@ export class Plugins {
   private readonly folders: SessionFolders;
   /** The developer briefing botling.dev pushed (app-seam.ts), kept on disk. */
   private readonly briefings: BriefingBook;
+  /** The notes plugins read or saved (`notes.*`), watched for changes on disk (`noteChanged`). */
+  private readonly notes = new NoteWatcher((botId, mtime) => this.event("noteChanged", { botId, mtime }));
   /** What each bot's session was last told about its folder (a signature of folder, extra folders and note; absent: its own). */
   private readonly foldersTold = new Map<string, string>();
   /** What each plugin shows in the status area (`ui.setStatus`), until it unloads. */
@@ -413,6 +419,7 @@ export class Plugins {
 
   /** Something plugins may listen for happened (`events.on`); only sent when one listens. */
   event(name: PluginEventName, data: unknown) {
+    if (name === "botRemoved") this.notes.unwatch((data as { botId: string }).botId);
     this.host.event(name, data);
   }
 
@@ -434,6 +441,7 @@ export class Plugins {
   }
 
   async shutdown() {
+    this.notes.close();
     await this.host.shutdown();
   }
 
@@ -844,6 +852,13 @@ export class Plugins {
     if (!this.shipped(plugin.manifest.name)) throw new Error("Only a plugin shipped with Botling may use a chat's cards.");
   }
 
+  /** A bot's note (`notes.*`): the core alone says where it is; a plugin never names a path. */
+  private noteFile(botId: string): string {
+    const file = this.options.world.botNote?.(botId);
+    if (!file) throw new Error("No such bot.");
+    return file;
+  }
+
   /** The consistency check of plugin-platform.md §5: what acts as the user needs the capability declared. */
   private needs(plugin: InstalledPlugin, capability: string, what: string) {
     if (!plugin.manifest.ccb?.permissions?.includes(capability)) throw new Error(`${what} needs the "${capability}" permission in package.json.`);
@@ -938,6 +953,22 @@ export class Plugins {
         const { plugin, data } = this.asked(BotParams, params);
         this.needs(plugin, "exec", "Reading a bot's folder");
         return world.botFolder?.(data.bot) ?? null;
+      }
+      case "notes.read": {
+        const { plugin, data } = this.asked(BotParams, params);
+        this.needs(plugin, "files", "Reading a bot's note");
+        const file = this.noteFile(data.bot);
+        const note = readNote(file);
+        this.notes.watch(data.bot, file, note.mtime);
+        return note;
+      }
+      case "notes.write": {
+        const { plugin, data } = this.asked(NoteWriteParams, params);
+        this.needs(plugin, "files", "Changing a bot's note");
+        const file = this.noteFile(data.bot);
+        const result = writeNote(file, data.text, data.base);
+        this.notes.watch(data.bot, file, result.mtime);
+        return result;
       }
       case "ui.quickPick": {
         const { plugin, data } = this.asked(PickParams, params);

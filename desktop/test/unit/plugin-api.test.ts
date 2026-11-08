@@ -2,7 +2,7 @@
 // against a fake world (no bots, no app page) and a fake host process (the `launch` hook: lines in,
 // lines out, no Node child). The real host and the real core are in plugin-host.test.ts.
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir, until } from "../helpers";
 import { Plugins, type AppQuestion, type AppAnswer, type PluginWorld } from "../../src/core/plugins";
@@ -485,3 +485,47 @@ describe("main-area tabs (plan W2)", () => {
   });
 });
 
+
+describe("a bot's note for plugins (the Note tab)", () => {
+  it("notes.read makes and reads only that bot's note; notes.write saves it, refusing a stale base; both need \"files\"", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "note", { permissions: ["files"] });
+    plugin(dir, "nosy");
+    const { ask, world } = await setup(dir);
+    const project = join(dir, "project");
+    world.botNote = (botId) => (botId === "main" ? join(project, ".bot", "note.md") : null);
+    await expect(ask("notes.read", { plugin: "nosy", bot: "main" })).rejects.toThrow('Reading a bot\'s note needs the "files" permission');
+    await expect(ask("notes.write", { plugin: "nosy", bot: "main", text: "x" })).rejects.toThrow('Changing a bot\'s note needs the "files" permission');
+    await expect(ask("notes.read", { plugin: "note", bot: "B9" })).rejects.toThrow("No such bot.");
+    const first = await ask("notes.read", { plugin: "note", bot: "main" });
+    expect(first).toEqual({ path: join(project, ".bot", "note.md"), text: "", mtime: expect.any(Number) });
+    // A path in the ask changes nothing: the core alone says where the note is.
+    const saved = await ask("notes.write", { plugin: "note", bot: "main", text: "# Ideas\n", base: first.mtime, path: join(dir, "elsewhere.md") });
+    expect(saved).toEqual({ saved: true, mtime: expect.any(Number) });
+    expect(readFileSync(join(project, ".bot", "note.md"), "utf8")).toBe("# Ideas\n");
+    expect(existsSync(join(dir, "elsewhere.md"))).toBe(false);
+    writeFileSync(join(project, ".bot", "note.md"), "the bot's edit");
+    utimesSync(join(project, ".bot", "note.md"), Date.now() / 1000 + 5, Date.now() / 1000 + 5);
+    expect(await ask("notes.write", { plugin: "note", bot: "main", text: "mine", base: saved.mtime })).toEqual({ saved: false, text: "the bot's edit", mtime: expect.any(Number) });
+    expect(readFileSync(join(project, ".bot", "note.md"), "utf8")).toBe("the bot's edit");
+    await expect(ask("notes.write", { plugin: "note", bot: "main", text: 7 })).rejects.toThrow();
+  });
+
+  it("a note read by a plugin is watched: a change on disk is the noteChanged event (bot and mtime, never the words)", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "note", { permissions: ["files"] });
+    const { ask, world, tell, plugins, sent } = await setup(dir);
+    const file = join(dir, "project", ".bot", "note.md");
+    world.botNote = (botId) => (botId === "main" ? file : null);
+    tell("registered", { beforeSend: 0, afterReply: 0, commands: [], exposed: {}, events: ["noteChanged"] });
+    await until(() => plugins.host.events.has("noteChanged"));
+    const { mtime } = await ask("notes.read", { plugin: "note", bot: "main" });
+    await ask("notes.write", { plugin: "note", bot: "main", text: "editor", base: mtime });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(sent.filter((m) => m.method === "event")).toEqual([]);
+    writeFileSync(file, "bot");
+    utimesSync(file, Date.now() / 1000 + 5, Date.now() / 1000 + 5);
+    await until(() => sent.some((m) => m.method === "event"));
+    expect(sent.filter((m) => m.method === "event")).toEqual([{ method: "event", params: { name: "noteChanged", data: { botId: "main", mtime: expect.any(Number) } } }]);
+  });
+});
