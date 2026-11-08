@@ -780,11 +780,16 @@ export type UsageView = z.infer<typeof UsageView>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
 
 /** The phone connection (mobile-bridge/desk.ts): off until the bridge is configured, then its routes in the order a phone
- * tries them and the paired phones. A pairing link is a secret shown once, so it is only in `MobilePairView`. */
-export const MobileRouteView = z.strictObject({ kind: z.enum(["lan", "tailscale", "tunnel"]), origin: z.string().max(300) });
+ * tries them and the paired phones. A pairing link is a secret shown once, so it is only in `MobilePairView`.
+ * `relay` (mobile-relay/): the end-to-end encrypted relay, its address (null: off) and whether Botling is connected to it;
+ * phones paired through it are listed with `via: "relay"`. */
+export const MobileRouteView = z.strictObject({ kind: z.enum(["lan", "tailscale", "tunnel", "relay"]), origin: z.string().max(300) });
+export const MobileRelayView = z.strictObject({ url: z.string().max(300).nullable(), state: z.enum(["off", "connecting", "online", "offline"]) });
 export const MobileDeskView = z.strictObject({
   enabled: z.boolean(), routes: z.array(MobileRouteView).max(6),
-  devices: z.array(z.strictObject({ id: z.string().max(64), label: z.string().max(40), pairedAt: z.number(), expiresAt: z.number(), botIds: z.array(z.string().max(64)).max(200) })).max(200),
+  devices: z.array(z.strictObject({ id: z.string().max(64), label: z.string().max(40), pairedAt: z.number(), expiresAt: z.number(), botIds: z.array(z.string().max(64)).max(200),
+    via: z.enum(["bridge", "relay"]).optional() })).max(400),
+  relay: MobileRelayView.optional(),
 });
 export type MobileDeskView = z.infer<typeof MobileDeskView>;
 export const MobilePairView = z.strictObject({ url: z.string().max(600), expiresAt: z.number(), route: MobileRouteView });
@@ -1051,8 +1056,10 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bot.settings"), botId }),
   /** The phone connection: its routes and paired phones; a one-time pairing link for the bots named; ending one phone's session. */
   z.strictObject({ type: z.literal("mobile.view") }),
-  z.strictObject({ type: z.literal("mobile.pair"), botIds: z.array(botId).min(1).max(50), route: z.number().int().min(0).max(5).optional() }),
+  z.strictObject({ type: z.literal("mobile.pair"), botIds: z.array(botId).min(1).max(50), route: z.number().int().min(0).max(5).optional(), relay: z.boolean().optional() }),
   z.strictObject({ type: z.literal("mobile.revoke"), deviceId: z.string().max(64) }),
+  /** Turns the phone relay on (its wss:// address) or off (null). */
+  z.strictObject({ type: z.literal("mobile.relay"), url: z.string().max(300).nullable() }),
   /** "Restart bot": each head starts again in the same session before the bot's next message, told the app's current instructions (asleep: the next wake). */
   z.strictObject({ type: z.literal("bot.restart"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
@@ -1101,7 +1108,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "projects.pick", "waiting.list", "waiting.ignore",
+  "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
@@ -1235,6 +1242,7 @@ export interface Results {
   "mobile.view": MobileDeskView;
   "mobile.pair": MobilePairView;
   "mobile.revoke": MobileDeskView;
+  "mobile.relay": MobileDeskView;
   "bot.configure": BotSettingsView;
   "bot.restart": { restart: "next-message" | "asleep" };
   "engineDefaults.applyAll": { applied: number; failed: { botId: string; name: string; reason: string }[] };

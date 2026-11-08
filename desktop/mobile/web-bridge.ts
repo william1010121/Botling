@@ -2,8 +2,8 @@
 // envelope bridge the renderer's Client speaks, carried over the mobile bridge's HTTPS command route
 // instead of Electron IPC. The renderer (src/renderer) runs unchanged on top of it.
 //
-// Only what the bridge already allows goes to the server: chat.snapshot, chat.send, chat.choose and
-// chat.answer (the bridge and the core check them again). A few shell-only commands are answered
+// Only what the bridge already allows goes to the server: chat.snapshot, chat.send, chat.choose,
+// chat.answer and turn.stop (the bridge and the core check them again). A few shell-only commands are answered
 // here without the server: per-viewer layout settings (kept in this browser), `chat.read` (unread
 // stays the desktop's) and `link.open` for http(s) links (a new tab). Everything else the desktop
 // shell can ask for is refused here as `forbidden`, so the renderer shows its usual failure.
@@ -14,7 +14,7 @@ import { CancelEnvelope, RequestEnvelope, errorResponse, okResponse, type Comman
 import type { Bridge } from '../src/renderer/client';
 import { MobileError, type MobileCommand } from './transport';
 
-export const REMOTE_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer']);
+export const REMOTE_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer', 'turn.stop']);
 /** Layout settings this browser keeps for itself (the desktop keeps its own). */
 export const LOCAL_SETTINGS = ['rightPanelCollapsed', 'railCollapsed', 'pinnedBots', 'idleBots', 'messageColumnWidth'] as const;
 type LocalKey = typeof LOCAL_SETTINGS[number];

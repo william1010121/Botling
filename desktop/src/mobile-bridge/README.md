@@ -1,5 +1,8 @@
 # Private mobile bridge (review required)
 
+A second way in, without a listener or tunnel on this computer: the end-to-end encrypted phone relay
+([docs/mobile-relay.md](../../../docs/mobile-relay.md), `src/mobile-relay/`). It runs the same commands through the same core call and journal.
+
 Protocol v10, `POST /api/mobile/command`, same-origin bearer authentication. Mobile assets are
 served at `/mobile/`; only the public application shell is unauthenticated. Every data/command
 request needs a current token and an explicit bot grant. There is no default HTTP listener, public bind,
@@ -8,7 +11,7 @@ No listener starts unless the local owner supplies `BOTLING_MOBILE_CONFIG`, or c
 owner-only `<selected core data>/mobile/config.json` opt-in before core startup.
 Bearer tokens are the only sign-in. A `google` field left in an older config file is ignored.
 
-The core adapter allows snapshot/send/choose/answer only. Existing boot-activation checks,
+The core adapter allows snapshot/history/send/choose/answer and turn.stop (stopping a turn) only. Existing boot-activation checks,
 plugin before-send hooks and question/approval semantics run through core `handle` unchanged.
 Snapshot does not invoke `chat.read`, and exposes only selected chat data and authorized bot
 summaries, not global settings, plugin information, other bots' waiting lists or web sessions.

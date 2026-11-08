@@ -9,10 +9,17 @@ At 700px and below the left column is a drawer over the chat (`web.css`); the ri
 hides below 860px as on the desktop.
 
 What the web cannot do (the bridge has no command for it): add/remove bots, groups or projects,
-settings, plugins, routines, the whiteboard, attachments, stopping a turn, component cards' own
+settings, plugins, routines, the whiteboard, attachments, component cards' own
 saves/actions and subagent views. Those controls are hidden or answer "Not available in Botling Web".
 Layout toggles (rail/right panel folded, pinned bots, message width) are kept in this browser only.
 No service worker stores private conversations or credentials.
+
+## Through the relay (end-to-end encrypted)
+
+The same page also works through the phone relay ([docs/mobile-relay.md](../../docs/mobile-relay.md)): a relay
+pairing link (`/mobile/#relay=…&k=…&s=…`) pairs over an end-to-end encrypted channel (`relay-client.ts`), the
+pairing is kept in IndexedDB with a non-extractable key (`relay-session.ts`), and the page reconnects with it on the
+next visit. Sign out forgets it.
 
 ## Build and checks
 

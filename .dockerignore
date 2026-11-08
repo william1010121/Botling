@@ -1,0 +1,9 @@
+**/node_modules
+**/.cache
+**/.git
+desktop/out
+desktop/dist
+desktop/mobile/dist
+Web/dist
+spec
+docs

@@ -21,7 +21,8 @@ export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash
   pairedAt: z.number().int().positive().optional(), label: z.string().max(40).optional() });
 export type Client = z.infer<typeof Client>;
 export const Clients = z.array(Client);
-export const mobileTypes = new Set(['chat.snapshot', 'chat.history', 'chat.send', 'chat.choose', 'chat.answer']);
+/** What a phone may ask (adapter.ts runs them): read a chat, send, answer a question, stop a turn. */
+export const mobileTypes = new Set(['chat.snapshot', 'chat.history', 'chat.send', 'chat.choose', 'chat.answer', 'turn.stop']);
 export interface MobileCore {
   mobileCommand(raw: unknown, allowedBots: readonly string[]): Promise<ResponseEnvelope>;
   /** Something changed in the core (a bot's chat, or nothing bot-specific). Only that it changed: never what. */

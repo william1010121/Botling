@@ -25,7 +25,7 @@ function setup(extra: Partial<ConstructorParameters<typeof WebBridge>[0]> = {}) 
 }
 
 describe('WebBridge (the renderer bridge over the mobile bridge)', () => {
-  it('carries the four mobile commands to the server and answers in the renderer protocol', async () => {
+  it('carries the mobile commands (stopping a turn included) to the server and answers in the renderer protocol', async () => {
     const onMutated = vi.fn();
     const { client, calls } = setup({ onMutated });
     const view = await client.request({ type: 'chat.snapshot', botId: 'project' });
@@ -34,15 +34,16 @@ describe('WebBridge (the renderer bridge over the mobile bridge)', () => {
     await client.request({ type: 'chat.send', botId: 'project', text: 'hello', to: 'codex' });
     await client.request({ type: 'chat.choose', botId: 'main', messageId: 'q', index: 0 });
     await client.request({ type: 'chat.answer', botId: 'main', messageId: 'q', text: 'yes' });
-    expect(calls.map(cmd => cmd.type)).toEqual(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer']);
+    await client.request({ type: 'turn.stop', botId: 'main', turnId: 't' });
+    expect(calls.map(cmd => cmd.type)).toEqual(['chat.snapshot', 'chat.send', 'chat.choose', 'chat.answer', 'turn.stop']);
     expect(calls[1]).toEqual({ type: 'chat.send', botId: 'project', text: 'hello', to: 'codex' });
-    expect(onMutated).toHaveBeenCalledTimes(3);
+    expect(onMutated).toHaveBeenCalledTimes(4);
   });
 
   it('refuses every other desktop command without contacting the server', async () => {
     const { client, calls } = setup();
     for (const cmd of [{ type: 'bots.remove', botId: 'project' }, { type: 'settings.set', change: { key: 'botLook', value: 'original' } },
-      { type: 'plugins.web' }, { type: 'turn.stop', botId: 'main', turnId: 't' }, { type: 'files.pick', botId: 'main' }, { type: 'link.open', botId: 'main', url: 'file:///etc/passwd', source: 'user' }] as any[]) {
+      { type: 'plugins.web' }, { type: 'files.pick', botId: 'main' }, { type: 'link.open', botId: 'main', url: 'file:///etc/passwd', source: 'user' }] as any[]) {
       await expect(client.request(cmd)).rejects.toSatisfy((error: unknown) => error instanceof RequestFailed && error.error.code === 'forbidden');
     }
     expect(calls).toEqual([]);
