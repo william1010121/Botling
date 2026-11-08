@@ -302,7 +302,7 @@ test('rejected output paths change nothing on disk (no folders, no files)', asyn
 test('the bundled command ships a licence notice for every package in the bundle', async () => {
   const { build } = await import('esbuild');
   const { thirdPartyNotices, bundledPackages, NOTICES_FILE } = await import('./licenses.mjs');
-  const r = await build({ entryPoints: [join(root, 'reports/cli-main.ts')], bundle: true, write: false, platform: 'node', format: 'cjs', outfile: join(temp, 'x.cjs'), metafile: true, jsx: 'automatic', loader: { '.css': 'text' }, tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } }, logLevel: 'silent' });
+  const r = await build({ entryPoints: [join(root, 'reports/cli-main.ts')], bundle: true, write: false, platform: 'node', format: 'cjs', outfile: join(temp, 'x.cjs'), metafile: true, jsx: 'automatic', loader: { '.css': 'text', '.woff2': 'base64' }, tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } }, logLevel: 'silent' });
   const packages = [...bundledPackages(r.metafile, root).keys()];
   for (const p of ['d3-scale', 'd3-array', 'internmap', 'elkjs', 'react', 'react-dom', 'zod', 'markdown-it']) assert.ok(packages.includes(p), p);
   const notices = thirdPartyNotices(r.metafile, root);

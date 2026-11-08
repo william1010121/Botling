@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { shieldMath } from './math';
 
 /** Deterministic text width (no DOM): CJK = 1em, Latin ≈ .56em, digits .6em, narrow punctuation .3em. */
 export function textWidth(text: string, fontSize: number): number {
@@ -47,10 +48,11 @@ const md = new MarkdownIt('zero', { html: false, linkify: false, breaks: false }
  *  Emphasis is matched before markdown-it runs because CommonMark's flanking rules reject the very
  *  common CJK case `**很可能（80%）**是…` (closing ** after punctuation, followed by a letter). */
 export function renderMarkdown(text: string): string {
-  const marked = text
+  const shield = shieldMath(text); // formulas are typeset later, on the whole page (core/math.ts); markdown must not touch them
+  const marked = shield.text
     .replace(/\*\*(?=\S)([^*\n]+?)(?<=\S)\*\*/g, '\u0001$1\u0002')
     .replace(/(^|[^*\w])\*(?=[^\s*])([^*\n]+?)(?<=\S)\*(?!\*)/g, '$1\u0003$2\u0004');
-  return md.render(marked).replace(/\u0001/g, '<strong>').replace(/\u0002/g, '</strong>').replace(/\u0003/g, '<em>').replace(/\u0004/g, '</em>');
+  return shield.restore(md.render(marked).replace(/\u0001/g, '<strong>').replace(/\u0002/g, '</strong>').replace(/\u0003/g, '<em>').replace(/\u0004/g, '</em>'));
 }
 export function markdownBullets(text: string): { count: number; depth: number } {
   let count = 0, depth = 0;

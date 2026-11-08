@@ -6,6 +6,7 @@ import { lintSpec } from './lint';
 import { planSlides, type SlidePlan } from './planner';
 import { validateSpec, type BrokenBlock, type Issue, type ReportSpec } from './spec';
 import { BlockView, DocReport, SlideDeck, type Prepared } from './Report';
+import { mathCss, typesetHtml } from './core/math';
 import tokens from './theme/tokens.css';
 import base from './theme/doc.css';
 import blockCss from './theme/blocks.css';
@@ -65,11 +66,12 @@ export function renderV2(input: unknown, opts: { mode?: Mode; baseDir?: string }
   errors.push(...layoutErrors);
   const slides: SlidePlan[] = planSlides(spec, registry, labels[spec.lang].continued);
   const warnings = lintSpec(spec, registry, slides, opts.baseDir);
-  const body = renderToStaticMarkup(mode === 'doc' ? <DocReport spec={spec} prepared={prepared}/> : <SlideDeck spec={spec} slides={slides} prepared={prepared}/>);
+  const body = typesetHtml(renderToStaticMarkup(mode === 'doc' ? <DocReport spec={spec} prepared={prepared}/> : <SlideDeck spec={spec} slides={slides} prepared={prepared}/>));
+  const math = mathCss(body);
   const zoom = body.includes('data-zoom') ? LIGHTBOX : '';
   const html = mode === 'doc'
-    ? page(spec.title, spec.lang, tokens + base + blockCss, body, zoom)
-    : page(spec.title, spec.lang, tokens + base + blockCss + slideCss, body, PAGER + zoom);
+    ? page(spec.title, spec.lang, tokens + base + blockCss + math, body, zoom)
+    : page(spec.title, spec.lang, tokens + base + blockCss + slideCss + math, body, PAGER + zoom);
   return { ok: errors.length === 0, errors, warnings, html, slides: slides.length, spec };
 }
 
@@ -80,7 +82,7 @@ export function renderBlock(block: unknown, opts: { mode?: Mode; lang?: 'zh-Hant
   if (!s) return { html: '', errors };
   const { prepared, errors: prepErrors } = prepare(s, opts.mode ?? 'doc', opts.baseDir);
   errors.push(...prepErrors);
-  const html = renderToStaticMarkup(<BlockView block={s.sections[0].blocks[0]} ctx={{ lang: s.lang, t: labels[s.lang], mode: opts.mode ?? 'doc', id: 'g' + Math.abs(hash(JSON.stringify(block))).toString(36) }} prepared={prepared}/>);
+  const html = typesetHtml(renderToStaticMarkup(<BlockView block={s.sections[0].blocks[0]} ctx={{ lang: s.lang, t: labels[s.lang], mode: opts.mode ?? 'doc', id: 'g' + Math.abs(hash(JSON.stringify(block))).toString(36) }} prepared={prepared}/>));
   return { html, errors };
 }
 function hash(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }

@@ -98,7 +98,7 @@ async function buildBundle(root, folder, { entry, outfile, minify = false, jsx =
     bundle: true, platform: "node", format: "cjs", target: "node22", legalComments: "eof",
     nodePaths: [join(root, "node_modules")], entryPoints: [join(root, entry)], outfile: join(folder, outfile), minify, metafile: true,
     ...(jsx ? { jsx: "automatic", tsconfigRaw: { compilerOptions: { jsx: "react-jsx" } } } : {}),
-    ...(cssAsText ? { loader: { ".css": "text" } } : {}),
+    ...(cssAsText ? { loader: { ".css": "text", ".woff2": "base64" } } : {}),
     ...(minify ? { define: { "process.env.NODE_ENV": '"production"' } } : {}),
   });
   if (!notices) return;
