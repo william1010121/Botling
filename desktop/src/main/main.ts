@@ -126,6 +126,13 @@ function applyAppTheme(setting: AppTheme | null | undefined) {
   const source = themeSourceFor(setting);
   if (nativeTheme.themeSource !== source) nativeTheme.themeSource = source;
 }
+/**
+ * The saved shortcuts, report look and app look, once the core is started (it cannot answer before): the menu starts on
+ * the defaults and the app dark, and both follow the saved settings here (and on every change, `settings.updated`).
+ */
+function applySavedSettings() {
+  void core.call({ type: "settings.get" }).then(settings => { applyMenu((settings as { shortcuts?: unknown }).shortcuts); reportTheme = (settings as { reportTheme?: ReportTheme }).reportTheme ?? "dark"; applyAppTheme((settings as { appTheme?: AppTheme }).appTheme); }, (error) => note(`Saved settings not applied: ${String(error)}`));
+}
 /** Whether the app is drawn dark now (the setting, or the system's look for "system"). */
 function appDark(): boolean { return nativeTheme.shouldUseDarkColors; }
 
@@ -834,10 +841,8 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 app.whenReady().then(async () => {
   startup.mark("app.ready");
   applyMenu(shortcutOverrides);
-  // The saved shortcuts: the menu starts on the defaults and is rebuilt once the core answers (and on every change).
-  void core.call({ type: "settings.get" }).then(settings => { applyMenu((settings as { shortcuts?: unknown }).shortcuts); reportTheme = (settings as { reportTheme?: ReportTheme }).reportTheme ?? "dark"; applyAppTheme((settings as { appTheme?: AppTheme }).appTheme); }, () => {});
   // The app starts dark, as 1.x's windows (`preferredColorScheme(.dark)`), until the saved Settings → Appearance → App
-  // look arrives (above); pages and component frames that ask (prefers-color-scheme) follow it (Phase 5c).
+  // look arrives (applySavedSettings, once the core is started); pages and component frames that ask (prefers-color-scheme) follow it (Phase 5c).
   nativeTheme.themeSource = "dark";
   // A window's background (seen while resizing, before its page draws) follows the look.
   nativeTheme.on("updated", () => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.setBackgroundColor(windowBackground(appDark())); });
@@ -859,6 +864,8 @@ app.whenReady().then(async () => {
   app.on("activate", () => { if (!mainWindow) createWindow(); });
   startup.mark("core.start");
   core.start();
+  // Only now: asked before core.start() the core cannot answer, and the saved look and shortcuts were lost on every restart.
+  applySavedSettings();
   createWindow();
   checkForRelease();
   setInterval(checkForRelease, CHECK_EVERY_MS).unref();
