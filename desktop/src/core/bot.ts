@@ -226,6 +226,8 @@ export interface BotOptions {
   callIns?: () => { id: string; state: "queued" | "answering" }[];
   /** The chat it is answering a call-in in now (null: none). */
   answeringIn?: () => string | null;
+  /** Its reply on the news of a worker it started when `caller`'s bot called it in with `asked`: told back there (`callInFollowUp`). */
+  callInFollowUp?: (caller: string, asked: string, record: ChatRecord) => void;
   /** Its @s still being answered or waiting, said with its next turn (status only; null: none). */
   callInNote?: () => string | null;
   /** What a line shows besides itself for the component studio, through its seam (the plugins' `studioLineExtras`): the component it already is (Phase 5a). */
@@ -286,7 +288,16 @@ interface Turn {
   guest?: boolean;
   /** Called into this chat (its id) with @: hidden here, but its own chat and row show it at work. */
   callIn?: string;
+  /** For a call-in: what it was asked there (a worker it starts reports back with it, `callInWork`). */
+  callInAsked?: string;
+  /** Its turn on the report or note of a worker it started for a bot's @: its reply goes back to that bot's chat too. */
+  relayTo?: CallInWork;
 }
+
+/** A worker started in a call-in turn: the chat it was called into, what it was asked there, and until when its news goes back. */
+interface CallInWork { caller: string; asked: string; until: number }
+/** How long a worker started for a bot's @ reports back there (its later runs too). */
+const CALL_IN_WORK_MS = 3 * 24 * 60 * 60_000;
 
 /** What a bot said for its turn in another chat (1.x's `GroupAnswer`). */
 export type GuestAnswer = { kind: "busy" } | { kind: "failed"; why: string } | { kind: "reply"; text: string; steps: StepRecord[]; engine: string };
@@ -905,8 +916,8 @@ export class Bot {
    * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
    * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
    */
-  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn }: { callIn?: string } = {}): Promise<GuestAnswer> {
-    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn });
+  async groupTurn(text: string, waitForMs: number, answerWithinMs: number, { callIn, asked }: { callIn?: string; asked?: string } = {}): Promise<GuestAnswer> {
+    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs, { callIn, asked });
     const deadline = Date.now() + waitForMs;
     while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
       if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
@@ -922,7 +933,7 @@ export class Bot {
       return await new Promise<GuestAnswer>((resolve) => {
         const turn = this.newTurn("tidy", text, null);
         turn.guest = true;
-        if (callIn) turn.callIn = callIn;
+        if (callIn) { turn.callIn = callIn; turn.callInAsked = asked ?? ""; }
         let settled = false;
         const settle = (answer: GuestAnswer) => { if (!settled) { settled = true; clearTimeout(timer); resolve(answer); } };
         const timer = setTimeout(() => {
@@ -1238,16 +1249,44 @@ export class Bot {
       processStarted: (pid) => this.options.ledger.record(pid),
       maxRunning: () => this.options.launch?.().claudeWorkerLimit ?? DEFAULT_CLAUDE_WORKER_LIMIT,
       specWriters: () => this.options.launch?.().specWriters ?? DEFAULT_SPEC_WRITERS,
-    }, (item) => this.onWorkerOutput(item), (_id, text) => this.workerReport(text), (config, handlers) => new ClaudeHead(config, handlers));
+    }, (item) => this.onWorkerOutput(item), (id, text) => this.workerReport(text, id), (config, handlers) => new ClaudeHead(config, handlers));
     this.syncWorkerOwners();
     return this.claudeWorkerHost;
   }
 
   /** A Claude worker's run ended: its report goes to this head as the app's message (waking it, or queued behind its turn). */
-  private workerReport(text: string): boolean {
+  private workerReport(text: string, workerId?: string): boolean {
     if (this.shuttingDown || this.problem || this.profile.problem) return false;
-    try { (this.options.primary ?? this).deliverTo(this.engine, text, null, { origin: "app" }); return true; }
+    try { this.relayIfCallInWork((this.options.primary ?? this).deliverTo(this.engine, text, null, { origin: "app" }), workerId); return true; }
     catch (error) { this.log(`claude worker report not delivered: ${(error as Error).message}`); return false; }
+  }
+
+  /** Workers started in a call-in turn, by worker id (`CallInWork`): kept in the owner's settings, so a restart keeps them. */
+  private callInWork(): Record<string, CallInWork> {
+    const bot = this.owner;
+    if (!bot.callInWorkCache) {
+      const saved = bot.store.loadSettings().callInWork;
+      const now = Date.now();
+      bot.callInWorkCache = Object.fromEntries(Object.entries(saved && typeof saved === "object" ? saved as Record<string, CallInWork> : {})
+        .filter(([, work]) => work && typeof work.caller === "string" && typeof work.until === "number" && work.until > now));
+    }
+    return bot.callInWorkCache;
+  }
+  private callInWorkCache: Record<string, CallInWork> | null = null;
+
+  /** A worker just started: in a call-in turn, its news is to go back to the bot that called it in. */
+  private linkCallInWork(workerId: string) {
+    const turn = this.turn ?? this.owner.turn;
+    if (!turn?.open || !turn.callIn || !turn.callInAsked) return;
+    const work = this.callInWork();
+    work[workerId] = { caller: turn.callIn, asked: turn.callInAsked ?? "", until: Date.now() + CALL_IN_WORK_MS };
+    this.owner.store.saveSetting("callInWork", work);
+  }
+
+  /** `turn` takes a worker's report or note: if that worker was started for a bot's @, its reply goes back there too. */
+  private relayIfCallInWork(turn: Turn, workerId: string | null | undefined) {
+    const work = workerId ? this.callInWork()[workerId] : undefined;
+    if (work && work.until > Date.now() && turn.open && turn.origin !== "tidy") turn.relayTo = work;
   }
 
   /**
@@ -1255,12 +1294,12 @@ export class Bot {
    * and this head woken with the <app_worker_note> message, or the note queued behind its turn. The run goes on.
    * Also the owner's side of a note from a worker another bot runs (the registry routes it here, `text` its words).
    */
-  workerNote(note: Pick<WorkerNote, "kind" | "name" | "message" | "files">, text: string): boolean {
+  workerNote(note: Pick<WorkerNote, "kind" | "name" | "message" | "files"> & { id?: string }, text: string): boolean {
     const bot = this.options.primary ?? this;
     if (this.shuttingDown || this.problem || this.profile.problem || bot.shuttingDown) return false;
     try {
       bot.add({ id: newId(), role: "relay", text: workerNoteLine(note), date: toSwiftDate() });
-      bot.deliverTo(this.engine, text, null, { origin: "app" });
+      this.relayIfCallInWork(bot.deliverTo(this.engine, text, null, { origin: "app" }), note.id);
       return true;
     } catch (error) { this.log(`worker note not delivered: ${(error as Error).message}`); return false; }
   }
@@ -3325,6 +3364,7 @@ export class Bot {
         const turn = this.backgroundTurn(head);
         // The app's worker id is authoritative even when the report is not a hand-off.
         if (item.taskId) turn.ended.push(item.taskId);
+        this.relayIfCallInWork(turn, item.taskId);
         // The report of a worker that owns a hand-off goes back as that hand-off's reply (`managedWorkerReportStarted`).
         const handoff = item.taskId ? this.managedTaskHandoffs.get(item.taskId) : undefined;
         if (item.taskId && handoff) {
@@ -3596,6 +3636,8 @@ export class Bot {
         // Initial ownership comes from the Agent call, never from whichever turn is now visible.
         if (this.subagents.started(item)) this.subagentChanged(this.subagents.get(item.id));
         if (item.background) this.addBackgroundTask(this.subagents.get(item.id)?.id ?? item.id, "agent", item.description);
+        // A worker started for a bot's @: its news goes back to that bot (`callInWork`).
+        if (isWorkerType(item.type)) this.linkCallInWork(item.id);
         // A worker for handed-over work: its report carries the hand-back.
         if ((this.engine === "codex" || this.engine === "agy") && this.turn?.conducted && this.turn.handoffId && (item.type === "codex-worker" || item.type === "agy-worker" || item.type === "ccb-core:component-editor")) {
           this.managedTaskHandoffs.set(item.id, this.turn.handoffId);
@@ -3775,6 +3817,7 @@ export class Bot {
         this.notice(`Botling 2.0 cannot do this yet, so nothing happened: ${what.join("; ")}.`);
       }
       this.afterReplyHooks(record);
+      if (turn.relayTo && turn.relayTo.until > Date.now()) this.owner.options.callInFollowUp?.(turn.relayTo.caller, turn.relayTo.asked, record);
       // What it said covers the subagents that ended so far.
       this.pendingEnded = [];
     }

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Bot, GuestAnswer } from "./bot";
 import { writeFileAtomic } from "./durable/atomic";
 import {
-  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
+  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botFollowUpNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
   isPass, mentionBody, mentioned, quoteName, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
@@ -332,7 +332,7 @@ export class Conversations {
       const asked = ask ?? (caller ? `@${member.name} ${caller.body}` : (newest ? chat.lines().find((line) => line.id === newest)?.text : undefined) ?? "");
       let answer: GuestAnswer;
       try {
-        answer = await bot.groupTurn(prompt, this.timing.busyNamed, this.timing.answerNamed, { callIn: chat.id });
+        answer = await bot.groupTurn(prompt, this.timing.busyNamed, this.timing.answerNamed, { callIn: chat.id, ...(caller ? { asked: caller.body } : {}) });
       } catch (error) {
         answer = { kind: "failed", why: (error as Error).message || "Its turn could not start." };
       } finally {
@@ -361,6 +361,25 @@ export class Conversations {
       this.deps.refreshWaiting();
     }
     if (unheard.length) { const words = `Did not answer this time: ${unheard.join(", ")}.`; if (caller) this.failed(chat, words); else chat.appNotice(words); }
+  }
+
+  /**
+   * `callee`'s reply in its own chat on the news of a worker it started when called into `callerId`'s chat
+   * (`callInFollowUp`): posted there as its line, and a bot that called it in is woken with it like its answer.
+   * Only when it was a bot's @ (`asked` set): a call-in you made shows its news in its own chat, where you go.
+   */
+  callInFollowUp(callerId: string, callee: Bot, asked: string, record: ChatRecord) {
+    const chat = this.deps.bot(callerId);
+    if (!chat || chat === callee || !asked || !(record.text.trim() || record.choices?.length)) return;
+    const member = { id: callee.id, name: this.speakerName(callee.id) ?? callee.profile.name };
+    const line: ChatRecord = { id: newId(), role: "bot", text: record.text, date: toSwiftDate(), sourceID: member.id };
+    if (record.engine) line.engine = record.engine;
+    if (record.choices) line.choices = record.choices;
+    if (record.questions) line.questions = record.questions;
+    if (record.displays) line.displays = record.displays;
+    chat.post(line);
+    this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
+    chat.appMessage(botFollowUpNote({ callee: member.name, question: asked, news: record.text, choices: record.choices?.map((choice) => choice.label) }));
   }
 
   /** Who answers in `chatId` now (null: nobody); `guest`, the bot that starts or stops answering there, is drawn again too. */
