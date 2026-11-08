@@ -93,12 +93,12 @@ describe("navigation v5, part 3: pins, Scheduled, New sub bot, Archive", () => {
   const bots = [base, sub("r", "Release", { working: true }), sub("n", "Nightly audit"), sub("i", "i18n")];
   const rows = bots.slice(1).map((bot) => subBotRow(bot, none, 0, bot.id === "n" ? [{ id: "c", kind: "legacy", task: "t", title: "t", schedule: "Every day 09:00", cron: "0 9 * * *", timezone: "system_local", status: "enabled", next: new Date(86_400_000).toISOString() }] : []));
   const picker = (over: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SubBotPicker, { rows, onOpen() {}, onClose() {}, ...over }));
-  it("a pinned row sits under Pinned with its ⌘⇧N key and a ⋮⋮ handle to drag; others offer ☆ Pin", () => {
-    const markup = picker({ pinned: ["i"], pinKeys: ["⌘⇧1", "⌘⇧2"], onPin() {}, onMovePin() {} });
+  it("a pinned row sits under Pinned with its ⌘⌥N key and a ⋮⋮ handle to drag; others offer ☆ Pin", () => {
+    const markup = picker({ pinned: ["i"], pinKeys: ["⌘⌥1", "⌘⌥2"], onPin() {}, onMovePin() {} });
     expect(markup.indexOf(">Pinned<")).toBeGreaterThan(-1);
     expect(markup.indexOf(">Pinned<")).toBeLessThan(markup.indexOf(">Active<"));
     expect(markup).toMatch(/data-pinned="true"[^>]*draggable="true"|draggable="true"[^>]*data-pinned="true"/);
-    expect(markup).toContain('<span class="sbn-time sbn-key">⌘⇧1</span>');
+    expect(markup).toContain('<span class="sbn-time sbn-key">⌘⌥1</span>');
     expect(markup).toContain('class="sbn-handle"');
     expect(markup).toContain('aria-label="Unpin i18n"');
     expect(markup).toContain('aria-label="Pin Release"');

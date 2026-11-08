@@ -39,7 +39,7 @@ import { flashMs, headerNav, leaveMark, movePinned, newSinceMark, newSubBotAsk, 
 
 /** Where you left each project bot for its sub bot (its newest line then): the chat page's "New while you were in X". */
 const leaveMarks: { current: LeaveMarks } = { current: {} };
-/** ⌘⇧1–9's shortcut ids, by the number. */
+/** ⌘⌥1–9's shortcut ids, by the number. */
 const PINNED_KEYS = ([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => `pinnedSubBot${n}` as const);
 const pinnedNumber = (id: string | null | undefined): number | null => { const n = /^pinnedSubBot([1-9])$/.exec(id ?? "")?.[1]; return n ? Number(n) : null; };
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
@@ -193,7 +193,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     const target = shown ? roomStep(direction, shown, current.bots, lastRooms.current) : null;
     if (target) { setSubBotsOpen(false); setError(null); void store.select(target); }
   }, [store]);
-  // Pinned sub bots (the menu's Pinned section, ⌘⇧1–9), kept in settings in the order dragged.
+  // Pinned sub bots (the menu's Pinned section, ⌘⌥1–9), kept in settings in the order dragged.
   const pinnedSubBots = view.settings?.pinnedSubBots ?? [];
   const setPinnedSubBots = useCallback((change: (now: string[]) => string[]) => {
     const now = (store.getView().settings?.pinnedSubBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));

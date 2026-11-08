@@ -192,7 +192,7 @@ export function movePinned(pinned: readonly string[], id: string, to: number): s
   return rest;
 }
 
-/** ⌘⇧N: the N-th pinned sub bot of the project bot on screen (inside a sub bot: of its project bot), or null. */
+/** ⌘⌥N: the N-th pinned sub bot of the project bot on screen (inside a sub bot: of its project bot), or null. */
 export function pinnedTarget(n: number, bot: BotView, bots: BotView[], pinned: readonly string[]): string | null {
   const project = bot.parent ?? bot.id;
   const mine = pinned.filter((id) => bots.some((candidate) => candidate.id === id && candidate.parent === project));

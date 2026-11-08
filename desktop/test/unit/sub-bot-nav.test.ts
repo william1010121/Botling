@@ -140,7 +140,7 @@ describe("⌘[ and ⌘] between the project bot and its sub bot", () => {
   });
 });
 
-// ---- Navigation v5, part 3: Scheduled, Pinned, ⌘⇧1–9, drag order, "New while you were in X", reduced motion.
+// ---- Navigation v5, part 3: Scheduled, Pinned, ⌘⌥1–9, drag order, "New while you were in X", reduced motion.
 import type { RoutineView } from "../../src/contract";
 import { flashMs, leaveMark, movePinned, newSinceMark, pinnedTarget, togglePinned, whenText } from "../../src/renderer/sub-bot-nav";
 
@@ -185,7 +185,7 @@ describe("pinned sub bots", () => {
     expect(movePinned(["a", "b", "c"], "x", 0)).toEqual(["a", "b", "c"]);
     expect(movePinned(["a", "b", "c"], "b", 9)).toEqual(["a", "c", "b"]);
   });
-  it("⌘⇧N opens the N-th pinned sub bot of the project bot on screen (or its sibling's project)", () => {
+  it("⌘⌥N opens the N-th pinned sub bot of the project bot on screen (or its sibling's project)", () => {
     const bots = [base, sub("a", "A"), sub("b", "B"), { ...base, id: "p2" }, sub("z", "Z", { parent: "p2" })];
     expect(pinnedTarget(1, base, bots, ["z", "b", "a"])).toBe("b");
     expect(pinnedTarget(2, bots[1]!, bots, ["z", "b", "a"])).toBe("a");

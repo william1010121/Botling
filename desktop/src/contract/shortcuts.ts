@@ -6,7 +6,7 @@
 // Plugin commands take keys here too (plugin-platform.md §3.3 `keybindings`): a binding's id is then the
 // command id ("uptime.refresh"), its default the manifest's key, and app shortcuts and system keys win.
 
-/** ⌘⇧1–9: the pinned sub bots of the project bot on screen, in their pinned order. */
+/** ⌘⌥1–9: the pinned sub bots of the project bot on screen, in their pinned order. */
 export type PinnedSubBotShortcut = `pinnedSubBot${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 export type ShortcutId = "search" | "settings" | "subBots" | "roomBack" | "roomForward" | PinnedSubBotShortcut | "toggleSidebar" | "toggleRightPanel" | "toggleWorkers" | "reload" | "forceReload" | "reloadChat";
 export type ShortcutGroup = "navigation" | "panels" | "view";
@@ -19,8 +19,8 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: "subBots", group: "navigation", default: "Mod+Shift+S" },
   { id: "roomBack", group: "navigation", default: "Mod+[" },
   { id: "roomForward", group: "navigation", default: "Mod+]" },
-  // (Mod+Shift+3/4/5 are also macOS's screenshot keys, which the system takes first unless they are turned off; rebind here.)
-  ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n): ShortcutDef => ({ id: `pinnedSubBot${n}`, group: "navigation", default: `Mod+Shift+${n}` })),
+  // Mod+Alt, not Mod+Shift as first designed: macOS takes Cmd+Shift+3/4/5 for screenshots before the app sees them.
+  ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n): ShortcutDef => ({ id: `pinnedSubBot${n}`, group: "navigation", default: `Mod+Alt+${n}` })),
   { id: "toggleSidebar", group: "panels", default: "Ctrl+Cmd+S" },
   { id: "toggleRightPanel", group: "panels", default: "Ctrl+Cmd+I" },
   { id: "toggleWorkers", group: "panels", default: "Mod+Shift+W" },

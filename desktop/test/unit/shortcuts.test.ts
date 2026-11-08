@@ -10,11 +10,17 @@ describe('shortcut registry', () => {
   it('lists every app shortcut with today\'s default keys', () => {
     const defaults = Object.fromEntries(SHORTCUTS.map(s => [s.id, s.default]));
     expect(defaults).toEqual({ search: 'Mod+K', settings: 'Mod+,', subBots: 'Mod+Shift+S', roomBack: 'Mod+[', roomForward: 'Mod+]',
-      pinnedSubBot1: 'Mod+Shift+1', pinnedSubBot2: 'Mod+Shift+2', pinnedSubBot3: 'Mod+Shift+3', pinnedSubBot4: 'Mod+Shift+4', pinnedSubBot5: 'Mod+Shift+5',
-      pinnedSubBot6: 'Mod+Shift+6', pinnedSubBot7: 'Mod+Shift+7', pinnedSubBot8: 'Mod+Shift+8', pinnedSubBot9: 'Mod+Shift+9', toggleSidebar: 'Ctrl+Cmd+S', toggleRightPanel: 'Ctrl+Cmd+I', toggleWorkers: 'Mod+Shift+W',
+      pinnedSubBot1: 'Mod+Alt+1', pinnedSubBot2: 'Mod+Alt+2', pinnedSubBot3: 'Mod+Alt+3', pinnedSubBot4: 'Mod+Alt+4', pinnedSubBot5: 'Mod+Alt+5',
+      pinnedSubBot6: 'Mod+Alt+6', pinnedSubBot7: 'Mod+Alt+7', pinnedSubBot8: 'Mod+Alt+8', pinnedSubBot9: 'Mod+Alt+9', toggleSidebar: 'Ctrl+Cmd+S', toggleRightPanel: 'Ctrl+Cmd+I', toggleWorkers: 'Mod+Shift+W',
       reload: 'Mod+R', forceReload: 'Mod+Shift+R', reloadChat: 'Mod+Alt+R' });
     expect(new Set(SHORTCUTS.map(s => s.default)).size).toBe(SHORTCUTS.length);
     expect(FIXED_SHORTCUTS.length).toBeGreaterThan(5);
+  });
+  it('pinned sub bots default to Mod+Alt+1–9 (macOS keeps Cmd+Shift+3/4/5 for screenshots), clashing with no app, fixed or built-in plugin key', () => {
+    const pinned = SHORTCUTS.filter(s => s.id.startsWith('pinnedSubBot'));
+    expect(pinned.map(s => s.default)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `Mod+Alt+${n}`));
+    const others = [...SHORTCUTS.filter(s => !pinned.includes(s)).map(s => s.default), ...FIXED_SHORTCUTS.map(s => s.combo), 'Mod+J', 'Mod+Shift+M'];
+    for (const s of pinned) expect(others).not.toContain(s.default);
   });
   it('falls back to the default for unknown, malformed or missing bindings', () => {
     const overrides = normalizeOverrides({ search: 'Mod+L', bogus: 'Mod+X', settings: 'nonsense', reload: 42, toggleTerminal: 'Shift+J' });

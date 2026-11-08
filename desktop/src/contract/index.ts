@@ -669,7 +669,7 @@ export const SettingsView = z.strictObject({
   pinnedBots: z.array(BotId).max(200),
   /** Bots the user put away in the left column's Idle group, in the order they were sent (never automatic); absent: none. */
   idleBots: z.array(BotId).max(200).optional(),
-  /** Sub bots pinned in the header's Sub bots menu (⌘⇧1–9), in the order dragged there; absent: none. */
+  /** Sub bots pinned in the header's Sub bots menu (⌘⌥1–9), in the order dragged there; absent: none. */
   pinnedSubBots: z.array(BotId).max(200).optional(),
   /** Developer mode (1.x's `developerMode`): the project that is Botling's own source gets what you flag as "not right". Phase 5a. */
   developerMode: z.boolean(),

@@ -17,13 +17,13 @@ function Badge({ badge }: { badge: SubBotBadge }) {
 
 const dotWords: Record<SubBotRow["dot"], string> = { working: "working", new: "new report", asks: "waits on you", error: "error", idle: "idle" };
 
-/** Pins: the order (ids), the ⌘⇧N labels, pin/unpin and drag within Pinned. */
+/** Pins: the order (ids), the ⌘⌥N labels, pin/unpin and drag within Pinned. */
 interface Pins { pinned: readonly string[]; keys: readonly string[]; onPin: (botId: string) => void; onMove: (botId: string, to: number) => void }
 
 function MenuRow({ row, current, onOpen, pins, pinnedAt = -1 }: { row: SubBotRow; current: boolean; onOpen: (botId: string) => void; pins?: Pins | null; pinnedAt?: number }) {
   const [over, setOver] = useState(false);
   const pinned = pins ? pins.pinned.includes(row.id) : false;
-  // A pinned row's corner shows its ⌘⇧N (the first nine); the others their state word or time.
+  // A pinned row's corner shows its ⌘⌥N (the first nine); the others their state word or time.
   const key = pinnedAt >= 0 ? pins?.keys[pinnedAt] : undefined;
   const corner = current ? <span className="sbn-check" aria-hidden="true">✓</span>
     : row.badge && row.badge.kind !== "time" ? <Badge badge={row.badge} />
@@ -57,7 +57,7 @@ function MenuRow({ row, current, onOpen, pins, pinnedAt = -1 }: { row: SubBotRow
   return (
     <div className={`sbn-item${over ? " drop" : ""}`} data-pinned={pinnedAt >= 0 ? "true" : undefined} {...drag}>
       {button}
-      <button type="button" className={`sbn-pin${pinned ? " on" : ""}`} aria-label={`${pinned ? "Unpin" : "Pin"} ${row.name}`} title={pinned ? "Unpin" : "Pin to the top (⌘⇧1–9)"}
+      <button type="button" className={`sbn-pin${pinned ? " on" : ""}`} aria-label={`${pinned ? "Unpin" : "Pin"} ${row.name}`} title={pinned ? "Unpin" : `Pin to the top${pins.keys[0] ? ` (${pins.keys[0]}…)` : ""}`}
         onClick={() => pins.onPin(row.id)}>{pinned ? "★" : "☆ Pin"}</button>
     </div>
   );
@@ -94,7 +94,7 @@ function NewSubBotForm({ onNew, onDone }: { onNew: (name: string, purpose: strin
 export function SubBotPicker({ rows, currentId = null, parent = null, backKey = "", onOpen, onClose, pinned, pinKeys = [], onPin, onMovePin, onNew, onArchive, startNew = false }: {
   rows: SubBotRow[]; currentId?: string | null; parent?: BotView | null; backKey?: string;
   onOpen: (botId: string) => void; onClose: (refocus: boolean) => void;
-  /** Pinned sub bot ids in order, and the ⌘⇧1–9 labels (Pinned section, ☆ Pin, drag). */
+  /** Pinned sub bot ids in order, and the ⌘⌥1–9 labels (Pinned section, ☆ Pin, drag). */
   pinned?: readonly string[]; pinKeys?: readonly string[]; onPin?: (botId: string) => void; onMovePin?: (botId: string, to: number) => void;
   /** "+ New sub bot…" in the footer (absent: not offered); `startNew` opens with its form. */
   onNew?: (name: string, purpose: string) => Promise<void>; startNew?: boolean;
