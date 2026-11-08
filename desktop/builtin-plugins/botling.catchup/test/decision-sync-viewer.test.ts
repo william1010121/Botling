@@ -7,12 +7,11 @@ import { setLanguage } from '../../../../Web/src/i18n';
 import { mediaHTML, renderMarkdown } from '../../../../Web/src/markdown';
 import { messageElement } from '../../../../Web/src/messages';
 import { staticSourcePage } from '../../../../Web/src/source-snapshot';
-import { taskCardChipHTML } from '../../../../Web/src/task-cards';
 import type { ChatState, MessageView } from '../../../../Web/src/types';
 import { setPage } from '../src/page';
 import { SummaryViewer } from '../src/viewer';
 
-setPage({ render: renderMarkdown, media: (url, label) => mediaHTML(url, label), taskChip: taskCardChipHTML });
+setPage({ render: renderMarkdown, media: (url, label) => mediaHTML(url, label) });
 
 const option = (id:string,label:string) => ({id,label,detail:null,recommended:false});
 const message = (id:string,extra:Partial<MessageView>):MessageView => ({id,role:'bot',text:'Design approval',stamp:null,avatar:null,choices:[option('yes','Implement'),option('no','Revise')],chosen:null,answer:null,open:true,attachments:null,replyTo:null,replyPreview:null,openable:false,...extra});

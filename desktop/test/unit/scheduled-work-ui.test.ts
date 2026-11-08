@@ -23,7 +23,7 @@ it("draws wake-up and cron countdowns in the existing task list, then clears com
     { ...base, id: "wake", kind: "wakeup", title: "Retry" }, { ...base, id: "cron", kind: "cron", title: "Logs", schedule: "*/30 * * * *", recurring: true },
   ];
   const messages = [messageView({ id: "r1", role: "bot", text: "Scheduled.", date, backgroundTasks }), messageView({ id: "r2", role: "bot", text: "More news.", date })];
-  const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] }, new Date(now));
+  const { state } = chatState(bot, { botId: "B", messages, running: null, live: [] }, new Date(now));
   expect(state.messages[0]!.tasks).toBeNull();
   const tasks = state.messages[1]!.tasks!;
   expect(tasks.map((task) => task.message)).toEqual(["r1", "r1"]);
@@ -44,5 +44,5 @@ it("draws wake-up and cron countdowns in the existing task list, then clears com
   expect(strip.querySelector(".task-output")?.textContent).toBe(reply.text);
   for (const message of messages) for (const task of message.backgroundTasks ?? []) { task.status = "completed"; task.ended = now; }
   messages.push(messageView({ id: "u", role: "user", text: "Next task", date: toSwiftDate(now + 1) }));
-  expect(chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] }).state.messages.flatMap((message) => message.tasks ?? [])).toEqual([]);
+  expect(chatState(bot, { botId: "B", messages, running: null, live: [] }).state.messages.flatMap((message) => message.tasks ?? [])).toEqual([]);
 });

@@ -2,9 +2,9 @@
 //   chat.json        its chat lines (the newest HISTORY_LIMIT), an array of ChatMessage
 //   bot.json         its settings (model, alwaysAllowed, unread, …); keys 2.0 does not use are kept
 //   subagents.json + subagents/<id>.jsonl      2.1+: a small index, and each subagent's steps appended to its own file
-//   tasks.json, pins.json, specs.json          complete atomic files
+//   pins.json, specs.json                      complete atomic files
+//   tasks.json       no longer read or written (task cards are gone, 2026-11-08); still cleared with the chat
 //   head.json        2.0 only: the claude session its head resumes
-//   done-days.json   2.0 only: when its tasks were finished, the last 14 days (the whiteboard's chart)
 // Every write is atomic. A file that exists but cannot be read is never replaced: the bot is
 // reported as broken instead, and the file stays for the user (or 1.x) to look at.
 import { existsSync, readFileSync, rmSync } from "node:fs";
@@ -133,15 +133,6 @@ export class BotStore {
 
   /** One subagent's steps and earlier runs, read from its file. */
   readSubagentSteps(id: string): SubagentHistory { return this.subagents.readSteps(id); }
-
-  /** When its tasks were finished (done-days.json, 2.0 only), as kept; null: none or unreadable. */
-  loadDoneLog(): unknown {
-    try { return readJSON(this.path("done-days.json")) ?? null; } catch { return null; }
-  }
-
-  saveDoneLog(value: unknown) {
-    writeFileAtomic(this.path("done-days.json"), JSON.stringify(value));
-  }
 
   loadHead(): HeadState | null {
     try {

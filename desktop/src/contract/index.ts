@@ -109,7 +109,11 @@ export const TaskAgentView = z.strictObject({
 });
 export type TaskAgentView = z.infer<typeof TaskAgentView>;
 
-/** A task card (1.20's TaskCard): one piece of work, kept current by the bot's <task> lines. */
+/**
+ * A task card (1.20's TaskCard). Task cards were removed in 2.5: nothing makes them any more, and `workspace.tasks`
+ * answers an empty list. The shape stays for plugins that still name it.
+ * @deprecated
+ */
 export const TaskView = z.strictObject({
   id,
   name: z.string().max(400),
@@ -477,8 +481,6 @@ export const BotView = z.strictObject({
   callIns: z.array(z.strictObject({ id: BotId, state: z.enum(["answering", "queued"]) })).max(100).optional(),
   /** The chat it is answering a call-in in right now (null: none). */
   answeringIn: BotId.nullable().optional(),
-  /** Its tasks running or waiting on you ("3 tasks" beside its name; 1.x's `openTaskCount`). */
-  openTasks: z.number().int().nonnegative().optional(),
   /** When its chat's newest line was said (ISO-8601; null: no lines): the column lists chats newest first (`lastActivity`). Phase 5a. */
   lastActivity: z.string().max(40).nullable().optional(),
   /** The bot's own component list (bot.json `components`); null: no list (a group has every component). Phase 5a. */
@@ -554,8 +556,7 @@ const PluginName = z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/);
 /**
  * What a plugin's web part draws among a chat's messages (chat extension v2, `chat.decorate`): a card
  * that folds the lines in `fold` behind it (drawn before the first), or one after the line `after`, or one under the words of the message `under`.
- * `tasks`: the task cards it is about, which the page hands the web part as live chips; `data` is the
- * plugin's own, for its web part.
+ * `tasks` is accepted and ignored (task cards were removed in 2.5); `data` is the plugin's own, for its web part.
  */
 export const ChatDecoration = z.strictObject({
   plugin: PluginName,
@@ -912,8 +913,6 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.ignoreQuestion"), botId, messageId: id }),
   /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */
   z.strictObject({ type: z.literal("chat.react"), botId, messageId: id, emoji: z.string().min(1).max(16), present: z.boolean() }),
-  /** Marks one task card complete. Its workers keep running. */
-  z.strictObject({ type: z.literal("task.complete"), botId, taskId: id }),
   /** A subagent's own conversation (the Agent call's id). */
   z.strictObject({ type: z.literal("subagent.view"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   /** Settles a subagent's row out of the left column into the right panel's "Settled" (false: back). It keeps working. */
@@ -1103,7 +1102,7 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.complete", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
+  "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
@@ -1146,7 +1145,6 @@ export interface ChatSnapshot {
   running: RunningView | null;
   /** What the running turn is doing now (before its reply has words). */
   live: StepView[];
-  tasks: TaskView[];
   /** Every turn under way (with two heads, both may work at once). */
   runs: RunView[];
   /** A bot with two heads; null with one. */
@@ -1173,7 +1171,6 @@ export interface Results {
   "agent.stop": { agentId: string; stopped: boolean };
   "agent.group": { ownerBotId: string; agentIds: string[] };
   "subbot.close": { closed: boolean; parentBotId: string; returned: number; stopped: number };
-  "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
   "bots.remove": { removed: boolean };
   "results.list": { results: ResultView[] };
@@ -1270,7 +1267,6 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("message.updated"), botId, message: MessageView }),
   /** A line went (a reply with nothing to show: only <no-reply/> or reactions; a cut-off turn that had said nothing). */
   z.strictObject({ type: z.literal("message.removed"), botId, messageId: id }),
-  z.strictObject({ type: z.literal("tasks.updated"), botId, tasks: z.array(TaskView) }),
   z.strictObject({ type: z.literal("subagent.updated"), botId, subagent: SubagentView }),
   // Identity is available before the reply record exists; optional for older event producers.
   z.strictObject({ type: z.literal("turn.started"), botId, turnId: id, messageId: id, head: Engine.optional() }),

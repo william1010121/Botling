@@ -14,7 +14,7 @@ const rowMarkup = (extra: Record<string, unknown>) => renderToStaticMarkup(creat
 
 describe("a bot row", () => {
   it("shows only the blue unread number, hidden at zero; no needs-you number and no task count", () => {
-    const both = rowMarkup({ counts: { unread: 3, needsYou: 1 }, bot: { ...base, openTasks: 5 } });
+    const both = rowMarkup({ counts: { unread: 3, needsYou: 1 }, bot: base });
     expect(both).toContain('<span class="badge" aria-hidden="true">3</span>');
     expect(both).not.toContain("badge waiting");
     expect(both).not.toContain("task-count");

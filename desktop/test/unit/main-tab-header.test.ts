@@ -28,7 +28,7 @@ async function render(botId: string, extra: Partial<WorkspaceView> = {}, whitebo
   // The whiteboard off unless asked, as after picking Chat: this test is about the plugin tabs.
   localStorage.setItem("botling.mainWhiteboard", whiteboard ? "1" : "0");
   const defaults = new WorkspaceStore(async () => { throw Error("Unexpected snapshot"); }).getView();
-  let view: WorkspaceView = { ...defaults, ready: true, bots: [bot(MAIN, "main", "Main bot"), bot(PROJECT, "manager", "Site")], settings: settingsView({}), plugins, chat: { botId, messages: [], running: null, live: [], tasks: [] }, ...extra };
+  let view: WorkspaceView = { ...defaults, ready: true, bots: [bot(MAIN, "main", "Main bot"), bot(PROJECT, "manager", "Site")], settings: settingsView({}), plugins, chat: { botId, messages: [], running: null, live: [] }, ...extra };
   const listeners = new Set<() => void>();
   const subscribe = (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); };
   const store = { getView: () => view, getChatView: () => view, subscribe, subscribeChat: subscribe, showBoard: () => {} } as unknown as WorkspaceStore;

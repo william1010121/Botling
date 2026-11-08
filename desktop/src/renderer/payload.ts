@@ -1,8 +1,8 @@
 // The chat page from Web/src (the Swift app's chat surface) draws a `ChatState`, which the Swift
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged; optional fields it does not receive are treated as absent.
-import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PluginsView, RoutineView, SubagentView, TaskView } from "../contract";
-import type { ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView, TaskChipView } from "../../../Web/src/types";
+import type { BotView, ChatDecoration, ComponentInfoView, DisplayView, HeadsView, MessageView, PluginsView, RoutineView, SubagentView } from "../contract";
+import type { ComponentInfo, DisplayView as WebDisplay, PinSize, DecorationView, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskChipView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { attachmentURL } from "../contract/attachment-url";
 import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
@@ -42,28 +42,6 @@ function step(view: NonNullable<MessageView["steps"]>[number]): WebStep {
     id: view.id, kind: view.kind === "message" ? "text" : view.kind, tool: view.tool, title: view.title,
     detail: view.detail, output: view.output, failed: view.failed, done: view.done, images: view.images, status: view.status ?? null, count: view.count ?? null,
   };
-}
-
-/** `TaskBook.staleAfter`: a running card with no news this long, nothing of it at work, may be stuck. */
-const STALE_MS = 10 * MINUTE;
-
-/** Each task's chip under the replies that belong to it; its latest reply says how it stands (`ChatPayload.TaskCardChip`). */
-export function taskChips(tasks: TaskView[], messages: MessageView[], working: boolean, now: Date): Map<string, TaskCardView[]> {
-  const chips = new Map<string, TaskCardView[]>();
-  for (const task of tasks) {
-    const mine = new Set(task.messageIds);
-    const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id;
-    const stale = task.state === "running" && !working && !task.atWork && now.getTime() - new Date(task.updatedAt).getTime() >= STALE_MS;
-    const detail = stale ? "May be stuck"
-      : task.state === "running" ? (task.now ? `Now: ${task.now}` : null)
-      : task.state === "waiting" ? `Waiting on you: ${task.blocked ?? task.now ?? "your reply"}`
-      : null;
-    for (const id of task.messageIds) {
-      const chip: TaskCardView = { id: task.id, name: task.name, state: stale ? "stale" : task.state, owner: task.owner, detail: id === latest ? detail : null };
-      chips.set(id, [...(chips.get(id) ?? []), chip]);
-    }
-  }
-  return chips;
 }
 
 /** Statuses of a routine that will still run. */
@@ -121,16 +99,12 @@ export function headsParts(heads: HeadsView | null | undefined): Pick<ChatState,
   };
 }
 
-/** A plugin's decoration as the page draws it: the task cards it is about as chips, as they stand now. */
-export function decorationView(decoration: ChatDecoration, tasks: TaskView[]): DecorationView {
-  const chips = (decoration.tasks ?? []).flatMap((id) => {
-    const task = tasks.find((candidate) => candidate.id === id);
-    return task ? [{ id: task.id, name: task.name, state: task.state, owner: task.owner } satisfies TaskCardView] : [];
-  });
+/** A plugin's decoration as the page draws it (its `tasks`, from before task cards were removed, are left out). */
+export function decorationView(decoration: ChatDecoration): DecorationView {
   return {
     plugin: decoration.plugin, key: decoration.key,
     ...(decoration.fold ? { fold: decoration.fold } : {}), ...(decoration.after ? { after: decoration.after } : {}), ...(decoration.under ? { under: decoration.under } : {}),
-    tasks: chips.length ? chips : null, data: decoration.data,
+    data: decoration.data,
   };
 }
 
@@ -200,7 +174,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
   const runningIds = new Set(runs.map((run) => run.messageId));
   const shown = chat.messages.filter((message) => !(runningIds.has(message.id) && !message.text));
   const runningShown = !!running && shown.some((message) => message.id === running.messageId);
-  const chips = taskChips(chat.tasks ?? [], chat.messages, !!running, now);
   // ChatPayload.shownBackgroundTasks/backgroundRowIndex: one row at the latest bot reply/notice, with
   // source ids. Finished work clears with your next line; an older task finishing after it still appears.
   const lastUser = chat.messages.findLastIndex((message) => message.role === "user");
@@ -258,7 +231,6 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       reactionEnabled: message.role !== "divider",
       reactions: reactions(message),
       tasks: message.id === backgroundRow && background.length ? background : null,
-      taskCards: message.role === "bot" && !guest ? chips.get(message.id) ?? null : null,
       // Replies before your latest line fold their finished subagents away (still in their steps).
       earlier: index < lastYours && !!steps?.length ? true : null,
       displays: message.displays?.length ? message.displays.map(displayView) : null,
@@ -314,7 +286,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     board,
     // "Make into component" on replies (1.x: every chat but a subagent's).
     feedback,
-    decorations: (chat.decorations ?? []).map((decoration) => decorationView(decoration, chat.tasks ?? [])),
+    decorations: (chat.decorations ?? []).map((decoration) => decorationView(decoration)),
   };
   return { state, extras };
 }

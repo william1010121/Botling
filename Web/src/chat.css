@@ -787,25 +787,6 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 .reaction-message-column .choice { min-width:0; flex-wrap:wrap; }
 .reaction-message-column .choice .detail { white-space:normal; }
 
-/* Task cards: a chip under each reply of a task, in its state's color (the same shape as the
-   background-work pills); pressed, the right panel opens the task. Also beside a summary's bullet. */
-.message-footer > .task-card-chips { display: contents; }
-.task-card-chip {
-  --task-card-bg: var(--info-bg); --task-card-fg: var(--link);
-  display: inline-flex; align-items: center; gap: 5px; height: 20px; max-width: 100%; min-width: 0; padding: 0 9px;
-  border: none; border-radius: 10px; background: var(--task-card-bg); color: var(--task-card-fg);
-  font: inherit; font-size: 11px; line-height: 20px; cursor: pointer; vertical-align: middle;
-}
-.task-card-chip.waiting { --task-card-bg: #2E2617; --task-card-fg: var(--orange-text); }
-.task-card-chip.done { --task-card-bg: var(--done-bg); --task-card-fg: var(--green); }
-.task-card-chip.stale { --task-card-bg: var(--stale-bg); --task-card-fg: var(--error); }
-.task-card-chip.pending, .task-card-chip.stopped { --task-card-bg: var(--chip); --task-card-fg: var(--faint); }
-.task-card-chip:hover { filter: brightness(1.2); }
-.task-card-chip.selected { box-shadow: inset 0 0 0 1px currentColor; }
-.task-card-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
-.task-card-mark { flex: none; font-size: 10px; }
-.task-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
 /* A message folded behind a plugin's decoration (decorations.ts); the timestamp wrapper folds with its row. */
 .row.decoration-folded, .stamped.decoration-folded { display: none; }
 /* A message a decoration showed again in place (a summary's "Show in chat"). */
@@ -893,7 +874,6 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 
 /* The light look (data-theme="light", set by Botling 2 from Settings → Appearance → App) for what has no token. */
 :root[data-theme="light"] .component-frame { color-scheme: light; }
-:root[data-theme="light"] .task-card-chip.waiting { --task-card-bg: #FFF4E2; }
 :root[data-theme="light"] .make-component:hover { color: #6B4FD8; }
 :root[data-theme="light"] .wide-part .component:hover .flag { background: rgba(255, 255, 255, 0.92); }
 :root[data-theme="light"] .mention-file mark { color: #9A5B00; }

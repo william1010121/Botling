@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseReply, saysNothing } from "../../src/core/reply";
-import { botPrompts, CORE_PROMPT_SECTIONS, desktopPrompts, TASK_STAGE_SENTENCE, WHITEBOARD_PICTURE_LINE } from "../../src/core/prompts";
+import { botPrompts, CORE_PROMPT_SECTIONS, desktopPrompts, WHITEBOARD_PICTURE_LINE } from "../../src/core/prompts";
 import { tempDir, until } from "../helpers";
 import { CoreHarness } from "../core-harness";
 import { writeLibrary } from "../fixtures/components";
@@ -41,8 +41,8 @@ describe("the line bots are told", () => {
       expect(system).toContain(`</show> to your reply.\n${WHITEBOARD_PICTURE_LINE}\n`);
     }
     const main = botPrompts({ profile: profile("main") });
-    // The main bot gets no picture line; every bot gets only the <task> stage sentence besides.
-    expect(desktopPrompts(main, profile("main"), "claude", false).system).toBe(main.system.replace(" done or stopped.", ` done or stopped. ${TASK_STAGE_SENTENCE}`));
+    // The main bot gets no picture line and nothing else besides.
+    expect(desktopPrompts(main, profile("main"), "claude", false).system).toBe(main.system);
     expect(WHITEBOARD_PICTURE_LINE).toContain('<whiteboard name="component name" size="1x1">JSON</whiteboard>');
     // It is the core's prompt section that botling.whiteboard's first version repeats byte for byte.
     expect(CORE_PROMPT_SECTIONS).toContainEqual({ id: "botling.whiteboard.picture", text: WHITEBOARD_PICTURE_LINE, after: "show", roles: ["manager", "bot"] });

@@ -81,7 +81,8 @@ describe("botling.catchup's program part", () => {
     await until(() => fake.last()[0]?.data && (fake.last()[0]!.data as { state: string }).state === "ready");
     expect(fake.drawn.map((list) => (list[0]?.data as { state: string }).state)).toEqual(["loading", "ready"]);
     const [summary] = fake.last();
-    expect(summary).toMatchObject({ key: expect.stringMatching(/^unread:/), fold: [id(2), id(3), id(4), id(5)], tasks: [] });
+    expect(summary).toMatchObject({ key: expect.stringMatching(/^unread:/), fold: [id(2), id(3), id(4), id(5)] });
+    expect(summary).not.toHaveProperty("tasks");
     expect(summary!.data).toMatchObject({ kind: "unread", count: 4, state: "ready", model: "gpt-6-luna", requestedBy: null, latest: "Claude: bot 5" });
     expect((summary!.data as { bullets: string[] }).bullets[0]).toMatch(/\[\[source:[0-9A-F-]{36}\]\]$/);
     expect(fake.reads).toEqual([2_000, 2_000, 2_000]);

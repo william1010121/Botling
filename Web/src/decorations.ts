@@ -7,7 +7,6 @@
 // - `under`: the element goes inside that message's own column, last, under its words (a message that has none gets one).
 // Elements carry `decoration-extra`, so the message loop steps over them; a folded row carries
 // `decoration-folded`. Nothing is drawn while you watch a subagent.
-import { post } from "./bridge";
 import { findMessageRow } from "./message-navigation";
 import type { ChatState, DecorationView } from "./types";
 
@@ -26,7 +25,7 @@ export interface DecorationContext {
   find(id: string): HTMLElement | null;
   /** Draw every decoration again (after something only the plugin knows changed, such as a dialog closing). */
   redraw(): void;
-  /** Opens a task in the right panel, as its chip under a reply does. */
+  /** @deprecated Task cards were removed in 2.5; this does nothing. */
   openTask(id: string): void;
 }
 
@@ -180,7 +179,7 @@ export class DecorationLayer {
       row: (id) => row(id),
       find: (id) => row(id) ?? findMessageRow(id),
       redraw: () => queueMicrotask(() => this.redraw()),
-      openTask: (id) => post({ type: "selectTask", id }),
+      openTask: () => {},
     };
   }
 

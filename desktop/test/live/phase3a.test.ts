@@ -95,7 +95,7 @@ describe.skipIf(!live)("Phase 3a, real CLIs", () => {
       { id: "11111111-0000-4000-8000-000000000002", role: "bot", text: "Deploy to staging is still running (step 3 of 5).", date: at(60), engine: "codex" },
       { id: "11111111-0000-4000-8000-000000000003", role: "bot", text: "Should I merge PR #42 now or wait for review?", date: at(120), engine: "claude", choices: [{ label: "Merge now", recommended: true }, { label: "Wait", recommended: false }] },
     ];
-    const prompt = summaryPrompt(messages, null, [], (m) => `Garden · ${m.engine === "codex" ? "Codex" : "Claude"}`);
+    const prompt = summaryPrompt(messages, null, (m) => `Garden · ${m.engine === "codex" ? "Codex" : "Claude"}`);
     const summarize = codexSummarizer({ file: "codex", env: { CODEX_HOME: home() } }, 120_000);
     const bullets = await summarize(prompt, process.env.BOTLING_CATCHUP_MODEL ?? "gpt-6-luna", "en");
     report("catch-up bullets", bullets);

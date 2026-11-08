@@ -249,7 +249,8 @@ describe("the plugin host", () => {
     }`, {}, { displayName: "Board" });
     const c = core(dir, { BOTLING_WAITING_SCAN_MS: "200" });
     const read = await until(() => c.call({ type: "plugins.command", id: "board.read" }).then((r) => r.result, () => null), { timeout: 15_000 });
-    expect(read).toMatchObject({ folder: "Site", status: ["The theme is live."], days: 7, face: true });
+    // workspace.taskHistory still answers an older plugin, always empty: task cards are gone.
+    expect(read).toMatchObject({ folder: "Site", status: ["The theme is live."], days: 0, face: true });
     expect(read.roles).toContain("main");
     expect(read.roles).toContain("manager");
     writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\n- The theme is back up.\n");

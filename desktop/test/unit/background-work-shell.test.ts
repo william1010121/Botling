@@ -11,7 +11,7 @@ import type { BotView } from "../../src/contract";
 it("requests core output for every chip kind and drops a reply after changing chats", async () => {
   const bot: BotView = { id: "B", name: "Main", role: "main", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
   const defaults = new WorkspaceStore(async () => { throw new Error("Unexpected snapshot"); }).getView();
-  let view: WorkspaceView = { ...defaults, ready: true, bots: [bot], chat: { botId: bot.id, messages: [], running: null, live: [], tasks: [] } };
+  let view: WorkspaceView = { ...defaults, ready: true, bots: [bot], chat: { botId: bot.id, messages: [], running: null, live: [] } };
   const listeners = new Set<() => void>();
   const store = { getView: () => view, getChatView: () => view, subscribeChat: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); }, subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); } } as unknown as WorkspaceStore;
   const pending: ((value: { text: string }) => void)[] = [];

@@ -10,7 +10,7 @@ const make = (n: number, fold: string[], botID = "flick"): ChatState => withSumm
   botID, botName: "Garden",
   messages: Array.from({ length: n }, (_, i) => line(`m${i}`, i % 4 === 0 ? "user" : "bot")),
   working: false, avatar: "face", placeholder: "", replyingTo: null, pendingFiles: [], components: {},
-  catchUp: { key: "k", kind: "unread", ids: fold, count: fold.length, heads: null, state: "ready", bullets: ["a"], error: null, model: "m", since: null, until: null, latest: null, manual: false, automatic: false, speakerCounts: null, requestedBy: null, tasks: [] } as never,
+  catchUp: { key: "k", kind: "unread", ids: fold, count: fold.length, heads: null, state: "ready", bullets: ["a"], error: null, model: "m", since: null, until: null, latest: null, manual: false, automatic: false, speakerCounts: null, requestedBy: null } as never,
 });
 const order = () => [...document.querySelectorAll<HTMLElement>("#messages > *")].map((e) => e.dataset.id ?? (e.classList.contains("decoration-extra") ? "DECO" : e.className));
 

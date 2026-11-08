@@ -2,7 +2,6 @@ import { setLanguage, t } from "./i18n";
 import { post } from "./bridge";
 import { buildNear, detailReply, keepFrames, releaseFrames } from "./components";
 import { startTaskTicks, taskOutput } from "./tasks";
-import { jumpToTask } from "./task-cards";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, jumpTo, messageElement, messageMenu, refreshRetryNote, refreshThinkNote, typingElement, updateTypingElement } from "./messages";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
@@ -626,8 +625,6 @@ declare global {
       pluginEvent(plugin: string, event: string, data: unknown): void;
       detailReply(requestID: number, ok: boolean, value: string): void;
       taskOutput(messageID: string, taskID: string, text: string): void;
-      /** "Jump to chat" on a task's card in the right panel: its latest reply, or the decoration that folds it. */
-      jumpToTask(messageID: string, taskID: string): void;
       focus(): void;
       /** Whether the app's window is shown (not minimized, hidden or fully covered). */
       setWindowVisible(visible: boolean): void;
@@ -687,7 +684,6 @@ window.ccb = {
   pluginEvent: (plugin, event, data) => chat.plugins.pluginEvent(plugin, event, data),
   detailReply: (requestID, ok, value) => detailReply(requestID, ok, value),
   taskOutput: (messageID, taskID, text) => taskOutput(messageID, taskID, text),
-  jumpToTask: (messageID, taskID) => jumpToTask(messageID, taskID),
   showPanel: (key) => showPanel(key),
   focus: () => chat.focus(),
   setWindowVisible: (visible) => setWindowVisible(visible),

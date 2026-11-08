@@ -13,7 +13,7 @@ export function detailsFixture() {
       subagentModel: null, subagentHourCache: false, claudeBypassPermissions: false, codexBypassPermissions: false, codexWorkersFollow: true,
       codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: 'sonnet', resultPublishing: 'localOnly', stallReminderMinutes: 15,
       developerMode: false, developerProject: null, updateCheck: false },
-    bots: [primary], chat: { botId, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] },
+    bots: [primary], chat: { botId, messages: [], running: null, live: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] },
   });
   const store = new WorkspaceStore(async botId => snapshot(botId));
   const client = { request: async (cmd: Command) => {

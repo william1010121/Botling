@@ -12,25 +12,24 @@ const root = fileURLToPath(new URL('./dist/', import.meta.url));
 const MAIN = '6A0B0000-0000-4000-8000-000000000002', MAINTAINER = 'DEC0DE00-0000-4000-8000-00000000DEC0';
 const minutes = n => new Date(Date.now() - n * 60_000).toISOString();
 const bot = (id, name, role, extra = {}) => ({ id, name, role, avatar: 'circle', folder: role === 'manager' ? name : '', phase: 'awake', working: false,
-  connection: null, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ['claude'], job: null, subagentRows: [], openTasks: 0, lastActivity: minutes(60), ...extra });
+  connection: null, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ['claude'], job: null, subagentRows: [], lastActivity: minutes(60), ...extra });
 const row = (id, title, status, head = 'claude') => ({ id, title, status, head, startedAt: Date.now() - 600_000, endedAt: status === 'running' ? null : Date.now() - 60_000,
   unsettledAt: null, settled: false, prompt: title });
 const bots = [
   bot(MAIN, 'Main bot', 'main', { unread: 1, lastActivity: minutes(3) }),
-  bot(MAINTAINER, 'Maintainer', 'bot', { openTasks: 4, unread: 2, job: 'Keeps Botling itself in shape', subagentRows: [row('m1', '更新紀錄卡 kit 遷移', 'running'), row('m2', '差異檢視卡審查', 'completed')] }),
-  bot('proj-botling', 'botling', 'manager', { heads: ['claude', 'codex'], working: true, openTasks: 15, lastActivity: minutes(1),
+  bot(MAINTAINER, 'Maintainer', 'bot', { unread: 2, job: 'Keeps Botling itself in shape', subagentRows: [row('m1', '更新紀錄卡 kit 遷移', 'running'), row('m2', '差異檢視卡審查', 'completed')] }),
+  bot('proj-botling', 'botling', 'manager', { heads: ['claude', 'codex'], working: true, lastActivity: minutes(1),
     subagentRows: [row('b1', 'Task 欄累積整合', 'running'), row('b2', 'Implement task panel', 'running', 'codex'), row('b3', 'Rust 接續交付', 'completed')] }),
   bot('proj-jenytsian', 'jenytsian_progress', 'manager', { lastActivity: minutes(30) }),
   bot('proj-csit', 'CSIT', 'manager', { phase: 'asleep', lastActivity: minutes(90) }),
   bot('proj-flux', 'flux-k8s', 'manager', { phase: 'asleep', lastActivity: minutes(200) }),
-  bot('proj-hotel', 'hotel', 'manager', { openTasks: 3, lastActivity: minutes(240) }),
-  bot('proj-rl', 'RL', 'manager', { openTasks: 2, approvals: 1, lastActivity: minutes(300) }),
-  bot('proj-disk', 'disk', 'manager', { openTasks: 1, phase: 'asleep', lastActivity: minutes(400) }),
+  bot('proj-hotel', 'hotel', 'manager', { lastActivity: minutes(240) }),
+  bot('proj-rl', 'RL', 'manager', { approvals: 1, lastActivity: minutes(300) }),
+  bot('proj-disk', 'disk', 'manager', { phase: 'asleep', lastActivity: minutes(400) }),
   bot('bot-news', 'Morning news', 'bot', { job: 'A short news digest each morning', phase: 'asleep', lastActivity: minutes(900) }),
 ];
 const message = (id, role, text, extra = {}) => ({ id, role, text, time: minutes(extra.ago ?? 5), ...Object.fromEntries(Object.entries(extra).filter(([key]) => key !== 'ago')) });
-const task = (id, name, state, now, owner = 'claude') => ({ id, name, state, owner, now, next: null, blocked: null, messageIds: [], updatedAt: minutes(2), createdAt: minutes(120) });
-const chat = (botId, messages, more = {}) => ({ botId, messages, running: null, live: [], tasks: [], runs: [], heads: null,
+const chat = (botId, messages, more = {}) => ({ botId, messages, running: null, live: [], runs: [], heads: null,
   pins: [], floating: [], pinChoices: [], pendingFiles: [], ...more });
 const chats = new Map(bots.map(b => [b.id, chat(b.id, [message(`${b.id}-hello`, 'bot', `Hi, I'm **${b.name}**. This is a synthetic fixture conversation.`, { ago: 50 })])]));
 chats.set('proj-botling', chat('proj-botling', [
@@ -38,9 +37,7 @@ chats.set('proj-botling', chat('proj-botling', [
   message('r1', 'bot', 'The task panel redesign is implemented and packaged in `.11`, awaiting your **Install and restart** confirmation and in-app verification.\n\nThe report redesign is still underway:\n\n- desktop layout: done\n- mobile layout: in review\n- screenshots: pending\n\n```sh\nnode mobile/build.mjs\n```', { ago: 11, engine: 'codex' }),
   message('u2', 'user', '請繼續做', { ago: 4, to: 'claude' }),
   message('r2', 'bot', 'Continuing. I will rebuild the web client and compare it against the desktop app at **1440×900** and **390×844**.', { ago: 3, engine: 'claude' }),
-], { heads: { engines: ['claude', 'codex'], answerWith: 'claude', handoffsOn: true, rounds: null, handoffs: [] },
-  tasks: [task('t1', 'Task 與報告重新設計', 'running', 'Task panel packaged; report redesign underway'), task('t2', '桌面瀏覽器網頁版', 'running', '實作桌面瀏覽器介面並共用元件', 'codex'),
-    task('t3', '手機版', 'running', '實作手機介面與連線流程'), task('t4', 'GitHub 整合與 CI', 'waiting', '盤點工作流程並補齊 CI'), task('t5', 'Bypass release', 'done', 'Verified installable bundle')] }));
+], { heads: { engines: ['claude', 'codex'], answerWith: 'claude', handoffsOn: true, rounds: null, handoffs: [] } }));
 chats.set(MAIN, chat(MAIN, [
   message('m-hi', 'bot', 'Good morning. Three projects moved overnight; **RL** is waiting on you.', { ago: 30 }),
   message('question', 'bot', 'Which direction should we explore?', { ago: 20, choices: [{ label: 'Mobile first', detail: 'Start with the phone', recommended: true, action: null }, { label: 'Desktop first', detail: null, recommended: false, action: null }], chosen: null, answer: null }),

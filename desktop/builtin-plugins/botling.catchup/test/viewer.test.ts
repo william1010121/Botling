@@ -6,10 +6,9 @@ import type { CatchUpView } from "../src/types";
 import { sent } from "../../../../Web/src/bridge";
 import { setLanguage } from "../../../../Web/src/i18n";
 import { mediaHTML, renderMarkdown } from "../../../../Web/src/markdown";
-import { taskCardChipHTML } from "../../../../Web/src/task-cards";
 import { setPage } from "../src/page";
-// The chat page lends the web part its Markdown, media and task chips (web.ts).
-setPage({ render: renderMarkdown, media: (url, label) => mediaHTML(url, label), taskChip: taskCardChipHTML });
+// The chat page lends the web part its Markdown and media (web.ts).
+setPage({ render: renderMarkdown, media: (url, label) => mediaHTML(url, label) });
 const message=(id:string,extra:Partial<MessageView>={}):MessageView=>({id,role:"bot",text:`Original ${id}: First sentence.`,stamp:null,avatar:null,choices:null,chosen:null,answer:null,open:false,attachments:null,replyTo:null,replyPreview:null,openable:false,...extra});
 const a=message("a",{sourceAuthor:"Garden",sourceEngine:"claude",sourceTime:"10:21 PM",choices:[{label:"Stable",detail:"after review",recommended:true},{label:"Canary",detail:null,recommended:false}],chosen:0,answer:"Keep tests. Wait for signing."});
 const b=message("b",{sourceAuthor:"Garden",sourceEngine:"codex",choices:[{label:"Continue",detail:null,recommended:false}],open:true});

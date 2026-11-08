@@ -27,10 +27,10 @@ it("draws the board with Preact: cards, donuts as SVG, a report on press, the in
   render(root);
   for (let i = 0; i < 20 && !root.querySelector(".wb-card"); i++) await new Promise((r) => setTimeout(r, 10));
   const card = root.querySelector(`.wb-card[data-bot="${site.id}"]`)!;
-  expect(card.querySelector(".wb-pill")?.textContent).toBe("2 waiting");
+  expect(card.querySelector(".wb-pill")?.textContent).toBe("1 waiting");
   expect(document.head.querySelector("style")?.textContent).toContain(".wb-canvas");
   expect(document.head.querySelector("style")?.textContent).toContain("--ground");
-  const arc = root.querySelector('[data-donut="tasks"] circle.arc');
+  const arc = root.querySelector('[data-donut="bots"] circle.arc');
   expect(arc?.getAttribute("class")).toContain("arc");
   expect((arc as SVGElement).style.strokeDasharray).not.toBe("");
   card.querySelector<HTMLButtonElement>(".wb-card-open")!.click();

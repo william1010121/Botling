@@ -359,7 +359,6 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     `  2 to 4 options; start the recommended one with * (exactly one), the others with -. Also write the decision into the "${waiting}" section of your memory file. ${CHOICES_NOT_MEMORY_RULE}`,
     `  Once the user picks, you receive the text of the chosen option; carry on with it and move it from "${waiting}" to "${decided}".`,
     QUESTION_GROUP_RULE,
-    "- The app keeps a task card for each piece of work the user gives you. When you take on real work (not a quick answer), keep its card current with one line in your reply, which the app hides from the chat: <task name=\"short name\" now=\"what you are doing\" next=\"what comes next\" blocked=\"what stops you, or empty\" state=\"running\"/>. state is running, waiting (the user must act), done or stopped. Every attribute is optional; leave out what has not changed. For a follow-up to an earlier task, add continues=\"its name\" instead of starting a new one; for two separate pieces of work in one message, write two lines. A task has one owner, the one who took it on; only the owner changes its state or says it is done.",
     "- When auto mode blocks a tool call you need (\"denied by the Claude Code auto mode classifier\"), the app shows the user a card to allow that very call. Never ask the user to add a permission rule or edit .claude/settings.local.json or any settings file by hand, and never write those files yourself: say in one sentence what you wanted to do and why, and no choices block for it. When \"(App: The user allowed …\" arrives, run it again exactly as it was; when they did not allow it, carry on without it.",
     `- When a background task's notification wakes you (a subagent, a background command or a Monitor reporting) and it is only interim (a subagent still waiting on its own work, a Monitor event with nothing new), reply with only <no-reply/> and the app shows nothing. A worker's question (<app_worker_note kind="question">) is never only interim: answer it. A subagent that finished (its hand-back report, or a notification with status completed or failed) is never interim: always tell the user what came of it, even when its report says little ("pending", empty)${completionFollowUp} Likewise report real news from other work (a result, a failure, something the user must decide).`,
     "- Routines support one-time and recurring schedules. On Codex, use app_routines directly: list; create with kind=once, at=ISO-8601 with explicit UTC offset/Z, task, request_id; or kind=recurring, cron=five cron fields, timezone=IANA name, task, request_id. Reuse request_id on retries and retain the returned persisted id. Pause/resume/cancel use that id. To reschedule, cancel and create a new request_id. Confirm only after tool success; show actionable errors. An overdue once job runs on the next check while Botling is running (no OS wakeup). fired means a trigger attempt, not agent startup or task success; delivery_uncertain requires checking chat before explicitly replacing. Do not edit scheduled-routines.json. The tool also lists/cancels/pauses/resumes legacy cron jobs.",
@@ -503,10 +502,6 @@ export function withPluginSections(sections: readonly (PromptSection & { plugin:
   return out;
 }
 
-/** 2.0 only: the `<task>` line's optional `stage`, told right after its states, to every bot. */
-export const TASK_STAGE_SENTENCE = "stage (optional) is built, reviewed, installed or verified, for work that must still be installed or checked before it is really done.";
-const TASK_STATES_SENTENCE = "state is running, waiting (the user must act), done or stopped.";
-
 /** A POSIX shell single-quoted word (paths with spaces or quotes stay one argument). */
 export const shellQuote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 /** A command a plugin gives the bots and its guide (botling.report: `Botling --render-report`, its report-blocks.md). */
@@ -538,13 +533,12 @@ export const REPORT_FIRST_PAGE = `one HTML page (a report page is built from a R
 const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
 /**
- * The instructions as 2.0 gives them: `botPrompts`, plus the `<task>` stage sentence (after its
- * states) for every bot, and the prompt sections (`sections`: by default the whiteboard picture line, after
+ * The instructions as 2.0 gives them: `botPrompts`, plus the prompt sections (`sections`: by default the whiteboard picture line, after
  * the <show> line, for every bot but the main bot; botling.report's report page line after the results rule, for every bot and
  * Codex worker).
  */
 export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "role"> & Partial<Pick<BotProfile, "folder" | "id" | "parent">>, engine: Engine = "claude", claudeWorkers = true, sections: readonly PromptSection[] = CORE_PROMPT_SECTIONS): BotPrompts {
-  let system = prompts.system.replace(TASK_STATES_SENTENCE, `${TASK_STATES_SENTENCE} ${TASK_STAGE_SENTENCE}`);
+  let system = prompts.system;
   // Claude's subagents are app-managed workers (the default; settings.json `claudeWorkers: "native"` keeps the Agent tool).
   const workers = engine === "claude" && claudeWorkers;
   if (workers) {

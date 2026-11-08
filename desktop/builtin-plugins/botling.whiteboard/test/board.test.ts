@@ -1,18 +1,18 @@
 // @vitest-environment jsdom
 // The main bot's whiteboard as botling.whiteboard draws it (whiteboard.test.ts, moved with the page): the summary (numbers,
-// donuts, where the open work is, tasks finished), the Waiting on you and Running lanes and the Idle & asleep shelf; a card's
-// latest line, waiting items and task bar from the bots' own data; pressed, the report with only the parts that have something
+// the bots donut, where the open work is), the Waiting on you and Running lanes and the Idle & asleep shelf; a card's
+// latest line and waiting items from the bots' own data (task cards are gone, 2026-11-08); pressed, the report with only the parts that have something
 // in them. The functions are the ones the app page's Whiteboard.tsx had; the page runs on React here (Preact in the plugin).
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  ageLabel, askCount, boardLanes, boardWeek, botWeek, CARD_LINE_WIDTH, dayKey, doneByDay, highlight, lastActive, lineWidth, nextSteps, openRanking, quietWeeks,
-  shortLine, taskCounts, waitingAsks, waitingCount,
+  ageLabel, askCount, boardLanes, CARD_LINE_WIDTH, highlight, lastActive, lineWidth, nextSteps, openRanking, quietWeeks,
+  shortLine, waitingAsks, waitingCount,
 } from "../src/board";
 import { Whiteboard, type BoardApi } from "../src/ui";
-import type { BoardView, Bot, Entry, Picture, Task, Waiting } from "../src/types";
-import { board, bot, bots, empty, entries, id, main, MAIN, news, paper, site, task, waiting } from "./fixtures";
+import type { BoardView, Bot, Entry, Picture, Waiting } from "../src/types";
+import { board, bot, bots, empty, entries, id, main, MAIN, news, paper, site, waiting } from "./fixtures";
 import { isOpenQuestion, type ChatRecord } from "../../../src/core/store/records";
 
 const display = (extra: Partial<Picture>): Picture => ({ name: "status", data: '{"ok":true}', size: "1x1", command: null, folder: null, status: null, error: null, ranAt: null, ...extra });
@@ -37,12 +37,8 @@ describe("whiteboard data", () => {
     expect(highlight(site, entries[0], waiting)).toBe("The theme is live.");
     expect(highlight(news, entries[2], waiting)).toBe("Morning news");
     expect(highlight(paper, entries[1], waiting)).toBeNull();
-    expect(waitingCount(site, waiting, entries[0])).toBe(2); // Its question and its task waiting on you.
-    expect(taskCounts(entries[0]!.tasks)).toEqual({ waiting: 1, active: 1, done: 1, total: 3 });
-    expect(nextSteps(entries[0]!)).toEqual(["Dark mode", "Test on phones"]);
-    const days = doneByDay(entries[0]!.tasks, Date.now());
-    expect(days).toHaveLength(7);
-    expect(days[6]).toMatchObject({ day: "Today", count: 1 });
+    expect(waitingCount(site, waiting, entries[0])).toBe(1); // Its question.
+    expect(nextSteps(entries[0]!)).toEqual(["Dark mode"]);
   });
 });
 
@@ -63,14 +59,13 @@ describe("whiteboard: terse cards (one short line, as the approved design)", () 
     expect(lineWidth(line)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
     expect(line.startsWith("token-speed 是 Rust CLI")).toBe(true);
   });
-  it("draws no empty task bar for a bot with no tasks, and keeps the main bot's reply to a short excerpt", async () => {
+  it("keeps the main bot's reply to a short excerpt", async () => {
     const reply = `${status}\n\n第二段：很長的說明。`;
     const { host, unmount } = await mount(board(bots, [{ ...entries[0]!, currentStatus: [status] }, entries[1]!, entries[2]!], waiting, { mainReply: reply }));
     try {
       const card = host.querySelector(`.wb-card[data-bot="${site.id}"]`)!;
       expect(lineWidth(card.querySelector(".wb-latest .txt")!.textContent!)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
-      expect(card.querySelector(".wb-statebar")).not.toBeNull();
-      expect(host.querySelector(`[data-bot="${paper.id}"] .wb-statebar`)).toBeNull();
+      expect(host.querySelector(".wb-statebar")).toBeNull();
       const excerpt = host.querySelector(".wb-main-reply")!.textContent!;
       expect(excerpt).not.toContain("第二段");
       expect(lineWidth(excerpt)).toBeLessThanOrEqual(2 * CARD_LINE_WIDTH + 1);
@@ -105,7 +100,7 @@ async function mount(view: BoardView, now = Date.now()) {
   return { host, api, calls, unmount: async () => { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; } };
 }
 
-describe("whiteboard: lanes, ranking, the week and the shelf", () => {
+describe("whiteboard: lanes, ranking and the shelf", () => {
   const now = Date.parse("2026-10-26T12:00:00Z");
   const old = "2026-10-23T09:00:00Z";
   const recent = new Date(now - 3 * 3_600_000).toISOString();
@@ -126,22 +121,17 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
     expect(lanes.waiting.map((entry) => entry.name)).toEqual(["Asking", "Approving"]);
     expect(lanes.running.map((entry) => entry.name)).toEqual(["Busy", "Helped"]);
     expect(lanes.quiet.map((entry) => entry.name)).toEqual(["Pinned", "Fresh", "Stale", "Silent"]);
-    // A running task's subagent at work counts as running.
-    const atWork = boardLanes([stale], new Map([[stale.id, empty(stale.id, [task("r", "Build", "running", old, { atWork: true })])]]), none);
-    expect(atWork.running.map((entry) => entry.name)).toEqual(["Stale"]);
   });
 
   it("lists every thing waiting on you oldest first, with its kind, age and the chat that answers it", () => {
     const ago = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
     const entry = bot(50, "Many", "bot", { approvals: 2 });
     const view: Waiting = { items: [{ botId: entry.id, text: "Ship it?", messageId: "Q3", at: ago(1) }, { botId: entry.id, text: "Pick a name", messageId: null }, { botId: entry.id, text: "In the group", messageId: "Q4", at: ago(5) }], doing: {} };
-    const wb = empty(entry.id, [task("w", "Domain", "waiting", ago(9), { blocked: "Which domain?", history: [{ kind: "waiting", at: ago(3), text: "Which domain?" }] })],
-      { approvals: [{ tool: "Bash", text: "npm publish", at: ago(2) }] });
+    const wb = empty(entry.id, { approvals: [{ tool: "Bash", text: "npm publish", at: ago(2) }] });
     const list = waitingAsks(entry, view, wb);
     expect(list).toHaveLength(waitingCount(entry, view, wb));
     expect(list.map((ask) => [ask.kind, ask.code ?? ask.text, ageLabel(ask.at, now), ask.open])).toEqual([
       ["question", "In the group", "5h", entry.id],
-      ["call", "Domain · Which domain?", "3h", entry.id],
       ["approval", "npm publish", "2h", entry.id],
       ["question", "Ship it?", "1h", entry.id],
       ["call", "Pick a name", null, entry.id],
@@ -149,15 +139,6 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
     ]);
     expect(ageLabel(ago(0.1), now)).toBe("6m");
     expect(ageLabel(ago(50), now)).toBe("2d");
-  });
-
-  it("leaves out the tasks waiting on you that were acknowledged with Notify", () => {
-    const entry = bot(55, "Acked", "bot");
-    const wb = empty(entry.id, [task("w", "Domain", "waiting", new Date(now).toISOString(), { blocked: "Which domain?" })]);
-    const view: Waiting = { items: [], doing: {}, acked: [`${entry.id}-task:w`] };
-    expect(waitingAsks(entry, view, wb)).toEqual([]);
-    expect(waitingCount(entry, view, wb)).toBe(0);
-    expect(waitingAsks(entry, none, wb).map((ask) => [ask.kind, ask.ack])).toEqual([["call", { botId: entry.id, text: "task:w" }]]);
   });
 
   it("counts every tool approval, also those the core gives no details for (one row says how many)", () => {
@@ -168,11 +149,11 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
     expect(askCount(rows)).toBe(waitingCount(three, none, empty(three.id)));
     // 25 waiting, details for the first 20.
     const many = bot(55, "Many", "bot", { approvals: 25 });
-    const listed = empty(many.id, [], { approvals: Array.from({ length: 20 }, (_, n) => ({ tool: "Bash", text: `cmd ${n}`, at: null })) });
+    const listed = empty(many.id, { approvals: Array.from({ length: 20 }, (_, n) => ({ tool: "Bash", text: `cmd ${n}`, at: null })) });
     expect(askCount(waitingAsks(many, none, listed))).toBe(25);
     // Details for more than the view's count (the view is a moment older): all of them count.
     const behind = bot(56, "Behind", "bot", { approvals: 1 });
-    const two = empty(behind.id, [], { approvals: [{ tool: "Bash", text: "a", at: null }, { tool: "Bash", text: "b", at: null }] });
+    const two = empty(behind.id, { approvals: [{ tool: "Bash", text: "a", at: null }, { tool: "Bash", text: "b", at: null }] });
     expect(askCount(waitingAsks(behind, none, two))).toBe(2);
     expect(waitingCount(behind, none, two)).toBe(2);
   });
@@ -187,33 +168,18 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
     } finally { await unmount(); }
   });
 
-  it("ranks the open work by what waits on you, then what is under way", () => {
+  it("ranks the open work by what waits on you", () => {
     const a = bot(51, "A", "bot", { approvals: 1 });
-    const b = bot(52, "B", "bot");
+    const b = bot(52, "B", "bot", { approvals: 2 });
     const c = bot(53, "C", "bot");
-    const byBot = new Map([[b.id, empty(b.id, [task("1", "One", "running", old), task("2", "Two", "pending", old)])], [c.id, empty(c.id, [task("3", "Three", "done", old)])]]);
-    expect(openRanking([main, a, b, c], byBot, none).map((row) => [row.bot.name, row.waiting, row.active])).toEqual([["A", 1, 0], ["B", 0, 2]]);
-  });
-
-  it("sums the tasks finished on each of the last seven days across the bots, with last week's sum from the done log", () => {
-    const day = (back: number) => { const date = new Date(now); date.setDate(date.getDate() - back); return dayKey(date.getTime()); };
-    const logged = empty("x", [], { doneDays: Array.from({ length: 14 }, (_, index) => ({ day: day(13 - index), done: index === 13 ? 2 : index === 3 ? 4 : 1, manual: 0 })) });
-    // An older core (no done log): its done cards by their last change.
-    const older = empty("y", [task("d", "Done", "done", new Date(now).toISOString())]);
-    const week = boardWeek([logged, older, undefined], now);
-    expect(week.days.map((entry) => entry.count)).toEqual([1, 1, 1, 1, 1, 1, 3]);
-    expect(week.days.at(-1)).toMatchObject({ label: "Today", today: true });
-    expect(week.week).toBe(9);
-    expect(week.lastWeek).toBe(10);
-    expect(botWeek(logged, now)).toEqual([1, 1, 1, 1, 1, 1, 2]);
-    expect(boardWeek([older], now).lastWeek).toBeNull();
+    expect(openRanking([main, a, b, c], new Map(), none).map((row) => [row.bot.name, row.waiting])).toEqual([["B", 2], ["A", 1]]);
   });
 
   it("says a bot is quiet from three weeks on", () => {
     expect(quietWeeks(bot(60, "Q", "bot", { lastActivity: new Date(now - 26 * 86_400_000).toISOString() }), undefined, now)).toBe(3);
     expect(quietWeeks(bot(61, "R", "bot", { lastActivity: new Date(now - 20 * 86_400_000).toISOString() }), undefined, now)).toBeNull();
     expect(quietWeeks(silent, undefined, now)).toBeNull();
-    expect(lastActive(stale, empty(stale.id, [task("t", "Draft", "done", recent)]))).toBe(Date.parse(recent));
+    expect(lastActive(stale, empty(stale.id))).toBe(Date.parse(old));
   });
 
   describe("on the page", () => {
@@ -230,7 +196,7 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
     it.each([0, 1, 8])("expands all approval commands and ages even when the bot count is %i", async (count) => {
       const entry = { ...approving, approvals: count };
       const approvals = Array.from({ length: 5 }, (_, index) => ({ tool: "Bash", text: `command-${index + 1}`, at: new Date(now - (index + 1) * 3_600_000).toISOString() }));
-      const { host, calls } = await render({}, [empty(entry.id, [], { approvals })], [main, entry]);
+      const { host, calls } = await render({}, [empty(entry.id, { approvals })], [main, entry]);
       const card = host.querySelector(".ask-card")!;
       expect(card.querySelectorAll("code")).toHaveLength(4);
       expect(card.querySelector(".wb-ask-more")?.textContent).toBe(`+${Math.max(5, count) - 4} more in the report`);
@@ -238,31 +204,22 @@ describe("whiteboard: lanes, ranking, the week and the shelf", () => {
       const report = host.querySelector(".wb-report")!;
       expect([...report.querySelectorAll('[data-part="ask"] code')].map(node => node.textContent).sort()).toEqual(approvals.map(item => item.text).sort());
       expect([...report.querySelectorAll('[data-part="ask"] .wb-ask-age')].map(node => node.textContent).sort()).toEqual(["1h ago", "2h ago", "3h ago", "4h ago", "5h ago"]);
-      expect(report.querySelector(".wb-toc")?.textContent).toContain(`Your call ${Math.max(5, count)}`);
-      expect(report.querySelector(".wb-stat-n.waiting")?.textContent).toBe(String(Math.max(5, count)));
+      // Only "Your call" has something (no task stats any more): one part, so no contents row.
+      expect([...report.querySelectorAll("[data-part]")].map((part) => part.getAttribute("data-part"))).toEqual(["ask"]);
+      expect(report.querySelector(".wb-toc")).toBeNull();
       if (count > 5) expect(report.querySelector('[data-part="ask"]')?.textContent).toContain("3 more tool approvals waiting");
       await act(async () => report.querySelector<HTMLButtonElement>('[data-part="ask"] .wb-ask-open')!.click());
       expect(calls.filter((call) => call[0] === "openChat")).toEqual([["openChat", entry.id]]);
     });
 
-    it.each(["persisted", "empty", "legacy"])("uses %s completion history in the expanded report", async (mode) => {
-      const tasks = mode === "persisted" ? [] : [task("finished", "Finished", "done", new Date(now).toISOString())];
-      const extra = mode === "legacy" ? {} : { doneDays: mode === "empty" ? [] : [{ day: dayKey(now), done: 7, manual: 0 }] };
-      const { host } = await render({}, [empty(busy.id, tasks, extra)], [main, busy]);
-      await act(async () => host.querySelector<HTMLButtonElement>(".run-card")!.click());
-      const trend = host.querySelector('.wb-report [data-part="trend"]');
-      if (mode === "empty") expect(trend).toBeNull();
-      else expect(trend?.querySelector("svg")?.getAttribute("aria-label")).toContain(`Today ${mode === "persisted" ? 7 : 1}`);
-    });
-
     it("draws the numbers, the lanes and the quiet bots as dimmed pills; the waiting number scrolls to its lane", async () => {
-      const { host } = await render({}, [empty(approving.id, [], { approvals: [{ tool: "Bash", text: "npm publish --tag next", at: new Date(now - 20 * 60_000).toISOString() }] })]);
+      const { host } = await render({}, [empty(approving.id, { approvals: [{ tool: "Bash", text: "npm publish --tag next", at: new Date(now - 20 * 60_000).toISOString() }] })]);
       const metric = (name: string) => host.querySelector(`[data-metric="${name}"]`)!;
       expect(metric("Bots").querySelector(".wb-metric-n")!.textContent).toBe("7");
       expect(metric("Bots").querySelector(".wb-metric-s")!.textContent).toBe("2 active · 2 waiting · 3 asleep");
       expect(metric("Waiting on you").querySelector(".wb-metric-n")!.textContent).toBe("2");
       expect(metric("Waiting on you").querySelector(".wb-metric-s")!.textContent).toBe("from 2 bots · oldest 2 hours");
-      expect(metric("Running").querySelector(".wb-metric-s")!.textContent).toBe("0 tasks under way · 1 also waiting");
+      expect(metric("Running").querySelector(".wb-metric-s")!.textContent).toBe("1 also waiting on you");
       expect(names(host, ".lane-waiting")).toEqual(["Asking", "Approving"]);
       expect(names(host, ".lane-running")).toEqual(["Busy"]);
       // Running and waiting: in Waiting only, marked Running.
@@ -352,29 +309,26 @@ describe("whiteboard page", () => {
     expect(calls[0]).toEqual(["board", undefined]);
     const card = host.querySelector<HTMLElement>(`.wb-card[data-bot="${site.id}"]`)!;
     expect(card.className).toContain("waiting");
-    expect(card.querySelector(".wb-pill")?.textContent).toBe("2 waiting");
-    expect([...card.querySelectorAll(".wb-ask-text")].map((text) => text.textContent)).toEqual(["Pick a domain · Which domain?", "Publish now?"]); // Oldest first; a memory line has no time.
-    expect([...card.querySelectorAll(".wb-ask-open")].map((button) => button.textContent)).toEqual(["Notify", "Notify"]);
+    expect(card.querySelector(".wb-pill")?.textContent).toBe("1 waiting");
+    expect([...card.querySelectorAll(".wb-ask-text")].map((text) => text.textContent)).toEqual(["Publish now?"]);
+    expect([...card.querySelectorAll(".wb-ask-open")].map((button) => button.textContent)).toEqual(["Notify"]);
     // Notify only acknowledges (the waiting ignore): it opens no chat and answers nothing.
-    await act(async () => card.querySelectorAll<HTMLButtonElement>(".wb-ask-open")[1]!.click());
-    expect(calls.at(-1)).toEqual(["ignore", site.id, "Publish now?"]);
     await act(async () => card.querySelectorAll<HTMLButtonElement>(".wb-ask-open")[0]!.click());
-    expect(calls.at(-1)).toEqual(["ignore", site.id, "task:c"]);
+    expect(calls.at(-1)).toEqual(["ignore", site.id, "Publish now?"]);
     expect(calls.some((call) => call[0] === "openChat")).toBe(false);
     expect(card.querySelector(".wb-latest .txt")?.textContent).toBe("The theme is live.");
-    expect(card.querySelector(".wb-foot-count")?.textContent).toBe("1/3");
+    expect(card.querySelector(".wb-foot-count")).toBeNull();
     expect(card.querySelector(".wb-ring")).toBeNull();
     expect(host.querySelector(`.quiet-pill[data-bot="${paper.id}"]`)).not.toBeNull();
     expect(host.querySelector(`[data-bot="${MAIN}"]`)).toBeNull();
-    // Where the open work is: Site, 2 waiting on you and 1 under way.
-    expect(host.querySelector(`.wb-rank li[data-bot="${site.id}"] .wb-rank-v`)?.textContent).toBe("2 · 1");
-    expect(host.querySelector('[data-donut="tasks"] svg')?.getAttribute("aria-label")).toBe("tasks: Done 1, Under way 1, Waiting 1");
+    // Where the open work is: Site, 1 waiting on you. No tasks donut any more.
+    expect(host.querySelector(`.wb-rank li[data-bot="${site.id}"] .wb-rank-v`)?.textContent).toBe("1");
+    expect(host.querySelector('[data-donut="tasks"]')).toBeNull();
 
     await act(async () => card.querySelector<HTMLButtonElement>(".wb-card-open")!.click());
     const report = host.querySelector(`.wb-report[data-bot="${site.id}"]`)!;
-    expect([...report.querySelectorAll("[data-part]")].map((part) => part.getAttribute("data-part"))).toEqual(["sum", "ask", "made", "trend", "log", "decided", "next"]);
+    expect([...report.querySelectorAll("[data-part]")].map((part) => part.getAttribute("data-part"))).toEqual(["sum", "ask", "made", "decided", "next"]);
     expect(report.querySelector('[data-part="ask"]')?.textContent).toContain("Publish now?");
-    expect(report.querySelector('[data-part="ask"]')?.textContent).toContain("Which domain?");
     expect(report.querySelector('[data-part="decided"]')?.textContent).toContain("Kept the old URLs");
     await act(async () => report.querySelector<HTMLButtonElement>(".wb-result")!.click());
     expect(calls.at(-1)).toEqual(["openResult", site.id, "https://example.com/theme"]);
@@ -394,7 +348,7 @@ describe("whiteboard page", () => {
     const working = bots.map((entry) => (entry.id === site.id ? { ...entry, working: true } : entry));
     const calm: Waiting = { items: [], doing: {} };
     const withPictures: Entry[] = [
-      { ...entries[0]!, tasks: entries[0]!.tasks.filter((entry) => entry.state !== "waiting"), picture: display({ size: "2x1" }) },
+      { ...entries[0]!, picture: display({ size: "2x1" }) },
       { ...entries[1]!, picture: display({ name: "gitlog", data: "null", command: "printf x", folder: "/tmp/paper", status: "approve" }) },
       entries[2]!,
     ];

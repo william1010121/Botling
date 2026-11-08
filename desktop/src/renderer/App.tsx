@@ -73,9 +73,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [subBotMenu, setSubBotMenu] = useState<{ botId: string; x: number; y: number } | null>(null);
   const [closingSubBot, setClosingSubBot] = useState<BotView | null>(null);
   const [picking, setPicking] = useState<{ botId: string; ids: string[] } | null>(null);
-  /** The task card pressed open in the right panel (`selectedTask`); pressed again, it closes. */
-  const [selectedTask, setSelectedTask] = useState<string | null>(null);
-  const selectTask = useCallback((id: string) => setSelectedTask((current) => (current === id ? null : id)), []);
   const now = useMinuteClock();
   /** The main bot's main view: its chat, or the whiteboard plugin's tab (kept for the next start). */
   const [whiteboardOn, setWhiteboardOn] = useWhiteboardChoice();
@@ -325,7 +322,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "result.open", botId: chat.botId, url: result.url }).catch(fail);
   }, [client, chat, fail]);
 
-  useEffect(() => { setSelectedTask(null); }, [chat?.botId]);
   // The bot's settings, one level in in the right panel (1.x's DetailPanel `showingSettings`); a new bot shows its overview.
   const [botSettings, setBotSettings] = useState(false);
   // Settings → Models & workers → "Open" on a bot with its own settings: that bot, with its settings panel open.
@@ -513,7 +509,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
-        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} onAsk={approval.ask} />
+        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask} />
         {!web && <BottomPanels client={client} panels={view.plugins?.bottomPanels ?? []} toggleHost={bottomControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)}
           shortcutFor={(command) => (command && pluginKeys[command] ? formatCombo(pluginKeys[command]!, shellPlatform()) : "")} onBuiltin={runBuiltin} onKey={forwardKey} components={view.components} bots={view.bots} ask={approval.ask} />}
         </div>
@@ -529,20 +525,6 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
           results={results} watching={watching} collapsed={collapsed}
-          tasks={chat?.botId === bot.id ? chat.tasks ?? [] : []} messages={chat?.botId === bot.id ? chat.messages : []}
-          summarized={chat?.botId === bot.id ? new Set((chat.decorations ?? []).flatMap((decoration) => decoration.fold ?? [])) : undefined}
-          selectedTask={selectedTask} onSelectTask={selectTask}
-          onCompleteTask={(taskId) => void client.request({ type: "task.complete", botId: bot.id, taskId }).catch(fail)}
-          onJumpToTask={(messageId, taskId) => {
-            const message: ShellMessage = { botling: "jumpToTask", messageID: messageId, taskID: taskId };
-            postToChat(message);
-          }}
-          onAskForReport={(task, replyTo) => {
-            // "Ask it to report" (`askForReport`): a short message of yours to the task's owner, on the task's card.
-            const two = bot.heads.length > 1;
-            void client.request({ type: "chat.send", botId: bot.id, text: `How is "${task.name}" going? Please report where it stands.`,
-              ...(replyTo ? { replyTo } : {}), ...(two && task.owner ? { to: task.owner } : {}) }).catch(fail);
-          }}
           onSelect={selectBot}
           onIgnore={(item) => void client.request(item.messageId ? { type: "chat.ignoreQuestion", botId: item.botId, messageId: item.messageId } : { type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
           onOpenResult={openResult}
@@ -593,11 +575,10 @@ export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu,
   peek?: { enter: (row: HTMLElement) => void; leave: () => void; focus: (row: HTMLElement) => void };
 }) {
   const asleep = bot.phase === "asleep" && !bot.working;
-  const tasks = bot.openTasks ?? 0;
   const unread = counts ? counts.unread : selected ? 0 : bot.unread;
   const needsYou = counts ? counts.needsYou : bot.approvals;
   const label = [bot.name, statusText(bot), needsYou ? `${needsYou} waiting on you` : waiting ? "waiting on you" : null, unread ? `${unread} unread` : null,
-    tasks ? `${tasks} task${tasks === 1 ? "" : "s"} under way` : null, pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
+    pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
   return (
     <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}`}
       // A touch has no hover: its tap opens the card instead (onSelect).
@@ -797,7 +778,7 @@ function runPluginCommand(client: Client, plugins: PluginsView | null | undefine
   else postToChat({ botling: "runCommand", id });
 }
 
-function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void;
+function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
   onAsk: (view: ApprovalAskView, approve: import("../contract").Command, done?: (allowed: boolean) => void) => void }) {
   const [report, setReport] = useState<{botId: string; url: string} | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -1162,10 +1143,6 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
         case "cancelReply":
           setReplying(null);
           return;
-        // A task chip under a reply: its card opens in the right panel.
-        case "selectTask":
-          if (typeof action.id === "string") onSelectTask(action.id);
-          return;
         case "taskOutput": {
           if (!chat || typeof action.messageID !== "string" || typeof action.taskID !== "string") return;
           const botId = chat.botId, messageId = action.messageID, taskId = action.taskID;
@@ -1352,7 +1329,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask, onAsk }: { cl
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, onSent, onSelectTask, onAsk, push, pushPlugins, store, channel]);
+  }, [client, onError, onSent, onAsk, push, pushPlugins, store, channel]);
 
   const viewer = report && report.botId === view.chat?.botId ? <ReportViewer url={report.url} onClose={() => setReport(null)} /> : null;
   if (nativeEditor()) return <>{viewer}<div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>

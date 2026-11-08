@@ -10,8 +10,6 @@
   --catchup-nav-bg: #EEF3FC; --catchup-nav-line: #CCDAF3; --catchup-viewer-line: #CFCFD6; --catchup-picked-bg: #EAF1FF;
   --catchup-answer-bg: #FFF1DC; --catchup-claude-name: #B4532F; --catchup-codex-name: #3D6FE0;
 }
-.catchup-bullets .task-card-chip { margin: 0 4px 0 2px; }
-.catchup-task-count.waiting { color: var(--orange-text); }
 .catchup-bullets li.flash, .catchup-card.flash { background: rgba(76, 141, 255, 0.12); border-radius: 8px; transition: background 0.3s; }
 
 .catchup-head { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }

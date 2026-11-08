@@ -27,8 +27,8 @@ async function render(element: ReturnType<typeof createElement>) {
 function panel(extra: Partial<RightPanelProps>, calls: string[]) {
   return createElement(RightPanel, {
     bot, bots: [bot], waiting: { items: [], doing: {} }, look: "original", status: { key: "idle", text: "Idle" }, results: [], watching: null,
-    tasks: [], messages: [], selectedTask: null, collapsed: false,
-    onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {},
+    collapsed: false,
+    onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {},
     onSettings() { calls.push("settings"); }, onCloseSettings() { calls.push("close"); }, onExpand() { calls.push("expand"); },
     ...extra,
   } satisfies RightPanelProps);

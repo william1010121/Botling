@@ -5,7 +5,7 @@
 import type { BotlingApi, ChatData } from "../../../../Web/host/src/api";
 import {
   CatchUpCache, CatchUps, catchUpSettings, claudeSummarizer, codexSummarizer, engineSummarizer, SUMMARY_ENGINE_NAMES, SummaryFailure,
-  type CatchUpChat, type ChatRecord, type Summarizer, type TaskCard,
+  type CatchUpChat, type ChatRecord, type Summarizer,
 } from "./catchup";
 import { migrate, settingsReader, summariesFile } from "./migrate";
 import { appLanguage } from "./util";
@@ -17,7 +17,7 @@ const LINES = 2_000;
 export function catchUpChat(data: ChatData, through?: string | null): CatchUpChat {
   const records = data.messages as unknown as ChatRecord[];
   const end = through ? records.findIndex((record) => record.id === through) : -1;
-  return { id: data.botId, name: data.name, records: end >= 0 ? records.slice(0, end + 1) : records, unread: data.unread, tasks: data.tasks as TaskCard[] };
+  return { id: data.botId, name: data.name, records: end >= 0 ? records.slice(0, end + 1) : records, unread: data.unread };
 }
 
 export async function activate(api: BotlingApi) {

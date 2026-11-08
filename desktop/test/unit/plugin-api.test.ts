@@ -307,7 +307,8 @@ describe("Host API v3 in the core (plan M5)", () => {
     await expect(ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "a", data: "x".repeat(1_100_000) }] })).rejects.toThrow(/1 MB/);
     expect(await ask("chat.decorate", { plugin: "sum", bot: "main", decorations: [{ key: "a", fold: ["L1", "L2"], tasks: ["T1"], data: { state: "loading" } }, { key: "b", after: "L3" }] })).toBeNull();
     expect(plugins.decorations("MAIN-ID")).toEqual([
-      { plugin: "sum", key: "a", fold: ["L1", "L2"], tasks: ["T1"], data: { state: "loading" } },
+      // `tasks` is still accepted from an older plugin, and dropped: task cards are gone.
+      { plugin: "sum", key: "a", fold: ["L1", "L2"], data: { state: "loading" } },
       { plugin: "sum", key: "b", after: "L3" },
     ]);
     expect(log.decorated).toEqual(["MAIN-ID"]);

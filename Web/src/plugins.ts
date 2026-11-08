@@ -13,8 +13,7 @@ import { language, pieces, t } from "./i18n";
 import { intervalRow, LiveSchedule, liveTick, parseInterval, presetMinutes, presetSeconds, refreshWords } from "./refresh";
 import { mediaHTML, md, renderMarkdown, resetMarkdown } from "./markdown";
 import { extensions } from "./messages";
-import { taskCardChipHTML } from "./task-cards";
-import type { Action, ChatState, ComponentInfo, DisplayView, SpecChipView, TaskCardView } from "./types";
+import type { Action, ChatState, ComponentInfo, DisplayView, SpecChipView } from "./types";
 import { onScreen, setWindowListener, whenShownAgain, windowVisible } from "./visible";
 
 /** A plugin's web part, as the Swift side sends it. */
@@ -121,8 +120,8 @@ export interface CcbWeb {
     render(text: string): string;
     /** A picture or video as the chat draws one in a message, as HTML. */
     media(url: string, label: string): string;
-    /** A task's chip as the chat draws it under a reply, as HTML; `action`: the chip's data-action. */
-    taskChip(task: TaskCardView, action?: string): string;
+    /** @deprecated Task cards were removed in 2.5: always "". Kept so older web parts that call it still load. */
+    taskChip(task: unknown, action?: string): string;
   };
   /**
    * Chat extension v2: draws what this plugin's program part put among a chat's messages
@@ -521,7 +520,7 @@ export class PluginHost {
         },
         render: (text) => renderMarkdown(text),
         media: (url, label) => mediaHTML(url, label),
-        taskChip: (task, action) => taskCardChipHTML(task, action),
+        taskChip: () => "",
       },
       studio: {
         specButton: (make) => {

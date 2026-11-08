@@ -59,7 +59,7 @@ describe("session schedules (1.x ScheduleWakeup / CronCreate)", () => {
       { id: "cron", kind: "cron", title: "Check logs", schedule: "*/30 * * * *", recurring: true, jobID: "job-1" }]);
     const chat = await c.chat();
     const bot = { id: MAIN, name: "Main", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] } as BotView;
-    const { state } = chatState(bot, { ...chat, live: [], tasks: [] });
+    const { state } = chatState(bot, { ...chat, live: [] });
     // The row also carries the bot's own routines that will still run: the main bot's daily summary from routines.cron.
     expect(state.messages.at(-1)?.tasks).toMatchObject([{ id: "wake", kind: "wakeup", fires: fire }, { id: "cron", schedule: "*/30 * * * *", recurring: true },
       { id: expect.stringMatching(/^routine:cron:/), kind: "cron", title: "Daily summary", schedule: "15 8 * * *", recurring: true }]);

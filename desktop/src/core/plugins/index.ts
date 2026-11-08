@@ -6,7 +6,7 @@
 // them as the user need the "bots" permission — a consistency check, not a sandbox: the host is one
 // process). Everything else is refused. A plugin's message to a bot shows as sent by it unless it
 // asked to send as the user (plugin-platform.md §5, N1). Any plugin may read the workspace (`workspace.*`,
-// what the whiteboard shows: bots, memory, tasks, results, what waits on you); none may answer for you.
+// what the whiteboard shows: bots, memory, results, what waits on you); none may answer for you.
 // Reading a chat (`chat.messages`) needs the "messages" permission; what a plugin draws among a chat's
 // messages (`chat.decorate`, chat extension v2) is kept here per chat until it unloads, and its web part draws it.
 //
@@ -46,10 +46,10 @@ export interface AppQuestion { text: string; choices: { label: string; detail?: 
 /** Its answer: a pick, or the user's own words (`typed` only). Ignoring it (no callbacks, by design) answers nothing. */
 export type AppAnswer = { index: number } | { text: string };
 export interface PluginStatusItem { id: string; text: string; icon: string | null; tooltip: string | null; command: string | null }
-/** A chat as a plugin may read it (`chat.messages`): its newest lines as kept, its task cards, its name and unread count. */
-export interface PluginChat { botId: string; name: string; unread: number; messages: unknown[]; tasks: { id: string; name: string; state: string; messageIDs: string[] }[] }
+/** A chat as a plugin may read it (`chat.messages`): its newest lines as kept, its name and unread count. `tasks` is always empty (task cards were removed in 2.5). */
+export interface PluginChat { botId: string; name: string; unread: number; messages: unknown[]; tasks: never[] }
 /** What a plugin's web part draws among a chat's messages (`chat.decorate`, chat extension v2). */
-export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; under?: string; tasks?: string[]; data?: JSONValue }
+export interface MessageDecoration { plugin: string; key: string; fold?: string[]; after?: string; under?: string; data?: JSONValue }
 /** How Botling starts an engine's CLI here (`engines.cli`), for a plugin's one-shot model call. */
 export interface EngineCli { file: string; args: string[]; env: Record<string, string> }
 
@@ -239,6 +239,7 @@ const DecorateParams = BotParams.extend({
     fold: z.array(ContractId).max(2_000).optional(),
     after: ContractId.optional(),
     under: ContractId.optional(),
+    /** Accepted and ignored: task cards were removed in 2.5. */
     tasks: z.array(ContractId).max(100).optional(),
     data: z.unknown().optional(),
   })).max(200),
@@ -1228,7 +1229,6 @@ export class Plugins {
         const list: MessageDecoration[] = data.decorations.map((entry) => ({
           plugin: name, key: entry.key,
           ...(entry.fold?.length ? { fold: entry.fold } : entry.after ? { after: entry.after } : entry.under ? { under: entry.under } : {}),
-          ...(entry.tasks?.length ? { tasks: entry.tasks } : {}),
           ...(entry.data === undefined ? {} : { data: entry.data as JSONValue }),
         }));
         if (new Set(list.map((entry) => entry.key)).size !== list.length) throw new Error("Each decoration needs a key of its own.");

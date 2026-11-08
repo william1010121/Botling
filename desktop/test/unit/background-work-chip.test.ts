@@ -19,7 +19,7 @@ function draw(records: ChatRecord[], extra: Partial<ChatSnapshot> = {}) {
   const messages = records.map((record) => EventEnvelope.parse({ v: 10, epoch: "e", seq: 1,
     event: { type: "message.updated", botId: "6A0B0000-0000-4000-8000-000000000002", message: messageView(record) } }).event)
     .map((event) => (event as Extract<typeof event, { type: "message.updated" }>).message);
-  return chatState(bot, { botId: bot.id, messages, running: null, live: [], tasks: [], runs: [], heads: null, ...extra }).state.messages;
+  return chatState(bot, { botId: bot.id, messages, running: null, live: [], runs: [], heads: null, ...extra }).state.messages;
 }
 beforeEach(() => { resetTaskChips(); sent.length = 0; document.body.innerHTML = ""; });
 

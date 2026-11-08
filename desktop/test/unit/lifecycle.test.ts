@@ -66,23 +66,15 @@ describe("reply tags", () => {
     expect(chat.messages.at(-1).text).toBe("You said: Neither, wait a day");
   });
 
-  it("a <task> line keeps the message's card current in tasks.json (1.20's format); a quick answer leaves none", async () => {
+  it("a <task> line is taken out of the reply and nothing is kept for it (task cards are gone)", async () => {
     const dir = tempDir("tags");
     const c = core(dir);
-    const { messageId } = await turn(c, "/task");
-    const saved = JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8"));
-    expect(saved).toHaveLength(1);
-    expect(saved[0]).toMatchObject({ name: "Docs", owner: "claude", state: "running", now: "writing the intro", next: "examples", kept: true, stateFromTag: "running" });
-    expect(saved[0].id).toMatch(/^[0-9A-F-]{36}$/);
-    expect(typeof saved[0].createdAt).toBe("number");
-    expect(saved[0].messageIDs).toEqual([expect.stringMatching(/^[0-9A-F-]{36}$/), messageId]);
-    // The snapshot and events carry it; the line is gone from the reply.
+    await turn(c, "/task");
     const chat = await c.chat();
-    expect(chat.tasks).toEqual([expect.objectContaining({ name: "Docs", state: "running", now: "writing the intro", atWork: false })]);
     expect(chat.messages.at(-1).text).toBe("Working on the docs.");
-    expect(c.of("tasks.updated").length).toBeGreaterThan(0);
-    await turn(c, "thanks");
-    expect(JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8"))).toHaveLength(1);
+    expect(chat).not.toHaveProperty("tasks");
+    expect(c.of("tasks.updated")).toHaveLength(0);
+    expect(existsSync(join(dir, "main", "tasks.json"))).toBe(false);
   });
 
   it("the developer project's requests are taken out of the reply; from the main bot they do nothing (as 1.x)", async () => {
@@ -138,7 +130,7 @@ describe("a message while a reply is written", () => {
     // The order: your two lines, then the one reply.
     expect(chat.messages.slice(-3).map((m: { role: string; text: string }) => [m.role, m.role === "bot" ? m.text.replace(/word\d+ /g, "") : m.text]))
       .toEqual([["user", "/slow"], ["user", "and also this"], ["bot", "You said: and also this"]]);
-    expect(JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8")).length).toBeLessThanOrEqual(1);
+    expect(existsSync(join(dir, "main", "tasks.json"))).toBe(false); // Task cards are gone.
   });
 
   it("a line claude reads only after its turn ended gets a turn of its own, shown as the answer to you", async () => {
@@ -189,8 +181,6 @@ describe("subagents", () => {
     const { subagent } = await c.call({ type: "subagent.view", botId: MAIN, subagentId: saved[0].id });
     expect(subagent).toMatchObject({ title: "Research the API", owner: "Main bot", status: "completed", prompt: "Look up the API and report", result: "Found 3 things." });
     await expect(c.call({ type: "subagent.view", botId: MAIN, subagentId: "nope" })).rejects.toThrow(/not_found/);
-    // Linked to the message's card.
-    expect(JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8"))[0].subagentIDs).toEqual([saved[0].id]);
     await c.kill(); // SIGTERM: join the real core's durable shutdown, not SIGKILL teardown.
     expect(c.child.exitCode).toBe(0);
     expect(readSubagentRows(historyFile)).toEqual(saved);

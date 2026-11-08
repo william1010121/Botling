@@ -4,7 +4,7 @@
 // - <choices> becomes buttons (the last block wins; every block comes out of the text); blocks that name their
 //   question (`<choices question="…">`, `multiple="true"`) are a group of up to 5 answered together (questions.ts);
 // - <no-reply/> means "nothing for the user" (only a turn claude started itself may go unshown);
-// - <task …/> lines update the chat's task cards (tasks.ts);
+// - <task …/> lines (the task cards, removed in 2.5) come out of the text silently, so an older or other bot's never shows;
 // - <reaction …/> on a line of its own sets the bot's own reaction;
 // - <show> becomes a component display (kept in 1.x's `displays` format; 2.0 does not draw them yet);
 // - a tag a plugin declares (`replyTags`, plugins/contributions.ts) comes out of the text, drawn nowhere in the
@@ -44,12 +44,6 @@ export type BotRequest =
 export interface Choice { label: string; detail?: string; recommended: boolean }
 export interface Display { name: string; data: string; at?: number; command?: string; id?: string; refresh?: number; savedAt?: number; [key: string]: unknown }
 export interface ReactionAction { messageId: string; emoji: string; present: boolean }
-export type TaskState = "pending" | "running" | "waiting" | "done" | "stopped";
-/** How far finished work has got (2.x): built, reviewed, installed, then verified. */
-export type TaskStage = "built" | "reviewed" | "installed" | "verified";
-export const TASK_STAGES: readonly TaskStage[] = ["built", "reviewed", "installed", "verified"];
-/** `TaskTag`: undefined keeps a field, "" clears it. `stage` is 2.x only; an unknown one is left out. */
-export interface TaskTag { id?: string; expectedUpdatedAt?: number; name?: string; continues?: string; now?: string; next?: string; blocked?: string; state?: TaskState; stage?: TaskStage | "" }
 export interface CompletionSignal { kind: "end" | "block"; evidence: string }
 
 /** A tag a plugin declared, as the bot wrote it (`<deploy-status env="prod">{"ok":true}</deploy-status>`). */
@@ -67,7 +61,6 @@ export interface Parsed {
   displays: Display[];
   completionSignals: CompletionSignal[];
   decisionReference: string | null;
-  tasks: TaskTag[];
 }
 
 const decisionReferenceTag = () => /^ {0,3}<decision-ref\s+id="([0-9A-Fa-f-]{36})"\s*\/>[ \t]*$/gm;
@@ -139,31 +132,6 @@ const group = (text: string, hit: Hit, i: number) => { const span = hit.spans[i]
 /** `ReplyParser.saysNoReply`: the reply carries <no-reply/> outside code. */
 export function saysNoReply(reply: string): boolean {
   return noReplyTag().test(masked(reply));
-}
-
-/** `TaskTag(attributes:)`. */
-function taskTagFrom(found: Record<string, string>): TaskTag {
-  const value = (key: string) => (found[key] === undefined ? undefined : trimAll(found[key]!));
-  const tag: TaskTag = {};
-  const id = value("id");
-  if (id !== undefined) tag.id = id;
-  const expected = value("expected-updated-at");
-  // Swift-date seconds from the saved snapshot. Keep invalid supplied tokens as NaN so
-  // the book rejects them instead of silently dropping the compare-and-swap condition.
-  if (expected !== undefined) tag.expectedUpdatedAt = expected ? Number(expected) : NaN;
-  const name = value("name");
-  if (name) tag.name = name;
-  const continues = value("continues");
-  if (continues) tag.continues = continues;
-  for (const key of ["now", "next", "blocked"] as const) {
-    const v = value(key);
-    if (v !== undefined) tag[key] = v;
-  }
-  const state = value("state")?.toLowerCase();
-  if (state === "running" || state === "waiting" || state === "done" || state === "stopped") tag.state = state;
-  const stage = value("stage")?.toLowerCase();
-  if (stage === "" || TASK_STAGES.includes(stage as TaskStage)) tag.stage = stage as TaskStage | "";
-  return tag;
 }
 
 function choiceFrom(line: string): Choice | null {
@@ -287,8 +255,8 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   take(projectTag, ([folder, task]) => projects.unshift({ kind: "newProject", folder: trimWS(folder!), task: task! }));
   requests.push(...projects);
   take(noReplyTag, () => {});
-  const tasks: TaskTag[] = [];
-  take(taskTag, ([attrs]) => tasks.unshift(taskTagFrom(attributes(attrs!))));
+  // Task cards are gone; a <task …/> line is dropped, never shown and never acted on.
+  take(taskTag, () => {});
   take(folderTag, ([path]) => requests.push({ kind: "folder", path: path! }));
   const openQuestions: BotRequest[] = [];
   take(openQuestionTag, ([a, b]) => { const from = trimWS(a || b!); if (from) openQuestions.unshift({ kind: "openQuestion", from }); });
@@ -338,7 +306,7 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
 
   const { body, places } = placing(text, displays.length);
   displays.forEach((display, i) => { if (places[i] != null) display.at = places[i]!; });
-  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(pluginTags.length ? { pluginTags } : {}), ...(questions ? { questions } : {}) };
+  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, ...(pluginTags.length ? { pluginTags } : {}), ...(questions ? { questions } : {}) };
 }
 
 /** The text without its markers, trimmed, and where each marker was (UTF-16 offsets). */

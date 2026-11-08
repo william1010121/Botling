@@ -10,7 +10,6 @@ import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
-import { taskCardChips } from "./task-cards";
 import type { ChatState, ComponentInfo, DisplayView, FileView, MessageMenuItem, MessageView, SeenView, StepView } from "./types";
 import { escapeHTML, queuedBadge } from "./util";
 
@@ -59,8 +58,7 @@ export function messageElement(message: MessageView, components: Record<string, 
 
   drawRole(row, message, components);
   const tasks = row.querySelector<HTMLElement>(".task-chips");
-  const cards = message.taskCards?.length ? taskCardChips(message.taskCards) : null;
-  if (cards || tasks || message.reactionEnabled || message.seen?.length) {
+  if (tasks || message.reactionEnabled || message.seen?.length) {
     let holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column");
     if (!holder) {
       const body = row.querySelector<HTMLElement>(".bot-bubble, .notice-bubble, .relay-column, .relay:not(.row), .error-text");
@@ -75,8 +73,6 @@ export function messageElement(message: MessageView, components: Record<string, 
       // Keep all compact metadata together; expanded work details get their own footer line.
       const footer = document.createElement("div");
       footer.className = "message-footer";
-      // The task it belongs to comes first: what the reply is part of.
-      if (cards) footer.append(cards);
       if (tasks) footer.append(tasks);
       if (message.reactionEnabled) footer.append(reactionBar(message));
       if (message.seen?.length) footer.append(seenMarks(message.seen));

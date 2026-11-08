@@ -92,5 +92,3 @@ export type ShellMessage =
   | { botling: "recoverFocus"; traceId?: string }
   /** Pointer events over the shell after a width drag leaves the chat iframe. */
   | { botling: "messageWidthPointer"; kind: "move" | "up" | "cancel"; pointerId: number; x: number }
-  /** "Jump to chat" on a task's card in the right panel (`ccb.jumpToTask`). */
-  | { botling: "jumpToTask"; messageID: string; taskID: string }

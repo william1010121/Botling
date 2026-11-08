@@ -1,13 +1,13 @@
 import { z } from 'zod';
 import type { RouteBook } from './routes';
 import { requestTicket } from './events';
-import { BotView, MessageView, TaskView, Command, PROTOCOL_VERSION, ResponseEnvelope, RequestId } from '../src/contract';
+import { BotView, MessageView, Command, PROTOCOL_VERSION, ResponseEnvelope, RequestId } from '../src/contract';
 
 // Validate just the fields rendered here; the core remains the authority for commands.
 export const Snapshot = z.object({
   epoch: z.string(), seq: z.number().int().nonnegative(),
   bots: z.array(BotView.pick({ id: true, name: true, role: true, working: true, approvals: true, unread: true, problem: true, heads: true })),
-  chat: z.object({ botId: z.string(), messages: z.array(MessageView), tasks: z.array(TaskView),
+  chat: z.object({ botId: z.string(), messages: z.array(MessageView),
     pendingFiles: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
   }).nullable(),
 });

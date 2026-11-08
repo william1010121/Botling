@@ -14,7 +14,7 @@ beforeAll(async () => {
   document.body.innerHTML = '<main id="scroller"><div id="messages"></div></main><div id="composer-slot"></div>';
   await import("../../../Web/src/main");
 });
-afterEach(() => { window.ccb.setState(chatState({ ...bot, subagents: 0 }, { botId: "empty", messages: [], running: null, live: [], tasks: [] }).state); sent.length = 0; vi.useRealTimers(); });
+afterEach(() => { window.ccb.setState(chatState({ ...bot, subagents: 0 }, { botId: "empty", messages: [], running: null, live: [] }).state); sent.length = 0; vi.useRealTimers(); });
 
 describe("token speed in the production chat page", () => {
   const showChild = (engine: "claude" | "codex" | "agy", speed: Record<string, unknown> | undefined) => {
@@ -32,7 +32,7 @@ describe("token speed in the production chat page", () => {
   it("shows the main bot's own speed on the latest bot message's header line, and removes it when nothing is timed", () => {
     const two = { ...bot, subagents: 0 };
     const messages = [0, 1].map((i) => ({ id: String(i), role: "bot" as const, text: `reply ${i}`, time: "2026-10-27T08:00:00Z", engine: "claude" as const }));
-    const show = (extra: Record<string, unknown>) => window.ccb.setState(chatState({ ...two, ...extra }, { botId: "B", messages, running: null, live: [], tasks: [] }).state);
+    const show = (extra: Record<string, unknown>) => window.ccb.setState(chatState({ ...two, ...extra }, { botId: "B", messages, running: null, live: [] }).state);
     show({ tokenSpeed: { tokPerSec: 42.04, estimated: false, engine: "codex" } });
     const lines = [...document.querySelectorAll("#messages .speaker")].map((node) => node.textContent);
     expect(lines).toEqual(["Main · Claude", "Main · Claude · 42.0 tok/s"]);
@@ -66,7 +66,7 @@ describe("desktop payload rendered by the production chat page", () => {
 
   it.each(["claude", "codex"])("keeps %s task cards visible through streaming, folding and later history, while the parent waits without thinking", (engine) => {
     const live = [step("note", "text", "I will delegate."), step("child", "subagent", "Review patch", { status: "running", done: false, count: 2 }), ...Array.from({ length: 9 }, (_, index) => step(`call-${index}`, "tool", "Read file"))];
-    const chat = { botId: bot.id, messages: [], running: { turnId: "turn", messageId: "reply" }, live, tasks: [] };
+    const chat = { botId: bot.id, messages: [], running: { turnId: "turn", messageId: "reply" }, live };
     window.ccb.setState(chatState(bot, chat).state);
     const check = (status: string) => {
       const cards = document.querySelectorAll<HTMLButtonElement>("#messages .subagent-card");
@@ -114,8 +114,8 @@ it.each([false, true])("keeps the restored owner avatar and truthful running sta
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   try {
     await act(async () => root.render(createElement(RightPanel, {
-      bot: parent, bots: [parent], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, tasks: [], messages: [], selectedTask: null, collapsed,
-      onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent: onOpen, onUnsettle: onRestore, onSettings() {}, onExpand() {},
+      bot: parent, bots: [parent], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, collapsed,
+      onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent: onOpen, onUnsettle: onRestore, onSettings() {}, onExpand() {},
     })));
     if (collapsed) await act(async () => host.querySelector<HTMLButtonElement>('[data-section="settled"]')!.click());
     expect(host.querySelector(".settled-open")?.getAttribute("aria-label")).toContain("running");
@@ -156,7 +156,7 @@ describe("words put into a worker's run under way (steering)", () => {
   });
 
   it("a head chat line the bot could not take in yet shows Queued, until redrawn without it", () => {
-    const line = (queuedMark: boolean) => window.ccb.setState(chatState(bot, { botId: "B", messages: [{ id: "u1", role: "user" as const, text: "hello later", time: "2026-10-27T08:00:00Z", ...(queuedMark ? { queued: true } : {}) }], running: null, live: [], tasks: [] }).state);
+    const line = (queuedMark: boolean) => window.ccb.setState(chatState(bot, { botId: "B", messages: [{ id: "u1", role: "user" as const, text: "hello later", time: "2026-10-27T08:00:00Z", ...(queuedMark ? { queued: true } : {}) }], running: null, live: [] }).state);
     line(true);
     expect(document.querySelector("#messages .queued-badge")?.textContent).toBe("Queued");
     line(false);

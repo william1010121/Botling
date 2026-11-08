@@ -26,7 +26,7 @@ async function reply(c: CoreHarness, text: string) {
 const settings = (dir: string, value: Record<string, unknown>) => { mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "settings.json"), JSON.stringify(value)); };
 /** The chat's summaries as the page gets them (its decorations), in the old shape. */
 async function summaries(c: CoreHarness): Promise<{ catchUp: any; intervalSummaries: any[] }> {
-  const ours = ((await c.chat()).decorations ?? []).filter((d: any) => d.plugin === "botling.catchup").map((d: any) => ({ ...d.data, ids: d.fold, taskIds: d.tasks ?? [] }));
+  const ours = ((await c.chat()).decorations ?? []).filter((d: any) => d.plugin === "botling.catchup").map((d: any) => ({ ...d.data, ids: d.fold }));
   return { catchUp: ours.find((d: any) => d.kind === "unread") ?? null, intervalSummaries: ours.filter((d: any) => d.kind === "interval") };
 }
 /** What the web part's Retry and "Summarize N replies" ask its program part. */
