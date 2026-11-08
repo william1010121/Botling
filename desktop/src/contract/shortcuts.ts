@@ -6,13 +6,17 @@
 // Plugin commands take keys here too (plugin-platform.md §3.3 `keybindings`): a binding's id is then the
 // command id ("uptime.refresh"), its default the manifest's key, and app shortcuts and system keys win.
 
-export type ShortcutId = "search" | "settings" | "toggleSidebar" | "toggleRightPanel" | "reload" | "forceReload" | "reloadChat";
+export type ShortcutId = "search" | "settings" | "subBots" | "roomBack" | "roomForward" | "toggleSidebar" | "toggleRightPanel" | "reload" | "forceReload" | "reloadChat";
 export type ShortcutGroup = "navigation" | "panels" | "view";
 export interface ShortcutDef { id: ShortcutId; group: ShortcutGroup; default: string }
 /** Every key the app handles itself and lets you change. Order is the order on the Settings page. */
 export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: "search", group: "navigation", default: "Mod+K" },
   { id: "settings", group: "navigation", default: "Mod+," },
+  // Navigation v5: the Sub bots menu, and back / forward between a project bot and its sub bot.
+  { id: "subBots", group: "navigation", default: "Mod+Shift+S" },
+  { id: "roomBack", group: "navigation", default: "Mod+[" },
+  { id: "roomForward", group: "navigation", default: "Mod+]" },
   { id: "toggleSidebar", group: "panels", default: "Ctrl+Cmd+S" },
   { id: "toggleRightPanel", group: "panels", default: "Ctrl+Cmd+I" },
   { id: "reload", group: "view", default: "Mod+R" },

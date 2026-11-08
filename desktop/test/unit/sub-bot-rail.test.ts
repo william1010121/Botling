@@ -3,7 +3,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { railOrder, rowTarget, SubBotTitle } from "../../src/renderer/App";
+import { BotRow, railOrder, rowTarget, SubBotTitle } from "../../src/renderer/App";
 import { SubagentRows } from "../../src/renderer/Rail";
 import type { BotView, SubagentRowView } from "../../src/contract";
 
@@ -75,7 +75,17 @@ describe("opening a row", () => {
     const markup = renderToStaticMarkup(createElement(SubBotTitle, { bot: sub, parent: base, onOpenParent() {} }));
     expect(markup).toContain(">botling</button>");
     expect(markup).toContain(">Settings page</span>");
-    expect(markup.indexOf("botling")).toBeLessThan(markup.indexOf("Settings page"));
+    // Navigation v5: "[S] Settings page · sub bot of botling".
+    expect(markup).toContain('class="sbn-face"');
+    expect(markup).toContain("sub bot of <button");
+    expect(markup.indexOf("Settings page")).toBeLessThan(markup.indexOf("sub bot of"));
+  });
+  it("while a sub bot is on screen, its project bot's row stays selected and says which one (navigation v5)", () => {
+    const markup = renderToStaticMarkup(createElement(BotRow, { bot: base, selected: true, inside: "Settings page", look: "original", waiting: false, onSelect() {} }));
+    expect(markup).toContain('class="bot-inside">› Settings page<');
+    expect(markup).toContain("in Settings page");
+    expect(markup).toContain('aria-current="page"');
+    expect(renderToStaticMarkup(createElement(BotRow, { bot: base, selected: false, look: "original", waiting: false, onSelect() {} }))).not.toContain("bot-inside");
   });
 });
 

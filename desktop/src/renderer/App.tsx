@@ -34,6 +34,8 @@ import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { botCounts, canIdle, idleCounts, idleList, peekCard, railOrder, railSplit } from "./rail-idle";
 import { peekHover } from "./peek-hover";
+import { SubBotFace, SubBotNav } from "./SubBotNav";
+import { headerNav, rememberRoom, roomStep, subBotRow, type LastRooms } from "./sub-bot-nav";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
@@ -151,6 +153,22 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       peekQuiet.current = false;
     }
   }, [peeking]);
+  // Navigation v5: the Sub bots menu left of Chat | Board | Review (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
+  // sub bot last shown under it (kept for this window only, never in a bot's context).
+  const [subBotsOpen, setSubBotsOpen] = useState(false);
+  const lastRooms = useRef<LastRooms>({});
+  const toggleSubBots = useCallback(() => {
+    const current = store.getView();
+    const shown = current.bots.find((candidate) => candidate.id === current.chat?.botId);
+    // Only where the header has the button or the breadcrumb (a bot with sub bots, or a sub bot).
+    if (shown && headerNav(shown, current.bots, current.waiting, Date.now()).kind !== "none") setSubBotsOpen((open) => !open);
+  }, [store]);
+  const stepRoom = useCallback((direction: "back" | "forward") => {
+    const current = store.getView();
+    const shown = current.bots.find((candidate) => candidate.id === current.chat?.botId);
+    const target = shown ? roomStep(direction, shown, current.bots, lastRooms.current) : null;
+    if (target) { setSubBotsOpen(false); setError(null); void store.select(target); }
+  }, [store]);
   // The app's keys (Settings > Shortcuts): ⌘, Settings, ⌃⌘I the right panel, ⌃⌘S the left column, ⌘K its search, by default.
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
@@ -165,13 +183,16 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       case "toggleRightPanel": toggleRight(); break;
       case "toggleSidebar": toggleRail(); break;
       case "search": startSearch(); break;
+      case "subBots": toggleSubBots(); break;
+      case "roomBack": stepRoom("back"); break;
+      case "roomForward": stepRoom("forward"); break;
       case null: {
         const command = commandForEvent(key, pluginKeys);
         if (command) runCommand(command, [], { from: "frame", name: plugin });
         break;
       }
     }
-  }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       switch (actionForEvent(event, shortcutBindings)) {
@@ -179,6 +200,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
         case "toggleSidebar": event.preventDefault(); toggleRail(); break;
         case "search": event.preventDefault(); startSearch(); break;
+        case "subBots": event.preventDefault(); toggleSubBots(); break;
+        case "roomBack": event.preventDefault(); stepRoom("back"); break;
+        case "roomForward": event.preventDefault(); stepRoom("forward"); break;
         case null: {
           const command = event.defaultPrevented ? null : commandForEvent(event, pluginKeys);
           if (command) { event.preventDefault(); runCommand(command); }
@@ -192,12 +216,15 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         case "rightPanel": toggleRight(); break;
         case "sidebar": toggleRail(); break;
         case "search": startSearch(); break;
+        case "subBots": toggleSubBots(); break;
+        case "roomBack": stepRoom("back"); break;
+        case "roomForward": stepRoom("forward"); break;
       }
     };
     window.addEventListener("botling:chat-command", onCommand);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleRail, startSearch, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   const watching = view.subagent?.id ?? null;
@@ -212,6 +239,23 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const remembered = bot && !watching ? shownTab(tabs, view.settings?.mainTabs?.[bot.id]) : null;
   // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice is kept for the next start.
   const tab = remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
+  // The header's left side (navigation v5): this bot's Sub bots button, or inside a sub bot the way back.
+  const nav = useMemo(() => (bot && !web ? headerNav(bot, view.bots, view.waiting, now) : { kind: "none" as const }), [bot, web, view.bots, view.waiting, now]);
+  // Back in a project bot from its sub bot: the Sub bots button rings blue for 600 ms and "⌘] <sub bot>" shows beside it.
+  const [cameBack, setCameBack] = useState<{ botId: string; from: string; flash: boolean } | null>(null);
+  const previousBot = useRef<{ id: string; parent: string | null } | null>(null);
+  useEffect(() => {
+    const before = previousBot.current;
+    previousBot.current = bot ? { id: bot.id, parent: bot.parent ?? null } : null;
+    setSubBotsOpen(false);
+    if (!bot) return;
+    lastRooms.current = rememberRoom(lastRooms.current, bot);
+    if (before?.parent !== bot.id) { setCameBack(null); return; }
+    setCameBack({ botId: bot.id, from: before.id, flash: true });
+    const timer = setTimeout(() => setCameBack((shown) => (shown?.botId === bot.id ? { ...shown, flash: false } : shown)), 600);
+    return () => clearTimeout(timer);
+  }, [bot?.id]);
+  const cameFrom = cameBack && cameBack.botId === bot?.id ? view.bots.find((candidate) => candidate.id === cameBack.from && candidate.parent === bot.id) ?? null : null;
 
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
@@ -412,7 +456,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                     <BotRow
                       bot={candidate}
                       look={look}
-                      selected={candidate.id === chat?.botId && !watching}
+                      selected={(candidate.id === chat?.botId || (!!bot?.parent && candidate.id === bot.parent)) && !watching}
+                      inside={bot?.parent === candidate.id && !watching ? bot.name : undefined}
                       waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
                       counts={counts}
                       onSelect={(from) => {
@@ -505,6 +550,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
           <div className="board-switch-bar">
             <span className="workers-badge-slot"><WorkersBadge bot={bot} bots={view.bots} seen={seenFailed} on={!collapsed && panelTabs[bot.id] === "workers"} onClick={() => workersBadgeClick(bot.id)} /></span>
+            {/* Navigation v5: sub bots left of the switch; the workers' badge sits at the right. */}
+            <div className="board-switch-left">
+              <SubBotNav nav={nav} open={subBotsOpen} onOpenChange={setSubBotsOpen} onOpen={selectBot}
+                flash={!!cameFrom && !!cameBack?.flash} forward={cameFrom ? { name: cameFrom.name } : null}
+                keys={{ menu: shortcutLabel("subBots"), back: shortcutLabel("roomBack"), forward: shortcutLabel("roomForward") }} />
+            </div>
             <div className="board-switch" role="group" aria-label="Chat views">
               <button type="button" aria-pressed={!(view.board && boardOffered(view.plugins)) && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
               {boardOffered(view.plugins) && <button type="button" aria-pressed={view.board && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>}
@@ -586,8 +637,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   );
 }
 
-export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle, peek }: {
-  bot: BotView; selected: boolean; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
+export function BotRow({ bot, selected, inside, onSelect, look, waiting, counts, onMenu, pinned, onTogglePin, idle, peek }: {
+  bot: BotView; selected: boolean;
+  /** Navigation v5: the sub bot of this project bot on screen ("› Release" on the row); sub bots are never rows of their own. */
+  inside?: string; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
   /** The row was clicked: the row, and whether the keyboard pressed it (the status card then takes the focus). */
   onSelect: (from?: { el: HTMLElement; keyboard: boolean }) => void;
   /** The two numbers (rail-idle.ts botCounts): blue unread, orange what needs you (its sub bots' included). Absent: its own approvals and unread. */
@@ -603,7 +656,7 @@ export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu,
   const unread = counts ? counts.unread : selected ? 0 : bot.unread;
   const needsYou = counts ? counts.needsYou : bot.approvals;
   const label = [bot.name, statusText(bot), needsYou ? `${needsYou} waiting on you` : waiting ? "waiting on you" : null, unread ? `${unread} unread` : null,
-    pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
+    inside ? `in ${inside}` : null, pinned ? "pinned" : null, idle?.away ? "in Idle" : null].filter(Boolean).join(", ");
   return (
     <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}${idle ? " idleable" : ""}`}
       // A touch has no hover: its tap opens the card instead (onSelect).
@@ -617,6 +670,7 @@ export function BotRow({ bot, selected, onSelect, look, waiting, counts, onMenu,
         <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
         <span className="bot-gap" />
+        {inside && <span className="bot-inside">› {inside}</span>}
         {bot.working && <span className="bot-dot working" aria-hidden="true" />}
         {unread > 0 && <span className="bot-counts"><span className="badge" aria-hidden="true">{unread}</span></span>}
       </button>
@@ -662,11 +716,12 @@ export function rowTarget(row: Pick<SubagentRowView, "id" | "subBot">): { kind: 
 
 /** A sub bot's title: the project bot it belongs to (a button back to it), then its own name. */
 export function SubBotTitle({ bot, parent, onOpenParent }: { bot: BotView; parent: BotView | null; onOpenParent: (botId: string) => void }) {
+  // Navigation v5: its square face and name, then "sub bot of <project bot>" (the way back is the breadcrumb below too).
   return (
     <>
-      {parent && <button type="button" className="chat-parent" title={`Back to ${parent.name}`} onClick={() => onOpenParent(parent.id)}>{parent.name}</button>}
-      {parent && <span className="chat-parent-sep" aria-hidden="true"> › </span>}
+      <SubBotFace row={subBotRow(bot, { items: [], doing: {} }, 0)} dot={false} />
       <span className="chat-sub-bot" data-sub-bot={bot.id}>{bot.name}</span>
+      {parent && <span className="chat-sub-of">sub bot of <button type="button" className="chat-parent" title={`Back to ${parent.name}`} onClick={() => onOpenParent(parent.id)}>{parent.name}</button></span>}
     </>
   );
 }
@@ -1074,7 +1129,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
           return;
         }
         case "shellCommand":
-          if (nativeEditor() && ["settings", "rightPanel", "sidebar", "search"].includes(String(action.command))) {
+          if (nativeEditor() && ["settings", "rightPanel", "sidebar", "search", "subBots", "roomBack", "roomForward"].includes(String(action.command))) {
             window.dispatchEvent(new CustomEvent("botling:chat-command", { detail: action.command }));
           }
           return;
