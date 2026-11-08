@@ -13,7 +13,7 @@ export async function loadReports() {
   const temp = await mkdtemp(join(tmpdir(), 'botling-report-'));
   try {
     const bundle = join(temp, 'render.cjs');
-    await build({ entryPoints: [join(root, 'reports/index.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', loader: { '.css': 'text' }, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent', tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } } });
+    await build({ entryPoints: [join(root, 'reports/index.ts')], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', jsx: 'automatic', loader: { '.css': 'text', '.woff2': 'base64' }, define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent', tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } } });
     return createRequire(import.meta.url)(bundle);
   } finally { await rm(temp, { recursive: true, force: true }); }
 }
