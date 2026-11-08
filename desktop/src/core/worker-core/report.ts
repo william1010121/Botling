@@ -21,7 +21,7 @@ export function wireStatus(s: RunStatus): "completed" | "failed" | "stopped" | "
 
 /** The sentence after the tag, per policy (claude-workers.ts's and agy-workers.ts's words). */
 export const REPORT_TAIL: Record<AckPolicy, string> = {
-  none: "This is the worker's own account, not proof the user's goal is met: check what matters, then tell the user in a sentence or two what came of it. To continue this worker, use app_send_message with its task_id; to stop it, app_cancel_task.",
+  none: "This is the worker's own account, not proof the user's goal is met: check what matters, then tell the user in a sentence or two what came of it. In that same reply, show what you said you would show (pictures and videos as ![caption](file://full path)) and, when it leaves the user something to decide, end with a choices block; a note in memory is not shown to the user. To continue this worker, use app_send_message with its task_id; to stop it, app_cancel_task.",
   checkpoint: "Worker completion is execution evidence, not acceptance of the user's full objective. Resolve this exact task_id and run with app_task_checkpoint (outcome and concrete evidence) or same-task app_send_message before ending this report turn. Research-only scope and existing permissions remain unchanged.",
 };
 
