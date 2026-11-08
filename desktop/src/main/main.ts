@@ -3,7 +3,7 @@
 import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeImage, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, writeSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
@@ -606,12 +606,16 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
-    case "worker.file": return openWorkerFile((await core.call({ type: "subagent.view", botId: cmd.botId, subagentId: cmd.subagentId })).subagent.steps, cmd.path, {
-      exists: existsSync,
-      preview: async (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") await new Promise<void>((done, fail) => execFile("open", ["-a", "Preview", path], (error) => error ? fail(error) : done())); },
-      open: async (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") { const problem = await shell.openPath(path); if (problem) throw new Error(problem); } },
-      reveal: (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") shell.showItemInFolder(path); },
-    });
+    case "worker.file": {
+      const steps = (await core.call({ type: "subagent.view", botId: cmd.botId, subagentId: cmd.subagentId })).subagent.steps;
+      const { cwd } = await core.call({ type: "worker.cwd", botId: cmd.botId, subagentId: cmd.subagentId });
+      return openWorkerFile(steps, cwd, cmd.path, {
+        exists: existsSync, realpath: (path) => realpathSync(path),
+        preview: async (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") await new Promise<void>((done, fail) => execFile("open", ["-a", "Preview", path], (error) => error ? fail(error) : done())); },
+        open: async (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") { const problem = await shell.openPath(path); if (problem) throw new Error(problem); } },
+        reveal: (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") shell.showItemInFolder(path); },
+      });
+    }
     case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true,cmd.preview===true,cmd.cardImage);
     case "doctor.copy": return copyDoctorFix(cmd.tool, await core.call({ type: "doctor.view" }), text => clipboard.writeText(text));
     case "chat.reloadPage": return { reloaded: await reloadNativeEditor(sender) };

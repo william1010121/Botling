@@ -2667,6 +2667,13 @@ First write a test that shows this, then fix it.`;
       case "chat.history": return this.bot(cmd.botId).history(cmd.before, cmd.bytes, cmd.until);
       case "task.output": return this.bot(cmd.botId).taskOutput(cmd.messageId, cmd.taskId);
       case "subagent.view": return this.agentView(cmd.botId, cmd.subagentId);
+      case "worker.cwd": {
+        // Where the worker runs: its host bot's session folder (a worktree when one is set), else that bot's own folder.
+        const record = this.agents.byHostBot(cmd.botId, cmd.subagentId) ?? this.agents.movedIn(cmd.botId).find((candidate) => candidate.nativeId === cmd.subagentId);
+        const hostId = record?.host.botId ?? cmd.botId;
+        const profile = this.profiles.find((candidate) => candidate.id === hostId);
+        return { cwd: this.plugins.sessionFolder(hostId)?.cwd ?? record?.host.folder ?? profile?.folder ?? null };
+      }
       case "agent.targets": return this.agentTargets(cmd.botId, cmd.subagentId);
       case "agent.move": return this.moveAgent(cmd.botId, cmd.subagentId, cmd.to, { notifyAgent: cmd.notifyAgent === true });
       case "agent.message": return this.agentMessageCommand(cmd.botId, cmd.subagentId, cmd.text);
