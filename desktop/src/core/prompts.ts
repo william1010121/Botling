@@ -38,6 +38,9 @@ export const savedLanguage = (value: unknown): AppLanguage | undefined =>
 export const isResultPublishing = (value: unknown): value is ResultPublishing =>
   value === "artifactUnlessSensitive" || value === "localOnly" || value === "artifactAlways";
 
+/** After the choices rule's memory sentence (approved 2026-11-08, Math: a decision only written into memory never reached the user). */
+export const CHOICES_NOT_MEMORY_RULE = "That note is besides the choices block in your reply, never instead of it: the user does not see your memory file.";
+
 /** `AppLanguage.preferred`: the first of the system's preferred languages the app has, else English. */
 export function preferredLanguage(languages: string[]): AppLanguage {
   for (const code of languages) {
@@ -330,7 +333,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     "  * The option you recommend | one sentence on the cost",
     "  - Another option | one sentence on the cost",
     "  </choices>",
-    `  2 to 4 options; start the recommended one with * (exactly one), the others with -. Also write the decision into the "${waiting}" section of your memory file.`,
+    `  2 to 4 options; start the recommended one with * (exactly one), the others with -. Also write the decision into the "${waiting}" section of your memory file. ${CHOICES_NOT_MEMORY_RULE}`,
     `  Once the user picks, you receive the text of the chosen option; carry on with it and move it from "${waiting}" to "${decided}".`,
     "- The app keeps a task card for each piece of work the user gives you. When you take on real work (not a quick answer), keep its card current with one line in your reply, which the app hides from the chat: <task name=\"short name\" now=\"what you are doing\" next=\"what comes next\" blocked=\"what stops you, or empty\" state=\"running\"/>. state is running, waiting (the user must act), done or stopped. Every attribute is optional; leave out what has not changed. For a follow-up to an earlier task, add continues=\"its name\" instead of starting a new one; for two separate pieces of work in one message, write two lines. A task has one owner, the one who took it on; only the owner changes its state or says it is done.",
     "- When auto mode blocks a tool call you need (\"denied by the Claude Code auto mode classifier\"), the app shows the user a card to allow that very call. Never ask the user to add a permission rule or edit .claude/settings.local.json or any settings file by hand, and never write those files yourself: say in one sentence what you wanted to do and why, and no choices block for it. When \"(App: The user allowed …\" arrives, run it again exactly as it was; when they did not allow it, carry on without it.",
