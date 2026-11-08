@@ -4,6 +4,15 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 2.6.0
+
+- **New navigation for sub bots and workers.** A Sub bots menu sits left of Chat | Board (Needs you, Pinned, Active, Scheduled, Idle; pin, reorder, new sub bot, archive), a breadcrumb leads back from a sub bot, ⌘[ / ⌘] switch between the project bot and its last sub bot, ⌘⌥1–9 open pinned sub bots, and coming back keeps your place and marks what arrived meanwhile.
+- **Workers in the right panel.** A Workers tab lists each owner's workers with a read-only log (result, files changed, steps) and Ask, which puts your question in the owner's input box; a badge shows running and failed workers; ⌘⇧W opens it. Changed pictures and PDFs open in Preview, other files in their default app.
+- **Review tab removed.** The header shows only Chat | Board.
+- **New Settings, and the Note tab.** Settings come in four groups with Models & workers per engine and Permissions on its own page. Each bot has its own note (Note tab); pictures in a note are copied into its own note-assets folder, so they never break.
+- **Bots ask better and hear back.** A bot can ask up to 5 questions at once (single or multi-select), notes on each option reach the bot, workers can report or ask their owner while they run, and a bot called in with `@` relays its worker's later results back to the caller.
+- **Also:** report pages typeset LaTeX math offline; task cards are gone; phone relay with end-to-end encryption (phase 1); Antigravity reports its real context window.
+
 ## 2.5.0
 
 - **Appearance is kept across restarts.** The saved light, dark or system look (and shortcuts) is applied when the app starts again; before, the app always came back dark.
