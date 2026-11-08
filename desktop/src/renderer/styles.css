@@ -409,7 +409,7 @@ button { font: inherit; color: inherit; }
 .task-details-drawer { position: fixed; inset: 0; z-index: 80; }
 .task-details-drawer[hidden] { display: none; }
 .task-details-backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / calc(0.53 * var(--shade))); }
-.task-details-sheet { position: absolute; inset: 0 0 0 auto; width: min(360px, 92vw); display: flex; flex-direction: column; background: var(--side); box-shadow: 0 0 40px rgb(0 0 0 / calc(0.6 * var(--shade, 1))); }
+.task-details-sheet { position: absolute; inset: 0 0 0 auto; width: min(350px, 85%); display: flex; flex-direction: column; background: var(--side); box-shadow: 0 0 40px rgb(0 0 0 / calc(0.6 * var(--shade, 1))); }
 .task-details-header { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: max(8px, env(safe-area-inset-top)) 16px 8px; border-bottom: 1px solid var(--line); }
 .task-details-header button { min-height: 44px; min-width: 44px; background: transparent; border: 0; border-radius: 6px; cursor: pointer; }
 .task-details-sheet > .detail-panel { display: flex; width: 100%; min-height: 0; flex: 1; border: 0; padding: 20px 20px max(20px, env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain; }
@@ -838,7 +838,7 @@ button.wk-owner:hover { background: var(--hover); }
 .wk-ask-box textarea:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
 .wk-ask-row { display: flex; align-items: center; gap: 8px; }
 .wk-ask-row .wk-tm { flex: 1; white-space: normal; }
-@media (max-width: 860px) { .workers-badge b { display: none; } .workers-badge-slot { right: 8px; } }
+@media (max-width: 860px) { .workers-badge-slot { right: 8px; } }
 /* Navigation v5, sub bots (SubBotNav.tsx): "Sub bots · N ▾" left of Chat | Board | Review, its menu, and inside a
    sub bot the breadcrumb "‹ botling / Release ▾". The switch stays in the middle; the workers' badge (.workers-badge-slot) sits at the right.
    With no sub bots the bar looks as before. Colours are the tokens (dark by default, data-theme="light"). */
@@ -937,3 +937,18 @@ button.wk-owner:hover { background: var(--hover); }
   .sbn-button { transition: none; }
 }
 @keyframes sbn-fade { from { opacity: 0; } to { opacity: 1; } }
+.panel-tabs button { position: relative; }
+.tab-dot { position: absolute; top: 2px; right: 3px; width: 6px; height: 6px; border-radius: 50%; }
+.tab-dot.waiting { background: var(--orange); }
+.tab-dot.failed { background: var(--error); }
+button.wk-fc { display: block; width: 100%; border: 0; background: transparent; color: var(--link); text-align: left; padding: 1px 0; cursor: pointer; }
+button.wk-fc:hover { text-decoration: underline; }
+.wk-ask:disabled { opacity: .45; cursor: default; }
+.workers-badge .cnt-short { display: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+@container chatbar (max-width: 999px) {
+  .workers-badge b, .workers-badge .cnt, .workers-badge .wk-mu { display: none; }
+  .workers-badge .cnt-short { display: inline; }
+  .workers-badge[data-tone="failed"] .cnt-short { color: var(--error); }
+}
+.task-details-sheet > .detail-panel.workers-panel { padding: 16px 0 0; }
+.task-details-sheet > .detail-panel.workers-panel .panel-tabs, .task-details-sheet > .detail-panel .panel-tabs { margin-top: 0; }

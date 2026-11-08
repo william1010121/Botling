@@ -249,6 +249,7 @@ export const en = {
   "shortcuts.action.roomForward": "Forward to the last sub bot",
   "shortcuts.action.toggleSidebar": "Show or hide the left column",
   "shortcuts.action.toggleRightPanel": "Show or hide the right panel",
+  "shortcuts.action.toggleWorkers": "Show or hide the room's workers",
   "shortcuts.action.reload": "Reload the window",
   "shortcuts.action.forceReload": "Reload the window, ignoring the cache",
   "shortcuts.action.reloadChat": "Reload the chat page",

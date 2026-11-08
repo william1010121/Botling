@@ -130,3 +130,26 @@ export function clock(at: number): string {
   const d = new Date(at);
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+
+export type AskWorker = { id: string; title: string; agentId?: string };
+
+/**
+ * "Ask <owner>" puts this in the owner's input box as a reference, in the chat page's reply bar (who / preview / ×):
+ * the words you then send go to the owner wrapped by `askOwnerText`, never to the worker.
+ */
+export function askReference(worker: AskWorker, ownerName: string): { id: string; who: string; preview: string } {
+  return { id: `worker:${worker.id}`, who: `About ${worker.title}`, preview: `${ownerName}’s worker · your words go to ${ownerName}, not the worker` };
+}
+
+/** Whether "Ask <owner>" can go, and the line above the button that says what happens. */
+export function askState(owner: Pick<BotView, "name" | "working"> | null, name = owner?.name ?? "Its owner"): { ok: boolean; note: string } {
+  if (!owner) return { ok: false, note: `${name} is gone, so nobody can pass this on.` };
+  if (owner.working) return { ok: true, note: `${owner.name} is mid-turn. It reads your note at its next step.` };
+  return { ok: true, note: `Workers take instructions only from ${owner.name}.` };
+}
+
+/** Today's failed workers in the room or its family that you have not opened (the Workers tab's red dot). */
+export function unseenFailures(bot: BotView, bots: BotView[], now: number, seen: ReadonlySet<string>): number {
+  const { room, others } = workerFamily(bot, bots);
+  return [room, ...others].reduce((sum, owner) => sum + sectionedWorkers(workerRowsOf(owner), now).today.filter((row) => row.status === "failed" && !seen.has(row.id)).length, 0);
+}

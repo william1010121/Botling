@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotView, SubagentRowView, SubagentView } from "../../src/contract";
 import {
-  askOwnerText, filesChanged, ownerSummary, sectionedWorkers, workerFamily, workerRowsOf, workersBadge, workersTabOffered,
+  askOwnerText, askReference, askState, filesChanged, ownerSummary, sectionedWorkers, workerFamily, workerRowsOf, workersBadge, workersTabOffered,
 } from "../../src/renderer/worker-panel";
 
 const NOW = new Date(2026, 10, 8, 16, 0).getTime();
@@ -158,14 +158,7 @@ describe("the Workers tab in the right panel", () => {
       expect(host.querySelector(".wk-log textarea, .wk-log input")).toBeNull();
       expect([...host.querySelectorAll(".wk-log button")].some((b) => /stop/i.test(b.textContent ?? ""))).toBe(false);
       await act(async () => host.querySelector<HTMLButtonElement>(".wk-ask")!.click());
-      const box = host.querySelector<HTMLTextAreaElement>(".wk-ask-box textarea")!;
-      expect(box.placeholder).toBe("Ask botling about context-baseline…");
-      await act(async () => {
-        const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-        set.call(box, "Rerun it with 30 turns"); box.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      await act(async () => host.querySelector<HTMLButtonElement>(".wk-ask-send")!.click());
-      expect(onAskOwner).toHaveBeenCalledWith("botling", 'About your worker "context-baseline" (w1): Rerun it with 30 turns');
+      expect(onAskOwner).toHaveBeenCalledWith("botling", { id: "w1", title: "context-baseline" });
       await act(async () => host.querySelector<HTMLButtonElement>(".wk-back")!.click());
       expect(host.querySelector(".wk-log")).toBeNull();
       await act(async () => host.querySelectorAll<HTMLButtonElement>(".panel-tabs button")[0]!.click());
@@ -187,6 +180,8 @@ describe("the Workers tab in the right panel", () => {
       expect(host.querySelector(".wk-own")?.textContent).toBe("Release’s worker");
       expect(host.querySelector(".wk-now")).not.toBeNull();
       expect(host.querySelector(".wk-ask")?.textContent).toBe("Ask Release");
+      await act(async () => host.querySelector<HTMLButtonElement>(".wk-ask")!.click());
+      expect(onAskOwner).toHaveBeenCalledWith("release", { id: "n1", title: "notarize" });
     } finally { await unmount(); vi.useRealTimers(); }
   });
 
@@ -210,7 +205,7 @@ describe("the badge button", () => {
     try {
       await act(async () => root.render(createElement(WorkersBadge, { bot: b, bots: [b], seen: new Set<string>(), on: true, onClick })));
       const button = host.querySelector<HTMLButtonElement>(".workers-badge")!;
-      expect(button.textContent).toBe("botling’s workers1 running");
+      expect(button.querySelector("b")?.textContent).toBe("botling’s workers"); expect(button.querySelector(".cnt")?.textContent).toBe("1 running");
       expect(button.classList.contains("on")).toBe(true);
       expect(button.dataset.tone).toBe("running");
       await act(async () => button.click());
@@ -218,5 +213,110 @@ describe("the badge button", () => {
       await act(async () => root.render(createElement(WorkersBadge, { bot: { ...b, subagentRows: [] }, bots: [b], seen: new Set<string>(), on: false, onClick })));
       expect(host.querySelector(".workers-badge")).toBeNull();
     } finally { await act(async () => root.unmount()); vi.useRealTimers(); }
+  });
+});
+
+describe("Ask <owner> prefills the owner's input box (the chat page's reference bar)", () => {
+  it("is a reference chip naming the worker, with the owner's name; the words then go out wrapped", () => {
+    expect(askReference({ id: "w1", title: "context-baseline" }, "botling")).toEqual({ id: "worker:w1", who: "About context-baseline", preview: "botling’s worker · your words go to botling, not the worker" });
+  });
+  it("says when the owner is busy, and cannot ask an owner that is gone", () => {
+    expect(askState(bot({ id: "b", name: "botling" }))).toEqual({ ok: true, note: "Workers take instructions only from botling." });
+    expect(askState(bot({ id: "b", name: "botling", working: true }))).toEqual({ ok: true, note: "botling is mid-turn. It reads your note at its next step." });
+    expect(askState(null, "Release")).toEqual({ ok: false, note: "Release is gone, so nobody can pass this on." });
+  });
+});
+
+describe("v5 extras in the panel", () => {
+  async function mount(props: Record<string, unknown>) {
+    const { RightPanel } = await import("../../src/renderer/RightPanel");
+    const host = document.createElement("div"); document.body.append(host);
+    const root = createRoot(host);
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    const base = {
+      waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, collapsed: false,
+      onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+      onPanelTab() {}, onLoadWorker: vi.fn(async () => ({ id: "f", title: "perf-trace", owner: "b", status: "failed", type: null, model: null, prompt: "trace", result: "Trace too large",
+        startedAt: new Date(NOW - 9 * MIN).toISOString(), endedAt: new Date(NOW - MIN).toISOString(),
+        steps: [{ id: "s", kind: "tool", tool: "Edit", title: "Edit a.ts", detail: "/w/src/a.ts", output: null, failed: false, done: true }] })), onAskOwner: vi.fn(),
+    };
+    const render = (more: Record<string, unknown>) => act(async () => root.render(createElement(RightPanel, { ...base, ...props, ...more } as never)));
+    await render({});
+    return { host, render, unmount: () => act(async () => root.unmount()) };
+  }
+
+  it("dots: Workers red with an unseen failure (on Details), Details orange when something waits (on Workers)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const b = bot({ id: "b", name: "botling", role: "main" as never, subagentRows: [row({ id: "f", status: "failed" })] });
+    const waiting = { items: [{ botId: "b", text: "Pick one?", messageId: null }], doing: {} };
+    const { host, render, unmount } = await mount({ bot: b, bots: [b], panelTab: "details", seenWorkers: new Set() });
+    try {
+      expect(host.querySelector('.panel-tabs button:nth-child(2) .tab-dot')?.className).toContain("failed");
+      await render({ seenWorkers: new Set(["f"]) });
+      expect(host.querySelector(".panel-tabs .tab-dot")).toBeNull();
+      await render({ panelTab: "workers", waiting });
+      expect(host.querySelector('.panel-tabs button:nth-child(1) .tab-dot')?.className).toContain("waiting");
+    } finally { await unmount(); vi.useRealTimers(); }
+  });
+
+  it("a focus request opens that worker's log directly; a changed file opens in Review", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const b = bot({ id: "b", name: "botling", subagentRows: [row({ id: "f", status: "failed" })] });
+    const onOpenFile = vi.fn();
+    const { host, unmount } = await mount({ bot: b, bots: [b], panelTab: "workers", focusWorker: { ownerId: "b", workerId: "f", at: 1 }, onOpenFile });
+    try {
+      expect(host.querySelector(".wk-log-title")?.textContent).toBe("perf-trace");
+      const file = host.querySelector<HTMLButtonElement>(".wk-files button.wk-fc")!;
+      expect(file.textContent).toBe("/w/src/a.ts");
+      await act(async () => file.click());
+      expect(onOpenFile).toHaveBeenCalledWith("b", "/w/src/a.ts");
+    } finally { await unmount(); vi.useRealTimers(); }
+  });
+
+  it("Ask is off, with why, when the owner is gone", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const b = bot({ id: "b", name: "botling", working: true, subagentRows: [row({ id: "f", status: "failed" })] });
+    const { host, unmount } = await mount({ bot: b, bots: [b], panelTab: "workers", focusWorker: { ownerId: "b", workerId: "f", at: 1 } });
+    try {
+      expect(host.querySelector(".wk-hint")?.textContent).toBe("botling is mid-turn. It reads your note at its next step.");
+      expect(host.querySelector<HTMLButtonElement>(".wk-ask")!.disabled).toBe(false);
+    } finally { await unmount(); vi.useRealTimers(); }
+  });
+});
+
+describe("the badge at narrow widths", () => {
+  it("carries a short count (icon + number) beside the long one, and the full words in its label", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const { WorkersBadge } = await import("../../src/renderer/WorkersTab");
+    const host = document.createElement("div"); document.body.append(host);
+    const root = createRoot(host);
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    const b = bot({ id: "botling", name: "botling", subagentRows: [row({ id: "r", status: "running", endedAt: null }), row({ id: "r2", status: "running", endedAt: null })] });
+    try {
+      await act(async () => root.render(createElement(WorkersBadge, { bot: b, bots: [b], seen: new Set<string>(), on: false, onClick() {} })));
+      expect(host.querySelector(".workers-badge .cnt-short")?.textContent).toBe("2");
+      expect(host.querySelector(".workers-badge")?.getAttribute("aria-label")).toBe("botling’s workers: 2 running");
+    } finally { await act(async () => root.unmount()); vi.useRealTimers(); }
+  });
+});
+
+describe("the narrow drawer opens on request", () => {
+  it("opens when asked (the badge or ⌘⇧W at narrow widths), as a sheet over the chat", async () => {
+    window.matchMedia = ((media: string) => ({ media, matches: true, addEventListener() {}, removeEventListener() {} })) as never;
+    const { TaskDetails } = await import("../../src/renderer/TaskDetails");
+    const host = document.createElement("div"); document.body.append(host);
+    const root = createRoot(host);
+    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    const b = bot({ id: "b" });
+    const props = {
+      bot: b, bots: [b], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, collapsed: false,
+      onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {}, onDrawerSettings() {},
+    };
+    try {
+      await act(async () => root.render(createElement(TaskDetails, { ...props, openSignal: 0 } as never)));
+      expect(document.querySelector<HTMLElement>("#task-details-drawer")!.hidden).toBe(true);
+      await act(async () => root.render(createElement(TaskDetails, { ...props, openSignal: 1 } as never)));
+      expect(document.querySelector<HTMLElement>("#task-details-drawer")!.hidden).toBe(false);
+    } finally { await act(async () => root.unmount()); }
   });
 });

@@ -17,7 +17,7 @@ import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
 import { AgentMenuButton, OwnerMark } from "./Rail";
 import { WorkersTab, type PanelTab, type WorkersTabProps } from "./WorkersTab";
-import { workersTabOffered } from "./worker-panel";
+import { unseenFailures, workersTabOffered } from "./worker-panel";
 
 type Section = "waiting" | "results" | "settled";
 
@@ -58,6 +58,10 @@ export interface RightPanelProps {
   onLoadWorker?: WorkersTabProps["onLoadWorker"];
   onAskOwner?: WorkersTabProps["onAskOwner"];
   onSeenWorker?: (workerId: string) => void;
+  /** Failed workers whose log you opened (no red dot for them). */
+  seenWorkers?: ReadonlySet<string>;
+  onOpenFile?: WorkersTabProps["onOpenFile"];
+  focusWorker?: WorkersTabProps["focusWorker"];
 }
 
 /** `ArtifactLink.isArtifact`: a claude.ai Artifact's page. */
@@ -83,24 +87,31 @@ function SettingsPanel({ settingsPage, onCloseSettings }: RightPanelProps) {
 
 function OpenPanel(props: RightPanelProps) {
   if (props.showingSettings && props.settingsPage) return <SettingsPanel {...props} />;
-  const offered = !!(props.onLoadWorker && props.onAskOwner && props.onPanelTab) && workersTabOffered(props.bot, props.bots, Date.now());
+  const now = Date.now();
+  const offered = !!(props.onLoadWorker && props.onAskOwner && props.onPanelTab) && workersTabOffered(props.bot, props.bots, now);
+  // The other tab's dot: Details orange when something waits on you there; Workers red with a failure you have not opened.
+  const waits = panelWaiting(props.bot, props.waiting).length > 0 || props.bot.approvals > 0;
+  const failed = offered && unseenFailures(props.bot, props.bots, now, props.seenWorkers ?? new Set()) > 0;
   if (offered && props.panelTab === "workers") {
     return (
       <aside className="detail-panel workers-panel" aria-label="Workers">
-        <PanelTabs tab="workers" onTab={props.onPanelTab!} />
-        <WorkersTab key={props.bot.id} bot={props.bot} bots={props.bots} onLoadWorker={props.onLoadWorker!} onAskOwner={props.onAskOwner!} onSeen={props.onSeenWorker} />
+        <PanelTabs tab="workers" onTab={props.onPanelTab!} waits={waits} failed={false} />
+        <WorkersTab key={props.bot.id} bot={props.bot} bots={props.bots} onLoadWorker={props.onLoadWorker!} onAskOwner={props.onAskOwner!} onSeen={props.onSeenWorker}
+          onOpenFile={props.onOpenFile} focusWorker={props.focusWorker} />
       </aside>
     );
   }
-  return <Overview {...props} tabs={offered ? <PanelTabs tab="details" onTab={props.onPanelTab!} /> : null} />;
+  return <Overview {...props} tabs={offered ? <PanelTabs tab="details" onTab={props.onPanelTab!} waits={false} failed={failed} /> : null} />;
 }
 
-/** Details | Workers, at the panel's top (only when there are workers to show). */
-function PanelTabs({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab) => void }) {
+/** Details | Workers, at the panel's top (only when there are workers to show), each with its dot when the other is shown. */
+function PanelTabs({ tab, onTab, waits, failed }: { tab: PanelTab; onTab: (tab: PanelTab) => void; waits: boolean; failed: boolean }) {
   return (
     <div className="panel-tabs" role="tablist" aria-label="Panel">
-      <button type="button" role="tab" aria-selected={tab === "details"} className={tab === "details" ? "on" : ""} onClick={() => onTab("details")}>Details</button>
-      <button type="button" role="tab" aria-selected={tab === "workers"} className={tab === "workers" ? "on" : ""} onClick={() => onTab("workers")}>Workers</button>
+      <button type="button" role="tab" aria-selected={tab === "details"} className={tab === "details" ? "on" : ""} onClick={() => onTab("details")}
+        aria-label={waits ? "Details, something waits on you" : undefined}>Details{waits && <span className="tab-dot waiting" aria-hidden="true" />}</button>
+      <button type="button" role="tab" aria-selected={tab === "workers"} className={tab === "workers" ? "on" : ""} onClick={() => onTab("workers")}
+        aria-label={failed ? "Workers, a worker failed" : undefined}>Workers{failed && <span className="tab-dot failed" aria-hidden="true" />}</button>
     </div>
   );
 }

@@ -40,7 +40,7 @@ import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDial
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { WorkersBadge, type PanelTab } from "./WorkersTab";
-import { readSeenFailed, writeSeenFailed } from "./worker-panel";
+import { askOwnerText, askReference, readSeenFailed, workerRowsOf, writeSeenFailed, type AskWorker } from "./worker-panel";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -94,13 +94,31 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     writeSeenFailed(next);
     return next;
   }), []);
-  // The badge: opens the panel on Workers; on Details it switches to Workers; on Workers it folds the panel.
+  // At narrow widths the panel is a sheet over the chat (TaskDetails): the badge and ⌘⇧W open it on Workers.
+  const [drawerSignal, setDrawerSignal] = useState(0);
+  // A worker the panel should open now (the chat's subagent card "Open ›").
+  const [focusWorker, setFocusWorker] = useState<{ ownerId: string; workerId: string; at: number } | null>(null);
+  // "Ask <owner>": the worker shown as a reference in that owner's input box until you send or ×.
+  const [askAbout, setAskAbout] = useState<{ botId: string; worker: AskWorker; ownerName: string } | null>(null);
+  // The badge (and ⌘⇧W): opens the panel on Workers; on Details it switches to Workers; on Workers it folds the panel.
   const workersBadgeClick = useCallback((botId: string) => {
     const onWorkers = panelTabs[botId] === "workers";
+    if (window.matchMedia?.("(max-width: 860px)").matches) { setPanelTabs((tabs) => ({ ...tabs, [botId]: "workers" })); setDrawerSignal((n) => n + 1); return; }
     if (collapsed) { setPanelTabs((tabs) => ({ ...tabs, [botId]: "workers" })); toggleRight(); }
     else if (!onWorkers) setPanelTabs((tabs) => ({ ...tabs, [botId]: "workers" }));
     else toggleRight();
   }, [panelTabs, collapsed, toggleRight]);
+  const toggleWorkers = useCallback(() => { const shown = store.getView().chat?.botId; if (shown) workersBadgeClick(shown); }, [store, workersBadgeClick]);
+  // The chat's subagent card "Open ›": a worker's log opens in the panel's Workers tab (else, as before, in the chat's place).
+  const openWorkerInPanel = useCallback((botId: string, workerId: string): boolean => {
+    const owner = store.getView().bots.find((candidate) => candidate.id === botId);
+    if (!owner || !workerRowsOf(owner).some((row) => row.id === workerId)) return false;
+    setPanelTabs((tabs) => ({ ...tabs, [botId]: "workers" }));
+    setFocusWorker({ ownerId: botId, workerId, at: Date.now() });
+    if (window.matchMedia?.("(max-width: 860px)").matches) setDrawerSignal((n) => n + 1);
+    else if (store.getView().settings?.rightPanelCollapsed) toggleRight();
+    return true;
+  }, [store, toggleRight]);
   // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView).
   const railCollapsed = view.settings?.railCollapsed ?? false;
   const toggleRail = useCallback((collapse?: boolean) => {
@@ -181,6 +199,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     switch (actionForEvent(key, shortcutBindings)) {
       case "settings": openSettings(); break;
       case "toggleRightPanel": toggleRight(); break;
+      case "toggleWorkers": toggleWorkers(); break;
       case "toggleSidebar": toggleRail(); break;
       case "search": startSearch(); break;
       case "subBots": toggleSubBots(); break;
@@ -192,12 +211,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         break;
       }
     }
-  }, [openSettings, toggleRight, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       switch (actionForEvent(event, shortcutBindings)) {
         case "settings": event.preventDefault(); openSettings(); break;
         case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
+        case "toggleWorkers": event.preventDefault(); toggleWorkers(); break;
         case "toggleSidebar": event.preventDefault(); toggleRail(); break;
         case "search": event.preventDefault(); startSearch(); break;
         case "subBots": event.preventDefault(); toggleSubBots(); break;
@@ -214,6 +234,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       switch ((event as CustomEvent).detail) {
         case "settings": openSettings(); break;
         case "rightPanel": toggleRight(); break;
+        case "workers": toggleWorkers(); break;
         case "sidebar": toggleRail(); break;
         case "search": startSearch(); break;
         case "subBots": toggleSubBots(); break;
@@ -224,7 +245,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     window.addEventListener("botling:chat-command", onCommand);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   const watching = view.subagent?.id ?? null;
@@ -580,7 +601,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         )}
         {tab && bot && <MainTabFrame key={`${bot.id}/${tabKey(tab)}`} client={client} plugin={tab.plugin} view={tab.id} title={tab.title} botId={bot.id} onBuiltin={runBuiltin} components={view.components} bots={view.bots} ask={approval.ask} />}
         {/* Under a plugin's tab the chat page stays loaded (hidden), so going back to Chat is instant. */}
-        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask} />
+        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onAsk={approval.ask}
+          onOpenWorker={openWorkerInPanel} askAbout={askAbout} onAskDone={() => setAskAbout(null)} />
         {!web && <BottomPanels client={client} panels={view.plugins?.bottomPanels ?? []} toggleHost={bottomControls} onHide={focusComposer} botId={bot?.id} botIds={view.bots.map(b => b.id)}
           shortcutFor={(command) => (command && pluginKeys[command] ? formatCombo(pluginKeys[command]!, shellPlatform()) : "")} onBuiltin={runBuiltin} onKey={forwardKey} components={view.components} bots={view.bots} ask={approval.ask} />}
         </div>
@@ -611,7 +633,23 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           panelTab={panelTabs[bot.id] ?? "details"}
           onPanelTab={(next) => setPanelTabs((tabs) => ({ ...tabs, [bot.id]: next }))}
           onLoadWorker={(ownerId, workerId) => client.request({ type: "subagent.view", botId: ownerId, subagentId: workerId }).then((result) => result.subagent)}
-          onAskOwner={(ownerId, text) => client.request({ type: "chat.send", botId: ownerId, text }).then(() => { if (ownerId !== bot.id) selectBot(ownerId); })}
+          onAskOwner={(ownerId, worker) => {
+            const owner = view.bots.find((candidate) => candidate.id === ownerId);
+            if (!owner) return;
+            setAskAbout({ botId: ownerId, worker, ownerName: owner.name });
+            if (ownerId !== bot.id) selectBot(ownerId);
+            setTimeout(focusComposer, 0);
+          }}
+          onOpenFile={(ownerId) => {
+            const owner = view.bots.find((candidate) => candidate.id === ownerId);
+            const review = owner ? mainTabsFor(view.plugins, owner).find((candidate) => candidate.plugin === "botling.git" && candidate.id === "botling.git.review") : undefined;
+            if (!owner || !review) { setError("No Review tab here: turn on the botling.git plugin to see diffs."); return; }
+            if (ownerId !== bot.id) selectBot(ownerId);
+            chooseTab(ownerId, review);
+          }}
+          focusWorker={focusWorker}
+          seenWorkers={seenFailed}
+          openSignal={drawerSignal}
           onSeenWorker={seeWorker}
         />
       )}
@@ -858,7 +896,9 @@ function runPluginCommand(client: Client, plugins: PluginsView | null | undefine
   else postToChat({ botling: "runCommand", id });
 }
 
-function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
+function ChatFrame({ client, store, onError, onSent, onAsk, onOpenWorker, askAbout = null, onAskDone }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void;
+  onOpenWorker?: (botId: string, workerId: string) => boolean;
+  askAbout?: { botId: string; worker: AskWorker; ownerName: string } | null; onAskDone?: () => void;
   onAsk: (view: ApprovalAskView, approve: import("../contract").Command, done?: (allowed: boolean) => void) => void }) {
   const [report, setReport] = useState<{botId: string; url: string} | null>(null);
   const frame = useRef<HTMLIFrameElement>(null);
@@ -876,6 +916,8 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
   const [replying, setReplying] = useState<{ botId: string; id: string } | null>(null);
   const replyingRef = useRef(replying);
   replyingRef.current = replying;
+  const askRef = useRef(askAbout);
+  askRef.current = askAbout;
 
   const channel = useMemo(() => new ChatStateChannel(() => {
     const target = frame.current?.contentWindow;
@@ -889,6 +931,8 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
       const line = chat.messages.find((message) => message.id === reply.id);
       if (line) quoted = { id: line.id, who: line.role === "user" ? "Reply to yourself" : `Reply to ${bot.name}`, preview: (line.text.split("\n").find(Boolean) ?? "").slice(0, 60) };
     }
+    // "Ask <owner>" from the Workers tab: the worker as the input box's reference (the same bar, its × drops it).
+    if (!quoted && askRef.current?.botId === chat.botId) quoted = askReference(askRef.current.worker, askRef.current.ownerName);
     const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, {
       components: current.components, board: current.board, look: current.settings?.botLook ?? "original",
       lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, bots: current.bots,
@@ -901,7 +945,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
       messageColumnWidth: current.settings?.messageColumnWidth ?? null, ...(traceId ? { traceId } : {}) };
   }, postToChat), [store]);
   const push = useCallback(() => channel.flush(true), [channel]);
-  useEffect(() => { channel.schedule(); }, [channel, view, replying]);
+  useEffect(() => { channel.schedule(); }, [channel, view, replying, askAbout]);
   useEffect(() => channel.reset, [channel]);
 
   useEffect(() => {
@@ -1129,7 +1173,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
           return;
         }
         case "shellCommand":
-          if (nativeEditor() && ["settings", "rightPanel", "sidebar", "search", "subBots", "roomBack", "roomForward"].includes(String(action.command))) {
+          if (nativeEditor() && ["settings", "rightPanel", "workers", "sidebar", "search", "subBots", "roomBack", "roomForward"].includes(String(action.command))) {
             window.dispatchEvent(new CustomEvent("botling:chat-command", { detail: action.command }));
           }
           return;
@@ -1153,9 +1197,13 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
           const botId = typeof action.botID === "string" ? action.botID : chat.botId;
           const reply = replyingRef.current?.botId === botId ? replyingRef.current.id : undefined;
           const to = action.to === "agy" || action.to === "claude" || action.to === "codex" ? { to: action.to as "agy" | "claude" | "codex" } : {};
-          void client.request({ type: "chat.send", botId, text: action.text, ...(reply ? { replyTo: reply } : {}), ...to }).then(result => {
+          // A worker reference ("Ask <owner>") and no reply: the words go to this bot naming the worker.
+          const about = !reply && action.text.trim() && askRef.current?.botId === botId ? askRef.current : null;
+          const text = about ? askOwnerText(about.worker, action.text) : action.text;
+          void client.request({ type: "chat.send", botId, text, ...(reply ? { replyTo: reply } : {}), ...to }).then(result => {
             if (result.stoppedBy) { composerReply(false, `Plugin ${result.stoppedBy} stopped the message.`); return; }
             onSent();
+            if (about) onAskDone?.();
             setReplying(current => current?.botId === botId && current.id === reply ? null : current);
             composerReply(true);
           }).catch(composerFailure);
@@ -1221,6 +1269,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
           if (chat && typeof action.messageID === "string") setReplying({ botId: chat.botId, id: action.messageID });
           return;
         case "cancelReply":
+          if (!replyingRef.current && askRef.current) onAskDone?.();
           setReplying(null);
           return;
         case "taskOutput": {
@@ -1236,6 +1285,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk }: { client: Client; 
         case "openSubagent": {
           if (!chat || typeof action.id !== "string") return;
           const botId = chat.botId;
+          if (onOpenWorker?.(botId, action.id)) return;
           void client.request({ type: "subagent.view", botId, subagentId: action.id })
             .then((result) => { if (store.getView().chat?.botId === botId) store.watch(result.subagent); })
             .catch(onError);

@@ -2,10 +2,10 @@
 // The tab lists the room's app-managed workers (Claude, Codex, Antigravity) by owner: the room expanded, its parent and
 // sibling sub bots folded to one line each. A row opens its read-only log in the panel; the only action is
 // "Ask <owner>", which sends your question to the owner bot as your message, never to the worker.
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { BotView, SubagentRowView, SubagentView } from "../contract";
 import {
-  askOwnerText, clock, elapsed, filesChanged, ownerSummary, sectionedWorkers, shortPath, workerFamily, workerRowsOf, workersBadge,
+  askState, clock, elapsed, filesChanged, ownerSummary, sectionedWorkers, shortPath, workerFamily, workerRowsOf, workersBadge, type AskWorker,
 } from "./worker-panel";
 
 export type PanelTab = "details" | "workers";
@@ -15,8 +15,12 @@ export interface WorkersTabProps {
   bots: BotView[];
   /** The worker's own record, read only (`subagent.view` on its owner). */
   onLoadWorker: (ownerId: string, workerId: string) => Promise<SubagentView>;
-  /** Send `text` to the owner bot as your message. */
-  onAskOwner: (ownerId: string, text: string) => Promise<void>;
+  /** "Ask <owner>": the owner's chat, with this worker as a reference in its input box. */
+  onAskOwner: (ownerId: string, worker: AskWorker) => void;
+  /** A file in "Files changed": its diff in the owner's Review tab. */
+  onOpenFile?: (ownerId: string, path: string) => void;
+  /** Open this worker's log now (the chat's subagent card "Open ›"); `at` makes each request new. */
+  focusWorker?: { ownerId: string; workerId: string; at: number } | null;
   /** You opened a failed worker's log: the badge goes back to normal. */
   onSeen?: (workerId: string) => void;
 }
@@ -124,15 +128,11 @@ function meta(view: SubagentView, now: number): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-function WorkerLog({ owner, row, onBack, onLoad, onAsk, onSeen }: { owner: BotView; row: SubagentRowView; onBack: () => void } & { onLoad: WorkersTabProps["onLoadWorker"]; onAsk: WorkersTabProps["onAskOwner"]; onSeen?: (id: string) => void }) {
+function WorkerLog({ owner, row, onBack, onLoad, onAsk, onSeen, onOpenFile }: { owner: BotView; row: SubagentRowView; onBack: () => void } & { onLoad: WorkersTabProps["onLoadWorker"]; onAsk: WorkersTabProps["onAskOwner"]; onSeen?: (id: string) => void; onOpenFile?: (path: string) => void }) {
   const [view, setView] = useState<SubagentView | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [slow, setSlow] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [question, setQuestion] = useState("");
-  const [sent, setSent] = useState<"sending" | "sent" | string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     let live = true;
     const timer = setTimeout(() => { if (live) setSlow(true); }, 300);
@@ -147,20 +147,12 @@ function WorkerLog({ owner, row, onBack, onLoad, onAsk, onSeen }: { owner: BotVi
     return () => clearInterval(timer);
   }, [row.status, row.id]);
   useEffect(() => { if (row.status === "failed") onSeen?.(row.id); }, [row.id, row.status]);
-  useEffect(() => { if (asking) box.current?.focus(); }, [asking]);
-
-  const send = () => {
-    const words = question.trim();
-    if (!words) return;
-    setSent("sending");
-    onAsk(owner.id, askOwnerText({ title: row.title || "Worker", id: row.id, ...(row.agentId ? { agentId: row.agentId } : {}) }, words))
-      .then(() => { setSent("sent"); setQuestion(""); setAsking(false); }, (error: unknown) => setSent(String((error as Error)?.message ?? error)));
-  };
+  const ask = askState(owner);
   const now = Date.now();
   const files = view ? filesChanged(view.steps) : [];
   const lastStep = view?.steps.at(-1);
   const keys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "ArrowLeft" && !(event.target instanceof HTMLTextAreaElement)) { event.preventDefault(); onBack(); }
+    if (event.key === "ArrowLeft") { event.preventDefault(); onBack(); }
   };
   return (
     <div className="wk-logpane" onKeyDown={keys}>
@@ -181,7 +173,9 @@ function WorkerLog({ owner, row, onBack, onLoad, onAsk, onSeen }: { owner: BotVi
             {view.status === "stopped" && <div className="wk-box wk-result"><div className="wk-lab">Stopped</div>{view.result || `${owner.name} stopped it.`}</div>}
             {files.length > 0 && (
               <div className="wk-files"><div className="wk-lab">Files changed · {files.length}</div>
-                {files.map((file) => <div key={file} className="wk-fc" title={file}>{shortPath(file)}</div>)}</div>
+                {files.map((file) => onOpenFile
+                  ? <button key={file} type="button" className="wk-fc" title={`${file} · open its diff in Review`} onClick={() => onOpenFile(file)}>{shortPath(file)}</button>
+                  : <div key={file} className="wk-fc" title={file}>{shortPath(file)}</div>)}</div>
             )}
             <div><div className="wk-lab">Steps · {view.steps.length + 1}</div>
               <ol className="wk-steps">
@@ -196,33 +190,24 @@ function WorkerLog({ owner, row, onBack, onLoad, onAsk, onSeen }: { owner: BotVi
           </>
         )}
       </div>
-      {asking ? (
-        <div className="wk-lf wk-ask-box">
-          <textarea ref={box} rows={3} value={question} placeholder={`Ask ${owner.name} about ${row.title || "this worker"}…`} onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); } if (event.key === "Escape") setAsking(false); }} />
-          <div className="wk-ask-row">
-            <span className="wk-tm">Goes to {owner.name}’s chat as your message.</span>
-            <button type="button" className="wk-btn2" onClick={() => setAsking(false)}>Cancel</button>
-            <button type="button" className="wk-ask-send" disabled={!question.trim() || sent === "sending"} onClick={send}>Send</button>
-          </div>
-        </div>
-      ) : (
-        <div className="wk-lf">
-          <span className="wk-tm wk-hint">{sent === "sent" ? `Sent to ${owner.name}.` : sent && sent !== "sending" ? sent : `Workers take instructions only from ${owner.name}.`}</span>
-          <button type="button" className="wk-ask" onClick={() => { setSent(null); setAsking(true); }}>Ask {owner.name}</button>
-        </div>
-      )}
+      <div className="wk-lf">
+        <span className="wk-tm wk-hint">{ask.note}</span>
+        <button type="button" className="wk-ask" disabled={!ask.ok} title={`${owner.name}’s chat, with this worker as a reference (A)`}
+          onClick={() => onAsk(owner.id, { id: row.id, title: row.title || "Worker", ...(row.agentId ? { agentId: row.agentId } : {}) })}>Ask {owner.name}</button>
+      </div>
     </div>
   );
 }
 
 /** The Workers tab's body: the list, or one worker's read-only log pushed in its place. */
-export function WorkersTab({ bot, bots, onLoadWorker, onAskOwner, onSeen }: WorkersTabProps) {
-  const [picked, setPicked] = useState<{ ownerId: string; workerId: string } | null>(null);
+export function WorkersTab({ bot, bots, onLoadWorker, onAskOwner, onSeen, onOpenFile, focusWorker }: WorkersTabProps) {
+  const [picked, setPicked] = useState<{ ownerId: string; workerId: string } | null>(focusWorker ? { ownerId: focusWorker.ownerId, workerId: focusWorker.workerId } : null);
+  useEffect(() => { if (focusWorker) setPicked({ ownerId: focusWorker.ownerId, workerId: focusWorker.workerId }); }, [focusWorker?.at]);
   const owner = picked ? bots.find((candidate) => candidate.id === picked.ownerId) ?? (bot.id === picked.ownerId ? bot : null) : null;
   const row = owner && picked ? owner.subagentRows.find((candidate) => candidate.id === picked.workerId) ?? null : null;
   if (owner && row) {
-    return <WorkerLog owner={owner} row={row} onBack={() => setPicked(null)} onLoad={onLoadWorker} onAsk={onAskOwner} onSeen={onSeen} />;
+    return <WorkerLog owner={owner} row={row} onBack={() => setPicked(null)} onLoad={onLoadWorker} onAsk={onAskOwner} onSeen={onSeen}
+      onOpenFile={onOpenFile ? (path) => onOpenFile(owner.id, path) : undefined} />;
   }
   return <WorkerList bot={bot} bots={bots.some((candidate) => candidate.id === bot.id) ? bots : [bot, ...bots]} onOpen={(chosen, chosenRow) => setPicked({ ownerId: chosen.id, workerId: chosenRow.id })} />;
 }
@@ -243,6 +228,7 @@ export function WorkersBadge({ bot, bots, seen, on, onClick }: { bot: BotView; b
       aria-label={`${possessive(bot.name)} workers: ${badge.count}${badge.extra ? `, ${badge.extra}` : ""}`} onClick={onClick}>
       <span className={`wk-s ${badge.tone === "today" ? "completed" : badge.tone === "failed" ? "failed" : "running"}`} aria-hidden="true">{badge.tone === "today" ? "✓" : badge.tone === "failed" ? "!" : ""}</span>
       <b>{possessive(bot.name)} workers</b><span className="cnt">{badge.count}</span>{badge.extra && <span className="wk-mu">· {badge.extra}</span>}
+      <span className="cnt-short" aria-hidden="true">{badge.count.split(" ")[0]}</span>
     </button>
   );
 }
