@@ -207,6 +207,17 @@ export const zhHant: Dictionary = {
   "command.runningFirst": "正在執行指令…",
   // components.ts: choices and a component's flag
   "choices.recommended": "建議",
+  // question-group.ts: several questions answered together
+  "questions.pickOne": "單選",
+  "questions.pickAny": "可複選",
+  "questions.other": "其他，自己寫…",
+  "questions.otherLabel": "其他",
+  "questions.skip": "略過",
+  "questions.unskip": "取消略過",
+  "questions.skipped": "已略過",
+  "questions.submit": "送出答案",
+  "questions.progress": "已回答 {done}/{total}",
+  "questions.count": "{n} 個問題",
   "component.updating": "元件更新中",
   "component.report": "回報這個元件",
   "component.updated": "已更新",

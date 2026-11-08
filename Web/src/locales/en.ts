@@ -208,6 +208,17 @@ export const en = {
   "command.runningFirst": "Running the command…",
   // components.ts: choices and a component's flag
   "choices.recommended": "Recommended",
+  // question-group.ts: several questions answered together
+  "questions.pickOne": "Pick one",
+  "questions.pickAny": "Pick any",
+  "questions.other": "Other, write your own…",
+  "questions.otherLabel": "Other",
+  "questions.skip": "Skip",
+  "questions.unskip": "Undo skip",
+  "questions.skipped": "Skipped",
+  "questions.submit": "Submit answers",
+  "questions.progress": "{done} of {total} answered",
+  "questions.count": "{n} questions",
   "component.updating": "Component being updated",
   "component.report": "Report this component",
   "component.updated": "Updated",

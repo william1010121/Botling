@@ -370,6 +370,30 @@ export function resizeFrame(frame: HTMLIFrameElement, size: PinSize): void {
   frame.contentWindow?.postMessage({ ccbSize: sizeInfo(size) }, "*");
 }
 
+/**
+ * A question group's answers as a template sent them, checked; null when not a group answer. A 「choices」 template
+ * that draws groups posts them itself, `parent.postMessage({ccb: "answer", picks}, "*")` (the page script stays as it was).
+ */
+export function answerPicks(value: unknown): NonNullable<ComponentAnswer["picks"]> | null {
+  if (!Array.isArray(value) || !value.length || value.length > 5) return null;
+  const picks = value.map((entry) => {
+    const pick = (entry ?? {}) as { options?: unknown; other?: unknown; skipped?: unknown };
+    const options = Array.isArray(pick.options) ? pick.options.filter((option): option is number => Number.isInteger(option) && (option as number) >= 0 && (option as number) <= 5).slice(0, 6) : [];
+    return { options, ...(typeof pick.other === "string" && pick.other.trim() ? { other: pick.other.trim().slice(0, 1_000) } : {}), ...(pick.skipped === true ? { skipped: true } : {}) };
+  });
+  return picks;
+}
+
+/** Whether the 「choices」 template draws question groups itself (its root says `data-ccb-questions`); else the app draws them. */
+export function choicesDrawGroups(info: ComponentInfo | undefined): boolean {
+  return !!info?.template.includes("data-ccb-questions");
+}
+
+/** The data a 「choices」 template that draws groups reads: every question, the picks once answered, and the 1.x keys. */
+export function questionGroupData(questions: { question: string; multiple: boolean; options: ChoiceView[] }[], picks: { options: number[]; other: string | null; skipped: boolean }[] | null, answer: string | null): string {
+  return JSON.stringify({ questions, picks, options: questions[0]?.options ?? [], chosen: null, answer });
+}
+
 /** The choices data a 「choices」 template reads. */
 export function choicesData(choices: ChoiceView[], chosen: number | null, answer: string | null): string {
   return JSON.stringify({ options: choices, chosen, answer });
@@ -386,6 +410,8 @@ export interface ComponentAnswer {
   index?: number;
   text?: string;
   images?: AnswerImage[];
+  /** A question group's answers, one per question in order (question-group.ts, or a 「choices」 template that draws groups). */
+  picks?: { options: number[]; other?: string; skipped?: boolean }[];
 }
 
 type AnswerHandler = (answer: ComponentAnswer) => void;
@@ -632,7 +658,9 @@ window.addEventListener("message", (event) => {
     frame.closest(".board-card, .pin-sheet, .float-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     const images = answerImages(message.images);
-    if (typeof message.index === "number" && Number.isInteger(message.index)) frame.ccbAnswer({ index: message.index, ...(typeof message.text === "string" && message.text.trim() ? {text: message.text} : {}), ...(images.length ? {images} : {}) });
+    const picks = answerPicks((message as { picks?: unknown }).picks);
+    if (picks) frame.ccbAnswer({ picks });
+    else if (typeof message.index === "number" && Number.isInteger(message.index)) frame.ccbAnswer({ index: message.index, ...(typeof message.text === "string" && message.text.trim() ? {text: message.text} : {}), ...(images.length ? {images} : {}) });
     else if (images.length) frame.ccbAnswer({ text: typeof message.text === "string" ? message.text : "", images });
     else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
   } else if (message.ccb === "open" && typeof message.url === "string" && message.url !== "") {
@@ -690,6 +718,7 @@ export function answerImages(value: unknown): AnswerImage[] {
  * Nothing for an empty answer.
  */
 export function answerAction(messageID: string, answer: ComponentAnswer): Action | null {
+  if (answer.picks?.length) return { type: "answer", messageID, text: "", picks: answer.picks };
   if (answer.index !== undefined) return { type: "choose", messageID, index: answer.index, ...(answer.text?.trim() ? { text: answer.text } : {}), ...(answer.images?.length ? { images: answer.images } : {}) };
   const text = answer.text ?? "";
   const images = answer.images ?? [];

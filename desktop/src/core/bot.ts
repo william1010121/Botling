@@ -92,6 +92,7 @@ import { displayCommand, displayView, type ComponentsContext, type DisplayData }
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
 import { detailValues, type CommandStatus } from "./components/commands";
 import type { Display } from "./reply";
+import { answerMessage, savedPicks, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { headTurnContent, headTurnEnd } from "./head-turn";
 import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, type WorkerCoreFactory, type WorkerLedgerRecord } from "./worker-core";
 import { projectWorker } from "./worker-projection";
@@ -664,7 +665,7 @@ export class Bot {
         if (kept.reactions) record.reactions = kept.reactions;
         if (kept.ignoredAt) record.ignoredAt = kept.ignoredAt;
         if (kept.questionInvalidatedAt) record.questionInvalidatedAt = kept.questionInvalidatedAt;
-        if (kept.decisionID && !isOpenQuestion(kept)) { record.decisionID = kept.decisionID; record.choices = kept.choices; record.chosen = kept.chosen; record.answer = kept.answer; }
+        if (kept.decisionID && !isOpenQuestion(kept)) { record.decisionID = kept.decisionID; record.choices = kept.choices; record.chosen = kept.chosen; record.answer = kept.answer; if (kept.questions) record.questions = kept.questions; if (kept.picks) record.picks = kept.picks; }
         this.records[at] = record;
       }
     }
@@ -865,12 +866,13 @@ export class Bot {
    * never to the bot; after a restart nobody waits for it, so it is closed ("No longer needed").
    */
   appNotice(text: string, choices?: { label: string; recommended?: boolean; detail?: string }[], onPick?: (index: number) => void,
-    more: { onAnswer?: (text: string, files: string[]) => boolean; sourceID?: string; sourceMessageID?: string; moveNotice?: string } = {}): string {
+    more: { onAnswer?: (text: string, files: string[]) => boolean; sourceID?: string; sourceMessageID?: string; moveNotice?: string; questions?: ChatRecord["questions"] } = {}): string {
     if (this.options.primary) return this.options.primary.appNotice(text, choices, onPick, more);
     const record: ChatRecord = { id: newId(), role: "notice", text, date: toSwiftDate() };
     // An agent move's notice: keyed so a move's notices are posted once, even when they are sent again after a crash.
     if (more.moveNotice) record.moveNotice = more.moveNotice;
     if (choices?.length) record.choices = choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended }));
+    if (choices?.length && more.questions?.length) record.questions = more.questions;
     // 1.x's keys: the project or bot a line came from, and the question it is a copy of.
     if (more.sourceID) record.sourceID = more.sourceID;
     if (more.sourceMessageID) record.sourceMessageID = more.sourceMessageID;
@@ -1010,11 +1012,12 @@ export class Bot {
   }
 
   /** Its latest question still waiting for you (1.x's `openQuestion`), if any (not tool approvals). */
-  openQuestion(): { id: string; text: string; choices: { label: string; detail?: string; recommended: boolean }[] } | null {
+  openQuestion(): { id: string; text: string; choices: { label: string; detail?: string; recommended: boolean }[]; questions?: NonNullable<ChatRecord["questions"]> } | null {
     const owner = this.owner;
     // The bot's own (1.x: role .bot), not the app's cards in its chat.
     const record = owner.records.findLast((candidate) => candidate.role === "bot" && isOpenQuestion(candidate) && !candidate.permissionTool && typeof candidate.sourceID !== "string");
-    return record ? { id: record.id, text: record.text, choices: (record.choices ?? []).map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended })) } : null;
+    const questions = savedQuestions(record?.questions);
+    return record ? { id: record.id, text: record.text, choices: (record.choices ?? []).map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended })), ...(questions ? { questions } : {}) } : null;
   }
 
   /** Its chat's lines as they stand (read only). */
@@ -2509,6 +2512,7 @@ export class Bot {
     const record: ChatRecord = { id: newId(), role: "bot", text: "", date: toSwiftDate(), state: "done", engine: this.engine };
     record.text = parsed.body;
     if (parsed.choices) record.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
+    if (parsed.questions) record.questions = parsed.questions;
     if (parsed.displays.length) record.displays = parsed.displays;
     if (record.text || record.choices || record.displays) {
       this.add(record);
@@ -2571,7 +2575,9 @@ export class Bot {
     const lines = [...ids].sort().flatMap((id) => {
       const source = this.records.find((candidate) => candidate.id === id && candidate.decisionID === id);
       if (!source) return [];
-      const options = source.choices?.map((choice) => choice.label).join(" / ") ?? "";
+      const options = source.questions?.length
+        ? source.questions.map((question, at) => `Q${at + 1} ${question.question}${question.multiple ? " (several)" : ""}: ${question.options.map((option) => option.label).join(" / ")}`).join("; ")
+        : source.choices?.map((choice) => choice.label).join(" / ") ?? "";
       const selected = source.chosen != null ? source.choices?.[source.chosen]?.label : undefined;
       const actual = [selected, source.answer].filter((part): part is string => typeof part === "string").join("\nNotes: ");
       return [`Decision ${id}: ${preview(source)}; options: ${options}; answer: ${source.ignoredAt ? "ignored by user; notification only, unanswered and NOT authorized" : actual || "unanswered"}`];
@@ -2589,6 +2595,8 @@ export class Bot {
     if (!(fromHandoff || fromPeer) || !source || source.role !== "bot" || source.permissionTool) return;
     record.decisionID = reference;
     if (source.choices) record.choices = source.choices.map((choice) => ({ ...choice }));
+    if (source.questions) record.questions = source.questions.map((question) => ({ ...question, options: question.options.map((option) => ({ ...option })) }));
+    if (source.picks) record.picks = source.picks.map((pick) => ({ ...pick, options: [...pick.options] }));
     if (source.chosen !== undefined) record.chosen = source.chosen;
     if (source.answer !== undefined) record.answer = source.answer;
     if (source.ignoredAt !== undefined) record.ignoredAt = source.ignoredAt;
@@ -2620,9 +2628,12 @@ export class Bot {
       if (!words) return false;
       source.answer = words;
       dispatch = words;
+      // A question group's answers (answerQuestions put them on the view): every view shows them.
+      if (view.picks && source.questions) source.picks = view.picks;
     }
     for (const record of this.records) {
       if (record.decisionID !== id || record === source) continue;
+      if (source.picks && record.questions) record.picks = source.picks;
       const option = source.chosen != null ? source.choices?.[source.chosen]?.id : undefined;
       const at = option ? record.choices?.findIndex((choice) => choice.id === option) ?? -1 : -1;
       if (at >= 0) record.chosen = at;
@@ -3855,6 +3866,7 @@ export class Bot {
     let text = tags.body;
     if (status === "done") {
       if (parsed.choices) record.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
+      if (parsed.questions) record.questions = parsed.questions;
       if (parsed.displays.length) {
         record.displays = parsed.displays;
         // A library component it drew without having it goes on its list, if there is room (`countComponents`).
@@ -5399,6 +5411,11 @@ export class Bot {
 
   /** A button on a question: an approval's action, or a bot's own question answered with the pick's label (`Bot.choose`). */
   choose(messageId: string, index: number, notes?: string): ResultOf<"chat.choose"> {
+    // A question group picked by index (a phone, a copy, an older page): that pick answers its first question, the rest are skipped.
+    const group = this.line(messageId);
+    if (group?.questions?.length && group.role === "bot" && !group.permissionTool && !this.appQuestions.has(messageId) && !this.cardPicks.has(messageId)) {
+      return this.answer(messageId, "", [], group.questions.map((_, at): QuestionPick => (at === 0 ? { options: [index] } : { options: [], skipped: true })));
+    }
     const resolved = this.resolveDecision(messageId, index, notes);
     if (resolved !== null) return { accepted: resolved };
     // A question the other head asked: its own to settle.
@@ -5476,7 +5493,8 @@ export class Bot {
   }
 
   /** `Bot.answer`: the user answered a question in their own words instead of a button. */
-  answer(messageId: string, text: string, files: string[] = []): ResultOf<"chat.answer"> {
+  answer(messageId: string, text: string, files: string[] = [], picks?: QuestionPick[]): ResultOf<"chat.answer"> {
+    if (picks) return this.answerQuestions(messageId, picks, files);
     const resolved = this.resolveDecision(messageId, null, answerLabel(text, files.length));
     if (resolved !== null) return { accepted: resolved };
     const peer = this.peers.find(bot => bot.records.some(candidate => candidate.id === messageId));
@@ -5530,6 +5548,24 @@ export class Bot {
     this.changed(record);
     this.send(words, { replyTo: messageId, files, ...(this.sharesChat ? { to: this.engine } : {}) });
     return { accepted: true };
+  }
+
+  /**
+   * A question group answered together: the picks are checked against its questions, kept on the line, and the bot
+   * gets one message listing each question and its answer (questions.ts), down the same road as words on a question.
+   */
+  private answerQuestions(messageId: string, picks: QuestionPick[], files: string[]): ResultOf<"chat.answer"> {
+    const record = this.line(messageId);
+    const questions = savedQuestions(record?.questions);
+    if (!record || !questions) throw new ContractError("not_found", "No such question.");
+    const clean = validPicks(questions, picks);
+    if (!clean) throw new ContractError("bad_request", "Those answers do not fit the questions.");
+    if (!isOpenQuestion(record)) return { accepted: false };
+    record.picks = clean;
+    let result: ResultOf<"chat.answer"> = { accepted: false };
+    try { result = this.answer(messageId, answerMessage(questions, clean), files); }
+    finally { if (!result.accepted && isOpenQuestion(record)) delete record.picks; }
+    return result;
   }
 
   /** The user's own reaction on a line (`Bot.setReaction`, actor "user"). */
@@ -6002,6 +6038,12 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
     // The legacy status label is presentation only; the persisted record holds system provenance.
     view.answer = typeof record.answer === "string" ? record.answer.slice(0, 4_000) : record.questionInvalidatedAt && !record.ignoredAt ? NO_LONGER_NEEDED : null;
     if (record.ignoredAt) view.ignoredAt = record.ignoredAt;
+    const questions = savedQuestions(record.questions);
+    if (questions) {
+      view.questions = questions.map((question) => ({ question: question.question, multiple: question.multiple, options: question.options.map(choiceView) }));
+      const picks = savedPicks(questions, record.picks);
+      if (picks) view.picks = picks.map((pick) => ({ options: pick.options, other: pick.other ?? null, skipped: pick.skipped === true }));
+    }
   }
   if (record.permissionTool) view.approval = { tool: record.permissionTool.slice(0, 200), expires: approval ? new Date(approval.expires).toISOString() : null };
   if (record.steps?.length) view.steps = record.steps.slice(-500).map((step) => stepView(step, subagents));

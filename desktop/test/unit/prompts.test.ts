@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botPrompts, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { botPrompts, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -64,6 +64,8 @@ function withApprovedRouting(swift: string): string {
   expected = expected.replace(MAINTAINER_ROUTE, `${MAINTAINER_ROUTE} ${VERBATIM_HANDOFF_RULE}`);
   // Approved 2026-11-08 (Math): the memory note goes with the choices block, never in its place.
   expected = expected.replace(/(Also write the decision into the "[^"\n]+" section of your memory file\.)/g, `$1 ${CHOICES_NOT_MEMORY_RULE}`);
+  // Approved 2026-11-08: several questions in one reply (<choices question="…">, multiple="true"), answered together.
+  expected = expected.replace(/(  Once the user picks, you receive the text of the chosen option;[^\n]*\n)/g, (line) => `${line}${QUESTION_GROUP_RULE}\n`);
   return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
 }
 

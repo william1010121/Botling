@@ -2,7 +2,8 @@ import { findMessageRow } from "./message-navigation";
 import { artifactCard } from "./artifacts";
 import { post } from "./bridge";
 import { t } from "./i18n";
-import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
+import { answerAction, answerImages, choicesData, choicesDrawGroups, commandCard, componentElement, detailTarget, fallbackChoices, questionGroupData } from "./components";
+import { groupSummary, questionGroupElement } from "./question-group";
 import type { ComponentAnswer } from "./components";
 import { mediaHTML, mediaSrc, renderMarkdown } from "./markdown";
 import { acceptPictures } from "./pictures";
@@ -638,9 +639,13 @@ export function ignoredQuestion(message: MessageView): HTMLElement {
   const summary = document.createElement("summary");
   summary.textContent = t("messages.ignoredQuestion");
   const options = document.createElement("ul");
-  for (const choice of message.choices ?? []) {
+  // A question group lists its questions with their options; a plain question its options.
+  const lines = message.questions?.length
+    ? message.questions.map((question) => `${question.question ? `${question.question}: ` : ""}${question.options.map((option) => option.label).join(" / ")}`)
+    : (message.choices ?? []).map((choice) => choice.label + (choice.detail ? ` — ${choice.detail}` : ""));
+  for (const line of lines) {
     const item = document.createElement("li");
-    item.textContent = choice.label + (choice.detail ? ` — ${choice.detail}` : "");
+    item.textContent = line;
     options.append(item);
   }
   notice.append(summary, options);
@@ -656,8 +661,10 @@ function choicesElement(message: MessageView, components: Record<string, Compone
         if (action) post(action);
       }
     : null;
-  const component = componentElement("choices", components.choices, choicesData(choices, message.chosen ?? null, message.answer ?? null), onAnswer, message.id, null, null, undefined, "chat", false, null, true);
-  const options = component ?? fallbackChoices(choices, message.chosen ?? null, message.answer ?? null, onAnswer ? (index) => onAnswer({ index }) : null);
+  const options = message.questions?.length
+    ? groupOptions(message, components, onAnswer)
+    : componentElement("choices", components.choices, choicesData(choices, message.chosen ?? null, message.answer ?? null), onAnswer, message.id, null, null, undefined, "chat", false, null, true)
+      ?? fallbackChoices(choices, message.chosen ?? null, message.answer ?? null, onAnswer ? (index) => onAnswer({ index }) : null);
   if (message.open) {
     if (!message.canIgnoreQuestion) return options;
     const wrap = document.createElement("div");
@@ -683,12 +690,28 @@ function choicesElement(message: MessageView, components: Record<string, Compone
 }
 
 /**
+ * A question group: the 「choices」 template when it draws groups (`data-ccb-questions`), else the app's own card
+ * (question-group.ts). Either way one Submit sends every answer as `picks`.
+ */
+function groupOptions(message: MessageView, components: Record<string, ComponentInfo>, onAnswer: ((answer: ComponentAnswer) => void) | null): HTMLElement {
+  const questions = message.questions!;
+  const picks = message.picks ?? null;
+  if (choicesDrawGroups(components.choices)) {
+    const component = componentElement("choices", components.choices, questionGroupData(questions, picks, message.answer ?? null), onAnswer, message.id, null, null, undefined, "chat", false, null, true);
+    if (component) return component;
+  }
+  return questionGroupElement(questions, picks, onAnswer ? (given) => onAnswer({ picks: given }) : null);
+}
+
+/**
  * An answered question as one line, what you picked; click to see every option again. No tick:
  * the answer may as well be "Don't allow" or "No longer needed".
  */
 export function foldedChoices(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const picked = message.chosen != null ? message.choices?.[message.chosen]?.label : null;
-  const label = picked ? picked + (message.answer ? ` — ${message.answer}` : "") : message.answer ?? t("messages.answered");
+  // A question group: each answer, in order ("Postgres · Login; Export · Skipped").
+  const group = message.questions?.length && message.picks?.length ? groupSummary(message.questions, message.picks) : null;
+  const label = group ?? (picked ? picked + (message.answer ? ` — ${message.answer}` : "") : message.answer?.replace(/\s*\n\s*/g, " ") ?? t("messages.answered"));
   const button = document.createElement("button");
   button.className = "folded-choice";
   button.setAttribute("aria-expanded", "false");

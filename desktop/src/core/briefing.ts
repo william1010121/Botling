@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_LEAD } from "./prompts";
 import { swiftJSON } from "./swift-json";
+import { answerSummary, savedPicks, savedQuestions, type Question } from "./questions";
 import { fromSwiftDate, HISTORY_LIMIT, type ChatRecord, type ReactionRecord, type Role } from "./store/records";
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -99,12 +100,22 @@ export function headSpeaker(record: ChatRecord, head: "claude" | "codex" | "agy"
   return speaker(record.role);
 }
 
+/** A question group in one line: "questions: 1. Which database? (Postgres / SQLite); 2. … (several: …)". */
+function groupOptions(questions: Question[]): string {
+  return `questions: ${questions.map((question, index) => `${index + 1}. ${question.question || "?"} (${question.multiple ? "several: " : ""}${question.options.map((option) => option.label).join(" / ")})`).join("; ")}`;
+}
+
 export function recentChat(records: ChatRecord[], options: Clock & { archive: string; leavingOut?: string | null; head?: "claude" | "codex" | "agy" | null }): string {
   const lines = records.filter((record) => record.id !== options.leavingOut).slice(-RECENT_LINES).flatMap((record) => {
     let text = trimmed(record.text);
     if (characterCount(text) > RECENT_LINE_LENGTH) text = `${characterPrefix(text, RECENT_LINE_LENGTH)}…`;
     if (record.attachments?.length) text += `${text ? " " : ""}(files: ${record.attachments.map((file) => filePath(file.url)).join(", ")})`;
-    if (record.choices?.length) {
+    const group = savedQuestions(record.questions);
+    if (group) {
+      const picks = savedPicks(group, record.picks);
+      const answered = picks ? answerSummary(group, picks) : record.answer;
+      text += ` [${groupOptions(group)}]${answered != null ? ` → answered: ${answered}` : " (not answered yet)"}`;
+    } else if (record.choices?.length) {
       const picked = (typeof record.chosen === "number" ? record.choices[record.chosen]?.label : undefined) ?? record.answer;
       text += ` [options: ${record.choices.map((choice) => choice.label).join(" / ")}]${picked != null ? ` → picked: ${picked}` : " (not answered yet)"}`;
     }
@@ -119,7 +130,9 @@ export function recentChat(records: ChatRecord[], options: Clock & { archive: st
 export function archiveEntry(record: ChatRecord, { timeZone }: { timeZone?: string } = {}): string | null {
   let text = trimmed(record.text);
   if (record.attachments?.length) text += `${text ? " " : ""}(files: ${record.attachments.map((file) => filePath(file.url)).join(", ")})`;
-  if (record.choices?.length) text += ` [options: ${record.choices.map((choice) => choice.label).join(" / ")}]`;
+  const group = savedQuestions(record.questions);
+  if (group) text += ` [${groupOptions(group)}]`;
+  else if (record.choices?.length) text += ` [options: ${record.choices.map((choice) => choice.label).join(" / ")}]`;
   if (record.interrupted === true && text) text += " (interrupted)";
   if (!text) return null;
   return `[${longStamp(record.date, timeZone)}] ${archiveSpeaker(record)}: ${text}`;

@@ -57,6 +57,22 @@ export const ChoiceView = z.strictObject({
 });
 export type ChoiceView = z.infer<typeof ChoiceView>;
 
+/** One question of a group asked together (`<choices question="…">`): single-choice or several allowed. */
+export const QuestionView = z.strictObject({
+  question: z.string().max(400),
+  multiple: z.boolean(),
+  options: z.array(ChoiceView).min(2).max(6),
+});
+export type QuestionView = z.infer<typeof QuestionView>;
+
+/** What the user gave one question of a group: options ticked (indices), their own words ("Other"), or a skip. */
+export const QuestionPickView = z.strictObject({
+  options: z.array(z.number().int().nonnegative().max(5)).max(6),
+  other: z.string().max(1_000).nullable(),
+  skipped: z.boolean(),
+});
+export type QuestionPickView = z.infer<typeof QuestionPickView>;
+
 /** One line of work on the way to a reply: a tool call (or a subagent sent off). */
 export const StepView = z.strictObject({
   id: z.string().max(200),
@@ -278,6 +294,10 @@ export const MessageView = z.strictObject({
   chosen: z.number().int().nonnegative().nullable().optional(),
   answer: z.string().max(4_000).nullable().optional(),
   ignoredAt: z.string().datetime().optional(),
+  /** Several questions answered together (one decision; `choices` is the first one's options, for older readers). */
+  questions: z.array(QuestionView).min(1).max(5).optional(),
+  /** Once answered: what the user gave each of `questions`, in order. */
+  picks: z.array(QuestionPickView).max(5).optional(),
   /** A tool approval: which tool it asks for, and when it counts as "no" if nobody answers (ISO). */
   approval: z.strictObject({ tool: z.string().max(200), expires: z.string().nullable() }).optional(),
   backgroundTasks: z.array(BackgroundTaskView).optional(),
@@ -880,7 +900,9 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.choose"), botId, messageId: id, index: z.number().int().nonnegative().max(19), text: z.string().max(MESSAGE_TEXT_LIMIT).optional() }),
   /** Answers a bot's question in the user's own words instead of a button. */
   /** `images`: pictures a component sent with its answer (`{text, images}`), as `{name, base64}`; they go along as attachments. */
-  z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().max(MESSAGE_TEXT_LIMIT), images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10).optional() }),
+  /** `picks`: a question group's answers, one per question in order; the app writes the bot's message from them (`text` is then ignored). */
+  z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().max(MESSAGE_TEXT_LIMIT), images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10).optional(),
+    picks: z.array(z.strictObject({ options: z.array(z.number().int().nonnegative().max(5)).max(6), other: z.string().max(1_000).optional(), skipped: z.boolean().optional() })).min(1).max(5).optional() }),
   /** Explicitly dismiss a question as a notification; never dispatches an answer. */
   z.strictObject({ type: z.literal("chat.ignoreQuestion"), botId, messageId: id }),
   /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */
