@@ -27,6 +27,9 @@ describe("an @-called bot asked for real work", () => {
     expect(note).toMatch(/the user already asked/);
     expect(note).toMatch(/never on .*word alone/i);
     expect(note).toMatch(/Do not say you will go back to your own chat/);
+    // Its replies on the worker's report and questions go back to the asking bot by themselves.
+    expect(note).toMatch(/passes your replies on them back to the asking bot's chat/);
+    expect(note).not.toMatch(/its result will show in your own chat/);
   });
 
   it("the prompts as before (Swift golden) stay unchanged; the note goes after them", () => {
