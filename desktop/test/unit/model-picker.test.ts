@@ -23,15 +23,15 @@ it('loads discovered choices, keeps unavailable IDs, retries, and saves only exp
  const choose=async(label:string,value:string)=>act(async()=>{const e=select(label);e.value=value;e.dispatchEvent(new Event('change',{bubbles:true}));});
  try {
   await act(async()=>root.render(createElement(BotSettings,{client,bot:{id:'main',heads:state.engines,phase:'asleep'} as BotView})));
-  expect(host.textContent).toContain('Loading models');expect(select("Claude's model").value).toBe('custom-claude');expect(select("Claude subagents' model").value).toBe('saved-subagent');
+  expect(host.textContent).toContain('Loading models');expect(select('Claude head model').value).toBe('custom-claude');expect(select("Claude workers' model").value).toBe('saved-subagent');
   expect(host.textContent).toContain('not in the current list');expect(calls.filter(c=>c.type==='bot.configure')).toEqual([]);
   expect(calls.filter(c=>c.type==='engine.models'&&c.engine==='claude')).toHaveLength(1);
   await act(async()=>resolveAgy({status:'signed-out',models:[],source:'Antigravity ACP',message:'ACP requires sign-in.'}));
-  expect(host.textContent).toContain('ACP requires sign-in');expect(select('Antigravity model').value).toBe('');
-  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Refresh Antigravity model"]')!.click());
-  expect(select('Antigravity model').options.length).toBe(2);
-  await choose('Antigravity model','discovered');expect(calls.at(-1)).toEqual({type:'bot.configure',botId:'main',agyModel:'discovered'});
-  await choose("Claude's model",'discovered');await choose("Claude subagents' model",'discovered');await choose("Codex's model",'');
+  expect(host.textContent).toContain('ACP requires sign-in');expect(select('Antigravity head model').value).toBe('');
+  await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="Refresh Antigravity head model"]')!.click());
+  expect(select('Antigravity head model').options.length).toBe(2);
+  await choose('Antigravity head model','discovered');expect(calls.at(-1)).toEqual({type:'bot.configure',botId:'main',agyModel:'discovered'});
+  await choose('Claude head model','discovered');await choose("Claude workers' model",'discovered');await choose('Codex head model','');
   expect(state).toMatchObject({model:'discovered',subagentModel:'discovered',codexModel:null,effort:'medium',engines:['claude','codex','agy']});
  } finally {await act(async()=>root.unmount());host.remove();(globalThis as any).IS_REACT_ACT_ENVIRONMENT=false;}
 });
@@ -49,7 +49,7 @@ it('ignores discovery responses from a previously selected bot',async()=>{
  try {
   await act(async()=>render('old'));await act(async()=>render('new'));
   await act(async()=>finishOld({status:'ready',source:'Codex',message:'',models:[{id:'old-model',name:'Old model',isDefault:false,efforts:null}]}));
-  const select=host.querySelector<HTMLSelectElement>('select[aria-label="Codex\'s model"]')!;
+  const select=host.querySelector<HTMLSelectElement>('select[aria-label="Codex head model"]')!;
   expect(select.value).toBe('new-saved');expect([...select.options].map(o=>o.value)).toEqual(['','new-saved','new-model']);
  }finally{await act(async()=>root.unmount());host.remove();(globalThis as any).IS_REACT_ACT_ENVIRONMENT=false;}
 });

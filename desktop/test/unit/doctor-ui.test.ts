@@ -5,7 +5,7 @@ import { expect, it, vi } from "vitest";
 import { SettingsSheet } from "../../src/renderer/Settings";
 import type { Client } from "../../src/renderer/client";
 
-it("offers Doctor in Settings and checks CLI health when opened", async () => {
+it("offers Doctor in Settings (Engine setup) and checks CLI health when opened", async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   const host = document.createElement("div");
   const root = createRoot(host);
@@ -13,8 +13,8 @@ it("offers Doctor in Settings and checks CLI health when opened", async () => {
   const client = { request, onEvent: () => () => {} } as unknown as Client;
   try {
     await act(async () => root.render(createElement(SettingsSheet, { client, settings: null, bot: null, plugins: null, onClose() {} })));
-    const tab = [...host.querySelectorAll("button")].find(button => button.textContent === "Doctor");
-    expect(tab, "1.x Settings → Doctor must be reachable").toBeDefined();
+    const tab = [...host.querySelectorAll("button")].find(button => button.textContent === "Engine setup");
+    expect(tab, "1.x Settings → Doctor must be reachable (Engine setup)").toBeDefined();
     await act(async () => tab!.click());
     expect(request).toHaveBeenCalledWith({ type: "doctor.run", includeLatest: true });
     expect(host.textContent).toContain("Command-line tools");
@@ -101,7 +101,7 @@ it("shows the gear warning and Doctor shortcut only for required failure, in bot
       const shortcut = [...host.querySelectorAll("button")].find(button => button.textContent?.includes("Claude Code needs attention"));
       expect(shortcut).toBeDefined();
       await act(async () => shortcut!.click());
-      expect(onOpen).toHaveBeenLastCalledWith("doctor");
+      expect(onOpen).toHaveBeenLastCalledWith("setup");
       await act(async () => root.render(createElement(SidebarSettings, { client, compact, settings: null, plugins: null, doctor: checked(false), settingsOpen: false, onOpen })));
       expect(host.querySelector(".doctor-dot")).toBeNull();
     }

@@ -45,7 +45,7 @@ export function ModelPicker({ label, value, blank = 'Engine default', discovery,
       {loading ? 'Loading models from the engine…' : result ? <>{result.status === 'ready' ? `${models.length ? 'From ' + (result.source.startsWith('Claude') ? 'Claude Code' : result.source.startsWith('Codex') ? 'Codex' : 'Antigravity ACP') : 'No models returned'} · access checked when used.` : result.message}</> : 'Models have not been loaded.'}
     </p>
     {missing && !loading && <p className="settings-note">Saved ID is not in the current list; kept unchanged.</p>}
-    {subagents && <p className="settings-note">Uses Claude’s catalog; separate subagent availability is not reported.</p>}
+    {subagents && <p className="settings-note">Uses Claude’s catalog; whether workers can use a model is not reported separately.</p>}
   </div>;
 }
 

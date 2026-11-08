@@ -328,7 +328,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   useEffect(() => { setSelectedTask(null); }, [chat?.botId]);
   // The bot's settings, one level in in the right panel (1.x's DetailPanel `showingSettings`); a new bot shows its overview.
   const [botSettings, setBotSettings] = useState(false);
-  useEffect(() => { setBotSettings(false); }, [bot?.id]);
+  // Settings → Models & workers → "Open" on a bot with its own settings: that bot, with its settings panel open.
+  const openingBotSettings = useRef<string | null>(null);
+  useEffect(() => { setBotSettings(!!bot && openingBotSettings.current === bot.id); openingBotSettings.current = null; }, [bot?.id]);
   const openBotSettings = useCallback(() => { if (collapsed) toggleRight(); setBotSettings(true); }, [collapsed, toggleRight]);
 
   // The core learns what the main window shows, for plugins' `workspace.current`; said again after every snapshot
@@ -549,7 +551,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           onAgentMenu={(row, at) => openAgentMenu(bot.id, row, at)}
           onSettings={openBotSettings}
           showingSettings={botSettings}
-          settingsPage={botSettings ? <BotSettings client={client} bot={bot} /> : undefined}
+          settingsPage={botSettings ? <BotSettings client={client} bot={bot} settings={view.settings} onOpenAppSettings={() => openSettings("models")} /> : undefined}
           pluginSections={rightPanelSectionsFor(view.plugins, bot).map((block) => <SlotFrame key={`${bot.id}/${block.plugin}/${block.id}`} client={client} plugin={block.plugin} view={block.id} title={block.title} fontSize={13} botId={bot.id} onBuiltin={runBuiltin} />)}
           onCloseSettings={() => setBotSettings(false)}
           onExpand={toggleRight}
@@ -571,7 +573,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       {closingSubBot && <CloseSubBotDialog name={closingSubBot.name} onCancel={() => setClosingSubBot(null)} onConfirm={() => closeSubBot(closingSubBot)} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {approval.sheet}
-      {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)}
+        onOpenBot={(botId) => { if (botId === bot?.id) openBotSettings(); else { openingBotSettings.current = botId; if (collapsed) toggleRight(); selectBot(botId); } }} />}
     </div>
   );
 }

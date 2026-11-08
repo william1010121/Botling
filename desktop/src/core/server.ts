@@ -34,6 +34,7 @@ import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
 import { botChoicesFromDefaults, engineDefaultsFor } from "./engine-defaults";
 import { appliedCodexWorkers, applySetting, claudeWorkersMode, codexWorkersJSON, launchSettings, moveSettingsToPlugins, moveShortcutsToPlugins, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
+import { claudeAutoCompactWindow, codexConfigFile } from "./engine-files";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, MemoryFiles, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { answerLabel } from "./attachments";
 import {
@@ -2673,7 +2674,8 @@ First write a test that shows this, then fix it.`;
   }
 
   private settingsNow(): SettingsView {
-    return { ...settingsView(readSettings(Layout.settings(this.options.dataDir)), this.language()), agyPermissionSessions: agyPermissionSessions() };
+    return { ...settingsView(readSettings(Layout.settings(this.options.dataDir)), this.language()), agyPermissionSessions: agyPermissionSessions(),
+      claudeAutoCompactWindow: claudeAutoCompactWindow(), codexConfigFile: codexConfigFile() };
   }
 
   /**
@@ -2719,6 +2721,11 @@ First write a test that shows this, then fix it.`;
     const workers = appliedCodexWorkers(next);
     if ((change.key === "codexWorkers" || change.key === "codexWorkersFollow") && JSON.stringify(workers) !== JSON.stringify(appliedCodexWorkers(before))) {
       for (const bot of this.bots.values()) bot.applyEngineDefaults({ codexWorkers: codexWorkersJSON(workers) });
+    }
+    // The Antigravity workers' defaults go to every bot as the Claude subagents' do (each worker reads its bot's at its start).
+    for (const key of ["agyWorkerModel", "agyWorkerEffort"] as const) {
+      const now = settingsView(next)[key];
+      if (change.key === key && now !== settingsView(before)[key]) for (const bot of this.bots.values()) bot.applyEngineDefaults({ [key]: now });
     }
     if (change.key === "defaultPrimaryEngine" || change.key === "defaultEngines") for (const bot of this.bots.values()) bot.appPrimaryChanged();
     if (change.key === "claudeWorkerLimit") for (const bot of this.bots.values()) bot.claudeWorkerLimitChanged();

@@ -41,11 +41,13 @@ it("serves a themed report page whole, with the preview policy, and other files 
   expect(await style.text()).toBe("p{}");
 });
 
-it("keeps the Appearance setting: dark is the default and is not written to settings.json", () => {
-  expect(settingsView({}).reportTheme).toBe("dark");
+it("keeps the Appearance setting: Match app is the default and is not written to settings.json", () => {
+  expect(settingsView({}).reportTheme).toBe("system");
   const light = applySetting({}, { key: "reportTheme", value: "light" });
   expect(light.reportTheme).toBe("light");
   expect(settingsView(light).reportTheme).toBe("light");
-  expect(settingsView({ reportTheme: "sepia" }).reportTheme).toBe("dark");
-  expect("reportTheme" in applySetting(light, { key: "reportTheme", value: "dark" })).toBe(false);
+  expect(settingsView({ reportTheme: "sepia" }).reportTheme).toBe("system");
+  // Dark is now a choice of its own (written), Match app is the default (left out).
+  expect(applySetting(light, { key: "reportTheme", value: "dark" }).reportTheme).toBe("dark");
+  expect("reportTheme" in applySetting(light, { key: "reportTheme", value: "system" })).toBe(false);
 });

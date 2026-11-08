@@ -100,7 +100,7 @@ import {
   routineStatus, routineTitle, routinesSpecState, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
 import { specTrace } from "./spec-trace";
-import { codexWorkerDefaults } from "./settings";
+import { codexWorkerDefaults, codexWorkersJSON } from "./settings";
 import { PAGE_COMPONENT, previewCards } from "./page-preview";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
@@ -2270,7 +2270,7 @@ export class Bot {
   }
 
   /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`, `codexWorkers`). */
-  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null } {
+  private choices(): { model: string | null; effort: string | null; efforts: EngineEfforts; subagentModel: string | null; subagentEffort: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null; agyWorkerModel: string | null; agyWorkerEffort: string | null } {
     const settings = this.store.loadSettings();
     const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
     const workers = codexWorkerDefaults(settings.codexWorkers);
@@ -2283,6 +2283,9 @@ export class Bot {
       subagentEffort: pick(settings.subagentEffort, EFFORTS_BY_ENGINE.claude),
       // None set: Codex's own config (~/.codex/config.toml).
       codexWorkers: workers.model || workers.effort || workers.fast !== null ? workers : null,
+      // Antigravity workers' own model and effort; none: the same as its Antigravity head (agy-workers.ts).
+      agyWorkerModel: typeof settings.agyWorkerModel === "string" && settings.agyWorkerModel.trim() ? settings.agyWorkerModel.trim() : null,
+      agyWorkerEffort: pick(settings.agyWorkerEffort, EFFORTS_BY_ENGINE.agy),
     };
   }
 
@@ -2304,13 +2307,15 @@ export class Bot {
    * set every bot): written into its bot.json and its other head's; a head already running keeps its own
    * until it next wakes, as with its own settings.
    */
-  applyEngineDefaults(change: { subagentModel?: string | null; subagentEffort?: string | null; codexWorkers?: Record<string, unknown> | undefined }) {
+  applyEngineDefaults(change: { subagentModel?: string | null; subagentEffort?: string | null; codexWorkers?: Record<string, unknown> | undefined; agyWorkerModel?: string | null; agyWorkerEffort?: string | null }) {
     const owner = this.owner;
     if (owner.readOnly) return;
     for (const store of owner.members.map(bot => bot.store)) {
       if (change.subagentModel !== undefined) store.saveSetting("subagentModel", change.subagentModel ?? undefined);
       if (change.subagentEffort !== undefined) store.saveSetting("subagentEffort", change.subagentEffort ?? undefined);
       if ("codexWorkers" in change) store.saveSetting("codexWorkers", change.codexWorkers);
+      if (change.agyWorkerModel !== undefined) store.saveSetting("agyWorkerModel", change.agyWorkerModel ?? undefined);
+      if (change.agyWorkerEffort !== undefined) store.saveSetting("agyWorkerEffort", change.agyWorkerEffort ?? undefined);
     }
   }
 
@@ -2325,11 +2330,13 @@ export class Bot {
       model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"], efforts: choices.efforts as BotSettingsView["efforts"],
       subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], subagentEffort: choices.subagentEffort as BotSettingsView["subagentEffort"], codexModel: owner.headsSettings.codexModel ?? null,
       agyModel: typeof owner.store.loadSettings().agyModel === "string" ? owner.store.loadSettings().agyModel as string : null,
+      codexWorkers: choices.codexWorkers as BotSettingsView["codexWorkers"],
+      agyWorkerModel: choices.agyWorkerModel, agyWorkerEffort: choices.agyWorkerEffort as BotSettingsView["agyWorkerEffort"],
     };
   }
 
   /** Changes its own choices; a head already running keeps its own until it next wakes. */
-  configure(change: { agyModel?: string | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
+  configure(change: { agyModel?: string | null; agyWorkerModel?: string | null; agyWorkerEffort?: string | null; codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null; model?: string | null; effort?: string | null; subagentModel?: string | null; subagentEffort?: string | null; codexModel?: string | null; primary?: Engine | null; efforts?: Partial<Record<Engine, string | null>> }): BotSettingsView {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
     const before = owner.settingsView();
@@ -2347,9 +2354,13 @@ export class Bot {
     }
     // The subagents' effort is read when each worker starts: nothing to restart.
     if (change.subagentEffort && !(EFFORTS_BY_ENGINE.claude as readonly string[]).includes(change.subagentEffort)) throw new ContractError("bad_request", `Claude has no ${change.subagentEffort} effort.`);
-    for (const key of ["model", "effort", "subagentModel", "subagentEffort", "agyModel"] as const) {
+    if (change.agyWorkerEffort && !(EFFORTS_BY_ENGINE.agy as readonly string[]).includes(change.agyWorkerEffort)) throw new ContractError("bad_request", `Antigravity has no ${change.agyWorkerEffort} effort.`);
+    // The Antigravity workers' model and effort are read when each worker starts, and the Codex workers' choice at a
+    // Codex head's next wake (as the app's own Codex workers setting): nothing to restart.
+    for (const key of ["model", "effort", "subagentModel", "subagentEffort", "agyModel", "agyWorkerModel", "agyWorkerEffort"] as const) {
       if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
     }
+    if (change.codexWorkers !== undefined) owner.store.saveSetting("codexWorkers", change.codexWorkers ? codexWorkersJSON(change.codexWorkers) : undefined);
     if (change.codexModel !== undefined) {
       owner.headsSettings.codexModel = change.codexModel ?? null;
       owner.saveHeads();
@@ -3235,7 +3246,7 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
+        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
         { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });

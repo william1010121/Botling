@@ -39,6 +39,22 @@ interface AgyRun {handle:RunHandle;head?:AgyWorkerHead;approvals:Map<string,Reco
 /** Heads the words a run ended before reading, at the start of the worker's next run. */
 const CARRIED_NOTE='(App: Messages sent to you while your last run was at work, which it ended before reading:)';
 
+const AGY_WORKER_EFFORTS=['low','medium','high'];
+/**
+ * The model and effort an Antigravity worker starts with: the bot's choice for its workers (`workerChoice`), else the
+ * head's own (as before there was a choice). An effort Antigravity does not take falls back to the head's. A Codex
+ * worker of this head keeps the head's config (its engine has its own choices).
+ */
+export function agyWorkerModelEffort(config:Pick<AgyConfig,'model'|'effort'|'workerChoice'>,engine:'agy'|'codex'='agy'):{model:string|null;effort:string|null}{
+  const head={model:config.model??null,effort:config.effort??null};
+  if(engine!=='agy')return head;
+  let choice:{model?:string|null;effort?:string|null}={};
+  try{choice=config.workerChoice?.()??{};}catch{choice={};}
+  const model=typeof choice.model==='string'&&choice.model.trim()?choice.model.trim():head.model;
+  const effort=typeof choice.effort==='string'&&AGY_WORKER_EFFORTS.includes(choice.effort)?choice.effort:head.effort;
+  return {model,effort};
+}
+
 /** Antigravity's WorkerAdapter: one ACP process per run, ended (and its process group checked) when the run ends. */
 export class AgyAcpAdapter implements WorkerAdapter {
   readonly kind='agy-acp' as const;
@@ -50,6 +66,8 @@ export class AgyAcpAdapter implements WorkerAdapter {
   private carried=new Map<string,string[]>();
   private startTime:(pid:number)=>string|null;
   private sink?:(item:CodexItem)=>void;
+  /** The effort the last worker run started with (undefined: none yet). */
+  private lastEffort:string|null|undefined;
   /**
    * `processStartTime`: a process's start time (identity); a replay maps its recorded processes. `item`: the head's item
    * sink, told a worker's conversation once ACP names it (after the run's opening items, which had none).
@@ -75,7 +93,10 @@ export class AgyAcpAdapter implements WorkerAdapter {
       handle.emit({type:'end',end});};
     const carried=this.carried.get(record.id);this.carried.delete(record.id);
     if(carried?.length)words=`${CARRIED_NOTE}\n${carried.join('\n\n')}\n\n${words}`;
-    const config:AgyConfig={...this.config,worker:true,workerEngine:record.engine==='codex'?'codex':'agy',processStarted:pid=>{
+    const workerEngine=record.engine==='codex'?'codex':'agy';
+    const chosen=agyWorkerModelEffort(this.config,workerEngine);
+    this.lastEffort=chosen.effort;
+    const config:AgyConfig={...this.config,worker:true,workerEngine,model:chosen.model,effort:chosen.effort,processStarted:pid=>{
       // A process the app cannot identify could outlive it unseen: refused (the head then stops it).
       if(!current())throw Error('Stale worker process registration.');
       const started=this.startTime(pid);if(!started)throw Error('Cannot record worker process identity.');
@@ -183,7 +204,8 @@ export class AgyAcpAdapter implements WorkerAdapter {
   }
   /** Whether it still holds a head of this worker that it could not end. */
   holds(id:string):boolean {return !!this.runs.get(id)?.head&&!!this.runs.get(id)?.ended;}
-  runtime(){return {reasoningEffort:this.config.effort??null};}
+  /** The effort its workers run with: the last one started, else what the next would start with. */
+  runtime(){return {reasoningEffort:this.lastEffort!==undefined?this.lastEffort:agyWorkerModelEffort(this.config).effort};}
   async close(){
     const results=await Promise.allSettled([...this.runs.values()].map(async live=>{live.ended=true;await live.head?.terminate();live.head=undefined;}));
     if(results.some(r=>r.status==='rejected'))throw new Error(CLEANUP_INCOMPLETE);

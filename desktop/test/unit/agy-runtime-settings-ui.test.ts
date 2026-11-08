@@ -5,12 +5,12 @@ import { expect, it } from 'vitest';
 import { SettingsSheet } from '../../src/renderer/Settings';
 import { settingsView } from '../../src/core/settings';
 import type { Client } from '../../src/renderer/client';
-it('makes official Antigravity runtime configuration discoverable in Engines settings', async () => {
+it('makes official Antigravity runtime configuration discoverable in Engine setup', async () => {
  const host = document.createElement('div'); document.body.append(host); const root = createRoot(host);
  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
- const client = { request: async () => ({ models: [] }) } as unknown as Client;
+ const client = { request: async (cmd: any) => cmd.type === 'doctor.run' ? { checks: [], isRunning: false, checkedAt: null, includedLatest: false, needsAttention: false } : ({ models: [] }), onEvent: () => () => {} } as unknown as Client;
  try {
-  await act(async () => root.render(createElement(SettingsSheet, { client, settings: settingsView({}), bot: null, plugins: null, initialSection: 'engines', onClose() {} })));
+  await act(async () => root.render(createElement(SettingsSheet, { client, settings: settingsView({}), bot: null, plugins: null, initialSection: 'setup', onClose() {} })));
   expect(host.querySelector('input[aria-label="Official ACP runtime path"]')).not.toBeNull();
   expect(host.textContent).toContain('Save and verify');
  } finally { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; }
@@ -23,12 +23,13 @@ it('keeps a rejected draft visible, saves a corrected path, and explains the env
  const client = {request: async (cmd: any) => {
   calls.push(cmd);
   if (cmd.type === 'codex.models') return {models:[]};
+  if (cmd.type === 'doctor.run') return {checks:[],isRunning:false,checkedAt:null,includedLatest:false,needsAttention:false};
   if (cmd.type === 'agy.runtime.check') return {saved,override:'/environment/runtime',effective:'/environment/runtime',valid:false,message:'Correct the environment override.'};
   if (cmd.type === 'settings.set') {
    if (cmd.change.value === 'bad') throw Error('Official runtime hash mismatch; choose ACP 1.4.3.');
    saved=cmd.change.value;return settingsView({agyAcpPath:saved});
   }
- }} as unknown as Client;
+ }, onEvent: () => () => {}} as unknown as Client;
  const enter = async (value: string) => {
   await act(async () => {
    const input=host.querySelector<HTMLInputElement>('[aria-label="Official ACP runtime path"]')!;
@@ -38,7 +39,7 @@ it('keeps a rejected draft visible, saves a corrected path, and explains the env
  };
  const save = async () => {await act(async () => [...host.querySelectorAll('button')].find(b=>b.textContent==='Save and verify')!.click());};
  try {
-  await act(async () => root.render(createElement(SettingsSheet,{client,settings:settingsView({}),bot:null,plugins:null,initialSection:'engines',onClose(){}})));
+  await act(async () => root.render(createElement(SettingsSheet,{client,settings:settingsView({}),bot:null,plugins:null,initialSection:'setup',onClose(){}})));
   expect(host.textContent).toContain('Environment override active: /environment/runtime');
   await enter('bad'); await save();
   expect(host.querySelector('[role="alert"]')?.textContent).toContain('hash mismatch');

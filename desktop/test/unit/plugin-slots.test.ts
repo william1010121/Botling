@@ -41,11 +41,14 @@ const resizeTo = async (height: number) => {
   await act(async () => { window.dispatchEvent(new MessageEvent("message", { data: { ccb: "resize", height }, origin: "null", source: frame.contentWindow })); });
 };
 
-it("Settings: a plugin's page follows the core page it names, is found by its terms, and its frame is sized to its content", async () => {
+it("Settings: a plugin's page sits under Plugins (indented), is found by its terms, and its frame is sized to its content", async () => {
   const { client: c, requests } = client();
   await act(async () => root.render(createElement(SettingsSheet, { client: c, settings: settingsView({}), bot: null, plugins, onClose() {} })));
   const tabs = () => [...host.querySelectorAll(".settings-tab")].map((tab) => tab.textContent?.replace("New", ""));
-  expect(tabs().slice(0, 4)).toEqual(["General", "Appearance", "Engines and subagents", "Meter"]);
+  // Grouped pages: a plugin's own page goes under Plugins, whatever core page it names (`after`).
+  expect(tabs().slice(6, 10)).toEqual(["Engine setup", "Plugins", "Meter", "Phone"]);
+  expect([...host.querySelectorAll(".settings-tab")].find((tab) => tab.textContent === "Meter")!.className).toContain("indent");
+  expect([...host.querySelectorAll(".settings-nav-title")].map((title) => title.textContent)).toEqual(["App", "Bots", "Connect", "Advanced"]);
   expect(tabs()).not.toContain("Usage");
   const search = host.querySelector<HTMLInputElement>(".settings-search")!;
   const type = async (value: string) => act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, value); search.dispatchEvent(new Event("input", { bubbles: true })); });
@@ -64,7 +67,7 @@ it("Settings: without a plugin page the core pages are the same, and Usage is no
   const { client: c } = client();
   await act(async () => root.render(createElement(SettingsSheet, { client: c, settings: settingsView({}), bot: null, plugins: null, onClose() {} })));
   expect([...host.querySelectorAll(".settings-tab")].map((tab) => tab.textContent?.replace("New", ""))).toEqual(
-    ["General", "Appearance", "Engines and subagents", "Reports and results", "Plugins", "Doctor", "Updates", "Shortcuts", "Phone", "Developer"]);
+    ["General", "Appearance", "Shortcuts", "Models & workers", "Permissions", "Chat & reports", "Engine setup", "Plugins", "Phone", "Updates", "Developer"]);
   expect(frameOf()).toBeNull();
 });
 
