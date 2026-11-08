@@ -83,7 +83,9 @@ it("finds a session in Botling's agy profiles and reuses a reading until the fil
   c.add(generation({ usage: usage({ input: 5, output: 5 }) }));
   const first = agyUsageInProfiles(data, "s6");
   expect(first?.total.input).toBe(5);
-  expect(agyUsage(home, "s6")).toBe(first);
+  // a copy with the live window added; the file read underneath stays cached
+  expect(first).toEqual({ ...agyUsage(home, "s6"), window: null });
+  expect(agyUsage(home, "s6")).toBe(agyUsage(home, "s6"));
   c.add(generation({ usage: usage({ input: 6, output: 1 }) }));
   c.db.close();
   expect(agyUsageInProfiles(data, "s6")?.total.input).toBe(11);
