@@ -154,6 +154,20 @@ describe("a Claude worker's run", () => {
     expect(h.items.filter((i) => i.kind === "subagentStarted").map((i) => i.execution.run)).toEqual([1, 2, 3]);
   });
 
+  it("a run into the kept-alive process is shown on the model and effort that process runs, not a setting changed since", async () => {
+    let model: string | null = "sonnet";
+    const h = harness(undefined, { subagentModel: () => model });
+    const { task_id } = await h.workers.tool("app_handoff", { instructions: "One" }) as any;
+    const first = h.heads[0]!;
+    h.say(first, { kind: "init", sessionId: first.config.sessionId });
+    h.result(first, "One done.");
+    model = "opus"; // the bot's workers' model changed while the process stays
+    expect(h.workers.sendToWorker(task_id, "Two")).toEqual({ ok: true, how: "newRun", run: 2 });
+    expect(h.heads).toHaveLength(1);
+    const runtimes = h.items.filter((i) => i.kind === "subagentRuntime" && i.id === task_id);
+    expect(runtimes.at(-1)).toMatchObject({ model: "sonnet" });
+  });
+
   it("is stopped alone by app_cancel_task: its process ends, no report; a later message starts its next run on its session", async () => {
     const h = harness();
     const a = await h.workers.tool("app_handoff", { instructions: "A" }) as any;

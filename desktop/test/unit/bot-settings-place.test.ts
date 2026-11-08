@@ -53,7 +53,7 @@ describe("a bot's settings are in the right panel", () => {
     try {
       expect(host.querySelector(".detail-panel .the-page")).not.toBeNull();
       expect(host.querySelector(".tasks-section")).toBeNull();
-      expect(host.querySelector(".detail-head")!.textContent).toContain("Settings");
+      expect(host.querySelector(".detail-head")!.textContent).toBe("Main bot settings");
       await act(async () => host.querySelector<HTMLButtonElement>(".detail-head button[aria-label='Back']")!.click());
       expect(calls).toEqual(["close"]);
     } finally { await done(); }

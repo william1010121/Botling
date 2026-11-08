@@ -72,13 +72,14 @@ export function RightPanel(props: RightPanelProps) {
   return <OpenPanel {...props} />;
 }
 
-/** The bot's settings in the overview's place (1.x's SettingsPage): Back, "Settings", then the page. */
-function SettingsPanel({ settingsPage, onCloseSettings }: RightPanelProps) {
+/** The bot's settings in the overview's place (1.x's SettingsPage): Back, "<bot> settings", then the page. */
+function SettingsPanel({ bot, settingsPage, onCloseSettings }: RightPanelProps) {
   return (
     <aside className="detail-panel" aria-label="Details">
       <div className="detail-head settings-panel-head">
         <button type="button" className="panel-back" aria-label="Back" onClick={onCloseSettings}><Icon name="chevronLeft" size={14} /></button>
-        <span className="detail-name">Settings</span>
+        {/* Whose: the Workers tab beside it lists other bots' workers too. */}
+        <span className="detail-name">{bot.name} settings</span>
       </div>
       <div className="panel-settings">{settingsPage}</div>
     </aside>

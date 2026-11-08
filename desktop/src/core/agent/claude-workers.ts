@@ -175,6 +175,8 @@ interface Proc {
   keepAlive?: ReturnType<typeof setTimeout>;
   /** The effort its process was started with (`--effort`; a run into the kept-alive process goes on at it). */
   effort?: string | null;
+  /** The model its process was started with (`--model`; a run into the kept-alive process goes on with it). */
+  model?: string | null;
   /** The config a run started with, for its opening items (null: it went into the kept-alive process). */
   opening?: { run: number; base: HeadConfig | null };
 }
@@ -234,8 +236,9 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   runtime(r: Readonly<WorkerLedgerRecord>) {
     const proc = this.procs.get(r.id);
     const base = proc?.opening?.run === r.run ? proc.opening.base : proc?.head?.running ? null : this.options.base();
-    // A run into the kept-alive process goes on at the effort that process started with.
-    return { reasoningEffort: !base && proc?.head?.running ? proc.effort ?? null : this.effort(r, base), model: this.model(r, base) };
+    // A run into the kept-alive process goes on with the model and effort that process started with.
+    if (!base && proc?.head?.running) return { reasoningEffort: proc.effort ?? null, model: proc.model ?? this.model(r, null) };
+    return { reasoningEffort: this.effort(r, base), model: this.model(r, base) };
   }
 
   /** Sends a run's first words: into its kept-alive process, or a new one (`--resume` once its session exists). */
@@ -276,7 +279,7 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
       },
     });
     head.start();
-    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, opening: { run: run.run, base }, pendingResult: undefined });
+    Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, model: config.model ?? null, opening: { run: run.run, base }, pendingResult: undefined });
     proc.stream.newProcess();
     proc.queued.clear();
     run.emit({ type: "session", conversationId: sessionId });

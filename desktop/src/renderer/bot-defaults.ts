@@ -27,6 +27,19 @@ export function choiceLabel(engine: EngineId, field: ChoiceField, value: string 
   return field === "effort" || field === "workerEffort" ? EFFORT_NAMES[text] ?? text : engine === "claude" ? MODEL_NAMES[text] ?? text : text;
 }
 
+/**
+ * "Same as head (Opus 5.5)": what a workers' choice left to the head means in this bot — its head's own model or
+ * effort (claude-workers.ts falls back to the head's config), or the engine's default when the head has none.
+ */
+export function sameAsHead(view: BotSettingsView, engine: EngineId, field: "workerModel" | "workerEffort", modelName?: (id: string) => string | null | undefined): string {
+  if (field === "workerEffort") {
+    const effort = view.efforts?.[engine] ?? view.effort ?? null;
+    return `Same as head (${effort ? EFFORT_NAMES[effort] ?? effort : "Default"})`;
+  }
+  const model = engine === "claude" ? view.model : engine === "codex" ? view.codexModel : view.agyModel;
+  return `Same as head (${model ? modelName?.(model) ?? choiceLabel(engine, "model", model) : `${ENGINE_NAMES[engine]} default`})`;
+}
+
 /** Stands in for the app's settings before they are known (every default null). */
 const UNKNOWN = {
   engineDefaults: { engines: [], primary: null, models: { claude: null, codex: null, agy: null }, efforts: { claude: null, codex: null, agy: null } },

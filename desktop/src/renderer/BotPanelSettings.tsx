@@ -6,7 +6,7 @@ import type { BotSettingsView, BotView, SettingsView } from "../contract";
 import type { Client } from "./client";
 import { ModelPicker, useModelDiscovery } from "./ModelPicker";
 import { Group, Row, SelectSetting, Toggle, effortOptions, why } from "./settings-controls";
-import { choiceLabel, defaultsChange, engineChoices, ENGINE_NAMES, FIELD_LABELS, type ChoiceRow, type ConfigureChange, type EngineId } from "./bot-defaults";
+import { choiceLabel, defaultsChange, sameAsHead, engineChoices, ENGINE_NAMES, FIELD_LABELS, type ChoiceRow, type ConfigureChange, type EngineId } from "./bot-defaults";
 
 export function BotSettings({ client, bot, settings = null, onOpenAppSettings }: { client: Client; bot: BotView; settings?: SettingsView | null; onOpenAppSettings?: () => void }) {
   const [problem, setProblem] = useState<string | null>(null);
@@ -49,19 +49,22 @@ function ThisBot({ client, bot, appSettings, onProblem, onOpenAppSettings }: { c
     const value = typeof row.value === "string" ? row.value : null;
     const effort = (blank: string, onChange: (level: BotSettingsView["effort"]) => void) =>
       <SelectSetting label={label} blank={blank} options={effortOptions(row.engine)} value={value} onChange={(level) => onChange(level as BotSettingsView["effort"])} />;
+    // What "Same as head" is in this bot: its head's model (by the engine's own name for it) or effort.
+    const modelName = (id: string) => { const found = discovery[row.engine].result; return found?.status === "ready" ? found.models.find((m) => m.id === id)?.name : null; };
+    const head = (field: "workerModel" | "workerEffort") => sameAsHead(view, row.engine, field, modelName);
     switch (`${row.engine}.${row.field}`) {
       // Models: what the engine reports, with its loading state, Refresh and a saved ID kept when the list lacks it.
       case "claude.model": return <ModelPicker label={label} blank="Claude default" discovery={discovery.claude} value={value} onChange={(model) => configure({ model })} />;
-      case "claude.workerModel": return <ModelPicker label={label} blank="Same as head" discovery={discovery.claude} value={value} subagents onChange={(subagentModel) => configure({ subagentModel })} />;
-      case "claude.workerEffort": return effort("Same as head", (subagentEffort) => configure({ subagentEffort }));
+      case "claude.workerModel": return <ModelPicker label={label} blank={head("workerModel")} discovery={discovery.claude} value={value} subagents onChange={(subagentModel) => configure({ subagentModel })} />;
+      case "claude.workerEffort": return effort(head("workerEffort"), (subagentEffort) => configure({ subagentEffort }));
       case "codex.model": return <ModelPicker label={label} blank="Codex default" discovery={discovery.codex} value={value} onChange={(codexModel) => configure({ codexModel })} />;
-      case "codex.workerModel": return <ModelPicker label={label} blank="Same as head" discovery={discovery.codex} value={value} onChange={(model) => configure({ codexWorkers: { ...workers, model } })} />;
-      case "codex.workerEffort": return effort("Same as head", (level) => configure({ codexWorkers: { ...workers, effort: level ?? null } }));
+      case "codex.workerModel": return <ModelPicker label={label} blank={head("workerModel")} discovery={discovery.codex} value={value} onChange={(model) => configure({ codexWorkers: { ...workers, model } })} />;
+      case "codex.workerEffort": return effort(head("workerEffort"), (level) => configure({ codexWorkers: { ...workers, effort: level ?? null } }));
       case "codex.workerFast": return <SelectSetting label={label} blank="Same as head" options={[{ id: "fast", label: "Fast" }, { id: "standard", label: "Standard" }]} value={row.value === true ? "fast" : row.value === false ? "standard" : null}
         onChange={(choice) => configure({ codexWorkers: { ...workers, fast: choice === null ? null : choice === "fast" } })} />;
       case "agy.model": return <ModelPicker label={label} blank="Antigravity default" discovery={discovery.agy} value={value} onChange={(agyModel) => configure({ agyModel })} />;
-      case "agy.workerModel": return <ModelPicker label={label} blank="Same as head" discovery={discovery.agy} value={value} onChange={(agyWorkerModel) => configure({ agyWorkerModel })} />;
-      case "agy.workerEffort": return effort("Same as head", (agyWorkerEffort) => configure({ agyWorkerEffort }));
+      case "agy.workerModel": return <ModelPicker label={label} blank={head("workerModel")} discovery={discovery.agy} value={value} onChange={(agyWorkerModel) => configure({ agyWorkerModel })} />;
+      case "agy.workerEffort": return effort(head("workerEffort"), (agyWorkerEffort) => configure({ agyWorkerEffort }));
       default: return effort("Default", (level) => configure({ efforts: { [row.engine]: level } }));
     }
   };
