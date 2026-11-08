@@ -1,7 +1,7 @@
 import { ContractError, RequestEnvelope, errorResponse, okResponse, type Command, type ResponseEnvelope, type ResultOf } from '../contract';
 import { MAIN_BOT_ID } from '../core/store/records';
 import { ALL_BOTS, botAllowed } from './scope';
-type MobileCommand = Extract<Command, { type: 'chat.snapshot' | 'chat.history' | 'chat.send' | 'chat.choose' | 'chat.answer' }>;
+type MobileCommand = Extract<Command, { type: 'chat.snapshot' | 'chat.history' | 'chat.send' | 'chat.choose' | 'chat.answer' | 'turn.stop' }>;
 export interface MobileAccess {
   pending(botId: string): readonly unknown[];
   snapshot(botId?: string): ResultOf<'chat.snapshot'>;
@@ -15,7 +15,7 @@ export async function mobileCommand(access: MobileAccess, raw: unknown, allowedB
   if (!parsed.success) return errorResponse('invalid', { code: 'bad_request', message: 'Invalid mobile envelope.' });
   const { id, cmd } = parsed.data;
   try {
-    if (cmd.type !== 'chat.snapshot' && cmd.type !== 'chat.history' && cmd.type !== 'chat.send' && cmd.type !== 'chat.choose' && cmd.type !== 'chat.answer')
+    if (cmd.type !== 'chat.snapshot' && cmd.type !== 'chat.history' && cmd.type !== 'chat.send' && cmd.type !== 'chat.choose' && cmd.type !== 'chat.answer' && cmd.type !== 'turn.stop')
       throw new ContractError('forbidden', 'Command not available on mobile.');
     const botId = cmd.botId ?? MAIN_BOT_ID;
     if (!botAllowed(allowedBots, botId)) throw new ContractError('forbidden', 'Bot not authorized.');

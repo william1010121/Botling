@@ -10,20 +10,28 @@ import { MobileError, MobileTransport, endpointURL } from './transport';
 import { clearDrafts } from './session';
 import { watchEvents } from './events';
 import { loadRouteBook, type RouteBook } from './routes';
-import { betterRoute, deviceId, redeemPairing, takePairingLink } from './pair';
+import { betterRoute, deviceId, deviceName, redeemPairing, takePairingLink } from './pair';
 import { WebBridge, forgetLocal } from './web-bridge';
+import { RelayClient } from './relay-client';
+import { forgetRelaySession, loadRelaySession, saveRelaySession } from './relay-session';
+import { parseRelayFragment } from '../src/mobile-relay/protocol';
 
 const POLL_MS = 2_500;
 /** While the event stream is up, a slow read is only a safety net. */
 const LIVE_POLL_MS = 30_000;
 type Auth = 'checking' | 'signedOut' | 'denied' | 'unavailable';
 const TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
-export interface Connected { transport: MobileTransport; bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void }; shown: { value: boolean } }
+/** The bridge over HTTPS (a token), or the end-to-end encrypted relay (a paired phone). */
+export interface Connected { transport: MobileTransport | RelayClient; bridge: WebBridge; client: Client; store: WorkspaceStore; wake: { poke: () => void }; shown: { value: boolean } }
 
 function storage(): Storage | null { try { return window.localStorage; } catch { return null; } }
 
 export function connectWorkspace(token: string, onAuthLost: (error: MobileError) => void, fetcher: typeof fetch = fetch, routes: RouteBook | null = null): Connected {
-  const transport = new MobileTransport(endpointURL('/api/mobile/command', location.origin), token, fetcher, routes);
+  return workspaceOver(new MobileTransport(endpointURL('/api/mobile/command', location.origin), token, fetcher, routes), onAuthLost);
+}
+
+/** The same workspace over any command transport (the HTTPS bridge, or a relay client). */
+export function workspaceOver(transport: MobileTransport | RelayClient, onAuthLost: (error: MobileError) => void): Connected {
   const wake = { poke: () => {} };
   const shown = { value: false };
   const bridge = new WebBridge({ transport, storage: storage(), onAuthLost,
@@ -61,9 +69,11 @@ export function startSync(connected: Connected, interval = POLL_MS, liveInterval
   window.addEventListener('online', visible);
   timer = setTimeout(tick, interval);
   // The core says when something changed; reading stays the (checked) snapshot request.
-  const stopEvents = watchEvents({ origin: () => connected.transport.origin, ticket: () => connected.transport.ticket(), recover: () => connected.transport.recover(),
-    onChange: () => { clearTimeout(timer); timer = setTimeout(tick, 100); },
-    onLive: value => { live = value; if (!value) { clearTimeout(timer); timer = setTimeout(tick, 300); } } });
+  const onChange = () => { clearTimeout(timer); timer = setTimeout(tick, 100); };
+  const onLive = (value: boolean) => { live = value; if (!value) { clearTimeout(timer); timer = setTimeout(tick, 300); } };
+  const transport = connected.transport;
+  const stopEvents = transport instanceof RelayClient ? transport.watch(onChange, onLive) : watchEvents({ origin: () => transport.origin, ticket: () => transport.ticket(), recover: () => transport.recover(),
+    onChange, onLive });
   return () => { stopped = true; stopEvents(); clearTimeout(timer); document.removeEventListener('visibilitychange', visible); window.removeEventListener('online', visible); };
 }
 
@@ -76,11 +86,44 @@ export function WebApp() {
   const [navOpen, setNavOpen] = useState(() => window.matchMedia?.(narrowQuery).matches ?? false);
   const [tokenText, setTokenText] = useState('');
   const connecting = useRef(false);
+  /** A relay pairing is saved in this browser (it can reconnect without a new code). */
+  const [relaySaved, setRelaySaved] = useState(false);
 
   const lost = useCallback((error: MobileError) => {
-    setConnected(current => { current?.bridge.close(); return null; });
+    setConnected(current => { current?.bridge.close(); if (current?.transport instanceof RelayClient) current.transport.close(); return null; });
     setAuth('signedOut'); setMessage(error.message);
   }, []);
+  // The desktop revoked this phone: forget the pairing too.
+  const relayLost = useCallback((error: MobileError) => { setRelaySaved(false); void forgetRelaySession(); lost(error); }, [lost]);
+
+  /** Shows the workspace over a relay channel that is up (paired just now, or reconnected). */
+  const showRelay = useCallback(async (relay: RelayClient) => {
+    let ended: MobileError | undefined;
+    const next = workspaceOver(relay, error => { ended = error; relayLost(error); });
+    try { await next.store.resync(); } catch (cause) { next.bridge.close(); relay.close(); throw ended ?? cause; }
+    next.shown.value = true;
+    setMessage('');
+    setConnected(next);
+  }, [relayLost]);
+
+  const failed = useCallback((cause: unknown, fallback: string) => {
+    setAuth(cause instanceof MobileError ? cause.auth ? 'signedOut' : cause.denied ? 'denied' : 'unavailable' : 'unavailable');
+    setMessage(cause instanceof MobileError ? cause.message : fallback);
+  }, []);
+
+  /** Reconnects with the pairing this browser saved. */
+  const reconnectRelay = useCallback(async () => {
+    if (connecting.current) return;
+    const saved = await loadRelaySession();
+    setRelaySaved(!!saved);
+    if (!saved) return;
+    connecting.current = true; setAuth('checking'); setMessage('');
+    try { await showRelay(await RelayClient.connect(saved, { onRevoked: relayLost })); }
+    catch (cause) {
+      if (cause instanceof MobileError && cause.auth) { setRelaySaved(false); await forgetRelaySession(); }
+      failed(cause, 'Could not reach Botling through the relay. Try again.');
+    } finally { connecting.current = false; }
+  }, [showRelay, relayLost, failed]);
 
   const connect = useCallback(async (token: string, coreId?: string) => {
     if (connecting.current) return;
@@ -105,8 +148,23 @@ export function WebApp() {
   // A scanned pairing link: redeem it once for a token (the secret never leaves this function), then sign in
   // exactly as a pasted token does. The fragment is cleared first; the token path stays available.
   useEffect(() => {
+    // A relay pairing code (end-to-end encrypted, through the relay this page came from): the secret stays in this function.
+    const relayLink = parseRelayFragment(location.hash);
+    if (relayLink) {
+      history.replaceState(null, '', location.pathname + location.search);
+      void (async () => {
+        connecting.current = true; setAuth('checking'); setMessage('Pairing…');
+        try {
+          const { client, session } = await RelayClient.pair(relayLink, location.origin, deviceName(), { onRevoked: relayLost });
+          setRelaySaved(await saveRelaySession(session));
+          await showRelay(client);
+        } catch (cause) { failed(cause, 'Pairing failed. Show a new code on your computer.'); }
+        finally { connecting.current = false; }
+      })();
+      return;
+    }
     const link = takePairingLink();
-    if (!link) return;
+    if (!link) { void reconnectRelay(); return; }
     void (async () => {
       setAuth('checking'); setMessage('Pairing…');
       try {
@@ -119,7 +177,7 @@ export function WebApp() {
         setAuth('signedOut'); setMessage(cause instanceof MobileError ? cause.message : 'Pairing failed. Show a new code on your computer.');
       }
     })();
-  }, [connect]);
+  }, [connect, showRelay, relayLost, failed, reconnectRelay]);
 
   useEffect(() => connected ? startSync(connected) : undefined, [connected]);
   useEffect(() => () => connected?.bridge.close(), [connected]);
@@ -127,6 +185,8 @@ export function WebApp() {
   const signOut = useCallback(() => {
     if (!connected) return;
     connected.bridge.close(); clearDrafts(); forgetLocal(storage()); setConnected(null); setAuth('signedOut'); setMessage('');
+    // Signing out of a relay session forgets its pairing in this browser (the desktop can revoke it in Settings › Phone).
+    if (connected.transport instanceof RelayClient) { connected.transport.close(); setRelaySaved(false); void forgetRelaySession(); }
   }, [connected]);
 
   const chrome = useMemo(() => ({
@@ -146,6 +206,7 @@ export function WebApp() {
           value={tokenText} onChange={event => setTokenText(event.target.value)} disabled={auth === 'checking'} />
         <button type="submit" className="web-primary" disabled={auth === 'checking'}>{auth === 'checking' ? 'Connecting…' : 'Connect'}</button>
       </div>
+      {relaySaved && <button type="button" className="web-primary" disabled={auth === 'checking'} onClick={() => void reconnectRelay()}>Reconnect through the relay</button>}
       <p className="web-signin-muted">Keep Botling running on your computer. The token is kept only in this tab's memory.</p>
     </form>
   </main>;

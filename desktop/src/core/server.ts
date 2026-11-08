@@ -9,6 +9,7 @@ import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings
 import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
 import { MobileDesk, OFF as MOBILE_OFF } from '../mobile-bridge/desk';
+import type { RelayConnector } from '../mobile-relay/connector';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
 // transport-agnostic: `receive` takes whatever arrived, `emit` is where answers and events go. It
 // validates everything it receives itself — main validating first is defense in depth, not the
@@ -2398,6 +2399,16 @@ First write a test that shows this, then fix it.`;
   /** Called once by the bridge's start when the phone connection is configured (mobile-bridge/start.ts). */
   attachMobile(desk: MobileDesk) { this.mobileDesk = desk; }
   private mobileOr(): MobileDesk { if (!this.mobileDesk) throw new Error("The phone connection is not set up."); return this.mobileDesk; }
+  private relay: RelayConnector | null = null;
+  /** Called once at startup (mobile-relay/start.ts): the end-to-end encrypted relay, off until Settings › Phone gives it an address. */
+  attachRelay(relay: RelayConnector) { this.relay = relay; }
+  /** Settings › Phone: the bridge's routes and phones, plus the relay and the phones paired through it. */
+  private mobileView() {
+    const view = this.mobileDesk ? this.mobileDesk.view() : MOBILE_OFF;
+    if (!this.relay) return view;
+    const relayed = this.relay.devices().map(({ id, label, pairedAt, expiresAt, botIds }) => ({ id, label: label ?? "", pairedAt, expiresAt, botIds: [...botIds], via: "relay" as const }));
+    return { ...view, devices: [...view.devices.map((device) => ({ ...device, via: "bridge" as const })), ...relayed].sort((a, b) => b.pairedAt - a.pairedAt), relay: this.relay.view() };
+  }
 
   /** Private mobile transport: the guard and handle's synchronous send prefix share this loop. */
   mobileCommand(raw: unknown, allowedBots: readonly string[]) {
@@ -2570,13 +2581,28 @@ First write a test that shows this, then fix it.`;
       case "settings.set": return this.changeSetting(cmd.change);
       case "engineDefaults.applyAll": return this.applyEngineDefaultsToAll();
       case "bot.settings": return this.bot(cmd.botId).settingsView();
-      case "mobile.view": return this.mobileDesk ? this.mobileDesk.view() : MOBILE_OFF;
+      case "mobile.view": return this.mobileView();
       case "mobile.pair": {
         const unknown = cmd.botIds.find((id) => !this.bots.has(id));
         if (unknown) throw new Error("Unknown bot.");
+        if (cmd.relay) {
+          if (!this.relay) throw new Error("The phone relay is not available.");
+          const offer = await this.relay.pair(cmd.botIds);
+          return { ...offer, route: { kind: "relay" as const, origin: new URL(offer.url).origin } };
+        }
         return this.mobileOr().pair(cmd.botIds, cmd.route);
       }
-      case "mobile.revoke": return this.mobileOr().revoke(cmd.deviceId);
+      case "mobile.revoke": {
+        if (!this.mobileDesk && !this.relay) throw new Error("The phone connection is not set up.");
+        this.mobileDesk?.revoke(cmd.deviceId);
+        await this.relay?.revoke(cmd.deviceId);
+        return this.mobileView();
+      }
+      case "mobile.relay": {
+        if (!this.relay) throw new Error("The phone relay is not available.");
+        await this.relay.setURL(cmd.url);
+        return this.mobileView();
+      }
       case "bot.configure": {
         const { type: _type, botId, ...change } = cmd;
         return this.bot(botId).configure(change);

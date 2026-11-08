@@ -45,6 +45,28 @@ describe("phone connection commands", () => {
       expect((await run({ type: "mobile.revoke", deviceId: DEVICE })).devices).toEqual([]);
     } finally { await core.shutdown?.(); }
   });
+  it("turn the relay on, pair through it, list and revoke its phones beside the bridge's", async () => {
+    const dir = tempDir("phone-relay-core"), core: any = open(dir);
+    try {
+      core.activated = true;
+      const run = (cmd: any) => core.handle(cmd, new AbortController().signal);
+      expect(parseInbound({ v: 10, id: "a", cmd: { type: "mobile.relay", url: null } }).ok).toBe(true);
+      expect(RENDERER_COMMANDS.has("mobile.relay")).toBe(true);
+      await expect(run({ type: "mobile.relay", url: "wss://relay.example/ws" })).rejects.toThrow(/not available/);
+      let url: string | null = null; const revoked: string[] = [];
+      const devices = [{ id: "r".repeat(22), publicKey: "k".repeat(43), tokenHash: "0".repeat(64), botIds: [MAIN_BOT_ID], pairedAt: 2, expiresAt: 9e12, label: "Pixel" }];
+      core.attachRelay({ view: () => ({ url, state: url ? "online" : "off" }), devices: () => devices.filter((d) => !revoked.includes(d.id)),
+        setURL: async (next: string | null) => { url = next; }, revoke: async (id: string) => { revoked.push(id); return true; },
+        pair: async (botIds: string[]) => ({ url: `https://relay.example/mobile/#relay=${"a".repeat(43)}&k=${"b".repeat(43)}&s=${botIds.length}`, expiresAt: 1 }) });
+      expect((await run({ type: "mobile.view" })).relay).toEqual({ url: null, state: "off" });
+      const on = await run({ type: "mobile.relay", url: "wss://relay.example/ws" });
+      expect(on).toMatchObject({ enabled: false, relay: { url: "wss://relay.example/ws", state: "online" }, devices: [{ id: "r".repeat(22), label: "Pixel", via: "relay" }] });
+      const offer = await run({ type: "mobile.pair", botIds: [MAIN_BOT_ID], relay: true });
+      expect(offer.route).toEqual({ kind: "relay", origin: "https://relay.example" });
+      expect((await run({ type: "mobile.revoke", deviceId: "r".repeat(22) })).devices).toEqual([]);
+      expect(revoked).toEqual(["r".repeat(22)]);
+    } finally { await core.shutdown?.(); }
+  });
 });
 
 describe("Settings > Phone", () => {
@@ -90,6 +112,34 @@ describe("Settings > Phone", () => {
       await click([...m.host.querySelectorAll("button")].find((b) => b.textContent === "Revoke"));
       expect(calls.find((c) => c.type === "mobile.revoke")).toEqual({ type: "mobile.revoke", deviceId: DEVICE });
       expect(m.host.textContent).toContain("No phones are paired.");
+    } finally { await m.done(); }
+  });
+  it("turns the relay on and pairs through it when the bridge is not set up", async () => {
+    const calls: any[] = []; let relay = { url: null as string | null, state: "off" };
+    const devices = [{ id: DEVICE, label: "Pixel", pairedAt: Date.UTC(2026, 10, 1), expiresAt: Date.UTC(2026, 11, 1), botIds: [MAIN_BOT_ID], via: "relay" }];
+    const m = await mount(async (cmd) => {
+      calls.push(cmd);
+      if (cmd.type === "mobile.relay") relay = { url: cmd.url, state: cmd.url ? "online" : "off" };
+      if (cmd.type === "mobile.pair") return { url: "https://relay.example/mobile/#relay=x", expiresAt: Date.now() + 300_000, route: { kind: "relay", origin: "https://relay.example" } };
+      return { enabled: false, routes: [], devices, relay };
+    });
+    try {
+      expect(button(m.host, "Create pairing code")).toBeUndefined(); // nothing to pair through yet
+      const input = m.host.querySelector('input[type="url"]') as HTMLInputElement;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "wss://relay.example/ws");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await click(button(m.host, "Turn on"));
+      expect(calls.find((c) => c.type === "mobile.relay")).toEqual({ type: "mobile.relay", url: "wss://relay.example/ws" });
+      expect(m.host.textContent).toContain("Connected");
+      expect(m.host.textContent).toContain("via relay");
+      await click(m.host.querySelector('input[type="checkbox"]')!);
+      await click(button(m.host, "Create pairing code"));
+      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair", botIds: [MAIN_BOT_ID], relay: true });
+      expect(m.host.querySelector("svg.qr-code")).not.toBeNull();
+      await click(button(m.host, "Turn off"));
+      expect(calls.filter((c) => c.type === "mobile.relay").at(-1)).toEqual({ type: "mobile.relay", url: null });
     } finally { await m.done(); }
   });
   it("speaks Traditional Chinese", async () => {

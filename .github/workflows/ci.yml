@@ -32,6 +32,21 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  relay:
+    name: Phone relay
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
   perf:
     name: Performance budgets
     runs-on: ubuntu-latest

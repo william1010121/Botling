@@ -12,7 +12,7 @@ export const Snapshot = z.object({
   }).nullable(),
 });
 export type MobileSnapshot = z.infer<typeof Snapshot>;
-export type MobileCommand = Extract<Command, { type: 'chat.snapshot' | 'chat.send' | 'chat.choose' | 'chat.answer' }>;
+export type MobileCommand = Extract<Command, { type: 'chat.snapshot' | 'chat.send' | 'chat.choose' | 'chat.answer' | 'turn.stop' }>;
 export class MobileError extends Error {
   /** `revoked`: refused before the bridge looked at the request (no bridge envelope): the session itself
    * is no longer accepted, unlike a bridge's refusal of one bot or command. */

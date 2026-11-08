@@ -1,6 +1,7 @@
 import { discoverModels, discoveryFailure, modelDiscoveryService } from "./agent/model-discovery";
 import { agyRuntimeStatus, resolveAgyRuntime } from "./agy-runtime-settings";
 import { startConfiguredMobile } from '../mobile-bridge/start';
+import { startRelay } from '../mobile-relay/start';
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
@@ -303,6 +304,9 @@ const core = new Core({
 try {
   startConfiguredMobile(core, dataDir, () => log('mobile bridge unavailable: check local TLS/bind configuration'), desk => core.attachMobile(desk));
 } catch { log('mobile bridge disabled: invalid local configuration'); }
+// The phone relay (Settings › Phone): connects out only once the user gave it an address.
+try { const relay = startRelay(core, dataDir); if (relay) core.attachRelay(relay); }
+catch { log('phone relay disabled: unreadable relay settings'); }
 
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
 // Main's startup log (src/startup-marks.ts): how long after this process began its bots and chats were loaded.

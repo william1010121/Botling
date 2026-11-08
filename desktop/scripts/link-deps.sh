@@ -50,4 +50,7 @@ link "$desktop/node_modules" "$target/node_modules"
 # spec/tests import vitest and the app the same way.
 spec="$desktop/../spec"
 [ -d "$spec" ] && { [ -L "$spec/node_modules" ] || [ ! -e "$spec/node_modules" ]; } && link "$spec/node_modules" ../desktop/node_modules
+# relay/ runs its tests with the same ws package.
+relay="$desktop/../relay"
+[ -d "$relay" ] && { [ -L "$relay/node_modules" ] || [ ! -e "$relay/node_modules" ]; } && link "$relay/node_modules" ../desktop/node_modules
 exit 0
