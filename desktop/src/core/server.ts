@@ -319,6 +319,7 @@ export class Core {
           const bot = this.pluginBot(botId);
           return bot ? notePath(bot.profile) : null;
         },
+        imageUrl: (path, type) => this.components.images.register(path, type),
         appSettings: () => {
           const settings = settingsView(readSettings(Layout.settings(this.options.dataDir)));
           return { language: settings.effectiveLanguage, botLook: settings.botLook, workerLimit: settings.claudeWorkerLimit };

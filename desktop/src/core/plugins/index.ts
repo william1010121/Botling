@@ -38,6 +38,7 @@ import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./
 import { agyUsageInProfiles, agyWorkerUsage } from "../agy-usage-db";
 import { refreshAntigravityQuota } from "../antigravity-quota";
 import { NOTE_MAX, NoteWatcher, readNote, writeNote } from "../bot-note";
+import { ASSET_BYTES_MAX, assetFile, importAssetBytes, importAssetFile, linkedFile, linkedPictures, localizeImages } from "../note-assets";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
 
@@ -85,6 +86,8 @@ export interface PluginWorld {
   botFolder?(botId: string): string | null;
   /** Where a bot's note is (bot-note.ts `notePath`, the Note tab's file; null: no such bot). The only file `notes.*` touches. */
   botNote?(botId: string): string | null;
+  /** The URL a plugin's frame loads a picture from (`botling-card://image/<token>`, components' ImageRegistry); only for a note's own pictures. */
+  imageUrl?(path: string, type: string): string;
   /** Botling's own settings plugins may read (`settings.app`). */
   appSettings(): Record<string, JSONValue>;
   /** The keys the user chose (settings.json `shortcutBindings`: Botling's shortcuts and plugin commands). */
@@ -183,6 +186,12 @@ const NotifyMore = z.object({
 const SendParams = z.object({ plugin: str(214), bot: str(64), text: z.string().min(1).max(100_000), as: z.enum(["plugin", "user"]).default("plugin") });
 const BotParams = z.object({ plugin: str(214), bot: str(64) });
 const NoteWriteParams = BotParams.extend({ text: z.string().max(NOTE_MAX), base: z.number().finite().optional() });
+const NoteAssetParams = z.union([
+  BotParams.extend({ path: z.string().min(1).max(4096) }).strict(),
+  BotParams.extend({ data: z.string().min(1).max(Math.ceil(ASSET_BYTES_MAX / 3) * 4 + 4).regex(/^[A-Za-z0-9+/]+={0,2}$/), name: z.string().min(1).max(400) }).strict(),
+]);
+const NoteRefsParams = BotParams.extend({ refs: z.array(z.string().max(4096)).max(500) });
+const NoteLocalizeParams = BotParams.extend({ base: z.number().finite().optional() });
 const WakeParams = BotParams.extend({ prompt: z.string().min(1).max(100_000).optional() });
 const PickParams = z.object({
   plugin: str(214), title: str(400).optional(),
@@ -860,6 +869,13 @@ export class Plugins {
     return file;
   }
 
+  /** The URL a frame shows a note's picture from (null: no such picture in the note's own note-assets folder). */
+  private noteAssetUrl(noteFile: string, ref: string): string | null {
+    const asset = assetFile(noteFile, ref);
+    const url = asset ? this.options.world.imageUrl?.(asset.path, asset.type) : undefined;
+    return url ?? null;
+  }
+
   /** The consistency check of plugin-platform.md §5: what acts as the user needs the capability declared. */
   private needs(plugin: InstalledPlugin, capability: string, what: string) {
     if (!plugin.manifest.ccb?.permissions?.includes(capability)) throw new Error(`${what} needs the "${capability}" permission in package.json.`);
@@ -970,6 +986,42 @@ export class Plugins {
         const result = writeNote(file, data.text, data.base);
         this.notes.watch(data.bot, file, result.mtime);
         return result;
+      }
+      case "notes.importAsset": {
+        const { plugin, data } = this.asked(NoteAssetParams, params);
+        this.needs(plugin, "files", "Adding a picture to a bot's note");
+        const file = this.noteFile(data.bot);
+        let ref: string;
+        if ("path" in data) {
+          // Only a picture the note itself links: never a general file read.
+          const wanted = linkedFile(data.path);
+          if (!wanted || !linkedPictures(readNote(file).text).includes(wanted)) throw new Error("Only a picture the note links can be copied into it.");
+          ref = importAssetFile(file, wanted);
+        } else {
+          ref = importAssetBytes(file, Buffer.from(data.data, "base64"), data.name);
+        }
+        return { ref, url: this.noteAssetUrl(file, ref) };
+      }
+      case "notes.assetUrls": {
+        const { plugin, data } = this.asked(NoteRefsParams, params);
+        this.needs(plugin, "files", "Showing a bot's note's pictures");
+        const file = this.noteFile(data.bot);
+        return Object.fromEntries(data.refs.map((ref) => [ref, this.noteAssetUrl(file, ref)]));
+      }
+      case "notes.localizeImages": {
+        const { plugin, data } = this.asked(NoteLocalizeParams, params);
+        this.needs(plugin, "files", "Changing a bot's note");
+        const file = this.noteFile(data.bot);
+        const note = readNote(file);
+        if (data.base !== undefined && note.mtime !== data.base) {
+          this.notes.watch(data.bot, file, note.mtime);
+          return { saved: false, text: note.text, mtime: note.mtime, copied: [], missing: [], failed: [] };
+        }
+        const done = localizeImages(file, note.text);
+        const result = done.copied.length ? writeNote(file, done.text, note.mtime) : { saved: true as const, mtime: note.mtime };
+        this.notes.watch(data.bot, file, result.mtime);
+        if (!result.saved) return { ...result, copied: [], missing: [], failed: [] };
+        return { saved: true, text: done.text, mtime: result.mtime, copied: done.copied, missing: done.missing, failed: done.failed };
       }
       case "ui.quickPick": {
         const { plugin, data } = this.asked(PickParams, params);

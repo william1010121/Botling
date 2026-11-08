@@ -47,10 +47,7 @@ export class ImageRegistry {
         let real: string;
         let stamp: number;
         try { real = realpathSync(file); const stat = statSync(real); if (!stat.isFile()) return; stamp = stat.mtimeMs; } catch { return; }
-        const token = createHash("sha256").update(`${real}\n${stamp}`).digest("hex").slice(0, 40);
-        this.byToken.set(token, { path: real, type });
-        if (this.byToken.size > 5_000) this.byToken.delete(this.byToken.keys().next().value!);
-        found[item] = `botling-card://image/${token}`;
+        found[item] = this.register(real, type, stamp);
       } else if (Array.isArray(item)) {
         for (const entry of item) visit(entry, depth + 1);
       } else if (item && typeof item === "object") {
@@ -59,6 +56,15 @@ export class ImageRegistry {
     };
     visit(value, 0);
     return found;
+  }
+
+  /** The URL a frame loads `path` (real, a file) from: `botling-card://image/<token>`, served by main (main.ts). */
+  register(path: string, type: string, stamp = 0): string {
+    const token = createHash("sha256").update(`${path}\n${stamp}`).digest("hex").slice(0, 40);
+    this.byToken.delete(token);
+    this.byToken.set(token, { path, type });
+    if (this.byToken.size > 5_000) this.byToken.delete(this.byToken.keys().next().value!);
+    return `botling-card://image/${token}`;
   }
 
   /** Whether `url` (a file URL or path) is the picture this token stands for: a lightbox's buttons open only that file. */

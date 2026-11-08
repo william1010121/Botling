@@ -369,6 +369,12 @@ export interface StudioApi { request(method: string, params?: JSONValue): Promis
 export interface BotNote { path: string; text: string; mtime: number }
 /** What `notes.write` did: saved, or refused because the note on disk changed since `base` (its words and mtime come back to take in). */
 export type NoteSave = { saved: true; mtime: number } | { saved: false; text: string; mtime: number };
+/** A picture kept in the note's own folder: `ref` is what the note links ("note-assets/<hash>.png", relative to the note); `url` is what a frame's <img> loads (null: not there). */
+export interface NoteAsset { ref: string; url: string | null }
+/** What `notes.localizeImages` did: as `notes.write` (refused when the note changed since `base`), plus the note's words now and which pictures were copied in, missing or failed. */
+export type NoteLocalized =
+  | { saved: true; text: string; mtime: number; copied: Array<{ from: string; ref: string }>; missing: string[]; failed: Array<{ from: string; error: string }> }
+  | { saved: false; text: string; mtime: number; copied: []; missing: []; failed: [] };
 
 export interface BotlingApi {
   /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
@@ -419,6 +425,17 @@ export interface BotlingApi {
     read(botId: string): Promise<BotNote>;
     /** Saves the whole note. With `base` (the mtime last read or saved) a note changed on disk since is not overwritten. */
     write(botId: string, text: string, opts?: { base?: number }): Promise<NoteSave>;
+    /**
+     * Copies a picture into the note's own note-assets folder (named by a hash of its bytes, so the same picture is kept
+     * once) and gives the ref to link. `{ path }`: only a picture the note already links (absolute path, ~/… or file: URL).
+     * `{ data, name }`: a paste or drop, base64 bytes (at most 2,500,000 bytes); `name` gives the extension. png, jpg,
+     * jpeg, gif, webp or svg only, at most 20 MB.
+     */
+    importAsset(botId: string, source: { path: string } | { data: string; name: string }): Promise<NoteAsset & { url: string }>;
+    /** The URL a frame's <img> shows each ref from ("note-assets/<name>" or "./note-assets/<name>"; null: not in the note's folder). */
+    assetUrls(botId: string, refs: string[]): Promise<Record<string, string | null>>;
+    /** Copies every picture the note links by absolute path, ~/… or file: URL into note-assets and links the copies instead. */
+    localizeImages(botId: string, opts?: { base?: number }): Promise<NoteLocalized>;
   };
   keybindings: {
     /** Every key in effect ("Mod+Shift+L"): Botling's (default or the user's) and plugins' commands'. */
@@ -683,6 +700,9 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
     notes: {
       read: async (botId) => (await ask("notes.read", { bot: botId })) as BotNote,
       write: async (botId, text, opts = {}) => (await ask("notes.write", { bot: botId, text, ...(opts.base === undefined ? {} : { base: opts.base }) })) as NoteSave,
+      importAsset: async (botId, source) => (await ask("notes.importAsset", { bot: botId, ...("path" in source ? { path: source.path } : { data: source.data, name: source.name }) })) as NoteAsset & { url: string },
+      assetUrls: async (botId, refs) => (await ask("notes.assetUrls", { bot: botId, refs })) as Record<string, string | null>,
+      localizeImages: async (botId, opts = {}) => (await ask("notes.localizeImages", { bot: botId, ...(opts.base === undefined ? {} : { base: opts.base }) })) as NoteLocalized,
     },
     sessions: {
       setFolder: async (botId, folder, reason) => { await ask("sessions.folder", { bot: botId, folder, ...(reason ? { reason } : {}) }); },

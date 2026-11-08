@@ -2,7 +2,7 @@
 // against a fake world (no bots, no app page) and a fake host process (the `launch` hook: lines in,
 // lines out, no Node child). The real host and the real core are in plugin-host.test.ts.
 import { afterEach, describe, expect, it } from "vitest";
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir, until } from "../helpers";
 import { Plugins, type AppQuestion, type AppAnswer, type PluginWorld } from "../../src/core/plugins";
@@ -510,6 +510,52 @@ describe("a bot's note for plugins (the Note tab)", () => {
     expect(await ask("notes.write", { plugin: "note", bot: "main", text: "mine", base: saved.mtime })).toEqual({ saved: false, text: "the bot's edit", mtime: expect.any(Number) });
     expect(readFileSync(join(project, ".bot", "note.md"), "utf8")).toBe("the bot's edit");
     await expect(ask("notes.write", { plugin: "note", bot: "main", text: 7 })).rejects.toThrow();
+  });
+
+  it("note pictures: importAsset copies only a picture the note links (or bytes), assetUrls shows only its own refs, localizeImages rewrites links; all need \"files\"", async () => {
+    const dir = tempDir("plugin-api");
+    plugin(dir, "note", { permissions: ["files"] });
+    plugin(dir, "nosy");
+    const { ask, world } = await setup(dir);
+    const note = join(dir, "project", ".bot", "note.md");
+    const other = join(dir, "sub", "note.md");
+    world.botNote = (botId) => (botId === "main" ? note : botId === "S1" ? other : null);
+    const served: string[] = [];
+    world.imageUrl = (path, type) => { served.push(`${type} ${path}`); return `botling-card://image/${served.length}`; };
+    mkdirSync(join(dir, "figs"), { recursive: true });
+    const fig = join(dir, "figs", "reward.png");
+    const stray = join(dir, "figs", "private.png");
+    writeFileSync(fig, "png bytes");
+    writeFileSync(stray, "private bytes");
+    for (const method of ["notes.importAsset", "notes.assetUrls", "notes.localizeImages"]) {
+      await expect(ask(method, { plugin: "nosy", bot: "main", path: fig, refs: [] })).rejects.toThrow(/permission|Not a request/);
+    }
+    await expect(ask("notes.importAsset", { plugin: "note", bot: "B9", path: fig })).rejects.toThrow("No such bot.");
+    // A picture the note does not link is never read.
+    await expect(ask("notes.importAsset", { plugin: "note", bot: "main", path: stray })).rejects.toThrow("Only a picture the note links");
+    writeFileSync(note, `# Plot\n![reward](file://${fig})\n![gone](${join(dir, "figs", "gone.png")})\n`);
+    const imported = await ask("notes.importAsset", { plugin: "note", bot: "main", path: `file://${fig}` });
+    expect(imported).toEqual({ ref: expect.stringMatching(/^note-assets\/[0-9a-f]{32}\.png$/), url: "botling-card://image/1" });
+    expect(served[0]).toBe(`image/png ${join(realpathSync(dir), "project", ".bot", imported.ref)}`);
+    await expect(ask("notes.importAsset", { plugin: "note", bot: "main", path: join(dir, "figs", "gone.png") })).rejects.toThrow("No such picture");
+    // A paste: base64 bytes and a name for the extension.
+    const pasted = await ask("notes.importAsset", { plugin: "note", bot: "main", data: Buffer.from("pasted").toString("base64"), name: "image.png" });
+    expect(pasted.ref).toMatch(/^note-assets\/[0-9a-f]{32}\.png$/);
+    await expect(ask("notes.importAsset", { plugin: "note", bot: "main", data: "aGk=", name: "page.html" })).rejects.toThrow("Only png");
+    // Refs: only the note's own folder; another bot's note does not reach them.
+    expect(await ask("notes.assetUrls", { plugin: "note", bot: "main", refs: [imported.ref, `./${pasted.ref}`, "note-assets/../note.md", fig] }))
+      .toEqual({ [imported.ref]: expect.stringMatching(/^botling-card:\/\/image\//), [`./${pasted.ref}`]: expect.stringMatching(/^botling-card:\/\/image\//), "note-assets/../note.md": null, [fig]: null });
+    expect(await ask("notes.assetUrls", { plugin: "note", bot: "S1", refs: [imported.ref] })).toEqual({ [imported.ref]: null });
+    // Localize: the note's links become refs; a stale base is refused.
+    const { mtime } = await ask("notes.read", { plugin: "note", bot: "main" });
+    expect(await ask("notes.localizeImages", { plugin: "note", bot: "main", base: mtime - 1000 })).toEqual({ saved: false, text: expect.any(String), mtime, copied: [], missing: [], failed: [] });
+    const done = await ask("notes.localizeImages", { plugin: "note", bot: "main", base: mtime });
+    expect(done).toEqual({
+      saved: true, mtime: expect.any(Number), failed: [],
+      text: `# Plot\n![reward](${imported.ref})\n![gone](${join(dir, "figs", "gone.png")})\n`,
+      copied: [{ from: `file://${fig}`, ref: imported.ref }], missing: [join(dir, "figs", "gone.png")],
+    });
+    expect(readFileSync(note, "utf8")).toBe(done.text);
   });
 
   it("a note read by a plugin is watched: a change on disk is the noteChanged event (bot and mtime, never the words)", async () => {
