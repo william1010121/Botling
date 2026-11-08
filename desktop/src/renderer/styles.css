@@ -838,3 +838,4 @@ button.wk-owner:hover { background: var(--hover); }
 .wk-ask-box textarea:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
 .wk-ask-row { display: flex; align-items: center; gap: 8px; }
 .wk-ask-row .wk-tm { flex: 1; white-space: normal; }
+@media (max-width: 860px) { .workers-badge b { display: none; } .workers-badge-slot { right: 8px; } }
