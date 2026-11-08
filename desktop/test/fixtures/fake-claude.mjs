@@ -22,6 +22,11 @@
 //              a turn of its own to say so ("/bgagent:silent": that turn says only <no-reply/>)
 //   worker   — (long-lived) "/worker <instructions>": calls the app's app_handoff tool (its in-process MCP server, an
 //              mcp_message control request) and replies "Handed off: <task_id>" (or "Handoff failed: <error>")
+//   notify   — (long-lived, a Claude app worker) "/notify:report <words>" or "/notify:question <words>": calls the app's
+//              app_notify_owner tool, then keeps working (streams) until words join its turn: "You said: <words>"
+//   An owner woken by a worker's note (<app_worker_note …>): a question is answered with app_send_message
+//              ("Answer: " + FAKE_CLAUDE_NOTE_ANSWER, default "use SQLite"), then "Answered the worker."; a report
+//              is answered "Got the worker's note: <its words>".
 //   failtool — "/failtool <words>": a Bash call that fails, then "Recovered after a failed tool: <words>" (a worker's run that succeeds anyway)
 //   say      — "/say <text>": replies exactly <text> (a hand-off tag, say)
 //   mention  — "/mention <name> <words>[|…]": "Let me ask." and a line "@<name> <words>" each (a bot's @)
@@ -111,7 +116,7 @@ function helper(ignoreTerm) {
 }
 
 function directive(prompt) {
-  const match = /^\/(normal|slow|stubborn|crash|netloss|tool|resume|choices|task|react|agent|bgagent|worker|failtool)(?::([A-Za-z]+))?\s*/.exec(prompt);
+  const match = /^\/(normal|slow|stubborn|crash|netloss|tool|resume|choices|task|react|agent|bgagent|worker|notify|failtool)(?::([A-Za-z]+))?\s*/.exec(prompt);
   return match ? { mode: match[1], tool: match[2] ?? "Bash", rest: prompt.slice(match[0].length) } : { mode: envMode, tool: "Bash", rest: prompt };
 }
 
@@ -257,6 +262,16 @@ lines.on("line", (line) => {
 });
 lines.on("close", () => { closed = true; wake?.(); });
 
+/** A call of one of the app's tools (its in-process "sdk" MCP server): the host answers on the control channel. */
+async function mcpCall(name, args) {
+  const requestId = `mcp-${Math.random().toString(36).slice(2, 10)}`;
+  const answer = new Promise((resolve) => pending.set(requestId, resolve));
+  out({ type: "control_request", request_id: requestId, request: { subtype: "mcp_message", server_name: "botling", message: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } } } });
+  const response = await answer;
+  pending.delete(requestId);
+  return response;
+}
+
 const toolId = () => `toolu_${Math.random().toString(36).slice(2, 10)}`;
 const assistant = (content, parent = null) => out({ type: "assistant", parent_tool_use_id: parent, message: { role: "assistant", content } });
 const toolResult = (id, content, parent = null, extra = {}) => out({ type: "user", parent_tool_use_id: parent, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content, is_error: false }] }, ...extra });
@@ -288,6 +303,16 @@ async function turn(job) {
   // A worker's report (Claude app workers) answered with exactly FAKE_CLAUDE_REPORT_REPLY ("" ends the turn with nothing).
   if (process.env.FAKE_CLAUDE_REPORT_REPLY !== undefined && prompt.startsWith("<app_task_result ")) {
     result(await stream(process.env.FAKE_CLAUDE_REPORT_REPLY));
+    return;
+  }
+  // A worker's note (app_notify_owner) wakes its owner while the worker keeps running.
+  const workerNote = /<app_worker_note task_id="([^"]+)" run="(\d+)" kind="(report|question)"[^>]*>\n([\s\S]*?)\n<\/app_worker_note>/.exec(prompt);
+  if (workerNote) {
+    if (workerNote[3] === "question") {
+      const response = await mcpCall("app_send_message", { task_id: workerNote[1], message: `Answer: ${process.env.FAKE_CLAUDE_NOTE_ANSWER ?? "use SQLite"}` });
+      const content = response?.mcp_response?.result?.content?.[0]?.text ?? "";
+      result(await stream(response?.mcp_response?.result?.isError ? `Could not answer: ${content}` : "Answered the worker."));
+    } else result(await stream(`Got the worker's note: ${workerNote[4]}`));
     return;
   }
   if (prompt.startsWith("(App: You have been idle")) {
@@ -447,7 +472,7 @@ async function turn(job) {
   }
   const { mode, tool } = directive(said.last);
   const rest = said.last === said.all ? directive(said.all).rest : said.all;
-  current = { interrupted: false, helper: null, ignoreInterrupt: mode === "stubborn", absorbs: mode === "slow", steered: null };
+  current = { interrupted: false, helper: null, ignoreInterrupt: mode === "stubborn", absorbs: mode === "slow" || mode === "notify", steered: null };
   out({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start" } });
   out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
   if (mode === "slow" || mode === "stubborn") {
@@ -509,13 +534,26 @@ async function turn(job) {
     result(`${intro}\n\n${text}`);
     return;
   }
+  if (mode === "notify") {
+    const kind = tool === "question" ? "question" : "report";
+    const response = await mcpCall("app_notify_owner", { kind, message: rest, ...(kind === "report" ? { files: [join(process.cwd(), "progress.md")] } : {}) });
+    const content = response?.mcp_response?.result?.content?.[0]?.text ?? "";
+    if (response?.mcp_response?.result?.isError) return result(await stream(`Note failed: ${content}`));
+    let soFar = "Note sent. ";
+    delta(soFar);
+    // Keeps working until words join its turn (an answer from its owner).
+    for (let i = 0; !current.interrupted && !current.steered; i++) {
+      delta(`step${i} `);
+      soFar += `step${i} `;
+      await sleep(30);
+    }
+    if (current.steered) return result(soFar + await stream(`You said: ${words(current.steered).last}`));
+    result("", false);
+    return;
+  }
   if (mode === "worker") {
     // As claude calls an MCP tool of an "sdk" server: the host answers on the control channel.
-    const requestId = `mcp-${Math.random().toString(36).slice(2, 10)}`;
-    const answer = new Promise((resolve) => pending.set(requestId, resolve));
-    out({ type: "control_request", request_id: requestId, request: { subtype: "mcp_message", server_name: "botling", message: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "app_handoff", arguments: { name: "Research", instructions: rest } } } } });
-    const response = await answer;
-    pending.delete(requestId);
+    const response = await mcpCall("app_handoff", { name: "Research", instructions: rest });
     const content = response?.mcp_response?.result?.content?.[0]?.text ?? "";
     let text;
     try { text = response.mcp_response.result.isError ? `Handoff failed: ${content}` : `Handed off: ${JSON.parse(content).task_id}`; }

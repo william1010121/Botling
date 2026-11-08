@@ -39,13 +39,24 @@ export interface PromptContext {
 }
 
 interface PolicySection {
-  id: "header" | "monitors" | "coordinator" | "authorization" | "scope" | "dispatch" | "worktree" | "validation" | "ownership" | "followUp" | "runDispatch" | "reports";
+  id: "header" | "monitors" | "coordinator" | "authorization" | "scope" | "dispatch" | "worktree" | "validation" | "ownership" | "followUp" | "runDispatch" | "reports" | "notes";
   when?(caps: DelegationCaps, ctx: PromptContext): boolean;
   text(caps: DelegationCaps, ctx: PromptContext): string;
 }
 
 /** A verbatim request (Math, 2026-11-06: a "verbatim" record briefed with the head's own summary came back rewritten). */
 export const VERBATIM_HANDOFF_RULE = "When the user asks for something verbatim, a transcript or the original text, the handoff gives the worker that source itself or its exact file paths (for example the chat archive file and its line range), never only your own summary, and tells the worker to quote from it, not rewrite it.";
+
+/**
+ * What an app-managed worker is told about app_notify_owner (every engine's worker prompt): when a note to its owner
+ * is worth sending. Interim only; the final message stays the report.
+ */
+export const WORKER_NOTIFY_RULE = "While you work, the app_notify_owner tool sends a short note to the bot that started you, and only to it: kind \"report\" when you reach a milestone others can act on or a plan or progress file is ready (give its full paths in files), kind \"question\" when an answer would change your work (the answer joins this run as a message; carry on meanwhile with what does not depend on it). Not for chatter or routine progress; your final message is still your report.";
+
+/** What a coordinator does with a worker's note (<app_worker_note>): interim news to act on, never the final report. */
+export function workerNoteRule(caps: Pick<DelegationCaps, "steerWorkerRun">): string {
+  return `A worker that is still running may send you a note as an app message: <app_worker_note task_id="…" run="…" kind="report" or "question" name="…">. It is interim news, never the worker's final report (that still comes as app_task_result), and it resolves nothing. Act on it: start parallel workers on what it unblocks, and answer a question with app_send_message to its task_id${caps.steerWorkerRun ? "" : " and run"} (your words join its run under way). Tell the user only when it matters to them or needs their decision.`;
+}
 
 const sentences = (...parts: (string | false)[]) => parts.filter(Boolean).join(" ");
 
@@ -83,6 +94,8 @@ const SECTIONS: PolicySection[] = [
     when: (caps) => !caps.steerWorkerRun,
     text: (_caps, { engine }) => `Use app_handoff for each independent authorized scope. The default worker engine is ${engine}; use another engine only when its tool schema exposes it and the user authorized it. An acceptance receipt contains task_id and run; it is not a result. Use app_send_message with task_id, run and message only for the same task; a follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. A busy worker reads a message at its next tool call (if its run ends first, at the start of its next run); do not poll or retry to keep the turn alive. Preserve all approval cards and denials; delegation never grants file or command permission.`,
   },
+  // Before the reports: the agy report text ends with a newline that its prompt hash has always kept.
+  { id: "notes", text: (caps) => workerNoteRule(caps) },
   {
     id: "reports",
     text: (caps) => caps.reportVia === "prompt"
@@ -94,6 +107,6 @@ const SECTIONS: PolicySection[] = [
 
 /** The delegation policy for a coordinator with these capabilities: its sections joined by blank lines, or the one-line form. */
 export function delegationPolicy(caps: DelegationCaps, ctx: PromptContext): string {
-  if (ctx.form === "line") return `- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to app-managed workers with the app_handoff tool and keep yourself free for the user. A worker is a ${caps.name} subagent running as its own session in this folder; the Agent tool is off. Give each one a short name and a clear, self-contained task (subagent_type picks a .claude/agents definition), run independent ones in parallel, say in one sentence what you handed off, then end your turn: do not wait or poll. Its report arrives later as an app message (<app_task_result task_id="…" run="…">); tell the user what came of it. To follow up, use app_send_message with its task_id (joined into its run while it works, or its next run once it reported). A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. ${VERBATIM_HANDOFF_RULE} To stop one, app_cancel_task. Do it yourself only when it is quicker than explaining it.`;
+  if (ctx.form === "line") return `- By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to app-managed workers with the app_handoff tool and keep yourself free for the user. A worker is a ${caps.name} subagent running as its own session in this folder; the Agent tool is off. Give each one a short name and a clear, self-contained task (subagent_type picks a .claude/agents definition), run independent ones in parallel, say in one sentence what you handed off, then end your turn: do not wait or poll. Its report arrives later as an app message (<app_task_result task_id="…" run="…">); tell the user what came of it. To follow up, use app_send_message with its task_id (joined into its run while it works, or its next run once it reported). A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question. ${VERBATIM_HANDOFF_RULE} To stop one, app_cancel_task. ${workerNoteRule(caps)} Do it yourself only when it is quicker than explaining it.`;
   return SECTIONS.filter(section => section.when?.(caps, ctx) ?? true).map(section => section.text(caps, ctx)).join("\n\n");
 }

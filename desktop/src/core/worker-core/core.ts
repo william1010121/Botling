@@ -25,7 +25,7 @@ import type { RunEnd, RunHandle, WorkerAdapterKind, WorkerEvent } from "./events
 import { MAX_PROCESSES, MAX_WORKER_RECORDS, trimRecords, type WorkerLedgerRecord, type WorkerStore } from "./ledger";
 import type { LegacySources } from "./migrate";
 import { RunPipeline, type ControlEvent } from "./pipeline";
-import { ownedWorkerReport, REPORT_LIMIT, reportTag, wireStatus, withDeniedNote, type AckPolicy, type WorkerReport } from "./report";
+import { ownedWorkerReport, parseWorkerNote, REPORT_LIMIT, reportTag, wireStatus, withDeniedNote, workerNoteText, type AckPolicy, type WorkerNote, type WorkerReport } from "./report";
 import { reportOwed, workerState, type WorkerStatus } from "./status";
 
 /** The coordinator end of report delivery (Claude: an app message; Antigravity: a queued report prompt; Codex: a turn with the tool output). */
@@ -77,6 +77,11 @@ export interface WorkerCoreOptions {
    * the chip, agents.json, the step) follow it. A copy; called after the ledger is written.
    */
   projected?(record: WorkerLedgerRecord): void;
+  /**
+   * A note from one of its workers' runs under way (app_notify_owner) for the coordinator that owns it: shown in its
+   * chat and woken with `text` (the <app_worker_note> message). False: it cannot take it now. Absent: notes go nowhere.
+   */
+  note?(note: WorkerNote, text: string): boolean;
 }
 
 export interface HandoffResult { accepted: true; task_id: string; run: number }
@@ -84,6 +89,7 @@ export interface MessageArgs { task_id?: unknown; run?: unknown; message?: unkno
 export interface MessageResult { task_id: string; run: number; status: "steered" | "accepted" }
 export interface CheckpointArgs { task_id?: unknown; run?: unknown; outcome?: unknown; evidence?: unknown; dependency_task_id?: unknown }
 export interface CheckpointResult { task_id: string; run: number; outcome: string; evidence: string; dependency_task_id?: string }
+export interface NotifyResult { task_id: string; run: number; kind: WorkerNote["kind"]; delivered: true; to: "owner" }
 export interface ReconcileArgs { task_id?: unknown; run?: unknown; action?: unknown }
 export interface ReconcileResult { task_id: string; run: number; action: "acknowledge" | "retry"; taskReplayed: false }
 
@@ -471,6 +477,27 @@ export class WorkerCore implements WorkerHost {
     const sent = await this.sendToWorker(r.id, typeof args.message === "string" ? args.message : "", "coordinator");
     if (!sent.ok) throw new Error(sent.reason);
     return { task_id: r.id, run: sent.run, status: sent.how === "steered" ? "steered" : "accepted" };
+  }
+
+  /**
+   * app_notify_owner from worker `id`'s run under way: its owner (the coordinator, or the bot it was moved to) gets the
+   * note now; the run goes on. Only a worker at work can send one; nothing about the record changes.
+   */
+  notifyOwner(id: string, args: Record<string, unknown>): NotifyResult {
+    const r = this.records.get(id);
+    if (!r) throw new Error("Only an app-managed worker can notify its owner.");
+    if (r.status !== "running" || !this.lives.has(r.id)) throw new Error("This worker's run is not under way: say it in your final report instead.");
+    const note: WorkerNote = { id: r.id, run: r.run, engine: r.engine, name: r.name, ...parseWorkerNote(args) };
+    if (r.owner) {
+      // Another bot owns it: the app routes the note there (the coordinator never sees it).
+      this.emit({ kind: "workerNote", id: note.id, run: note.run, engine: note.engine, noteKind: note.kind, name: note.name, message: note.message, files: note.files });
+    } else {
+      let taken = false;
+      try { taken = this.options.note?.(note, workerNoteText(note)) ?? false; }
+      catch (error) { this.options.log(`worker ${r.id}: note not delivered: ${(error as Error).message}`); }
+      if (!taken) throw new Error("Your owner cannot take a note right now. Nothing was sent; say it in your final report instead.");
+    }
+    return { task_id: note.id, run: note.run, kind: note.kind, delivered: true, to: "owner" };
   }
 
   /** app_task_checkpoint: the coordinator's decision on a report it was shown. */

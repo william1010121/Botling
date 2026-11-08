@@ -58,3 +58,47 @@ export function deniedNote(denied: number): string {
 
 /** A report with the denial note in front, when there was any. */
 export const withDeniedNote = (text: string, denied: number) => (denied > 0 ? `${deniedNote(denied)}\n${text}` : text);
+
+// ---- Worker notes (app_notify_owner): interim news or a question from a run still under way ----
+
+export type WorkerNoteKind = "report" | "question";
+export const WORKER_NOTE_KINDS: readonly WorkerNoteKind[] = ["report", "question"];
+/** A note's text is cut to this many characters; at most this many files, each path this long. */
+export const NOTE_LIMIT = 20_000;
+export const NOTE_FILES_MAX = 20;
+const NOTE_PATH_MAX = 1_000;
+
+/** A worker's note to its owner: the worker's task, the run under way, and what it says. */
+export interface WorkerNote { id: string; run: number; engine: Engine; kind: WorkerNoteKind; name: string; message: string; files: string[] }
+
+/** The sentence after the note's tag: what the owner does with it (never treated as the worker's final report). */
+export const NOTE_TAIL: Record<WorkerNoteKind, string> = {
+  report: "Interim news from a worker that is still running, not its final report (that comes later as <app_task_result>). Act on it if it helps now (start parallel workers on what it unblocks, read the file it names); tell the user only if it matters to them or needs their decision, otherwise reply with only <no-reply/>.",
+  question: "A worker that is still running asks you this; it is not its final report. Answer it with app_send_message to its task_id (your words join its run under way). If only the user can answer, ask the user, then pass their answer on the same way.",
+};
+
+const attr = (value: string) => value.replaceAll("&", "&amp;").replaceAll("\"", "&quot;").replaceAll("<", "&lt;");
+
+/** The <app_worker_note> message the owner reads (`tail`: what to do with it; default NOTE_TAIL). */
+export function workerNoteText(n: Pick<WorkerNote, "id" | "run" | "kind" | "name" | "message" | "files">, tail = NOTE_TAIL[n.kind]): string {
+  const files = n.files.length ? `\nFiles: ${n.files.join(", ")}` : "";
+  return `<app_worker_note task_id="${attr(n.id)}" run="${n.run}" kind="${n.kind}" name="${attr(n.name)}">\n${`${n.message}${files}`.replaceAll("<", "&lt;")}\n</app_worker_note>\n${tail}`;
+}
+
+/** The owner's chat line for a note (a relay line, not the user's). */
+export function workerNoteLine(n: Pick<WorkerNote, "kind" | "name" | "message" | "files">): string {
+  const files = n.files.length ? `\n${n.files.join("\n")}` : "";
+  return `${n.kind === "question" ? "Question" : "Note"} from worker "${n.name}": ${n.message}${files}`;
+}
+
+/** app_notify_owner's arguments, checked: an error says what is wrong (nothing was sent). */
+export function parseWorkerNote(args: Record<string, unknown>): Pick<WorkerNote, "kind" | "message" | "files"> {
+  const kind = args.kind;
+  if (kind !== "report" && kind !== "question") throw new Error('kind must be "report" or "question". Nothing was sent.');
+  const message = typeof args.message === "string" ? args.message.trim() : "";
+  if (!message) throw new Error("message required. Nothing was sent.");
+  const raw = args.files ?? [];
+  if (!Array.isArray(raw) || raw.length > NOTE_FILES_MAX || raw.some((file) => typeof file !== "string" || !file.trim() || file.length > NOTE_PATH_MAX))
+    throw new Error(`files must be a list of at most ${NOTE_FILES_MAX} paths. Nothing was sent.`);
+  return { kind, message: message.slice(0, NOTE_LIMIT), files: (raw as string[]).map((file) => file.trim()) };
+}

@@ -1,6 +1,7 @@
 // The app tools, defined once (provider-layer plan 4.1). A coordinator steers its workers and the app through these
 // tools: app_handoff, app_send_message, app_cancel_task, the report tools (app_task_checkpoint, app_reconcile_report),
-// routines and monitors. Each engine gets them over its own transport: Claude's in-process MCP server (head.ts
+// routines and monitors. A worker gets one tool of its own, app_notify_owner (`workerAppTools`): a note to the bot that
+// started it while it keeps working. Each engine gets them over its own transport: Claude's in-process MCP server (head.ts
 // `appMcp`) and the agy bridge (agy-mcp.ts `AgyMcpBridge.tools`) take MCP tools, Codex takes dynamic tools on
 // `thread/start` (codex.ts `MANAGED_TOOLS`).
 //
@@ -12,7 +13,8 @@
 export type AppToolProvider = "claude" | "agy" | "codex";
 export type AppToolName =
   | "app_handoff" | "app_send_message" | "app_cancel_task" | "app_task_checkpoint" | "app_reconcile_report"
-  | "app_routines" | "app_monitor_start" | "app_monitor_status" | "app_monitor_cancel";
+  | "app_routines" | "app_monitor_start" | "app_monitor_status" | "app_monitor_cancel"
+  | "app_notify_owner";
 type JsonSchema = Record<string, unknown>;
 /** A tool as an MCP server lists it (Claude's `appMcp`, the agy bridge). */
 export interface McpTool { name: string; description: string; inputSchema: JsonSchema }
@@ -61,11 +63,16 @@ const PARAMS = {
   id: () => text,
   command: () => text,
   monitor_id: () => text,
+  files: () => ({ type: "array", items: text, maxItems: 20, description: "Full paths of files the note is about (a plan, a progress file, a result)." }),
 } satisfies Record<string, (options: AppToolOptions & { provider?: AppToolProvider }) => JsonSchema>;
 type ParamName = keyof typeof PARAMS;
 
 /** One provider's form of a tool: its description, its parameters in order, and the required ones (absent: no `required` key). */
-interface ToolForm { description: string; params: readonly ParamName[]; required?: readonly ParamName[] }
+interface ToolForm {
+  description: string; params: readonly ParamName[]; required?: readonly ParamName[];
+  /** Parameters whose schema differs for this tool from the shared one (app_notify_owner's `kind`). */
+  schemas?: Partial<Record<ParamName, JsonSchema>>;
+}
 interface AppToolDef { name: AppToolName; forms: Partial<Record<AppToolProvider, ToolForm>> }
 
 const APP_TOOLS: readonly AppToolDef[] = [
@@ -117,7 +124,21 @@ const APP_TOOLS: readonly AppToolDef[] = [
     codex: { description: "Cancel one owned monitor and suppress any queued completion wake. Cancellation is best effort; side effects cannot be undone. A finished command keeps its actual exit status.",
       params: ["monitor_id"], required: ["monitor_id"] },
   } },
+  { name: "app_notify_owner", forms: notifyForms() },
 ];
+
+/**
+ * app_notify_owner, the one tool an app-managed worker has (every engine the same words): interim news or a question
+ * for the bot that started it, while it keeps working.
+ */
+function notifyForms(): Partial<Record<AppToolProvider, ToolForm>> {
+  const form: ToolForm = {
+    description: "Send a short note to your owner, the bot that started you, while you keep working; it returns at once. kind \"report\": news your owner can act on now (a milestone others can build on, a plan or progress file ready: give its full paths in files). kind \"question\": a question whose answer changes your work; your owner answers with a message that joins this run (you read it at your next step), so carry on with what does not depend on it, or wait for it. It reaches only your owner, never the user or another bot. Not for chatter or routine progress, and never instead of your final report: the last message of your run is still your report.",
+    params: ["kind", "message", "files"], required: ["kind", "message"],
+    schemas: { kind: { type: "string", enum: ["report", "question"] } },
+  };
+  return { claude: form, agy: form, codex: form };
+}
 
 /** Which tools each provider's coordinator gets, in the order it lists them. */
 const PROVIDER_TOOLS: Record<AppToolProvider, readonly AppToolName[]> = {
@@ -126,14 +147,24 @@ const PROVIDER_TOOLS: Record<AppToolProvider, readonly AppToolName[]> = {
   codex: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"],
 };
 
+/** The tools an app-managed worker gets (never a coordinator): only app_notify_owner. */
+export const WORKER_APP_TOOLS: readonly AppToolName[] = ["app_notify_owner"];
+
+const render = (provider: AppToolProvider, names: readonly AppToolName[], options: AppToolOptions): McpTool[] => names.map((name) => {
+  const form = APP_TOOLS.find((tool) => tool.name === name)!.forms[provider];
+  if (!form) throw new Error(`${provider} has no form of ${name}`);
+  const properties = Object.fromEntries(form.params.map((param) => [param, form.schemas?.[param] ?? PARAMS[param]({ ...options, provider })]));
+  return { name, description: form.description, inputSchema: { type: "object", properties, ...(form.required ? { required: [...form.required] } : {}), additionalProperties: false } };
+});
+
 /** A provider's app tools, as MCP lists them. */
 export function appTools(provider: AppToolProvider, options: AppToolOptions = {}): McpTool[] {
-  return PROVIDER_TOOLS[provider].map((name) => {
-    const form = APP_TOOLS.find((tool) => tool.name === name)!.forms[provider];
-    if (!form) throw new Error(`${provider} has no form of ${name}`);
-    const properties = Object.fromEntries(form.params.map((param) => [param, PARAMS[param]({ ...options, provider })]));
-    return { name, description: form.description, inputSchema: { type: "object", properties, ...(form.required ? { required: [...form.required] } : {}), additionalProperties: false } };
-  });
+  return render(provider, PROVIDER_TOOLS[provider], options);
+}
+
+/** The tools a provider's app-managed worker gets, as MCP lists them (Claude's worker `appMcp`, the agy worker bridge). */
+export function workerAppTools(provider: AppToolProvider): McpTool[] {
+  return render(provider, WORKER_APP_TOOLS, {});
 }
 
 /** The same tools in Codex's dynamic-tool form. */

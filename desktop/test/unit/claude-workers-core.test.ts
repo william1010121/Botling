@@ -56,10 +56,10 @@ describe("Claude's app-managed workers", () => {
     expect(flag(head!.args, "--disallowedTools")!.split(",")).toEqual(expect.arrayContaining(["Agent", "Task"]));
     expect(flag(head!.args, "--allowedTools")!.split(",")).toContain("mcp__botling__app_handoff");
     expect(flag(head!.args, "--append-system-prompt")).toContain("app_handoff");
-    // The worker: its own session in the bot's folder, no app tools, no subagents.
+    // The worker: its own session in the bot's folder, no subagents, and of the app's tools only app_notify_owner.
     expect(worker!.session).not.toBe(head!.session);
     expect(worker!.cwd).toBe(head!.cwd);
-    expect(worker!.args).not.toContain("--mcp-config");
+    expect(flag(worker!.args, "--allowedTools")!.split(",").filter((tool) => tool.startsWith("mcp__botling__"))).toEqual(["mcp__botling__app_notify_owner"]);
     expect(flag(worker!.args, "--disallowedTools")!.split(",")).toEqual(expect.arrayContaining(["Agent", "Task", "SendMessage"]));
     expect(flag(worker!.args, "--append-system-prompt")).toContain("app-managed worker");
     // Its report: the app's message to the bot, which answers it in a turn of its own.

@@ -68,6 +68,8 @@ export class AgyAcpAdapter implements WorkerAdapter {
   private sink?:(item:CodexItem)=>void;
   /** The effort the last worker run started with (undefined: none yet). */
   private lastEffort:string|null|undefined;
+  /** app_notify_owner from a worker's run (its core's `notifyOwner`, set by the facade once the core exists). */
+  notify?:(id:string,args:Record<string,unknown>)=>unknown;
   /**
    * `processStartTime`: a process's start time (identity); a replay maps its recorded processes. `item`: the head's item
    * sink, told a worker's conversation once ACP names it (after the run's opening items, which had none).
@@ -96,7 +98,11 @@ export class AgyAcpAdapter implements WorkerAdapter {
     const workerEngine=record.engine==='codex'?'codex':'agy';
     const chosen=agyWorkerModelEffort(this.config,workerEngine);
     this.lastEffort=chosen.effort;
-    const config:AgyConfig={...this.config,worker:true,workerEngine,model:chosen.model,effort:chosen.effort,processStarted:pid=>{
+    const notify=this.notify;
+    const config:AgyConfig={...this.config,worker:true,workerEngine,model:chosen.model,effort:chosen.effort,
+      // Its one app tool: a note to its owner, only from this run while it is under way.
+      ...(notify?{workerNotify:(args:Record<string,unknown>)=>{if(!current())throw new Error("This worker's run is not under way: say it in your final report instead.");return notify(record.id,args);}}:{}),
+      processStarted:pid=>{
       // A process the app cannot identify could outlive it unseen: refused (the head then stops it).
       if(!current())throw Error('Stale worker process registration.');
       const started=this.startTime(pid);if(!started)throw Error('Cannot record worker process identity.');
@@ -232,6 +238,7 @@ export class AgyWorkers {
     const options:WorkerCoreOptions={store,sink:{item:emit},adapters:[this.adapter],ownerSessionId:()=>config.sessionId,pendingSignal:true,log:()=>undefined,
       port:{ack:'checkpoint',deliver:(r,text)=>{report(r.id,text,r.run);return 'queued';}}};
     this.core=core?.({...options,sessionScoped:true},{agy:{acpHome,sessionId:config.sessionId}})??new WorkerCore(options);
+    this.adapter.notify=(id,args)=>({...this.core.notifyOwner(id,args),message:'Sent to your owner. Keep working; an answer, if any, reaches this run at your next tool call.'});
     this.core.redeliver();
   }
   get hostedLive(){return this.core.hostedLive;}

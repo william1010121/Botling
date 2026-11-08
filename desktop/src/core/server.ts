@@ -47,7 +47,8 @@ import { AgentRegistry, isDetached, newMoveId, rowStatus, TERMINAL_STATES, type 
 import { agyWorkerList } from "./agy-usage-db";
 import { AgentStore, migrationRecords } from "./store/agent-store";
 import { planMove, unmovable, type BotFacts, type MoveFacts, type MoveTarget } from "./agent-moves";
-import { agentMessageNotice, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotClosedNotice, subBotGroupFirstMessage } from "./agent-relay";
+import { agentMessageNotice, agentNoteTail, agentReportNote, agentToldOfMove, backNote, handedNote, handedNotice, hostLostNotice, movedAwayNote, movedAwayNotice, notOwnedNote, ownedAgentsBriefing, ownerGoneNotice, queuedSentNotice, subBotAdoptedFirstMessage, subBotClosedNotice, subBotGroupFirstMessage } from "./agent-relay";
+import { workerNoteText } from "./worker-core";
 import type { WorkerOwner } from "./agent/workers";
 import { AgentStatusWriter } from "./agent-status";
 import { filePath, pageInCard } from "./page-preview";
@@ -1049,6 +1050,7 @@ First write a test that shows this, then fix it.`;
       // Its report (if any) comes as the host's `workerReport` and goes to the owner (`report`).
       ended: (host, rec, worker) => { this.agents.observe(host, rec, worker); },
       report: (host, r) => this.agentReported(host, r),
+      note: (host, n) => this.agentNoted(host, n),
       approval: (host, nativeId, item, head) => this.agentApproval(host, nativeId, item, head),
       approvalCancelled: (_host, requestId) => { for (const bot of this.bots.values()) bot.settleWorkerApproval(requestId); },
       retained: (engine) => this.agents.retained(id, engine),
@@ -1396,6 +1398,16 @@ First write a test that shows this, then fix it.`;
     if (!this.agents.reported(record.id, r)) return;
     this.deliverAgentReport(record.id);
     void this.sendQueuedMessages(record.id);
+  }
+
+  /** A worker another bot owns sent a note from its run under way (its host's `workerNote`): handed to the owner now, never kept. */
+  private agentNoted(host: HostFacts, n: { nativeId: string; run: number; kind: "report" | "question"; name: string; message: string; files: string[] }) {
+    const record = this.agents.byNative(host.botId, host.engine, n.nativeId);
+    const owner = record && !this.removed.has(record.owner.botId) ? this.bots.get(record.owner.botId) : undefined;
+    if (!record || !owner) { this.log(`agent note from ${host.botId} for ${n.nativeId}: no owner to take it`); return; }
+    const name = record.summary.description || n.name;
+    const text = workerNoteText({ id: record.id, run: n.run, kind: n.kind, name, message: n.message, files: n.files }, agentNoteTail({ kind: n.kind, host: this.agentBotName(record.host.botId), agentId: record.id }));
+    if (!owner.workerNote({ kind: n.kind, name, message: n.message, files: n.files }, text)) this.log(`agent note for ${record.id}: its owner could not take it now`);
   }
 
   /** The owner's app turn with the report (its status file brought up to date first). Stays undelivered when the owner cannot run. */

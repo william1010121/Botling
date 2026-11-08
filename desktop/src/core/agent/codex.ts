@@ -56,7 +56,7 @@ import { activity, type StreamItem } from "./stream";
 import type { HeadExit, HeadHandlers } from "./head";
 import { movedTaskError, type WorkerHost, type WorkerInfo, type WorkerOwner, type WorkerOwnerResult, type WorkerSendResult } from "./workers";
 import { ComponentEditorAdapter, EditorTransport, type ComponentEditorAction, type ComponentEditorRoute } from "./component-editor";
-import { appTools, codexDynamicTools } from "../app-tools/registry";
+import { appTools, codexDynamicTools, workerAppTools } from "../app-tools/registry";
 import { EFFORTS_BY_ENGINE } from "../../contract/efforts";
 import { readCodexModels, resolveCodexModel, type CodexModelEntry } from "./codex-models";
 
@@ -85,6 +85,8 @@ export type CodexItem =
   | { kind: "inserted"; id: string }
   /** A run report of a worker another bot owns (workers.ts `setWorkerOwner`): the app routes it to that bot, never to this coordinator. */
   | { kind: "workerReport"; id: string; run: number; engine: "claude" | "codex" | "agy"; status: string; report: string }
+  /** A worker another bot owns sent a note (app_notify_owner): the app routes it to that bot, never to this coordinator. */
+  | { kind: "workerNote"; id: string; run: number; engine: "claude" | "codex" | "agy"; noteKind: "report" | "question"; name: string; message: string; files: string[] }
   /** A monitored command ended: its step (from an earlier turn) is done. */
   | { kind: "monitorState"; record: CommandMonitor }
   | { kind: "monitorEnded"; id: string; output: string; failed: boolean }
@@ -212,6 +214,8 @@ export const MANAGED_TOOLS: Record<string, unknown>[] = codexDynamicTools(appToo
 const MAX_HANDOFF = 64_000;
 /** Changing the tools needs a new coordinator thread (tools are fixed when a thread starts). */
 export const MANAGED_TOOL_SIGNATURE = JSON.stringify(MANAGED_TOOLS);
+/** A worker thread's one dynamic tool: app_notify_owner (fixed when its thread starts, like the coordinator's). */
+export const WORKER_TOOLS: Record<string, unknown>[] = codexDynamicTools(workerAppTools("codex"));
 // All bot sessions in this app share destination claims. A second session must never adopt
 // another worker's grant just because its branch/worktree names happen to match.
 const isolatedGitOwners = new Map<string, string>();
@@ -565,7 +569,9 @@ export class CodexThreadAdapter implements WorkerAdapter {
     // Fast mode: the priority service tier (`CodexWorkerDefaults.fast`).
     if (typeof c.workerFast === "boolean") params.serviceTier = c.workerFast ? "priority" : "default";
     const resumed = !!w.thread;
+    // Tools are fixed when a thread starts: a resumed thread keeps the ones it started with.
     if (resumed) { params.threadId = w.thread; params.excludeTurns = true; }
+    else params.dynamicTools = WORKER_TOOLS;
     this.call(w, run, resumed ? "thread/resume" : "thread/start", params, (result, error) => this.threadReady(w, run, resumed, result, error));
   }
 
@@ -1911,6 +1917,13 @@ export class CodexSession implements CoordinatorPort {
     let args: any = params.arguments;
     if (typeof args === "string") { try { args = JSON.parse(args); } catch { args = null; } }
     if (!args || typeof args !== "object") args = {};
+    if (tool === "app_notify_owner") {
+      // A worker's note to its owner (never the coordinator's tool): its run goes on.
+      const requester = params.threadId !== this.threadId ? this.threads.requester(params.threadId) : null;
+      if (!requester) return [{ kind: "write", value: reply({ error: "Only an app-managed worker can use app_notify_owner." }, false) }];
+      try { return [{ kind: "write", value: reply({ ...this.core.notifyOwner(requester.id, args), message: "Sent to your owner. Keep working; an answer, if any, joins this run as a message." }, true) }]; }
+      catch (error) { return [{ kind: "write", value: reply({ error: (error as Error).message }, false) }]; }
+    }
     if (tool?.startsWith("app_monitor_") && params.threadId !== this.threadId) {
       const requester = this.threads.requester(params.threadId);
       const response = reply(monitorHandback(tool, args, { task_id: requester?.id ?? null, run: requester?.run ?? null, owner_session_id: this.config.ownerSession?.toLowerCase() ?? null,

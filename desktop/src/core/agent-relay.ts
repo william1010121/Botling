@@ -87,6 +87,16 @@ export function agentReportNote(input: { engine: Engine; title: string; from: st
   return `(App: The ${engineName(input.engine)} agent "${input.title}" you own (from ${input.from}; it runs on ${input.host}) finished run ${input.run}: ${input.status}. Its report:\n${clipReport(input.report.trim() || "(no words)")}\n${input.statusFile ? `Its status file: ${input.statusFile}\n` : ""}Tell the user what came of it in a sentence or two. ${agentTagsHelp(input.agentId)})`;
 }
 
+/**
+ * What an owner does with a note from an agent it owns that another bot runs (app_notify_owner): the <app_worker_note>
+ * tail, answered with the agent tags instead of app_send_message.
+ */
+export function agentNoteTail(input: { kind: "report" | "question"; host: string; agentId: string }): string {
+  return input.kind === "question"
+    ? `An agent you own (it runs on ${input.host}) is still at work and asks you this; it is not its final report. Answer it with <agent-message to="${input.agentId}">your answer</agent-message> (your words join its run under way). If only the user can answer, ask the user, then pass their answer on the same way.`
+    : `Interim news from an agent you own (it runs on ${input.host}) that is still at work, not its final report. Act on it if it helps now; tell the user only if it matters to them or needs their decision, otherwise reply with only <no-reply/>. ${agentTagsHelp(input.agentId)}`;
+}
+
 /** The owner's model note when it commands an agent it does not own. */
 export function notOwnedNote(to: string, owner: string | null): string {
   return `(App: You do not own the agent "${to}"${owner ? `; it belongs to ${owner}` : ""}, so nothing was sent to it.)`;

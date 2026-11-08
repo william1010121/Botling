@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { botPrompts, noteRule, DEFAULT_HEADS, headsRule, isPlainOK, reportOnlyRule, PAUSE_NOTE, RELAY_PREFIX, RESTATE_RULE, TIDY_LEAD, VERBATIM_HANDOFF_RULE, WAKE_LEAD, CHOICES_NOT_MEMORY_RULE, QUESTION_GROUP_RULE, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { WORKER_NOTIFY_RULE, workerNoteRule } from "../../src/core/prompts/delegation";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -68,6 +69,12 @@ function withApprovedRouting(swift: string): string {
   expected = expected.replace(/(Also write the decision into the "[^"\n]+" section of your memory file\.)/g, `$1 ${CHOICES_NOT_MEMORY_RULE}`);
   // Approved 2026-11-08: several questions in one reply (<choices question="…">, multiple="true"), answered together.
   expected = expected.replace(/(  Once the user picks, you receive the text of the chosen option;[^\n]*\n)/g, (line) => `${line}${QUESTION_GROUP_RULE}\n`);
+  // Approved 2026-11-08 (DAFAWU): a worker may notify its owner while it runs (app_notify_owner); the owner acts on the
+  // note, answers a question with app_send_message, and never takes it for the final report.
+  expected = expected.replace("reply with only <no-reply/> and the app shows nothing. ", `reply with only <no-reply/> and the app shows nothing. A worker's question (<app_worker_note kind="question">) is never only interim: answer it. `);
+  expected = expected.replace("To stop one, app_cancel_task. Do it yourself only when it is quicker than explaining it.", `To stop one, app_cancel_task. ${workerNoteRule({ steerWorkerRun: true })} Do it yourself only when it is quicker than explaining it.`);
+  expected = expected.replace("\n\nThe app delivers worker execution reports through app_task_result", `\n\n${workerNoteRule({ steerWorkerRun: true })}\n\nThe app delivers worker execution reports through app_task_result`);
+  expected = expected.replace("\n- Complete the task before returning your final report.", `\n- ${WORKER_NOTIFY_RULE}\n- Complete the task before returning your final report.`);
   return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
 }
 

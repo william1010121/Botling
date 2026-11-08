@@ -230,7 +230,8 @@ describe("Codex head: app-managed workers", () => {
     expect(handed.of("managedPending")).toEqual([{ kind: "managedPending", pending: true }]);
     const workerStart = handed.params("thread/start");
     expect(workerStart).toMatchObject({ cwd: "/tmp/bot", approvalPolicy: "on-request", sandbox: "workspace-write", developerInstructions: expect.stringContaining("You are a worker."), model: "gpt-worker", config: { "features.multi_agent": false, "agents.enabled": false } });
-    expect(workerStart.dynamicTools).toBeUndefined();
+    // A worker thread's only dynamic tool: a note to its owner.
+    expect(workerStart.dynamicTools.map((t: { name: string }) => t.name)).toEqual(["app_notify_owner"]);
     expect(session.workerRecords).toMatchObject([{ id: task, name: "Parser", run: 1, wasActive: true, reportPending: false }]);
     // The same request again (a retry) gets the same receipt and starts nothing.
     expect(new Out(session.receive(JSON.stringify({ method: "item/tool/call", id: serverId, params: { threadId: COORD, turnId: "t1", callId: `call-${serverId}`, tool: "app_handoff", arguments: { instructions: "Build the parser\nwith tests", name: "Parser" } } }))).writes[0]).toEqual(handed.writes[0]);
