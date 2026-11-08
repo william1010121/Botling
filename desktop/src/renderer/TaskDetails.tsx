@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { RightPanel, RightToggle, type RightPanelProps } from "./RightPanel";
 import { ShellOverlay } from "./ShellOverlay";
+import { workersTabOffered } from "./worker-panel";
 
 const narrowQuery = "(max-width: 860px)";
 
@@ -65,7 +66,7 @@ export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => v
       <div ref={drawer} id="task-details-drawer" className="task-details-drawer" hidden={!open} role="dialog" aria-modal="true" aria-label="Details" tabIndex={-1}>
         <div className="task-details-backdrop" aria-hidden="true" onClick={close} />
         <div className="task-details-sheet">
-          <header className="task-details-header"><span>Details</span><button type="button" onClick={close} aria-label="Close Details">Close</button></header>
+          <header className="task-details-header"><span>{props.panelTab === "workers" && workersTabOffered(props.bot, props.bots, Date.now()) ? "Workers" : "Details"}</span><button type="button" onClick={close} aria-label="Close Details">Close</button></header>
           <RightPanel {...props} collapsed={false} onSettings={props.onDrawerSettings}
             onAskOwner={props.onAskOwner ? (owner, worker) => { close(); props.onAskOwner!(owner, worker); } : undefined}
             onSelect={id => { close(); props.onSelect(id); }}

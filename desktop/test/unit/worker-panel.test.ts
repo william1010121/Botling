@@ -317,6 +317,7 @@ describe("the narrow drawer opens on request", () => {
       expect(document.querySelector<HTMLElement>("#task-details-drawer")!.hidden).toBe(true);
       await act(async () => root.render(createElement(TaskDetails, { ...props, openSignal: 1 } as never)));
       expect(document.querySelector<HTMLElement>("#task-details-drawer")!.hidden).toBe(false);
+      expect(document.querySelector(".task-details-header span")?.textContent).toBe("Details");
     } finally { await act(async () => root.unmount()); }
   });
 });

@@ -945,7 +945,7 @@ button.wk-fc { display: block; width: 100%; border: 0; background: transparent; 
 button.wk-fc:hover { text-decoration: underline; }
 .wk-ask:disabled { opacity: .45; cursor: default; }
 .workers-badge .cnt-short { display: none; font-weight: 600; font-variant-numeric: tabular-nums; }
-@container chatbar (max-width: 999px) {
+@container chatbar (max-width: 700px) {
   .workers-badge b, .workers-badge .cnt, .workers-badge .wk-mu { display: none; }
   .workers-badge .cnt-short { display: inline; }
   .workers-badge[data-tone="failed"] .cnt-short { color: var(--error); }
