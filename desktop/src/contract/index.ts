@@ -669,6 +669,8 @@ export const SettingsView = z.strictObject({
   pinnedBots: z.array(BotId).max(200),
   /** Bots the user put away in the left column's Idle group, in the order they were sent (never automatic); absent: none. */
   idleBots: z.array(BotId).max(200).optional(),
+  /** Sub bots pinned in the header's Sub bots menu (⌘⇧1–9), in the order dragged there; absent: none. */
+  pinnedSubBots: z.array(BotId).max(200).optional(),
   /** Developer mode (1.x's `developerMode`): the project that is Botling's own source gets what you flag as "not right". Phase 5a. */
   developerMode: z.boolean(),
   developerProject: BotId.nullable(),
@@ -713,6 +715,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("idleBots"), value: z.array(BotId).max(200) }),
+  z.strictObject({ key: z.literal("pinnedSubBots"), value: z.array(BotId).max(200) }),
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
   /** The plugin tab a bot's main area shows (null: none, Chat or Board). */
   z.strictObject({ key: z.literal("mainTab"), value: z.strictObject({ botId: BotId, tab: z.string().min(1).max(320).nullable() }) }),

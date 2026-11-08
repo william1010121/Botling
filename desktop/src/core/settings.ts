@@ -81,6 +81,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     railCollapsed: bool(raw.railCollapsed, false),
     pinnedBots: [...new Set(readSettingsList(raw.pinnedBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
     idleBots: [...new Set(readSettingsList(raw.idleBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
+    pinnedSubBots: [...new Set(readSettingsList(raw.pinnedSubBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
     developerMode: bool(raw.developerMode, false),
     developerProject: typeof raw.developerProjectID === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw.developerProjectID) ? raw.developerProjectID.toUpperCase() : null,
     updateCheck: bool(raw.updateCheckEnabled, true),
@@ -201,6 +202,8 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "pinnedBots": set("pinnedBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;
     // The left column's Idle group: only the user sends a bot there (the clock on its row) or brings it back.
     case "idleBots": set("idleBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;
+    // The header's Sub bots menu: pinned by the user, in the order dragged.
+    case "pinnedSubBots": set("pinnedSubBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;
   }
   return next;
 }

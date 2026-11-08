@@ -139,3 +139,101 @@ describe("⌘[ and ⌘] between the project bot and its sub bot", () => {
     expect(rememberRoom(last, base)).toBe(last);
   });
 });
+
+// ---- Navigation v5, part 3: Scheduled, Pinned, ⌘⇧1–9, drag order, "New while you were in X", reduced motion.
+import type { RoutineView } from "../../src/contract";
+import { flashMs, leaveMark, movePinned, newSinceMark, pinnedTarget, togglePinned, whenText } from "../../src/renderer/sub-bot-nav";
+
+const routine = (over: Partial<RoutineView>): RoutineView => ({ id: "cron:1", kind: "legacy", task: "audit", title: "audit", schedule: "Every day 09:00", cron: "0 9 * * *", timezone: "system_local", status: "enabled", next: null, ...over });
+
+describe("scheduled sub bots", () => {
+  const at = (d: number, h: number, m = 0) => new Date(2026, 10, d, h, m).getTime();
+  it("writes when it next runs: today, tomorrow, a weekday within the week, else the date", () => {
+    const now = at(8, 12);
+    expect(whenText(at(8, 18), now)).toBe("today 18:00");
+    expect(whenText(at(9, 9), now)).toBe("tomorrow 09:00");
+    expect(whenText(at(12, 10, 30), now)).toBe("Thu 10:30");
+    expect(whenText(at(20, 9), now)).toBe("Nov 20 09:00");
+  });
+  it("an idle sub bot with a routine that will run is Scheduled, soonest first, with ⟳ and its next run", () => {
+    const now = at(8, 12);
+    const a = subBotRow(sub("a", "Nightly audit"), none, now, [routine({ next: new Date(at(9, 9)).toISOString() })]);
+    const b = subBotRow(sub("b", "Weekly report"), none, now, [routine({ schedule: "Mon 10:00", next: new Date(at(9, 8)).toISOString() }), routine({ id: "x", next: null, status: "paused" })]);
+    const idle = subBotRow(sub("c", "Idle"), none, now, []);
+    expect(a).toMatchObject({ dot: "idle", next: at(9, 9), schedule: "Every day 09:00", badge: { kind: "time", text: "⟳ Every day 09:00" }, status: "Next tomorrow 09:00" });
+    expect(subBotSections([a, idle, b]).map((section) => [section.title, section.rows.map((row) => row.id)])).toEqual([["Scheduled", ["b", "a"]], ["Idle", ["c"]]]);
+  });
+  it("a working one stays Active even with a routine", () => {
+    const row = subBotRow(sub("a", "A", { working: true }), none, 0, [routine({ next: new Date(5_000).toISOString() })]);
+    expect(row.dot).toBe("working");
+    expect(subBotSections([row])[0]!.title).toBe("Active");
+  });
+});
+
+describe("pinned sub bots", () => {
+  const rows = ["a", "b", "c", "d"].map((id) => subBotRow(sub(id, id.toUpperCase(), id === "d" ? { approvals: 1 } : {}), none, 0));
+  it("Pinned comes after Needs you, in pin order; one that needs you stays in Needs you", () => {
+    expect(subBotSections(rows, ["c", "d", "a", "gone"]).map((section) => [section.title, section.rows.map((row) => row.id)])).toEqual([
+      ["Needs you", ["d"]], ["Pinned", ["c", "a"]], ["Idle", ["b"]],
+    ]);
+  });
+  it("pins at the end, unpins, and drags within the pinned order", () => {
+    expect(togglePinned(["a"], "b")).toEqual(["a", "b"]);
+    expect(togglePinned(["a", "b"], "a")).toEqual(["b"]);
+    expect(movePinned(["a", "b", "c"], "c", 0)).toEqual(["c", "a", "b"]);
+    expect(movePinned(["a", "b", "c"], "a", 2)).toEqual(["b", "c", "a"]);
+    expect(movePinned(["a", "b", "c"], "x", 0)).toEqual(["a", "b", "c"]);
+    expect(movePinned(["a", "b", "c"], "b", 9)).toEqual(["a", "c", "b"]);
+  });
+  it("⌘⇧N opens the N-th pinned sub bot of the project bot on screen (or its sibling's project)", () => {
+    const bots = [base, sub("a", "A"), sub("b", "B"), { ...base, id: "p2" }, sub("z", "Z", { parent: "p2" })];
+    expect(pinnedTarget(1, base, bots, ["z", "b", "a"])).toBe("b");
+    expect(pinnedTarget(2, bots[1]!, bots, ["z", "b", "a"])).toBe("a");
+    expect(pinnedTarget(3, base, bots, ["z", "b", "a"])).toBeNull();
+  });
+});
+
+describe("New while you were in X", () => {
+  const P = { id: "p1", parent: null, lastId: "m2" };
+  it("leaving a project bot for its sub bot marks its newest line; leaving it elsewhere forgets", () => {
+    const marks = leaveMark({}, P, sub("r", "Release"));
+    expect(marks).toEqual({ p1: { after: "m2", name: "Release" } });
+    expect(leaveMark(marks, P, { ...base, id: "other", parent: null })).toEqual({});
+    // Between sibling sub bots the mark stays.
+    expect(leaveMark(marks, { id: "r", parent: "p1", lastId: "x" }, sub("d", "Docs"))).toBe(marks);
+  });
+  it("draws the divider over the first line that came after, never over your own", () => {
+    const lines = [{ id: "m1", role: "user" }, { id: "m2", role: "bot" }, { id: "m3", role: "user" }, { id: "m4", role: "bot" }];
+    expect(newSinceMark({ after: "m2", name: "Release" }, lines)).toEqual({ messageID: "m4", text: "New while you were in Release" });
+    expect(newSinceMark({ after: "m4", name: "Release" }, lines)).toBeNull();
+    expect(newSinceMark({ after: "gone", name: "Release" }, lines)).toBeNull();
+    expect(newSinceMark(undefined, lines)).toBeNull();
+  });
+});
+
+describe("reduced motion", () => {
+  it("the coming-back ring is 600 ms, or a 1.2 s still ring with Reduce motion", () => {
+    expect(flashMs(false)).toBe(600);
+    expect(flashMs(true)).toBe(1200);
+  });
+});
+
+describe("the pinnedSubBots setting", () => {
+  it("keeps your pinned sub bots in the order you dragged them: upper-cased, no repeats", async () => {
+    const { applySetting, settingsView } = await import("../../src/core/settings");
+    const one = "0a1b2c3d-0000-4000-8000-000000000001", two = "0A1B2C3D-0000-4000-8000-000000000002";
+    const raw = applySetting({}, { key: "pinnedSubBots", value: [two, one, two.toLowerCase()] });
+    expect(raw.pinnedSubBots).toEqual([two, one.toUpperCase()]);
+    expect(settingsView(raw).pinnedSubBots).toEqual([two, one.toUpperCase()]);
+    expect(settingsView({ pinnedSubBots: ["nope", 1] }).pinnedSubBots).toEqual([]);
+    expect(settingsView({}).pinnedSubBots).toEqual([]);
+  });
+});
+
+describe("+ New sub bot…", () => {
+  it("asks the project bot in its chat, as you would yourself (it opens sub bots)", async () => {
+    const { newSubBotAsk } = await import("../../src/renderer/sub-bot-nav");
+    expect(newSubBotAsk("Release", "Ship 2.4.1")).toBe('Please open a new sub bot named "Release" for this: Ship 2.4.1');
+    expect(newSubBotAsk(' Re"lease ', "  line one\nline two ")).toBe('Please open a new sub bot named "Re\'lease" for this: line one\nline two');
+  });
+});

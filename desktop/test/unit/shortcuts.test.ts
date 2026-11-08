@@ -9,7 +9,9 @@ const ev = (init: Partial<KeyboardEvent> & { key: string }) => ({ code: '', meta
 describe('shortcut registry', () => {
   it('lists every app shortcut with today\'s default keys', () => {
     const defaults = Object.fromEntries(SHORTCUTS.map(s => [s.id, s.default]));
-    expect(defaults).toEqual({ search: 'Mod+K', settings: 'Mod+,', subBots: 'Mod+Shift+S', roomBack: 'Mod+[', roomForward: 'Mod+]', toggleSidebar: 'Ctrl+Cmd+S', toggleRightPanel: 'Ctrl+Cmd+I', toggleWorkers: 'Mod+Shift+W',
+    expect(defaults).toEqual({ search: 'Mod+K', settings: 'Mod+,', subBots: 'Mod+Shift+S', roomBack: 'Mod+[', roomForward: 'Mod+]',
+      pinnedSubBot1: 'Mod+Shift+1', pinnedSubBot2: 'Mod+Shift+2', pinnedSubBot3: 'Mod+Shift+3', pinnedSubBot4: 'Mod+Shift+4', pinnedSubBot5: 'Mod+Shift+5',
+      pinnedSubBot6: 'Mod+Shift+6', pinnedSubBot7: 'Mod+Shift+7', pinnedSubBot8: 'Mod+Shift+8', pinnedSubBot9: 'Mod+Shift+9', toggleSidebar: 'Ctrl+Cmd+S', toggleRightPanel: 'Ctrl+Cmd+I', toggleWorkers: 'Mod+Shift+W',
       reload: 'Mod+R', forceReload: 'Mod+Shift+R', reloadChat: 'Mod+Alt+R' });
     expect(new Set(SHORTCUTS.map(s => s.default)).size).toBe(SHORTCUTS.length);
     expect(FIXED_SHORTCUTS.length).toBeGreaterThan(5);

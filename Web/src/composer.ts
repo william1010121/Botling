@@ -162,7 +162,9 @@ export class Composer {
           this.placeholder.of(placeholderExtension("")),
           keymap.of([
             { key: "Shift-Enter", run: insertNewlineAndIndent },
-            ...defaultKeymap,
+            // Not Mod-[ / Mod-] (indent): those are the app's back / forward between a project bot and its
+            // sub bot, and indenting there changed the draft and kept the key from the app.
+            ...defaultKeymap.filter((binding) => binding.key !== "Mod-[" && binding.key !== "Mod-]"),
             ...historyKeymap,
           ]),
           EditorView.updateListener.of((update) => {

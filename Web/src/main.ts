@@ -31,6 +31,8 @@ const historyTopSlack = 160;
  * unless you have scrolled up to read: whatever grows or shrinks later (a component's frame
  * sizing itself, an image loading, the input box) keeps it there too.
  */
+const placeKey = (botID: string, subagentID: string | null) => `${botID}/${subagentID ?? ""}`;
+
 class Chat {
   private readonly scroller: HTMLElement;
   private readonly list: HTMLElement;
@@ -71,6 +73,8 @@ class Chat {
   private readonly historyMore = document.createElement("button");
   private historyRequest: number | null = null;
   private readingAnchor: { element: Element; top: number } | null = null;
+  /** Where you were reading in each chat you left scrolled up (a line and its place): opened there again. */
+  private readonly places = new Map<string, { firstID: string | null; navigating: boolean; messageID: string; top: number }>();
   private last: ChatState | null = null;
   /** Following the bottom of the chat; false once you scroll up to read. */
   private stuck = true;
@@ -158,11 +162,14 @@ class Chat {
     let animateArrivals = !switched && !redrawing;
     const newestBefore = this.newestID;
     this.newestID = state.messages[state.messages.length - 1]?.id ?? null;
+    let place: { firstID: string | null; navigating: boolean; messageID: string; top: number } | null = null;
     if (switched) {
+      if (this.botID !== null) this.leavePlace(placeKey(this.botID, this.subagentID));
       this.botID = state.botID;
       this.subagentID = subagentID;
-      this.firstID = null;
-      this.navigatingHistory = false;
+      place = this.places.get(placeKey(state.botID, subagentID)) ?? null;
+      this.firstID = place?.firstID ?? null;
+      this.navigatingHistory = place?.navigating ?? false;
       this.readingAnchor = null;
       if (this.historyRequest !== null) cancelAnimationFrame(this.historyRequest);
       this.historyRequest = null;
@@ -394,6 +401,12 @@ class Chat {
     if (switched || sentNow) {
       this.stuck = true;
       this.readingAnchor = null;
+      // Back in a chat you left scrolled up (a project bot after its sub bot): the same line at the same place.
+      const kept = place ? [...this.list.children].find((row) => (row as HTMLElement).dataset.id === place.messageID) : undefined;
+      if (kept) {
+        this.stuck = false;
+        this.readingAnchor = { element: kept, top: place!.top };
+      }
     }
     if (this.stuck) this.scrollToBottom();
     // The component frames now in view (or near it) are built; the rest once scrolled to.
@@ -410,6 +423,21 @@ class Chat {
       if (retained >= 0) return retained;
     }
     return Math.max(0, messages.length - historyPageSize);
+  }
+
+  /** Leaving a chat: where you were reading, if you had scrolled up; at the bottom it opens at the bottom again. */
+  private leavePlace(key: string): void {
+    this.places.delete(key);
+    if (this.stuck) return;
+    const box = this.scroller.getBoundingClientRect();
+    const element = [...this.list.children].find((row) => {
+      const rect = row.getBoundingClientRect();
+      return !!(row as HTMLElement).dataset.id && rect.height > 0 && rect.bottom > box.top && rect.top < box.bottom;
+    }) as HTMLElement | undefined;
+    if (!element) return;
+    this.places.set(key, { firstID: this.firstID, navigating: this.navigatingHistory, messageID: element.dataset.id!, top: element.getBoundingClientRect().top - box.top });
+    // Only the last few chats are kept.
+    if (this.places.size > 20) this.places.delete(this.places.keys().next().value!);
   }
 
   /** Remember a visible row, rather than total height: content below it can resize too. */

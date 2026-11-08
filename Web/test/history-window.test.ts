@@ -426,3 +426,48 @@ it("preserves a historical target on full state updates and redraw, releases old
     expect(document.querySelector<HTMLButtonElement>(".history-latest")!.hidden).toBe(true);
   } finally { HTMLElement.prototype.scrollIntoView = previous; }
 });
+
+describe("switching back to a chat (Navigation v5: project bot ⇄ sub bot)", () => {
+  const rect = (y: number, height: number) => ({ x: 0, y, top: y, bottom: y + height, left: 0, right: 600, width: 600, height, toJSON() {} }) as DOMRect;
+  function withGeometry(run: () => void) {
+    let top = 0;
+    const height = () => rows().length * 40 + (more().hidden ? 0 : 24);
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, get: height },
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollTop: { configurable: true, get: () => top, set: value => { top = Math.max(0, Math.min(value, height() - 400)); } },
+    });
+    const original = HTMLElement.prototype.getBoundingClientRect;
+    const geometry = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this === scroller) return rect(0, 400);
+      if (this.parentElement?.id === "messages" && this.matches(".row, .stamped")) return rect(rows().indexOf(this) * 40 + (more().hidden ? 0 : 24) - top, 40);
+      return original.call(this);
+    });
+    try { run(); } finally {
+      geometry.mockRestore();
+      for (const property of ["scrollTop", "scrollHeight", "clientHeight"]) delete (scroller as unknown as Record<string, unknown>)[property];
+    }
+  }
+  const lines = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => message(i, { id: `${prefix}${i}` }));
+
+  it("opens where you were reading, not at the bottom", () => withGeometry(() => {
+    window.ccb.setState(state(lines("p", 40), { botID: "P" }));
+    expect(scroller.scrollTop).toBe(40 * 40 - 400);
+    scroller.scrollTop = 600;
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(row("p15").getBoundingClientRect().top).toBe(0);
+    window.ccb.setState(state(lines("s", 30), { botID: "S" }));
+    expect(scroller.scrollTop).toBe(30 * 40 - 400);
+    // Back, with a new line come in meanwhile: the same line at the same place.
+    window.ccb.setState(state(lines("p", 41), { botID: "P" }));
+    expect(row("p15").getBoundingClientRect().top).toBe(0);
+    expect(scroller.scrollTop).toBe(600);
+  }));
+
+  it("one left at the bottom opens at the bottom again, new lines included", () => withGeometry(() => {
+    window.ccb.setState(state(lines("q", 20), { botID: "Q" }));
+    window.ccb.setState(state(lines("s", 30), { botID: "S2" }));
+    window.ccb.setState(state(lines("q", 22), { botID: "Q" }));
+    expect(scroller.scrollTop).toBe(22 * 40 - 400);
+  }));
+});

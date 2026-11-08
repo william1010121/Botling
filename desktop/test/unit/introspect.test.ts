@@ -27,7 +27,7 @@ function world() {
   write(library, "alpha", {
     web: "dist/web.js", permissions: ["composer"],
     contributes: {
-      commands: [{ id: "alpha.find", title: "Find", key: "cmd+k" }, { id: "alpha.ok", title: "Fine", key: "cmd+shift+9" }, { id: "alpha.extra", title: "Extra" }],
+      commands: [{ id: "alpha.find", title: "Find", key: "cmd+k" }, { id: "alpha.ok", title: "Fine", key: "cmd+alt+shift+9" }, { id: "alpha.extra", title: "Extra" }],
       settings: { "alpha.token": { type: "string", title: "Token", secret: true, default: "DEFAULT-SECRET-VALUE" } },
     },
   });
@@ -114,19 +114,19 @@ describe("the introspection queries", () => {
     });
 
     // Resetting alpha.ok / alpha.extra and restoring alpha.find's manifest conflict, then checking user shortcutOverrides:
-    registry.setCommandKey("alpha", "alpha.ok", "Mod+Shift+9");
+    registry.setCommandKey("alpha", "alpha.ok", "Mod+Alt+Shift+9");
     registry.setCommandKey("alpha", "alpha.extra", null);
     registry.setCommandKey("alpha", "alpha.find", "Mod+K");
-    // User moved "search" off Mod+K -> alpha.find is now free; user moved "reload" onto Mod+Shift+9 -> alpha.ok now conflicts.
-    expect(registry.inspect("shortcutConflicts", {}, { themeCss: null, shortcutOverrides: { search: "Mod+L", reload: "Mod+Shift+9" } })).toEqual({
+    // User moved "search" off Mod+K -> alpha.find is now free; user moved "reload" onto Mod+Alt+Shift+9 -> alpha.ok now conflicts.
+    expect(registry.inspect("shortcutConflicts", {}, { themeCss: null, shortcutOverrides: { search: "Mod+L", reload: "Mod+Alt+Shift+9" } })).toEqual({
       ok: true,
       query: "shortcutConflicts",
       data: {
-        conflicts: [{ plugin: "alpha", command: "alpha.ok", key: "Mod+Shift+9", heldBy: { kind: "shortcut", id: "reload" } }],
+        conflicts: [{ plugin: "alpha", command: "alpha.ok", key: "Mod+Alt+Shift+9", heldBy: { kind: "shortcut", id: "reload" } }],
       },
     });
     // User rebound alpha.find itself to a free key -> no conflict, including via --inspect-plugins reading settings.json.
-    writeFileSync(join(root, "settings.json"), JSON.stringify({ shortcutBindings: { "alpha.find": "Mod+Shift+8" } }));
+    writeFileSync(join(root, "settings.json"), JSON.stringify({ shortcutBindings: { "alpha.find": "Mod+Alt+Shift+8" } }));
     const cli = inspectReport(["shortcutConflicts"], { builtIns: null, themeCssFile: null, cwd: library });
     expect(cli.code).toBe(0);
     expect(JSON.parse(cli.stdout)).toEqual({ ok: true, query: "shortcutConflicts", data: { conflicts: [] } });

@@ -88,3 +88,41 @@ describe("the menu", () => {
     expect(markup).toContain('aria-label="Search sub bots"');
   });
 });
+
+describe("navigation v5, part 3: pins, Scheduled, New sub bot, Archive", () => {
+  const bots = [base, sub("r", "Release", { working: true }), sub("n", "Nightly audit"), sub("i", "i18n")];
+  const rows = bots.slice(1).map((bot) => subBotRow(bot, none, 0, bot.id === "n" ? [{ id: "c", kind: "legacy", task: "t", title: "t", schedule: "Every day 09:00", cron: "0 9 * * *", timezone: "system_local", status: "enabled", next: new Date(86_400_000).toISOString() }] : []));
+  const picker = (over: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SubBotPicker, { rows, onOpen() {}, onClose() {}, ...over }));
+  it("a pinned row sits under Pinned with its ⌘⇧N key and a ⋮⋮ handle to drag; others offer ☆ Pin", () => {
+    const markup = picker({ pinned: ["i"], pinKeys: ["⌘⇧1", "⌘⇧2"], onPin() {}, onMovePin() {} });
+    expect(markup.indexOf(">Pinned<")).toBeGreaterThan(-1);
+    expect(markup.indexOf(">Pinned<")).toBeLessThan(markup.indexOf(">Active<"));
+    expect(markup).toMatch(/data-pinned="true"[^>]*draggable="true"|draggable="true"[^>]*data-pinned="true"/);
+    expect(markup).toContain('<span class="sbn-time sbn-key">⌘⇧1</span>');
+    expect(markup).toContain('class="sbn-handle"');
+    expect(markup).toContain('aria-label="Unpin i18n"');
+    expect(markup).toContain('aria-label="Pin Release"');
+    expect(markup.match(/class="sbn-handle"/g)).toHaveLength(1);
+  });
+  it("Scheduled lists the sub bot with a routine coming, its schedule in the corner", () => {
+    const markup = picker();
+    expect(markup).toContain(">Scheduled<");
+    expect(markup).toContain("⟳ Every day 09:00");
+  });
+  it("the footer offers + New sub bot… where it can be made", () => {
+    expect(picker({ onNew: async () => {} })).toContain('class="sbn-act"');
+    expect(picker({ onNew: async () => {} })).toContain("+ New sub bot…");
+    expect(picker()).not.toContain("New sub bot");
+  });
+  it("the breadcrumb's menu can archive the sub bot shown (the close-sub-bot dialog)", () => {
+    const markup = picker({ parent: base, currentId: "r", onArchive() {} });
+    expect(markup).toContain("Archive Release…");
+  });
+  it("a project bot with none yet gets a faint + Sub bot to make the first (shown on hover)", () => {
+    const markup = draw(base, [base], { onNew: async () => {}, canAdd: true });
+    expect(markup).toContain('class="sbn-anchor sbn-empty-slot"');
+    expect(markup).toContain("+ Sub bot");
+    // Only where a sub bot can be made (a project bot; App decides): otherwise the header stays as it was.
+    expect(draw(base, [base], { onNew: async () => {}, canAdd: false })).toBe("");
+  });
+});

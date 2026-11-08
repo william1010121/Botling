@@ -117,3 +117,27 @@ describe("drafts", () => {
     expect(composer.text).toBe("x");
   });
 });
+
+describe("⌘[ / ⌘] while typing (Navigation v5: back to the project bot / forward to its sub bot)", () => {
+  const press = (composer: Composer, key: "[" | "]") => {
+    // jsdom is not a Mac: CodeMirror's Mod is Ctrl here, so press both to stand for ⌘ on either.
+    const event = new KeyboardEvent("keydown", { key, code: key === "[" ? "BracketLeft" : "BracketRight", ctrlKey: true, bubbles: true, cancelable: true });
+    composer.view.contentDOM.dispatchEvent(event);
+    return event;
+  };
+  it("leave the draft as typed and pass the key on to the app, so switching rooms never eats it", () => {
+    const composer = new Composer(document.body);
+    composer.update(state("P"));
+    composer.insert("half a thought");
+    for (const key of ["]", "["] as const) {
+      const event = press(composer, key);
+      expect(composer.text).toBe("half a thought");
+      // Not taken by the editor (indent): the shell's shortcut handler sees it.
+      expect(event.defaultPrevented).toBe(false);
+    }
+    // The room switch the key asks for: P → its sub bot → back to P keeps P's draft.
+    composer.update(state("S"));
+    composer.update(state("P"));
+    expect(composer.text).toBe("half a thought");
+  });
+});

@@ -71,11 +71,11 @@ describe("bottom panels on the app page", () => {
       ],
       keybindings: [
         { command: "alpha.toggle", key: "Mod+J", plugin: "alpha", title: "Toggle Alpha" },
-        { command: "alpha.sync", key: "Mod+Shift+9", plugin: "alpha", title: "Sync" },
-        { command: "alpha.webCmd", key: "Mod+Shift+5", plugin: "alpha", title: "Alpha Web" },
-        { command: "beta.toggle", key: "Mod+Shift+7", plugin: "beta", title: "Toggle Beta" },
-        { command: "beta.secret", key: "Mod+Shift+8", plugin: "beta", title: "Secret" },
-        { command: "beta.webCmd", key: "Mod+Shift+6", plugin: "beta", title: "Web" },
+        { command: "alpha.sync", key: "Mod+Alt+Shift+9", plugin: "alpha", title: "Sync" },
+        { command: "alpha.webCmd", key: "Mod+Alt+Shift+5", plugin: "alpha", title: "Alpha Web" },
+        { command: "beta.toggle", key: "Mod+Alt+Shift+7", plugin: "beta", title: "Toggle Beta" },
+        { command: "beta.secret", key: "Mod+Alt+Shift+8", plugin: "beta", title: "Secret" },
+        { command: "beta.webCmd", key: "Mod+Alt+Shift+6", plugin: "beta", title: "Web" },
       ],
     };
     const defaults = new WorkspaceStore(async () => { throw new Error("Unexpected snapshot"); }).getView();
@@ -128,17 +128,17 @@ describe("bottom panels on the app page", () => {
     };
 
     // 1. Cross-plugin host command, web command, and bottom-panel toggle forged from alpha's frame MUST be blocked.
-    await sendKey("8", "Digit8", { metaKey: true, shiftKey: true }); // beta.secret
-    await sendKey("6", "Digit6", { metaKey: true, shiftKey: true }); // beta.webCmd
-    await sendKey("7", "Digit7", { metaKey: true, shiftKey: true }); // beta.toggle
+    await sendKey("8", "Digit8", { metaKey: true, altKey: true, shiftKey: true }); // beta.secret
+    await sendKey("6", "Digit6", { metaKey: true, altKey: true, shiftKey: true }); // beta.webCmd
+    await sendKey("7", "Digit7", { metaKey: true, altKey: true, shiftKey: true }); // beta.toggle
     expect(requests.filter((r) => r.type === "plugins.command")).toEqual([]);
     expect(chatPosted.filter((m: any) => m?.botling === "runCommand")).toEqual([]);
     expect(host.querySelector('[data-plugin="beta"]')).toBeNull();
 
     // 2. Alpha's own host command runs with explicit frame attribution (`from: "frame", name: "alpha"`),
     //    and alpha's own web-only command in the chat page runs too.
-    await sendKey("9", "Digit9", { metaKey: true, shiftKey: true }); // alpha.sync
-    await sendKey("5", "Digit5", { metaKey: true, shiftKey: true }); // alpha.webCmd
+    await sendKey("9", "Digit9", { metaKey: true, altKey: true, shiftKey: true }); // alpha.sync
+    await sendKey("5", "Digit5", { metaKey: true, altKey: true, shiftKey: true }); // alpha.webCmd
     expect(requests.filter((r) => r.type === "plugins.command")).toEqual([
       { type: "plugins.command", id: "alpha.sync", from: "frame", name: "alpha" },
     ]);

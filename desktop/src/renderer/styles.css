@@ -917,6 +917,33 @@ button.wk-owner:hover { background: var(--hover); }
 .sbn-foot { border-top: 1px solid var(--line); padding: 8px 12px; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); flex-shrink: 0; }
 .sbn-keys { margin-left: auto; }
 .sbn-foot kbd { font: inherit; font-size: 10.5px; border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; color: var(--soft-text); background: var(--ground); white-space: nowrap; }
+/* Navigation v5, part 3: ☆ Pin on hover, the Pinned section's ⋮⋮ drag handle, the footer's actions, New sub bot. */
+.sbn-item { position: relative; }
+.sbn-item.drop::before { content: ""; position: absolute; left: 12px; right: 12px; top: -1px; height: 2px; border-radius: 1px; background: var(--blue); }
+.sbn-item .sbn-row { padding-right: 64px; }
+.sbn-pin { position: absolute; top: 6px; right: 12px; height: 20px; padding: 0 7px; border: 0; border-radius: 6px; background: var(--card); color: var(--muted); box-shadow: 0 0 0 1px var(--border); font-size: 11px; white-space: nowrap; cursor: pointer; opacity: 0; }
+.sbn-pin.on { color: var(--link); }
+.sbn-item:hover .sbn-pin, .sbn-item:focus-within .sbn-pin, .sbn-pin:focus-visible { opacity: 1; }
+.sbn-item:hover .sbn-line1 > :last-child:not(b) { visibility: hidden; }
+.sbn-pin:hover { color: var(--text); background: var(--chip); }
+.sbn-pin:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--blue); }
+.sbn-handle { width: 8px; margin: 3px -4px 0 -6px; color: var(--muted); font-size: 10px; letter-spacing: -2px; line-height: 1; cursor: grab; opacity: 0; flex-shrink: 0; }
+.sbn-item:hover .sbn-handle { opacity: 1; }
+.sbn-act { border: 0; padding: 0; background: none; color: var(--link); font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.sbn-act:hover { text-decoration: underline; }
+.sbn-act:focus-visible { outline: none; text-decoration: underline; }
+.sbn-archive { color: var(--muted); font-weight: 400; }
+.sbn-new { border-top: 1px solid var(--line); padding: 2px 12px 10px; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; flex-shrink: 0; }
+.sbn-new .sbn-head { padding: 9px 0 0; }
+.sbn-new input, .sbn-new textarea { background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; font: inherit; font-size: 13px; resize: none; }
+.sbn-new input:focus, .sbn-new textarea:focus { outline: none; border-color: rgba(76, 141, 255, 0.6); }
+.sbn-new-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+.sbn-new-actions .sbn-time { margin-right: auto; }
+.sbn-error { color: var(--error); font-size: 12px; }
+/* No sub bots yet: the place stays empty (the header as before) until hovered or opened. */
+.sbn-add { color: var(--muted); background: transparent; box-shadow: 0 0 0 1px var(--line); padding: 0 10px; opacity: 0; }
+.board-switch-bar:hover .sbn-add, .sbn-add:focus-visible, .sbn-add.on { opacity: 1; }
+.sbn-empty-slot .sbn-menu { width: 340px; }
 /* The title inside a sub bot: [R] Release  sub bot of botling */
 .chat-title .sbn-face { width: 20px; height: 20px; margin-right: 6px; vertical-align: -5px; }
 .chat-sub-of { font-weight: 400; color: var(--muted); margin-left: 8px; }
@@ -934,7 +961,8 @@ button.wk-owner:hover { background: var(--hover); }
 }
 @media (prefers-reduced-motion: reduce) {
   .sbn-menu { animation: sbn-fade 120ms ease-out; }
-  .sbn-button { transition: none; }
+  /* The coming-back ring stays still for 1.2 s (App: flashMs) instead of fading in and out. */
+  .sbn-button, .sbn-button.flash { transition: none; }
 }
 @keyframes sbn-fade { from { opacity: 0; } to { opacity: 1; } }
 .panel-tabs button { position: relative; }

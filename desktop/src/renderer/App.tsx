@@ -17,7 +17,7 @@ import { cardImageOf } from "../contract/attachment-url";
 import { status, statusText } from "../contract/bot-status";
 import { actionForEvent, bindingsFor, commandBindings, commandForEvent, formatCombo } from "../contract/shortcuts";
 import { setShortcutLabels, shellPlatform, shortcutLabel } from "./shortcut-labels";
-import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultView, type SubagentRowView } from "../contract";
+import { MAINTAINER_BOT_ID, resultLinks, type ApprovalAskView, type BotView, type PluginsView, type ResultView, type RoutineView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
@@ -35,7 +35,13 @@ import { TaskDetails } from "./TaskDetails";
 import { botCounts, canIdle, idleCounts, idleList, peekCard, railOrder, railSplit } from "./rail-idle";
 import { peekHover } from "./peek-hover";
 import { SubBotFace, SubBotNav } from "./SubBotNav";
-import { headerNav, rememberRoom, roomStep, subBotRow, type LastRooms } from "./sub-bot-nav";
+import { flashMs, headerNav, leaveMark, movePinned, newSinceMark, newSubBotAsk, NEW_SINCE_PREFIX, pinnedTarget, rememberRoom, roomStep, subBotRow, togglePinned, withNewSince, type LastRooms, type LeaveMarks } from "./sub-bot-nav";
+
+/** Where you left each project bot for its sub bot (its newest line then): the chat page's "New while you were in X". */
+const leaveMarks: { current: LeaveMarks } = { current: {} };
+/** ⌘⇧1–9's shortcut ids, by the number. */
+const PINNED_KEYS = ([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => `pinnedSubBot${n}` as const);
+const pinnedNumber = (id: string | null | undefined): number | null => { const n = /^pinnedSubBot([1-9])$/.exec(id ?? "")?.[1]; return n ? Number(n) : null; };
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
@@ -187,6 +193,20 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     const target = shown ? roomStep(direction, shown, current.bots, lastRooms.current) : null;
     if (target) { setSubBotsOpen(false); setError(null); void store.select(target); }
   }, [store]);
+  // Pinned sub bots (the menu's Pinned section, ⌘⇧1–9), kept in settings in the order dragged.
+  const pinnedSubBots = view.settings?.pinnedSubBots ?? [];
+  const setPinnedSubBots = useCallback((change: (now: string[]) => string[]) => {
+    const now = (store.getView().settings?.pinnedSubBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
+    void client.request({ type: "settings.set", change: { key: "pinnedSubBots", value: change(now) } }).catch(() => {});
+  }, [client, store]);
+  const openPinned = useCallback((n: number) => {
+    const current = store.getView();
+    const shown = current.bots.find((candidate) => candidate.id === current.chat?.botId);
+    const target = shown ? pinnedTarget(n, shown, current.bots, current.settings?.pinnedSubBots ?? []) : null;
+    if (target && target !== shown?.id) { setSubBotsOpen(false); setError(null); void store.select(target); }
+  }, [store]);
+  // Routines of the sub bots in the menu (read-only, each from its own routines.cron), asked for whenever the menu opens.
+  const [subBotRoutines, setSubBotRoutines] = useState<Record<string, RoutineView[]>>({});
   // The app's keys (Settings > Shortcuts): ⌘, Settings, ⌃⌘I the right panel, ⌃⌘S the left column, ⌘K its search, by default.
   const shortcutBindings = useMemo(() => setShortcutLabels(view.settings?.shortcuts), [view.settings?.shortcuts]);
   // Plugin commands' keys (plugin-platform.md §3.3), after the app's: the same table the chat page relays.
@@ -196,7 +216,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   }, [client, store]);
   // A key a panel's frame did not use (a modifier held): runs Botling's shortcuts or that plugin's own bound command (never another plugin's, and never a synthetic window keydown).
   const forwardKey = useCallback((plugin: string, key: { key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }) => {
-    switch (actionForEvent(key, shortcutBindings)) {
+    const action = actionForEvent(key, shortcutBindings);
+    const pin = pinnedNumber(action);
+    if (pin) { openPinned(pin); return; }
+    switch (action) {
       case "settings": openSettings(); break;
       case "toggleRightPanel": toggleRight(); break;
       case "toggleWorkers": toggleWorkers(); break;
@@ -211,10 +234,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         break;
       }
     }
-  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      switch (actionForEvent(event, shortcutBindings)) {
+      const action = actionForEvent(event, shortcutBindings);
+      const pin = pinnedNumber(action);
+      if (pin) { event.preventDefault(); openPinned(pin); return; }
+      switch (action) {
         case "settings": event.preventDefault(); openSettings(); break;
         case "toggleRightPanel": event.preventDefault(); toggleRight(); break;
         case "toggleWorkers": event.preventDefault(); toggleWorkers(); break;
@@ -231,6 +257,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       }
     };
     const onCommand = (event: Event) => {
+      const pin = pinnedNumber(String((event as CustomEvent).detail));
+      if (pin) { openPinned(pin); return; }
       switch ((event as CustomEvent).detail) {
         case "settings": openSettings(); break;
         case "rightPanel": toggleRight(); break;
@@ -245,7 +273,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     window.addEventListener("botling:chat-command", onCommand);
     window.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("botling:chat-command", onCommand); };
-  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, shortcutBindings, pluginKeys, runCommand]);
+  }, [openSettings, toggleRight, toggleWorkers, toggleRail, startSearch, toggleSubBots, stepRoom, openPinned, shortcutBindings, pluginKeys, runCommand]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   const watching = view.subagent?.id ?? null;
@@ -261,21 +289,43 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // The main bot opens on the whiteboard unless you last picked Chat or Board: the choice is kept for the next start.
   const tab = remembered ?? (boardTab && whiteboardOn && !watching ? boardTab : null);
   // The header's left side (navigation v5): this bot's Sub bots button, or inside a sub bot the way back.
-  const nav = useMemo(() => (bot && !web ? headerNav(bot, view.bots, view.waiting, now) : { kind: "none" as const }), [bot, web, view.bots, view.waiting, now]);
+  const nav = useMemo(() => (bot && !web ? headerNav(bot, view.bots, view.waiting, now, subBotRoutines) : { kind: "none" as const }), [bot, web, view.bots, view.waiting, now, subBotRoutines]);
+  const navIds = nav.kind === "none" ? "" : nav.rows.map((row) => row.id).join(",");
+  useEffect(() => {
+    if (!subBotsOpen || !navIds) return;
+    let live = true;
+    for (const botId of navIds.split(",")) {
+      void client.request({ type: "routines.list", botId }).then((result) => {
+        if (live) setSubBotRoutines((known) => ({ ...known, [botId]: result.routines }));
+      }, () => {});
+    }
+    return () => { live = false; };
+  }, [subBotsOpen, navIds, client]);
   // Back in a project bot from its sub bot: the Sub bots button rings blue for 600 ms and "⌘] <sub bot>" shows beside it.
   const [cameBack, setCameBack] = useState<{ botId: string; from: string; flash: boolean } | null>(null);
   const previousBot = useRef<{ id: string; parent: string | null } | null>(null);
+  // The newest line of the chat on screen, read when you leave it (for "New while you were in X").
+  const newestLine = useRef<{ botId: string; id: string | null } | null>(null);
   useEffect(() => {
     const before = previousBot.current;
     previousBot.current = bot ? { id: bot.id, parent: bot.parent ?? null } : null;
     setSubBotsOpen(false);
     if (!bot) return;
+    if (before && before.id !== bot.id) {
+      const lastId = newestLine.current?.botId === before.id ? newestLine.current.id : null;
+      leaveMarks.current = leaveMark(leaveMarks.current, { id: before.id, parent: before.parent, lastId }, bot);
+    }
     lastRooms.current = rememberRoom(lastRooms.current, bot);
     if (before?.parent !== bot.id) { setCameBack(null); return; }
     setCameBack({ botId: bot.id, from: before.id, flash: true });
-    const timer = setTimeout(() => setCameBack((shown) => (shown?.botId === bot.id ? { ...shown, flash: false } : shown)), 600);
+    // With Reduce motion the ring stays still for 1.2 s instead of 600 ms.
+    const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timer = setTimeout(() => setCameBack((shown) => (shown?.botId === bot.id ? { ...shown, flash: false } : shown)), flashMs(reduced));
     return () => clearTimeout(timer);
   }, [bot?.id]);
+  useEffect(() => {
+    if (chat) newestLine.current = { botId: chat.botId, id: chat.messages.findLast((message) => !message.id.startsWith(NEW_SINCE_PREFIX))?.id ?? null };
+  }, [chat]);
   const cameFrom = cameBack && cameBack.botId === bot?.id ? view.bots.find((candidate) => candidate.id === cameBack.from && candidate.parent === bot.id) ?? null : null;
 
   const fail = useCallback((failure: unknown) => {
@@ -348,6 +398,13 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     void client.request({ type: "subbot.close", botId: target.id })
       .then((result) => { if (shown || store.getView().chat?.botId === target.id) void store.select(result.parentBotId); }, fail);
   }, [client, store, fail]);
+
+  // "+ New sub bot…" (Navigation v5): only a project bot opens sub bots, so it is asked in its chat, as you would yourself.
+  const newSubBot = useCallback(async (projectId: string, name: string, purpose: string) => {
+    await client.request({ type: "chat.send", botId: projectId, text: newSubBotAsk(name, purpose) });
+    setSubBotsOpen(false);
+    if (store.getView().chat?.botId !== projectId) void store.select(projectId);
+  }, [client, store]);
 
   // "New bot": made, set up (it writes its routines and says hello), and shown.
   const createBot = useCallback((made: { name: string; job: string } | null) => {
@@ -575,7 +632,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             <div className="board-switch-left">
               <SubBotNav nav={nav} open={subBotsOpen} onOpenChange={setSubBotsOpen} onOpen={selectBot}
                 flash={!!cameFrom && !!cameBack?.flash} forward={cameFrom ? { name: cameFrom.name } : null}
-                keys={{ menu: shortcutLabel("subBots"), back: shortcutLabel("roomBack"), forward: shortcutLabel("roomForward") }} />
+                keys={{ menu: shortcutLabel("subBots"), back: shortcutLabel("roomBack"), forward: shortcutLabel("roomForward") }}
+                pinned={pinnedSubBots} pinKeys={PINNED_KEYS.map((id) => shortcutLabel(id))}
+                onPin={(botId) => setPinnedSubBots((now) => togglePinned(now, botId))} onMovePin={(botId, to) => setPinnedSubBots((now) => movePinned(now, botId, to))}
+                canAdd={bot.role === "manager" && !bot.parent}
+                onNew={(name, purpose) => newSubBot(bot.parent ?? bot.id, name, purpose)}
+                onArchive={(botId) => { const target = view.bots.find((candidate) => candidate.id === botId); if (target) setClosingSubBot(target); }} />
             </div>
             <div className="board-switch" role="group" aria-label="Chat views">
               <button type="button" aria-pressed={!(view.board && boardOffered(view.plugins)) && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
@@ -940,6 +1002,12 @@ function ChatFrame({ client, store, onError, onSent, onAsk, onOpenWorker, askAbo
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
       plugins: current.plugins,
     });
+    // Back in a project bot from its sub bot: "New while you were in Release" over what came meanwhile.
+    if (!current.subagent) {
+      state.messages = withNewSince(state.messages, newSinceMark(leaveMarks.current[bot.id], state.messages), (id, text) => ({
+        id, role: "divider", text, stamp: null, avatar: null, choices: null, chosen: null, answer: null, open: false,
+        attachments: null, replyTo: null, replyPreview: null, openable: false, reactionEnabled: false }));
+    }
     const traceId = inputTrace()?.mark("shell.state.send", () => ({ chat: state.botID, ...inputTrace()!.snapshot() }));
     return { state, extras, libraryVersion: current.libraryVersion, resyncs: current.resyncs,
       messageColumnWidth: current.settings?.messageColumnWidth ?? null, ...(traceId ? { traceId } : {}) };
@@ -1173,7 +1241,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, onOpenWorker, askAbo
           return;
         }
         case "shellCommand":
-          if (nativeEditor() && ["settings", "rightPanel", "workers", "sidebar", "search", "subBots", "roomBack", "roomForward"].includes(String(action.command))) {
+          if (nativeEditor() && (["settings", "rightPanel", "workers", "sidebar", "search", "subBots", "roomBack", "roomForward"].includes(String(action.command)) || pinnedNumber(String(action.command)) !== null)) {
             window.dispatchEvent(new CustomEvent("botling:chat-command", { detail: action.command }));
           }
           return;

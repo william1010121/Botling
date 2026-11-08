@@ -41,7 +41,8 @@ export function setShortcutBindings(next: Record<string, string>, nextCommands: 
   commands = { ...nextCommands };
 }
 const SHELL_COMMANDS: Record<string, string> = { settings: "settings", toggleRightPanel: "rightPanel", toggleWorkers: "workers", toggleSidebar: "sidebar", search: "search",
-  subBots: "subBots", roomBack: "roomBack", roomForward: "roomForward" };
+  subBots: "subBots", roomBack: "roomBack", roomForward: "roomForward",
+  ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`pinnedSubBot${n}`, `pinnedSubBot${n}`])) };
 
 /**
  * Existing application shortcuts become semantic actions (native chat); plugin commands' keys run here when a
