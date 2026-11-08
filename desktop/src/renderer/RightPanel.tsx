@@ -7,7 +7,8 @@
 // the face with its status dot (hover for the Now card), an icon per section with a count, each
 // opening that section beside the strip, and the bot's settings at the bottom. The bot's settings
 // live one level in (1.x's DetailPanel `showingSettings`): the slider button on the name row, or the
-// strip's bottom one, shows them in the overview's place, with Back.
+// strip's bottom one, shows them in the overview's place, with Back. Navigation v5: when the room or its family
+// (parent, sibling sub bots) has workers, "Details | Workers" tabs sit on top; Workers is WorkersTab.tsx.
 import { shortcutLabel } from "./shortcut-labels";
 import { useEffect, useState, type ReactNode } from "react";
 import { ShellOverlay } from "./ShellOverlay";
@@ -15,6 +16,8 @@ import { settledRows, type BotView, type ResultView, type SubagentRowView, type 
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
 import { AgentMenuButton, OwnerMark } from "./Rail";
+import { WorkersTab, type PanelTab, type WorkersTabProps } from "./WorkersTab";
+import { workersTabOffered } from "./worker-panel";
 
 type Section = "waiting" | "results" | "settled";
 
@@ -49,6 +52,12 @@ export interface RightPanelProps {
   pluginSections?: ReactNode;
   onCloseSettings?: () => void;
   onExpand: () => void;
+  /** Navigation v5: the panel's tab (Details or Workers), when the room or its family has workers. */
+  panelTab?: PanelTab;
+  onPanelTab?: (tab: PanelTab) => void;
+  onLoadWorker?: WorkersTabProps["onLoadWorker"];
+  onAskOwner?: WorkersTabProps["onAskOwner"];
+  onSeenWorker?: (workerId: string) => void;
 }
 
 /** `ArtifactLink.isArtifact`: a claude.ai Artifact's page. */
@@ -74,15 +83,35 @@ function SettingsPanel({ settingsPage, onCloseSettings }: RightPanelProps) {
 
 function OpenPanel(props: RightPanelProps) {
   if (props.showingSettings && props.settingsPage) return <SettingsPanel {...props} />;
-  return <Overview {...props} />;
+  const offered = !!(props.onLoadWorker && props.onAskOwner && props.onPanelTab) && workersTabOffered(props.bot, props.bots, Date.now());
+  if (offered && props.panelTab === "workers") {
+    return (
+      <aside className="detail-panel workers-panel" aria-label="Workers">
+        <PanelTabs tab="workers" onTab={props.onPanelTab!} />
+        <WorkersTab key={props.bot.id} bot={props.bot} bots={props.bots} onLoadWorker={props.onLoadWorker!} onAskOwner={props.onAskOwner!} onSeen={props.onSeenWorker} />
+      </aside>
+    );
+  }
+  return <Overview {...props} tabs={offered ? <PanelTabs tab="details" onTab={props.onPanelTab!} /> : null} />;
 }
 
-function Overview({ pluginSections, bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSettings }: RightPanelProps) {
+/** Details | Workers, at the panel's top (only when there are workers to show). */
+function PanelTabs({ tab, onTab }: { tab: PanelTab; onTab: (tab: PanelTab) => void }) {
+  return (
+    <div className="panel-tabs" role="tablist" aria-label="Panel">
+      <button type="button" role="tab" aria-selected={tab === "details"} className={tab === "details" ? "on" : ""} onClick={() => onTab("details")}>Details</button>
+      <button type="button" role="tab" aria-selected={tab === "workers"} className={tab === "workers" ? "on" : ""} onClick={() => onTab("workers")}>Workers</button>
+    </div>
+  );
+}
+
+function Overview({ tabs, pluginSections, bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSettings }: RightPanelProps & { tabs?: ReactNode }) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
   return (
     <aside className="detail-panel" aria-label="Details">
+      {tabs}
       <div className="detail-head">
         <img className="detail-avatar" src={faceURL(bot, look, { asleep: bot.phase === "asleep" && !bot.working, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className="detail-name">{bot.name}</span>

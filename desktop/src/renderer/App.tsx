@@ -37,6 +37,8 @@ import { peekHover } from "./peek-hover";
 import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDialog, StripPeek, SubBotMenu, subBotsOf, useMinuteClock, type AgentMoveTo, type AgentTargets } from "./Rail";
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
+import { WorkersBadge, type PanelTab } from "./WorkersTab";
+import { readSeenFailed, writeSeenFailed } from "./worker-panel";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -80,6 +82,23 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const toggleRight = useCallback(() => {
     void client.request({ type: "settings.set", change: { key: "rightPanelCollapsed", value: !(store.getView().settings?.rightPanelCollapsed ?? false) } }).catch(() => {});
   }, [client, store]);
+  // Navigation v5: the right panel's tab per room (renderer only, never the bot's settings) and the failed
+  // workers whose log you opened (the badge stops showing them as failed).
+  const [panelTabs, setPanelTabs] = useState<Record<string, PanelTab>>({});
+  const [seenFailed, setSeenFailed] = useState<ReadonlySet<string>>(() => readSeenFailed());
+  const seeWorker = useCallback((workerId: string) => setSeenFailed((seen) => {
+    if (seen.has(workerId)) return seen;
+    const next = new Set(seen).add(workerId);
+    writeSeenFailed(next);
+    return next;
+  }), []);
+  // The badge: opens the panel on Workers; on Details it switches to Workers; on Workers it folds the panel.
+  const workersBadgeClick = useCallback((botId: string) => {
+    const onWorkers = panelTabs[botId] === "workers";
+    if (collapsed) { setPanelTabs((tabs) => ({ ...tabs, [botId]: "workers" })); toggleRight(); }
+    else if (!onWorkers) setPanelTabs((tabs) => ({ ...tabs, [botId]: "workers" }));
+    else toggleRight();
+  }, [panelTabs, collapsed, toggleRight]);
   // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView).
   const railCollapsed = view.settings?.railCollapsed ?? false;
   const toggleRail = useCallback((collapse?: boolean) => {
@@ -485,6 +504,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         {bot && chat && !watching && (
           // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
           <div className="board-switch-bar">
+            <span className="workers-badge-slot"><WorkersBadge bot={bot} bots={view.bots} seen={seenFailed} on={!collapsed && panelTabs[bot.id] === "workers"} onClick={() => workersBadgeClick(bot.id)} /></span>
             <div className="board-switch" role="group" aria-label="Chat views">
               <button type="button" aria-pressed={!(view.board && boardOffered(view.plugins)) && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(false); }}><Icon name="bubble" size={13} />Chat</button>
               {boardOffered(view.plugins) && <button type="button" aria-pressed={view.board && !tab} onClick={() => { setWhiteboardOn(false); chooseTab(bot.id, null); store.showBoard(true); }}><Icon name="grid" size={13} />Board</button>}
@@ -537,6 +557,11 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
           pluginSections={rightPanelSectionsFor(view.plugins, bot).map((block) => <SlotFrame key={`${bot.id}/${block.plugin}/${block.id}`} client={client} plugin={block.plugin} view={block.id} title={block.title} fontSize={13} botId={bot.id} onBuiltin={runBuiltin} />)}
           onCloseSettings={() => setBotSettings(false)}
           onExpand={toggleRight}
+          panelTab={panelTabs[bot.id] ?? "details"}
+          onPanelTab={(next) => setPanelTabs((tabs) => ({ ...tabs, [bot.id]: next }))}
+          onLoadWorker={(ownerId, workerId) => client.request({ type: "subagent.view", botId: ownerId, subagentId: workerId }).then((result) => result.subagent)}
+          onAskOwner={(ownerId, text) => client.request({ type: "chat.send", botId: ownerId, text }).then(() => { if (ownerId !== bot.id) selectBot(ownerId); })}
+          onSeenWorker={seeWorker}
         />
       )}
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
