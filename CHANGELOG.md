@@ -4,6 +4,14 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 2.5.0
+
+- **Appearance is kept across restarts.** The saved light, dark or system look (and shortcuts) is applied when the app starts again; before, the app always came back dark.
+- **Bots call each other in for real work.** A bot called in with `@` for real work now starts a worker in that reply and reports to its own chat, instead of promising to come back later. A Codex head can start a worker on a chosen Codex model, and a head can close one of its own sub bots when you ask.
+- **Antigravity gets better.** Usage and quota now come from Antigravity's own data (no `/usage` turn): one quota ring per Gemini bucket, and worker usage is recorded. A message sent while it works now goes into its current turn.
+- **Chat pictures and videos.** Videos can go fullscreen, a picture in a component card opens full size in the lightbox (Open in Preview / Show in Finder open the right file), a rewritten picture shows its own copy in each reply, and a turn cut off by your new message leaves no error bubble.
+- **Steadier workers and reports.** A message sent to a working Claude goes in at once, new Claude workers no longer fail when the CLI is slow to start, every result page is a ReportSpec report, and Windows paths work better. Plugins get a composer-bar view slot next to the pins.
+
 ## Unreleased
 
 - **Component studio is now a built-in plugin (`botling.component-studio`).** "Make into component", the bot's `<suggest-component>` chips and the spec panel
