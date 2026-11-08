@@ -94,7 +94,7 @@ import { detailValues, type CommandStatus } from "./components/commands";
 import type { Display } from "./reply";
 import { answerMessage, savedPicks, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { headTurnContent, headTurnEnd } from "./head-turn";
-import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, type WorkerCoreFactory, type WorkerLedgerRecord } from "./worker-core";
+import { costDelta, hasVisibleContent, WorkerCore, WorkerLedger, workerNoteLine, type WorkerCoreFactory, type WorkerLedgerRecord, type WorkerNote } from "./worker-core";
 import { projectWorker } from "./worker-projection";
 import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
@@ -1228,6 +1228,7 @@ export class Bot {
     const core = new WorkerCore({
       ...options, store: new WorkerLedger(this.workerLedgerFile, legacy),
       projected: (record) => this.projectWorker(record),
+      note: (note, text) => this.workerNote(note, text),
       closeReason: () => (this.swapHold ? "restart" : "quit"),
       log: (line) => this.log(line),
     });
@@ -1274,6 +1275,21 @@ export class Bot {
   }
 
   /**
+   * A note from one of this member's workers at work (app_notify_owner): a relay line in the chat (not the user's),
+   * and this head woken with the <app_worker_note> message, or the note queued behind its turn. The run goes on.
+   * Also the owner's side of a note from a worker another bot runs (the registry routes it here, `text` its words).
+   */
+  workerNote(note: Pick<WorkerNote, "kind" | "name" | "message" | "files">, text: string): boolean {
+    const bot = this.options.primary ?? this;
+    if (this.shuttingDown || this.problem || this.profile.problem || bot.shuttingDown) return false;
+    try {
+      bot.add({ id: newId(), role: "relay", text: workerNoteLine(note), date: toSwiftDate() });
+      bot.deliverTo(this.engine, text, null, { origin: "app" });
+      return true;
+    } catch (error) { this.log(`worker note not delivered: ${(error as Error).message}`); return false; }
+  }
+
+  /**
    * The one entry for every app-managed worker's items, whatever engine runs it (shared-core spec S4b). Workers are
    * not the head's: their items come whether or not the head is awake (never dropped as an old head's), and only
    * their own bookkeeping happens here (the book, the step that started one, approvals, usage, speed),
@@ -1289,6 +1305,7 @@ export class Bot {
       case "connectionLost": if (item.parent) this.cutOffByNetwork.add(item.parent); return;
       case "permissionDenied": this.showDenial(item); return;
       case "workerReport": this.workerReported(item); return;
+      case "workerNote": this.workerNoted(item); return;
       case "managedPending": this.onItemPending(item.pending); return;
       case "permission":
         if (this.routeWorkerApproval(this.workerApprovals, item)) return;
@@ -1436,6 +1453,13 @@ export class Bot {
     const port = this.options.agents;
     if (port?.report) { port.report(this.hostFacts(), { nativeId: item.id, run: item.run, status: item.status, text: item.report }); return; }
     this.log(`worker ${item.id} reported for an owner, but there is no registry: its report stays in its row`);
+  }
+
+  /** A worker another bot owns sent a note: the registry hands it to the owner. */
+  private workerNoted(item: Extract<CodexItem, { kind: "workerNote" }>) {
+    const port = this.options.agents;
+    if (port?.note) { port.note(this.hostFacts(), { nativeId: item.id, run: item.run, kind: item.noteKind, name: item.name, message: item.message, files: item.files }); return; }
+    this.log(`worker ${item.id} sent a note for an owner, but there is no registry: it was dropped`);
   }
 
   /** A worker another bot owns asks for an approval: the owner's chat shows the card (the host's own standing rules still answer what they cover). */
@@ -3410,7 +3434,7 @@ export class Bot {
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
     // Workers' own items come through `onWorkerOutput` only.
-    if (item.kind === "workerReport") return;
+    if (item.kind === "workerReport" || item.kind === "workerNote") return;
     if (item.kind === "request") { this.noteRequest(item.request); return; }
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).

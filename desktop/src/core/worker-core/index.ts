@@ -6,7 +6,8 @@ export { classifyRun, ENGINE_NAMES, INTERRUPTED_REPORT, NO_REPORT, NO_RESULT, ST
 export { costDelta, RunAccounting, runCounter } from "./accounting";
 export {
   deniedNote, ownedWorkerReport, REPORT_LIMIT, REPORT_TAIL, reportPayload, reportTag, wireStatus, withDeniedNote, workerReportText,
-  type AckPolicy, type WorkerReport,
+  NOTE_TAIL, parseWorkerNote, workerNoteLine, workerNoteText,
+  type AckPolicy, type WorkerNote, type WorkerNoteKind, type WorkerReport,
 } from "./report";
 export { RunPipeline, type ControlEvent, type PipelineHooks, type PipelineIds } from "./pipeline";
 export { agentState, chipStatus, reportOwed, stepFailed, subagentStatus, workerState, type ReportState, type WorkerChipStatus, type WorkerStatus } from "./status";

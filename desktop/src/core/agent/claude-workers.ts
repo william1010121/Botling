@@ -20,12 +20,13 @@ import {
   ClaudeLegacyStore, WorkerCore,
   type HandoffRequest, type WorkerCoreFactory, type WorkerCoreOptions, type RecoverResult, type RunHandle, type WorkerAdapter, type WorkerLedgerRecord,
 } from "../worker-core";
-import { appTools } from "../app-tools/registry";
+import { appTools, workerAppTools } from "../app-tools/registry";
 import { ClaudeStreamEvents } from "./claude-worker-events";
 import type { CodexItem } from "./codex";
 import type { AppToolSpec, HeadConfig, HeadHandlers } from "./head";
 import { commandEnded, type StreamItem } from "./stream";
 import { DEFAULT_SPEC_WRITERS } from "../spec-guard";
+import { WORKER_NOTIFY_RULE } from "../prompts/delegation";
 import { EFFORTS_BY_ENGINE, type EffortLevel } from "../../contract/efforts";
 import type { WorkerHost, WorkerInfo, WorkerOwner, WorkerOwnerResult, WorkerSendResult } from "./workers";
 
@@ -45,6 +46,8 @@ export interface ClaudeWorkerHead {
 /** The in-process MCP server Claude coordinators get (head.ts `appMcp`). */
 export const CLAUDE_APP_SERVER = "botling";
 export const CLAUDE_APP_TOOLS: AppToolSpec[] = appTools("claude");
+/** The same server inside a worker: only app_notify_owner (a note to the bot that started it). */
+export const CLAUDE_WORKER_TOOLS: AppToolSpec[] = workerAppTools("claude");
 
 /** The deny reason the coordinator reads if a native Agent/Task call still gets through (head.ts `agentGuard`). */
 export const CLAUDE_AGENT_GUARD = "Native subagents are off in Botling: the app runs every subagent as a worker of its own. Call the app_handoff tool instead (botling MCP server; load it with ToolSearch if it is deferred), with this call's prompt as instructions, its description as name, and its subagent_type. Do not retry Agent or Task.";
@@ -57,6 +60,7 @@ export const CLAUDE_WORKER_POLICY = [
   "You cannot start subagents or workers, and you do not talk to the user: the app hands your final message of each run to the coordinator as your report.",
   "End every run with a concise report: what you did, the evidence (commands and their results, files changed), and anything left, blocked or needing a decision.",
   "Messages that arrive later come from the coordinator and continue the same task.",
+  WORKER_NOTIFY_RULE,
 ].join("\n");
 
 /** A `.claude/agents/<type>.md` definition, as far as a worker can reproduce it. */
@@ -188,6 +192,8 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
   readonly steersRunning = true;
   private procs = new Map<string, Proc>();
   private closed = false;
+  /** app_notify_owner from a worker's process (its core's `notifyOwner`, set by the facade once the core exists). */
+  notify?: (id: string, args: Record<string, unknown>) => unknown;
 
   constructor(private options: ClaudeAdapterOptions, private factory: (config: HeadConfig, handlers: HeadHandlers) => ClaudeWorkerHead) {}
 
@@ -253,14 +259,22 @@ export class ClaudeWorkerAdapter implements WorkerAdapter {
     if (def && "error" in def) throw new Error(def.error);
     const config: HeadConfig = {
       ...base, cwd: this.options.cwd(), sessionId, resume: r.engineData.sessionStarted === true, forkSession: false, persistSession: true,
-      model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: null, agentGuard: CLAUDE_WORKER_GUARD,
+      model: this.model(r, base), effort: this.effort(r, base), monitorWorker: true, appMcp: { server: CLAUDE_APP_SERVER, tools: CLAUDE_WORKER_TOOLS }, agentGuard: CLAUDE_WORKER_GUARD,
       specGuard: { writers: this.options.specWriters?.() ?? DEFAULT_SPEC_WRITERS },
       systemPrompt: [CLAUDE_WORKER_POLICY, def?.prompt ?? ""].filter(Boolean).join("\n\n"),
       disallowedTools: [...new Set([...(base.disallowedTools ?? []), "SendMessage", "TaskStop"])],
       ...(def?.tools ? { tools: def.tools } : {}),
     };
     // A kept-alive process carries later runs too: its items belong to whichever run is under way.
-    const head: ClaudeWorkerHead = this.factory(config, { onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit) });
+    const head: ClaudeWorkerHead = this.factory(config, {
+      onItem: (item) => this.onItem(r.id, head, item), onExit: (exit) => this.onExit(r.id, head, exit),
+      // Its one app tool: a note to its owner, from the run under way in this process.
+      onAppTool: async (name, args) => {
+        if (name !== "app_notify_owner" || !this.notify) throw new Error(`Unknown app tool ${name}.`);
+        if (this.procs.get(r.id)?.head !== head) throw new Error("This worker's run is not under way: say it in your final report instead.");
+        return this.notify(r.id, args);
+      },
+    });
     head.start();
     Object.assign(proc, { head, tree: head, run, record: r, effort: config.effort ?? null, opening: { run: run.run, base }, pendingResult: undefined });
     proc.stream.newProcess();
@@ -472,6 +486,7 @@ export class ClaudeWorkers implements WorkerHost {
       log: (line) => options.log?.(line),
     };
     this.core = options.core?.(core, { claudeFile: options.file }) ?? new WorkerCore(core);
+    this.adapter.notify = (id, args) => ({ ...this.core.notifyOwner(id, args), message: "Sent to your owner. Keep working; an answer, if any, joins this run as a message." });
   }
 
   listWorkers(): WorkerInfo[] { return this.core.listWorkers(); }

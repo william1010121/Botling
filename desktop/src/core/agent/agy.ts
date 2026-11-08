@@ -8,6 +8,8 @@ export interface AgyConfig {
   transport?: "acp";
   worker?: boolean;
   workerEngine?: "agy" | "codex";
+  /** A worker's app_notify_owner, from its run under way (its core's `notifyOwner`); absent: the worker has no such tool. */
+  workerNotify?: (args: Record<string, unknown>) => unknown;
   /** Model families whose workers may write spec/ (settings.json `specWriters`; default ["opus"]). Bot heads are not restricted. */
   specWriters?: readonly string[];
   processStarted?: (pid: number) => void;

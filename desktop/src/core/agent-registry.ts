@@ -665,6 +665,8 @@ export interface AgentPort {
   rowInfo?(engine: AgentEngine, nativeId: string): { agentId?: string; movable?: { ok: boolean; reason: string | null } };
   /** A run report of a worker another bot owns (its host's `workerReport`): the app routes it to the owner. */
   report?(host: HostFacts, r: { nativeId: string; run: number; status: string; text: string }): void;
+  /** A note from a run under way of a worker another bot owns (its host's `workerNote`, app_notify_owner): the app hands it to the owner. */
+  note?(host: HostFacts, n: { nativeId: string; run: number; kind: "report" | "question"; name: string; message: string; files: string[] }): void;
   /**
    * A worker another bot owns asks for an approval: the card goes to the owner's chat, and the pick back to `head` (the host's).
    * False: nobody else owns it (the host asks itself).

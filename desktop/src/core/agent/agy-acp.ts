@@ -472,7 +472,8 @@ export class AgyAcpHead {
       (taskId, text, taskRun) => { this.queue.push({text, uuid:randomUUID(), images:[], taskId, taskRun}); void this.drain(); },
       (config, handlers) => createAgyWorkerHead(config, handlers, (c,h) => new AgyAcpHead(c,h,this.tree)), this.wiring.core);
     this.bridge = new AgyMcpBridge(cwd, home, this.workers ? (name,args) => this.workers!.tool(name,args) : undefined, this.config.processStarted, join(dirname(this.config.command), "botling-agy-file-helper"), () => this.protocol?.fullPermissionActive === true, item => this.handlers.onItem(item), this.config.addDirs,
-      () => this.config.worker === true && !maySpecWrite(this.config.model, this.config.specWriters ?? DEFAULT_SPEC_WRITERS));
+      () => this.config.worker === true && !maySpecWrite(this.config.model, this.config.specWriters ?? DEFAULT_SPEC_WRITERS),
+      this.config.worker === true ? this.config.workerNotify : undefined);
     this.bridge.attach = () => this.takeInserts();
     return this.bridge.start().then(server => [server]);
   }
