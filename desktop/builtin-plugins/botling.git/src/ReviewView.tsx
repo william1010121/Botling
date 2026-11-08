@@ -1,7 +1,7 @@
 // The Review view (review.ts): the files a worktree (or the project's working tree) changed, each as
 // a unified or split diff with syntax colours, loaded one file at a time; a click on a line adds a comment,
 // and "Send to agent" sends every pending comment to the bot that owns the worktree as one chat message.
-// It is a tab in the chat header's place (botling.git's `mainTab` view), like the whiteboard.
+// It has no tab of its own now (the header is Chat | Board); nothing shows it until a button does.
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewDiffView, ReviewFilesView, ReviewScope } from "./types";
 import { RequestFailed, type Client } from "./client";

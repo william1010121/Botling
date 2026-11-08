@@ -17,8 +17,8 @@ export interface WorkersTabProps {
   onLoadWorker: (ownerId: string, workerId: string) => Promise<SubagentView>;
   /** "Ask <owner>": the owner's chat, with this worker as a reference in its input box. */
   onAskOwner: (ownerId: string, worker: AskWorker) => void;
-  /** A file in "Files changed": its diff in the owner's Review tab. */
-  onOpenFile?: (ownerId: string, path: string) => void;
+  /** A file in "Files changed": a picture or PDF in Preview, anything else with its default app (main checks the worker changed it). */
+  onOpenFile?: (ownerId: string, path: string, workerId: string) => void;
   /** Open this worker's log now (the chat's subagent card "Open ›"); `at` makes each request new. */
   focusWorker?: { ownerId: string; workerId: string; at: number } | null;
   /** You opened a failed worker's log: the badge goes back to normal. */
@@ -174,7 +174,7 @@ function WorkerLog({ owner, row, onBack, onLoad, onAsk, onSeen, onOpenFile }: { 
             {files.length > 0 && (
               <div className="wk-files"><div className="wk-lab">Files changed · {files.length}</div>
                 {files.map((file) => onOpenFile
-                  ? <button key={file} type="button" className="wk-fc" title={`${file} · open its diff in Review`} onClick={() => onOpenFile(file)}>{shortPath(file)}</button>
+                  ? <button key={file} type="button" className="wk-fc" title={`${file} · open`} onClick={() => onOpenFile(file)}>{shortPath(file)}</button>
                   : <div key={file} className="wk-fc" title={file}>{shortPath(file)}</div>)}</div>
             )}
             <div><div className="wk-lab">Steps · {view.steps.length + 1}</div>
@@ -207,7 +207,7 @@ export function WorkersTab({ bot, bots, onLoadWorker, onAskOwner, onSeen, onOpen
   const row = owner && picked ? owner.subagentRows.find((candidate) => candidate.id === picked.workerId) ?? null : null;
   if (owner && row) {
     return <WorkerLog owner={owner} row={row} onBack={() => setPicked(null)} onLoad={onLoadWorker} onAsk={onAskOwner} onSeen={onSeen}
-      onOpenFile={onOpenFile ? (path) => onOpenFile(owner.id, path) : undefined} />;
+      onOpenFile={onOpenFile ? (path) => onOpenFile(owner.id, path, row.id) : undefined} />;
   }
   return <WorkerList bot={bot} bots={bots.some((candidate) => candidate.id === bot.id) ? bots : [bot, ...bots]} onOpen={(chosen, chosenRow) => setPicked({ ownerId: chosen.id, workerId: chosenRow.id })} />;
 }

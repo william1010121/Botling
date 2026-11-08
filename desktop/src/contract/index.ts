@@ -939,6 +939,7 @@ export const Command = z.discriminatedUnion("type", [
   /** The links handed over in a bot's chat, newest first (the right panel's Results). */
   z.strictObject({ type: z.literal("results.list"), botId }),
   /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
+  z.strictObject({ type: z.literal("worker.file"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), path: z.string().min(1).max(4096) }),
   z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("link.open"), cardImage: z.string().regex(/^[0-9a-f]{40}$/).optional(), preview: z.boolean().optional(), reveal: z.boolean().optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
   /** Core-only membership lookup: no chat payload or component rendering. */
@@ -1111,11 +1112,11 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "projects.pick", "waiting.list", "waiting.ignore",
-  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
+  "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "worker.file",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["card.page", "files.pick", "projects.pick", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["card.page", "files.pick", "projects.pick", "result.open", "link.open", "worker.file", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
 
 /** A link handed over in a chat (`[label](url)`, 1.x's `Chip`). */
 export const ResultView = z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) });
@@ -1179,6 +1180,7 @@ export interface Results {
   "results.list": { results: ResultView[] };
   "result.open": { opened: boolean };
   "link.open": { opened: boolean; previewURL?: string };
+  "worker.file": { route: "preview" | "reveal" | "open" };
   "link.authorize": { result: boolean; linked: boolean };
   /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
   "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };

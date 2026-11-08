@@ -1,4 +1,4 @@
-// Navigation v5, sub bots: the "Sub bots" button left of Chat | Board | Review, its menu, the breadcrumb
+// Navigation v5, sub bots: the "Sub bots" button left of Chat | Board, its menu, the breadcrumb
 // "‹ botling / Release ▾" shown in its place inside a sub bot, and ⌘[ / ⌘] between the two. The pure part
 // (SubBotNav.tsx draws it). A sub bot is a room the user opened on purpose; it is never a row of the left column.
 import type { BotView, RoutineView, WaitingView } from "../contract";

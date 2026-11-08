@@ -1,4 +1,4 @@
-// Navigation v5, sub bots: what SubBotNav draws left of Chat | Board | Review (static markup, no window, no focus).
+// Navigation v5, sub bots: what SubBotNav draws left of Chat | Board (static markup, no window, no focus).
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";

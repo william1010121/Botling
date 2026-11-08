@@ -248,7 +248,7 @@ describe("botling.terminal", () => {
 });
 
 describe("botling.git", () => {
-  it("brings the Worktrees block (right panel), the Review tab and a Worktrees page of Settings, and may decide where sessions start", async () => {
+  it("brings the Worktrees block (right panel) and a Worktrees page, and no Review tab of Settings, and may decide where sessions start", async () => {
     const { viewSurfaces } = await import("../../src/core/plugins/views");
     const plugins = registry(join(tempDir("builtin-git"), "plugins"));
     const git = plugins.plugin("botling.git")!;
@@ -256,7 +256,7 @@ describe("botling.git", () => {
     expect(git.manifest.ccb?.permissions).toEqual(["exec", "files", "bots", "sessions"]);
     const surfaces = viewSurfaces(plugins.contributions(), (name) => !!plugins.webPart(name));
     expect(surfaces.rightPanelSections).toEqual([{ plugin: "botling.git", id: "botling.git.worktrees", title: "Worktrees", forRole: "bots" }]);
-    expect(surfaces.mainTabs).toContainEqual({ plugin: "botling.git", id: "botling.git.review", title: "Review", icon: "git", forRole: "bots" });
+    expect(surfaces.mainTabs.filter((tab) => tab.plugin === "botling.git")).toEqual([]);
     expect(surfaces.settingsSections).toContainEqual(expect.objectContaining({ plugin: "botling.git", id: "botling.git.settings", after: "developer" }));
     expect(plugins.setting("botling.git", "botling.git.enabled")).toBe(true);
     expect(plugins.setting("botling.git", "botling.git.root")).toBe("");

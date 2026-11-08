@@ -36,6 +36,8 @@ import { COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES, tileNavigation } 
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { attachmentFile, attachmentLine, attachmentTarget, cardImageToken } from "../contract/attachment-url";
 import { randomBytes } from "node:crypto";
+import { execFile } from "node:child_process";
+import { openWorkerFile } from "./worker-file";
 import { createRequire } from "node:module";
 import {
   MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
@@ -604,6 +606,12 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
+    case "worker.file": return openWorkerFile((await core.call({ type: "subagent.view", botId: cmd.botId, subagentId: cmd.subagentId })).subagent.steps, cmd.path, {
+      exists: existsSync,
+      preview: async (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") await new Promise<void>((done, fail) => execFile("open", ["-a", "Preview", path], (error) => error ? fail(error) : done())); },
+      open: async (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") { const problem = await shell.openPath(path); if (problem) throw new Error(problem); } },
+      reveal: (path) => { openedResults.push(path); if (process.env.BOTLING_NO_EXTERNAL !== "1") shell.showItemInFolder(path); },
+    });
     case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId,cmd.reveal===true,cmd.preview===true,cmd.cardImage);
     case "doctor.copy": return copyDoctorFix(cmd.tool, await core.call({ type: "doctor.view" }), text => clipboard.writeText(text));
     case "chat.reloadPage": return { reloaded: await reloadNativeEditor(sender) };

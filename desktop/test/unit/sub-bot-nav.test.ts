@@ -1,4 +1,4 @@
-// Navigation v5, sub bots (sub-bot-nav.ts): the "Sub bots" button left of Chat | Board | Review, its menu,
+// Navigation v5, sub bots (sub-bot-nav.ts): the "Sub bots" button left of Chat | Board, its menu,
 // the breadcrumb "‹ botling / Release ▾" inside a sub bot, and ⌘[ / ⌘] between the two. Pure logic.
 import { describe, expect, it } from "vitest";
 import type { BotView, WaitingView } from "../../src/contract";

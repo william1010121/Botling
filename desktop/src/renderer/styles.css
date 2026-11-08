@@ -839,7 +839,7 @@ button.wk-owner:hover { background: var(--hover); }
 .wk-ask-row { display: flex; align-items: center; gap: 8px; }
 .wk-ask-row .wk-tm { flex: 1; white-space: normal; }
 @media (max-width: 860px) { .workers-badge-slot { right: 8px; } }
-/* Navigation v5, sub bots (SubBotNav.tsx): "Sub bots · N ▾" left of Chat | Board | Review, its menu, and inside a
+/* Navigation v5, sub bots (SubBotNav.tsx): "Sub bots · N ▾" left of Chat | Board, its menu, and inside a
    sub bot the breadcrumb "‹ botling / Release ▾". The switch stays in the middle; the workers' badge (.workers-badge-slot) sits at the right.
    With no sub bots the bar looks as before. Colours are the tokens (dark by default, data-theme="light"). */
 .board-switch-bar > .board-switch { grid-column: 2; }

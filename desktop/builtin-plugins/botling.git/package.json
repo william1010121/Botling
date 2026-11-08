@@ -26,13 +26,6 @@
           "forRole": "bots"
         },
         {
-          "id": "botling.git.review",
-          "title": "Review",
-          "icon": "git",
-          "where": "mainTab",
-          "forRole": "bots"
-        },
-        {
           "id": "botling.git.settings",
           "title": "Worktrees",
           "where": "settings.section",

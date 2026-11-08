@@ -1,13 +1,8 @@
 // The three views as components: what each reads from the program part and which of Botling's own commands it runs.
 import { useEffect, useState } from "react";
 import type { Client, Ccb } from "./client";
-import { Review, type ReviewTarget } from "./ReviewView";
 import { Worktrees } from "./WorktreesView";
 import { worktreeWords } from "./worktree-text";
-
-const REVIEW_TAB = ["botling.git", "botling.git.review"] as const;
-/** How often an open Review tab asks whether the Worktrees block sent it somewhere else (ms). */
-export const TARGET_POLL_MS = 1_000;
 
 /** The app's language as the program part knows it (null until it answers). */
 function useLanguage(ccb: Pick<Ccb, "call">): string | null {
@@ -16,34 +11,11 @@ function useLanguage(ccb: Pick<Ccb, "call">): string | null {
   return lang;
 }
 
-/** The Worktrees block under a bot's tasks; "Review" opens the Review tab on that worktree (or on the main checkout). */
+/** The Worktrees block under a bot's tasks. (The Review tab is gone from the header; ReviewView and the host's review.* stay for a button to come back to.) */
 export function WorktreesBlock({ ccb, client, botId }: { ccb: Ccb; client: Client; botId: string }) {
   const lang = useLanguage(ccb);
   if (!botId) return null;
-  const review = (target: ReviewTarget) => {
-    void client.request({ type: "review.open", botId, target }).then(() => ccb.command("botling.openTab", botId, ...REVIEW_TAB), () => {});
-  };
-  return <Worktrees client={client} bot={{ id: botId }} lang={lang} onReview={review} />;
-}
-
-/** The Review tab of a bot's header: what the Worktrees block last asked for (the main checkout at first). */
-export function ReviewTab({ ccb, client, botId }: { ccb: Ccb; client: Client; botId: string }) {
-  const lang = useLanguage(ccb);
-  const [shown, setShown] = useState<{ bot: { id: string; name: string }; target: ReviewTarget } | null>(null);
-  useEffect(() => {
-    let live = true, timer: ReturnType<typeof setTimeout> | undefined, last = "";
-    const tick = async () => {
-      try {
-        const answer = (await client.request({ type: "review.target", botId })) as { bot: { id: string; name: string }; target: ReviewTarget; stamp: number } | null;
-        if (live && answer && String(answer.stamp) !== last) { last = String(answer.stamp); setShown({ bot: answer.bot, target: answer.target }); }
-      } catch { /* asked again */ }
-      if (live) timer = setTimeout(tick, TARGET_POLL_MS);
-    };
-    void tick();
-    return () => { live = false; clearTimeout(timer); };
-  }, [client, botId]);
-  if (!shown) return null;
-  return <Review client={client} bot={shown.bot} target={shown.target} lang={lang} onClose={() => ccb.command("botling.openChat", botId)} />;
+  return <Worktrees client={client} bot={{ id: botId }} lang={lang} />;
 }
 
 /** Settings → Worktrees: the two settings the Developer page used to hold. */

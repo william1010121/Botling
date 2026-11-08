@@ -177,7 +177,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
       peekQuiet.current = false;
     }
   }, [peeking]);
-  // Navigation v5: the Sub bots menu left of Chat | Board | Review (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
+  // Navigation v5: the Sub bots menu left of Chat | Board (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
   // sub bot last shown under it (kept for this window only, never in a bot's context).
   const [subBotsOpen, setSubBotsOpen] = useState(false);
   const lastRooms = useRef<LastRooms>({});
@@ -702,13 +702,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
             if (ownerId !== bot.id) selectBot(ownerId);
             setTimeout(focusComposer, 0);
           }}
-          onOpenFile={(ownerId) => {
-            const owner = view.bots.find((candidate) => candidate.id === ownerId);
-            const review = owner ? mainTabsFor(view.plugins, owner).find((candidate) => candidate.plugin === "botling.git" && candidate.id === "botling.git.review") : undefined;
-            if (!owner || !review) { setError("No Review tab here: turn on the botling.git plugin to see diffs."); return; }
-            if (ownerId !== bot.id) selectBot(ownerId);
-            chooseTab(ownerId, review);
-          }}
+          onOpenFile={(ownerId, path, workerId) => { void client.request({ type: "worker.file", botId: ownerId, subagentId: workerId, path }).catch(fail); }}
           focusWorker={focusWorker}
           seenWorkers={seenFailed}
           openSignal={drawerSignal}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// The frame side: the shipped ui.js (the built bundle, on Preact) registers botling.git's three views and draws each from what the
-// program part answers; the frame's calls become the requests the components make, and "Review" opens the Review tab.
+// The frame side: the shipped ui.js (the built bundle, on Preact) registers botling.git's two views (Worktrees block, settings page) and draws each from what the
+// program part answers; the frame's calls become the requests the components make. There is no Review tab.
 import { beforeEach, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ it("the frame's client turns commands into calls of the program part, a link int
   expect(failure.error.message).toBe("Nothing to merge.");
 });
 
-it("registers the Worktrees block, the Review tab and the settings page, and draws them (Review in the toolbar opens the tab on the main checkout)", async () => {
+it("registers the Worktrees block and the settings page (no Review tab, no Review buttons) and draws them", async () => {
   const views = new Map<string, (root: HTMLElement) => (() => void) | void>();
   const commands: string[][] = [], calls: [string, any][] = [];
   const item = { id: "w1", branch: "bot/feat", path: "/w/feat", base: "main", task: null, owner: null, status: "active", createdAt: "2026-01-01T00:00:00Z", changedFiles: 2, ahead: 1, missing: false };
@@ -46,7 +46,7 @@ it("registers the Worktrees block, the Review tab and the settings page, and dra
   };
   const module = await import(/* @vite-ignore */ `data:text/javascript;base64,${Buffer.from(source()).toString("base64")}`);
   module.activate(ccb);
-  expect([...views.keys()]).toEqual(["botling.git.worktrees", "botling.git.review", "botling.git.settings"]);
+  expect([...views.keys()]).toEqual(["botling.git.worktrees", "botling.git.settings"]);
 
   const block = document.createElement("div"); document.body.append(block);
   const stop = views.get("botling.git.worktrees")!(block);
@@ -54,16 +54,9 @@ it("registers the Worktrees block, the Review tab and the settings page, and dra
   expect(calls.find(([method]) => method === "worktrees.list")![1]).toEqual({ botId: "B1" });
   expect(document.head.querySelector("style")?.textContent).toContain("--ground");
   expect(document.head.querySelector("style")?.textContent).toContain(".rv-file");
-  block.querySelector(".worktrees-toolbar button")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  await vi.waitFor(() => expect(commands).toEqual([["botling.openTab", "B1", "botling.git", "botling.git.review"]]));
-  expect(calls.find(([method]) => method === "review.open")![1]).toMatchObject({ botId: "B1", target: { worktreeId: null } });
+  expect(block.textContent).not.toContain("Review");
+  expect(commands).toEqual([]);
   (stop as () => void)();
-
-  const tab = document.createElement("div"); document.body.append(tab);
-  views.get("botling.git.review")!(tab);
-  await vi.waitFor(() => expect(tab.textContent).toContain("src/a.ts"));
-  expect(calls.find(([method]) => method === "review.files")![1]).toMatchObject({ botId: "B1", worktreeId: "w1", scope: "branch" });
-  await vi.waitFor(() => expect(tab.textContent).toContain("new"));
 
   const page = document.createElement("div"); document.body.append(page);
   views.get("botling.git.settings")!(page);

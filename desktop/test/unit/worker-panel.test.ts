@@ -259,7 +259,7 @@ describe("v5 extras in the panel", () => {
     } finally { await unmount(); vi.useRealTimers(); }
   });
 
-  it("a focus request opens that worker's log directly; a changed file opens in Review", async () => {
+  it("a focus request opens that worker's log directly; a changed file asks to open (the worker's id with it)", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
     const b = bot({ id: "b", name: "botling", subagentRows: [row({ id: "f", status: "failed" })] });
     const onOpenFile = vi.fn();
@@ -269,7 +269,7 @@ describe("v5 extras in the panel", () => {
       const file = host.querySelector<HTMLButtonElement>(".wk-files button.wk-fc")!;
       expect(file.textContent).toBe("/w/src/a.ts");
       await act(async () => file.click());
-      expect(onOpenFile).toHaveBeenCalledWith("b", "/w/src/a.ts");
+      expect(onOpenFile).toHaveBeenCalledWith("b", "/w/src/a.ts", "f");
     } finally { await unmount(); vi.useRealTimers(); }
   });
 
