@@ -384,6 +384,7 @@ export class Conversations {
     chat.guestReactions(parsed.reactions, `guest:${member.id}:${answer.engine}`);
     const line: ChatRecord = { id: newId(), role: "bot", text: parsed.body, date: toSwiftDate(), sourceID: member.id, engine: answer.engine };
     if (parsed.choices) line.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
+    if (parsed.questions) line.questions = parsed.questions;
     if (parsed.displays.length) line.displays = parsed.displays as unknown as ChatRecord["displays"];
     if (answer.steps.length) line.steps = answer.steps;
     keep?.(line);

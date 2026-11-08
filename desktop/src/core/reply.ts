@@ -1,7 +1,8 @@
 // A bot's reply split into what the chat shows and the tags the app acts on, ported from the
 // Swift `ReplyParser` (Sources/ClaudeCodeBotCore/ReplyParser.swift). Same tags, same rules:
 // - tags inside code (```fenced``` or `inline`) are examples, not requests;
-// - <choices> becomes buttons (the last block wins; every block comes out of the text);
+// - <choices> becomes buttons (the last block wins; every block comes out of the text); blocks that name their
+//   question (`<choices question="…">`, `multiple="true"`) are a group of up to 5 answered together (questions.ts);
 // - <no-reply/> means "nothing for the user" (only a turn claude started itself may go unshown);
 // - <task …/> lines update the chat's task cards (tasks.ts);
 // - <reaction …/> on a line of its own sets the bot's own reaction;
@@ -15,6 +16,7 @@
 // Offsets are UTF-16, as NSString's and the chat page's.
 import { refreshSeconds } from "./components/library";
 import { REACTION_PALETTE } from "./briefing";
+import { isGroupBlock, isMultiple, questionGroup, type Question } from "./questions";
 
 export type BotRequest =
   | { kind: "component"; name: string; request: string }
@@ -56,6 +58,8 @@ export interface PluginTag { tag: string; attributes: Record<string, string>; bo
 export interface Parsed {
   /** Plugins' tags outside code, in order; absent when there are none. */
   pluginTags?: PluginTag[];
+  /** Several questions answered together (`<choices question="…">` blocks); absent for a plain <choices>. `choices` is then the first one's options. */
+  questions?: Question[];
   body: string;
   choices: Choice[] | null;
   requests: BotRequest[];
@@ -68,7 +72,7 @@ export interface Parsed {
 
 const decisionReferenceTag = () => /^ {0,3}<decision-ref\s+id="([0-9A-Fa-f-]{36})"\s*\/>[ \t]*$/gm;
 const quotedHTMLRegion = () => /<(pre|code|blockquote)\b[^>]*>[\s\S]*?<\/\1\s*>|<!--[\s\S]*?-->/gi;
-const choicesBlock = () => /<choices>\s*([\s\S]*?)\s*<\/choices>/g;
+const choicesBlock = () => /<choices((?:\s+[A-Za-z-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*>\s*([\s\S]*?)\s*<\/choices>/g;
 const requestTag = () => /<(component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*([\s\S]*?)\s*<\/\1>/g;
 const subBotTag = () => /<sub-bot((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/sub-bot>)/g;
 const removeSubBotTag = () => /<remove-sub-bot\s+name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/remove-sub-bot>)/g;
@@ -309,13 +313,21 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
   if (references.length === 1 && UUID_RE.test(group(text, references[0]!, 0))) decisionReference = group(text, references[0]!, 0).toUpperCase();
   for (const hit of references.reverse()) replace(hit.index, hit.length, "");
 
-  // Several blocks: the last one (taken first, from the end) is the question.
-  let choices: Choice[] | null = null;
-  take(choicesBlock, ([inner]) => {
-    if (choices) return;
-    const parsed = inner!.split("\n").map(choiceFrom).filter((choice): choice is Choice => !!choice);
-    choices = parsed.length ? parsed : null;
+  // Several plain blocks: the last one with options is the question. Blocks that name their question are a group, in order.
+  const blocks: { raw: string; found: Record<string, string>; options: Choice[] }[] = [];
+  take(choicesBlock, ([raw, inner]) => {
+    blocks.unshift({ raw: raw!, found: attributes(raw!), options: inner!.split("\n").map(choiceFrom).filter((choice): choice is Choice => !!choice) });
   });
+  let choices: Choice[] | null = null;
+  let questions: Question[] | null = null;
+  if (blocks.some((block) => isGroupBlock(block.found, block.raw))) {
+    questions = questionGroup(blocks.map((block) => ({ question: block.found.question ?? "", multiple: isMultiple(block.found, block.raw), options: block.options })));
+    if (questions) choices = questions[0]!.options.map((option) => ({ ...option }));
+  }
+  if (!questions) {
+    // The last block with options (an empty one leaves the one before it), as 1.x.
+    choices = blocks.findLast((block) => block.options.length)?.options ?? null;
+  }
 
   const completionSignals: CompletionSignal[] = [];
   for (const hit of hits(terminalTag(), mask).reverse()) {
@@ -326,7 +338,7 @@ export function parseReply(reply: string, tags: readonly string[] = declaredTags
 
   const { body, places } = placing(text, displays.length);
   displays.forEach((display, i) => { if (places[i] != null) display.at = places[i]!; });
-  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(pluginTags.length ? { pluginTags } : {}) };
+  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(pluginTags.length ? { pluginTags } : {}), ...(questions ? { questions } : {}) };
 }
 
 /** The text without its markers, trimmed, and where each marker was (UTF-16 offsets). */

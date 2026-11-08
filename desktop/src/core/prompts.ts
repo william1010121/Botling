@@ -40,6 +40,19 @@ export const isResultPublishing = (value: unknown): value is ResultPublishing =>
 
 /** After the choices rule's memory sentence (approved 2026-11-08, Math: a decision only written into memory never reached the user). */
 export const CHOICES_NOT_MEMORY_RULE = "That note is besides the choices block in your reply, never instead of it: the user does not see your memory file.";
+/** After the choices rule (approved 2026-11-08): several decisions asked at once, single-choice or multi-select, answered together. */
+export const QUESTION_GROUP_RULE = [
+  "  Several decisions at once (at most 5, only as many as you really need): one block per question, each naming it, all at the end of the reply:",
+  "  <choices question=\"Which database?\">",
+  "  * Postgres | one sentence on the cost",
+  "  - SQLite | one sentence on the cost",
+  "  </choices>",
+  "  <choices question=\"Which features?\" multiple=\"true\">",
+  "  - Login",
+  "  - Export",
+  "  </choices>",
+  "  2 to 6 options each; multiple=\"true\" lets the user tick several (* optional there, exactly one otherwise). The user answers them all with one Submit; you receive one message listing each question and its answer, \"(Skipped)\" for one they skipped.",
+].join("\n");
 
 /** `AppLanguage.preferred`: the first of the system's preferred languages the app has, else English. */
 export function preferredLanguage(languages: string[]): AppLanguage {
@@ -335,6 +348,7 @@ export function botPrompts({ profile, results: chosen = "artifactUnlessSensitive
     "  </choices>",
     `  2 to 4 options; start the recommended one with * (exactly one), the others with -. Also write the decision into the "${waiting}" section of your memory file. ${CHOICES_NOT_MEMORY_RULE}`,
     `  Once the user picks, you receive the text of the chosen option; carry on with it and move it from "${waiting}" to "${decided}".`,
+    QUESTION_GROUP_RULE,
     "- The app keeps a task card for each piece of work the user gives you. When you take on real work (not a quick answer), keep its card current with one line in your reply, which the app hides from the chat: <task name=\"short name\" now=\"what you are doing\" next=\"what comes next\" blocked=\"what stops you, or empty\" state=\"running\"/>. state is running, waiting (the user must act), done or stopped. Every attribute is optional; leave out what has not changed. For a follow-up to an earlier task, add continues=\"its name\" instead of starting a new one; for two separate pieces of work in one message, write two lines. A task has one owner, the one who took it on; only the owner changes its state or says it is done.",
     "- When auto mode blocks a tool call you need (\"denied by the Claude Code auto mode classifier\"), the app shows the user a card to allow that very call. Never ask the user to add a permission rule or edit .claude/settings.local.json or any settings file by hand, and never write those files yourself: say in one sentence what you wanted to do and why, and no choices block for it. When \"(App: The user allowed …\" arrives, run it again exactly as it was; when they did not allow it, carry on without it.",
     `- When a background task's notification wakes you (a subagent, a background command or a Monitor reporting) and it is only interim (a subagent still waiting on its own work, a Monitor event with nothing new), reply with only <no-reply/> and the app shows nothing. A subagent that finished (its hand-back report, or a notification with status completed or failed) is never interim: always tell the user what came of it, even when its report says little ("pending", empty)${completionFollowUp} Likewise report real news from other work (a result, a failure, something the user must decide).`,

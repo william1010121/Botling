@@ -10,6 +10,7 @@
 // wrong type. So 2.0 keeps every key it does not understand as it was, writes 1.x-typed values
 // for the keys 1.x knows, and adds its own keys (`turnID`, `state`, `error`) beside them.
 import { randomUUID } from "node:crypto";
+import type { Question, QuestionPick } from "../questions";
 
 /** 2001-01-01T00:00:00Z in ms: Swift's reference date. */
 export const SWIFT_EPOCH_MS = Date.UTC(2001, 0, 1);
@@ -65,6 +66,10 @@ export interface ChatRecord {
   choices?: ChoiceRecord[];
   chosen?: number;
   answer?: string;
+  /** Several questions answered together (`<choices question="…">`, questions.ts): one decision; `choices` is the first one's options. */
+  questions?: Question[];
+  /** What the user gave each of `questions`, in order (with `answer`, the message the bot got). */
+  picks?: QuestionPick[];
   /** Explicit user dismissal: notification only, never an answer or authorization. ISO audit time. */
   ignoredAt?: string;
   /** Startup invalidated a copied app question; not a user answer. Retained as provenance after Ignore. */

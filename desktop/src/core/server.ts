@@ -68,6 +68,7 @@ import { status, statusText } from "../contract/bot-status";
 import { currentChat, WorkspaceWatch, type BotSummary, type CurrentChat, type ShownChat, type MemorySections, type ResultLink, type WorkspaceDigest, type WorkspaceSource } from "./workspace";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
+import { answerMessage, savedQuestions, validPicks, type QuestionPick } from "./questions";
 import { handoffFile, progressFile, progressStatus, runHandoff, fallbackHandoff, subBotBriefing, subBotFirstMessage, subBotDirectFirstMessage, directSubBotEngine, SUB_BOT_WAIT_MS, safeToken, subBotEngine, wrapUpMessage } from "./sub-bots";
 import { Conversations } from "./conversations";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
@@ -1673,7 +1674,7 @@ First write a test that shows this, then fix it.`;
       return;
     }
     const copy: string = main.appNotice(`${profile.name}: ${question.text}`, question.choices, (index) => this.pickOnCopy(copy, index), {
-      onAnswer: (text, files) => this.answerOnCopy(copy, text, files), sourceID: profile.id, sourceMessageID: question.id,
+      onAnswer: (text, files) => this.answerOnCopy(copy, text, files), sourceID: profile.id, sourceMessageID: question.id, ...(question.questions ? { questions: question.questions } : {}),
     });
     this.copies.set(copy, { botId: profile.id, questionId: question.id });
     this.refreshWaiting();
@@ -1713,7 +1714,11 @@ First write a test that shows this, then fix it.`;
     const bot = source ? this.bots.get(source.botId) : undefined;
     if (!source || !bot) { this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, { answer: "No longer needed" }); return false; }
     let accepted = false;
-    try { accepted = bot.answer(source.questionId, text, files).accepted; } catch { /* gone */ }
+    // A question group answered on its copy: the original gets the same picks (its line shows them too).
+    const copyLine = this.bots.get(MAIN_BOT_ID)?.line(copy);
+    const picks = copyLine?.picks && bot.line(source.questionId)?.questions ? copyLine.picks : undefined;
+    try { accepted = bot.answer(source.questionId, text, files, picks).accepted; } catch { /* gone */ }
+    if (!accepted && copyLine) delete copyLine.picks;
     this.copies.delete(copy);
     this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, accepted ? { answer: answerLabel(text, files.length) } : { answer: "No longer needed" });
     this.refreshWaiting();
@@ -1774,8 +1779,11 @@ First write a test that shows this, then fix it.`;
       const legacyText = firstLine(question.text).slice(0, 400);
       // Older versions keyed an ignored item by its first line; changing the preview must not revive it.
       if (ignored.has(`${botId}-${legacyText}`)) return;
-      const choices = chat?.line(question.id)?.choices;
-      const labels = Array.isArray(choices) ? choices.flatMap((choice, index) =>
+      const line = chat?.line(question.id);
+      const choices = line?.choices;
+      const group = savedQuestions(line?.questions);
+      // A question group: its questions, numbered (each one's options stay in the chat).
+      const labels = group ? group.map((item, index) => `${index + 1}. ${(item.question || item.options.map((option) => option.label).join(" / ")).replace(/\s+/g, " ").trim()}`) : Array.isArray(choices) ? choices.flatMap((choice, index) =>
         typeof choice?.label === "string" && choice.label.trim() ? [`${index + 1}. ${choice.label.trim().replace(/\s+/g, " ")}`] : []) : [];
       // Keep a directly stated question for context (e.g. Yes / No); never infer one from prose.
       const questionLead = /[?？][*_`]*$/.test(legacyText.trim()) ? `${legacyText} — ` : "";
@@ -2465,6 +2473,20 @@ First write a test that shows this, then fix it.`;
     return { accepted: true };
   }
 
+  /** A called-in bot's question group answered together: its one answer message goes to that bot, as words would. */
+  private calledInGroupAnswer(botId: string, messageId: string, picks: QuestionPick[], files: number): { accepted: boolean } | null {
+    const record = this.bot(botId).line(messageId);
+    if (!record || !this.conversations.isCalledIn(record, botId)) return null;
+    const questions = savedQuestions(record.questions);
+    const clean = questions ? validPicks(questions, picks) : null;
+    if (!questions || !clean) throw new ContractError("bad_request", "Those answers do not fit the questions.");
+    if (!isOpenQuestion(record)) return { accepted: false };
+    record.picks = clean;
+    const result = this.calledInAnswer(botId, messageId, answerMessage(questions, clean), files);
+    if (!result?.accepted && isOpenQuestion(record)) delete record.picks;
+    return result;
+  }
+
   private bot(id: string): Bot {
     const bot = this.bots.get(id);
     if (!bot) throw new ContractError("not_found", "No such bot.");
@@ -2592,7 +2614,10 @@ First write a test that shows this, then fix it.`;
       case "chat.answer": {
         // A component's pictures: written to incoming/, kept by the bot with the answer, then removed.
         const files = (cmd.images ?? []).flatMap((image) => writeIncoming(join(this.options.dataDir, "incoming"), image.name, image.base64) ?? []);
-        try { return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files); } finally { for (const file of files) rmSync(file, { force: true }); }
+        try {
+          if (cmd.picks) return this.calledInGroupAnswer(cmd.botId, cmd.messageId, cmd.picks, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files, cmd.picks);
+          return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files);
+        } finally { for (const file of files) rmSync(file, { force: true }); }
       }
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
       case "chat.history": return this.bot(cmd.botId).history(cmd.before, cmd.bytes, cmd.until);

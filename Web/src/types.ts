@@ -53,6 +53,20 @@ export interface TaskCardView {
   selected?: boolean | null;
 }
 
+/** One question of a group asked together: single-choice, or several allowed (`multiple`). */
+export interface QuestionView {
+  question: string;
+  multiple: boolean;
+  options: ChoiceView[];
+}
+
+/** What the user gave one question of a group: options ticked (indices), their own words, or a skip. */
+export interface QuestionPickView {
+  options: number[];
+  other: string | null;
+  skipped: boolean;
+}
+
 export interface MessageView {
   sourceAuthor?: string | null;
   sourceEngine?: string | null;
@@ -70,6 +84,10 @@ export interface MessageView {
   choices: ChoiceView[] | null;
   chosen: number | null;
   answer: string | null;
+  /** Several questions answered together with one Submit; `choices` is then the first one's options. */
+  questions?: QuestionView[] | null;
+  /** Once answered: each question's answer, in order. */
+  picks?: QuestionPickView[] | null;
   ignoredAt?: string;
   /** Desktop app-owned action; absent on older hosts. */
   canIgnoreQuestion?: boolean;
@@ -407,7 +425,7 @@ export type Action =
   | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number; text?: string; images?: { name: string; base64: string }[] }
   | { type: "ignoreQuestion"; messageID: string }
-  | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
+  | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[]; picks?: { options: number[]; other?: string; skipped?: boolean }[] }
   | { type: "setReaction"; messageID: string; emoji: string; present: boolean }
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
