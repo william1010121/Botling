@@ -44,11 +44,13 @@ export interface PluginEvents {
   libraryChanged: Record<string, never>;
   /** Maintainer's reply showed (after the tags in it were handed over): its line's role ("bot" or "error"), its words (the first 2,000 characters) and whether its subagents are still at work. */
   maintainerReplied: { role: string; text: string; running: boolean };
+  /** A bot's note (`notes.read`) changed on disk by someone else (a bot, another editor) since this plugin read or saved it; `mtime` null: it was removed. Read it again with `notes.read`. */
+  noteChanged: { botId: string; mtime: number | null };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -363,6 +365,11 @@ export interface AppApi {
  */
 export interface StudioApi { request(method: string, params?: JSONValue): Promise<unknown> }
 
+/** A bot's note as `notes.read` gives it: its absolute path (to show, never to write by hand), its words and its mtime (ms). */
+export interface BotNote { path: string; text: string; mtime: number }
+/** What `notes.write` did: saved, or refused because the note on disk changed since `base` (its words and mtime come back to take in). */
+export type NoteSave = { saved: true; mtime: number } | { saved: false; text: string; mtime: number };
+
 export interface BotlingApi {
   /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
   readonly plugin: { name: string; version: string; dir: string; storageDir: string; appDataDir?: string };
@@ -402,6 +409,17 @@ export interface BotlingApi {
     afterReply(fn: (message: Incoming) => Incoming | string | void | Promise<Incoming | string | void>): Dispose;
   };
   commands: { register(id: string, run: (...args: unknown[]) => unknown): Dispose };
+  /**
+   * Each bot's note: one Markdown file the user keeps for that bot (the Note tab), where Botling says (<project>/.bot/note.md,
+   * a sub bot's under .bot/sub-bots/<id>/, the main bot's in its own folder); the bots are told it is there. Needs "files".
+   * A note this plugin reads or saves is watched: `events.on("noteChanged", …)` hears when it changes on disk.
+   */
+  notes: {
+    /** The note's words, made empty (with its folders) the first time. */
+    read(botId: string): Promise<BotNote>;
+    /** Saves the whole note. With `base` (the mtime last read or saved) a note changed on disk since is not overwritten. */
+    write(botId: string, text: string, opts?: { base?: number }): Promise<NoteSave>;
+  };
   keybindings: {
     /** Every key in effect ("Mod+Shift+L"): Botling's (default or the user's) and plugins' commands'. */
     list(): Promise<Keybinding[]>;
@@ -662,6 +680,10 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       briefing: async (briefing) => { await ask("app.briefing", { briefing }); },
     },
     studio: { request: async (method, params) => ask(`studio.${String(method)}`, (params ?? {}) as Record<string, JSONValue>) },
+    notes: {
+      read: async (botId) => (await ask("notes.read", { bot: botId })) as BotNote,
+      write: async (botId, text, opts = {}) => (await ask("notes.write", { bot: botId, text, ...(opts.base === undefined ? {} : { base: opts.base }) })) as NoteSave,
+    },
     sessions: {
       setFolder: async (botId, folder, reason) => { await ask("sessions.folder", { bot: botId, folder, ...(reason ? { reason } : {}) }); },
       syncFolders: async (folders) => { await ask("sessions.folders", { folders }); },
