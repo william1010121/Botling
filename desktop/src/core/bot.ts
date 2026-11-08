@@ -2526,7 +2526,7 @@ export class Bot {
     record.decisionID = reference;
     if (source.choices) record.choices = source.choices.map((choice) => ({ ...choice }));
     if (source.questions) record.questions = source.questions.map((question) => ({ ...question, options: question.options.map((option) => ({ ...option })) }));
-    if (source.picks) record.picks = source.picks.map((pick) => ({ ...pick, options: [...pick.options] }));
+    if (source.picks) record.picks = source.picks.map((pick) => ({ ...pick, options: [...pick.options], ...(pick.notes ? { notes: { ...pick.notes } } : {}) }));
     if (source.chosen !== undefined) record.chosen = source.chosen;
     if (source.answer !== undefined) record.answer = source.answer;
     if (source.ignoredAt !== undefined) record.ignoredAt = source.ignoredAt;

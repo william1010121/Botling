@@ -105,6 +105,25 @@ describe("question group answers", () => {
     expect(answerSummary(questions, picks)).toBe("Postgres · Login; Export; Other: SSO · Monday · (Skipped)");
   });
 
+  it("keeps the per-option notes the user typed", () => {
+    const picks = validPicks(questions, [
+      { options: [1], notes: { "1": " managed is fine " } },
+      { options: [0, 1], other: "SSO", notes: { "0": "first", "2": "not picked", "x": "bad", "1": "   " } },
+      { options: [0], notes: { "0": "a".repeat(1_500) } },
+      { options: [], skipped: true, notes: { "0": "ignored" } },
+    ])!;
+    expect(picks[0]).toEqual({ options: [1], notes: { "1": "managed is fine" } });
+    expect(picks[1]).toEqual({ options: [0, 1], other: "SSO", notes: { "0": "first" } });
+    expect(picks[2].notes!["0"]).toHaveLength(1_000);
+    expect(picks[3]).toEqual({ options: [], skipped: true });
+    expect(answerMessage(questions.slice(0, 2), picks.slice(0, 2))).toBe([
+      "1. Which database?", "→ SQLite (Note: managed is fine)",
+      "2. Which features? (several allowed)", "→ Login (Note: first); Export; Other: SSO",
+    ].join("\n"));
+    expect(answerSummary(questions.slice(0, 2), picks.slice(0, 2))).toBe("SQLite (Note: managed is fine) · Login (Note: first); Export; Other: SSO");
+    expect(savedPicks(questions.slice(0, 1), JSON.parse(JSON.stringify(picks.slice(0, 1))))).toEqual(picks.slice(0, 1));
+  });
+
   it("reads saved questions and picks back defensively", () => {
     expect(savedQuestions([{ question: 1, options: [{ label: "a" }, { label: "" }, { label: "b", recommended: true }] }, "junk"]))
       .toEqual([{ question: "", multiple: false, options: [{ label: "a", recommended: false }, { label: "b", recommended: true }] }]);

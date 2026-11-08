@@ -9,8 +9,8 @@ export interface QuestionOption { label: string; detail?: string; recommended: b
 /** One question of a group. `question` may be "" (a block with only `multiple`). */
 export interface Question { question: string; multiple: boolean; options: QuestionOption[] }
 
-/** What the user gave one question: the options ticked (indices, ascending), typed "Other" words, or a skip. */
-export interface QuestionPick { options: number[]; other?: string; skipped?: boolean }
+/** What the user gave one question: the options ticked (indices, ascending), typed "Other" words, a note per ticked option (keyed by index), or a skip. */
+export interface QuestionPick { options: number[]; other?: string; skipped?: boolean; notes?: Record<string, string> }
 
 export const MAX_QUESTIONS = 5;
 export const MAX_QUESTION_OPTIONS = 6;
@@ -68,15 +68,33 @@ export function validPicks(questions: readonly Question[], picks: readonly Quest
     if (!options.length && !other) return null;
     // A single-choice question takes one option or its own words, never both.
     if (!question.multiple && (options.length > 1 || (options.length && other))) return null;
-    clean.push({ options, ...(other ? { other } : {}) });
+    const notes = cleanNotes(pick.notes, options);
+    clean.push({ options, ...(other ? { other } : {}), ...(notes ? { notes } : {}) });
   }
   return clean;
+}
+
+/** Notes keyed by the index of a ticked option: trimmed, capped, empties and strays dropped; undefined when none is left. */
+function cleanNotes(value: unknown, options: readonly number[]): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const notes: Record<string, string> = {};
+  for (const index of options) {
+    const note = (value as Record<string, unknown>)[String(index)];
+    const text = typeof note === "string" ? note.trim().slice(0, 1_000) : "";
+    if (text) notes[String(index)] = text;
+  }
+  return Object.keys(notes).length ? notes : undefined;
 }
 
 /** What one question's answer says: the ticked labels, then "Other: …", or "(Skipped)". */
 export function pickLabel(question: Question, pick: QuestionPick): string {
   if (pick.skipped) return SKIPPED;
-  const parts = pick.options.map((index) => question.options[index]?.label ?? "").filter(Boolean);
+  const parts = pick.options.flatMap((index) => {
+    const label = question.options[index]?.label;
+    if (!label) return [];
+    const note = pick.notes?.[String(index)];
+    return [note ? `${label} (Note: ${note})` : label];
+  });
   if (pick.other) parts.push(parts.length || question.multiple ? `Other: ${pick.other}` : pick.other);
   return parts.join("; ") || SKIPPED;
 }
