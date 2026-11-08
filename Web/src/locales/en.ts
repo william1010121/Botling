@@ -109,6 +109,7 @@ export const en = {
   // composer.ts: the input box
   "composer.addFiles": "Add images or files",
   "composer.send": "Send",
+  "composer.escapeAgain": "Press Esc again to stop",
   "composer.message": "Message",
   "composer.kindCommand": "command",
   "composer.kindFile": "File",

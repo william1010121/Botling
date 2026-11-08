@@ -108,6 +108,7 @@ export const zhHant: Dictionary = {
   // composer.ts: the input box
   "composer.addFiles": "加入圖片或檔案",
   "composer.send": "傳送",
+  "composer.escapeAgain": "再按一次 Esc 停止",
   "composer.message": "訊息",
   "composer.kindCommand": "指令",
   "composer.kindFile": "檔案",

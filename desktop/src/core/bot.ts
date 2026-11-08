@@ -17,7 +17,7 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 //   subagent) the bot tidies — the 1.x "tidy" turn, which updates memory.md and is never shown —
 //   then its head's stdin is closed. Quitting the app tidies awake bots too, with no time limit (1.x).
 // - One turn at a time. A message while a reply is written never stops it (1.x steering; 2.x has no
-//   Stop button, Escape stops):
+//   Stop button, Escape pressed twice stops):
 //   · a head at work on anything but handed-over work or the tidy takes the message into the turn
 //     under way — claude as a message on its stdin, read in at its next step; Codex as `turn/steer` —
 //     and that turn goes on: one reply answers both, after your new line, even with an approval

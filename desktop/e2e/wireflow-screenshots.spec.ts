@@ -81,6 +81,8 @@ test.describe("Wireflow Automated Screenshot Pipeline & Verification", () => {
       expect(existsSync(join(screensDir, "S2.png"))).toBe(true);
 
       // E1: Engine Interrupted / Error State
+      // Escape twice stops a reply (one press only shows "Press Esc again to stop").
+      await editor.keyboard.press("Escape");
       await editor.keyboard.press("Escape");
       await editor.waitForTimeout(400);
       await captureWindow(app, "E1.png");

@@ -9,7 +9,7 @@
    Web/src owns the 12px inset and pointer-events:none, so drops still reach their targets. */
 body.dropping::after { z-index: 50; }
 
-/* A reply cut off (stopped with Escape, or the app went away) keeps its words with no "Interrupted" under
+/* A reply cut off (stopped with Escape twice, or the app went away) keeps its words with no "Interrupted" under
    them (2.x only; the 1.x app shows it). The page still knows it was cut off (its avatar sleeps). */
 .interrupted-note { display: none; }
 
@@ -71,3 +71,14 @@ body.board .message-width-handle, body.panel-mode .message-width-handle { displa
 body.board .composer-bar, body.board .composer-bar-card, body.panel-mode .composer-bar { display: none; }
 body.board #pin-area.has-composer-bar { min-height: 0; }
 @media (width < 480px) { .composer-bar { right: 16px; } }
+
+/* "Press Esc again to stop", under the input box after one Escape while a reply is written (escape-stop.ts).
+   Quiet and brief: it fades in, and out when the double-press window ends. */
+.escape-stop-hint {
+  position: fixed; z-index: 40; transform: translate(-50%, 2px);
+  padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border);
+  background: var(--popover); color: var(--faint); font-size: 11.5px; line-height: 18px; white-space: nowrap;
+  pointer-events: none; opacity: 0; transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.escape-stop-hint.shown { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) { .escape-stop-hint { transition: none; } }

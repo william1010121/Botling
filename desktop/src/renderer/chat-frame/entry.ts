@@ -12,6 +12,8 @@ import "./composer-bar";
 import { installInputRecovery } from "./input-focus";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
+import { installEscapeStop } from "./escape-stop";
+import { t } from "../../../../Web/src/i18n";
 import { EditorView } from "@codemirror/view";
 import type { FrameExtras } from "../payload";
 import { WEB } from "./protocol";
@@ -186,10 +188,11 @@ nativeChat?.subscribe(packet => {
   }
 });
 
-// Escape stops a reply being written, as in a terminal. (There is no Stop button: a message sent while
-// it writes never stops it, the bot hears it and carries on.)
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && document.body.classList.contains("botling-running") && !event.isComposing) toShell({ botling: "stop" });
+// Escape twice, close together, stops a reply being written (escape-stop.ts); one press only says so.
+installEscapeStop({
+  running: () => document.body.classList.contains("botling-running"),
+  stop: () => toShell({ botling: "stop" }),
+  words: () => t("composer.escapeAgain"),
 });
 
 /**
