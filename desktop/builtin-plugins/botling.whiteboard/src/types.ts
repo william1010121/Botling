@@ -1,8 +1,5 @@
 // The shapes botling.whiteboard's two halves share: main.ts (its program part, in the plugin host) builds a
 // `BoardView` from the workspace, ui.tsx (its frame) draws it. Plain data, so it crosses `ccb.call` as JSON.
-import type { TaskView } from "../../../src/contract";
-
-export type { TaskView as Task };
 export type Look = "original" | "cute";
 export type Lang = "en" | "zh-Hant";
 
@@ -42,19 +39,14 @@ export interface Picture {
   ranAt: string | null;
 }
 
-export interface LatestAction { kind: "done" | "now" | "waiting"; text: string; at: string }
-
 /** One bot's part of the board (the core's `WhiteboardBotView`). */
 export interface Entry {
   botId: string;
   currentStatus: string[];
   inProgress: string[];
   decided: string[];
-  tasks: import("../../../src/contract").TaskView[];
   results: Result[];
   picture: Picture | null;
-  latest?: LatestAction | null;
-  doneDays?: { day: string; done: number; manual: number }[];
   description?: string | null;
   approvals?: Approval[];
 }

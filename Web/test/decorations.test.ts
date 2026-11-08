@@ -149,12 +149,13 @@ describe("DecorationLayer", () => {
     expect(order()).toEqual(["u", "[k]", "a", "b", "c", "d"]);
   });
 
-  it("opens a task as its chip does", () => {
+  it("still hands an older web part openTask, which does nothing now that task cards are gone", () => {
     const layer = new DecorationLayer();
     let open: ((id: string) => void) | null = null;
     layer.register("p", { draw: (_root, _decoration, context) => { open = context.openTask; } });
     layer.update(state([fold("k", ["a"])]), row);
-    open!("T1");
-    expect(sent.at(-1)).toEqual({ type: "selectTask", id: "T1" });
+    const before = sent.length;
+    expect(() => open!("T1")).not.toThrow();
+    expect(sent.length).toBe(before);
   });
 });

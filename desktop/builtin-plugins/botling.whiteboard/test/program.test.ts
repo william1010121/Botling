@@ -81,10 +81,10 @@ describe("the board", () => {
     expect(view.bots.map((bot: any) => [bot.id, bot.phase, bot.working, bot.approvals])).toEqual([["main", "asleep", false, 0], ["site", "awake", true, 1], ["sub", "asleep", false, 0]]);
     // No part for the main bot or a sub bot (it shares its project's); the part has what the core's had.
     expect(view.entries.map((entry: any) => entry.botId)).toEqual(["site"]);
-    expect(view.entries[0]).toMatchObject({ botId: "site", currentStatus: ["site is fine."], picture: null, latest: null, description: "site is fine." });
-    expect(t.calls).toContainEqual(["tasks", "site", { limit: 100 }]);
+    expect(view.entries[0]).toMatchObject({ botId: "site", currentStatus: ["site is fine."], picture: null, description: "site is fine." });
+    expect(view.entries[0]).not.toHaveProperty("tasks");
+    expect(t.calls.some((entry) => entry[0] === "tasks" || entry[0] === "taskHistory")).toBe(false);
     expect(t.calls).toContainEqual(["results", "site", { limit: 12 }]);
-    expect(t.calls).toContainEqual(["taskHistory", "site", 14]);
     expect(view.faces).toEqual({ main: "face:main:original", site: "face:site:original", sub: "face:sub:original" });
     expect(view.statuses.site).toEqual({ key: "waiting", text: "Waiting for your answer" });
     expect(view.stamp).toMatch(/^\d+:\d+$/);
@@ -103,7 +103,7 @@ describe("the board", () => {
     expect((await t.board(first.stamp)).same).toBe(true);
     expect(t.reads()).toBe(reads + 1);
     t.state.bots = [t.state.bots[0]!, summary("site", { busy: true, asleep: false }), t.state.bots[2]!];
-    t.fire({ kinds: ["bots", "tasks"] });
+    t.fire({ kinds: ["bots"] });
     const moved = await t.board(first.stamp);
     expect(moved.stamp).not.toBe(first.stamp);
     expect(moved.bots.find((bot: any) => bot.id === "site")).toMatchObject({ working: true });
@@ -149,8 +149,8 @@ describe("the board", () => {
     await t.call("send", { text: "  How is everyone?  " });
     expect(t.calls).toContainEqual(["send", "main", "How is everyone?", { as: "user" }]);
     await expect(t.call("send", { text: "  " })).rejects.toThrow("Nothing to send.");
-    await t.call("ignore", { botId: "site", text: "task:c" });
-    expect(t.calls).toContainEqual(["ignoreWaiting", "site", "task:c"]);
+    await t.call("ignore", { botId: "site", text: "Publish now?" });
+    expect(t.calls).toContainEqual(["ignoreWaiting", "site", "Publish now?"]);
   });
 });
 

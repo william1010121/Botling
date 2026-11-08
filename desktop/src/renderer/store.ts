@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { DoctorView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, ChatDecoration, ComponentInfoView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RoutineView, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { DoctorView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, ChatDecoration, ComponentInfoView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RoutineView, RunningView, StepView, SubagentView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; head?: "claude" | "codex" | "agy"; live: StepView[] }
@@ -18,7 +18,6 @@ export interface ChatView {
   running: RunningView | null;
   /** The running turn's steps so far. */
   live: StepView[];
-  tasks: TaskView[];
   runs?: RunState[];
   /** A bot with two heads: who new messages go to, the rounds line, the hand-offs. */
   heads?: HeadsView | null;
@@ -63,9 +62,9 @@ export type ChatRenderView = Pick<WorkspaceView, "chat" | "subagent" | "board" |
 
 // Worker progress changes the selected bot's sidebar row on every step. Compare only
 // its chat inputs before invalidating the expensive history conversion. Keep unknown/new
-// fields conservative; only these four known sidebar-only fields are excluded.
+// fields conservative; only these three known sidebar-only fields are excluded.
 const chatBotKey = (bot: BotView): string => {
-  const { subagentRows: _rows, unread: _unread, openTasks: _tasks, lastActivity: _activity, ...chat } = bot;
+  const { subagentRows: _rows, unread: _unread, lastActivity: _activity, ...chat } = bot;
   return JSON.stringify(chat);
 };
 
@@ -282,8 +281,6 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   switch (event.type) {
     case "message.removed":
       return withChat({ ...chat, messages: chat.messages.filter((message) => message.id !== event.messageId) });
-    case "tasks.updated":
-      return withChat({ ...chat, tasks: event.tasks });
     case "routines.updated":
       return withChat({ ...chat, routines: event.routines });
     case "subagent.updated":

@@ -45,7 +45,6 @@ export const en = {
   "catchup.manualRange": "Summary · {n} messages",
   "catchup.messages": "{n} messages",
   "catchup.links": "Links & artifacts",
-  "catchup.tasks": ["{n} task", "{n} tasks"],
   "common.close": "Close",
   "choices.recommended": "Recommended",
 } satisfies Record<string, Word>;
@@ -95,7 +94,6 @@ const zhHant: Record<Key, Word> = {
   "catchup.manualRange": "摘要範圍 · {n} 則訊息",
   "catchup.messages": "{n} 則訊息",
   "catchup.links": "連結與產出",
-  "catchup.tasks": "{n} 件事",
   "common.close": "關閉",
   "choices.recommended": "建議",
 };

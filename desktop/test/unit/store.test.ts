@@ -7,7 +7,7 @@ const botB: BotView = { ...botA, id: "B", name: "B", role: "bot", working: false
 const reply: MessageView = { id: "m1", role: "bot", text: "", time: "t", turnId: "t1", state: "streaming" };
 const snap = (epoch: string, seq: number, text = "", botId = "A"): ResultOf<"chat.snapshot"> => ({
   epoch, seq, bots: [botA, botB], imported: null, components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null },
-  chat: { botId, messages: [{ ...reply, text }], running: { turnId: "t1", messageId: "m1" }, live: [], tasks: [], runs: [], heads: null },
+  chat: { botId, messages: [{ ...reply, text }], running: { turnId: "t1", messageId: "m1" }, live: [], runs: [], heads: null },
 });
 const delta = (epoch: string, seq: number, text: string, botId = "A"): EventEnvelope =>
   ({ v: 10, epoch, seq, event: { type: "turn.delta", botId, turnId: "t1", messageId: "m1", text } });
@@ -88,7 +88,7 @@ describe("selected chat subscriptions", () => {
     const first = store.getChatView();
     for (let i = 0; i < 20; i++) {
       store.receive({ v: 10, epoch: "e1", seq: i + 2, event: { type: "bot.updated", bot: {
-        ...botA, heads: [...botA.heads], unread: i, openTasks: i,
+        ...botA, heads: [...botA.heads], unread: i,
         lastActivity: new Date(i * 1000).toISOString(),
         subagentRows: [{ id: "worker", title: `Step ${i}`, status: "running", head: "codex", startedAt: 0, endedAt: null, unsettledAt: null, settled: false, prompt: "work" }],
       } } });

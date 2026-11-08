@@ -63,7 +63,7 @@ describe("a call-in under way", () => {
       expect(BotView.safeParse(caller).success).toBe(true);
       expect(caller.callIns).toEqual([{ id: FLUX, state: "answering" }, { id: FLUX, state: "queued" }]);
       // The caller's own bot is at work: its typing bubble shows, and the call-ins still do.
-      const chat = { botId: BOTLING, messages: [], running: { turnId: "t1", messageId: "m1" }, live: [], tasks: [] };
+      const chat = { botId: BOTLING, messages: [], running: { turnId: "t1", messageId: "m1" }, live: [] };
       const state = chatState(caller, chat as any, new Date(), null, { bots: h.core.snapshot().bots }).state;
       expect(state.working).toBe(true);
       expect(state.callIns).toEqual([{ name: "flux-k8s", state: "answering" }, { name: "flux-k8s", state: "queued" }]);
@@ -87,7 +87,7 @@ describe("a call-in under way", () => {
       expect(flux.working).toBe(true);
       expect(flux.answeringIn).toBe(BOTLING);
       expect(h.events.some(({ event }) => event.type === "bot.updated" && event.bot.id === FLUX && event.bot.working)).toBe(true);
-      const own = chatState(flux, { botId: FLUX, messages: [], running: null, live: [], tasks: [] } as any, new Date(), null, { bots: h.core.snapshot().bots }).state;
+      const own = chatState(flux, { botId: FLUX, messages: [], running: null, live: [] } as any, new Date(), null, { bots: h.core.snapshot().bots }).state;
       expect(own.answeringIn).toBe("botling");
       const turn = (h.flux as any).turn;
       turn.reply.text = "Deployed.";

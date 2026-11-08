@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MobileError, MobileTransport, endpointURL } from './transport';
 import { PROTOCOL_VERSION } from '../src/contract';
 const endpoint = new URL('https://bot.test/api/mobile/command');
-const fixture = (botId = 'main') => ({ epoch: 'epoch', seq: 1, bots: [{ id: 'main', name: 'Main', role: 'main', working: false, approvals: 0, unread: 0, problem: null, heads: ['claude'] }], chat: { botId, messages: [], tasks: [] } });
+const fixture = (botId = 'main') => ({ epoch: 'epoch', seq: 1, bots: [{ id: 'main', name: 'Main', role: 'main', working: false, approvals: 0, unread: 0, problem: null, heads: ['claude'] }], chat: { botId, messages: [] } });
 function answer(result: unknown, change: Record<string, unknown> = {}) {
   return vi.fn(async (_url: unknown, init: RequestInit) => new Response(JSON.stringify({ v: PROTOCOL_VERSION, id: JSON.parse(init.body as string).id, ok: true, result, ...change }), { headers: { 'content-type': 'application/json' } }));
 }

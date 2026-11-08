@@ -6,8 +6,8 @@ import { monitorTask, type CommandMonitor } from "./agent/monitors";
 import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
 import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 // One bot in the core: its chat (kept in 1.x's chat.json format), its head (one long-lived
-// claude process), the turn under way, the tool approvals it is waiting on, its task cards
-// (tasks.json) and subagents (subagents.json).
+// claude process), the turn under way, the tool approvals it is waiting on, and its subagents
+// (subagents.json).
 //
 // Rules, as in the Swift `Bot` (Bot.swift) unless said otherwise:
 // - Waking: an asleep bot's head starts a NEW claude session, and its first message carries the
@@ -42,7 +42,7 @@ import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
 // - A head that crashes fails the turn it was on and the bot is asleep, as in 1.x: the next message
 //   wakes a new session (briefed from memory.md and the chat). A non-zero exit says so in the chat.
 // - A reply's tags are acted on (reply.ts): <choices> become buttons whose pick goes back as the
-//   user's answer, <task> lines move the task cards, <reaction> lines set the bot's reaction,
+//   user's answer, <task> lines (task cards, removed) are dropped, <reaction> lines set the bot's reaction,
 //   <no-reply/> leaves a turn claude started itself (a background subagent reporting) unshown.
 //   Other requests (<component>, …) are taken out and a notice says 2.0 cannot do them yet.
 // - A project bot shares its project's .bot/ with 1.x.
@@ -63,7 +63,7 @@ import { parseFeedback } from "./feedback";
 import { hostKind, type AgentPort, type ApprovalAnswerer, type HostFacts, type StartupHost, type WorkerApproval } from "./agent-registry";
 import {
   ContractError, type ApprovalAskView, type RoutineView, type BotView, type SubagentRowView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
-  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks,
+  type StepView, type SubagentView, type BotSettingsView, type ResultView, resultLinks,
 } from "../contract";
 import { EFFORTS_BY_ENGINE, effortsFor, type EngineEfforts } from "./engine-defaults";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
@@ -85,9 +85,6 @@ import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, SUB_BOT_RELAY_PREFIX, 
 import { masked, parseReply, pluginTagNames, unsupportedRequest, type BotRequest, type PluginTag } from "./reply";
 import { SubagentBook, readSubagent, readExecution, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import type { SubagentHistory } from "./store/subagent-store";
-import { relatedTaskAgents, taskAgentIds } from "./task-agents";
-import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
-import { doneLogFile, readDoneLog, recordDone, taskHistory, type DoneDay, type DoneLog } from "./task-history";
 import { displayCommand, displayView, type ComponentsContext, type DisplayData } from "./components/service";
 import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
 import { detailValues, type CommandStatus } from "./components/commands";
@@ -264,8 +261,6 @@ interface Turn {
   retried: boolean;
   /** Swift date it was sent. */
   started: number;
-  usedTools: boolean;
-  claimed: boolean;
   /** Subagents that ended while it ran (a silent turn has to report them). */
   ended: string[];
   /** Background work it started (1.x's `trace.takeTasks()`), kept in its reply. */
@@ -341,7 +336,6 @@ const readStoredSpec = (value: unknown): StoredSpec | null =>
 
 export class Bot {
   readonly store: BotStore;
-  readonly tasks: TaskBook;
   readonly subagents: SubagentBook;
   /**
    * Worker return routes (1.x's `managedTaskHandoffs`, `managedHandbackIDs`): a Codex worker started for
@@ -352,8 +346,6 @@ export class Bot {
   private managedHandbacks = new Set<string>();
   /** Components being made from its replies (specs.json, 1.x's format; the primary's): the component studio's records, kept as they are. */
   private specList: StoredSpec[] = [];
-  /** The task each head last replied on (`headTask`): hand-offs it makes help that task. */
-  private headTask = new Map<Engine, string>();
   private records: ChatRecord[] = [];
   /** Set when its chat file could not be read: nothing is written over it then. */
   private problem: string | null = null;
@@ -506,10 +498,6 @@ export class Bot {
   private routinesShown = "";
   /** What a plugin that keeps cards of its own (botling.board's pins) says changed in them, to tell the bot with the user's next message (`cards.setNotes`; the primary's). Swift dates. */
   private cardNotes: { date: number; line: string }[] = [];
-  /** When its tasks were finished (done-days.json; the primary's), with what is not saved yet; filled at start, before any card is trimmed. */
-  private doneLog: DoneLog = {};
-  /** The done log as last saved (JSON): a log that differs is saved again at the next save or read. */
-  private doneLogSaved = "";
   /** Its own components (bot.json `components`, at most 20); null: not given yet. */
   private componentList: string[] | null = null;
   /** What this head's session has been told about components (null: tell it in full). */
@@ -524,21 +512,13 @@ export class Bot {
     this.session = { sessionId: randomUUID(), started: false };
     this.alwaysAllowed = (primary ?? this).storeAlwaysAllowed();
     this.unread = primary ? 0 : this.store.loadUnread();
-    this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard));
-    // Kept from trimming: the ones a task card shows, and the ones another bot owns now (their rows and steps are its to show).
-    this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set([
-      ...this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }])),
-      ...(this.options.agents?.retained(this.engine) ?? []),
-    ]));
+    // Kept from trimming: the ones another bot owns now (their rows and steps are its to show).
+    this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set(this.options.agents?.retained(this.engine) ?? []));
     this.subagents.sink = (id, line) => { if (!this.readOnly) this.store.stageSubagentLine(id, line); };
     // Its app-managed workers' rows are the worker ledger's projection (`projectWorker`), never their end notices.
     this.subagents.workerProjection = true;
     this.subagents.loadSteps = (id) => this.store.readSubagentSteps(id).steps.slice(-500);
     if (!primary) {
-      // The done log, brought up to the cards now: a new task trims old ones before the next save.
-      this.doneLog = readDoneLog(this.store.loadDoneLog());
-      this.doneLogSaved = JSON.stringify(doneLogFile(this.doneLog));
-      recordDone(this.doneLog, this.tasks.tasks, Date.now());
       this.specList = this.readList("specs.json", readStoredSpec);
       const list = this.store.loadSettings().components;
       this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
@@ -697,8 +677,6 @@ export class Bot {
     switch (event.type) {
       case "bot.updated":
         return this.updated();
-      case "tasks.updated":
-        return this.options.emit({ ...event, botId: this.id, tasks: this.taskViews() });
       case "message.added":
       case "message.updated": {
         let record = this.records.find((candidate) => candidate.id === event.message.id);
@@ -726,7 +704,7 @@ export class Bot {
     }
   }
 
-  private readList<T>(name: "tasks.json" | "subagents.json" | "specs.json", read: (value: unknown) => T | null): T[] {
+  private readList<T>(name: "subagents.json" | "specs.json", read: (value: unknown) => T | null): T[] {
     try {
       return this.store.loadList(name).map(read).filter((value): value is T => value !== null);
     } catch (error) {
@@ -902,8 +880,6 @@ export class Bot {
     // A "not right" report shows short in the chat (1.x's `FeedbackNote`).
     if (feedback) line.feedback = feedback;
     this.add(line);
-    this.tasks.begin(line.id, words, this.engine, line.date);
-    this.saveTasks();
     const turn = this.deliverTo(this.engine, (this.profile.parent ? SUB_BOT_RELAY_PREFIX : RELAY_PREFIX) + words + (kept.length ? `\n\n${attachmentList(kept.map((file) => file.path))}` : ""), line.id);
     return { messageId: turn.messageId, turnId: turn.id };
   }
@@ -1327,8 +1303,6 @@ export class Bot {
     const turn = this.turn;
     if (item.kind === "toolUse" && item.parent === null && turn?.open && turn.origin !== "tidy") {
       turn.steps.push({ id: item.id, kind: "subagent", tool: item.tool, title: item.title, detail: item.detail, failed: false, done: false });
-      this.noteWork(turn, true);
-      this.linkSubagent(turn, item.id);
       this.emitSteps(turn);
     }
   }
@@ -1596,37 +1570,6 @@ export class Bot {
     return this.members.some(bot => !!bot.head?.running);
   }
 
-  private saveTasks(): void {
-    if (this.options.primary) return this.options.primary.saveTasks();
-    if (!this.readOnly) this.store.saveList("tasks.json", this.tasks.tasks);
-    this.keepDoneLog();
-    this.emit({ type: "tasks.updated", botId: this.id, tasks: this.taskViews() });
-    // Its row's "N tasks" follows.
-    const open = shownTasks(this.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length;
-    if (open !== this.lastOpenTasks) { this.lastOpenTasks = open; this.updated(); }
-  }
-  private lastOpenTasks = 0;
-
-  /**
-   * Logs tasks that became done (and drops ones open again) in done-days.json, so they outlive tasks.json's
-   * pruning. Saved only when it differs from what was saved; a save that fails is tried again next time.
-   */
-  private keepDoneLog(now = Date.now()): DoneLog {
-    recordDone(this.doneLog, this.tasks.tasks, now);
-    const text = JSON.stringify(doneLogFile(this.doneLog));
-    if (text !== this.doneLogSaved && !this.readOnly) {
-      try { this.store.saveDoneLog(doneLogFile(this.doneLog)); this.doneLogSaved = text; }
-      catch (error) { this.log(`done-days.json not saved (tried again at the next change or read): ${(error as Error).message}`); }
-    }
-    return this.doneLog;
-  }
-
-  /** Tasks finished on each of the last `days` days (at most 14, the whiteboard's chart), oldest first (`workspace.taskHistory`). */
-  doneDays(now = Date.now(), days = 14): DoneDay[] {
-    if (this.options.primary) return this.options.primary.doneDays(now, days);
-    return taskHistory(this.keepDoneLog(now), now, days);
-  }
-
   /** Its tool approvals waiting for you: the tool, what it would run, when it asked (oldest first). */
   pendingApprovals(): { tool: string; text: string; at: string | null }[] {
     const out: { tool: string; text: string; at: string | null; date: number }[] = [];
@@ -1637,21 +1580,6 @@ export class Bot {
       }
     }
     return out.sort((a, b) => a.date - b.date).slice(0, 20).map(({ tool, text, at }) => ({ tool, text, at }));
-  }
-
-  /** A user closes a card, independently of whether its owner has finished executing. */
-  completeTask(id: string): ResultOf<"task.complete"> {
-    if (this.options.primary) return this.options.primary.completeTask(id);
-    this.refuseIfClosed();
-    if (!this.tasks.task(id)) throw new ContractError("not_found", "No such task.");
-    const before = structuredClone(this.tasks.tasks);
-    const changed = this.tasks.complete(id, toSwiftDate());
-    if (changed) {
-      // Commit before publishing. A failed write must not leave an unpersisted closure in memory.
-      try { this.saveTasks(); }
-      catch (error) { this.tasks.tasks = before; throw error; }
-    }
-    return { changed };
   }
 
   private readonly dirtySubagents = new Set<string>();
@@ -1737,7 +1665,6 @@ export class Bot {
       guest: this.options.guest?.() ?? null,
       callIns: this.options.callIns?.() ?? [],
       answeringIn: this.options.answeringIn?.() ?? null,
-      openTasks: shownTasks(this.owner.tasks.tasks).filter((card) => card.state === "running" || card.state === "waiting").length,
       components: this.components,
       lastActivity: this.records.length ? iso(this.records.at(-1)!.date) : null,
       tokenSpeed: this.tokenSpeed(),
@@ -1810,24 +1737,6 @@ export class Bot {
     this.emit({ type: "bot.updated", bot: this.view() });
   }
 
-  taskViews(): TaskView[] {
-    const sources = this.members.map(bot => ({engine:bot.engine,list:bot.subagents.list}));
-    // Only declared work is a task in the panel; a plain message's provisional card is not.
-    const workingCards = new Set(this.members.flatMap((bot) => {
-      const turn = bot.shownTurn;
-      if (!turn?.open) return [];
-      const card = this.tasks.base({ head: bot.engine, userMessage: turn.origin === "user" ? turn.userId : null,
-        handoffID: turn.handoffId, reporting: turn.ended });
-      return card ? [card.id] : [];
-    }));
-    return shownTasks(this.tasks.tasks).map((card) => {
-      const relatedAgents = relatedTaskAgents(card, this.records, sources);
-      return { ...taskView(card, new Set(relatedAgents.filter((agent) => agent.status === "running").map((agent) => agent.id))),
-        atWork: workingCards.has(card.id) || relatedAgents.some((agent) => agent.status === "running"), relatedAgents,
-        agentLinks: Array.isArray(card.subagentIDs) && !card.agentLinkHistoryIncomplete ? "recorded" as const : "unknown" as const };
-    });
-  }
-
   private get shownTurn(): Turn | null {
     return this.turn && this.turn.origin !== "tidy" ? this.turn : null;
   }
@@ -1844,7 +1753,6 @@ export class Bot {
       ...(page.start > 0 ? { history: { hasMore: true, older: page.start } } : {}),
       running: shown ? { turnId: shown.id, messageId: shown.messageId } : null,
       live: shown ? shown.steps.slice(-500).map((step) => stepView(step, owner(shown).subagents)) : [],
-      tasks: this.taskViews(),
       routines: this.chatRoutines(),
       runs: turns.map((turn) => ({ turnId: turn.id, messageId: turn.messageId, head: owner(turn).engine, live: turn.steps.slice(-500).map((step) => stepView(step, owner(turn).subagents)) })),
       heads: this.headsView(),
@@ -1875,11 +1783,12 @@ export class Bot {
     return this.records.length;
   }
 
-  /** What a plugin may read of this chat (`chat.messages`): its newest `limit` lines as kept, its task cards. */
+  /** What a plugin may read of this chat (`chat.messages`): its newest `limit` lines as kept. */
   pluginChat(limit: number) {
     return {
       botId: this.id, name: this.profile.name, unread: this.unread, messages: this.records.slice(-limit),
-      tasks: this.tasks.tasks.map((task) => ({ id: task.id, name: task.name, state: task.state, messageIDs: task.messageIDs })),
+      // Task cards were removed in 2.5; kept empty for plugins that still read it.
+      tasks: [],
     };
   }
 
@@ -1975,9 +1884,6 @@ export class Bot {
       user.replyPreview = preview(quoted);
     }
     this.add(user);
-    // A card for it at once; the head that takes it on names it.
-    this.tasks.begin(user.id, words, decisionOwner ?? target, user.date, quoted?.id);
-    this.saveTasks();
     const lines: string[] = [];
     if (appNote) lines.push(appNote);
     // What its components kept since your last message, and cards it drew empty (`componentStateNote`, `emptyShowNote`).
@@ -2017,37 +1923,14 @@ export class Bot {
   }
 
   private newTurn(origin: Origin, words: string, userId: string | null): Turn {
-    let settle!: Turn["resolve"];
-    const done = new Promise<Status>((r) => (settle = r));
-    let ended = false;
-    // However a user's turn ends (answered, failed, stopped, taken back, joined), its card does not
-    // stay "Claiming…". Checked after the code that ended it, so a turn it joined counts.
-    const resolve: Turn["resolve"] = (status) => {
-      settle(status);
-      if (ended || origin !== "user" || !userId) return;
-      ended = true;
-      queueMicrotask(() => this.endTaskTurn(turn, status));
-    };
+    let resolve!: Turn["resolve"];
+    const done = new Promise<Status>((r) => (resolve = r));
     const turn: Turn = {
       id: `t-${randomUUID()}`, messageId: newId(), userId, origin, words, reply: new ReplyText(), steps: [], record: null,
-      open: true, sent: false, head: null, retried: false, started: toSwiftDate(), usedTools: false, claimed: false,
+      open: true, sent: false, head: null, retried: false, started: toSwiftDate(),
       ended: [], conducted: false, handoffId: null, about: [], peer: new Set(), told: 0, done, resolve,
     };
     return turn;
-  }
-
-  /** Settles the card of a user's turn that ended, unless another open turn still answers its message. */
-  private endTaskTurn(turn: Turn, status: Status) {
-    if (!turn.userId) return;
-    const book = this.tasks;
-    const card = book.containing(turn.userId);
-    if (!card) return;
-    const mine = new Set(card.messageIDs);
-    const bots = this.owner.members;
-    const still = bots.flatMap((bot) => [bot.turn, ...bot.queue, bot.deferred, bot.claimHold?.turn ?? null])
-      .some((other) => !!other && other !== turn && other.open && ((!!other.userId && mine.has(other.userId)) || other.about.some((id) => mine.has(id))));
-    if (still) return;
-    if (book.unanswered(turn.userId, this.engine, status, toSwiftDate())) this.saveTasks();
   }
 
   // ------------------------------------------------------------------------------------------
@@ -2199,25 +2082,9 @@ export class Bot {
           break;
       }
     }
-    this.noteTaskHandoffs();
     const kept = new Set(this.conductor.records.map((record) => record.id));
     for (const id of [...this.handoffDecisions.keys()]) if (!kept.has(id)) this.handoffDecisions.delete(id);
     this.headsChanged();
-  }
-
-  /** Hand-offs the conductor just made help with the task their head was working on (`noteTaskHandoffs`). */
-  private noteTaskHandoffs() {
-    const helped = new Set(this.tasks.tasks.flatMap((card) => card.helps ?? []).map((help) => help.handoffID));
-    let changed = false;
-    for (const record of this.conductor.records) {
-      if (helped.has(record.id)) continue;
-      const task = this.headTask.get(record.from);
-      if (!task) continue;
-      const line = record.task.split(/\r?\n/)[0] ?? record.task;
-      this.tasks.help({ handoffID: record.id, head: record.to, text: [...line].slice(0, 120).join("") }, task);
-      changed = true;
-    }
-    if (changed) this.saveTasks();
   }
 
   /** "Stop now" on the rounds line: no more hand-offs for this message. */
@@ -2853,13 +2720,9 @@ export class Bot {
 
   /** `next`, already read into `current`: their cards join, the turn is yours, and the reply so far moves below your line. */
   private joinTurn(current: Turn, next: Turn) {
-    // Your two messages are one piece of work: their cards join (1.x leaves the first card as it was).
-    if (current.origin === "user" && current.userId && next.userId) { this.tasks.join(current.userId, next.userId); this.saveTasks(); }
     current.origin = "user";
     current.userId = next.userId;
     current.words = next.words;
-    current.claimed = false;
-    current.usedTools = false;
     current.about.push(...next.about);
     for (const id of next.peer) current.peer.add(id);
     this.markSeen([...next.about, ...(next.userId ? [next.userId] : [])], this.engine);
@@ -3584,7 +3447,6 @@ export class Bot {
       case "stepText":
         // Codex's commentary: a step, and what the other head hears it say.
         turn.steps.push({ id: `${turn.id}:text:${turn.steps.length}`, kind: "text", title: item.text, failed: false, done: true });
-        this.noteWork(turn, false);
         if (turn.origin !== "tidy") this.headWords(item.text);
         this.emitSteps(turn);
         return;
@@ -3596,8 +3458,6 @@ export class Bot {
         if (said && turn.origin !== "tidy") { turn.told = turn.reply.text.length; this.headWords(streamingText(said)); }
         const isSubagent = SUBAGENT_TOOLS.has(item.tool);
         turn.steps.push({ id: item.id, kind: isSubagent ? "subagent" : "tool", tool: item.tool, title: item.title, detail: item.detail, failed: false, done: false });
-        this.noteWork(turn, true);
-        if (isSubagent) this.linkSubagent(turn, item.id);
         this.emitSteps(turn);
         return;
       }
@@ -3637,7 +3497,6 @@ export class Bot {
       default: {
         const piece = turn.reply.add(item);
         if (!piece) return;
-        this.noteWork(turn, false);
         // claude's own turns show only once they end (or never); the tidy never.
         if (turn.origin === "background" || turn.origin === "tidy") return;
         this.showSoFar(turn);
@@ -3698,28 +3557,6 @@ export class Bot {
       const record = this.records[i]!;
       if (mark(record.steps)) { this.changed(record); return; }
     }
-  }
-
-  /** The turn's first words or tool claim its task card; a tool makes it real work. */
-  private noteWork(turn: Turn, tool: boolean) {
-    if (turn.origin !== "user" || !turn.userId) return;
-    let changed = false;
-    if (!turn.claimed) {
-      turn.claimed = true;
-      changed = this.tasks.claim(turn.userId, this.engine, toSwiftDate()) || changed;
-    }
-    if (tool && !turn.usedTools) {
-      turn.usedTools = true;
-      const text = this.chat.find((record) => record.id === turn.userId)?.text ?? "";
-      this.tasks.working(turn.userId, text, this.engine, toSwiftDate());
-      changed = true;
-    }
-    if (changed) this.saveTasks();
-  }
-
-  private linkSubagent(turn: Turn, subagentId: string) {
-    const base = this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null, handoffID: turn.handoffId, reporting: turn.ended });
-    if (base) { this.tasks.link(subagentId, base.id, toSwiftDate()); this.saveTasks(); }
   }
 
   /** Subagent bookkeeping (subagents.json). True when the item was the subagent's own (not the turn's). */
@@ -3795,8 +3632,6 @@ export class Bot {
     // The current run's tail is in memory; earlier runs (rare) come from its file so an open view keeps them.
     const live = subagent.runs ? { runs: this.subagentHistory(subagent).runs, steps: subagent.steps } : undefined;
     this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine, live) });
-    // Status/metadata are durably journaled; publish the task projection without rewriting cards.
-    this.emit({ type: "tasks.updated", botId: this.id, tasks: this.owner.taskViews() });
     const top = subagent.parentID ? this.subagents.get(subagent.parentID) ?? subagent : subagent;
     if (this.turn?.steps.some((step) => step.id === top.id)) this.emitSteps(this.turn);
     for (let i = this.records.length - 1, seen = 0; i >= 0 && seen < 80; i--, seen++) {
@@ -3831,7 +3666,6 @@ export class Bot {
     if (moved) { /* routed to its owner */ }
     else if (this.turn && this.turn.origin !== "tidy") this.turn.ended.push(id);
     else this.pendingEnded.push(id);
-    this.saveTasks(); // A card's "at work" may have changed.
     if (!this.turn && !this.queue.length && !this.tidying) this.scheduleIdle();
     this.checkSettingsHold();
   }
@@ -3925,23 +3759,6 @@ export class Bot {
     else {
       this.persist();
       archiveLine(this.paths.archive, record);
-    }
-    // The task cards it belongs to, from its <task> lines (written before anyone hears the turn ended).
-    if (status === "done") {
-      const touched = this.tasks.replied(record.id, {
-        head: this.engine,
-        userMessage: turn.origin === "user" ? turn.userId : null,
-        userText: turn.userId ? this.chat.find((candidate) => candidate.id === turn.userId)?.text ?? null : null,
-        ...(turn.handoffId ? { handoffID: turn.handoffId } : {}),
-        handsOff: !!tags.handoff,
-        started: turn.started,
-        usedTools: turn.usedTools,
-        reporting: ended,
-        asks: !!record.choices?.length,
-        runningSubagents: new Set(this.subagents.running.map((subagent) => subagent.id)),
-      }, parsed.tasks, toSwiftDate());
-      if (touched[0]) this.owner.headTask.set(this.engine, touched[0]);
-      this.saveTasks();
     }
     this.emit({
       type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: record.text,
@@ -4176,7 +3993,7 @@ export class Bot {
     for (const [id, approval] of [...this.approvals]) if (approval.head === head) this.settle(id, NO_LONGER_NEEDED, false);
     // Its subagents (and Codex's workers) run inside its process: they went with it.
     this.managedPending = false;
-    if (this.subagents.stopRunning()) { this.saveSubagents(); this.saveTasks(); }
+    if (this.subagents.stopRunning()) this.saveSubagents();
     const why = `${exit.signal ?? exit.code}`;
     const turn = this.turn;
     let failedTurn = false;
@@ -5985,26 +5802,6 @@ function choiceView(choice: ChoiceRecord): ChoiceView {
 }
 
 const iso = (swift: number | undefined) => (typeof swift === "number" && Number.isFinite(swift) ? swiftDateISO(swift) : new Date(0).toISOString());
-
-export function taskView(card: TaskCard, running: Set<string>): TaskView {
-  return {
-    id: card.id.slice(0, 64),
-    name: clip(card.name, 400) ?? "",
-    state: card.state,
-    owner: card.owner ?? null,
-    now: clip(card.now, 2_000),
-    next: clip(card.next, 2_000),
-    blocked: clip(card.blocked, 2_000),
-    ...(card.stage ? { stage: card.stage } : {}),
-    messageIds: card.messageIDs.filter((id) => /^[A-Za-z0-9_.:-]{1,64}$/.test(id)).slice(-1_000),
-    updatedAt: iso(card.updatedAt),
-    createdAt: iso(card.createdAt),
-    ...(card.history?.length ? { history: card.history.slice(-50).map((event) => ({ kind: event.kind, at: iso(event.at), text: clip(event.text, 2_000) ?? null })) } : {}),
-    atWork: (card.subagentIDs ?? []).some((id) => running.has(id)),
-    ...(card.manuallyCompletedAt !== undefined ? { manuallyCompletedAt: iso(card.manuallyCompletedAt) } : {}),
-    ...(card.helps?.length ? { helps: card.helps.slice(-20).map((help) => ({ head: help.head, text: clip(help.text, 400) ?? "" })) } : {}),
-  };
-}
 
 /** `ChatPayload.make(subagent:)`'s data: its task, steps, words and report. */
 function executionText(id: string, execution: SubagentExecution | undefined): string {

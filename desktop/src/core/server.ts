@@ -1891,8 +1891,9 @@ First write a test that shows this, then fix it.`;
         return this.workspaceBots().map(({ bot, profile }) => this.botSummary(bot, profile, pinned));
       },
       memory: (botId) => this.memorySections(this.workspaceBot(botId).profile),
-      tasks: (botId, limit) => this.workspaceBot(botId).bot.taskViews().slice(-limit),
-      taskHistory: (botId, days) => this.workspaceBot(botId).bot.doneDays(Date.now(), days),
+      // Task cards were removed in 2.5: both stay for plugins that still ask, and answer nothing.
+      tasks: (botId) => { this.workspaceBot(botId); return []; },
+      taskHistory: (botId) => { this.workspaceBot(botId); return []; },
       results: (botId, limit) => this.resultLinks(this.workspaceBot(botId).bot, limit),
       waiting: () => this.workspaceWaiting(),
       ignoreWaiting: (botId, text) => { this.ignoreWaiting(this.workspaceBot(botId).bot.id, text); },
@@ -1925,7 +1926,6 @@ First write a test that shows this, then fix it.`;
       const id = this.outId(bot.id);
       out[id] = {
         bots: JSON.stringify(this.botSummary(bot, profile, pinned)),
-        tasks: JSON.stringify([bot.taskViews().slice(-100), bot.doneDays()]),
         memory: JSON.stringify(this.memorySections(profile)),
         waiting: JSON.stringify([waiting.items.filter((item) => item.botId === id), waiting.doing[id] ?? null, bot.pendingApprovals()]),
         results: JSON.stringify(this.resultLinks(bot, 100)),
@@ -2564,7 +2564,6 @@ First write a test that shows this, then fix it.`;
       }
       case "bots.remove": return this.removeBot(cmd.botId);
       case "subagent.settle": return this.bot(cmd.botId).settleSubagent(cmd.subagentId, cmd.settled);
-      case "task.complete": return this.bot(cmd.botId).completeTask(cmd.taskId);
       case "link.authorize": {
         const lines=this.bot(cmd.botId).lines();
         const context=cmd.messageId?lines.find(line=>line.id===cmd.messageId):null;

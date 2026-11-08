@@ -68,8 +68,7 @@ export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => v
           <RightPanel {...props} collapsed={false} onSettings={props.onDrawerSettings}
             onSelect={id => { close(); props.onSelect(id); }}
             onOpenSubagent={row => { close(); props.onOpenSubagent(row); }}
-            onOpenResult={result => { close(); props.onOpenResult(result); }}
-            onJumpToTask={(messageId, taskId) => { close(); props.onJumpToTask(messageId, taskId); }} />
+            onOpenResult={result => { close(); props.onOpenResult(result); }} />
         </div>
       </div>
     </ShellOverlay>

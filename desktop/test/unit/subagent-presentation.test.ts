@@ -35,7 +35,7 @@ describe("1.x subagent presentation data through the desktop boundary", () => {
   });
 
   it("shows the idle parent's waiting-for-workers state without a thinking animation, clearing it when no child runs", () => {
-    const chat = { botId: bot.id, messages: [], running: null, live: [], tasks: [] };
+    const chat = { botId: bot.id, messages: [], running: null, live: [] };
     expect(chatState(bot, chat).state).toMatchObject({ working: false, waitingForWorkers: true });
     expect(chatState({ ...bot, subagents: 0 }, chat).state).toMatchObject({ working: false, waitingForWorkers: false });
   });

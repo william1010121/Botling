@@ -1,8 +1,7 @@
 import type { MessageView } from "../../../../Web/src/types";
 import type { CatchUpView } from "./types";
 export interface SourceReference { messageID: string; quote?: string; part?: "answer"; }
-/** `tasks`: the ids of the task cards it is about ([[task:ID]]), when it names any. */
-export interface CitedBullet { text: string; sources: SourceReference[]; tasks?: string[]; }
+export interface CitedBullet { text: string; sources: SourceReference[]; }
 
 /** A quote cannot splice two options or the prompt and the answer. */
 export function sourceTexts(message: MessageView): string[] {
@@ -48,14 +47,11 @@ export function citedBullet(bullet: string, source: MessageView[]): CitedBullet 
     if (!seen.has(key)) { sources.push({ messageID: message.id, ...(exact ? { quote: exact } : {}), ...(answer ? {part: "answer" as const} : {}) }); seen.add(key); }
     return "";
   });
-  // Task markers name a card of the range; the page draws its chip, never the id.
-  const tasks: string[] = [];
-  const unmarked = text.replace(/\[\[task:([0-9A-Fa-f-]{36})\]\]/g, (_marker, id: string) => {
-    if (!tasks.includes(id.toUpperCase())) tasks.push(id.toUpperCase());
-    return "";
-  });
-  const bare = (tasks.length ? unmarked.replace(/[ \t]{2,}/g, " ") : unmarked).trim();
-  return { text: bare, sources, ...(tasks.length ? { tasks } : {}) };
+  // Task markers (from summaries written while task cards existed) are dropped, never shown.
+  let marked = false;
+  const unmarked = text.replace(/\[\[task:[0-9A-Fa-f-]{36}\]\]/g, () => { marked = true; return ""; });
+  const bare = (marked ? unmarked.replace(/[ \t]{2,}/g, " ") : unmarked).trim();
+  return { text: bare, sources };
 }
 
 export function summaryReferences(view: CatchUpView, messages: MessageView[]): CitedBullet[] {

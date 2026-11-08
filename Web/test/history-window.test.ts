@@ -173,9 +173,9 @@ describe("chat history window", () => {
       expect(scroll).toHaveBeenCalledTimes(1);
       expect(row("m159")).toBeNull();
       expect(document.querySelector<HTMLButtonElement>(".history-latest")!.hidden).toBe(false);
-      window.ccb.setState(state(history(160), { botID: "tasks" }));
+      window.ccb.setState(state(history(160), { botID: "jump" }));
       expect(row("m15")).toBeNull();
-      window.ccb.jumpToTask("m15", "task-1");
+      jumpTo("m15");
       expect(row("m15")).not.toBeNull();
       expect(scroll).toHaveBeenCalledTimes(2);
     } finally { HTMLElement.prototype.scrollIntoView = previous; }
@@ -415,7 +415,7 @@ it("preserves a historical target on full state updates and redraw, releases old
     expect(rows()).toHaveLength(150);
     expect(row("m20").textContent).toContain("Reply 20");
     expect(rows()[0].dataset.id).toBe("m1");
-    window.ccb.jumpToTask("m1100", "task-middle");
+    jumpTo("m1100");
     expect(row("m1100")).not.toBeNull();
     expect(row("m1099")).not.toBeNull();
     expect(row("m1101")).not.toBeNull();

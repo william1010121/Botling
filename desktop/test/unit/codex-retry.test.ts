@@ -83,7 +83,7 @@ describe("Codex's retry log (logs_2.sqlite, read-only)", () => {
 
 describe("the chat page hears of it", () => {
   const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["codex"], job: null, subagentRows: [] };
-  const chat = { botId: "B", messages: [], running: { turnId: "t", messageId: "m" }, live: [], tasks: [] };
+  const chat = { botId: "B", messages: [], running: { turnId: "t", messageId: "m" }, live: [] };
   it("while a turn is under way", () => {
     const retry = { attempt: 1, max: 5, reason: "rateLimited" as const, retryAt: 1_793_004_901_250 };
     expect(chatState({ ...bot, codexRetry: retry }, chat).state.retrying).toEqual(retry);

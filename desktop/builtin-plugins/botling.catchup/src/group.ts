@@ -82,10 +82,6 @@ export class CatchUpGroup {
   private clicked(event: Event): void {
     const button = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
     if (!button || !this.view || !this.context) return;
-    if (button.dataset.action === "task") {
-      if (button.dataset.taskId) this.context.openTask(button.dataset.taskId);
-      return;
-    }
     if (button.dataset.action === "retry") {
       void page.call("retry", { botId: this.botID, ...(this.interval ? { key: this.view.key } : {}) }).catch(() => {});
       return;
@@ -215,10 +211,6 @@ function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: So
   const divider = view.manual ? t("catchup.manualRange", { n }) : view.since ? t("catchup.divider", { n, since: view.since }) : t("catchup.dividerNoTime", { n });
   const heads = interval ? Object.entries(view.speakerCounts ?? {}).filter(([head, count]) => head !== "unknown" && count > 0).length || view.heads : view.heads;
   const meta = [t(interval ? "interval.replies" : view.manual ? "catchup.messages" : "catchup.count", { n: interval ? view.count : n }), heads ? t("catchup.heads", { n: heads }) : null].filter(Boolean).join(" · ");
-  // "· 2 tasks", in orange when one of them waits on you.
-  const tasks = view.tasks?.length
-    ? ` · <span class="catchup-task-count${view.tasks.some(task => task.state === "waiting") ? " waiting" : ""}">${escapeHTML(t("catchup.tasks", { n: view.tasks.length }))}</span>`
-    : "";
   const range = view.since && view.until ? (view.since === view.until ? view.since : `${view.since} – ${view.until}`) : "";
   let body = "";
   if (view.state === "ready") {
@@ -235,7 +227,7 @@ function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: So
   return (interval ? "" : `<div class="catchup-divider"><div class="line"></div><div>${escapeHTML(divider)}</div><div class="line"></div></div>`)
     + `<section class="catchup-card stacked" aria-label="${escapeHTML(t("catchup.label"))}">`
     + `<div class="catchup-card-body">`
-    + `<div class="catchup-top">${view.state === "failed" ? alert : sparkle}<span class="catchup-title">${escapeHTML(t(interval || !view.manual ? "catchup.title" : "catchup.manualTitle"))}</span><span class="catchup-meta">${escapeHTML(meta)}${tasks}</span><span class="catchup-space"></span><span class="catchup-range">${escapeHTML(range)}</span></div>`
+    + `<div class="catchup-top">${view.state === "failed" ? alert : sparkle}<span class="catchup-title">${escapeHTML(t(interval || !view.manual ? "catchup.title" : "catchup.manualTitle"))}</span><span class="catchup-meta">${escapeHTML(meta)}</span><span class="catchup-space"></span><span class="catchup-range">${escapeHTML(range)}</span></div>`
     + body
     + linksHTML(links)
     + `<div class="catchup-foot"><div class="catchup-faces" aria-hidden="true">${faces}</div><div class="catchup-latest">${escapeHTML(footer)}</div>`
@@ -254,11 +246,8 @@ function linksHTML(links: SourceLink[]): string {
 
 
 function bulletsHTML(view: CatchUpView, source: MessageView[]): string {
-  const cards = new Map((view.tasks ?? []).map(task => [task.id.toUpperCase(), task]));
   return summaryReferences(view,source).map((bullet,point)=>{
-    // The task it is about first, then where it comes from.
-    const taskChips=(bullet.tasks ?? []).map(id=>cards.get(id.toUpperCase())).filter(task=>!!task).map(task=>page.taskChip(task!,"task")).join("");
-    const chips=taskChips+bullet.sources.map((reference,index)=>{
+    const chips=bullet.sources.map((reference,index)=>{
       const message=source.find(m=>m.id===reference.messageID)!;
       return `<button type="button" class="source-cite ${sourceHead(message,reference)}" data-action="source" data-cite-point="${point}" data-cite-index="${index}" aria-haspopup="dialog" aria-label="${escapeHTML(t("source.openFrom",{author:sourceAuthor(message,reference),n:point+1}))}"><span class="source-head-dot" aria-hidden="true"></span>${escapeHTML(sourceAuthor(message,reference))}</button>`;
     }).join("");

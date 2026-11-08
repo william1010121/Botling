@@ -15,7 +15,7 @@ it("the actual shell sends no packet for unrelated activity, batches tokens, and
   const other = { ...bot, id: "C", name: "other" };
   const components = { demo: { template: "<p>template-marker</p>", version: 1, updated: false, sizes: ["2x2"], icon: null, title: null } };
   const store = new WorkspaceStore(async () => ({ epoch: "e", seq: 1, bots: [bot, other], imported: null, components, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null },
-    chat: { botId: "B", messages: [{ id: "m", role: "bot", text: "start", time: "2026-10-27T08:00:00Z" }], running: null, live: [], tasks: [], runs: [], heads: null } }));
+    chat: { botId: "B", messages: [{ id: "m", role: "bot", text: "start", time: "2026-10-27T08:00:00Z" }], running: null, live: [], runs: [], heads: null } }));
   await store.resync();
   let seq = 1;
   const event = (event: Event) => store.receive({ v: 10, epoch: "e", seq: ++seq, event });

@@ -75,6 +75,8 @@ function withApprovedRouting(swift: string): string {
   expected = expected.replace("To stop one, app_cancel_task. Do it yourself only when it is quicker than explaining it.", `To stop one, app_cancel_task. ${workerNoteRule({ steerWorkerRun: true })} Do it yourself only when it is quicker than explaining it.`);
   expected = expected.replace("\n\nThe app delivers worker execution reports through app_task_result", `\n\n${workerNoteRule({ steerWorkerRun: true })}\n\nThe app delivers worker execution reports through app_task_result`);
   expected = expected.replace("\n- Complete the task before returning your final report.", `\n- ${WORKER_NOTIFY_RULE}\n- Complete the task before returning your final report.`);
+  // Approved 2026-11-08 (the user): task cards are gone, so no bot is told to write <task …/> lines any more.
+  expected = expected.replace(/^- The app keeps a task card for each piece of work[^\n]*\n/m, "");
   return expected.replace(OLD_FOLLOW_UP, `${OLD_FOLLOW_UP} A follow-up on a worker's result goes to that same worker, not a new one. Every handoff and follow-up quotes the user's own words of their question.`);
 }
 

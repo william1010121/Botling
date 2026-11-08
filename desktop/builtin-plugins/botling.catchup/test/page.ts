@@ -26,8 +26,7 @@ export async function openPage(): Promise<void> {
 
 /** A summary as the program part puts it in the chat. */
 export function decoration(view: CatchUpView, kind: "unread" | "interval" = view.kind ?? "unread"): DecorationView {
-  const { tasks, ...data } = view;
-  return { plugin: manifest.name, key: `${kind}:${view.key}`, fold: view.ids, tasks: tasks ?? null, data: { ...data, kind } };
+  return { plugin: manifest.name, key: `${kind}:${view.key}`, fold: view.ids, data: { ...view, kind } };
 }
 
 /** The old ChatState shape (the folded group, the interval summaries) as decorations. */

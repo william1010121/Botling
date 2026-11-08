@@ -8,7 +8,7 @@ import type { BotView } from "../../src/contract";
 const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ["claude"], job: null, subagentRows: [] };
 const components = { demo: { template: "<p>template-marker</p>", version: 1, updated: false, working: false, hasPrevious: false, sizes: ["2x2"], icon: null, title: null } };
 function packet(text = "hello", count = 2): ChatPacket {
-  return { ...chatState(bot, { botId: bot.id, running: null, live: [], tasks: [],
+  return { ...chatState(bot, { botId: bot.id, running: null, live: [],
     messages: Array.from({ length: count }, (_, i) => ({ id: String(i), role: "bot", text: i === count - 1 ? text : "History ".repeat(40), time: "2026-10-27T08:00:00Z" })) }, new Date("2026-10-27T09:00:00Z"), null, { components }),
     libraryVersion: 1, resyncs: 1, messageColumnWidth: null };
 }

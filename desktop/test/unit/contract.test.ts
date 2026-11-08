@@ -4,13 +4,9 @@ import { CARD_SAVE_LIMIT, EventEnvelope, PROTOCOL_VERSION, RENDERER_COMMANDS, pa
 const bot = "6A0B0000-0000-4000-8000-000000000002";
 
 describe("contract", () => {
-  it("allows the task completion action from the renderer and requires an explicit valid task id", () => {
-    const request = (extra: Record<string, unknown>) => parseInbound({ v: 10, id: "complete", cmd: { type: "task.complete", botId: bot, ...extra } });
-    expect(RENDERER_COMMANDS.has("task.complete")).toBe(true);
-    expect(request({ taskId: "task" }).ok).toBe(true);
-    expect(request({}).ok).toBe(false);
-    expect(request({ taskId: "../tasks.json" }).ok).toBe(false);
-    expect(request({ taskId: "task", stopWorkers: true }).ok).toBe(false);
+  it("no longer takes task.complete (task cards are gone)", () => {
+    expect(RENDERER_COMMANDS.has("task.complete" as never)).toBe(false);
+    expect(parseInbound({ v: 10, id: "complete", cmd: { type: "task.complete", botId: bot, taskId: "task" } }).ok).toBe(false);
   });
 
   it("accepts a well-formed request and cancel", () => {

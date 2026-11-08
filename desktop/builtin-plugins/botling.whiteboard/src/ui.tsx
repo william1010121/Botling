@@ -1,18 +1,15 @@
 // The main bot's whiteboard, drawn in botling.whiteboard's frame (the page this was, Whiteboard.tsx, moved out of the app):
 // three layers (the approved Whiteboard redesign):
-//   A. The summary: four numbers (bots, tasks, what waits on you, what runs), two donuts (tasks
-//      done / under way / waiting; bots active / waiting / asleep), where the open work is (bots
-//      ranked by what waits on you and what is under way) and the tasks finished on each of the last
-//      seven days across all bots (each bot's done-days.json, so pruned cards still count).
+//   A. The summary: three numbers (bots, what waits on you, what runs), a donut (bots active /
+//      waiting / asleep) and where the open work is (bots ranked by what waits on you).
 //   B. Two lanes: "Waiting on you" (each bot with something for you lists every item: a question,
 //      your call, a tool approval, with its age and a button to answer it) and "Running" (bots at
 //      work: their latest action and what comes next). A bot both at work and waiting on you shows
 //      once, in Waiting, marked Running.
-//   C. The rest on a shelf, "Idle & asleep": a pill each (name, a 7-day spark, its last update,
+//   C. The rest on a shelf, "Idle & asleep": a pill each (name, its last update,
 //      "N wk quiet" after three weeks), dimmed; "Show details" opens a list (kept per user).
-// A card shows the bot's latest action (the newest entry on its task cards' timelines), not its
-// memory paragraph. Pressed, a card (or a pill, a row) grows into the bot's report, read by scrolling:
-// Summary, Your call, Results, Progress, What I did, My calls ("Decided"), Next. Everything is what
+// A card shows one short line from the bot's memory, not its whole paragraph. Pressed, a card (or a pill,
+// a row) grows into the bot's report, read by scrolling: Summary, Your call, Results, My calls ("Decided"), Next. Everything is what
 // the bots keep themselves; a part with nothing in it is left out. A bot may give its card a picture
 // of its own (<whiteboard>): one of its components, drawn as a 1×1 or 2×1 Board tile on its Running
 // card, in the same sandboxed component frame as the chat's (`ccb.tile`); the report shows it too.
@@ -21,11 +18,11 @@
 // ../build.json), so the unit tests run it on React. Keep to what both do the same.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ageLabel, askCount, boardLanes, boardWeek, botWeek, CARD_LINE_WIDTH, description, drawnPicture, finishedTasks, isRunning, laneStatus, lastActive, latestLine,
-  MOST_PICTURES, named, nextSteps, openRanking, quietWeeks, shortLine, shortTime, shortTimeOf, taskCounts, waitingAsks,
+  ageLabel, askCount, boardLanes, CARD_LINE_WIDTH, description, drawnPicture, isRunning, laneStatus, lastActive, latestLine,
+  MOST_PICTURES, nextSteps, openRanking, quietWeeks, shortLine, shortTime, shortTimeOf, waitingAsks,
   type Ask, type AskKind,
 } from "./board";
-import type { BoardView, Bot, Entry, Lang, Picture, Task, Waiting } from "./types";
+import type { BoardView, Bot, Entry, Lang, Picture, Waiting } from "./types";
 
 export { CARD_LINE_WIDTH };
 
@@ -192,14 +189,12 @@ export function Whiteboard({ api, now: given, refreshMs = 5_000 }: WhiteboardPro
   const asks = new Map(lanes.waiting.map((bot) => [bot.id, waitingAsks(bot, waiting, byBot.get(bot.id))]));
   const askTotal = [...asks.values()].reduce((sum, list) => sum + askCount(list), 0);
   const oldestAsk = Math.min(...[...asks.values()].flat().map((ask) => (ask.at ? Date.parse(ask.at) : NaN)).filter((at) => !Number.isNaN(at)));
-  const counts = cards.reduce((sum, bot) => { const each = taskCounts(byBot.get(bot.id)?.tasks ?? []); return { waiting: sum.waiting + each.waiting, active: sum.active + each.active, done: sum.done + each.done, total: sum.total + each.total }; }, { waiting: 0, active: 0, done: 0, total: 0 });
   const waitingBots = cards.filter((bot) => asks.has(bot.id)).length;
   const runningBots = cards.filter((bot) => isRunning(bot, byBot.get(bot.id)));
   const alsoWaiting = runningBots.filter((bot) => asks.has(bot.id)).length;
   const activeBots = cards.filter((bot) => !asks.has(bot.id) && (isRunning(bot, byBot.get(bot.id)) || bot.phase !== "asleep")).length;
   const asleepBots = cards.length - waitingBots - activeBots;
   const ranking = openRanking(bots, byBot, waiting);
-  const week = boardWeek(cards.map((bot) => byBot.get(bot.id)), now);
 
   return (
     <div className="whiteboard" aria-label="Whiteboard">
@@ -208,12 +203,11 @@ export function Whiteboard({ api, now: given, refreshMs = 5_000 }: WhiteboardPro
           <div className="wb-board-inner">
             <section className="wb-summary" aria-label="Summary">
               <Metric label="Bots" value={cards.length} sub={<><b>{activeBots}</b> active · {waitingBots} waiting · {asleepBots} asleep</>} />
-              <Metric label="Tasks" value={counts.total} sub={<><b>{counts.done}</b> done{counts.total ? ` · ${Math.round((counts.done / counts.total) * 100)}%` : ""}</>} />
               <Metric kind="waiting" label="Waiting on you" value={askTotal} dot="waiting"
                 sub={askTotal ? <>from <b>{lanes.waiting.length}</b> bot{lanes.waiting.length === 1 ? "" : "s"}{Number.isFinite(oldestAsk) ? ` · oldest ${ageWords(now - oldestAsk)}` : ""}</> : "Nothing for you"}
                 onPress={askTotal ? () => waitingLane.current?.scrollIntoView?.({ behavior: "smooth", block: "start" }) : undefined} />
               <Metric kind="running" label="Running" value={runningBots.length} dot="working"
-                sub={<><b>{counts.active}</b> task{counts.active === 1 ? "" : "s"} under way{alsoWaiting ? ` · ${alsoWaiting} also waiting` : ""}</>} />
+                sub={alsoWaiting ? <><b>{alsoWaiting}</b> also waiting on you</> : runningBots.length ? "At work now" : "Nothing running"} />
             </section>
 
             {cards.length > 0 && (
@@ -221,21 +215,16 @@ export function Whiteboard({ api, now: given, refreshMs = 5_000 }: WhiteboardPro
                 <div className="wb-panel">
                   <div className="wb-panel-head"><h3 className="wb-panel-title">At a glance</h3><span className="wb-panel-meta">Updated {shortTime(new Date(now).toISOString(), now)}</span></div>
                   <div className="wb-donuts">
-                    <Donut label="tasks" total={counts.total} parts={[{ key: "done", label: "Done", value: counts.done }, { key: "active", label: "Under way", value: counts.active }, { key: "waiting", label: "Waiting", value: counts.waiting }]} />
                     <Donut label="bots" total={cards.length} parts={[{ key: "active", label: "Active", value: activeBots }, { key: "waiting", label: "Waiting", value: waitingBots }, { key: "asleep", label: "Asleep", value: asleepBots }]} />
                   </div>
                 </div>
                 <div className="wb-panel">
-                  <div className="wb-panel-head"><h3 className="wb-panel-title">Where the open work is</h3><span className="wb-panel-meta">Open tasks + asks, by bot</span></div>
+                  <div className="wb-panel-head"><h3 className="wb-panel-title">Where the open work is</h3><span className="wb-panel-meta">Asks, by bot</span></div>
                   <OpenRanking rows={ranking} face={face} tipFor={tipFor} onPress={press} />
                   <div className="wb-panel-foot">
-                    <span><i className="sw waiting" />Waiting on you</span><span><i className="sw active" />Under way</span>
+                    <span><i className="sw waiting" />Waiting on you</span>
                     {ranking.length > RANKED && <span>+{ranking.length - RANKED} more</span>}
                   </div>
-                </div>
-                <div className="wb-panel trend">
-                  <div className="wb-panel-head"><h3 className="wb-panel-title">Tasks finished</h3><span className="wb-panel-meta">{weekRange(now)}</span></div>
-                  <Trend week={week} tipFor={tipFor} />
                 </div>
               </section>
             )}
@@ -256,7 +245,7 @@ export function Whiteboard({ api, now: given, refreshMs = 5_000 }: WhiteboardPro
             {lanes.running.length > 0 && (
               <section className="wb-section lane-running" aria-label="Running">
                 <h3 className="wb-section-title"><span className="lane-dot blue" aria-hidden="true" />Running
-                  <span className="wb-section-meta"> · {lanes.running.length} bot{lanes.running.length === 1 ? "" : "s"} · {lanes.running.reduce((sum, bot) => sum + taskCounts(byBot.get(bot.id)?.tasks ?? []).active, 0)} tasks under way</span></h3>
+                  <span className="wb-section-meta"> · {lanes.running.length} bot{lanes.running.length === 1 ? "" : "s"}</span></h3>
                 <div className="lane-grid">
                   {lanes.running.map((bot) => (
                     <RunningCard key={bot.id} api={api} bot={bot} data={byBot.get(bot.id)} waiting={waiting} now={now} face={face(bot)}
@@ -299,12 +288,6 @@ function ageWords(ms: number): string {
   return `${n} ${unit}${n === 1 ? "" : "s"}`;
 }
 
-function weekRange(now: number): string {
-  const from = new Date(now); from.setDate(from.getDate() - 6);
-  const day = (date: Date) => date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  return `${day(from)} – ${day(new Date(now))}`;
-}
-
 type TipFor = (content: ReactNode) => Record<string, unknown>;
 
 function Metric({ label, value, sub, kind, dot, onPress }: { label: string; value: number; sub: ReactNode; kind?: "waiting" | "running"; dot?: string; onPress?: () => void }) {
@@ -322,7 +305,7 @@ function Metric({ label, value, sub, kind, dot, onPress }: { label: string; valu
     : <div className={className} data-metric={label}>{body}</div>;
 }
 
-/** A ring of parts (done / under way / waiting; active / waiting / asleep) with the total in it and a legend. */
+/** A ring of parts (bots active / waiting / asleep) with the total in it and a legend. */
 function Donut({ label, total, parts }: { label: string; total: number; parts: { key: string; label: string; value: number }[] }) {
   const radius = 40;
   const length = 2 * Math.PI * radius;
@@ -351,52 +334,24 @@ function Donut({ label, total, parts }: { label: string; total: number; parts: {
 
 const RANKED = 6;
 
-/** Where the open work is: a stacked bar per bot (waiting on you, under way), the most first. */
+/** Where the open work is: a bar per bot (what waits on you), the most first. */
 function OpenRanking({ rows, face, tipFor, onPress }: { rows: ReturnType<typeof openRanking>; face: (bot: Bot) => string; tipFor: TipFor; onPress: (bot: Bot, element: HTMLElement) => void }) {
   const top = rows.slice(0, RANKED);
-  const peak = Math.max(1, ...top.map((row) => row.waiting + row.active));
+  const peak = Math.max(1, ...top.map((row) => row.waiting));
   if (!top.length) return <p className="wb-panel-empty">Nothing open right now.</p>;
   return (
     <ul className="wb-rank">
-      {top.map(({ bot, waiting, active }) => (
+      {top.map(({ bot, waiting }) => (
         <li key={bot.id} data-bot={bot.id} onClick={(event) => onPress(bot, event.currentTarget)}
-          {...tipFor(<><span className="tt">{bot.name}</span><br /><span className="ts">{waiting} waiting on you · {active} under way</span></>)}>
+          {...tipFor(<><span className="tt">{bot.name}</span><br /><span className="ts">{waiting} waiting on you</span></>)}>
           <span className="wb-rank-name"><img src={face(bot)} alt="" />{bot.name}</span>
           <span className="wb-rank-track" aria-hidden="true">
             {waiting > 0 && <span className="fill-waiting" style={{ width: `${(waiting / peak) * 100}%` }} />}
-            {active > 0 && <span className="fill-active" style={{ width: `${(active / peak) * 100}%` }} />}
           </span>
-          <span className="wb-rank-v" aria-label={`${waiting} waiting on you, ${active} under way`}>{waiting > 0 && <><b>{waiting}</b> · </>}{active}</span>
+          <span className="wb-rank-v" aria-label={`${waiting} waiting on you`}><b>{waiting}</b></span>
         </li>
       ))}
     </ul>
-  );
-}
-
-/** Tasks finished on each of the last seven days across the bots, this week's sum and the change from last week. */
-function Trend({ week, tipFor }: { week: ReturnType<typeof boardWeek>; tipFor: TipFor }) {
-  const peak = Math.max(1, ...week.days.map((day) => day.count));
-  const change = week.lastWeek ? Math.round(((week.week - week.lastWeek) / week.lastWeek) * 100) : null;
-  return (
-    <div className="wb-trend">
-      <div className="wb-trend-big">
-        <b>{week.week}</b>
-        <span>this week{week.lastWeek !== null && <> · {change !== null ? <span className={change >= 0 ? "up" : "down"}>{change >= 0 ? "↑" : "↓"} {Math.abs(change)}%</span> : null}{change !== null ? " vs" : ""} last week ({week.lastWeek})</>}</span>
-      </div>
-      <svg viewBox="0 0 700 80" preserveAspectRatio="none" role="img" aria-label={`Tasks finished per day: ${week.days.map((day) => `${day.label} ${day.count}`).join(", ")}`}>
-        {week.days.map((day, index) => {
-          const height = day.count ? Math.max(6, (day.count / peak) * 64) : 2;
-          return (
-            <g key={day.key}>
-              <rect x={index * 100 + 18} y={80 - height} width="64" height={height} rx="4" className={day.today ? "today" : day.count ? "bar" : "empty"} />
-              <rect className="hit" x={index * 100} y="0" width="100" height="80" {...tipFor(<><span className="tt">{day.label}</span><br /><span className="ts">{day.count} task{day.count === 1 ? "" : "s"} finished</span></>)} />
-            </g>
-          );
-        })}
-      </svg>
-      <div className="wb-chart-days vals">{week.days.map((day) => <span key={day.key} className={day.today ? "today" : ""}>{day.count}</span>)}</div>
-      <div className="wb-chart-days">{week.days.map((day) => <span key={day.key} className={day.today ? "today" : ""}>{day.label}</span>)}</div>
-    </div>
   );
 }
 
@@ -430,7 +385,6 @@ function WaitingCard({ bot, data, waiting, asks, now, face, lang, onPress, onOpe
   bot: Bot; data: Entry | undefined; waiting: Waiting; asks: Ask[]; now: number; face: string; lang?: Lang | null;
   onPress: (element: HTMLElement) => void; onOpenChat: (botId: string) => void; onNotify: (ask: Ask) => void;
 }) {
-  const counts = taskCounts(data?.tasks ?? []);
   const status = laneStatus(bot, data);
   const when = shortTime(bot.lastActivity, now);
   return (
@@ -458,19 +412,16 @@ function WaitingCard({ bot, data, waiting, asks, now, face, lang, onPress, onOpe
       </ul>
       <span className="wb-card-foot">
         <Latest bot={bot} data={data} waiting={waiting} one />
-        {counts.total > 0 && <span className="wb-foot-count"><b>{counts.done}</b>/{counts.total}</span>}
       </span>
-      {counts.total > 0 && <StateBar counts={counts} />}
     </article>
   );
 }
 
-/** A bot at work: its latest action, what comes next, its tasks under way and one bar. */
+/** A bot at work: its short line and what comes next. */
 function RunningCard({ api, bot, data, waiting, now, face, picture, onPress }: {
   api: BoardApi; bot: Bot; data: Entry | undefined; waiting: Waiting; now: number; face: string;
   picture: Picture | null; onPress: (element: HTMLElement) => void;
 }) {
-  const counts = taskCounts(data?.tasks ?? []);
   const next = data ? nextSteps(data)[0] : undefined;
   const when = shortTime(bot.lastActivity, now);
   const line = latestLine(bot, data, waiting);
@@ -486,26 +437,9 @@ function RunningCard({ api, bot, data, waiting, now, face, picture, onPress }: {
       <Latest bot={bot} data={data} waiting={waiting} one />
       <span className="wb-next">{next ? `Next · ${next}` : ""}</span>
       <span className="wb-card-foot">
-        <span className="wb-status"><span className="now-dot" data-status="working" aria-hidden="true" />{counts.active > 0 ? `${counts.active} under way` : "Running"}</span>
-        {counts.total > 0 && <span className="wb-foot-count"><b>{counts.done}</b>/{counts.total} done</span>}
+        <span className="wb-status"><span className="now-dot" data-status="working" aria-hidden="true" />Running</span>
       </span>
-      {counts.total > 0 && <StateBar counts={counts} />}
     </button>
-  );
-}
-
-/** Tasks done on each of the last seven days, as a tiny bar chart. */
-function Spark({ values, width, height }: { values: number[]; width: number; height: number }) {
-  const peak = Math.max(1, ...values);
-  const bar = 4;
-  const gap = (width - bar * values.length) / Math.max(1, values.length - 1);
-  return (
-    <svg className="spark" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-      {values.map((value, index) => {
-        const tall = value ? Math.max(3, (value / peak) * height) : 2;
-        return <rect key={index} x={(index * (bar + gap)).toFixed(1)} y={height - tall} width={bar} height={tall} rx="1" className={value ? (index === values.length - 1 ? "today" : "") : "zero"} />;
-      })}
-    </svg>
   );
 }
 
@@ -533,10 +467,9 @@ function QuietShelf({ bots, byBot, waiting, now, face, open, lang, onToggle, onP
       </h3>
       {open ? (
         <div className="quiet-list" role="table" aria-label="Idle and asleep bots">
-          <div className="quiet-row quiet-head" role="row"><span /><span>Bot</span><span className="a">Latest</span><span className="w">Tasks</span><span>Last 7 days</span><span className="t">Updated</span></div>
+          <div className="quiet-row quiet-head" role="row"><span /><span>Bot</span><span className="a">Latest</span><span className="t">Updated</span></div>
           {bots.map((bot) => {
             const data = byBot.get(bot.id);
-            const counts = taskCounts(data?.tasks ?? []);
             const line = latestLine(bot, data, waiting);
             return (
               <div key={bot.id} role="row" tabIndex={0} className={`quiet-row${bot.phase !== "asleep" ? " ready" : ""}`} data-bot={bot.id}
@@ -544,8 +477,6 @@ function QuietShelf({ bots, byBot, waiting, now, face, open, lang, onToggle, onP
                 <img src={face(bot)} alt="" />
                 <span className="n">{bot.name}</span>
                 <span className="a">{line ? `${line.kind ? `${MARK[line.kind]} ` : ""}${line.text}` : ""}</span>
-                <span className="w">{counts.total ? `${counts.done}/${counts.total}` : "—"}</span>
-                <Spark values={botWeek(data, now)} width={52} height={14} />
                 <span className="t">{shortTimeOf(lastActive(bot, data), now)}</span>
               </div>
             );
@@ -562,7 +493,6 @@ function QuietShelf({ bots, byBot, waiting, now, face, open, lang, onToggle, onP
                 aria-label={`${bot.name}, ${bot.phase === "asleep" ? "asleep" : "ready"}${when ? `, updated ${when}` : ""}: ${description(bot, data)}`}
                 onClick={(event) => onPress(bot, event.currentTarget)} {...tipFor(tip(bot))}>
                 <img src={face(bot)} alt="" /><span className="name">{bot.name}</span>
-                <Spark values={botWeek(data, now)} width={30} height={12} />
                 {when && <span className="when">{when}</span>}
                 {weeks !== null && <span className="stale">· {weeks} wk quiet</span>}
               </button>
@@ -571,18 +501,6 @@ function QuietShelf({ bots, byBot, waiting, now, face, open, lang, onToggle, onP
         </div>
       )}
     </section>
-  );
-}
-
-/** The bar along a card's foot: its tasks waiting on you, under way and finished. */
-function StateBar({ counts }: { counts: ReturnType<typeof taskCounts> }) {
-  const part = (count: number) => `${counts.total ? (count / counts.total) * 100 : 0}%`;
-  return (
-    <span className="wb-statebar" aria-hidden="true">
-      {counts.waiting > 0 && <span className="waiting" style={{ width: part(counts.waiting) }} />}
-      {counts.active > 0 && <span className="active" style={{ width: part(counts.active) }} />}
-      {counts.done > 0 && <span className="done" style={{ width: part(counts.done) }} />}
-    </span>
   );
 }
 
@@ -618,7 +536,7 @@ function MainSummary({ main, face, reply }: { main: Bot | undefined; face: strin
   );
 }
 
-const SECTIONS = [["sum", "Summary"], ["ask", "Your call"], ["made", "Results"], ["trend", "Progress"], ["log", "What I did"], ["decided", "My calls"], ["next", "Next"]] as const;
+const SECTIONS = [["sum", "Summary"], ["ask", "Your call"], ["made", "Results"], ["decided", "My calls"], ["next", "Next"]] as const;
 type ReportSection = (typeof SECTIONS)[number][0];
 
 function Report({ api, bot, data, waiting, face, now, origin, status, lang, onClose, onOpenChat, onNotify, onAllow }: {
@@ -631,21 +549,14 @@ function Report({ api, bot, data, waiting, face, now, origin, status, lang, onCl
   const asking = data?.picture?.status === "approve" && data.picture.command && data.picture.folder ? data.picture : null;
   const body = useRef<HTMLDivElement>(null);
   const article = useRef<HTMLElement>(null);
-  const tasks = named(data?.tasks ?? []);
-  const counts = taskCounts(tasks);
   const asks = waitingAsks(bot, waiting, data);
   const waitingTotal = askCount(asks);
-  const done = finishedTasks(tasks, 12);
-  const days = boardWeek([data], now).days.map(({ label, count, today }) => ({ day: label, count, today }));
-  const peak = Math.max(1, ...days.map((day) => day.count));
   const next = data ? nextSteps(data) : [];
   const status0 = data?.currentStatus ?? [];
   const has: Record<ReportSection, boolean> = {
-    sum: status0.length > 0 || counts.total > 0 || asks.length > 0 || !!picture || !!asking,
+    sum: status0.length > 0 || !!picture || !!asking,
     ask: waitingTotal > 0,
     made: (data?.results.length ?? 0) > 0,
-    trend: days.some((day) => day.count > 0),
-    log: done.length > 0,
     decided: (data?.decided.length ?? 0) > 0,
     next: next.length > 0,
   };
@@ -681,7 +592,7 @@ function Report({ api, bot, data, waiting, face, now, origin, status, lang, onCl
         )}
       </header>
       <div className="wb-report-body" ref={body}>
-        {shown.length === 0 && <p className="wb-report-empty">{bot.name} has not written a status, tasks or results yet.</p>}
+        {shown.length === 0 && <p className="wb-report-empty">{bot.name} has not written a status or results yet.</p>}
         {has.sum && (
           <section data-part="sum" className="wb-part">
             {picture && <PictureFrame api={api} botId={bot.id} picture={picture} size="2x2" title={`${bot.name}'s picture`} />}
@@ -692,11 +603,6 @@ function Report({ api, bot, data, waiting, face, now, origin, status, lang, onCl
               </div>
             )}
             {status0.map((line, index) => <p key={index} className="wb-sum-line">{line}</p>)}
-            <div className="wb-stats">
-              <span className="wb-stat"><span className="wb-stat-n done">{counts.done}</span><span className="wb-stat-l">done</span></span>
-              <span className="wb-stat"><span className="wb-stat-n active">{counts.active}</span><span className="wb-stat-l">under way</span></span>
-              <span className="wb-stat"><span className="wb-stat-n waiting">{waitingTotal}</span><span className="wb-stat-l">waiting on you</span></span>
-            </div>
           </section>
         )}
         {has.ask && (
@@ -725,32 +631,6 @@ function Report({ api, bot, data, waiting, face, now, origin, status, lang, onCl
                 </button>
               ))}
             </div>
-          </section>
-        )}
-        {has.trend && (
-          <section data-part="trend" className="wb-part">
-            <h4 className="wb-part-title">Tasks finished this week</h4>
-            <div className="wb-chart">
-              <svg width="100%" height="96" viewBox="0 0 700 96" preserveAspectRatio="none" role="img"
-                aria-label={`Tasks finished per day: ${days.map((day) => `${day.day} ${day.count}`).join(", ")}`}>
-                {days.map((day, index) => {
-                  const height = day.count ? Math.max(6, (day.count / peak) * 86) : 2;
-                  return <rect key={day.day} x={index * 100 + 15} y={92 - height} width="70" height={height} rx="4" className={day.today ? "today" : day.count ? "bar" : "empty"} />;
-                })}
-              </svg>
-              <div className="wb-chart-days">{days.map((day) => <span key={day.day}>{day.day}{day.count ? ` · ${day.count}` : ""}</span>)}</div>
-            </div>
-          </section>
-        )}
-        {has.log && (
-          <section data-part="log" className="wb-part">
-            <h4 className="wb-part-title">What I did (newest first)</h4>
-            {done.map((task) => (
-              <span key={task.id} className="wb-log" data-task={task.id}>
-                <span className="wb-log-when">{shortTime(task.updatedAt, now)}</span>
-                <span className="wb-log-text">{task.state === "stopped" ? `${task.name} (stopped)` : task.name}</span>
-              </span>
-            ))}
           </section>
         )}
         {has.decided && (

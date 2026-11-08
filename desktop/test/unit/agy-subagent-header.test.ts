@@ -12,7 +12,7 @@ beforeAll(async () => {
   document.body.innerHTML = '<main id="scroller"><div id="messages"></div></main><div id="composer-slot"></div>';
   await import("../../../Web/src/main");
 });
-afterEach(() => { window.ccb.setState(chatState({ ...bot, subagents: 0 }, { botId: "empty", messages: [], running: null, live: [], tasks: [] }).state); });
+afterEach(() => { window.ccb.setState(chatState({ ...bot, subagents: 0 }, { botId: "empty", messages: [], running: null, live: [] }).state); });
 
 // An Antigravity worker as the registry stores it; `runtime` may be missing on an old record.
 const worker = (type: string, runtime?: Record<string, unknown>) => readSubagent({ id: "w", description: "charts", prompt: "p", type, status: "running", background: true, startedAt: 0, steps: [], ...(runtime ? { runtime } : {}) })!;

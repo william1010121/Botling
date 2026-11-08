@@ -8,8 +8,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BotlingApi, BotSummary, ReplyTag } from "../../../../Web/host/src/api";
-import { botDescription, latestAction } from "./data";
-import type { Approval, BoardView, Bot, Entry, Lang, Look, Picture, Task, Waiting } from "./types";
+import { botDescription } from "./data";
+import type { Approval, BoardView, Bot, Entry, Lang, Look, Picture, Waiting } from "./types";
 
 /** The most a picture's data may be (as `ccb.save`'s), as JSON characters. */
 export const PICTURE_DATA_LIMIT = 256_000;
@@ -221,13 +221,12 @@ export class Program {
       faces[bot.id] = face;
     }
     const entries = await Promise.all(summaries.filter((bot) => bot.role !== "main" && !bot.parent).map(async (bot): Promise<Entry> => {
-      const [memory, tasks, results, days, approvals] = await Promise.all([
-        workspace.memory(bot.id), workspace.tasks(bot.id, { limit: 100 }), workspace.results(bot.id, { limit: 12 }), workspace.taskHistory(bot.id, 14), workspace.pendingApprovals(bot.id),
+      const [memory, results, approvals] = await Promise.all([
+        workspace.memory(bot.id), workspace.results(bot.id, { limit: 12 }), workspace.pendingApprovals(bot.id),
       ]);
-      const shown = tasks as unknown as Task[];
       return {
-        botId: bot.id, currentStatus: memory.currentStatus, inProgress: memory.inProgress, decided: memory.decided, tasks: shown, results,
-        picture: null, latest: latestAction(shown), doneDays: days, description: botDescription(bot.job, memory.currentStatus[0], bot.folder), approvals: approvals as Approval[],
+        botId: bot.id, currentStatus: memory.currentStatus, inProgress: memory.inProgress, decided: memory.decided, results,
+        picture: null, description: botDescription(bot.job, memory.currentStatus[0], bot.folder), approvals: approvals as Approval[],
       };
     }));
     this.read = { look, bots: summaries, waiting, entries, faces };

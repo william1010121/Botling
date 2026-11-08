@@ -11,7 +11,7 @@ import { WorkspaceStore, type WorkspaceView } from '../../src/renderer/store';
 it('updates the actual chat header to the selected bot engines, including single Antigravity and all three', async () => {
   const bot: BotView = { id: 'B', name: 'Project', role: 'manager', avatar: 'square', folder: '/w', phase: 'awake', working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ['codex'], job: null, subagentRows: [] };
   const defaults = new WorkspaceStore(async () => { throw Error('Unexpected snapshot'); }).getView();
-  let view: WorkspaceView = { ...defaults, ready: true, bots: [bot], settings: settingsView({}), chat: { botId: bot.id, messages: [], running: null, live: [], tasks: [] } };
+  let view: WorkspaceView = { ...defaults, ready: true, bots: [bot], settings: settingsView({}), chat: { botId: bot.id, messages: [], running: null, live: [] } };
   const listeners = new Set<() => void>();
   const subscribe = (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); };
   const store = { getView: () => view, getChatView: () => view, subscribe, subscribeChat: subscribe } as unknown as WorkspaceStore;

@@ -38,7 +38,7 @@ it('mounts the real 1.x Composer in the native root before readiness and retains
  const stamp={surfaceId:'surface',documentGeneration:'document'};
  listeners.get(EDITOR_CHANNEL.bound)!({},stamp);
  expect(outgoing.some(({value})=>value.message?.action?.type==='ready')).toBe(true);
- const payload=chatState(bot,{botId:bot.id,messages:[],running:null,live:[],tasks:[]});
+ const payload=chatState(bot,{botId:bot.id,messages:[],running:null,live:[]});
  const state=()=>listeners.get(EDITOR_CHANNEL.down)!({}, {stamp,message:{botling:'state',...payload}});
  state();
  const dom=document.querySelector<HTMLElement>('.composer .cm-editor')!;

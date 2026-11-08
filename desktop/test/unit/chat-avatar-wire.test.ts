@@ -8,7 +8,7 @@ import type { ShellMessage } from '../../src/renderer/chat-frame/protocol';
 const avatar = 'data:image/png;base64,' + 'A'.repeat(34_000);
 const bot: BotView = { id: 'B', name: 'botling', role: 'manager', avatar: 'cloud', folder: '/fixture', phase: 'asleep', working: false, approvals: 0, unread: 0, subagents: 0, problem: null, heads: ['codex'], job: null, subagentRows: [] };
 function full(): Extract<ShellMessage, { botling: 'state' }> {
-  const { state, extras } = chatState(bot, { botId: 'B', running: null, live: [], tasks: [], messages: Array.from({ length: 600 }, (_, i) => ({ id: String(i), role: 'bot', text: 'message ' + i, time: '2026-10-28T00:00:00Z' })) });
+  const { state, extras } = chatState(bot, { botId: 'B', running: null, live: [], messages: Array.from({ length: 600 }, (_, i) => ({ id: String(i), role: 'bot', text: 'message ' + i, time: '2026-10-28T00:00:00Z' })) });
   return { botling: 'state', state: { ...state, avatar, seenHeads: { X: avatar }, messages: state.messages.map(m => ({ ...m, avatar })) }, extras, revision: 8 };
 }
 describe('native avatar transport', () => {

@@ -79,7 +79,7 @@ describe("bottom panels on the app page", () => {
       ],
     };
     const defaults = new WorkspaceStore(async () => { throw new Error("Unexpected snapshot"); }).getView();
-    const view: WorkspaceView = { ...defaults, ready: true, bots: [bot], settings: settingsView({}), plugins: pluginsView, chat: { botId: BOT, messages: [], running: null, live: [], tasks: [] } };
+    const view: WorkspaceView = { ...defaults, ready: true, bots: [bot], settings: settingsView({}), plugins: pluginsView, chat: { botId: BOT, messages: [], running: null, live: [] } };
     const store = { getView: () => view, getChatView: () => view, subscribe: () => () => {}, subscribeChat: () => () => {}, showBoard: () => {} } as unknown as WorkspaceStore;
     const requests: any[] = [];
     const client = {

@@ -12,7 +12,7 @@ describe("chat state for the Web/src page", () => {
   it("maps ignored questions to notifications and excludes approvals from Ignore", () => {
     const question: MessageView = { id: "q", role: "bot", text: "Proceed?", time: at(0), choices: [{ label: "Yes", detail: null, recommended: true, action: "allowOnce" }] };
     const messages = [question, { ...question, id: "ignored", ignoredAt: at(1) }, { ...question, id: "approval", approval: { tool: "Bash", expires: null } }];
-    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] });
+    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [] });
     expect(state.messages[0]).toMatchObject({ open: true, canIgnoreQuestion: true });
     expect(state.messages[1]).toMatchObject({ open: false, ignoredAt: at(1), chosen: null, answer: null });
     expect(state.messages[2]).toMatchObject({ open: true, canIgnoreQuestion: false });
@@ -29,7 +29,7 @@ describe("chat state for the Web/src page", () => {
       { id: "r2", role: "bot", text: "", time: at(3), state: "streaming", turnId: "t2" },
     ];
     const live = [{ id: "s1", kind: "tool" as const, tool: "Bash", title: "Run rm -rf build", detail: "rm -rf build", output: null, failed: false, done: false }];
-    const { state, extras } = chatState(bot, { botId: "B", messages, running: { turnId: "t2", messageId: "r2" }, live, tasks: [] }, new Date(Date.UTC(2026, 9, 25, 9)));
+    const { state, extras } = chatState(bot, { botId: "B", messages, running: { turnId: "t2", messageId: "r2" }, live }, new Date(Date.UTC(2026, 9, 25, 9)));
     expect(state).toMatchObject({ botID: "B", botName: "blog", working: true, placeholder: "Message blog…", components: {}, pendingFiles: [] });
     expect(state.messages.map((m) => m.id)).toEqual(["u1", "r1", "q1"]); // The running reply has no words yet.
     expect(state.live).toEqual([expect.objectContaining({ title: "Run rm -rf build", status: null, count: null })]);
@@ -38,7 +38,7 @@ describe("chat state for the Web/src page", () => {
     expect(state.messages[0]).toMatchObject({ avatar: null, choices: null, attachments: null, openable: false });
     expect(extras).toEqual({ botId: "B", running: true, states: { r1: "stopped" } });
 
-    const answered = chatState(bot, { botId: "B", messages: [{ ...messages[2]!, chosen: 0 }, { ...messages[3]!, text: "Done" }], running: { turnId: "t2", messageId: "r2" }, live, tasks: [] }).state;
+    const answered = chatState(bot, { botId: "B", messages: [{ ...messages[2]!, chosen: 0 }, { ...messages[3]!, text: "Done" }], running: { turnId: "t2", messageId: "r2" }, live }).state;
     expect(answered.messages[0]!.open).toBe(false);
     expect(answered.messages[1]).toMatchObject({ text: "Done", steps: [expect.objectContaining({ id: "s1" })] });
     expect(answered.live).toEqual([]);
@@ -72,7 +72,7 @@ describe("chat state for the Web/src page", () => {
       handoffs: [{ id: "H1", from: "claude" as const, to: "codex" as const, kind: "review" as const, task: "Check it", origin: null, round: 1, limit: 2, state: "running" as const, lines: [{ who: "claude" as const, text: "Check it" }] }],
     };
     const runs = [{ turnId: "t3", messageId: "r3", live: [] }, { turnId: "t4", messageId: "r4", live: [] }];
-    const { state, extras } = chatState(two, { botId: "B", messages, running: { turnId: "t3", messageId: "r3" }, live: [], tasks: [], runs, heads });
+    const { state, extras } = chatState(two, { botId: "B", messages, running: { turnId: "t3", messageId: "r3" }, live: [], runs, heads });
     expect(state.answerWith).toEqual({ options: [{ id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }], chosen: "claude" });
     expect(state.rounds).toEqual({ text: "Review round 1 of 2", stop: "Stop now", kind: "review", round: 1, limit: 2 });
     expect(state.handoffs).toEqual([{ id: "H1", from: "claude", to: "codex", fromName: "Claude", toName: "Codex", kind: "review", task: "Check it", origin: null, round: 1, limit: 2, state: "running", lines: [{ who: "claude", name: "Claude", text: "Check it" }] }]);
@@ -83,7 +83,7 @@ describe("chat state for the Web/src page", () => {
     expect(state.working).toBe(true);
     expect(extras.running).toBe(true);
     // One head: none of it.
-    const one = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] }).state;
+    const one = chatState(bot, { botId: "B", messages, running: null, live: [] }).state;
     expect(one.answerWith).toBeUndefined();
     expect(one.messages[1]!.speaker).toBeNull();
     expect(one.messages[1]!.seen).toBeNull();
@@ -94,7 +94,7 @@ describe("attachments in the chat state", () => {
   it("are served by the chat origin under their own file name", () => {
     const messages: MessageView[] = [{ id: "u1", role: "relay", text: "A component report", time: at(0),
       attachments: [{ name: "x-agent-activity.png", kind: "image", url: "file:///synthetic/attachments/x-agent-activity.png" }] }];
-    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] });
+    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [] });
     expect(state.messages[0]!.attachments![0]!.url).toMatch(/^botling-chat:\/\/chat\/attachment\/B\/[A-Za-z0-9_-]+\/x-agent-activity\.png$/);
   });
 });
@@ -111,27 +111,27 @@ describe("the bot's routines in its chat", () => {
       { id: "cron:#0 4 * * * Old: gone", kind: "legacy" as const, task: "Old: gone", title: "Old", schedule: "Every day 04:00", cron: "0 4 * * *", timezone: "system_local", status: "paused", next: null },
       { id: "R3", kind: "once" as const, task: "Done: x", title: "Done", schedule: at(0), cron: null, timezone: "Asia/Taipei", status: "fired", next: null },
     ];
-    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [], routines }, new Date(Date.UTC(2026, 9, 25, 8, 5)));
+    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], routines }, new Date(Date.UTC(2026, 9, 25, 8, 5)));
     expect(state.messages[1]!.tasks).toEqual([
       expect.objectContaining({ id: "routine:cron:0,30 * * * * Baseline progress: report", kind: "cron", title: "Baseline progress", status: "running", detail: "Baseline progress: report", schedule: "0,30 * * * *", recurring: true, fires: Date.parse(at(30)), message: "r1" }),
       expect.objectContaining({ id: "routine:R2", kind: "cron", title: "Check", status: "running", schedule: null, recurring: false, fires: Date.parse(at(45)), message: "r1" }),
     ]);
     // No routines: no row.
-    expect(chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] }).state.messages[1]!.tasks).toBeNull();
+    expect(chatState(bot, { botId: "B", messages, running: null, live: [] }).state.messages[1]!.tasks).toBeNull();
   });
 });
 
 describe("routines.updated", () => {
   it("updates the routines of the chat on screen, and only that chat's", () => {
     const routine = { id: "cron:0,30 * * * * Baseline progress: report", kind: "legacy" as const, task: "Baseline progress: report", title: "Baseline progress", schedule: "Every 30 minutes", cron: "0,30 * * * *", timezone: "system_local", status: "enabled", next: null };
-    const view = { ready: true, bots: [bot], imported: null, chat: { botId: "B", messages: [], running: null, live: [], tasks: [] } } as unknown as WorkspaceView;
+    const view = { ready: true, bots: [bot], imported: null, chat: { botId: "B", messages: [], running: null, live: [] } } as unknown as WorkspaceView;
     expect(apply(view, { type: "routines.updated", botId: "B", routines: [routine], error: null }).chat!.routines).toEqual([routine]);
     expect(apply(view, { type: "routines.updated", botId: "OTHER", routines: [routine], error: null }).chat!.routines).toBeUndefined();
   });
 });
 
 describe("the / menu and menus from the plugin registry (M6)", () => {
-  const chat = { botId: "B", messages: [], running: null, live: [], tasks: [] };
+  const chat = { botId: "B", messages: [], running: null, live: [] };
   const pluginView = (name: string, parts: PluginsView["plugins"][number]["parts"], commands: { id: string; registered: boolean }[], builtIn = false) =>
     ({ name, title: name, version: "1", description: null, enabled: true, failure: null, installedFrom: null, permissions: [], parts, settings: [], panels: [],
       commands: commands.map((command) => ({ ...command, title: command.id })), ...(builtIn ? { builtIn } : {}) });

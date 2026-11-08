@@ -34,23 +34,8 @@ export interface DecorationView {
   after?: string;
   /** Inside the message's own column, under its words. */
   under?: string;
-  /** The task cards it is about, as their chips show them now. */
-  tasks?: TaskCardView[] | null;
   /** The plugin's own, for its web part. */
   data?: unknown;
-}
-
-/** A task card as the chip under one of its replies shows it (Swift's `TaskCardChip`). */
-export interface TaskCardView {
-  id: string;
-  name: string;
-  /** "stale": running, but maybe stuck. */
-  state: "pending" | "running" | "waiting" | "done" | "stopped" | "stale";
-  owner?: "claude" | "codex" | "agy" | null;
-  /** On the task's latest reply only: what it does now, or what it waits on. */
-  detail?: string | null;
-  /** The right panel shows this task open. */
-  selected?: boolean | null;
 }
 
 /** One question of a group asked together: single-choice, or several allowed (`multiple`). */
@@ -130,8 +115,6 @@ export interface MessageView {
   seen?: SeenView[] | null;
   /** A bot's turn cut off before it answered (you wrote again, it stopped): what it had said and done so far. */
   interrupted?: boolean | null;
-  /** The task cards it belongs to: a chip each under the reply. */
-  taskCards?: TaskCardView[] | null;
 }
 
 /** A head under a line: recipient highlighting and its separate actual-read receipt. */
@@ -447,7 +430,6 @@ export type Action =
   | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; force?: boolean; live?: boolean }
   | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number>; card?: string; command?: string }
   | { type: "componentSave"; messageID: string; index: number; data: string }
-  | { type: "selectTask"; id: string }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }
   | { type: "pluginLoaded"; name: string; version: string }

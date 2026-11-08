@@ -31,7 +31,7 @@ export async function mobileCommand(access: MobileAccess, raw: unknown, allowedB
       if (allowedBots.includes(ALL_BOTS)) return okResponse(id, webSnapshot(snapshot));
       return okResponse(id, { epoch: snapshot.epoch, seq: snapshot.seq,
         bots: snapshot.bots.filter(bot => allowedBots.includes(bot.id)).map(({ id, name, role, working, approvals, unread, problem, heads }) => ({ id, name, role, working, approvals, unread, problem, heads })),
-        chat: snapshot.chat ? { botId: snapshot.chat.botId, messages: snapshot.chat.messages, tasks: snapshot.chat.tasks, ...(snapshot.chat.history ? { history: snapshot.chat.history } : {}),
+        chat: snapshot.chat ? { botId: snapshot.chat.botId, messages: snapshot.chat.messages, ...(snapshot.chat.history ? { history: snapshot.chat.history } : {}),
           pendingFiles: (snapshot.chat.pendingFiles ?? []).map(({ id, name }) => ({ id, name })) } : null });
     }
     if (cmd.type === 'chat.send' && access.pending(botId).length)

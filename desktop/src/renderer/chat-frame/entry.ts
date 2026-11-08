@@ -145,8 +145,6 @@ fromShell(message => {
     takeFocusBack();
   } else if (message.botling === "focus") {
     window.ccb.focus();
-  } else if (message.botling === "jumpToTask") {
-    window.ccb.jumpToTask(message.messageID, message.taskID);
   } else if (message.botling === "taskOutput") {
     if (document.documentElement.dataset.chat === message.botID) window.ccb.taskOutput(message.messageID, message.taskID, message.text);
   } else if (message.botling === "detailReply") {
