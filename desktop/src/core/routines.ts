@@ -198,11 +198,21 @@ export interface Routine {
   task: string;
   /** A line starting with # is paused. */
   enabled: boolean;
+  /** "@once Name: what to do": runs at the next check, then the app takes the line out (a script waking its bot). */
+  once?: boolean;
 }
 
 export function routine(schedule: CronSchedule, task: string, enabled = true): Routine {
   return { id: `${schedule.text} ${task}`, schedule, task, enabled };
 }
+
+/** A one-shot line's job; its schedule (every minute) is only there for the views that read one. */
+export function onceRoutine(task: string, enabled = true): Routine {
+  return { id: `${ONCE} ${task}`, schedule: CronSchedule.parse("* * * * *")!, task, enabled, once: true };
+}
+
+/** What starts a one-shot line in place of the five cron fields. */
+export const ONCE = "@once";
 
 /** Where "Name: what to do" divides: the first full-width "：", or ":" followed by a space or the end. */
 function nameEnd(task: string): { name: string; rest: string } | null {
@@ -238,7 +248,7 @@ export function routineFile(task: string): string | null {
   return path || null;
 }
 
-const routineLine = (job: Routine) => `${job.enabled ? "" : "#"}${job.schedule.text} ${job.task}`;
+const routineLine = (job: Routine) => `${job.enabled ? "" : "#"}${job.once ? ONCE : job.schedule.text} ${job.task}`;
 
 /** `15 8 * * * Daily summary: …`, with an optional leading # for paused; plain comments are not jobs. */
 export function parseRoutine(line: string): Routine | null {
@@ -248,6 +258,8 @@ export function parseRoutine(line: string): Routine | null {
     enabled = false;
     text = text.slice(1).trim();
   }
+  const once = /^@once\s+([\s\S]+)$/.exec(text);
+  if (once) return once[1]!.trim() ? onceRoutine(once[1]!.trim(), enabled) : null;
   const match = /^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([\s\S]+)$/.exec(text);
   if (!match) return null;
   const schedule = CronSchedule.parse(match.slice(1, 6).join(" "));
@@ -298,6 +310,28 @@ export class RoutineFile {
 
   add(job: Routine) {
     this.write([...this.lines(), routineLine(job)]);
+  }
+
+  /**
+   * Takes a one-shot line out before it runs (true: it was there, so run it once; false: gone, run nothing). Other
+   * lines and comments stay; the file is read again right before the atomic write, so a line a script appended in
+   * between is kept (retried, not overwritten).
+   */
+  takeOnce(id: string): boolean {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      let text: string;
+      try { text = readFileSync(this.file, "utf8"); } catch { return false; }
+      const lines = text.split("\n");
+      const index = lines.findIndex((line) => { const job = parseRoutine(line); return !!job?.once && job.enabled && job.id === id; });
+      if (index < 0) return false;
+      lines.splice(index, 1);
+      let now: string;
+      try { now = readFileSync(this.file, "utf8"); } catch { return false; }
+      if (now !== text) continue;
+      writeFileAtomic(this.file, lines.join("\n"));
+      return true;
+    }
+    throw new RoutineError("routines.cron kept changing; the one-shot line was left for the next check.");
   }
 
   /** Checked change for the app's tools (`update(id:operation:)`): cancel removes the line, pause/resume set its #. */
@@ -464,7 +498,7 @@ export class ScheduledRoutineStore {
     const operation = typeof args.operation === "string" ? args.operation : "";
     if (operation === "list") {
       const jobs = this.load().map((job) => routinePayload(job, now));
-      const legacy = this.cronFile.load().map((job) => ({ id: `cron:${job.id}`, kind: "legacy_recurring", task: job.task, cron: job.schedule.text, timezone: "system_local", status: job.enabled ? "enabled" : "paused" }));
+      const legacy = this.cronFile.load().map((job) => ({ id: `cron:${job.id}`, kind: job.once ? "legacy_once" : "legacy_recurring", task: job.task, cron: job.once ? ONCE : job.schedule.text, timezone: "system_local", status: job.enabled ? "enabled" : "paused" }));
       return { routines: [...jobs, ...legacy], checked_at: iso(now) };
     }
     if (operation === "create") {

@@ -51,6 +51,21 @@ describe("routines", () => {
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineRuns["* * * * * Ping: say hi to the user"]).toBeGreaterThan(swiftNow(-60_000));
   });
 
+  it("an @once line a script appends to routines.cron reaches the bot's head once, and the core takes the line out", async () => {
+    const dir = tempDir("routines");
+    const c = core(dir);
+    const file = join(dir, "main", "routines.cron");
+    await until(() => existsSync(file));
+    const before = readFileSync(file, "utf8");
+    writeFileSync(file, `${before}@once Alert: disk full on 4090-2\n`);
+    const prompt = await until(() => claudeInputs(dir).find((text) => text.includes('Time for the routine "Alert"')), { timeout: 8_000 });
+    expect(prompt).toContain("disk full on 4090-2");
+    await until(() => readFileSync(file, "utf8") === before);
+    await sleep(600);
+    expect(claudeInputs(dir).filter((text) => text.includes('Time for the routine "Alert"'))).toHaveLength(1);
+    expect((await c.chat()).messages.filter((m: any) => m.role === "divider" && m.text.startsWith("Alert"))).toHaveLength(1);
+  });
+
   it("an app-owned schedule is claimed, dispatched once and marked fired; a claim nobody confirmed stays delivery_uncertain", async () => {
     const dir = tempDir("routines");
     const c = core(dir);

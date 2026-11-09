@@ -8,24 +8,19 @@ const profile = (role: "main" | "manager" | "bot") => ({ id: `${role}-id`, name:
 const system = (engine: "claude" | "codex" | "agy", role: "main" | "manager" | "bot" = "manager") =>
   desktopPrompts(botPrompts({ profile: profile(role), engine, language: "en" }), profile(role), engine).system;
 
+const LINE = (file: string) => `A script or monitor you start can wake you by appending the line "@once Alert: what happened" to ${file}; the app runs it once at its next check and removes the line.`;
+
 describe("a script can wake the bot", () => {
-  it("tells a Claude bot to have its script append a routines.cron line, with the full path, and remove it once woken", () => {
+  it("tells a Claude bot, in one sentence right after the legacy routines rule, with the full path", () => {
     const text = system("claude");
-    expect(text).toContain("A script or monitor you start can wake you:");
-    expect(text).toContain("/p/repo/.bot/routines.cron");
-    expect(text).toMatch(/delete that line first/);
-    // Right after the legacy routines rule.
-    expect(text.indexOf("A script or monitor you start")).toBeGreaterThan(text.indexOf("Claude may edit this legacy file"));
+    expect(text).toContain(`this legacy file for recurring jobs; Codex uses app_routines instead. Never encode a one-time request as a yearly cron job. For one-time scheduling on Claude, use the app’s Routines settings. Say what changed only after it is saved.\n  ${LINE("/p/repo/.bot/routines.cron")}\n`);
+    expect(text).not.toMatch(/delete that line first|after 3 minutes/);
   });
   it("gives the main bot its own routines.cron path", () => {
-    expect(system("claude", "main")).toContain("/p/repo/routines.cron");
+    expect(system("claude", "main")).toContain(LINE("/p/repo/routines.cron"));
   });
-  it("tells a Codex bot to cancel the line with app_routines", () => {
-    const text = system("codex");
-    expect(text).toContain("A script or monitor you start can wake you:");
-    expect(text).toMatch(/app_routines cancel/);
-  });
-  it("leaves Antigravity's prompt, which has no routines rule, alone", () => {
-    expect(system("agy")).not.toContain("A script or monitor you start");
+  it("tells Codex and Antigravity bots the same sentence: their routines.cron runs too", () => {
+    expect(system("codex")).toContain(`  ${LINE("/p/repo/.bot/routines.cron")}`);
+    expect(system("agy")).toContain(`\n${LINE("/p/repo/.bot/routines.cron")}`);
   });
 });

@@ -4585,8 +4585,8 @@ export class Bot {
     for (const job of jobs.slice(0, 50)) {
       views.push({
         id: `cron:${job.id}`.slice(0, 2_200), kind: "legacy", task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "",
-        schedule: clip(job.schedule.description, 400) ?? "", cron: clip(job.schedule.text, 400) ?? null, timezone: "system_local", status: job.enabled ? "enabled" : "paused",
-        next: job.enabled ? iso(job.schedule.nextTime(now, null)) : null,
+        schedule: job.once ? "Once, at the next check" : clip(job.schedule.description, 400) ?? "", cron: job.once ? "@once" : clip(job.schedule.text, 400) ?? null, timezone: "system_local", status: job.enabled ? "enabled" : "paused",
+        next: job.enabled ? iso(job.once ? now : job.schedule.nextTime(now, null)) : null,
       });
     }
     return { routines: views, error: this.routineError?.slice(0, 2_000) ?? null };
@@ -4620,6 +4620,8 @@ export class Bot {
   /** `isDue`: its latest time today has passed and it has not run since; a job seen for the first time starts from now. */
   private isDue(job: Routine, now: number): boolean {
     if (!job.enabled) return false;
+    // A one-shot line runs at the first check that sees it (it is taken out of the file before it runs).
+    if (job.once) return true;
     const last = this.routineRuns[job.id];
     if (last === undefined) {
       this.routineRuns[job.id] = toSwiftDate(now);
@@ -4648,6 +4650,15 @@ export class Bot {
     let noticed = false;
     for (const job of jobs) {
       if (!this.isDue(job, now)) continue;
+      if (job.once) {
+        // Out of the file first: a line that is already gone (taken by an earlier check) never runs twice.
+        let taken = false;
+        try { taken = this.routineFile.takeOnce(job.id); } catch (error) { this.log(`routine ${job.id}: ${(error as Error).message}`); }
+        if (!taken) continue;
+        this.dispatchRoutine(job, now);
+        ran = true;
+        continue;
+      }
       this.routineRuns[job.id] = toSwiftDate(now);
       this.saveRoutineRuns();
       this.dispatchRoutine(job, now);

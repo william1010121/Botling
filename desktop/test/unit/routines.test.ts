@@ -234,3 +234,26 @@ describe("scheduled-routines.json (ScheduledRoutineStoreTests)", () => {
     mkdirSync(join(store.file, ".."), { recursive: true });
   });
 });
+
+describe("@once lines in routines.cron (a script waking its bot)", () => {
+  it("reads \"@once Name: what\" as a one-shot job; the usual lines are as before", () => {
+    const job = parseRoutine("@once Alert: disk full on 4090-2")!;
+    expect(job).toMatchObject({ once: true, enabled: true, task: "Alert: disk full on 4090-2", id: "@once Alert: disk full on 4090-2" });
+    expect(routineTitle(job.task)).toBe("Alert");
+    expect(parseRoutine("#@once Alert: paused")).toMatchObject({ once: true, enabled: false });
+    expect(parseRoutine("@once")).toBeNull();
+    expect(parseRoutine("@once   ")).toBeNull();
+    expect(parseRoutine(DAILY_SUMMARY)!.once).toBeFalsy();
+  });
+
+  it("takeOnce removes exactly that line, keeps comments and other lines, and says false when it is gone", () => {
+    const dir = tempDir("routines-once");
+    const file = join(dir, "routines.cron");
+    writeFileSync(file, `# header\n${DAILY_SUMMARY}\n@once Alert: one\n\n# note\n@once Alert: two\n`);
+    const routines = new RoutineFile(file);
+    expect(routines.load().filter((job) => job.once).map((job) => job.task)).toEqual(["Alert: one", "Alert: two"]);
+    expect(routines.takeOnce("@once Alert: one")).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe(`# header\n${DAILY_SUMMARY}\n\n# note\n@once Alert: two\n`);
+    expect(routines.takeOnce("@once Alert: one")).toBe(false);
+  });
+});

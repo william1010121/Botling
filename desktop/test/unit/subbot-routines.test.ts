@@ -3,7 +3,7 @@
 // by editing the file reaches the chat without waiting for the job to run. Its project bot and an
 // unrelated project never show them.
 import { afterEach, expect, it, vi } from "vitest";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const fixture = vi.hoisted(() => {
   class Head {
@@ -109,21 +109,24 @@ it("a job the bot writes into its routines.cron reaches its chat at the next rou
   expect(events.filter((event) => event.type === "routines.updated")).toHaveLength(0);
 });
 
-it("a script that appends an every-minute Alert line wakes the bot once; deleted, it never runs again", () => {
+it("a script's @once line wakes the bot at the next check, once, and the app takes the line out; added again, it runs again once", () => {
   const { root, profiles } = workspace();
   const eeg = make(root, profiles.eeg, []);
   const file = join(profiles.eeg.folder, ".bot", "routines.cron");
+  writeFileSync(file, "# Routines: one job per line, crontab format.\n0 9 * * * Morning check: read STATUS.md\n");
   const noon = new Date(); noon.setHours(12, 0, 10, 0);
   const t0 = noon.getTime();
   eeg.checkRoutines(t0);
-  appendFileSync(file, "* * * * * Alert: disk full on 4090-2\n");
   const alerts = () => eeg.snapshot().messages.filter((message) => message.role === "divider" && message.text.startsWith("Alert")).length;
-  eeg.checkRoutines(t0 + 30_000); // first seen: starts from now
-  expect(alerts()).toBe(0);
-  eeg.checkRoutines(t0 + 60_000); // 12:01:10: the 12:01 run is due
+  appendFileSync(file, "@once Alert: disk full on 4090-2\n");
+  eeg.checkRoutines(t0 + 1_000); // no waiting for a minute boundary
   expect(alerts()).toBe(1);
-  writeFileSync(file, `# Routines: one job per line, crontab format.\n`); // the bot deletes it first thing
-  eeg.checkRoutines(t0 + 120_000);
-  eeg.checkRoutines(t0 + 180_000);
+  expect(readFileSync(file, "utf8")).toBe("# Routines: one job per line, crontab format.\n0 9 * * * Morning check: read STATUS.md\n");
+  eeg.checkRoutines(t0 + 31_000);
+  eeg.checkRoutines(t0 + 61_000);
   expect(alerts()).toBe(1);
+  appendFileSync(file, "@once Alert: disk full on 4090-2\n");
+  eeg.checkRoutines(t0 + 91_000);
+  eeg.checkRoutines(t0 + 121_000);
+  expect(alerts()).toBe(2);
 });
