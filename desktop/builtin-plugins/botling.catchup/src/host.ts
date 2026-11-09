@@ -4,7 +4,7 @@
 // in the chat as message decorations (`chat.decorate`) for its web part to draw.
 import type { BotlingApi, ChatData } from "../../../../Web/host/src/api";
 import {
-  CatchUpCache, CatchUps, catchUpSettings, claudeSummarizer, codexSummarizer, engineSummarizer, SUMMARY_ENGINE_NAMES, SummaryFailure,
+  CatchUpCache, CatchUps, catchUpSettings, ExpandedRanges, claudeSummarizer, codexSummarizer, engineSummarizer, SUMMARY_ENGINE_NAMES, SummaryFailure,
   type CatchUpChat, type ChatRecord, type Summarizer,
 } from "./catchup";
 import { migrate, settingsReader, summariesFile } from "./migrate";
@@ -48,6 +48,7 @@ export async function activate(api: BotlingApi) {
     settings,
     language: () => appLanguage(api.settings.app("language")),
     changed: redraw,
+    expanded: new ExpandedRanges(api.storage),
   });
 
   // You came back to a chat: more than the threshold of unread replies fold into a summary (`arrive(at:)`).
@@ -68,6 +69,12 @@ export async function activate(api: BotlingApi) {
     const { botId, key } = (params ?? {}) as { botId?: unknown; key?: unknown };
     if (typeof botId !== "string") return { started: false };
     return { started: catchUps.retry(catchUpChat(await read(botId)), typeof key === "string" && key ? key : undefined) };
+  });
+  // The card's "Show original messages": the card goes and its lines show where they are, for good.
+  api.ui.expose("expand", async (params) => {
+    const { botId, key } = (params ?? {}) as { botId?: unknown; key?: unknown };
+    if (typeof botId !== "string" || typeof key !== "string" || !key) return { expanded: false };
+    return { expanded: catchUps.expand(catchUpChat(await read(botId)), key) };
   });
   api.ui.expose("interval", async (params) => {
     const { botId, userMessageId } = (params ?? {}) as { botId?: unknown; userMessageId?: unknown };

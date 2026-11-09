@@ -1,4 +1,4 @@
-// The summary's sources in one dialog (the "Show N messages" button and each bullet's source chips): the
+// The summary's sources in one dialog (each bullet's source chips): the
 // original messages of the range, read only, with the cited passage marked; "Show in chat" and "Answer
 // in chat" reveal the message in place (the page's decoration context does that).
 import type { ChatState, MessageView } from "../../../../Web/src/types";
