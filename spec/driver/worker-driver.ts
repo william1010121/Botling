@@ -21,6 +21,19 @@ export interface WorkerView {
   stale: boolean;
   /** Times the coordinator was shown this run's report (the port took it, or a report turn began). */
   shown: number;
+  /** The run whose steer the engine has not answered yet and that may still act on it (0: none). */
+  steer: number;
+  /** Notes the core accepted from its runs (app_notify_owner), and who got the last: the coordinator or the owner bot. */
+  nsent: number;
+  noted: "none" | "coord" | "other";
+  /** Its follow-up route to another bot's chat (the app's call-in work book). */
+  link: "none" | "live" | "expired";
+  /** The coordinator's turns under way on its reports / notes that go back to the asking bot. */
+  relays: number;
+  nturns: number;
+  /** Such turns begun, and follow-ups posted in the asking bot's chat, in all. */
+  handed: number;
+  posted: number;
 }
 
 /** Recorded claude stream-json output (spec/fixtures/worker-streams), played as a run's output. */
@@ -54,6 +67,16 @@ export interface WorkerSession {
   retryUncertain(w: number): Promise<void>;
   checkpoint(w: number): Promise<void>;
   setOwner(w: number): Promise<void>;
+  /** The engine answers the worker's awaited steer: taken, or missed (its turn had just ended). */
+  steerBack(w: number, missed: boolean): Promise<void>;
+  /** The run at work sends its owner a note (app_notify_owner). */
+  note(w: number): Promise<void>;
+  /** The coordinator started this worker in a call-in turn for another bot's @. */
+  link(w: number): Promise<void>;
+  /** Time passes until this worker's route expires (routes linked earlier expire first). */
+  expire(w: number): Promise<void>;
+  /** The coordinator's oldest turn under way on this worker's `kind` of news ends, with words to show or not. */
+  turnEnd(w: number, kind: "report" | "note", said: boolean): Promise<void>;
   /** The app goes away and starts again on the same ledger. */
   crash(): Promise<void>;
   /** null: no handoff yet. */
