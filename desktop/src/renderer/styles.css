@@ -743,7 +743,9 @@ button { font: inherit; color: inherit; }
 /* Navigation v5, part 2: the "<owner>'s workers" badge on the right of the Chat / Board bar and its menu (the room's
    workers by owner). A worker opens in the main area, read only, with "Ask <owner>" under it (Workers.tsx). */
 .board-switch-bar { position: relative; }
-.workers-badge-slot { position: absolute; right: 16px; top: 50%; transform: translateY(calc(-50% + 2px)); display: flex; }
+/* The transform makes the slot a stacking context, so .wk-menu's z-index only counts inside it: the slot itself sits at the
+   menus' level, or the native chat's placeholder (#chat-frame, positioned and opaque, later in the page) paints over the menu. */
+.workers-badge-slot { position: absolute; right: 16px; top: 50%; transform: translateY(calc(-50% + 2px)); display: flex; z-index: 40; }
 .workers-badge { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--soft-text); font-size: 12.5px; white-space: nowrap; cursor: pointer; -webkit-app-region: no-drag; }
 .workers-badge b { color: var(--text); font-weight: 600; }
 .workers-badge .cnt { font-weight: 600; font-variant-numeric: tabular-nums; }
