@@ -6,13 +6,18 @@ import { t } from "./i18n";
 import { isSendEnter } from "./ime";
 import type { QuestionPickView, QuestionView } from "./types";
 
-/** One question's answer as sent: options ticked, their own words, or a skip. */
-export interface GroupPick { options: number[]; other?: string; skipped?: boolean }
+/** One question's answer as sent: options ticked, their own words, a note per ticked option, or a skip. */
+export interface GroupPick { options: number[]; other?: string; skipped?: boolean; notes?: Record<string, string> }
 
 /** What one answer says ("Postgres", "Login; Export; Other: SSO", "Skipped"). */
 export function pickText(question: QuestionView, pick: QuestionPickView | GroupPick | undefined): string {
   if (!pick || pick.skipped) return t("questions.skipped");
-  const parts = pick.options.map((index) => question.options[index]?.label ?? "").filter(Boolean);
+  const parts = pick.options.flatMap((index) => {
+    const label = question.options[index]?.label;
+    if (!label) return [];
+    const note = pick.notes?.[String(index)];
+    return [note ? `${label} (${t("questions.note")}: ${note})` : label];
+  });
   if (pick.other) parts.push(parts.length || question.multiple ? `${t("questions.otherLabel")}: ${pick.other}` : pick.other);
   return parts.join("; ") || t("questions.skipped");
 }

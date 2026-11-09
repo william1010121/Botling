@@ -8,6 +8,7 @@ import { saveProjectRow } from "../../src/core/projects";
 import { messageView } from "../../src/core/bot";
 import { isOpenQuestion } from "../../src/core/store/records";
 import { tempDir } from "../helpers";
+import { actionPicks } from "../../src/renderer/answer-picks";
 
 const PROJECT = "98BDBF26-850C-4521-AEB4-CCF9073E8BD1";
 const QUESTION = "DD43524E-1FC7-4DD6-9A50-4A129ADD64B0";
@@ -63,6 +64,22 @@ describe("question group answers", () => {
       expect(h.send).toHaveBeenCalledTimes(1);
       await h.core.shutdown();
       expect(JSON.parse(readFileSync(h.file, "utf8"))[0].picks).toEqual([{ options: [1] }, { options: [0, 2], other: "SSO" }]);
+    } finally { await h.core.shutdown(); }
+  });
+
+  // flux-k8s, 2026-11-10: a one-question <choices question="…"> card took the group path, and the note the user
+  // wrote on the picked option was dropped on the way (page → renderer → contract), so the bot got the option alone.
+  it("a note on a picked option reaches the bot through every hop of the group path, and is shown back", async () => {
+    const action = { picks: [{ options: [1], notes: { "1": " check the datastore first " } }, { options: [0, 2], notes: { "2": "later", "1": "not ticked" } }] };
+    const picks = actionPicks(action.picks)!;
+    expect(picks).toEqual([{ options: [1], notes: { "1": "check the datastore first" } }, { options: [0, 2], notes: { "2": "later" } }]);
+    expect(parseInbound({ v: 10, id: "a", cmd: { type: "chat.answer", botId: PROJECT, messageId: QUESTION, text: "", picks } }).ok).toBe(true);
+    const h = fixture();
+    try {
+      expect(await h.handle({ type: "chat.answer", text: "", picks })).toEqual({ accepted: true });
+      expect(h.send.mock.calls[0]![0]).toBe("1. Which database?\n→ SQLite (Note: check the datastore first)\n2. Which features? (several allowed)\n→ Login; Search (Note: later)");
+      const view = messageView(h.bot.line(QUESTION));
+      expect(view.picks).toEqual([{ options: [1], other: null, skipped: false, notes: { "1": "check the datastore first" } }, { options: [0, 2], other: null, skipped: false, notes: { "2": "later" } }]);
     } finally { await h.core.shutdown(); }
   });
 

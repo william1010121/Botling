@@ -6028,7 +6028,7 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
     if (questions) {
       view.questions = questions.map((question) => ({ question: question.question, multiple: question.multiple, options: question.options.map(choiceView) }));
       const picks = savedPicks(questions, record.picks);
-      if (picks) view.picks = picks.map((pick) => ({ options: pick.options, other: pick.other ?? null, skipped: pick.skipped === true }));
+      if (picks) view.picks = picks.map((pick) => ({ options: pick.options, other: pick.other ?? null, skipped: pick.skipped === true, ...(pick.notes ? { notes: { ...pick.notes } } : {}) }));
     }
   }
   if (record.permissionTool) view.approval = { tool: record.permissionTool.slice(0, 200), expires: approval ? new Date(approval.expires).toISOString() : null };

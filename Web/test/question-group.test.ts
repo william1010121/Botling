@@ -2,7 +2,8 @@
 // Several questions answered together: one card group, one Submit, the answers sent as `picks`.
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
-import { answerAction, answerPicks, choicesDrawGroups } from "../src/components";
+import { answerAction, answerPicks, choicesDrawGroups, questionGroupData } from "../src/components";
+import { pickText } from "../src/question-group";
 import { messageElement } from "../src/messages";
 import type { MessageView, QuestionView } from "../src/types";
 
@@ -109,6 +110,17 @@ describe("question groups", () => {
   it("a template's group answer becomes the same action", () => {
     expect(answerPicks([{ options: [1, 9, "x"], other: " hi " }, { skipped: true }])).toEqual([{ options: [1], other: "hi" }, { options: [], skipped: true }]);
     expect(answerPicks([])).toBeNull();
+    // A note the template wrote on a ticked option goes along (keyed by that option); a note on an unticked one does not.
+    expect(answerPicks([{ options: [1], notes: { 1: " check the datastore first ", 0: "stray" } }])).toEqual([{ options: [1], notes: { "1": "check the datastore first" } }]);
+    expect(answerAction("g1", { picks: [{ options: [1], notes: { "1": "n" } }] })).toEqual({ type: "answer", messageID: "g1", text: "", picks: [{ options: [1], notes: { "1": "n" } }] });
     expect(answerAction("g1", { picks: [{ options: [0] }] })).toEqual({ type: "answer", messageID: "g1", text: "", picks: [{ options: [0] }] });
+  });
+});
+
+describe("notes on a group answer, shown back", () => {
+  it("the answered card and the template's data keep the note", () => {
+    const picks = [{ options: [1], other: null, skipped: false, notes: { "1": "managed is fine" } }];
+    expect(pickText(questions[0]!, picks[0])).toBe("SQLite (Note: managed is fine)");
+    expect(JSON.parse(questionGroupData(questions.slice(0, 1), picks, null)).picks[0].notes).toEqual({ "1": "managed is fine" });
   });
 });

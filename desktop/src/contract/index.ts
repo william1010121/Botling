@@ -70,6 +70,8 @@ export const QuestionPickView = z.strictObject({
   options: z.array(z.number().int().nonnegative().max(5)).max(6),
   other: z.string().max(1_000).nullable(),
   skipped: z.boolean(),
+  /** A note the user wrote on a ticked option, keyed by its index. */
+  notes: z.record(z.string().regex(/^[0-5]$/), z.string().max(1_000)).optional(),
 });
 export type QuestionPickView = z.infer<typeof QuestionPickView>;
 
@@ -911,7 +913,8 @@ export const Command = z.discriminatedUnion("type", [
   /** `images`: pictures a component sent with its answer (`{text, images}`), as `{name, base64}`; they go along as attachments. */
   /** `picks`: a question group's answers, one per question in order; the app writes the bot's message from them (`text` is then ignored). */
   z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().max(MESSAGE_TEXT_LIMIT), images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10).optional(),
-    picks: z.array(z.strictObject({ options: z.array(z.number().int().nonnegative().max(5)).max(6), other: z.string().max(1_000).optional(), skipped: z.boolean().optional() })).min(1).max(5).optional() }),
+    picks: z.array(z.strictObject({ options: z.array(z.number().int().nonnegative().max(5)).max(6), other: z.string().max(1_000).optional(), skipped: z.boolean().optional(),
+      notes: z.record(z.string().regex(/^[0-5]$/), z.string().max(1_000)).optional() })).min(1).max(5).optional() }),
   /** Explicitly dismiss a question as a notification; never dispatches an answer. */
   z.strictObject({ type: z.literal("chat.ignoreQuestion"), botId, messageId: id }),
   /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */

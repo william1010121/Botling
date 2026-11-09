@@ -214,6 +214,7 @@ export const en = {
   "questions.pickAny": "Pick any",
   "questions.other": "Other, write your own…",
   "questions.otherLabel": "Other",
+  "questions.note": "Note",
   "questions.skip": "Skip",
   "questions.unskip": "Undo skip",
   "questions.skipped": "Skipped",
