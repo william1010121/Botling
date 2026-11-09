@@ -48,25 +48,14 @@ describe("catch-up summary", () => {
     expect(order()).toEqual(["a", "HEAD", "b", "c", "d", "e"]);
   });
 
-  it("\"Show original messages\" asks the program part to dissolve the card; it is the card's only way to the originals", () => {
-    window.ccb.setState(state(view({ key: "k-expand" })));
-    expect(document.querySelector('[data-action="toggle"]')).toBeNull();
-    const expand = document.querySelector<HTMLButtonElement>('[data-action="expand"]')!;
-    expect(expand.textContent).toBe("Show original messages");
-    expand.click();
-    expect(sent.at(-1)).toMatchObject({ type: "hostCall", plugin: "botling.catchup", method: "expand", params: { botId: "catchup-bot", key: "k-expand" } });
-    window.ccb.setState(state(view({ key: "k-expand" }), { lang: "zh-Hant" }));
-    expect(document.querySelector('[data-action="expand"]')?.textContent).toBe("展開原訊息");
-    // The program part drops the card: every line shows where it was.
-    window.ccb.setState(state(null));
-    expect(document.querySelectorAll("#messages .decoration-folded")).toHaveLength(0);
-    expect(order()).toEqual(["a", "b", "c", "d", "e"]);
-  });
-
-  it("opens all originals from a source chip in a centered viewer while keeping the main rows folded", () => {
-    window.ccb.setState(state(view({ bullets: ["Build passed [[source:b]]"] })));
+  it("opens all originals in a centered viewer while keeping the main rows folded", () => {
+    window.ccb.setState(state(view()));
     const originals=rows();
-    const toggle = document.querySelector<HTMLButtonElement>('[data-cite-point="0"][data-cite-index="0"]')!;
+    const toggle = document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!;
+    // "Show N messages" opens the originals over the card; there is no button that dissolves the card.
+    expect(toggle.textContent).toBe("Show 4 messages↗");
+    expect(toggle.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(document.querySelector('[data-action="expand"]')).toBeNull();
     toggle.focus();toggle.click();
     expect(document.querySelectorAll("#messages .decoration-folded")).toHaveLength(4);
     expect(order()).toEqual(["a", "HEAD", "b", "c", "d", "e"]);
@@ -75,7 +64,7 @@ describe("catch-up summary", () => {
     document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
     expect(document.querySelector(".summary-source-viewer")).toBeNull();
     expect(document.querySelectorAll("#messages .decoration-folded")).toHaveLength(4);
-    expect(document.activeElement?.getAttribute("data-cite-point")).toBe("0");
+    expect(document.activeElement?.getAttribute("data-action")).toBe("toggle");
   });
 
   it("shows loading with the selected model, and a failure with Retry", () => {
@@ -152,7 +141,7 @@ it("no \"Summarize N replies\" under an open question left out of its stretch's 
   window.ccb.setState(state(null, { messages, intervalSummaries: [view({ key: "iq", ids: ["b1", "b2"], count: 2, manual: true })] }));
   expect(document.querySelector('[data-id="q"]')?.classList.contains("decoration-folded")).toBe(false);
   expect(document.querySelector(".interval-summary-trigger")).toBeNull();
-  // Dissolved ("Show original messages"): the stretch can be summarized again.
+  // Without that summary the stretch can be summarized again.
   window.ccb.setState(state(null, { messages, intervalSummaries: [] }));
   expect(document.querySelector('[data-id="q"] .interval-summary-trigger')?.textContent).toBe("Summarize 3 replies");
 });
@@ -193,7 +182,7 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   old.text = `${"context ".repeat(4000)} [Report](file:///tmp/exact.html) [Same](file:///tmp/exact.html)`;
   old.artifacts = [{ title: "Artifact", url: "https://claude.ai/public/artifacts/old", host: "claude.ai" }];
   const messages = [line("u1", "user"), old, line("metadata", "notice"), line("u2", "user"), line("new"), line("u3", "user")];
-  const older = view({ key: "older", ids: ["old", "metadata"], count: 1, manual: true, speakerCounts: { codex: 1 }, bullets: ["Old report [[source:old]]"] });
+  const older = view({ key: "older", ids: ["old", "metadata"], count: 1, manual: true, speakerCounts: { codex: 1 } });
   const newer = view({ key: "newer", ids: ["new"], count: 1, manual: true, automatic: true, speakerCounts: { unknown: 1 } });
   const draw = (phase: CatchUpView["state"], extra: Partial<ChatState> = {}) => window.ccb.setState(state(null, {
     messages, intervalSummaries: [{ ...older, state: phase }, newer], lang: "zh-Hant", ...extra,
@@ -207,16 +196,15 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   expect(heads()[1].querySelector(".catchup-card")).not.toBeNull();
   expect(heads()[0].querySelector(".catchup-meta")?.textContent).toContain("1 則回覆");
   expect(heads()[1].querySelector(".catchup-meta")?.textContent).toContain("1 則回覆");
-  expect(heads()[0].querySelector('[data-action="expand"]')?.textContent).toBe("展開原訊息");
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.textContent).toContain("2");
   expect(heads()[1].querySelector(".interval-auto, .speaker")).toBeNull();
-  draw("ready");
-  heads()[0].querySelector<HTMLButtonElement>('[data-cite-point="0"]')!.click();
+  heads()[0].querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
   expect(document.querySelector('[data-id="old"]')?.classList.contains("decoration-folded")).toBe(true);
   expect(document.querySelector('[data-id="metadata"]')?.classList.contains("decoration-folded")).toBe(true);
   expect(document.querySelector('[data-id="new"]')?.classList.contains("decoration-folded")).toBe(true);
   draw("failed");
   expect(sourceURLs()).toHaveLength(2);
-  expect(heads()[0].classList.contains("open")).toBe(true);
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("true");
   heads()[0].querySelector<HTMLButtonElement>('[data-action="retry"]')!.click();
   expect(sent.at(-1)).toMatchObject(retried("older"));
   draw("ready");
@@ -224,9 +212,9 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   expect(messages.filter(m => m.role === "user").every(m => !document.querySelector(`[data-id="${m.id}"]`)?.classList.contains("decoration-folded"))).toBe(true);
   // Re-render, change language, and switch chat: expansion belongs to the exact chat/range.
   draw("ready", { lang: "en" });
-  expect(heads()[0].classList.contains("open")).toBe(true);
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("true");
   draw("ready", { botID: "different-chat" });
-  expect(heads()[0].classList.contains("open")).toBe(false);
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("false");
   window.ccb.setState(state(null, { messages: [], subagent: { id: "sub" } as ChatState["subagent"] }));
   expect(heads()).toHaveLength(0);
   expect(document.querySelector(".interval-summary-trigger")).toBeNull();
@@ -247,7 +235,7 @@ it("folds timestamped component requests and attachments within the cutoff", () 
   };
   try {
     for (const interval of [false, true]) {
-      const summary = view({ key: `stamped-${interval}`, ids, count: 2, manual: interval, bullets: ["Contribution [[source:contribution]]"] });
+      const summary = view({ key: `stamped-${interval}`, ids, count: 2, manual: interval });
       for (const phase of ["loading", "ready", "failed"] as const) {
         summary.state = phase;
         window.ccb.setState(state(interval ? null : summary, { messages, intervalSummaries: interval ? [summary] : [] }));
@@ -255,8 +243,7 @@ it("folds timestamped component requests and attachments within the cutoff", () 
         for (const id of ["boundary", "next", "later"]) expect(getComputedStyle(container(id)).display).not.toBe("none");
         const original = container("contribution"), image = original.querySelector("img.thumb");
         expect(document.querySelectorAll(".catchup-links [data-url]")).toHaveLength(2);
-        if (phase === "ready") document.querySelector<HTMLButtonElement>('[data-cite-point="0"]')!.click();
-        else { const head = document.querySelector<HTMLElement>(".catchup-head"); expect(head?.querySelector('[data-action="expand"]')).not.toBeNull(); continue; }
+        document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
         expect(container("contribution")).toBe(original);
         expect(original.querySelector("img.thumb")).toBe(image);
         expect(image).not.toBeNull();
@@ -284,7 +271,7 @@ it.each([false, true])("uses the existing Catch-up shell for interval summaries 
   expect(head.textContent).not.toContain("unread");
   expect(head.querySelector(".catchup-foot .catchup-latest")?.textContent).toBe("Latest · Claude: Ship now?");
   expect(head.querySelectorAll(".catchup-faces img")).toHaveLength(2);
-  expect(head.querySelector('[data-action="expand"]')?.textContent).toBe("Show original messages");
+  expect(head.querySelector('[data-action="toggle"]')?.textContent).toContain("Show 3 messages");
   expect(head.querySelector(".catchup-by")?.textContent).toContain("gpt-test");
 });
 
