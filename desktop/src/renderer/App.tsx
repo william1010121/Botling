@@ -46,7 +46,7 @@ import { AgentMenu, BotMenu, CloseSubBotDialog, NewBotForm, PeekCard, RemoveDial
 import { Icon, isIconName } from "./icons";
 import { useApprovalSheet } from "./ApprovalSheet";
 import { WorkerAskBar, WorkersBadge, WorkersMenu } from "./Workers";
-import { askOwnerText, askReference, filesChanged, readSeenFailed, watchedWorker, writeSeenFailed, type AskWorker } from "./worker-panel";
+import { askOwnerText, askReference, filesChanged, readSeenFailed, watchedWorker, workersMenuAfterMove, writeSeenFailed, type AskWorker } from "./worker-panel";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -93,6 +93,8 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // Navigation v5: the workers badge's menu (open for the bot on screen) and the failed workers whose log you opened
   // (the badge stops showing them as failed). A worker opens in the main area, like a left-column click.
   const [workersMenu, setWorkersMenu] = useState<string | null>(null);
+  // ⌘⇧W on a watched worker: the menu to keep open once the chat is back (the move would otherwise close it).
+  const workersMenuPending = useRef<string | null>(null);
   const [seenFailed, setSeenFailed] = useState<ReadonlySet<string>>(() => readSeenFailed());
   const seeWorker = useCallback((workerId: string) => setSeenFailed((seen) => {
     if (seen.has(workerId)) return seen;
@@ -106,7 +108,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const toggleWorkers = useCallback(() => {
     const shown = store.getView().chat?.botId;
     if (!shown) return;
-    if (store.getView().subagent) { store.watch(null); setWorkersMenu(shown); return; }
+    if (store.getView().subagent) { workersMenuPending.current = shown; store.watch(null); setWorkersMenu(shown); return; }
     setWorkersMenu((open) => (open === shown ? null : shown));
   }, [store]);
   // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView).
@@ -345,7 +347,10 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // and opening a failed one counts as seen.
   const shownWorker = useMemo(() => watchedWorker(bot, view.subagent ?? null), [bot, view.subagent]);
   useEffect(() => { if (shownWorker?.status === "failed") seeWorker(shownWorker.id); }, [shownWorker?.id, shownWorker?.status, seeWorker]);
-  useEffect(() => { setWorkersMenu(null); }, [chat?.botId, watching]);
+  useEffect(() => {
+    setWorkersMenu(workersMenuAfterMove(workersMenuPending.current, chat?.botId));
+    workersMenuPending.current = null;
+  }, [chat?.botId, watching]);
   const askOwner = useCallback((ownerId: string, worker: AskWorker) => {
     const owner = store.getView().bots.find((candidate) => candidate.id === ownerId);
     if (!owner) return;

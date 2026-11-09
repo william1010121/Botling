@@ -7,8 +7,9 @@ import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotView, SubagentRowView, SubagentView } from "../../src/contract";
 import {
-  askOwnerText, askReference, askState, filesChanged, ownerSummary, sectionedWorkers, watchedWorker, workerFamily, workerRowsOf, workersBadge,
+  askOwnerText, askReference, askState, filesChanged, ownerSummary, sectionedWorkers, watchedWorker, workerFamily, workerRowsOf, workersBadge, workersMenuAfterMove,
 } from "../../src/renderer/worker-panel";
+import { shellOverlayActive } from "../../src/renderer/ShellOverlay";
 
 const NOW = new Date(2026, 10, 8, 16, 0).getTime();
 const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
@@ -165,6 +166,27 @@ describe("the workers menu (the badge, ⌘⇧W): a row opens the worker in the m
       await act(async () => host.querySelector(".wk-menu")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
       expect(onClose).toHaveBeenCalled();
     } finally { await unmount(); vi.useRealTimers(); }
+  });
+});
+
+describe("the workers menu shows above the native chat", () => {
+  it("registers as a shell overlay while open, so the chat view (a native view over the shell) steps aside and the list is visible", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const { WorkersMenu } = await import("../../src/renderer/Workers");
+    const b = bot({ id: "botling", name: "botling", subagentRows: [row({ id: "w1" })] });
+    expect(shellOverlayActive()).toBe(false);
+    const { host, unmount } = await mountEl(WorkersMenu, { bot: b, bots: [b], onOpen() {}, onClose() {} });
+    try {
+      expect(host.querySelector('.wk-menu .wk-row[data-worker="w1"]')).not.toBeNull();
+      expect(shellOverlayActive()).toBe(true);
+    } finally { await unmount(); vi.useRealTimers(); }
+    expect(shellOverlayActive()).toBe(false);
+  });
+  it("Cmd+Shift+W on a watched worker: going back to the chat keeps the menu it asked for; any other move closes it", () => {
+    expect(workersMenuAfterMove("botling", "botling")).toBe("botling");
+    expect(workersMenuAfterMove(null, "botling")).toBeNull();
+    expect(workersMenuAfterMove("botling", "release")).toBeNull();
+    expect(workersMenuAfterMove("botling", undefined)).toBeNull();
   });
 });
 

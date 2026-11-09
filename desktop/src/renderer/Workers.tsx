@@ -5,6 +5,7 @@
 // "Ask <owner>" sends your question to the owner bot as your message, never to the worker.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { BotView, SubagentRowView } from "../contract";
+import { ShellOverlay } from "./ShellOverlay";
 import { askState, clock, elapsed, ownerSummary, sectionedWorkers, shortPath, workerFamily, workerRowsOf, workersBadge, type AskWorker } from "./worker-panel";
 
 const ENGINE = { claude: { mark: "C", name: "Claude" }, codex: { mark: "X", name: "Codex" }, agy: { mark: "A", name: "Antigravity" } } as const;
@@ -138,10 +139,11 @@ export function WorkersMenu({ bot, bots, onOpen, onClose }: { bot: BotView; bots
   const keys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
   };
+  // The chat is a native view laid over the shell: like every menu over it, this one is a shell overlay, or the chat hides it.
   return (
-    <div ref={box} className="wk-menu" role="dialog" aria-label={`${possessive(bot.name)} workers`} onKeyDown={keys}>
+    <ShellOverlay><div ref={box} className="wk-menu" role="dialog" aria-label={`${possessive(bot.name)} workers`} onKeyDown={keys}>
       <WorkerList bot={bot} bots={bots.some((candidate) => candidate.id === bot.id) ? bots : [bot, ...bots]} onOpen={(owner, row) => onOpen(owner.id, row)} />
-    </div>
+    </div></ShellOverlay>
   );
 }
 

@@ -61,6 +61,14 @@ export function watchedWorker(bot: Pick<BotView, "subagentRows"> | null, watched
   return workerRowsOf(bot).find((row) => row.id === watched.id) ?? null;
 }
 
+/**
+ * The workers menu after the shown chat or watched subagent changes: closed, unless ⌘⇧W asked for it on the way
+ * (a watched worker going back to its owner's chat with the menu open), and only for the chat now shown.
+ */
+export function workersMenuAfterMove(pending: string | null, shown: string | undefined): string | null {
+  return pending !== null && pending === shown ? pending : null;
+}
+
 export interface Badge { tone: Tone; count: string; extra: string | null; tip: string }
 
 /**
