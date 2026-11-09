@@ -4,7 +4,10 @@
 // stops delivery. The phones are played here too, with the real handshake and channel (e2e.ts). The connector's
 // onStep holds each modelled step until step() lets it go; a call returns once every peer waits at a step or for a
 // frame (its inbox has settled).
-// LanPair: one real PairingStore per process on one pairing folder, with a clock the driver moves.
+// The phones speak pairing v2 (they announce it in {t:'pair'} and acknowledge `paired`); the ack timer is fired by
+// timeout(), never by the clock.
+// LanPair: one real PairingStore per process on one pairing folder, with a clock the driver moves. Phones redeem
+// asking for the ack, each at its own moment (the clock moves a millisecond per redeem).
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -14,9 +17,10 @@ import type {
 import type { RelayDown, RelayPc } from "../../spec/reference/relaypair";
 import { okResponse } from "../src/contract";
 import type { MobileCore } from "../src/mobile-bridge/bridge";
-import { PAIR_TTL_MS, PairingStore } from "../src/mobile-bridge/pairing";
+import { PAIR_ACK_MS, PAIR_TTL_MS, PairingStore } from "../src/mobile-bridge/pairing";
 import { RELAY_PAIR_TTL_MS, RelayConnector, type SocketLike } from "../src/mobile-relay/connector";
 import { b64u, deriveChannel, deviceIdOf, generateKeyPair, offerIdOf, pairTokenOf, type Channel, type KeyPair } from "../src/mobile-relay/e2e";
+import { RELAY_PAIR_ACK } from "../src/mobile-relay/protocol";
 import { RelayStore } from "../src/mobile-relay/store";
 
 const ROOM = "r".repeat(43);
@@ -73,7 +77,7 @@ export async function relaypairDriver({ conns, offers, root }: RelayPairDriverOp
   };
 
   const connector = new RelayConnector({
-    store, core, coreId: () => "c".repeat(32), now: () => now, waits: [60_000],
+    store, core, coreId: () => "c".repeat(32), now: () => now, waits: [60_000], ackMs: 3_600_000,
     ledger: () => { throw new Error("no mutations here"); },
     socket: () => {
       const sock: SocketLike & { readyState: number } = {
@@ -152,10 +156,13 @@ export async function relaypairDriver({ conns, offers, root }: RelayPairDriverOp
           phoneStatic: phone.keys.publicKey, phoneEphemeral: phone.eph.publicKey, deskEphemeral: b64u.decode(frame.raw.eph), pairSecret: phone.secret,
         });
         phone.ph = "keys";
-        send(conn, await phone.channel.seal(phone.mode === "pair" ? { t: "pair", name: "Phone" } : { t: "hello" }));
+        send(conn, await phone.channel.seal(phone.mode === "pair" ? { t: "pair", name: "Phone", v: RELAY_PAIR_ACK } : { t: "hello" }));
       } else if ((frame.kind === "paired" || frame.kind === "ready") && phone.ph === "keys") {
         phone.ph = "ready";
-        if (frame.kind === "paired") saved.set(conn, { keys: phone.keys, deviceId: frame.raw.deviceId, token: frame.raw.token });
+        if (frame.kind === "paired") {
+          saved.set(conn, { keys: phone.keys, deviceId: frame.raw.deviceId, token: frame.raw.token });
+          send(conn, await phone.channel!.seal({ t: "ack" }));
+        }
       } else if ((frame.kind === "nope" || frame.kind === "revoked") && phone.ph !== "refused" && phone.ph !== "lost") phone.ph = "refused";
       else if (frame.kind === "bye" && (phone.ph === "wait" || phone.ph === "keys")) phone.ph = "lost";
       await settle();
@@ -175,6 +182,12 @@ export async function relaypairDriver({ conns, offers, root }: RelayPairDriverOp
     },
     async deskClose(conn) {
       toDesk({ t: "close", peer: conn });
+      await settle();
+    },
+    async timeout(conn) {
+      const peer: any = peers.get(conn);
+      clearTimeout(peer.timer);
+      (connector as any).ackLate(peer);
       await settle();
     },
     async step(conn) {
@@ -200,9 +213,10 @@ export async function relaypairDriver({ conns, offers, root }: RelayPairDriverOp
         const gate = gates.get(conn)?.step;
         if (peer.stage === "new") return gate === "HsKeys" ? "hs" : "new";
         if (peer.stage === "keys") return "keys";
+        if (peer.stage === "held") return gate === "Grant" ? "granting" : "held";
         return gate === "Grant" ? "granting" : gate === "ReqSend" ? "serving" : "ready";
       };
-      const busy = (conn: string) => ["HsCheck", "Confirm", "ReqCheck"].includes(gates.get(conn)?.step ?? "");
+      const busy = (conn: string) => ["HsCheck", "Confirm", "Commit", "ReqCheck"].includes(gates.get(conn)?.step ?? "");
       return {
         used: Object.fromEntries(offers.map((o) => [o, offerObjects.get(o)?.used === true])),
         claim: Object.fromEntries(offers.map((o) => [o, connOfPeer(offerObjects.get(o)?.claim)])),
@@ -220,29 +234,47 @@ export async function relaypairDriver({ conns, offers, root }: RelayPairDriverOp
   };
 }
 
-export function lanpairDriver({ procs, phones, root }: LanPairDriverOptions): LanPairDriver {
+export function lanpairDriver({ procs, phones, codes, root }: LanPairDriverOptions): LanPairDriver {
   let now = 1_700_000_000_000;
   const dir = join(root, "pairing");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stores = new Map(procs.map((q) => [q, new PairingStore(dir, () => now)] as const));
   const secrets = new Map<string, string>();
+  const tokens = new Map<string, string>();
+  const redeemedAt = new Map<string, number>();
   const deviceOf = (phone: string) => `phone-${phone}`.padEnd(16, "0");
   const read = (name: string): any[] => (existsSync(join(dir, name)) ? JSON.parse(readFileSync(join(dir, name), "utf8")) : []);
+  const phoneOfId = (id: string) => phones.find((f) => `pair-${deviceOf(f)}` === id) ?? `?${id}`;
+  const phoneOfToken = (hash: string) => [...tokens.entries()].find(([, t]) => hex(t) === hash)?.[0] ?? `?${hash}`;
   return {
     create(proc, code) { secrets.set(code, stores.get(proc)!.createOffer().secret); },
     redeem(proc, phone, code) {
-      const result = stores.get(proc)!.redeem(secrets.get(code), deviceOf(phone), phone);
+      now += 1;
+      const result = stores.get(proc)!.redeem(secrets.get(code), deviceOf(phone), phone, true);
       if (!result.ok && result.reason === "limited") throw new Error("rate limited");
-      return result.ok ? "token" : "invalid";
+      if (!result.ok) return "invalid";
+      if (result.ack !== true) throw new Error("the store did not ask for the ack");
+      tokens.set(phone, result.token);
+      redeemedAt.set(phone, now);
+      return "token";
     },
+    ack: (proc, phone) => (stores.get(proc)!.ack(tokens.get(phone)) ? "paired" : "late"),
     revoke: (proc, phone) => stores.get(proc)!.revoke(deviceOf(phone)),
     expire() { now += PAIR_TTL_MS; },
+    due(phone) { now = Math.max(now, redeemedAt.get(phone)! + PAIR_ACK_MS); },
     observe() {
-      const codeOf = (hash: string) => [...secrets.entries()].find(([, s]) => hex(s) === hash)?.[0] ?? `?${hash}`;
-      const phoneOf = (id: string) => phones.find((f) => `pair-${deviceOf(f)}` === id) ?? `?${id}`;
+      const listed = read("pairing-offers.json");
+      const mark = (code: string) => {
+        const secret = secrets.get(code);
+        const o = secret === undefined ? undefined : listed.find((x) => x.secretHash === hex(secret));
+        if (!o) return "no";
+        if (o.held) return phoneOfToken(o.held.tokenHash);
+        return o.expiresAt > now ? "live" : "no";
+      };
       return {
-        offers: read("pairing-offers.json").map((o) => codeOf(o.secretHash)).sort(),
-        clients: read("paired-clients.json").map((c) => phoneOf(c.id)).sort(),
+        offers: Object.fromEntries(codes.map((c) => [c, mark(c)])),
+        clients: read("paired-clients.json").map((c) => phoneOfId(c.id)).sort(),
+        served: stores.get(procs[0]!)!.clients().map((c) => phoneOfId(c.id)).sort(),
       };
     },
   };

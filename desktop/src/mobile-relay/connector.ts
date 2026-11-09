@@ -9,12 +9,14 @@ import type { MutationLedger } from '../mobile-bridge/ledger';
 import { ALL_BOTS, botAllowed } from '../mobile-bridge/scope';
 import { MAIN_BOT_ID } from '../core/store/records';
 import { b64u, deriveChannel, deviceIdOf, generateKeyPair, offerIdOf, pairTokenOf, type Channel } from './e2e';
-import { PhoneHandshake, PhoneMessage, READ_COMMANDS, RELAY_COMMANDS, relayPairingURL } from './protocol';
+import { PhoneHandshake, PhoneMessage, READ_COMMANDS, RELAY_COMMANDS, RELAY_PAIR_ACK, relayPairingURL } from './protocol';
 import { PAIRED_TTL_MS, RelayStore, relayPage, type RelayDevice } from './store';
 
 export const RELAY_PAIR_TTL_MS = 5 * 60_000;
 const MAX_OFFERS = 5;
 const HANDSHAKE_MS = 15_000;
+/** How long a pairing phone has to acknowledge `paired` before its code is given back. */
+const ACK_MS = 15_000;
 const NOTICE_MS = 250;
 /** Leave room under the relay's default 4 MiB frame limit for the relay's own wrapping. */
 const MAX_FRAME_CHARS = 3_800_000;
@@ -44,18 +46,23 @@ export interface ConnectorOptions {
   socket?: (url: string) => SocketLike;
   now?: () => number;
   waits?: number[];
+  /** How long a pairing phone has to acknowledge `paired` (default ACK_MS). */
+  ackMs?: number;
   /** Spec conformance only (spec/models/relaypair): called before each modelled step of a phone's peer, which waits
    * for it. Unset in the app. */
   onStep?: (step: RelayStep, peer: string) => Promise<void> | void;
 }
 /** The connector's steps as spec/models/relaypair/RelayPair.tla names them. */
-export type RelayStep = 'HsCheck' | 'HsKeys' | 'Confirm' | 'Grant' | 'ReqCheck' | 'ReqSend';
+export type RelayStep = 'HsCheck' | 'HsKeys' | 'Confirm' | 'Grant' | 'Commit' | 'ReqCheck' | 'ReqSend';
 
-/** `claim`: the peer whose handshake took this offer; another phone is told nope while that peer is open. */
+/** `claim`: the peer whose handshake took this offer; another phone is told nope while that peer is open. `used`
+ * is also set while a peer holds the offer for its phone's ack (stage 'held'); ending that peer clears it. */
 interface Offer { id: string; secret: Uint8Array; tokenHash: string; botIds: string[]; expiresAt: number; used: boolean; claim?: Peer }
 interface Peer {
-  id: string; tokenHash: string; stage: 'new' | 'keys' | 'ready' | 'closed';
+  id: string; tokenHash: string; stage: 'new' | 'keys' | 'held' | 'ready' | 'closed';
   channel?: Channel; mode?: 'pair' | 'session'; offer?: Offer; devicePublicKey?: string; deviceId?: string;
+  /** Stage 'held': the device stored when the phone's {t:'ack'} arrives. */
+  pending?: RelayDevice;
   inbox: Promise<unknown>; outbox: Promise<unknown>; timer?: ReturnType<typeof setTimeout>; notice?: ReturnType<typeof setTimeout>; count: number;
 }
 
@@ -111,7 +118,7 @@ export class RelayConnector {
     const offer: Offer = { id: await offerIdOf(secret), secret, tokenHash: sha(await pairTokenOf(secret)), botIds: botIds.includes(ALL_BOTS) ? [ALL_BOTS] : [...botIds], expiresAt: this.now() + RELAY_PAIR_TTL_MS, used: false };
     this.offers.set(offer.id, offer);
     this.pushAllow();
-    return { url: relayPairingURL(relayPage(url), { room: this.room, deskKey: settings.publicKey, secret: b64u.encode(secret) }), expiresAt: offer.expiresAt };
+    return { url: relayPairingURL(relayPage(url), { room: this.room, deskKey: settings.publicKey, secret: b64u.encode(secret), v: RELAY_PAIR_ACK }), expiresAt: offer.expiresAt };
   }
 
   devices(): RelayDevice[] { return this.options.store.devices(); }
@@ -225,10 +232,12 @@ export class RelayConnector {
     if (peer.stage === 'closed') return;
     if (peer.stage === 'new') return this.handshake(peer, d);
     const msg = PhoneMessage.parse(await peer.channel!.open(d));
-    if (this.options.onStep) await this.options.onStep(peer.stage === 'keys' ? 'Confirm' : 'ReqCheck', peer.id);
-    // Closed while the frame was opened (the phone left, a revoke): nothing more for it, and no code spent on it.
+    if (this.options.onStep) await this.options.onStep(peer.stage === 'keys' ? 'Confirm' : peer.stage === 'held' ? 'Commit' : 'ReqCheck', peer.id);
+    // Closed while the frame was opened (the phone left, a revoke, the ack timer): nothing more for it, and no code
+    // spent on it.
     if (gone(peer)) return;
     if (peer.stage === 'keys') return this.confirm(peer, msg);
+    if (peer.stage === 'held') return this.commit(peer, msg);
     if (msg.t !== 'req') throw new Error('Unexpected message.');
     const device = this.options.store.device(peer.deviceId!);
     if (!device || device.tokenHash !== peer.tokenHash && peer.mode === 'session') return void this.end(peer, true);
@@ -287,11 +296,23 @@ export class RelayConnector {
       const now = this.now();
       const device: RelayDevice = { id: peer.deviceId!, publicKey: peer.devicePublicKey!, tokenHash: sha(token), botIds: offer.botIds,
         pairedAt: now, expiresAt: now + PAIRED_TTL_MS, ...(label(msg.name) ? { label: label(msg.name) } : {}) };
-      this.options.store.add(device);
-      peer.stage = 'ready'; clearTimeout(peer.timer);
+      const acks = msg.v === RELAY_PAIR_ACK;
+      clearTimeout(peer.timer);
+      if (acks) {
+        // Held until the phone acknowledges: the device is stored then; ending the peer first gives the code back.
+        peer.stage = 'held'; peer.pending = device;
+      } else {
+        // A phone app before pairing v2 sends no ack: final now, as it always was.
+        this.options.store.add(device);
+        peer.stage = 'ready';
+      }
       if (this.options.onStep) await this.options.onStep('Grant', peer.id);
       this.toPeer(peer, await peer.channel!.seal({ t: 'paired', deviceId: device.id, token, coreId, botIds: device.botIds, expiresAt: device.expiresAt }));
-      this.pushAllow();
+      if (acks && peer.stage === 'held') {
+        peer.timer = setTimeout(() => this.ackLate(peer), this.options.ackMs ?? ACK_MS);
+        peer.timer.unref?.();
+      }
+      if (!acks) this.pushAllow();
       return;
     }
     if (msg.t !== 'hello') return this.end(peer);
@@ -300,6 +321,18 @@ export class RelayConnector {
     peer.stage = 'ready'; clearTimeout(peer.timer);
     if (this.options.onStep) await this.options.onStep('Grant', peer.id);
     this.toPeer(peer, await peer.channel!.seal({ t: 'ready', coreId, botIds: device.botIds, expiresAt: device.expiresAt }));
+  }
+
+  /** No ack in time: the peer is ended, which gives the code back. */
+  private ackLate(peer: Peer) { if (peer.stage === 'held') this.end(peer); }
+
+  /** The phone holds its token: the pairing is final (even if the code's TTL passed meanwhile). */
+  private commit(peer: Peer, msg: PhoneMessage) {
+    if (msg.t !== 'ack') return this.end(peer);
+    this.options.store.add(peer.pending!);
+    peer.pending = undefined;
+    peer.stage = 'ready'; clearTimeout(peer.timer);
+    this.pushAllow();
   }
 
   /** The bridge's checks (bridge.ts) for one command, then the same core call and journal. */
@@ -349,6 +382,9 @@ export class RelayConnector {
     this.forget(peer);
   }
   private forget(peer: Peer, closeChannel = true) {
+    // A pairing that waited for its ack: nothing was stored, and the code may pair again within its TTL (its claim,
+    // a closed peer now, frees it for the next handshake).
+    if (peer.stage === 'held' && peer.offer) { peer.offer.used = false; peer.pending = undefined; }
     peer.stage = 'closed';
     clearTimeout(peer.timer); clearTimeout(peer.notice);
     if (closeChannel) peer.channel?.close();

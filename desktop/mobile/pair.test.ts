@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parsePairingFragment, redeemPairing } from './pair';
+import { ackPairing, parsePairingFragment, redeemPairing } from './pair';
 
 const SECRET = 'S'.repeat(43), DEVICE = 'd'.repeat(22);
 describe('pairing fragment', () => {
@@ -17,12 +17,35 @@ describe('redeemPairing', () => {
     const fetcher = vi.fn(async (url: any, init?: any) => {
       calls.push(`${init?.method ?? 'GET'} ${new URL(String(url), 'https://h.example').pathname}`);
       if (String(url).endsWith('/core')) return new Response(JSON.stringify({ app: 'botling', coreId: core, protocol: 10, pairing: { ttlSeconds: 300 } }));
-      expect(JSON.parse(init.body)).toEqual({ secret: SECRET, deviceId: DEVICE, name: expect.any(String) });
+      expect(JSON.parse(init.body)).toEqual({ secret: SECRET, deviceId: DEVICE, name: expect.any(String), ack: true });
       expect(init.credentials).toBe('omit');
       return new Response(JSON.stringify({ token: 'T'.repeat(43), expiresAt: 5, coreId: core }));
     }) as unknown as typeof fetch;
     expect(await redeemPairing({ secret: SECRET, coreId: core }, DEVICE, 'https://h.example', fetcher)).toBe('T'.repeat(43));
     expect(calls).toEqual(['GET /api/mobile/core', 'POST /api/mobile/pair']);
+  });
+  it('acknowledges the token when the desktop asks for it, asking again when no answer comes', async () => {
+    const calls: string[] = [];
+    let acks = 0;
+    const fetcher = vi.fn(async (url: any, init?: any) => {
+      const path = new URL(String(url), 'https://h.example').pathname;
+      calls.push(`${init?.method ?? 'GET'} ${path}`);
+      if (path.endsWith('/core')) return new Response(JSON.stringify({ app: 'botling', coreId: core, protocol: 10, pairing: { ttlSeconds: 300 } }));
+      if (path.endsWith('/pair')) return new Response(JSON.stringify({ token: 'T'.repeat(43), expiresAt: 5, coreId: core, ack: true }));
+      expect(init.headers.Authorization).toBe(`Bearer ${'T'.repeat(43)}`);
+      if (++acks === 1) throw new TypeError('network');
+      return new Response('{"ok":true}');
+    }) as unknown as typeof fetch;
+    expect(await redeemPairing({ secret: SECRET, coreId: core }, DEVICE, 'https://h.example', fetcher)).toBe('T'.repeat(43));
+    expect(calls).toEqual(['GET /api/mobile/core', 'POST /api/mobile/pair', 'POST /api/mobile/pair/ack', 'POST /api/mobile/pair/ack']);
+  });
+  it('says the pairing did not finish when the ack is too late or never answered', async () => {
+    const answer = (status: number) => vi.fn(async () => new Response('{}', { status })) as unknown as typeof fetch;
+    await expect(ackPairing('T'.repeat(43), 'https://h.example', answer(401), 3, 0)).rejects.toThrow(/did not finish/);
+    const down = vi.fn(async () => { throw new TypeError('network'); }) as unknown as typeof fetch;
+    await expect(ackPairing('T'.repeat(43), 'https://h.example', down, 3, 0)).rejects.toThrow(/did not finish/);
+    expect(down).toHaveBeenCalledTimes(3);
+    expect(answer(401)).not.toHaveBeenCalled();
   });
   it('never sends the secret to a different core', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ app: 'botling', coreId: 'b'.repeat(32), protocol: 10, pairing: { ttlSeconds: 300 } }))) as unknown as typeof fetch;

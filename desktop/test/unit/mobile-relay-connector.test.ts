@@ -64,13 +64,31 @@ const until = async (check: () => boolean, ms = 3_000) => { const end = Date.now
 const cleanup: (() => void)[] = [];
 afterEach(() => { while (cleanup.length) cleanup.pop()!(); wire.length = 0; });
 
-async function setup() {
+/** A phone's socket factory whose first socket loses the phone's third encrypted frame (after {h:'pair'} and
+ * {t:'pair'}: the ack of `paired`): swallowed (the connection stays up), or the connection drops in its place. */
+function losingAck(connect: (url: string) => SocketLike, how: "swallow" | "drop") {
+  let first = true;
+  return (url: string): SocketLike => {
+    const sock = connect(url);
+    if (!first) return sock;
+    first = false;
+    let frames = 0;
+    const send = sock.send.bind(sock);
+    sock.send = (text: string) => {
+      if (JSON.parse(text).t === "d" && ++frames === 3) { if (how === "drop") sock.close(); return; }
+      send(text);
+    };
+    return sock;
+  };
+}
+
+async function setup(options: { ackMs?: number } = {}) {
   const relay = await makeRelay();
   const dir = tempDir("relay-desk");
   const store = new RelayStore(join(dir, "mobile"));
   const { core, calls, change } = fakeCore();
   const connect = sockets(relay);
-  const connector = new RelayConnector({ store, core, ledger: () => new MutationLedger(join(dir, "mobile-mutations")), coreId: () => "c".repeat(32), socket: connect, waits: [20] });
+  const connector = new RelayConnector({ store, core, ledger: () => new MutationLedger(join(dir, "mobile-mutations")), coreId: () => "c".repeat(32), socket: connect, waits: [20], ...options });
   connector.start();
   await connector.setURL("wss://relay.example/ws");
   await until(() => connector.view().state === "online");
@@ -81,6 +99,8 @@ async function setup() {
     expect(new URL(offer.url).origin).toBe("https://relay.example");
     const result = await RelayClient.pair(link, "https://relay.example", name, { socket: connect, waits: [20] });
     cleanup.push(() => result.client.close());
+    // The phone's ack follows `paired`: the device is stored when it arrives.
+    await until(() => connector.devices().some(d => d.id === result.session.deviceId));
     return { ...result, link, offer };
   };
   return { relay, store, connector, core, calls, change, connect, pairPhone };
@@ -176,7 +196,52 @@ describe("relay connector + phone client", () => {
     const refused = tries.find(t => t.status === "rejected") as PromiseRejectedResult;
     // A clear "used" (the handshake's nope), not "could not reach Botling" (a kick after the first phone won).
     expect(refused.reason).toMatchObject({ auth: true, message: expect.stringMatching(/already been used/) });
-    expect(connector.devices()).toHaveLength(1);
+    await until(() => connector.devices().length === 1);
+  });
+
+  it("a pairing whose ack never arrives (the connection drops first) stores nothing, and the code pairs again", async () => {
+    const { connector, connect } = await setup();
+    const offer = await connector.pair(["main"]);
+    const link = parseRelayFragment(new URL(offer.url).hash)!;
+    expect(link.v).toBe(2);
+    let lost: MobileError | undefined;
+    const first = await RelayClient.pair(link, "https://relay.example", "First", { socket: losingAck(connect, "drop"), waits: [20], onRevoked: error => { lost = error; } });
+    cleanup.push(() => first.client.close());
+    // Its token was never let in: connecting again is refused, and the phone says the pairing did not finish.
+    await until(() => lost !== undefined);
+    expect(lost).toMatchObject({ auth: true, message: expect.stringMatching(/did not finish/) });
+    expect(connector.devices()).toEqual([]);
+    const second = await RelayClient.pair(link, "https://relay.example", "Second", { socket: connect, waits: [20] });
+    cleanup.push(() => second.client.close());
+    await until(() => connector.devices().length === 1);
+    expect(connector.devices()[0]!.id).toBe(second.session.deviceId);
+  });
+
+  it("a pairing whose ack does not come in time is ended, and the code pairs again", async () => {
+    const { connector, connect } = await setup({ ackMs: 100 });
+    const offer = await connector.pair(["main"]);
+    const link = parseRelayFragment(new URL(offer.url).hash)!;
+    let lost: MobileError | undefined;
+    const first = await RelayClient.pair(link, "https://relay.example", "First", { socket: losingAck(connect, "swallow"), waits: [20], onRevoked: error => { lost = error; } });
+    cleanup.push(() => first.client.close());
+    await until(() => lost !== undefined);
+    expect(lost!.message).toMatch(/did not finish/);
+    expect(connector.devices()).toEqual([]);
+    const second = await RelayClient.pair(link, "https://relay.example", "Second", { socket: connect, waits: [20] });
+    cleanup.push(() => second.client.close());
+    await until(() => connector.devices().length === 1);
+  });
+
+  it("a phone app from before pairing v2 sends no ack: its pairing is final when `paired` is sent", async () => {
+    const { connector, connect } = await setup({ ackMs: 50 });
+    const offer = await connector.pair(["main"]);
+    const { v, ...older } = parseRelayFragment(new URL(offer.url).hash)!;
+    expect(v).toBe(2);
+    const { client, session } = await RelayClient.pair(older, "https://relay.example", "Older", { socket: connect, waits: [20] });
+    cleanup.push(() => client.close());
+    expect(connector.devices().map(d => d.id)).toEqual([session.deviceId]); // stored before `paired` left
+    await new Promise(r => setTimeout(r, 100)); // no ack timer ends it
+    expect(((await client.request({ type: "chat.snapshot", botId: "main" })) as any).chat.botId).toBe("main");
   });
 
   it("a revoked phone is told, disconnected, and cannot connect again", async () => {

@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { Command, RequestId, ResponseEnvelope } from '../src/contract';
 import { b64u, deriveChannel, deviceIdOf, generateKeyPair, offerIdOf, pairTokenOf, type Channel, type KeyPair } from '../src/mobile-relay/e2e';
-import { DeskHandshake, DeskMessage, type RelayLink } from '../src/mobile-relay/protocol';
+import { DeskHandshake, DeskMessage, RELAY_PAIR_ACK, type RelayLink } from '../src/mobile-relay/protocol';
 import { MobileError, type MobileCommand } from './transport';
 
 /** What the phone keeps after pairing (relay-session.ts stores it; the private key is never exportable). */
@@ -54,6 +54,9 @@ export class RelayClient {
   private live = false;
   private firstReady: { resolve: () => void; reject: (error: MobileError) => void } | null = null;
   private inbox: Promise<unknown> = Promise.resolve();
+  /** Paired with an ack and not yet connected again: if the desktop does not know this phone, the ack did not
+   * arrive and the pairing was undone (the code works again while it lasts). */
+  private fresh = false;
 
   private constructor(private session: RelaySession | null, private options: RelayClientOptions) {}
 
@@ -152,7 +155,7 @@ export class RelayClient {
     const msg = JSON.parse(text);
     if (msg.t === 'error') {
       // The relay no longer admits this token: the desktop revoked it (or the pairing code expired).
-      if (msg.code === 'denied') throw new MobileError(this.hello.kind === 'pair' ? 'This code has expired or already been used. Show a new code on your computer.' : 'This phone was signed out on your computer. Pair it again.', true);
+      if (msg.code === 'denied') throw new MobileError(this.hello.kind === 'pair' ? 'This code has expired or already been used. Show a new code on your computer.' : this.signedOut(), true);
       if (msg.code === 'desk_offline' && this.hello.kind === 'pair') throw new MobileError('Botling is not connected to the relay. Keep it running and try again.', true);
       return; // desktop offline: the close follows and we try again
     }
@@ -170,13 +173,14 @@ export class RelayClient {
     if (msg.t !== 'd' || typeof msg.d !== 'string') return;
     if (this.stage === 'keys' && !this.channel) {
       const answer = DeskHandshake.parse(JSON.parse(msg.d));
-      if (answer.h === 'nope') throw new MobileError(answer.reason === 'offer' ? 'This code has expired or already been used. Show a new code on your computer.' : 'This phone was signed out on your computer. Pair it again.', true);
+      if (answer.h === 'nope') throw new MobileError(answer.reason === 'offer' ? 'This code has expired or already been used. Show a new code on your computer.' : this.signedOut(), true);
       const s = this.session!;
       this.channel = await deriveChannel('phone', { static: s.keys, ephemeral: this.ephemeral! }, {
         mode: this.hello.kind, room: s.room, deviceId: s.deviceId, deskStatic: b64u.decode(s.deskKey), phoneStatic: s.keys.publicKey,
         phoneEphemeral: this.ephemeral!.publicKey, deskEphemeral: b64u.decode(answer.eph), pairSecret: this.hello.kind === 'pair' ? this.hello.secret : undefined });
       this.ephemeral = null;
-      this.send({ t: 'd', d: await this.channel.seal(this.hello.kind === 'pair' ? { t: 'pair', name: this.hello.name } : { t: 'hello' }) });
+      this.send({ t: 'd', d: await this.channel.seal(this.hello.kind === 'pair'
+        ? { t: 'pair', name: this.hello.name, ...(this.hello.link.v === RELAY_PAIR_ACK ? { v: RELAY_PAIR_ACK } : {}) } : { t: 'hello' }) });
       return;
     }
     if (!this.channel) return;
@@ -184,9 +188,11 @@ export class RelayClient {
     switch (message.t) {
       case 'paired': {
         if (this.hello.kind !== 'pair' || this.stage !== 'keys') throw new MobileError('Unexpected answer from Botling.');
-        const done = this.hello.done;
+        const done = this.hello.done, acks = this.hello.link.v === RELAY_PAIR_ACK;
         this.session = { ...this.session!, deviceId: message.deviceId, token: message.token, coreId: message.coreId, botIds: message.botIds, expiresAt: message.expiresAt };
         if (message.deviceId !== await deviceIdOf(this.session.keys.publicKey)) throw new MobileError('Unexpected answer from Botling.');
+        // The desktop keeps the pairing once this arrives (sealed before any request, so it goes first).
+        if (acks) { this.send({ t: 'd', d: await this.channel.seal({ t: 'ack' }) }); this.fresh = true; }
         this.hello = { kind: 'session' };
         this.ready();
         done(this.session);
@@ -194,6 +200,7 @@ export class RelayClient {
       }
       case 'ready':
         if (this.stage !== 'keys') throw new MobileError('Unexpected answer from Botling.');
+        this.fresh = false;
         this.session = { ...this.session!, coreId: message.coreId, botIds: message.botIds, expiresAt: message.expiresAt };
         this.ready();
         return;
@@ -208,6 +215,10 @@ export class RelayClient {
       case 'changed': this.options.onChange?.(); return;
       case 'revoked': throw new MobileError('This phone was signed out on your computer. Pair it again.', true);
     }
+  }
+
+  private signedOut() {
+    return this.fresh ? 'Pairing did not finish. Scan the code on your computer again.' : 'This phone was signed out on your computer. Pair it again.';
   }
 
   private ready() {

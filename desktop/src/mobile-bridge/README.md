@@ -158,6 +158,14 @@ with the clients file; pairing the same device again replaces its session. Unkno
 all answer 401; past five wrong guesses in a minute they answer 429 for the rest of the window, but a
 valid code is never refused (it has 256 bits; the limit is about noise, not guessing).
 
+The page sends `ack: true` with the secret. The answer then carries `ack: true`, and the page must call
+`POST /api/mobile/pair/ack` (`Authorization: Bearer <token>`) within 30 s. Until the ack arrives, the code stays in
+`pairing-offers.json`, held for that token (`held`). The ack removes the hold (200; asking again is fine), and the
+pairing is final. If no ack comes in time, the phone's record is no longer served. The next redeem then removes
+that record and lists the code again, so the phone can scan the same code once more while it lasts. An ack that
+comes too late answers 401 `pair_late`. A request without `ack` (an older page) gets the old behavior: the code is
+spent at once. Model: `spec/models/relaypair/LanPair.tla`.
+
 ### Phone settings, devices and the command line
 
 Settings > Phone (desktop) makes the code as a QR picture for the bots you tick, and lists and revokes

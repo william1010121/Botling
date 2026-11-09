@@ -1,13 +1,14 @@
 // Phone pairing (spec/models/relaypair) against the real code, through the adapter only.
 // RelayPair: random walks of the reference (fixed seeds) drive the real RelayConnector and phones speaking the
 // real protocol. The connector stops before each modelled step; the walk lets one peer go at a time, and phones,
-// drops, the relay's close, expiry and revokes happen in between. Every step the connector takes must be the one
+// drops, the relay's close, expiry, revokes and the ack timer happen in between. Every step the connector takes must be the one
 // the model allows that peer, and what can be seen (offers used and claimed, devices stored, where each peer is,
 // frames on their way to each phone) must agree after every step. A frame reaching a peer that can take it is taken
 // at once (the model's Take). Not driven: a revoke while `paired`/`res` is being sealed (the steps stop before the
 // seal), and the HANDSHAKE_MS timer. The scripted tests replay TLC's counterexamples.
-// LanPair: random sequences of whole operations (create, redeem, revoke, expiry) on two real PairingStores sharing
-// one folder must match the reference; the interleavings inside them, crashes and lost answers are TLC's alone.
+// LanPair: random sequences of whole operations (create, redeem, ack, revoke, expiry, ack deadlines) on two real
+// PairingStores sharing one folder must match the reference, down to which phones the bridge serves; the
+// interleavings inside them, crashes and lost answers are TLC's alone.
 // SPEC_BUG=relaypair turns on the old connector (no claim, steps resume on closed peers) in the reference: the
 // RelayPair tests must then fail.
 import { mkdtempSync, rmSync } from "node:fs";
@@ -22,7 +23,7 @@ import {
 import { lanpairDriver, relaypairDriver } from "../../desktop/spec-adapters/relaypair-adapter";
 
 const C: RelayConsts = { conns: ["p1", "p2", "p3"], offers: ["o1"], bug: process.env.SPEC_BUG === "relaypair" ? "old" : "none" };
-const L: LanConsts = { procs: ["q1", "q2"], phones: ["a", "b"], codes: ["s1"], bug: "none" };
+const L: LanConsts = { procs: ["q1", "q2"], phones: ["a", "b", "c"], codes: ["s1"], bug: "none" };
 const WALKS = 150;
 const STEPS = 80;
 
@@ -47,8 +48,8 @@ function random(seed: number) {
 
 const label = (t: Pick<RelayStep, "action" | "conn" | "offer" | "device">) =>
   `${t.action}(${[t.conn, t.offer, t.device].filter(Boolean).join(",")})`;
-const CHECKS = new Set(["HsCheck", "Confirm", "ReqCheck"]);
-const STEPS_OF_PEER = new Set<RelayAction>(["HsCheck", "HsKeys", "Confirm", "Grant", "ReqCheck", "ReqSend"]);
+const CHECKS = new Set(["HsCheck", "Confirm", "Commit", "ReqCheck"]);
+const STEPS_OF_PEER = new Set<RelayAction>(["HsCheck", "HsKeys", "Confirm", "Grant", "Commit", "ReqCheck", "ReqSend"]);
 
 async function relayFollower(driver: RelayPairDriver) {
   let s: RelayState = relayInit(C);
@@ -80,6 +81,7 @@ async function relayFollower(driver: RelayPairDriver) {
       case "Request": await driver.request(p); break;
       case "Drop": await driver.drop(p); break;
       case "DeskClose": await driver.deskClose(p); break;
+      case "Timeout": await driver.timeout(p); break;
       case "Revoke": await driver.revoke(p); take(t); take({ action: "RevokeDone", conn: p }); settle(); return;
       default:
         if (!STEPS_OF_PEER.has(t.action)) throw Error(`not a driver call: ${t.action}`);
@@ -125,7 +127,7 @@ describe("relay pairing model: the real RelayConnector follows the reference", (
       for (const d of drivers.splice(0)) d.close();
     }
     // The walks reach pairing, connecting again, requests and revokes.
-    for (const a of ["Grant", "GrantReady", "ReqSend", "Revoke", "Drop", "DeskClose", "JoinSession"]) expect(reached, a).toContain(a);
+    for (const a of ["Grant", "GrantReady", "Commit", "Timeout", "ReqSend", "Revoke", "Drop", "DeskClose", "JoinSession"]) expect(reached, a).toContain(a);
   }, 120_000);
 
   it("two phones scanning one code: the second is told nope at the handshake (RelayPair_bug_race.cfg)", async () => {
@@ -134,7 +136,7 @@ describe("relay pairing model: the real RelayConnector follows the reference", (
     await walk.run([["Make", undefined, "o1"], ["JoinPair", "p1", "o1"], ["JoinPair", "p2", "o1"], ["HsCheck", "p1"], ["HsCheck", "p2"], ["Recv", "p2"], ["Recv", "p2"]]);
     expect(walk.state().ph.p2).toBe("refused"); // nope, then the kick: told before its socket closed
     expect(driver.observe().claim.o1).toBe("p1");
-    await walk.run([["HsKeys", "p1"], ["Recv", "p1"], ["Confirm", "p1"], ["Grant", "p1"], ["Recv", "p1"]]);
+    await walk.run([["HsKeys", "p1"], ["Recv", "p1"], ["Confirm", "p1"], ["Grant", "p1"], ["Recv", "p1"], ["Commit", "p1"]]);
     expect(driver.observe().store).toEqual(["p1"]);
   });
 
@@ -144,14 +146,40 @@ describe("relay pairing model: the real RelayConnector follows the reference", (
     await walk.run([["Make", undefined, "o1"], ["JoinPair", "p1", "o1"], ["HsCheck", "p1"], ["HsKeys", "p1"], ["Recv", "p1"], ["Drop", "p1"], ["DeskClose", "p1"], ["Confirm", "p1"]]);
     expect(driver.observe()).toMatchObject({ used: { o1: false }, store: [] });
     // The code still pairs the next phone.
-    await walk.run([["JoinPair", "p2", "o1"], ["HsCheck", "p2"], ["HsKeys", "p2"], ["Recv", "p2"], ["Confirm", "p2"], ["Grant", "p2"], ["Recv", "p2"]]);
+    await walk.run([["JoinPair", "p2", "o1"], ["HsCheck", "p2"], ["HsKeys", "p2"], ["Recv", "p2"], ["Confirm", "p2"], ["Grant", "p2"], ["Recv", "p2"], ["Commit", "p2"]]);
     expect(driver.observe().store).toEqual(["p2"]);
+  });
+
+  it("a connection that drops before `paired` arrives gives the code back (RelayPair_noack.cfg)", async () => {
+    const driver = await newRelay("lost");
+    const walk = await relayFollower(driver);
+    await walk.run([["Make", undefined, "o1"], ["JoinPair", "p1", "o1"], ["HsCheck", "p1"], ["HsKeys", "p1"], ["Recv", "p1"], ["Confirm", "p1"]]);
+    expect(driver.observe()).toMatchObject({ used: { o1: true }, store: [] }); // held for p1, nothing stored yet
+    await walk.run([["Grant", "p1"], ["Drop", "p1"], ["DeskClose", "p1"]]);
+    expect(driver.observe()).toMatchObject({ used: { o1: false }, store: [], saved: [] });
+    // The same code pairs the phone when it scans again.
+    await walk.run([["JoinPair", "p2", "o1"], ["HsCheck", "p2"], ["HsKeys", "p2"], ["Recv", "p2"], ["Confirm", "p2"], ["Grant", "p2"], ["Recv", "p2"], ["Commit", "p2"]]);
+    expect(driver.observe()).toMatchObject({ used: { o1: true }, store: ["p2"] });
+  });
+
+  it("no ack in time: the code is given back, and the token the phone got is refused", async () => {
+    const driver = await newRelay("timeout");
+    const walk = await relayFollower(driver);
+    await walk.run([["Make", undefined, "o1"], ["JoinPair", "p1", "o1"], ["HsCheck", "p1"], ["HsKeys", "p1"], ["Recv", "p1"], ["Confirm", "p1"], ["Grant", "p1"], ["Timeout", "p1"]]);
+    expect(driver.observe()).toMatchObject({ used: { o1: false }, store: [] });
+    // `paired` was on its way before the kick: the phone keeps a token (its ack reaches a closed peer), then bye.
+    await walk.run([["Recv", "p1"], ["Recv", "p1"]]);
+    expect(driver.observe()).toMatchObject({ store: [], saved: ["p1"] });
+    await walk.run([["JoinSession", "p2", "p1"], ["HsCheck", "p2"], ["Recv", "p2"]]);
+    expect(walk.state().ph.p2).toBe("refused");
+    await walk.run([["JoinPair", "p3", "o1"], ["HsCheck", "p3"], ["HsKeys", "p3"], ["Recv", "p3"], ["Confirm", "p3"], ["Grant", "p3"], ["Recv", "p3"], ["Commit", "p3"]]);
+    expect(driver.observe().store).toEqual(["p3"]);
   });
 
   it("a revoke while a phone's handshake has not set its device yet: confirm looks again, no ready (RelayPair_bug_recheck.cfg)", async () => {
     const driver = await newRelay("window");
     const walk = await relayFollower(driver);
-    await walk.run([["Make", undefined, "o1"], ["JoinPair", "p1", "o1"], ["HsCheck", "p1"], ["HsKeys", "p1"], ["Recv", "p1"], ["Confirm", "p1"], ["Grant", "p1"], ["Recv", "p1"]]);
+    await walk.run([["Make", undefined, "o1"], ["JoinPair", "p1", "o1"], ["HsCheck", "p1"], ["HsKeys", "p1"], ["Recv", "p1"], ["Confirm", "p1"], ["Grant", "p1"], ["Recv", "p1"], ["Commit", "p1"]]);
     await walk.run([["JoinSession", "p2", "p1"], ["HsCheck", "p2"], ["Revoke", "p1"], ["HsKeys", "p2"], ["Recv", "p2"], ["Confirm", "p2"], ["Recv", "p2"]]);
     expect(walk.state().ph.p2).toBe("lost");
     expect(driver.observe().store).toEqual([]);
@@ -163,59 +191,95 @@ describe("LAN pairing model: the real PairingStore follows the reference", () =>
   /** One whole operation of process `q`, as the model's steps, and the driver's answer checked against it. */
   function lanWalk(driver: LanPairDriver) {
     let s: LanState = lanInit(L);
-    const take = (action: string, match: (t: ReturnType<typeof lanNext>[number]) => boolean) => {
+    /** Phones whose redeem took a code, in order (their ack deadlines pass in that order). */
+    const order: string[] = [];
+    const take = (action: string, match: (t: ReturnType<typeof lanNext>[number]) => boolean = () => true) => {
       const step = lanNext(L, s).find((t) => t.action === action && match(t));
       expect(step, `the model does not allow ${action} here`).toBeDefined();
       s = step!.state;
     };
     const check = () => {
-      expect(driver.observe()).toEqual(lanObserve(s));
+      expect(driver.observe()).toEqual(lanObserve(L, s));
       expect(lanViolated(L, s)).toEqual([]);
     };
+    const pending = () => order.filter((f) => !s.due.includes(f));
     return {
       state: () => s,
+      pending,
       create(q: string, c: string) { take("BeginCreate", (t) => t.proc === q && t.code === c); take("Create", (t) => t.proc === q); driver.create(q, c); check(); },
       redeem(q: string, f: string, c: string) {
         take("BeginTake", (t) => t.proc === q && t.phone === f && t.code === c);
+        if (s.st[q] === "sweep") { take("BeginSweep", (t) => t.proc === q); take("Sweep", (t) => t.proc === q); }
         take("Take", (t) => t.proc === q);
         if (s.st[q] === "issue") {
           take("BeginIssue", (t) => t.proc === q); take("Issue", (t) => t.proc === q); take("Answer", (t) => t.proc === q && t.result === "token");
+          order.push(f);
         }
         expect(driver.redeem(q, f, c)).toBe(s.got[f]);
         check();
       },
-      revoke(q: string, f: string) {
-        const listed = s.clients.includes(f);
-        take("BeginRevoke", (t) => t.proc === q && t.phone === f); take("Revoke", (t) => t.proc === q);
-        expect(driver.revoke(q, f)).toBe(listed);
+      ack(q: string, f: string) {
+        take("BeginAck", (t) => t.proc === q && t.phone === f); take("Ack", (t) => t.proc === q);
+        expect(driver.ack(q, f)).toBe(s.got[f]);
         check();
       },
-      expire(c: string) { take("Expire", (t) => t.code === c); driver.expire(c); check(); },
+      revoke(q: string, f: string) {
+        take("BeginRevoke", (t) => t.proc === q && t.phone === f); take("Revoke", (t) => t.proc === q);
+        expect(driver.revoke(q, f)).toBe(true);
+        check();
+      },
+      /** The code's TTL passes, and with it every ack deadline. */
+      expire(c: string) {
+        take("Expire", (t) => t.code === c);
+        for (const f of pending()) take("Due", (t) => t.phone === f);
+        driver.expire(c); check();
+      },
+      /** The earliest pending ack deadline passes. */
+      due() { const f = pending()[0]!; take("Due", (t) => t.phone === f); driver.due(f); check(); },
     };
   }
 
-  it("random sequences of create, redeem, revoke and expiry on two processes", () => {
-    let tokens = 0, invalid = 0;
-    for (let seed = 1; seed <= 40; seed++) {
+  it("random sequences of create, redeem, ack, revoke, expiry and ack deadlines on two processes", () => {
+    const seen: Record<string, number> = {};
+    const count = (what: string) => { seen[what] = (seen[what] ?? 0) + 1; };
+    for (let seed = 1; seed <= 60; seed++) {
       const rnd = random(seed);
       const pick = <T>(list: readonly T[]) => list[Math.floor(rnd() * list.length)]!;
-      const walk = lanWalk(lanpairDriver({ procs: L.procs, phones: L.phones, root: scratch(`lan${seed}`) }));
-      for (let i = 0; i < 8; i++) {
+      const walk = lanWalk(lanpairDriver({ procs: L.procs, phones: L.phones, codes: L.codes, root: scratch(`lan${seed}`) }));
+      for (let i = 0; i < 12; i++) {
         const s = walk.state();
         const q = pick(L.procs), f = pick(L.phones);
         const ops = [
           ...(s.made.includes("s1") ? [] : [() => walk.create(q, "s1")]),
-          ...(s.made.includes("s1") && s.got[f] === "none" ? [() => walk.redeem(q, f, "s1")] : []),
-          () => walk.revoke(q, f),
-          ...(s.made.includes("s1") && !s.exp.includes("s1") ? [() => walk.expire("s1")] : []),
+          ...(s.made.includes("s1") && s.got[f] === "none" ? [() => walk.redeem(q, f, "s1"), () => walk.redeem(q, f, "s1")] : []),
+          ...(s.got[f] === "token" ? [() => walk.ack(q, f)] : []),
+          ...(s.clients.includes(f) ? [() => walk.revoke(q, f)] : []),
+          ...(s.made.includes("s1") && !s.exp.includes("s1") && rnd() < 0.3 ? [() => walk.expire("s1")] : []),
+          ...(walk.pending().length ? [() => walk.due()] : []),
         ];
+        if (!ops.length) break;
         pick(ops)();
       }
-      tokens += Object.values(walk.state().got).filter((g) => g === "token").length;
-      invalid += Object.values(walk.state().got).filter((g) => g === "invalid").length;
+      for (const g of Object.values(walk.state().got)) count(g);
+      if (walk.state().clients.some((g) => !lanObserve(L, walk.state()).served.includes(g))) count("unserved");
       for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
     }
-    expect(tokens).toBeGreaterThan(10);
-    expect(invalid).toBeGreaterThan(10);
+    // The walks reach final pairings, late acks (and codes given back), phones listed but not served, and refusals.
+    for (const what of ["paired", "late", "token", "invalid", "unserved"]) expect(seen[what] ?? 0, what).toBeGreaterThan(2);
+  });
+
+  it("an ack that comes too late: the phone is not served, the code pairs the next phone, and that one's ack is final", () => {
+    const walk = lanWalk(lanpairDriver({ procs: L.procs, phones: L.phones, codes: L.codes, root: scratch("lanlate") }));
+    walk.create("q1", "s1");
+    walk.redeem("q1", "a", "s1");
+    expect(walk.state().ofile.s1).toBe("a");
+    walk.due();
+    expect(lanObserve(L, walk.state())).toMatchObject({ clients: ["a"], served: [] });
+    walk.ack("q2", "a");
+    expect(walk.state().got.a).toBe("late");
+    walk.redeem("q2", "b", "s1");
+    expect(walk.state()).toMatchObject({ clients: ["b"], got: { b: "token" } });
+    walk.ack("q1", "b");
+    expect(walk.state()).toMatchObject({ got: { b: "paired" }, ofile: { s1: "no" }, bound: { s1: ["b"] } });
   });
 });

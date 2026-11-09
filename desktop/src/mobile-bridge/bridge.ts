@@ -157,10 +157,19 @@ export function handler(options: BridgeOptions) {
         body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       } catch { return refuse(400); }
       try {
-        const result = options.pairing.redeem(body?.secret, body?.deviceId, body?.name);
-        if (result.ok) return json(res, 200, { token: result.token, expiresAt: result.expiresAt, coreId: result.coreId });
+        // `ack: true` from a page that acknowledges its token (pair.ts); the answer then asks for it.
+        const result = options.pairing.redeem(body?.secret, body?.deviceId, body?.name, body?.ack === true);
+        if (result.ok) return json(res, 200, { token: result.token, expiresAt: result.expiresAt, coreId: result.coreId, ...(result.ack ? { ack: true } : {}) });
         return json(res, result.reason === 'limited' ? 429 : 401, { error: { code: result.reason === 'limited' ? 'pair_limited' : 'pair_invalid' } });
       } catch { return json(res, 503, { error: { code: 'pair_unavailable' } }); }
+    }
+    // The phone holds the token /api/mobile/pair gave it (Authorization: Bearer): the pairing is final.
+    if (url.pathname === '/api/mobile/pair/ack' && url.search === '') {
+      if (!options.pairing) return refuse(404);
+      if (req.method !== 'POST') return refuse(405);
+      const token = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization ?? '')?.[1];
+      try { return options.pairing.ack(token) ? json(res, 200, { ok: true }) : json(res, 401, { error: { code: 'pair_late' } }); }
+      catch { return json(res, 503, { error: { code: 'pair_unavailable' } }); }
     }
     if (url.pathname === '/api/mobile/ticket' && url.search === '') {
       if (req.method !== 'POST') return refuse(405);

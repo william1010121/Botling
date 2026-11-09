@@ -6,7 +6,7 @@ import { request as httpsRequest } from 'node:https';
 import { createServer } from 'node:https';
 import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { PairingStore, PAIR_TTL_MS, pairingURL } from './pairing';
+import { PairingStore, PAIR_ACK_MS, PAIR_TTL_MS, pairingURL } from './pairing';
 import { handler, authenticate, type BridgeOptions } from './bridge';
 import { MutationLedger } from './ledger';
 import { okResponse } from '../contract';
@@ -41,6 +41,7 @@ describe('pairing offers', () => {
     if (!first.ok) return;
     expect(first.token).toMatch(/^[A-Za-z0-9_-]{43,128}$/);
     expect(first.coreId).toBe(store.coreId());
+    expect(first.ack).toBeUndefined(); // a page that does not acknowledge: final at once
     const clients = store.clients();
     expect(clients).toHaveLength(1);
     expect(clients[0].botIds).toEqual(['bot-a']);
@@ -48,6 +49,60 @@ describe('pairing offers', () => {
     expect(authenticate({ headers: { authorization: `Bearer ${first.token}` } } as any, clients, now)?.id).toBe(clients[0].id);
     // Single use.
     expect(store.redeem(offer.secret, 'e'.repeat(22))).toEqual({ ok: false, reason: 'invalid' });
+  });
+  it('with an ack: the code is held for the phone until it acknowledges, and the ack makes the pairing final', () => {
+    const dir = temp(); let now = 1_000_000;
+    const store = new PairingStore(dir, () => now);
+    const offer = store.createOffer(['bot-a']);
+    const first = store.redeem(offer.secret, DEVICE, 'A', true);
+    expect(first).toMatchObject({ ok: true, ack: true });
+    if (!first.ok) return;
+    expect(store.clients()).toHaveLength(1); // served while it acknowledges
+    // Held, not matchable (`expiresAt` 0 also keeps a store from before acks, in a hand-over, from matching it).
+    expect(JSON.parse(readFileSync(join(dir, 'pairing-offers.json'), 'utf8'))).toMatchObject([{ expiresAt: 0, held: { until: now + PAIR_ACK_MS, expiresAt: offer.expiresAt } }]);
+    expect(store.redeem(offer.secret, 'e'.repeat(22), 'B', true)).toEqual({ ok: false, reason: 'invalid' });
+    store.createOffer(['bot-a']); // a new code keeps the hold
+    expect(store.ack(first.token)).toBe(true);
+    expect(store.ack(first.token)).toBe(true); // asked again after a lost answer
+    now += PAIR_ACK_MS + 1;
+    expect(store.clients().map(c => c.id)).toEqual([`pair-${DEVICE}`]);
+    expect(store.redeem(offer.secret, 'e'.repeat(22), 'B', true)).toEqual({ ok: false, reason: 'invalid' });
+    expect(JSON.parse(readFileSync(join(dir, 'pairing-offers.json'), 'utf8')).some((o: any) => o.held)).toBe(false);
+  });
+  it('with an ack that does not come in time: the phone is not served, its ack is too late, and the code pairs again', () => {
+    const dir = temp(); let now = 1_000_000;
+    const store = new PairingStore(dir, () => now);
+    const offer = store.createOffer(['bot-a']);
+    const first = store.redeem(offer.secret, DEVICE, 'A', true);
+    if (!first.ok) throw new Error('not redeemed');
+    now += PAIR_ACK_MS;
+    expect(store.clients()).toEqual([]);
+    expect(store.devices()).toEqual([]);
+    expect(store.ack(first.token)).toBe(false);
+    const second = store.redeem(offer.secret, 'e'.repeat(22), 'B', true);
+    if (!second.ok) throw new Error('the code was not given back');
+    // The late phone's record left paired-clients.json before the code was listed again.
+    expect(JSON.parse(readFileSync(join(dir, 'paired-clients.json'), 'utf8')).map((c: any) => c.id)).toEqual([`pair-${'e'.repeat(22)}`]);
+    expect(store.ack(second.token)).toBe(true);
+    expect(store.ack(first.token)).toBe(false);
+    // A deadline past the code's own TTL does not list it again.
+    const late = store.createOffer(['bot-a']);
+    const third = store.redeem(late.secret, 'f'.repeat(22), 'C', true);
+    if (!third.ok) throw new Error('not redeemed');
+    now += PAIR_TTL_MS;
+    expect(store.redeem(late.secret, 'g'.repeat(22), 'D', true)).toEqual({ ok: false, reason: 'invalid' });
+    expect(store.clients().map(c => c.id)).toEqual([`pair-${'e'.repeat(22)}`]);
+  });
+  it('a revoke before the ack: the ack is too late', () => {
+    let now = 1_000_000;
+    const store = new PairingStore(temp(), () => now);
+    const offer = store.createOffer(['bot-a']);
+    const first = store.redeem(offer.secret, DEVICE, 'A', true);
+    if (!first.ok) throw new Error('not redeemed');
+    expect(store.revoke(DEVICE)).toBe(true);
+    expect(store.ack(first.token)).toBe(false);
+    expect(store.ack('x'.repeat(43))).toBe(false);
+    expect(store.ack('short')).toBe(false);
   });
   it('expires after five minutes and the same failure is reported for unknown, used and expired', () => {
     let now = 5_000;
@@ -148,6 +203,15 @@ describe('HTTPS pairing routes', () => {
       expect((await call('/api/mobile/command', 'POST', { v: 10, id: 'y', cmd: { type: 'chat.read', botId: MAIN_BOT_ID } }, { Authorization: `Bearer ${token}` })).status).toBe(403);
       const reuse = await call('/api/mobile/pair', 'POST', { secret: offer.secret, deviceId: DEVICE });
       expect(reuse.status).toBe(401); expect(reuse.body).not.toContain(token);
+      // A page that acknowledges: the answer asks for the ack, which makes the pairing final.
+      const acking = await call('/api/mobile/pair', 'POST', { secret: pairing.createOffer([MAIN_BOT_ID]).secret, deviceId: 'e'.repeat(22), ack: true });
+      const held = JSON.parse(acking.body);
+      expect(held).toMatchObject({ ack: true, coreId: pairing.coreId() });
+      expect((await call('/api/mobile/pair/ack', 'GET', undefined, { Authorization: `Bearer ${held.token}` })).status).toBe(405);
+      expect((await call('/api/mobile/pair/ack', 'POST', undefined, { Authorization: `Bearer ${'x'.repeat(43)}` })).status).toBe(401);
+      expect((await call('/api/mobile/pair/ack', 'POST', undefined, { Authorization: `Bearer ${held.token}`, Origin: 'https://evil.invalid' })).status).toBe(403);
+      const acked = await call('/api/mobile/pair/ack', 'POST', undefined, { Authorization: `Bearer ${held.token}` });
+      expect(acked).toEqual({ status: 200, body: JSON.stringify({ ok: true }) });
       expect((await call('/api/mobile/pair', 'POST', { secret: 'q'.repeat(43), deviceId: DEVICE }, { 'Sec-Fetch-Site': 'cross-site' })).status).toBe(403);
       expect((await call('/api/mobile/pair', 'POST', { secret: 'q'.repeat(43), deviceId: DEVICE }, { Origin: 'https://evil.invalid' })).status).toBe(403);
       expect((await call('/api/mobile/pair', 'POST', { secret: 'q'.repeat(43), deviceId: DEVICE }, { 'Content-Type': 'text/plain' })).status).toBe(415);
@@ -163,5 +227,6 @@ describe('HTTPS pairing routes', () => {
     const run = async (url: string, method: string) => { await handler(options)({ url, method, headers: { host: 'b.example' } } as any, res); return res.status; };
     expect(await run('/api/mobile/core', 'GET')).toBe(404);
     expect(await run('/api/mobile/pair', 'POST')).toBe(404);
+    expect(await run('/api/mobile/pair/ack', 'POST')).toBe(404);
   });
 });

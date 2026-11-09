@@ -58,7 +58,8 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
    by the core on each request; it still allows only the phone commands). The desktop makes a one-time 32-byte secret S (kept in memory only, 5 minutes,
    single use, at most 5 pending) and adds the pairing token `SHA-256("botling-relay/v1/pair-token" ‖ S)`'s hash to
    the relay's allow list with that expiry. The QR is
-   `https://relay.driseam.com/mobile/#relay=<room id>&k=<desktop public key>&s=<S>`.
+   `https://relay.driseam.com/mobile/#relay=<room id>&k=<desktop public key>&s=<S>&v=2` (`v=2`: the desktop takes the
+   phone's acknowledgement, step 6).
    Everything secret is in the URL **fragment**, which browsers never send to a server.
 3. The phone opens the page, reads and immediately clears the fragment, generates its own static X25519 key (non
    extractable) and an ephemeral one, joins the room with the pairing token, and sends
@@ -70,6 +71,13 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
    token, bots (`["*"]`), 30-day expiry) and answers `{t:'paired', deviceId, token, coreId, botIds, expiresAt}`. The phone
    saves `{relay, room, desktop key, device id, token, private key}` in IndexedDB. The same connection carries on as
    its first session.
+6. Pairing v2 (the link says `v=2` and the phone's `{t:'pair'}` says `v:2`): the phone answers `paired` with
+   `{t:'ack'}` before anything else. Until it arrives the desktop keeps the new device in memory only and the code
+   held for this connection; the ack stores the device and spends the code. If the connection ends first, or no ack
+   comes within 15 s, the code is given back (it pairs again within its 5 minutes) and nothing is stored; a phone
+   that got `paired` but whose ack was lost is refused when it connects again and says to scan the code again. When
+   either side is older there is no `v` and no ack, and the pairing is final when `paired` is sent (a lost `paired`
+   then spends the code). Model: `spec/models/relaypair/RelayPair.tla`.
 
 Later connections: join with the device token, `{h:'hello', device, eph}`, ack, `{t:'hello'}` → `{t:'ready'}`.
 
