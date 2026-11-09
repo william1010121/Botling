@@ -102,6 +102,11 @@ export const RELAY_PREFIX = "(From the main bot) ";
 export const SUB_BOT_RELAY_PREFIX = "(From your project bot) ";
 
 /**
+ * How a bot asks the app to take a project or bot out of Botling (`<remove-bot>`), as the left column's Remove does.
+ * Told to the main bot and to project bots and bots of their own; the app asks the user on a card before anything is removed.
+ */
+export const REMOVE_BOT_RULE = "- When the user asks you to delete or remove a project or bot from Botling (not one of your own sub bots), end your reply with <remove-bot name=\"its exact name\" path=\"its folder\"/> (the folder tells two bots with the same name apart; leave path out only when you do not know it). The app asks the user on a card and, only if they confirm, removes it as the left column's Remove does: it leaves the list and stops, and its folder, notes and chat files stay on disk. Never for yourself, the main bot or Maintainer. Say in one sentence that the app is asking; only when the user asks, and never write the tag inside code or examples.";
+/**
  * What a project bot is told about making a running subagent into a sub bot (Claude only). The two steps
  * go in one turn: the subagent is asked to write its handoff file and end, then the reply's tail carries the tag.
  */
@@ -111,6 +116,7 @@ export const subBotRule = [
   "- To make a new, empty sub bot directly, with no subagent behind it (a bot the user can open and talk to, for a job that deserves its own conversation): end your reply with <sub-bot name=\"short name, no quotes\">the first task, in full: what to do, where, and what done looks like</sub-bot>. The app makes it in this same folder (on your engine, or add engine=\"claude\", \"codex\" or \"agy\" to name another of your own engines) and sends it that task; nothing is started or moved first. Reply with one sentence, \"Started X\". Use it only when the user asks for a sub bot or the job clearly deserves its own conversation. Never write the tag inside code or examples.",
   "  When the user asks for a sub bot and a subagent already does that job, move that subagent (above); otherwise make the sub bot directly. Never quietly replace a requested sub bot with a plain subagent: if you do not make one, say so.",
   "- When the user asks you to delete or remove one of your sub bots, end your reply with <remove-sub-bot name=\"its exact name\"/>: the app closes it as the user's Close sub bot does (its chat and files are kept). Only when the user asks; never write the tag inside code or examples.",
+  REMOVE_BOT_RULE,
   "- When the app's wake note lists sub bots, each has a progress file: to answer how a sub bot is going, read its progress file; do not wake it. It reports to you when it finishes.",
 ].join("\n");
 /**
@@ -124,6 +130,7 @@ export const workerSubBotRule = [
   "- To make a new, empty sub bot directly, with no worker behind it (a bot the user can open and talk to, for a job that deserves its own conversation): end your reply with <sub-bot name=\"short name, no quotes\">the first task, in full: what to do, where, and what done looks like</sub-bot>. The app makes it in this same folder (on your engine, or add engine=\"claude\", \"codex\" or \"agy\" to name another of your own engines) and sends it that task; nothing is started or moved first. Reply with one sentence, \"Started X\". Use it only when the user asks for a sub bot or the job clearly deserves its own conversation. Never write the tag inside code or examples.",
   "  When the user asks for a sub bot and a worker already does that job, move that worker (above); otherwise make the sub bot directly. Never quietly replace a requested sub bot with a plain worker: if you do not make one, say so.",
   "- When the user asks you to delete or remove one of your sub bots, end your reply with <remove-sub-bot name=\"its exact name\"/>: the app closes it as the user's Close sub bot does (its chat and files are kept). Only when the user asks; never write the tag inside code or examples.",
+  REMOVE_BOT_RULE,
   "- When the app's wake note lists sub bots, each has a progress file: to answer how a sub bot is going, read its progress file; do not wake it. It reports to you when it finishes.",
 ].join("\n");
 /** How a message from the app itself (not the user) starts. */
@@ -532,6 +539,8 @@ export const HAND_WRITTEN_PAGE = `one HTML page: a single file with its styles i
 export const REPORT_FIRST_PAGE = `one HTML page (a report page is built from a ReportSpec v2 JSON with the report command, as the report page rule says, never written by hand; any other page is a single file with its styles inline, starting with <!doctype html><meta charset="utf-8">),`;
 const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
+/** The main bot's 1.x line (kept byte for byte in the Swift goldens) that sent the user to the left column to remove a bot. */
+const MAIN_REMOVE_LINE = "To remove or rename a bot, tell the user to right-click it in the left column.";
 /**
  * The instructions as 2.0 gives them: `botPrompts`, plus the prompt sections (`sections`: by default the whiteboard picture line, after
  * the <show> line, for every bot but the main bot; botling.report's report page line after the results rule, for every bot and
@@ -548,6 +557,11 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // Sub bots (desktop only; the Swift goldens stay as they are): a project's or bot's own bot may write handoff.md and
   // progress.md in .bot/subagents/<id>/, and it is told how to move a running subagent or worker out into a sub bot (Claude, Codex
   // and Antigravity alike; Antigravity's own prompt has no such line to extend, so its text is appended whole).
+  // The main bot removes a project or bot through the app (a card first) instead of sending the user to the left column.
+  if (profile.role === "main") {
+    system = system.replace(MAIN_REMOVE_LINE, "To rename a bot, tell the user to right-click it in the left column; to remove one, use <remove-bot> (below).");
+    system = `${system}\n${REMOVE_BOT_RULE}`;
+  }
   if (profile.role !== "main" && !profile.parent && profile.id !== MAINTAINER_PROMPT_ID) {
     system = system.replace(BOT_NOTES_LINE, (line, owned: string) => `- In .bot/ only ${owned}, inbox.md, artifacts/, and the handoff.md and progress.md files under .bot/subagents/<id>/ are yours, and archive/ to read; leave every other file alone.\n${engine === "claude" && !workers ? subBotRule : workerSubBotRule}`);
     if (engine === "agy" && !system.includes(workerSubBotRule)) system = `${system}\nIn .bot/ the handoff.md and progress.md files under .bot/subagents/<id>/ are also yours to write.\n${workerSubBotRule}`;

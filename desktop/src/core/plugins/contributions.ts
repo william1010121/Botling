@@ -49,7 +49,7 @@ export const PROMPT_SECTION_MAX = 4_000;
  * tag has a "-" in it, as a custom element does, so it is never an HTML element either.
  */
 export const CORE_REPLY_TAGS = [
-  "choices", "no-reply", "task", "reaction", "show", "whiteboard", "component", "new-bot", "sub-bot", "remove-sub-bot", "plugin", "agent-message", "agent-stop",
+  "choices", "no-reply", "task", "reaction", "show", "whiteboard", "component", "new-bot", "sub-bot", "remove-sub-bot", "remove-bot", "plugin", "agent-message", "agent-stop",
   "need-folder", "install", "install-build", "give-component", "take-component", "suggest-component", "component-spec", "component-declined",
   "app-screenshot", "open-question", "new-project", "decision-ref", "end", "block", "handoff",
 ] as const;

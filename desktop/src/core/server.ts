@@ -988,6 +988,50 @@ First write a test that shows this, then fix it.`;
     catch (error) { refuse((error as Error).message); }
   }
 
+  /**
+   * A bot's <remove-bot name="…" path="…"/>: a project or bot (never a sub bot, the asker itself or what it hangs under, the
+   * main bot or Maintainer) is found by name, and by folder when names repeat. The user is asked on a card in the asker's
+   * chat; only "Remove" runs `removeBot`, exactly what the left column's Remove does (nothing on disk is deleted).
+   */
+  private removeBotRequested(bot: Bot, request: { name: string; path?: string }): void {
+    const refuse = (why: string) => { bot.appNotice(`No bot was removed: ${why}`); bot.queueNote(`(App: No bot was removed: ${why})`); };
+    const wanted = request.name.trim().toLowerCase();
+    const named = this.profiles.filter((profile) => !this.removed.has(profile.id) && profile.name.trim().toLowerCase() === wanted);
+    const protectedBot = named.find((profile) => profile.role === "main" || profile.id === MAINTAINER_ID);
+    if (protectedBot && named.length === 1) return refuse(`"${protectedBot.name}" is ${protectedBot.role === "main" ? "the main bot" : "Maintainer"}, which cannot be removed.`);
+    let found = named.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID && !profile.parent);
+    if (!found.length) {
+      return refuse(named.some((profile) => profile.parent)
+        ? `"${request.name}" is a sub bot; a sub bot is closed by its own project bot (<remove-sub-bot>).`
+        : `there is no project or bot named "${request.name}".`);
+    }
+    if (request.path) {
+      const want = folderPath(request.path);
+      const at = (folder: string) => folderPath(folder) ?? folder;
+      const exact = found.filter((profile) => want !== null && at(profile.folder) === want);
+      found = exact.length ? exact : found.filter((profile) => want !== null && at(profile.folder).toLowerCase() === want.toLowerCase());
+      if (!found.length) return refuse(`no project or bot named "${request.name}" is at ${request.path}.`);
+    }
+    if (found.length > 1) {
+      return refuse(`more than one project or bot is named "${request.name}" (${found.map((profile) => profile.folder).join(", ")}); add path="its folder" to say which.`);
+    }
+    const target = found[0]!;
+    if (target.id === bot.id || target.id === bot.profile.parent) return refuse(target.id === bot.id ? "a bot cannot remove itself." : `"${target.name}" is the project bot you belong to.`);
+    const project = target.role !== "bot";
+    bot.appNotice(
+      `Remove **${target.name}** from Botling?\n\n\`${target.folder}\`\n\nIt stops at once${this.profiles.some((profile) => profile.parent === target.id && !this.removed.has(profile.id)) ? ", with its sub bots" : ""}. Nothing on disk is deleted: its folder, notes in .bot/ and chat files stay.`,
+      [{ label: project ? "Remove project" : "Remove bot" }, { label: "Keep" }],
+      (index) => {
+        if (index !== 0) { bot.queueNote(`(App: The user chose to keep "${target.name}"; nothing was removed.)`); return; }
+        if (!this.profiles.some((profile) => profile.id === target.id) || this.removed.has(target.id)) { bot.queueNote(`(App: "${target.name}" was already removed.)`); return; }
+        this.removeBot(target.id).then(
+          () => { bot.queueNote(`(App: The user confirmed; "${target.name}" was removed from Botling. Its folder stays at ${target.folder}.)`); this.log(`${target.name} removed by ${bot.profile.name}, confirmed by the user`); },
+          (error: Error) => refuse(error.message));
+      },
+      { sourceID: target.id });
+    bot.queueNote(`(App: The user now sees a card asking to remove "${target.name}" (${target.folder}). Nothing is removed until they confirm.)`);
+  }
+
   /** An agent a bot names in a tag (its agent id, its task id, or the id it reaches it by), if that bot owns it. */
   private tagAgent(bot: Bot, key: string): AgentRecord | undefined {
     const record = this.agents.get(key) ?? this.agents.byHostBot(bot.id, key) ?? this.agents.movedIn(bot.id).find((candidate) => candidate.nativeId === key);
@@ -2040,6 +2084,7 @@ First write a test that shows this, then fix it.`;
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
       else if (request.kind === "subBot") later.push(() => { void this.subBotRequested(bot, request); });
       else if (request.kind === "removeSubBot") later.push(() => { void this.removeSubBotRequested(bot, request); });
+      else if (request.kind === "removeBot") later.push(() => this.removeBotRequested(bot, request));
       else if (request.kind === "agentMessage" || request.kind === "agentStop") later.push(() => { void this.agentTag(bot, request); });
       else rest.push(request);
     }
