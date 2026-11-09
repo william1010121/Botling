@@ -39,14 +39,19 @@ export async function createCallinDriver({ dataDir }: CallinDriverOptions): Prom
   const bots: Map<string, Bot> = (core as any).bots;
   const conversations: Conversations = (core as any).conversations;
   const notices: Record<string, number> = {};
+  // Turns handed to a chat's bot by the app (appMessage): only call-ins ending do that here.
+  const wakes: Record<string, number> = {};
   const byId = new Map(Object.entries(BOTS).map(([key, bot]) => [bot.id, key]));
   const bot = (key: string) => bots.get(BOTS[key]!.id)!;
   for (const key of Object.keys(BOTS)) {
     const real = bot(key) as any;
     notices[key] = 0;
+    wakes[key] = 0;
     real.deliver = async () => {};
     const appNotice = real.appNotice.bind(real);
     real.appNotice = (...args: unknown[]) => { notices[key]! += 1; return appNotice(...args); };
+    const appMessage = real.appMessage.bind(real);
+    real.appMessage = (...args: unknown[]) => { const id = appMessage(...args); if (id) wakes[key]! += 1; return id; };
   }
   /** Ends `key`'s running turn as the agent would have, with `text`. */
   const end = async (key: string, text: string, status: "done" | "failed" = "done") => {
@@ -81,7 +86,7 @@ export async function createCallinDriver({ dataDir }: CallinDriverOptions): Prom
     async ownEnd(key) { await end(key, ""); },
     async remove(sub) { await core.removeBot(BOTS[sub]!.id, { quiet: true }); await flush(); },
     async answer(chat) { await end(callee(chat)!, "Answer."); },
-    async noAnswer(chat) { await end(callee(chat)!, "", "failed"); },
+    async noAnswer(chat, empty) { await end(callee(chat)!, "", empty ? "done" : "failed"); },
     view(): CallinView {
       return {
         pending: per((key) => conversations.callIns(BOTS[key]!.id).map(({ id, state }) => ({ id: byId.get(id) ?? id, state }))),
@@ -89,6 +94,7 @@ export async function createCallinDriver({ dataDir }: CallinDriverOptions): Prom
         answers: per((key) => bot(key).lines().filter((line) => line.role === "bot" && typeof line.sourceID === "string").length),
         speaker: per((key) => callee(key)),
         followUp: per((key) => (conversations as any).followUps.get(BOTS[key]!.id)?.depth ?? 0),
+        wakes: per((key) => wakes[key]!),
       };
     },
     nameOf: (id) => byId.get(id) ?? null,

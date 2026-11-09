@@ -5,7 +5,8 @@
 //     the reference allows (after steps the app does not trace: a callee's turn beginning, an own turn
 //     ending with nothing to show, a sub bot removed).
 // SPEC_BUG=callin runs the reference as the app was before 78bf1640 (drops left no notice);
-// SPEC_BUG=callin-sub as before 9d7c0bda (sub bots not callable either): both must go red.
+// SPEC_BUG=callin-sub as before 9d7c0bda (sub bots not callable either); SPEC_BUG=callin-nowake as before a failed
+// bot @ was handed back to the bot that asked (only an answer was): all must go red.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ import { createCallinDriver } from "../../desktop/spec-adapters/callin-adapter";
 import type { CallinDriver } from "../driver/callin-driver";
 import { CallinReference, viewOf, type CallinAction, type CallinState, type Outcome } from "../reference/callin";
 
-const BUG = process.env.SPEC_BUG === "callin" ? "silent" : process.env.SPEC_BUG === "callin-sub" ? "sub" : "none";
+const BUG = ({ callin: "silent", "callin-sub": "sub", "callin-nowake": "nowake" } as const)[process.env.SPEC_BUG ?? ""] ?? "none";
 const BODIES = ["deploy it", "check it"];
 const BOUNDS = { maxAts: 12, maxOwn: 2 };
 const INTERNAL = ["Start", "Take", "GiveUp"] as const;
@@ -58,7 +59,8 @@ async function drive(driver: CallinDriver, s: CallinState, a: CallinAction, ids:
     case "OwnEnd": return driver.ownEnd(a.b);
     case "Remove": return driver.remove(a.s);
     case "Answer": return driver.answer(a.c);
-    case "NoAnswer": return driver.noAnswer(a.c);
+    // A bot's @ answered with nothing counts as not answered: half the time it ends that way instead of failing.
+    case "NoAnswer": { const e = s.ev[s.cur[a.c]! - 1]!; return driver.noAnswer(a.c, e.by === "bot" && s.ev.length % 2 === 0); }
     default: throw new Error(`${a.name} is the app's own step`);
   }
 }
@@ -90,7 +92,10 @@ function random(seed: number) {
   return () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 }
 
-/** A random walk, each kind of action as likely as another, each reply heard again at most once; `skip` names actions left out. */
+/**
+ * A random walk, each kind of action as likely as another, each reply heard again at most once; `skip` names actions
+ * left out. A reply naming a bot with the same words as a call-in still pending comes more often (else "merged" is rare).
+ */
 const randomly = (seed: number, skip: string[] = []) => {
   const next = random(seed);
   const any = <T>(list: T[]) => list[Math.floor(next() * list.length)]!;
@@ -98,6 +103,8 @@ const randomly = (seed: number, skip: string[] = []) => {
     const once = (a: CallinAction) => a.name !== "Rehear" || s.ev.filter((e) => e.msg === s.ev[a.k - 1]!.msg).length === 1;
     const left = enabled.filter((a) => !skip.includes(a.name) && once(a));
     if (!left.length) return null;
+    const repeat = left.filter((a) => a.name === "BotReply" && a.t !== null && s.pending[a.c]!.some((p) => s.ev[p.ev - 1]!.to === a.t && s.ev[p.ev - 1]!.body === a.b));
+    if (repeat.length && next() < 0.3) return any(repeat);
     const name = any([...new Set(left.map((a) => a.name))]);
     return any(left.filter((a) => a.name === name));
   };
@@ -118,6 +125,9 @@ describe("callin conformance", () => {
     ["a reply heard again is not delivered again", [{ name: "UserLine", c: "A", t: null }, { name: "BotReply", c: "A", t: "B", b: BODIES[0] }, { name: "Rehear", k: 1 }, { name: "Answer", c: "A" }, { name: "Rehear", k: 1 }]],
     ["the hand-back chain stops at the depth limit", [{ name: "UserLine", c: "A", t: null }, { name: "BotReply", c: "A", t: "B", b: BODIES[0] }, { name: "Answer", c: "A" }, { name: "BotReply", c: "A", t: "C", b: BODIES[0] }, { name: "Answer", c: "A" }]],
     ["a callee removed before its turn is told of", [{ name: "UserLine", c: "C", t: "A" }, { name: "UserLine", c: "C", t: "S" }, { name: "Remove", s: "S" }, { name: "Answer", c: "C" }]],
+    ["a bot's @ to a busy bot is handed back to it as not answered", [{ name: "UserLine", c: "B", t: null }, { name: "UserLine", c: "A", t: null }, { name: "BotReply", c: "A", t: "B", b: BODIES[0] }]],
+    ["a bot's @ whose callee fails is handed back, and the reply to that goes one level deeper", [{ name: "UserLine", c: "A", t: null }, { name: "BotReply", c: "A", t: "B", b: BODIES[0] }, { name: "NoAnswer", c: "A" }, { name: "BotReply", c: "A", t: "C", b: BODIES[0] }, { name: "NoAnswer", c: "A" }]],
+    ["a bot's @ to its sub bot removed before its turn is handed back", [{ name: "UserLine", c: "C", t: "A" }, { name: "UserLine", c: "C", t: null }, { name: "OwnEnd", b: "C" }, { name: "BotReply", c: "C", t: "S", b: BODIES[0] }, { name: "Remove", s: "S" }, { name: "Answer", c: "C" }]],
   ] as [string, CallinAction[]][])("%s", async (_, actions) => {
     const { done } = await walk(fixed(actions), actions.length);
     expect(done).toHaveLength(actions.length);
@@ -126,11 +136,11 @@ describe("callin conformance", () => {
   it.each(SEEDS)("random walk, seed %i", async (seed) => {
     // One body on even seeds, so the same words come again more often.
     const { s } = await walk(randomly(seed), 40, seed % 2 ? BODIES : [BODIES[0]!]);
-    for (const e of s.ev) reached.add(e.st);
+    for (const e of s.ev) reached.add(e.woke ? `${e.st}, handed back` : e.st);
   });
 
   it("the random walks reach every outcome of an @", () => {
-    expect([...reached]).toEqual(expect.arrayContaining(["answered", "dropped", "merged", "seen", "unheard", "unreachable"]));
+    expect([...reached]).toEqual(expect.arrayContaining(["answered", "dropped", "merged", "seen", "unheard", "unreachable", "answered, handed back", "unheard, handed back"]));
   });
 });
 
@@ -141,6 +151,13 @@ describe("callin real bugs", () => {
     await driver.noAnswer("A");
     expect(driver.view().pending.A).toEqual([]);
     expect(driver.view().notices.A).toBe(1);
+  });
+
+  // Was: a bot's @ whose callee ended its turn with nothing to show posted nothing, told nothing and woke nobody.
+  it("a bot's @ answered with nothing is told of and handed back to the bot that asked", async () => {
+    const { driver } = await walk(fixed([{ name: "UserLine", c: "A", t: null }, { name: "BotReply", c: "A", t: "B", b: BODIES[0]! }]), 2);
+    await driver.noAnswer("A", true);
+    expect(driver.view()).toMatchObject({ pending: { A: [] }, notices: { A: 1 }, answers: { A: 0 }, wakes: { A: 1 }, followUp: { A: 1 } });
   });
 });
 
@@ -180,7 +197,9 @@ function replay(ref: CallinReference, lines: Line[], nameOf: (id: string) => str
       else if (action.name === "Start") outcome = after.ev[before.ev.findIndex((e) => e.chat === c && e.st === "queued")]!.st;
       else outcome = after.ev[before.cur[c]! - 1]!.st;
       if (outcome !== state.outcome) return false;
-      return action.name !== "Answer" || (state.posted === true && after.followUp[c] === state.followUp);
+      if (action.name === "Answer") return state.posted === true && after.followUp[c] === state.followUp;
+      // A call-in not answered says what hand-back it left (a bot that asked is told with a turn).
+      return outcome !== "unheard" || state.followUp === undefined || after.followUp[c] === state.followUp;
     };
     // The shortest run of untraced steps after which the line's action gives what the app wrote.
     let found: CallinState | null = null;

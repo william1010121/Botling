@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Bot, GuestAnswer } from "./bot";
 import { writeFileAtomic } from "./durable/atomic";
 import {
-  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botFollowUpNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
+  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botFollowUpNote, botFollowUpMissedNote, botUnansweredNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
   isPass, mentionBody, mentioned, quoteName, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
@@ -320,8 +320,13 @@ export class Conversations {
     for (const entry of entries) {
       const member = entry.member;
       const bot = this.deps.bot(member.id);
-      if (!bot) { unheard.push(`${member.name} (it is not running)`); this.settle(chat.id, entry); this.trace("Start", chat.id, { to: member.id, outcome: "unheard" }); continue; }
-      if (!this.callable(chat.id).some((candidate) => candidate.id === member.id)) { unheard.push(`${member.name} (it can no longer be called into this chat)`); this.settle(chat.id, entry); this.trace("Start", chat.id, { to: member.id, outcome: "unheard" }); continue; }
+      // Not answered (`why`): a bot that asked is handed a turn saying so, like an answer; otherwise told with the notice below.
+      const notHeard = (action: "Start" | "GiveUp" | "NoAnswer", why: string) => {
+        if (!this.wakeUnheard(chat, member.name, why, caller)) unheard.push(`${member.name} (${why})`);
+        this.trace(action, chat.id, { to: member.id, outcome: "unheard", followUp: this.followUps.get(chat.id)?.depth ?? 0 });
+      };
+      if (!bot) { this.settle(chat.id, entry); notHeard("Start", "it is not running"); continue; }
+      if (!this.callable(chat.id).some((candidate) => candidate.id === member.id)) { this.settle(chat.id, entry); notHeard("Start", "it can no longer be called into this chat"); continue; }
       entry.state = "answering";
       this.trace("Start", chat.id, { to: member.id, outcome: "answering" });
       const prompt = caller
@@ -341,8 +346,8 @@ export class Conversations {
         this.speak(chat.id, null, member.id);
       }
       if (member.id === this.deps.mainBotId) this.deps.afterMainTurn();
-      if (answer.kind === "busy") { unheard.push(`${member.name} (busy)`); this.trace("GiveUp", chat.id, { to: member.id, outcome: "unheard" }); }
-      else if (answer.kind === "failed") { unheard.push(`${member.name} (${firstLineOf(answer.why)})`); this.trace("NoAnswer", chat.id, { to: member.id, outcome: "unheard" }); }
+      if (answer.kind === "busy") notHeard("GiveUp", "busy");
+      else if (answer.kind === "failed") notHeard("NoAnswer", firstLineOf(answer.why));
       else {
         // You named it, so its tags act as they would in its own chat. Called in by a bot, its answer
         // is only a line: no tags act, nothing in it is dispatched.
@@ -351,16 +356,35 @@ export class Conversations {
           said = line.text;
           bot.keepCallIn(`Called into ${host}'s chat with @: ${asked}`, askedAt, line);
         });
+        // A bot asked and nothing was posted: not an answer; it is told so like any @ not answered, never left waiting.
+        if (caller && !posted) { notHeard("NoAnswer", "it answered nothing"); this.deps.refreshWaiting(); continue; }
         // A bot asked: wake it with the answer, once, so it is not left unaware of it.
-        if (caller && posted && said.trim() && (caller.depth ?? 1) < MAX_FOLLOW_DEPTH) {
+        if (caller && posted && (caller.depth ?? 1) < MAX_FOLLOW_DEPTH) {
           this.followUps.set(chat.id, { depth: caller.depth ?? 1, until: Date.now() + 30 * 60_000 });
-          chat.appMessage(botAnswerNote({ callee: member.name, question: caller.body, answer: said }));
+          chat.appMessage(botAnswerNote({ callee: member.name, question: caller.body, answer: said.trim() ? said : "(no words: only what its line in the chat shows)" }));
         }
         this.trace("Answer", chat.id, { to: member.id, outcome: "answered", posted: !!posted, followUp: this.followUps.get(chat.id)?.depth ?? 0 });
       }
       this.deps.refreshWaiting();
     }
     if (unheard.length) { const words = `Did not answer this time: ${unheard.join(", ")}.`; if (caller) this.failed(chat, words); else chat.appNotice(words); }
+  }
+
+  /**
+   * A bot's @ (`caller`) to `name` was not answered (`why`; spec/models/callin: GiveUp, NoAnswer, Start): below the
+   * depth limit the bot that asked is handed a turn saying so, as it would be handed the answer, and the chat shows the
+   * notice. False when it was not (a user's @, the depth limit, or the bot cannot take a turn): the caller tells it then.
+   */
+  private wakeUnheard(chat: Bot, name: string, why: string, caller?: BotMention): boolean {
+    if (!caller || (caller.depth ?? 1) >= MAX_FOLLOW_DEPTH) return false;
+    const before = this.followUps.get(chat.id);
+    this.followUps.set(chat.id, { depth: caller.depth ?? 1, until: Date.now() + 30 * 60_000 });
+    if (!chat.appMessage(botUnansweredNote({ callee: name, question: caller.body, why }))) {
+      if (before) this.followUps.set(chat.id, before); else this.followUps.delete(chat.id);
+      return false;
+    }
+    chat.appNotice(`Did not answer this time: ${name} (${why}).`);
+    return true;
   }
 
   /**
@@ -380,6 +404,19 @@ export class Conversations {
     chat.post(line);
     this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
     chat.appMessage(botFollowUpNote({ callee: member.name, question: asked, news: record.text, choices: record.choices?.map((choice) => choice.label) }));
+  }
+
+  /**
+   * `callee`'s turn on the report of a worker it started for `callerId`'s bot's @ ended without a reply (`why`):
+   * the chat says so and its bot is woken with it, so it never waits on news that is not coming.
+   */
+  callInFollowUpMissed(callerId: string, callee: Bot, asked: string, why: string) {
+    const chat = this.deps.bot(callerId);
+    if (!chat || chat === callee || !asked) return;
+    const name = this.speakerName(callee.id) ?? callee.profile.name;
+    chat.appNotice(`${name}'s worker for your @ ended, but ${name} sent no answer on it (${why}).`);
+    this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
+    chat.appMessage(botFollowUpMissedNote({ callee: name, question: asked, why }));
   }
 
   /** Who answers in `chatId` now (null: nobody); `guest`, the bot that starts or stops answering there, is drawn again too. */

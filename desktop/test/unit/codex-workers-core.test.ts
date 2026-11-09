@@ -228,6 +228,20 @@ describe("Codex workers on the shared core", () => {
     expect(h.s.core.get(task)).toMatchObject({ run: 2, status: "running" });
   });
 
+  it("round 5 a steer that missed its run's turn, the run then cancelled after it ended, never starts a run with it", async () => {
+    const h = session({}, true);
+    h.coordinatorTurn();
+    const task = h.worker("Job", "w1", "wt1");
+    const steered = h.take(h.s.sendToWorker(task, "CANCELLED AFTER THE END").out).method("turn/steer");
+    h.finish("w1", "wt1", "First answer.");
+    // app_cancel_task on the worker no longer at work: its report is dropped and its adapter cleans up.
+    await h.s.core.cancel(task, 1);
+    expect(h.s.core.get(task)).toMatchObject({ run: 1, report: { state: "none" } });
+    const late = h.take(h.s.receive(JSON.stringify({ id: steered.id, error: { message: "no active turn" } })));
+    expect(late.method("turn/start")).toBeUndefined();
+    expect(h.s.core.get(task)).toMatchObject({ run: 1 });
+  });
+
   it("a report waits for the coordinator's turn; a report with no decision is shown once more, then unresolved", () => {
     const h = session();
     h.coordinatorTurn();

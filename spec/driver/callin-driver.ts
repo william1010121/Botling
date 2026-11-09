@@ -18,8 +18,8 @@ export interface CallinDriver {
   remove(sub: string): Promise<void>;
   /** The bot answering a call-in in `chat` replies. */
   answer(chat: string): Promise<void>;
-  /** The bot answering a call-in in `chat` fails its turn. */
-  noAnswer(chat: string): Promise<void>;
+  /** The bot answering a call-in in `chat` fails its turn (`empty`: ends it with nothing to show, which a bot's @ counts as no answer). */
+  noAnswer(chat: string, empty?: boolean): Promise<void>;
   /** What the app shows now. */
   view(): CallinView;
   /** The model name of an app bot id (for trace lines), or null. */

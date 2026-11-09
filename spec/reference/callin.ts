@@ -1,11 +1,12 @@
 // The @ routing and call-in state machine of spec/models/callin/Callin.tla, action for action.
 // Pure: a step takes a state and returns the next one, or null when the action is not enabled.
+// A bot that asked with @ below the depth limit is handed a turn when the call-in ends, answered or not.
 
 export type Outcome = "queued" | "answering" | "answered" | "unheard" | "unreachable" | "dropped" | "merged" | "seen";
 export type PendingState = "queued" | "answering";
 
 /** One @ routed: who it was for, from a user line or a bot's reply (`msg`, 1-based; 0 for a user line). */
-export interface At { chat: string; to: string; by: "user" | "bot"; body: string | null; depth: number; msg: number; st: Outcome; told: boolean }
+export interface At { chat: string; to: string; by: "user" | "bot"; body: string | null; depth: number; msg: number; st: Outcome; told: boolean; /** Turns handed back on it to the bot that asked. */ woke: number }
 
 export interface CallinConfig {
   top: string[];
@@ -13,8 +14,11 @@ export interface CallinConfig {
   parent: Record<string, string>;
   cap: number;
   maxDepth: number;
-  /** "silent": before 78bf1640 (drops left no notice); "sub": before 9d7c0bda (and sub bots not callable either). */
-  bug?: "none" | "silent" | "sub";
+  /**
+   * "silent": before 78bf1640 (drops left no notice); "sub": before 9d7c0bda (and sub bots not callable either);
+   * "nowake": a bot's @ that failed handed nothing back to the bot that asked (only an answer did).
+   */
+  bug?: "none" | "silent" | "sub" | "nowake";
 }
 
 export interface CallinState {
@@ -51,7 +55,13 @@ export class CallinReference {
   constructor(readonly config: CallinConfig) {}
 
   get bots(): string[] { return [...this.config.top, ...Object.keys(this.config.parent)]; }
-  private get silent() { return (this.config.bug ?? "none") !== "none"; }
+  private get silent() { return this.config.bug === "silent" || this.config.bug === "sub"; }
+  /** A bot asked call-in `e`, below the depth limit: its end is handed back to the chat's bot. */
+  private asks(e: At) { return e.by === "bot" && e.depth < this.config.maxDepth; }
+  /** ... also when it was not answered. */
+  private failWakes(e: At) { return this.asks(e) && this.config.bug !== "nowake"; }
+  /** Call-in `e` of chat `c` hands its end back to the bot that asked. */
+  private handBack(s: CallinState, c: string, e: At) { e.woke += 1; s.followUp[c] = e.depth; s.own[c]! += 1; }
 
   init(): CallinState {
     const per = <T>(keys: string[], value: () => T) => Object.fromEntries(keys.map((key) => [key, value()]));
@@ -75,7 +85,7 @@ export class CallinReference {
   private route(s: CallinState, c: string, t: string, b: string, m: number) {
     const d = s.followUp[c]!;
     s.followUp[c] = 0;
-    const add = (st: Outcome, told: boolean, depth = d) => { s.ev.push({ chat: c, to: t, by: "bot", body: b, depth, msg: m, st, told }); };
+    const add = (st: Outcome, told: boolean, depth = d) => { s.ev.push({ chat: c, to: t, by: "bot", body: b, depth, msg: m, st, told, woke: 0 }); };
     if (!this.callable(s, c).includes(t)) return add("unreachable", !this.silent);
     if (s.ev.some((e) => e.msg === m && DELIVERED.includes(e.st))) return add("seen", false);
     if (d >= this.config.maxDepth) return add("dropped", !this.silent);
@@ -89,9 +99,10 @@ export class CallinReference {
     s.pending[c]!.push({ ev: s.ev.length, st: "queued" });
   }
 
-  private finish(s: CallinState, c: string, st: Outcome, told: boolean) {
-    const k = s.cur[c]!;
-    Object.assign(s.ev[k - 1]!, { st, told });
+  private finish(s: CallinState, c: string, st: Outcome, told: boolean, wake: boolean) {
+    const k = s.cur[c]!, e = s.ev[k - 1]!;
+    Object.assign(e, { st, told });
+    if (wake) this.handBack(s, c, e);
     this.settle(s, c, k);
     s.cur[c] = 0;
     s.phase[c] = "idle";
@@ -107,7 +118,7 @@ export class CallinReference {
         s.own[a.c]! += 1;
         if (top.includes(a.c)) s.recent[a.c] = [];
         if (a.t !== null) {
-          s.ev.push({ chat: a.c, to: a.t, by: "user", body: null, depth: 0, msg: 0, st: "queued", told: false });
+          s.ev.push({ chat: a.c, to: a.t, by: "user", body: null, depth: 0, msg: 0, st: "queued", told: false, woke: 0 });
           s.pending[a.c]!.push({ ev: s.ev.length, st: "queued" });
         }
         return s;
@@ -148,6 +159,7 @@ export class CallinReference {
           s.phase[a.c] = "wait";
         } else {
           Object.assign(e, { st: "unheard", told: !this.silent });
+          if (this.failWakes(e)) this.handBack(s, a.c, e);
           this.settle(s, a.c, k);
         }
         return s;
@@ -164,21 +176,20 @@ export class CallinReference {
         if (s.phase[a.c] !== "wait") return null;
         const b = this.callee(s, a.c);
         if (!(s.own[b]! > 0 || s.guest[b] || s.gone.includes(b))) return null;
-        this.finish(s, a.c, "unheard", true);
+        this.finish(s, a.c, "unheard", true, this.failWakes(s.ev[s.cur[a.c]! - 1]!));
         return s;
       }
       case "Answer": {
         if (s.phase[a.c] !== "turn") return null;
         const k = s.cur[a.c]!, e = s.ev[k - 1]!;
         s.guest[e.to] = false;
-        this.finish(s, a.c, "answered", false);
-        if (e.by === "bot" && e.depth < this.config.maxDepth) { s.followUp[a.c] = e.depth; s.own[a.c]! += 1; }
+        this.finish(s, a.c, "answered", false, this.asks(e));
         return s;
       }
       case "NoAnswer": {
         if (s.phase[a.c] !== "turn") return null;
         s.guest[this.callee(s, a.c)] = false;
-        this.finish(s, a.c, "unheard", true);
+        this.finish(s, a.c, "unheard", true, this.failWakes(s.ev[s.cur[a.c]! - 1]!));
         return s;
       }
     }
@@ -208,6 +219,8 @@ export class CallinReference {
     if (s.ev.some((e) => ["unreachable", "dropped", "unheard"].includes(e.st) && !e.told)) broken.push("NoSilentDrop");
     if (s.ev.some((e, j) => s.ev.some((f, k) => j !== k && e.msg !== 0 && e.msg === f.msg && DELIVERED.includes(e.st) && DELIVERED.includes(f.st)))) broken.push("DeliveredOnce");
     if (s.ev.some((e) => e.depth > this.config.maxDepth)) broken.push("HopBound");
+    if (s.ev.some((e) => e.woke > 1)) broken.push("WakeOnce");
+    if (s.ev.some((e) => e.woke > 0 && !(this.asks(e) && (e.st === "answered" || e.st === "unheard")))) broken.push("WakeBelowDepth");
     if (s.ev.some((e) => e.st === "unreachable" && this.config.parent[e.to] === e.chat)) broken.push("SubReachable");
     if (s.ev.some((e) => DELIVERED.includes(e.st) && e.to in this.config.parent && this.config.parent[e.to] !== e.chat)) broken.push("SubOnlyInParent");
     if (top.some((c) => s.recent[c]!.length > this.config.cap)) broken.push("CapPerUserLine");
@@ -232,6 +245,8 @@ export interface CallinView {
   speaker: Record<string, string | null>;
   /** The hand-back depth waiting for each chat bot's next reply (0: none). */
   followUp: Record<string, number>;
+  /** Turns each chat's bot was handed on the end of its @s (an answer, or word that it was not answered). */
+  wakes: Record<string, number>;
 }
 
 export function viewOf(ref: CallinReference, s: CallinState): CallinView {
@@ -242,5 +257,6 @@ export function viewOf(ref: CallinReference, s: CallinState): CallinView {
     answers: per((c) => s.ev.filter((e) => e.chat === c && e.st === "answered").length),
     speaker: per((c) => (s.phase[c] !== "idle" ? ref.callee(s, c) : null)),
     followUp: per((c) => s.followUp[c]!),
+    wakes: per((c) => s.ev.filter((e) => e.chat === c).reduce((sum, e) => sum + e.woke, 0)),
   };
 }

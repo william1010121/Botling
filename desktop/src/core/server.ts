@@ -523,6 +523,7 @@ export class Core {
         answeringIn: () => this.conversations?.answeringIn(profile.id) ?? null,
         callInNote: () => this.conversations?.callInStatus(profile.id) ?? null,
         callInFollowUp: (caller, asked, record) => this.conversations?.callInFollowUp(caller, bot, asked, record),
+        callInFollowUpMissed: (caller, asked, why) => this.conversations?.callInFollowUpMissed(caller, bot, asked, why),
         agents: this.agentPort(profile),
       });
       return bot;
