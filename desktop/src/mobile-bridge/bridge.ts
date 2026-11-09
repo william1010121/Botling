@@ -15,12 +15,21 @@ import type { PairingStore, Route } from './pairing';
 import { TicketStore } from './tickets';
 export { ALL_BOTS, botAllowed };
 
-export const Client = z.strictObject({ id: z.string().min(1).max(100), tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
-  botIds: z.array(z.string().min(1).refine(id => id !== ALL_BOTS, 'Bearer clients need explicit bot ids.')).min(1), expiresAt: z.number().int().positive(),
+const clientFields = { id: z.string().min(1).max(100), tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
+  botIds: z.array(z.string().min(1).max(64)).min(1), expiresAt: z.number().int().positive(),
   /** Set for paired phones (pairing.ts): when, and the phone's own short name. Display only. */
-  pairedAt: z.number().int().positive().optional(), label: z.string().max(40).optional() });
+  pairedAt: z.number().int().positive().optional(), label: z.string().max(40).optional() };
+/** A hand-issued token (the clients file): explicit bot ids only. */
+export const Client = z.strictObject({ ...clientFields,
+  botIds: z.array(z.string().min(1).max(64).refine(id => id !== ALL_BOTS, 'Bearer clients need explicit bot ids.')).min(1) });
 export type Client = z.infer<typeof Client>;
 export const Clients = z.array(Client);
+/** Any session the bridge authenticates: a hand-issued token, or a phone paired by QR code (id `pair-…`, pairing.ts),
+ * which may hold the all-bots scope (`*`: every bot the desktop lists, including bots added later). */
+export const SessionClient = z.strictObject(clientFields)
+  .refine(c => !c.botIds.includes(ALL_BOTS) || c.id.startsWith('pair-'), 'Bearer clients need explicit bot ids.');
+export const PairedClients = z.array(SessionClient.refine(c => c.id.startsWith('pair-'), 'Paired phones have pair- ids.'));
+const SessionClients = z.array(SessionClient);
 /** What a phone may ask (adapter.ts runs them): read a chat, send, answer a question, stop a turn. */
 export const mobileTypes = new Set(['chat.snapshot', 'chat.history', 'chat.send', 'chat.choose', 'chat.answer', 'turn.stop']);
 export interface MobileCore {
@@ -156,7 +165,7 @@ export function handler(options: BridgeOptions) {
     if (url.pathname === '/api/mobile/ticket' && url.search === '') {
       if (req.method !== 'POST') return refuse(405);
       let asked: Client | undefined;
-      try { asked = authenticate(req, Clients.parse(options.clients())); } catch { return json(res, 503, { error: { code: 'auth_unavailable' } }); }
+      try { asked = authenticate(req, SessionClients.parse(options.clients())); } catch { return json(res, 503, { error: { code: 'auth_unavailable' } }); }
       if (!asked) return json(res, 401, { error: { code: 'auth_required' } });
       const issued = tickets.issue(asked.id);
       return issued ? json(res, 200, issued) : json(res, 429, { error: { code: 'ticket_limited' } });
@@ -166,7 +175,7 @@ export function handler(options: BridgeOptions) {
       // The ticket is the only secret in this URL, and it is already spent when the stream opens.
       const ticket = [...url.searchParams.keys()].join() === 'ticket' ? url.searchParams.get('ticket') : null;
       const clientId = tickets.redeem(ticket);
-      const live = () => { try { return Clients.parse(options.clients()).find(c => c.id === clientId && c.expiresAt > Date.now()); } catch { return undefined; } };
+      const live = () => { try { return SessionClients.parse(options.clients()).find(c => c.id === clientId && c.expiresAt > Date.now()); } catch { return undefined; } };
       const client = clientId ? live() : undefined;
       if (!client) return json(res, 401, { error: { code: 'ticket_invalid' } });
       if (streams.size >= 16) return json(res, 429, { error: { code: 'stream_limited' } });
@@ -190,7 +199,7 @@ export function handler(options: BridgeOptions) {
     if (req.method !== 'POST') return refuse(405);
     let client: Pick<Client, 'id' | 'botIds' | 'expiresAt'> | undefined;
     // Bearer-authenticated with its own bot ACL, re-resolved after the body upload to honor revocation.
-    const resolveClient = () => authenticate(req, Clients.parse(options.clients()));
+    const resolveClient = () => authenticate(req, SessionClients.parse(options.clients()));
     try { client = resolveClient(); } catch { return json(res, 503, { error: { code: 'auth_unavailable' } }); }
     if (!client) return json(res, 401, { error: { code: 'auth_required' } });
     if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] ?? '')) return refuse(415);
@@ -205,11 +214,15 @@ export function handler(options: BridgeOptions) {
       const id = typeof (raw as any)?.id === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test((raw as any).id) ? (raw as any).id : 'invalid';
       return json(res, 400, errorResponse(id, { code: (raw as any)?.v !== 10 ? 'unsupported_version' : 'bad_request', message: 'Invalid mobile request.' }));
     }
-    const request = parsed.data;
-    const cmd = request.cmd;
+    let request = parsed.data;
     // Recheck revocation after a potentially slow body upload, before lookup/replay/dispatch.
     try { client = resolveClient(); } catch { return json(res, 503, { error: { code: 'auth_unavailable' } }); }
     if (!client) return json(res, 401, { error: { code: 'auth_required' } });
+    // The page's first read is a snapshot without a bot (the core's default is Main). A session that may not read Main
+    // opens its first bot instead of being refused (which sent a freshly paired phone back to the token sign-in).
+    if (request.cmd.type === 'chat.snapshot' && request.cmd.botId === undefined && !botAllowed(client.botIds, MAIN_BOT_ID))
+      request = { ...request, cmd: { ...request.cmd, botId: client.botIds[0] } };
+    const cmd = request.cmd;
     if (!mobileTypes.has(cmd.type) || !('botId' in cmd) && cmd.type !== 'chat.snapshot'
       || !botAllowed(client.botIds, ('botId' in cmd ? cmd.botId : undefined) ?? MAIN_BOT_ID)
       || (cmd.type === 'chat.answer' && cmd.images?.length)) {
@@ -242,7 +255,7 @@ export function startBridge(options: BridgeOptions, failed: (error: Error) => vo
     const parsed = new URL(route.origin);
     if (parsed.protocol !== 'https:' || parsed.origin !== route.origin) throw new Error('Every route must be an HTTPS origin without a path.');
   }
-  Clients.parse(options.clients());
+  SessionClients.parse(options.clients());
   const handle = handler(options);
   const server = createServer({ ...options.tls, minVersion: 'TLSv1.2' }, (req, res) => { void handle(req, res).catch(() => { res.destroy(); }); });
   server.requestTimeout = 15_000; server.headersTimeout = 10_000; server.maxHeadersCount = 32; server.maxConnections = 32;

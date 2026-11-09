@@ -70,10 +70,12 @@ describe('pairing offers', () => {
     expect(store.clients()).toHaveLength(2);
     expect(authenticate({ headers: { authorization: `Bearer ${other.token}` } } as any, store.clients())).toBeDefined();
   });
-  it('refuses wildcard or empty bot scope and malformed requests', () => {
+  it('refuses an empty bot scope and malformed requests; no list (or `*`) means every bot', () => {
     const store = new PairingStore(temp());
     expect(() => store.createOffer([])).toThrow();
-    expect(() => store.createOffer(['*'])).toThrow();
+    expect(() => store.createOffer(['bad id!'])).toThrow();
+    expect(store.redeem(store.createOffer(['*', 'bot-a']).secret, 'g'.repeat(22)).ok).toBe(true);
+    expect(store.clients()[0].botIds).toEqual(['*']);
     expect(store.redeem('short', DEVICE)).toEqual({ ok: false, reason: 'invalid' });
     expect(store.redeem(store.createOffer(['bot-a']).secret, 'bad id!')).toEqual({ ok: false, reason: 'invalid' });
   });

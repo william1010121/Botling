@@ -5,7 +5,7 @@ A second way in, without a listener or tunnel on this computer: the end-to-end e
 
 Protocol v10, `POST /api/mobile/command`, same-origin bearer authentication. Mobile assets are
 served at `/mobile/`; only the public application shell is unauthenticated. Every data/command
-request needs a current token and an explicit bot grant. There is no default HTTP listener, public bind,
+request needs a current token and a bot grant (explicit ids; a QR-paired phone may hold every bot, `*`). There is no default HTTP listener, public bind,
 CORS, reverse-proxy trust or file endpoint.
 No listener starts unless the local owner supplies `BOTLING_MOBILE_CONFIG`, or creates the
 owner-only `<selected core data>/mobile/config.json` opt-in before core startup.
@@ -153,7 +153,7 @@ Local setup prints a pairing link: `node out/mobile-bridge/pair.cjs <data>/mobil
 gives `https://ORIGIN/mobile/#pair=<secret>&core=<coreId>` (render it as a QR). The secret is in the
 fragment, valid 5 minutes, usable once, and only its SHA-256 is stored (`pairing-offers.json`, mode 0600).
 The page checks `coreId` against the descriptor, then `POST /api/mobile/pair { secret, deviceId }` returns a
-bearer token. That token is an ordinary client (explicit bots, 30 days) in `paired-clients.json`, merged
+bearer token. That token is an ordinary client (30 days; every bot, `*`, unless the code named bots) in `paired-clients.json`, merged
 with the clients file; pairing the same device again replaces its session. Unknown, used and expired codes
 all answer 401; past five wrong guesses in a minute they answer 429 for the rest of the window, but a
 valid code is never refused (it has 256 bits; the limit is about noise, not guessing).

@@ -1061,7 +1061,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bot.settings"), botId }),
   /** The phone connection: its routes and paired phones; a one-time pairing link for the bots named; ending one phone's session. */
   z.strictObject({ type: z.literal("mobile.view") }),
-  z.strictObject({ type: z.literal("mobile.pair"), botIds: z.array(botId).min(1).max(50), route: z.number().int().min(0).max(5).optional(), relay: z.boolean().optional() }),
+  /** `botIds` omitted: the phone may use every bot, including bots added later. */
+  z.strictObject({ type: z.literal("mobile.pair"), botIds: z.array(botId).min(1).max(50).optional(), route: z.number().int().min(0).max(5).optional(), relay: z.boolean().optional() }),
   z.strictObject({ type: z.literal("mobile.revoke"), deviceId: z.string().max(64) }),
   /** Turns the phone relay on (its wss:// address) or off (null). */
   z.strictObject({ type: z.literal("mobile.relay"), url: z.string().max(300).nullable() }),

@@ -9,6 +9,7 @@ import { AgyRuntimeInstaller } from './agy-runtime-install';
 import { agyRuntimeStatus, validateAgyRuntimePath } from "./agy-runtime-settings";
 import type { AgyConfig } from "./agent/agy";
 import { mobileCommand } from '../mobile-bridge/adapter';
+import { ALL_BOTS } from '../mobile-bridge/scope';
 import { MobileDesk, OFF as MOBILE_OFF } from '../mobile-bridge/desk';
 import type { RelayConnector } from '../mobile-relay/connector';
 // The core: owns every bot's chat and head, and answers the contract's commands. It is
@@ -2647,14 +2648,15 @@ First write a test that shows this, then fix it.`;
       case "bot.settings": return this.bot(cmd.botId).settingsView();
       case "mobile.view": return this.mobileView();
       case "mobile.pair": {
-        const unknown = cmd.botIds.find((id) => !this.bots.has(id));
-        if (unknown) throw new Error("Unknown bot.");
+        // No list: every bot (`*`, resolved on each request), so a bot made later is on the phone too.
+        const botIds = cmd.botIds ?? [ALL_BOTS];
+        if (cmd.botIds?.some((id) => !this.bots.has(id))) throw new Error("Unknown bot.");
         if (cmd.relay) {
           if (!this.relay) throw new Error("The phone relay is not available.");
-          const offer = await this.relay.pair(cmd.botIds);
+          const offer = await this.relay.pair(botIds);
           return { ...offer, route: { kind: "relay" as const, origin: new URL(offer.url).origin } };
         }
-        return this.mobileOr().pair(cmd.botIds, cmd.route);
+        return this.mobileOr().pair(botIds, cmd.route);
       }
       case "mobile.revoke": {
         if (!this.mobileDesk && !this.relay) throw new Error("The phone connection is not set up.");

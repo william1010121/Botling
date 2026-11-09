@@ -23,6 +23,7 @@ describe("phone connection commands", () => {
     for (const type of ["mobile.view", "mobile.pair", "mobile.revoke"] as const) { expect(RENDERER_COMMANDS.has(type)).toBe(true); expect(MAIN_COMMANDS.has(type)).toBe(false); }
     expect(parseInbound({ v: 10, id: "a", cmd: { type: "mobile.pair", botIds: [MAIN_BOT_ID], extra: 1 } }).ok).toBe(false);
     expect(parseInbound({ v: 10, id: "a", cmd: { type: "mobile.pair", botIds: [] } }).ok).toBe(false);
+    expect(parseInbound({ v: 10, id: "a", cmd: { type: "mobile.pair" } }).ok).toBe(true); // every bot
     expect(parseInbound({ v: 10, id: "a", cmd: { type: "mobile.revoke", deviceId: "x" } }).ok).toBe(true);
   });
   it("are off until the bridge is configured, then pair, list and revoke through the core", async () => {
@@ -35,6 +36,10 @@ describe("phone connection commands", () => {
       const pairing = new PairingStore(join(tempDir("phone-pair")), Date.now, ROUTES);
       core.attachMobile(new MobileDesk(pairing, ROUTES));
       await expect(run({ type: "mobile.pair", botIds: ["no-such-bot"] })).rejects.toThrow(/Unknown bot/);
+      const all = await run({ type: "mobile.pair" });
+      expect(pairing.redeem(new URL(all.url).hash.match(/pair=([^&]+)/)![1], "e".repeat(22), "iPad").ok).toBe(true);
+      expect((await run({ type: "mobile.view" })).devices).toMatchObject([{ id: "e".repeat(22), botIds: ["*"] }]);
+      await run({ type: "mobile.revoke", deviceId: "e".repeat(22) });
       const offer = await run({ type: "mobile.pair", botIds: [MAIN_BOT_ID], route: 1 });
       expect(offer.url.startsWith("https://botling.home.arpa/mobile/#pair=")).toBe(true);
       const secret = new URL(offer.url).hash.match(/pair=([^&]+)/)![1];
@@ -61,6 +66,7 @@ describe("phone connection commands", () => {
       expect((await run({ type: "mobile.view" })).relay).toEqual({ url: null, state: "off" });
       const on = await run({ type: "mobile.relay", url: "wss://relay.example/ws" });
       expect(on).toMatchObject({ enabled: false, relay: { url: "wss://relay.example/ws", state: "online" }, devices: [{ id: "r".repeat(22), label: "Pixel", via: "relay" }] });
+      expect((await run({ type: "mobile.pair", relay: true })).url.endsWith("&s=1")).toBe(true); // ["*"]
       const offer = await run({ type: "mobile.pair", botIds: [MAIN_BOT_ID], relay: true });
       expect(offer.route).toEqual({ kind: "relay", origin: "https://relay.example" });
       expect((await run({ type: "mobile.revoke", deviceId: "r".repeat(22) })).devices).toEqual([]);
@@ -84,7 +90,7 @@ describe("Settings > Phone", () => {
     const m = await mount(async () => ({ enabled: false, routes: [], devices: [] }));
     try { expect(m.host.textContent).toContain(mobileWords("en").off); expect(m.host.querySelector("button")).toBeNull(); } finally { await m.done(); }
   });
-  it("needs a bot chosen, shows a QR for the one-time link, hides it on request, lists routes in order, and asks before revoking", async () => {
+  it("pairs every bot without asking which, shows a QR for the one-time link, hides it on request, lists routes in order, and asks before revoking", async () => {
     const calls: any[] = []; let devices: any[] = [{ id: DEVICE, label: "iPhone", pairedAt: Date.UTC(2026, 9, 30), expiresAt: Date.UTC(2026, 10, 29), botIds: [MAIN_BOT_ID] }];
     const link = "https://botling-bridge.example/mobile/#pair=" + "S".repeat(43) + "&core=" + "a".repeat(32);
     const m = await mount(async (cmd) => {
@@ -94,14 +100,13 @@ describe("Settings > Phone", () => {
       if (cmd.type === "mobile.revoke") { devices = []; return { enabled: true, routes: ROUTES, devices }; }
     });
     try {
-      const create = button(m.host, "Create pairing code") as HTMLButtonElement;
-      expect(create.disabled).toBe(true);
+      // No bot picker: a paired phone gets every bot, including bots added later.
+      expect(m.host.querySelector('input[type="checkbox"]')).toBeNull();
+      expect((button(m.host, "Create pairing code") as HTMLButtonElement).disabled).toBe(false);
       const labels = [...m.host.querySelectorAll(".settings-hint")].map((e) => e.textContent ?? "");
       expect(labels.findIndex((t) => t.includes("botling-bridge.example"))).toBeLessThan(labels.findIndex((t) => t.includes("home.arpa")));
-      await click(m.host.querySelector('input[type="checkbox"]')!);
-      expect((button(m.host, "Create pairing code") as HTMLButtonElement).disabled).toBe(false);
       await click(button(m.host, "Create pairing code"));
-      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair", botIds: [MAIN_BOT_ID], route: 0 });
+      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair", route: 0 });
       expect(m.host.querySelector("svg.qr-code path")?.getAttribute("d")).toBeTruthy();
       expect(m.host.textContent).not.toContain("S".repeat(43)); // shown as a picture, not as text
       await click(button(m.host, "Hide code"));
@@ -134,12 +139,26 @@ describe("Settings > Phone", () => {
       expect(calls.find((c) => c.type === "mobile.relay")).toEqual({ type: "mobile.relay", url: "wss://relay.example/ws" });
       expect(m.host.textContent).toContain("Connected");
       expect(m.host.textContent).toContain("via relay");
-      await click(m.host.querySelector('input[type="checkbox"]')!);
       await click(button(m.host, "Create pairing code"));
-      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair", botIds: [MAIN_BOT_ID], relay: true });
+      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair", relay: true });
       expect(m.host.querySelector("svg.qr-code")).not.toBeNull();
       await click(button(m.host, "Turn off"));
       expect(calls.filter((c) => c.type === "mobile.relay").at(-1)).toEqual({ type: "mobile.relay", url: null });
+    } finally { await m.done(); }
+  });
+  it("points the code at the relay once it is connected, even with the bridge set up (the bridge stays a choice)", async () => {
+    const calls: any[] = [];
+    const devices = [{ id: DEVICE, label: "iPhone", pairedAt: Date.UTC(2026, 10, 1), expiresAt: Date.UTC(2026, 11, 1), botIds: ["*"], via: "relay" }];
+    const m = await mount(async (cmd) => {
+      calls.push(cmd);
+      if (cmd.type === "mobile.pair") return { url: "https://relay.example/mobile/#relay=x", expiresAt: Date.now() + 300_000, route: { kind: "relay", origin: "https://relay.example" } };
+      return { enabled: true, routes: ROUTES, devices, relay: { url: "wss://relay.example/ws", state: "online" } };
+    });
+    try {
+      expect((m.host.querySelector('select[aria-label="Address in the code"]') as HTMLSelectElement).value).toBe("relay");
+      expect(m.host.textContent).toContain("All bots");
+      await click(button(m.host, "Create pairing code"));
+      expect(calls.find((c) => c.type === "mobile.pair")).toEqual({ type: "mobile.pair", relay: true });
     } finally { await m.done(); }
   });
   it("speaks Traditional Chinese", async () => {

@@ -75,8 +75,8 @@ async function setup() {
   await connector.setURL("wss://relay.example/ws");
   await until(() => connector.view().state === "online");
   cleanup.push(() => { connector.stop(); relay.shutdown(); });
-  const pairPhone = async (botIds = ["main"], name = "Test phone") => {
-    const offer = await connector.pair(botIds);
+  const pairPhone = async (botIds: string[] | "default" = ["main"], name = "Test phone") => {
+    const offer = await (botIds === "default" ? connector.pair() : connector.pair(botIds));
     const link = parseRelayFragment(new URL(offer.url).hash)!;
     expect(new URL(offer.url).origin).toBe("https://relay.example");
     const result = await RelayClient.pair(link, "https://relay.example", name, { socket: connect, waits: [20] });
@@ -114,6 +114,24 @@ describe("relay connector + phone client", () => {
     const view: any = await client.request({ type: "chat.snapshot" });
     expect(view.chat.botId).toBe("project");
     expect(calls.map(c => c.cmd.type)).toEqual(["chat.snapshot"]);
+  });
+
+  it("a pairing code gives every bot by default: Main on the first read, and bots added later", async () => {
+    const { connector, calls, change, pairPhone } = await setup();
+    const { client, session } = await pairPhone("default");
+    expect(session.botIds).toEqual(["*"]);
+    expect(connector.devices()[0].botIds).toEqual(["*"]);
+    // The phone page's first read: no bot, so the core's default (Main) with the all-bots scope (the full sidebar).
+    await client.request({ type: "chat.snapshot" });
+    expect(calls[0].cmd.botId).toBeUndefined();
+    expect(calls[0].allowed).toEqual(["*"]);
+    expect(await client.request({ type: "chat.send", botId: "made-after-pairing", text: "hi" })).toEqual({ messageId: "m1", turnId: null });
+    let changed = 0;
+    client.watch(() => { changed++; }, () => {});
+    change("made-after-pairing");
+    await until(() => changed === 1);
+    // Still only the phone's commands.
+    await expect(client.request({ type: "bots.remove", botId: "main" } as any)).rejects.toThrow();
   });
 
   it("tells the phone when something changed in a bot it may read, and nothing else", async () => {

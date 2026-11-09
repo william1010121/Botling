@@ -44,7 +44,7 @@ export async function mobileCommand(access: MobileAccess, raw: unknown, allowedB
   }
 }
 
-/** What the desktop renderer draws, for the owner's all-bots browser session (Botling Web): the left
+/** What the desktop renderer draws, for an all-bots phone or browser session (Botling Web): the left
  * column (every bot), the chat on screen and the right panel. Only display settings go out, project
  * folders as their last path segment, and nothing of plugins, the doctor, web AIs, imports or specs. */
 export function webSnapshot(snapshot: ResultOf<'chat.snapshot'>) {
@@ -57,7 +57,7 @@ export function webSnapshot(snapshot: ResultOf<'chat.snapshot'>) {
     components: snapshot.components,
     settings: settings ? { language: settings.language, effectiveLanguage: settings.effectiveLanguage, botLook: settings.botLook,
       chatAvatarSize: settings.chatAvatarSize, messageColumnWidth: settings.messageColumnWidth, rightPanelCollapsed: settings.rightPanelCollapsed,
-      railCollapsed: settings.railCollapsed, pinnedBots: settings.pinnedBots } : undefined,
+      railCollapsed: settings.railCollapsed, pinnedBots: settings.pinnedBots, idleBots: settings.idleBots } : undefined,
     waiting: snapshot.waiting,
   };
 }

@@ -27,7 +27,7 @@ function access(handled: unknown[] = []): MobileAccess {
       chat: { botId: botId ?? MAIN_BOT_ID, messages: [], running: null, live: [], tasks: [], runs: [], heads: null, pendingFiles: [] },
       components: { card: { name: 'card' } }, plugins: { plugins: [], broken: [], host: { running: true, problem: null }, secretsProblem: null },
       settings: { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false,
-        pinnedBots: ['project-b'], developerMode: true, developerProject: 'project-a', claudeBypassPermissions: true, summaryPrompt: 'secret prompt' },
+        pinnedBots: ['project-b'], idleBots: ['project-a'], developerMode: true, developerProject: 'project-a', claudeBypassPermissions: true, summaryPrompt: 'secret prompt' },
       doctor: { problems: [] }, waiting: { items: [], doing: {} }, web: { sites: [] }, spec: null } as any),
     handle: async (command) => { handled.push(command); return { messageId: 'm', turnId: null }; },
   };
@@ -48,7 +48,9 @@ it('the browser scope snapshot lists every bot the desktop does, with display se
   expect(result.bots.find((row: any) => row.id === 'project-a')).toMatchObject({ folder: 'botling', avatar: 'circle', phase: 'awake' });
   expect(result.chat.botId).toBe('project-a');
   expect(result.components).toEqual({ card: { name: 'card' } });
-  expect(Object.keys(result.settings).sort()).toEqual(['botLook', 'chatAvatarSize', 'effectiveLanguage', 'language', 'messageColumnWidth', 'pinnedBots', 'railCollapsed', 'rightPanelCollapsed']);
+  expect(Object.keys(result.settings).sort()).toEqual(['botLook', 'chatAvatarSize', 'effectiveLanguage', 'idleBots', 'language', 'messageColumnWidth', 'pinnedBots', 'railCollapsed', 'rightPanelCollapsed']);
+  // The left column groups as on the desktop: Pinned and the collapsed Idle group come from these two lists.
+  expect(result.settings).toMatchObject({ pinnedBots: ['project-b'], idleBots: ['project-a'] });
   for (const hidden of ['plugins', 'doctor', 'web', 'spec']) expect(result).not.toHaveProperty(hidden);
   expect(result.imported).toBeNull();
   expect(JSON.stringify(result)).not.toContain('/Users/someone');

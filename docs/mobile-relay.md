@@ -27,7 +27,7 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
   between that phone and the desktop. It never parses them.
 - **Inside the channel** the phone speaks the bridge's own commands — `chat.snapshot`, `chat.history`, `chat.send`,
   `chat.choose`, `chat.answer`, and now `turn.stop` — and the desktop runs them through the same checks and core call
-  as the HTTPS bridge (`core.mobileCommand`, explicit bot list, mutation journal `<data>/mobile-mutations`). The
+  as the HTTPS bridge (`core.mobileCommand`, the phone's bot scope, mutation journal `<data>/mobile-mutations`). The
   desktop pushes `changed` notices (no content) when a chat the phone may read changes; the phone then reads a
   snapshot, as with the bridge's event stream.
 - **The phone app** is the existing Botling Web build (`desktop/mobile/dist`), served by the relay under `/mobile/`.
@@ -50,12 +50,15 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
 
 ## Pairing (QR)
 
-1. Settings › Phone › Relay: enter `wss://relay.botlinghq.com/ws`, **Turn on**. The first time, the desktop makes a
+1. Settings › Phone › Relay: enter the relay's address (ours: `wss://relay.driseam.com/ws`), **Turn on**. The QR link
+   uses the same host, so that host must serve the phone app under `/mobile/` (the default `full` image does). The first time, the desktop makes a
    32-byte room key and an X25519 identity key (`<data>/mobile/relay.json`, mode 0600, owner-only folder).
-2. Tick bots, **Create pairing code**. The desktop makes a one-time 32-byte secret S (kept in memory only, 5 minutes,
+2. **Create pairing code** (once the relay is connected, the code points at it by default; the bridge's routes stay in
+   the menu). There is no bot picker: a paired phone gets every bot, including bots added later (scope `*`, resolved
+   by the core on each request; it still allows only the phone commands). The desktop makes a one-time 32-byte secret S (kept in memory only, 5 minutes,
    single use, at most 5 pending) and adds the pairing token `SHA-256("botling-relay/v1/pair-token" ‖ S)`'s hash to
    the relay's allow list with that expiry. The QR is
-   `https://relay.botlinghq.com/mobile/#relay=<room id>&k=<desktop public key>&s=<S>`.
+   `https://relay.driseam.com/mobile/#relay=<room id>&k=<desktop public key>&s=<S>`.
    Everything secret is in the URL **fragment**, which browsers never send to a server.
 3. The phone opens the page, reads and immediately clears the fragment, generates its own static X25519 key (non
    extractable) and an ephemeral one, joins the room with the pairing token, and sends
@@ -64,11 +67,15 @@ relay is a second, independent way in; both are listed in Settings › Phone, an
    channel keys (below) with S mixed in, and answers `{h:'ack', eph}`.
 5. The phone's first encrypted message `{t:'pair', name}` proves it holds S and its private key; the desktop records
    the phone (`relay-devices.json`: id = fingerprint of its public key, public key, hash of a new random relay
-   token, bots, 30-day expiry) and answers `{t:'paired', deviceId, token, coreId, botIds, expiresAt}`. The phone
+   token, bots (`["*"]`), 30-day expiry) and answers `{t:'paired', deviceId, token, coreId, botIds, expiresAt}`. The phone
    saves `{relay, room, desktop key, device id, token, private key}` in IndexedDB. The same connection carries on as
    its first session.
 
 Later connections: join with the device token, `{h:'hello', device, eph}`, ack, `{t:'hello'}` → `{t:'ready'}`.
+
+When pairing fails, the page says why and asks for a new code; it never offers the bridge's access-token field (the
+relay serves no token API). The page's first read is a snapshot without a bot: Main for an all-bots phone, else the
+phone's first bot (the HTTPS bridge does the same, so a phone paired without Main is not refused).
 
 ## Cryptography
 

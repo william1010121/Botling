@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { PROTOCOL_VERSION } from '../contract';
 import { withFileLock, writeFileAtomic } from '../core/durable/atomic';
 import type { Client } from './bridge';
+import { ALL_BOTS } from './scope';
 
 export const PAIR_TTL_MS = 5 * 60_000;
 const PAIRED_TTL_MS = 30 * 86_400_000; // as `setup.mjs issue`
@@ -57,9 +58,11 @@ export class PairingStore {
   descriptor(): CoreDescriptor {
     return { app: 'botling', coreId: this.coreId(), protocol: PROTOCOL_VERSION, routes: this.routes.map(r => ({ ...r })), pairing: { ttlSeconds: PAIR_TTL_MS / 1000 } };
   }
-  /** Local setup only. Returns the secret once; it is not recoverable afterwards. */
-  createOffer(botIds: string[]): { secret: string; expiresAt: number } {
-    if (!botIds.length || botIds.some(id => !BOT_ID.test(id))) throw new Error('Explicit bot IDs required.');
+  /** Local setup only. Returns the secret once; it is not recoverable afterwards. Without bot ids the phone gets every
+   * bot (`*`, resolved by the core on each request, so bots added later too). */
+  createOffer(botIds: string[] = [ALL_BOTS]): { secret: string; expiresAt: number } {
+    if (botIds.includes(ALL_BOTS)) botIds = [ALL_BOTS];
+    else if (!botIds.length || botIds.some(id => !BOT_ID.test(id))) throw new Error('Explicit bot IDs required.');
     const file = this.file('pairing-offers.json');
     return withFileLock(file, () => {
       const now = this.now();

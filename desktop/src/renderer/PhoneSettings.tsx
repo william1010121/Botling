@@ -15,8 +15,8 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
   const words = mobileWords(lang);
   const [view, setView] = useState<MobileDeskView | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
-  const [picked, setPicked] = useState<string[]>([]);
-  const [route, setRoute] = useState<number | "relay">(0);
+  /** The address in the code, once the user picked one; until then the relay when it is connected, else the first route. */
+  const [route, setRoute] = useState<number | "relay" | null>(null);
   const [relayText, setRelayText] = useState<string | null>(null);
   const [savingRelay, setSavingRelay] = useState(false);
   const [offer, setOffer] = useState<MobilePairView | null>(null);
@@ -62,14 +62,15 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
 
   const relayOnline = relay?.state === "online";
   const canPair = view.enabled || relayOnline;
-  // Where the code points: a bridge route, or the relay (the only choice when the bridge is not set up).
-  const target: number | "relay" = !view.enabled ? "relay" : route === "relay" && !relayOnline ? 0 : route;
-  const choices = bots;
+  // Where the code points: a bridge route, or the relay (the only choice when the bridge is not set up, and the
+  // default once it is connected: the user turned it on to pair through it).
+  const target: number | "relay" = !view.enabled ? "relay" : route === null ? (relayOnline ? "relay" : 0) : route === "relay" && !relayOnline ? 0 : route;
   const create = async () => {
     setBusy(true); setFailed(null);
     try {
       setSeen(view.devices.length);
-      setOffer(await client.request(target === "relay" ? { type: "mobile.pair", botIds: picked, relay: true } : { type: "mobile.pair", botIds: picked, route: target }));
+      // No bot list: a paired phone may use every bot, including bots added later (the core's all-bots scope).
+      setOffer(await client.request(target === "relay" ? { type: "mobile.pair", relay: true } : { type: "mobile.pair", route: target }));
       setNow(Date.now());
     }
     catch (failure) { setFailed(why(failure)); }
@@ -115,17 +116,7 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
         <h3>{words.title}</h3>
         <p className="settings-note">{words.note}</p>
         <div className="settings-card">
-          <div className="settings-row"><div className="settings-label">{words.bots}<div className="settings-hint">{words.pairNote}</div></div></div>
-          <div className="settings-row">
-            <div className="settings-control" role="group" aria-label={words.bots}>
-              {choices.map((bot) => (
-                <label key={bot.id} className="phone-bot">
-                  <input type="checkbox" checked={picked.includes(bot.id)} onChange={(event) => setPicked((now) => event.target.checked ? [...now, bot.id] : now.filter((id) => id !== bot.id))} />
-                  {bot.name}
-                </label>
-              ))}
-            </div>
-          </div>
+          <div className="settings-row"><div className="settings-label">{words.pairTitle}<div className="settings-hint">{words.pairNote}</div></div></div>
           {view.enabled && (view.routes.length > 1 || relayOnline) && (
             <div className="settings-row">
               <div className="settings-label">{words.route}</div>
@@ -136,7 +127,7 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
             </div>
           )}
           <div className="settings-actions">
-            <button type="button" disabled={busy || !picked.length} onClick={() => void create()}>{busy ? words.creating : words.create}</button>
+            <button type="button" disabled={busy} onClick={() => void create()}>{busy ? words.creating : words.create}</button>
           </div>
           {offer && (
             <div className="phone-offer">
@@ -171,7 +162,7 @@ export function PhoneSettings({ client, bots, lang }: { client: Client; bots: Bo
             return (
               <div className="settings-row" key={`${device.via ?? "bridge"}-${device.id}`}>
                 <div className="settings-label">{name}
-                  <div className="settings-hint">{words.paired(when(device.pairedAt, lang))} · {words.until(when(device.expiresAt, lang))} · {device.botIds.map((id) => bots.find((bot) => bot.id === id)?.name ?? id).join(", ")}{device.via === "relay" ? ` · ${words.viaRelay}` : ""}</div>
+                  <div className="settings-hint">{words.paired(when(device.pairedAt, lang))} · {words.until(when(device.expiresAt, lang))} · {device.botIds.includes("*") ? words.allBots : device.botIds.map((id) => bots.find((bot) => bot.id === id)?.name ?? id).join(", ")}{device.via === "relay" ? ` · ${words.viaRelay}` : ""}</div>
                   {asking === device.id && <div className="settings-hint" role="alert">{words.revokeAsk(name)}</div>}
                 </div>
                 <div className="settings-control">

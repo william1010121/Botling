@@ -1,4 +1,4 @@
-// Botling Web: access-token sign-in, then the desktop app's own renderer (src/renderer/App.tsx: the left
+// Botling Web: access-token sign-in (or a relay pairing code), then the desktop app's own renderer (src/renderer/App.tsx: the left
 // column, the chat page, the right panel) over WebBridge instead of Electron IPC. Phone widths keep
 // the same chrome and show the left column as a drawer (web.css).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -88,6 +88,9 @@ export function WebApp() {
   const connecting = useRef(false);
   /** A relay pairing is saved in this browser (it can reconnect without a new code). */
   const [relaySaved, setRelaySaved] = useState(false);
+  /** This page came from a relay pairing code (or holds a relay pairing): an access token has no use here (the relay
+   * serves no token API), so a failed pairing asks for a new code instead of a token. */
+  const [relayPage, setRelayPage] = useState(() => parseRelayFragment(location.hash) !== null);
 
   const lost = useCallback((error: MobileError) => {
     setConnected(current => { current?.bridge.close(); if (current?.transport instanceof RelayClient) current.transport.close(); return null; });
@@ -117,6 +120,7 @@ export function WebApp() {
     const saved = await loadRelaySession();
     setRelaySaved(!!saved);
     if (!saved) return;
+    setRelayPage(true);
     connecting.current = true; setAuth('checking'); setMessage('');
     try { await showRelay(await RelayClient.connect(saved, { onRevoked: relayLost })); }
     catch (cause) {
@@ -196,18 +200,20 @@ export function WebApp() {
   }), [navOpen, signOut]);
 
   if (!connected) return <main className="web-signin" aria-busy={auth === 'checking'}>
-    <form className="web-signin-card" onSubmit={event => { event.preventDefault(); void connect(tokenText); }}>
+    <form className="web-signin-card" onSubmit={event => { event.preventDefault(); if (!relayPage) void connect(tokenText); }}>
       <img className="web-signin-icon" src="./icon.svg" alt="" />
       <h1>Botling</h1>
-      <p className="web-signin-lead">Your bots, from any browser. Scan the pairing code shown by your Botling, or enter an access token.</p>
+      <p className="web-signin-lead">{relayPage ? 'Your bots, from anywhere. On your computer, open Botling › Settings › Phone, create a pairing code and scan it with this phone’s camera.'
+        : 'Your bots, from any browser. Scan the pairing code shown by your Botling, or enter an access token.'}</p>
       {message && <p className="web-signin-message" role="alert">{message}</p>}
-      <div className="web-signin-actions">
+      {relayPage ? auth === 'checking' && <p className="web-signin-muted">Connecting…</p> : <div className="web-signin-actions">
         <input className="web-token" type="password" autoComplete="off" spellCheck={false} aria-label="Access token" placeholder="Access token"
           value={tokenText} onChange={event => setTokenText(event.target.value)} disabled={auth === 'checking'} />
         <button type="submit" className="web-primary" disabled={auth === 'checking'}>{auth === 'checking' ? 'Connecting…' : 'Connect'}</button>
-      </div>
+      </div>}
       {relaySaved && <button type="button" className="web-primary" disabled={auth === 'checking'} onClick={() => void reconnectRelay()}>Reconnect through the relay</button>}
-      <p className="web-signin-muted">Keep Botling running on your computer. The token is kept only in this tab's memory.</p>
+      <p className="web-signin-muted">{relayPage ? 'Keep Botling running on your computer. Everything between this phone and Botling is end-to-end encrypted.'
+        : 'Keep Botling running on your computer. The token is kept only in this tab\'s memory.'}</p>
     </form>
   </main>;
 

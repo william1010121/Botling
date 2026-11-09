@@ -2,7 +2,7 @@ import { loadMobileGeneration } from './generation';
 import { existsSync, lstatSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
-import { Clients, privateJSON, startBridge, type MobileCore } from './bridge';
+import { Clients, PairedClients, privateJSON, startBridge, type MobileCore } from './bridge';
 import { MutationLedger } from './ledger';
 import { closeWithCore } from './lifecycle';
 import { PairingStore, type Route } from './pairing';
@@ -54,7 +54,7 @@ export function startConfiguredMobile(core: MobileCore & { shutdown(): Promise<v
     clients: () => {
       const issued = Clients.parse(privateJSON(config.clientsFile));
       const ids = new Set(issued.map(c => c.id)); // a hand-issued id is never shadowed
-      return [...issued, ...Clients.parse(pairing.clients()).filter(c => !ids.has(c.id))];
+      return [...issued, ...PairedClients.parse(pairing.clients()).filter(c => !ids.has(c.id))];
     }, ledger: new MutationLedger(join(dataDir, 'mobile-mutations')), core }, failed);
   attach?.(new MobileDesk(pairing, ordered));
   closeWithCore(core, mobile);

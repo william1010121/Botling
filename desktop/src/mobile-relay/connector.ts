@@ -6,7 +6,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { PROTOCOL_VERSION, RequestEnvelope, errorResponse, type ResponseEnvelope } from '../contract';
 import type { MobileCore } from '../mobile-bridge/bridge';
 import type { MutationLedger } from '../mobile-bridge/ledger';
-import { botAllowed } from '../mobile-bridge/scope';
+import { ALL_BOTS, botAllowed } from '../mobile-bridge/scope';
+import { MAIN_BOT_ID } from '../core/store/records';
 import { b64u, deriveChannel, deviceIdOf, generateKeyPair, offerIdOf, pairTokenOf, type Channel } from './e2e';
 import { PhoneHandshake, PhoneMessage, READ_COMMANDS, RELAY_COMMANDS, relayPairingURL } from './protocol';
 import { PAIRED_TTL_MS, RelayStore, relayPage, type RelayDevice } from './store';
@@ -89,15 +90,16 @@ export class RelayConnector {
     return this.view();
   }
 
-  /** A one-time pairing link for these bots (shown as a QR code). The secret is returned once and kept only in memory. */
-  async pair(botIds: string[]): Promise<{ url: string; expiresAt: number }> {
+  /** A one-time pairing link (shown as a QR code) for these bots; by default every bot (`*`, bots added later too).
+   * The secret is returned once and kept only in memory. */
+  async pair(botIds: string[] = [ALL_BOTS]): Promise<{ url: string; expiresAt: number }> {
     const url = this.options.store.url(), settings = this.options.store.settings();
     if (!url || !settings) throw new Error('Turn the relay on first.');
     if (this.state !== 'online' || !this.room) throw new Error('Botling is not connected to the relay yet. Check the address and try again.');
     this.expireOffers();
     if ([...this.offers.values()].filter(o => !o.used).length >= MAX_OFFERS) throw new Error('Too many pending pairing codes; wait for them to expire.');
     const secret = new Uint8Array(randomBytes(32));
-    const offer: Offer = { id: await offerIdOf(secret), secret, tokenHash: sha(await pairTokenOf(secret)), botIds: [...botIds], expiresAt: this.now() + RELAY_PAIR_TTL_MS, used: false };
+    const offer: Offer = { id: await offerIdOf(secret), secret, tokenHash: sha(await pairTokenOf(secret)), botIds: botIds.includes(ALL_BOTS) ? [ALL_BOTS] : [...botIds], expiresAt: this.now() + RELAY_PAIR_TTL_MS, used: false };
     this.offers.set(offer.id, offer);
     this.pushAllow();
     return { url: relayPairingURL(relayPage(url), { room: this.room, deskKey: settings.publicKey, secret: b64u.encode(secret) }), expiresAt: offer.expiresAt };
@@ -289,8 +291,9 @@ export class RelayConnector {
       || (botId !== undefined && !botAllowed(device.botIds, botId)) || (botId === undefined && !device.botIds.length)
       || (command.type === 'chat.answer' && command.images?.length))
       return errorResponse(id, { code: 'forbidden', message: 'Command or bot not authorized.' });
-    // A snapshot without a bot is the first bot this phone may use (the bridge's default is Main, which it may not have).
-    const routed = command.type === 'chat.snapshot' && botId === undefined ? { ...request, cmd: { ...command, botId: device.botIds[0] } } : request;
+    // A snapshot without a bot reads Main (the core's default) when the phone may, else the first bot it may use.
+    const routed = command.type === 'chat.snapshot' && botId === undefined && !botAllowed(device.botIds, MAIN_BOT_ID)
+      ? { ...request, cmd: { ...command, botId: device.botIds[0] } } : request;
     const dispatch = () => this.options.core.mobileCommand(routed, device.botIds);
     try { return READ_COMMANDS.has(command.type) ? await dispatch() : await this.options.ledger().run(`relay-${device.id}`, request, dispatch); }
     catch { return errorResponse(id, { code: 'core_unavailable', message: 'Mobile bridge unavailable. Check chat before sending again.' }); }
