@@ -134,7 +134,7 @@ saved sessions in `npm run dev`), `BOTLING_HARMLESS_TOOLS=Bash` (tools that exis
 `BOTLING_MODEL`, `BOTLING_CLAUDE_PATH`, and for Codex heads `BOTLING_CODEX_PATH` (default `codex`),
 `BOTLING_CODEX_MODEL`, `BOTLING_CODEX_EFFORT` (low … xhigh), `BOTLING_CLAIM_WAIT_MS` (how long the second
 head waits for the lead's first words, 20 s as 1.x), `BOTLING_FAKE_CODEX` (the fake app-server, set by
-main for `dev:fake`), `BOTLING_ROUTINE_TICK_MS` (how often routines are checked, 30 s as 1.x; 0: never),
+main for `dev:fake`), `BOTLING_ROUTINE_TICK_MS` (how often routines are checked, 15 s; 0: never),
 `BOTLING_COMPONENT_SCAN_MS` (how often the component library is looked at for changes, 1.5 s),
 `BOTLING_PLAIN_SHELL=1` (component
 commands run with `/bin/sh -c` instead of 1.x's login shell `zsh -lc`; the tests set it so they never
@@ -224,7 +224,7 @@ three messages; `FAKE_CODEX_EXEC_LOG`, `FAKE_CODEX_EXEC_FAIL=1`, `FAKE_CODEX_EXE
 │   a coordinator with app_handoff workers; codex-threads/<session> keeps the thread and workers   │
 │   two heads: the primary Bot + a partner Bot (partner-<engine>/), lines mirrored into one chat;  │
 │   heads.ts: hand-off tags, the Conductor (budgets, hand-backs, the limit card), notes            │
-│ routines.ts (routines.cron + scheduled-routines.json, the 30 s clock)                            │
+│ routines.ts (routines.cron + scheduled-routines.json, the 15 s clock)                            │
 │ components/ (library, commands after Allow, pins, pictures by token) · agent/monitors.ts         │
 │ ProcessLedger: ends heads a crashed core left · durable/ (atomic files, locks)  │
 │ plugins/ (registry, sealed secrets, host client) · maintainer.ts (Maintainer's desk, installs)   │

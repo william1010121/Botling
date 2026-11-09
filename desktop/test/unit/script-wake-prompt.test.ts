@@ -1,4 +1,4 @@
-// A script or monitor a bot starts can wake it: the app rereads routines.cron every 30 s, so a script appends an
+// A script or monitor a bot starts can wake it: the app rereads routines.cron every 15 s, so a script appends an
 // every-minute line on an event and the bot deletes it first thing. The prompt says so, so a bot never claims a
 // background script cannot wake it (swordgale, 2026-11-09).
 import { describe, expect, it } from "vitest";

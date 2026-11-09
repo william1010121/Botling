@@ -4637,7 +4637,7 @@ export class Bot {
   }
 
   /**
-   * The core's clock (every 30 s, as `Workspace.checkRoutines`): routines.cron jobs that are due run;
+   * The core's clock (every 15 s; 1.x's `Workspace.checkRoutines` every 30 s): routines.cron jobs that are due run;
    * app-owned schedules are claimed (written before dispatch) and run. Nothing runs while the bot is
    * read-only here or its folder is gone.
    */

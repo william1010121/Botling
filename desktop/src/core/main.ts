@@ -28,6 +28,7 @@ import { childEnvironment } from "./agent/runner";
 import { resolveExecutable } from "./process/executable";
 import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
 import { StartupMarks } from "../startup-marks";
+import { ROUTINE_TICK_MS } from "./routines";
 
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -279,7 +280,7 @@ const core = new Core({
   tidyTimeoutMs: number(process.env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
   // Quitting waits for awake bots to tidy their notes, with no time limit, as in 1.x (`putEveryoneToSleep`).
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, Number.POSITIVE_INFINITY),
-  routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
+  routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, ROUTINE_TICK_MS),
   watchMs: number(process.env.BOTLING_WATCH_MS, 20_000),
   stallMinuteMs: number(process.env.BOTLING_STALL_MINUTE_MS, 60_000),
   // Whether Claude's API answers again, while a bot waits for the network (BOTLING_NETWORK_PROBE_URL: another address, for tests).

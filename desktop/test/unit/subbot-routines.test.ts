@@ -130,3 +130,15 @@ it("a script's @once line wakes the bot at the next check, once, and the app tak
   eeg.checkRoutines(t0 + 121_000);
   expect(alerts()).toBe(2);
 });
+
+it("checked every 15 s, a five-field job runs once per matching minute, never twice", () => {
+  const { root, profiles } = workspace();
+  const eeg = make(root, profiles.eeg, []);
+  const file = join(profiles.eeg.folder, ".bot", "routines.cron");
+  writeFileSync(file, "* * * * * Tick: say tick\n");
+  const noon = new Date(); noon.setHours(12, 0, 0, 0);
+  const t0 = noon.getTime();
+  // 12:00:00 first sight; then every 15 s up to 12:03:45: the 12:01, 12:02 and 12:03 runs, each once.
+  for (let t = t0; t < t0 + 4 * 60_000; t += 15_000) eeg.checkRoutines(t);
+  expect(eeg.snapshot().messages.filter((message) => message.role === "divider" && message.text.startsWith("Tick")).map((message) => message.text)).toEqual(["Tick · 12:01", "Tick · 12:02", "Tick · 12:03"]);
+});

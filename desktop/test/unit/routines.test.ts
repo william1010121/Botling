@@ -257,3 +257,10 @@ describe("@once lines in routines.cron (a script waking its bot)", () => {
     expect(routines.takeOnce("@once Alert: one")).toBe(false);
   });
 });
+
+describe("the routine clock", () => {
+  it("checks every 15 s, so a script's @once line runs within about 15 s (the user, 2026-11-09)", async () => {
+    const { ROUTINE_TICK_MS } = await import("../../src/core/routines");
+    expect(ROUTINE_TICK_MS).toBe(15_000);
+  });
+});

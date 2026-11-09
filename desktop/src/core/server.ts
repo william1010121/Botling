@@ -1,4 +1,5 @@
 import { agyPermissionSessions, changeAgyPermissions } from "./agent/agy-permissions";
+import { ROUTINE_TICK_MS } from "./routines";
 import type { ModelDiscovery, ModelEngine } from "../contract/model-discovery";
 import { discoveryFailure } from "./agent/model-discovery";
 import { ProjectFiles } from "./project-files";
@@ -122,7 +123,7 @@ export interface CoreOptions {
   quitTidyMs?: number;
   /** The system's preferred languages, best first (for bots' reply language when settings name none). */
   languages?: string[];
-  /** How often routines are checked (1.x: every 30 s); 0: never (tests drive `checkRoutines`). */
+  /** How often routines are checked (ROUTINE_TICK_MS, 15 s; 1.x: 30 s); 0: never (tests drive `checkRoutines`). */
   routineTickMs?: number;
   /** How often quiet runs (and, in 1.x, the network) are looked at (1.x: 20 s; 0: never). */
   watchMs?: number;
@@ -601,7 +602,7 @@ export class Core {
     // The new build says it came up (the install script waits for that); botling.dev tells the bot that asked.
     try { confirmHealthy(options.dataDir); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
-    // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
+    // Checking a wall-clock time every 15 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
     // The library on disk (a template edited by hand, a plugin dropped in) is watched rather than polled;
     // a slow look still runs, which also re-arms watchers after an external disk comes back.
@@ -613,7 +614,7 @@ export class Core {
       });
       this.libraryWatch.start();
     }
-    const tick = options.routineTickMs ?? 30_000;
+    const tick = options.routineTickMs ?? ROUTINE_TICK_MS;
     if (tick > 0) {
       setTimeout(() => this.checkRoutines(), 0);
       this.routineClock = setInterval(() => this.checkRoutines(), tick);

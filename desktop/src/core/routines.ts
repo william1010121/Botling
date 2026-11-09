@@ -276,6 +276,9 @@ export const ROUTINE_HEADER = [
 
 export const DAILY_SUMMARY = "15 8 * * * Daily summary: Read each project's memory file; list what is waiting on the user first, then one line of current status per project, 5 lines at most. Do not wake the managers.";
 
+/** How often the core rereads routines.cron and the app-owned schedules (1.x: 30 s; 15 s so a script's @once line wakes its bot sooner). */
+export const ROUTINE_TICK_MS = 15_000;
+
 export class RoutineError extends Error {}
 
 /** A bot's routines.cron (`RoutineFile`): comments and blank lines are kept as they are. */
