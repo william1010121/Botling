@@ -664,7 +664,8 @@ export class CodexThreadAdapter implements WorkerAdapter {
    */
   stop(record: Readonly<WorkerLedgerRecord>): { cleaned: boolean } | Promise<{ cleaned: boolean }> {
     const w = this.workers.get(record.id);
-    if (!w?.run) return { cleaned: true };
+    // Its run already over: cancelled all the same, so a late steer error of that run starts no next run with its words.
+    if (!w?.run) { if (w) { w.cancelled = true; w.messages = []; } return { cleaned: true }; }
     const run = w.run;
     const unsettled = !w.turnId && w.pending.has(run);
     this.interrupt(w);
