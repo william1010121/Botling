@@ -166,6 +166,19 @@ describe("relay connector + phone client", () => {
     await expect(RelayClient.pair(link, "https://relay.example", "Second", { socket: connect })).rejects.toMatchObject({ auth: true });
   });
 
+  it("two phones scanning one code at once: one pairs, the other is told the code is used", async () => {
+    const { connector, connect } = await setup();
+    const offer = await connector.pair(["main"]);
+    const link = parseRelayFragment(new URL(offer.url).hash)!;
+    const tries = await Promise.allSettled(["First", "Second"].map(name => RelayClient.pair(link, "https://relay.example", name, { socket: connect, waits: [20] })));
+    for (const t of tries) if (t.status === "fulfilled") cleanup.push(() => t.value.client.close());
+    expect(tries.map(t => t.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const refused = tries.find(t => t.status === "rejected") as PromiseRejectedResult;
+    // A clear "used" (the handshake's nope), not "could not reach Botling" (a kick after the first phone won).
+    expect(refused.reason).toMatchObject({ auth: true, message: expect.stringMatching(/already been used/) });
+    expect(connector.devices()).toHaveLength(1);
+  });
+
   it("a revoked phone is told, disconnected, and cannot connect again", async () => {
     const { connector, connect, pairPhone } = await setup();
     const { session, client } = await pairPhone();

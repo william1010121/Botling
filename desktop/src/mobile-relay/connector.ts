@@ -46,12 +46,16 @@ export interface ConnectorOptions {
   waits?: number[];
 }
 
-interface Offer { id: string; secret: Uint8Array; tokenHash: string; botIds: string[]; expiresAt: number; used: boolean }
+/** `claim`: the peer whose handshake took this offer; another phone is told nope while that peer is open. */
+interface Offer { id: string; secret: Uint8Array; tokenHash: string; botIds: string[]; expiresAt: number; used: boolean; claim?: Peer }
 interface Peer {
   id: string; tokenHash: string; stage: 'new' | 'keys' | 'ready' | 'closed';
   channel?: Channel; mode?: 'pair' | 'session'; offer?: Offer; devicePublicKey?: string; deviceId?: string;
   inbox: Promise<unknown>; outbox: Promise<unknown>; timer?: ReturnType<typeof setTimeout>; notice?: ReturnType<typeof setTimeout>; count: number;
 }
+
+/** The peer was closed (forgotten) while an await was pending: a step resuming on it does nothing. */
+const gone = (peer: Peer) => peer.stage === 'closed';
 
 export class RelayConnector {
   private socket: SocketLike | null = null;
@@ -216,6 +220,8 @@ export class RelayConnector {
     if (peer.stage === 'closed') return;
     if (peer.stage === 'new') return this.handshake(peer, d);
     const msg = PhoneMessage.parse(await peer.channel!.open(d));
+    // Closed while the frame was opened (the phone left, a revoke): nothing more for it, and no code spent on it.
+    if (gone(peer)) return;
     if (peer.stage === 'keys') return this.confirm(peer, msg);
     if (msg.t !== 'req') throw new Error('Unexpected message.');
     const device = this.options.store.device(peer.deviceId!);
@@ -232,12 +238,15 @@ export class RelayConnector {
     const room = this.room!;
     const identity = await this.options.store.keyPair();
     const ephemeral = await generateKeyPair();
+    if (gone(peer)) return;
     let deviceId: string, phoneStatic: Uint8Array, pairSecret: Uint8Array | undefined;
     if (hello.h === 'pair') {
       this.expireOffers();
       const offer = this.offers.get(hello.offer);
-      // The relay admitted this phone with the offer's own token, and the offer is still unused.
-      if (!offer || offer.used || offer.tokenHash !== peer.tokenHash) return nope('offer');
+      // The relay admitted this phone with the offer's own token, and the offer is still unused and not taken by
+      // another open handshake (that phone would win at confirm and this one would only see its socket close).
+      if (!offer || offer.used || offer.tokenHash !== peer.tokenHash || (offer.claim && offer.claim !== peer && offer.claim.stage !== 'closed')) return nope('offer');
+      offer.claim = peer;
       phoneStatic = b64u.decode(hello.device);
       deviceId = await deviceIdOf(phoneStatic);
       pairSecret = offer.secret;
@@ -251,6 +260,7 @@ export class RelayConnector {
     }
     peer.channel = await deriveChannel('desk', { static: identity, ephemeral }, { mode: hello.h === 'pair' ? 'pair' : 'session', room, deviceId,
       deskStatic: identity.publicKey, phoneStatic, phoneEphemeral: b64u.decode(hello.eph), deskEphemeral: ephemeral.publicKey, pairSecret });
+    if (gone(peer)) return;
     peer.mode = hello.h === 'pair' ? 'pair' : 'session';
     peer.deviceId = deviceId;
     peer.stage = 'keys';
