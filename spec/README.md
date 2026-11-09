@@ -29,6 +29,7 @@ Keep adapters thin (translation only); every change to them is reviewed.
 | `workspace` | plugins' workspace change watch, `workspace.onChange` (`desktop/src/core/workspace.ts`, `core/plugins/index.ts`, `Web/host/src/api.ts`) |
 | `approval` | a plugin frame's ask to run a bot's command: only the app page's ApprovalSheet allows (`desktop/src/renderer/plugin-frame-host.ts`, `ApprovalSheet.tsx`, `desktop/src/core/plugins/index.ts`) |
 | `folders` | where a bot's session starts, a built-in plugin's `sessions.folder`: the core's cache and file, plugin crashes/off, restart once before the next message (`desktop/src/core/plugins/session-folders.ts`, `core/plugins/index.ts`, `bot.ts` folderMoved) |
+| `relaypair` | phone pairing and connecting through the relay: one-time offers (TTL, used, claimed by one handshake), handshake, confirm, requests, revoke (`desktop/src/mobile-relay/connector.ts`); `LanPair` checks the home-network PairingStore's files and locks shared with the `pair` command (`desktop/src/mobile-bridge/pairing.ts`) |
 
 ## Rules for a model
 
