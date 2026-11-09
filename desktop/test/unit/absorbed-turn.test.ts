@@ -112,7 +112,7 @@ it('a line steered into a turn and taken in there leaves nothing behind (no turn
 
 it('a steered line claude reads into the turn under way, saying "started" for it, is no turn of its own: that turn still ends (spec/models/turns, silentsteer)',async()=>{
  const {b,events}=make();
- const first=b.send('first').turnId;await until(()=>fixture.heads[0]?.sent.length===1);
+ const first=b.send('first').turnId!;await until(()=>fixture.heads[0]?.sent.length===1);
  const head=fixture.heads[0];
  const id=(i:number)=>head.sent[i].id.toLowerCase();
  head.item({kind:'command',id:id(0),state:'started'});
