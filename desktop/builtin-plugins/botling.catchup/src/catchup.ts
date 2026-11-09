@@ -49,33 +49,6 @@ export const isOpenQuestion = (record: ChatRecord): boolean =>
 /** The lines a summary may fold: all but the open questions, which stay in the chat to be answered. */
 export const foldable = (messages: ChatRecord[]): ChatRecord[] => messages.filter((m) => !isOpenQuestion(m));
 
-/** A range of lines, whatever the language its summary was written in: what "Show original messages" remembers. */
-export const rangeId = (ids: string[]) => `${ids[0] ?? ""}/${ids.at(-1) ?? ""}`;
-
-/**
- * The ranges whose card "Show original messages" dissolved, in the plugin's storage (`expanded`): their lines
- * stay in the chat as they are, after a reload too. The newest 500 are kept.
- */
-export class ExpandedRanges {
-  static readonly KEY = "expanded";
-  static readonly LIMIT = 500;
-  constructor(private readonly storage: { get(key: string): unknown; set(key: string, value: unknown): void }) {}
-  private list(): string[] {
-    const value = this.storage.get(ExpandedRanges.KEY);
-    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-  }
-  has(range: string): boolean { return this.list().includes(range); }
-  add(range: string): void {
-    const list = this.list().filter((entry) => entry !== range);
-    list.push(range);
-    this.storage.set(ExpandedRanges.KEY, list.slice(-ExpandedRanges.LIMIT));
-  }
-  delete(range: string): void {
-    const list = this.list();
-    if (list.includes(range)) this.storage.set(ExpandedRanges.KEY, list.filter((entry) => entry !== range));
-  }
-}
-
 export const DEFAULT_WRITING_PROMPT = "Write short bullets covering what finished, what is still running, and anything waiting for the user's decision (put that last, starting it with \"!! \"). Keep ids, numbers and names exactly as written.";
 export const DEFAULT_THRESHOLD = 3;
 export const PROMPT_LIMIT = 12_000;
@@ -464,20 +437,14 @@ export class CatchUps {
     settings: () => CatchUpSettings;
     language: () => AppLanguage;
     changed: (chatId: string) => void;
-    /** Ranges dissolved by "Show original messages"; none remembered when absent. */
-    expanded?: ExpandedRanges;
   }) {}
-
-  private isExpanded(messages: ChatRecord[]): boolean {
-    return !!this.options.expanded?.has(rangeId(messages.map((m) => m.id)));
-  }
 
   /** You came back to `chat`: more than the threshold of unread replies fold into a group with a summary. */
   arrive(chat: CatchUpChat) {
     const settings = this.options.settings();
     if (!settings.catchUpEnabled) return;
     const source = foldable(unreadMessages(chat.records, chat.unread));
-    if (replyCount(source) > settings.catchUpThreshold && !this.isExpanded(source)) this.begin(chat, source, false);
+    if (replyCount(source) > settings.catchUpThreshold) this.begin(chat, source, false);
   }
 
   /** A user line was just added: the interval it closed is summarized when that is on (`summarizeClosedInterval`). */
@@ -488,15 +455,13 @@ export class CatchUps {
     if (!chat.records.slice(0, -1).some((m) => m.role === "user")) return;
     this.closures.set(chat.id, messageId);
     const source = foldable(intervalMessages(chat.records));
-    if (replyCount(source) >= settings.intervalSummaryThreshold && !this.isExpanded(source)) this.beginInterval(chat, source, true);
+    if (replyCount(source) >= settings.intervalSummaryThreshold) this.beginInterval(chat, source, true);
   }
 
   /** The footer's button under a user line (`summarizeInterval`). */
   interval(chat: CatchUpChat, userId: string): boolean {
     const source = foldable(intervalAfter(chat.records, userId));
     if (!replyCount(source)) return false;
-    // You asked for it: a card dissolved earlier comes back.
-    this.options.expanded?.delete(rangeId(source.map((m) => m.id)));
     this.beginInterval(chat, source, false);
     return true;
   }
@@ -510,22 +475,6 @@ export class CatchUps {
     if (!source.length) return false;
     Object.assign(state, { phase: "loading", error: null, requestedBy: "user", model: this.options.settings().model, engine: this.options.settings().engine });
     this.run(chat, source, state, key ? "interval" : "group");
-    return true;
-  }
-
-  /**
-   * "Show original messages" on the card `key` (the folded group's or an interval's): the card goes, its lines
-   * show where they are, and the range is remembered so it is not folded again by itself.
-   */
-  expand(chat: CatchUpChat, key: string): boolean {
-    const group = this.catchUps.get(chat.id);
-    const book = this.intervals.get(chat.id);
-    const state = group?.key === key ? group : book?.get(key);
-    if (!state) return false;
-    if (state === group) this.catchUps.delete(chat.id); else book!.delete(key);
-    for (const slot of [`${chat.id}/group/${key}`, `${chat.id}/interval/${key}`]) this.running.delete(slot);
-    this.options.expanded?.add(rangeId(state.messageIds));
-    this.options.changed(chat.id);
     return true;
   }
 

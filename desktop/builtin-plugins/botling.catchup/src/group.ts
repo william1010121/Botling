@@ -18,8 +18,7 @@ export const summaryCountable = (message: Pick<MessageView, "role">): boolean =>
 
 /**
  * One summary's card, drawn into the element the page placed before the first line it folds (that
- * element is the old `catchup-head`). "Show original messages" dissolves the card (the program part drops it
- * for good, catchup.ts `expand`), so its lines show where they are; the source chips open them in a viewer.
+ * element is the old `catchup-head`). "Show N messages" and the source chips open the originals.
  */
 export class CatchUpGroup {
   private state: ChatState | null = null;
@@ -87,13 +86,6 @@ export class CatchUpGroup {
       void page.call("retry", { botId: this.botID, ...(this.interval ? { key: this.view.key } : {}) }).catch(() => {});
       return;
     }
-    if (button.dataset.action === "expand") {
-      (button as HTMLButtonElement).disabled = true;
-      summaryViewer.close(this.owner);
-      void page.call("expand", { botId: this.botID, key: this.view.key }).catch(() => { (button as HTMLButtonElement).disabled = false; });
-      return;
-    }
-    if (button.dataset.citePoint == null) return;
     const point = button.dataset.citePoint == null ? -1 : Number(button.dataset.citePoint);
     const index = Number(button.dataset.citeIndex ?? 0);
     if (!this.state) return;
@@ -102,7 +94,7 @@ export class CatchUpGroup {
     summaryViewer.onClose = () => context.redraw();
     summaryViewer.open(this.owner,this.state,this.view,(id)=>context.find(id),id=>context.reveal(id),point,index);
     context.redraw();
-    summaryViewer.setRestoreTarget(()=>this.head.querySelector<HTMLElement>(point<0?'[data-action="expand"]':`[data-cite-point="${point}"][data-cite-index="${index}"]`));
+    summaryViewer.setRestoreTarget(()=>this.head.querySelector<HTMLElement>(point<0?'[data-action="toggle"]':`[data-cite-point="${point}"][data-cite-index="${index}"]`));
   }
 
   private preview(event: Event): void {
@@ -241,7 +233,7 @@ function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: So
     + linksHTML(links)
     + `<div class="catchup-foot"><div class="catchup-faces" aria-hidden="true">${faces}</div><div class="catchup-latest">${escapeHTML(footer)}</div>`
     + (view.state === "failed" ? `<button type="button" class="catchup-button outline" data-action="retry">${retry}${escapeHTML(t("catchup.retry"))}</button>` : "")
-    + `<button type="button" class="catchup-button" data-action="expand">${escapeHTML(t("catchup.expand"))}</button></div>`
+    + `<button type="button" class="catchup-button" data-action="toggle" aria-expanded="${open}" aria-haspopup="dialog">${escapeHTML(t("catchup.show", { n }))}↗</button></div>`
     + (view.state === "ready" ? `<div class="catchup-by">${escapeHTML(summaryBy(view))}</div>` : "")
     + `</div></section>`;
 }
