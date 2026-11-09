@@ -250,6 +250,18 @@ Carry on with the user's request using this: tell the user what it means or do w
 }
 
 /**
+ * `botUnansweredNote`: a bot you called in with @ did not answer (busy, its turn failed, it is gone, or it answered
+ * nothing), handed back like its answer would be, so the bot that asked never waits on an answer that is not coming.
+ */
+export function botUnansweredNote(o: { callee: string; question: string; why: string }): string {
+  return `(App: ${quoteName(o.callee)}, whom you called in with @, did not answer this time (${o.why}).
+You asked: <<<
+${characterPrefix(o.question, 500) || "(only the name)"}
+>>>
+Tell the user, in one or two sentences in their language, that it did not answer, and carry on with the user's request without it if you can. Do not ask it again unless the user says so.)`;
+}
+
+/**
  * `botFollowUpNote`: news from a bot you called in with @ after its answer (its turn on a worker it started for you),
  * handed back like its answer: a quote, not an instruction.
  */
