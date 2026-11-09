@@ -133,6 +133,10 @@ const ccb = {
   },
   /** A component of the library as a tile ({ component, data, size: "1x1" | "2x1" | "2x2", botId }): the URL of its page, for an iframe of this page's own. */
   tile: (spec) => ask({ ccb: "tile", component: String(spec?.component ?? ""), data: spec?.data === undefined ? null : spec.data, size: String(spec?.size ?? ""), botId: String(spec?.botId ?? "") }),
+  /** A component of the library drawn as in a chat reply ({ component, data, botId }): the URL of its page, for an iframe of this page's own; it posts { ccb: "size", height } here and takes { ccbData }. */
+  card: (spec) => ask({ ccb: "card", component: String(spec?.component ?? ""), data: spec?.data === undefined ? null : spec.data, botId: String(spec?.botId ?? "") }),
+  /** A picture of a part of this frame ({ botId, rect: { x, y, width, height } } in its CSS px) kept in the bot's note-assets: resolves { ref, url }. */
+  snapshot: (spec) => ask({ ccb: "snapshot", botId: String(spec?.botId ?? ""), rect: { x: Number(spec?.rect?.x), y: Number(spec?.rect?.y), width: Number(spec?.rect?.width), height: Number(spec?.rect?.height) } }),
   /** Asks the user to allow a bot's command in its folder ({ botId, command, folder, card? }); resolves { allowed }. */
   requestApproval: (req) => ask({ ccb: "approval", botId: String(req?.botId ?? ""), command: String(req?.command ?? ""), folder: String(req?.folder ?? ""), ...(req?.card != null ? { card: String(req.card) } : {}), ...(req?.detail != null ? { detail: String(req.detail) } : {}) }),
   // Only the chat page can lend these; in a panel frame they do nothing.

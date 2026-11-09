@@ -173,7 +173,7 @@ export function profilePaths(profile: Pick<BotProfile, "role" | "folder" | "memo
 
 /** Where the user's own note for this bot is (the Note tab, 2026-11-08): read when relevant, changed only when asked. */
 export function noteRule(note: string): string {
-  return `The user's notes for this bot are in ${note} (the Note tab): read them when relevant; edit them only when the user asks.`;
+  return `The user's notes for this bot are in ${note} (the Note tab): read them when relevant; edit them only when the user asks. Lines <!-- branch: name -->, <!-- route: name --> and <!-- end branch --> split it into alternative routes (nested allowed; text outside a branch is shared by all): to write in a route, put it under that route's line, before the next route or end branch. A <show> line in it is a live card, as in the chat.`;
 }
 
 export function localPage(folder: string): string {

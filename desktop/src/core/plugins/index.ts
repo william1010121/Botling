@@ -38,6 +38,7 @@ import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./
 import { agyUsageInProfiles, agyWorkerUsage } from "../agy-usage-db";
 import { refreshAntigravityQuota } from "../antigravity-quota";
 import { NOTE_MAX, NoteWatcher, readNote, writeNote } from "../bot-note";
+import { noteBranches, noteCards, noteRoutes, noteView } from "../note-format";
 import { ASSET_BYTES_MAX, assetFile, importAssetBytes, importAssetFile, linkedFile, linkedPictures, localizeImages } from "../note-assets";
 
 export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean }
@@ -68,6 +69,49 @@ export interface SessionBot {
 }
 
 /** What the core lends the plugins. */
+/** A component as a note's insert menu lists it (`notes.components`). */
+export interface NoteComponent {
+  name: string;
+  /** A short name from about.md's first line; null: none. */
+  title: string | null;
+  /** about.md's first line. */
+  summary: string;
+  /** In the bot's own list (else elsewhere in the library). */
+  offered: boolean;
+  /** Its about.md Command: an empty `<show name="…"></show>` runs it. */
+  command: string | null;
+  /** Its about.md Refresh in seconds. */
+  every: number | null;
+  sizes: string[];
+  icon: string | null;
+  /** The newest JSON the bot's chat drew it with, for a preview; null: none. */
+  chatData: string | null;
+}
+export interface NoteComponents { folder: string; readOnly: boolean; components: NoteComponent[] }
+/** A note card as it draws now (`notes.cards`). */
+export interface NoteCardState {
+  key: string;
+  name: string;
+  /** Whether the library has that component. */
+  exists: boolean;
+  /** The command it runs: its own command="…", or its component's Command when it has no JSON; null: it shows its JSON. */
+  command: string | null;
+  /** The folder the command runs in (what the ApprovalSheet shows). */
+  folder: string;
+  /** Seconds between reruns (its refresh="…", else about.md's Refresh); null: by hand. */
+  every: number | null;
+  /** "static": no command, `data` is its JSON; "approve": the user has not allowed the command in that folder yet. */
+  status: "static" | "approve" | "idle" | "running" | "done" | "failed";
+  /** JSON to draw: the last run's output, else the card's own JSON ("null"). */
+  data: string;
+  error: string | null;
+  ranAt: number | null;
+  /** Card-page URLs of the local pictures `data` names (what `ccb.card` puts into its page). */
+  images: Record<string, string>;
+  /** The newest JSON the chat drew this component with (to show before the first run); null: none. */
+  chatData: string | null;
+}
+
 export interface PluginWorld {
   bots(): BotInfo[];
   /** A message to a bot (`bots.send`, `bots.wake`): shown as sent `via` that plugin (its title), or as the user's own (null). Throws why not. */
@@ -115,6 +159,12 @@ export interface PluginWorld {
     ask(botId: string, card: string, command: string, component: string): ApprovalAskView | null;
     setNotes(botId: string, notes: { date: number; line: string }[]): boolean;
     legacyPins(botId: string): unknown[] | null;
+  };
+  /** The cards in a bot's note (`notes.components`, `notes.cards`, `notes.runCard`: bot.ts `noteComponents` …); null: no such bot. */
+  noteCards?: {
+    components(botId: string): NoteComponents | null;
+    states(botId: string, cards: { key: string; name: string; command: string | null; data: string; refresh: number | null }[]): NoteCardState[] | null;
+    run(botId: string, key: string, command: string, force: boolean): { folder: string; approved: boolean; started: boolean } | null;
   };
   /** What a plugin keeps for a chat's page changed (`chat.setData`). */
   dataChanged?(botId: string, plugin: string, data: unknown): void;
@@ -192,6 +242,9 @@ const NoteAssetParams = z.union([
 ]);
 const NoteRefsParams = BotParams.extend({ refs: z.array(z.string().max(4096)).max(500) });
 const NoteLocalizeParams = BotParams.extend({ base: z.number().finite().optional() });
+const NoteParseParams = z.object({ plugin: str(214), text: z.string().max(NOTE_MAX), picks: z.record(z.string().max(4_000), z.string().max(1_000)).optional() });
+const NoteCardsParams = BotParams.extend({ text: z.string().max(NOTE_MAX).optional() });
+const NoteRunParams = NoteCardsParams.extend({ key: z.string().regex(/^note\/[0-9a-f]{16}-[0-9]{1,5}$/), force: z.boolean().optional() });
 const WakeParams = BotParams.extend({ prompt: z.string().min(1).max(100_000).optional() });
 const PickParams = z.object({
   plugin: str(214), title: str(400).optional(),
@@ -213,7 +266,7 @@ const StatusParams = z.object({
   plugin: str(214), id: str(100).min(1),
   item: z.object({ text: str(200), icon: str(100).optional(), tooltip: str(1_000).optional(), command: str(200).optional() }).nullable(),
 });
-const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged"] as const;
+const EVENT_NAMES = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged"] as const;
 export type PluginEventName = (typeof EVENT_NAMES)[number];
 const ApprovalParams = z.object({ plugin: str(214), bot: str(64), command: z.string().min(1).max(20_000) });
 const RunKey = z.string().min(1).max(100).regex(/^[A-Za-z0-9_.:-]+$/);
@@ -816,6 +869,19 @@ export class Plugins {
   }
 
   /** The pictures a frame's tile data names, as card-page URLs (`ccb.tile`: the app page puts them into the tile's page). */
+  /**
+   * A plugin frame's `ccb.snapshot` ("freeze to image" in the Note tab): the picture main took of that frame's own rect,
+   * kept in the bot's note-assets folder like a pasted one. Needs "files"; the plugin links the ref itself.
+   */
+  noteSnapshot(name: string, botId: string, picture: { base64: string; name: string } | undefined): { ref: string; url: string | null } {
+    const plugin = this.asking(name);
+    this.needs(plugin, "files", "Adding a picture to a bot's note");
+    if (!picture) throw new ContractError("conflict", "No picture could be taken of that card.");
+    const file = this.noteFile(botId);
+    const ref = importAssetBytes(file, Buffer.from(picture.base64, "base64"), picture.name);
+    return { ref, url: this.noteAssetUrl(file, ref) };
+  }
+
   tileImages(name: string, botId: string, data: string): { images: Record<string, string> } {
     this.asking(name);
     const images = this.options.world.imageUrls(botId, data);
@@ -1022,6 +1088,48 @@ export class Plugins {
         this.notes.watch(data.bot, file, result.mtime);
         if (!result.saved) return { ...result, copied: [], missing: [], failed: [] };
         return { saved: true, text: done.text, mtime: result.mtime, copied: done.copied, missing: done.missing, failed: done.failed };
+      }
+      case "notes.parse": {
+        // The note's branches and cards as the core reads them (note-format.ts), so the Note tab and the bots agree. Nothing is read or written.
+        const { plugin, data } = this.asked(NoteParseParams, params);
+        this.needs(plugin, "files", "Reading a bot's note");
+        const branches = noteBranches(data.text);
+        const cards = noteCards(data.text);
+        return {
+          forks: branches.forks, cards: cards.cards, routes: noteRoutes(data.text),
+          problems: [...branches.problems, ...cards.problems].sort((a, b) => a.line - b.line),
+          ...(data.picks ? { view: noteView(data.text, data.picks) } : {}),
+        };
+      }
+      case "notes.components": {
+        const { plugin, data } = this.asked(BotParams, params);
+        this.needs(plugin, "files", "Listing a bot's components for its note");
+        const answer = world.noteCards?.components(data.bot);
+        if (!answer) throw new Error("No such bot.");
+        return answer;
+      }
+      case "notes.cards": {
+        const { plugin, data } = this.asked(NoteCardsParams, params);
+        this.needs(plugin, "files", "Reading a bot's note");
+        const text = data.text ?? readNote(this.noteFile(data.bot)).text;
+        const cards = noteCards(text).cards;
+        const states = world.noteCards?.states(data.bot, cards.map(({ key, name, command, data: json, refresh }) => ({ key, name, command, data: json, refresh })));
+        if (!states) throw new Error("No such bot.");
+        return states;
+      }
+      case "notes.runCard": {
+        // Runs only a command the user allowed for this bot's folder; the frame asks with ccb.requestApproval({ botId, command, folder, card }).
+        const { plugin, data } = this.asked(NoteRunParams, params);
+        this.needs(plugin, "files", "Running a card in a bot's note");
+        const text = data.text ?? readNote(this.noteFile(data.bot)).text;
+        const card = noteCards(text).cards.find((candidate) => candidate.key === data.key);
+        if (!card) throw new Error("No such card in the note.");
+        const [state] = world.noteCards?.states(data.bot, [{ key: card.key, name: card.name, command: card.command, data: card.data, refresh: card.refresh }]) ?? [];
+        if (!state) throw new Error("No such bot.");
+        if (!state.command) return { started: false, needsApproval: null };
+        const run = world.noteCards!.run(data.bot, card.key, state.command, data.force === true);
+        if (!run) throw new Error("No such bot.");
+        return { started: run.started, needsApproval: run.approved ? null : { command: state.command, folder: run.folder, card: card.name } };
       }
       case "ui.quickPick": {
         const { plugin, data } = this.asked(PickParams, params);

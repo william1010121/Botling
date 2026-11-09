@@ -86,7 +86,7 @@ const taskTag = () => /<task((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*\/?
 const noReplyTag = () => /<no-reply\s*\/>|<no-reply>\s*<\/no-reply>/g;
 const openQuestionTag = () => /<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/open-question>)/g;
 const projectTag = () => /<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:\/>|>\s*([\s\S]*?)\s*<\/new-project>)/g;
-const showTag = () => /<show((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/show>)/g;
+export const showTag = () => /<show((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/show>)/g;
 /** The tags plugins declare now (set by the core when its plugins change); parseReply reads them by default. */
 let declaredTags: readonly string[] = [];
 const tagName = (tag: string) => /^[a-z][a-z0-9-]{0,39}$/.test(tag);

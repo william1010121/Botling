@@ -272,7 +272,13 @@ export class Core {
     this.componentStamp = this.components.library.stamp;
     this.components.commands.onPid = (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid));
     // Every card's run goes to the plugins: botling.board's pins (`pin/<id>`), the component studio's specs' cards.
-    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.plugins.event("cardChanged", { card }); };
+    this.components.commands.onChange = (card) => {
+      for (const bot of this.bots.values()) bot.cardChanged(card);
+      // A card in a bot's note (`note/<bot id>/<tail>`): the Note tab hears it by the bot and the card's key in the note.
+      const note = /^note\/([^/]+)\/(.+)$/.exec(card);
+      if (note) this.plugins.event("noteCardChanged", { botId: note[1], key: `note/${note[2]}` });
+      else this.plugins.event("cardChanged", { card });
+    };
     // The plugins (their host starts later, in start()); the world they see is read when they ask.
     const host = options.plugins ?? null;
     const self = this;
@@ -342,6 +348,11 @@ export class Core {
         imageUrls: (botId, data) => this.pluginBot(botId)?.imageUrls(data) ?? null,
         cardAsk: (botId, card, command, component) => this.pluginBot(botId)?.cardAskFor(card, command, component) ?? null,
         cardApprove: (botId, command, component, folder, detail) => this.pluginBot(botId)?.cardApproveFor(command, component, folder, detail) ?? false,
+        noteCards: {
+          components: (botId) => this.pluginBot(botId)?.noteComponents() ?? null,
+          states: (botId, cards) => this.pluginBot(botId)?.noteCardStates(cards) ?? null,
+          run: (botId, key, command, force) => this.pluginBot(botId)?.noteCardRun(key, command, force) ?? null,
+        },
         cards: {
           library: (botId) => this.pluginBot(botId)?.cardLibrary() ?? null,
           shown: (botId) => this.pluginBot(botId)?.cardsShown() ?? null,
@@ -2596,6 +2607,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.approvalAsk": return this.plugins.approvalAsk(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.card, cmd.component, cmd.detail, cmd.from);
       case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.component, cmd.detail);
       case "plugins.tileImages": return this.plugins.tileImages(cmd.name, cmd.botId, cmd.data);
+      case "plugins.noteSnapshot": return this.plugins.noteSnapshot(cmd.name, cmd.botId, cmd.picture);
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
       case "agy.runtime.install": {

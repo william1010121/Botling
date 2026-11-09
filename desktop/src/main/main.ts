@@ -589,6 +589,26 @@ async function reportComponent(cmd: Extract<Command, { type: "component.report" 
   return core.call({ ...rest, ...(screenshot ? { screenshot } : {}) });
 }
 
+/**
+ * A plugin frame's `ccb.snapshot` (the Note tab's "freeze to image"): that part of the app's window, taken here (a page
+ * cannot hand in its own), as PNG, or JPEG when the PNG is past what a note takes as bytes; the core keeps it in the note.
+ */
+async function noteSnapshot(cmd: Extract<Command, { type: "plugins.noteSnapshot" }>, sender: WebContents): Promise<unknown> {
+  const { picture: _ignored, ...rest } = cmd;
+  let picture: { base64: string; name: string } | undefined;
+  try {
+    const rect = { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) };
+    const image = await windowPicture(sender, rect);
+    if (!image.isEmpty()) {
+      const png = image.toPNG();
+      picture = png.length <= 2_400_000 ? { base64: png.toString("base64"), name: "card.png" } : { base64: image.toJPEG(85).toString("base64"), name: "card.jpg" };
+    }
+  } catch (error) {
+    note(`note snapshot: no picture (${(error as Error).message})`);
+  }
+  return core.call({ ...rest, ...(picture ? { picture } : {}) });
+}
+
 /** "Not right" on a reply: the chat as you saw it (its frame's rect), then the core sends the report. */
 async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, sender: WebContents): Promise<unknown> {
   const { screenshot: _ignored, ...rest } = cmd;
@@ -637,6 +657,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
       return { opened: true };
     }
     case "component.report": return reportComponent(cmd, sender);
+    case "plugins.noteSnapshot": return noteSnapshot(cmd, sender);
     case "chat.feedback": return withScreenshot(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
