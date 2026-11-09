@@ -741,8 +741,8 @@ button { font: inherit; color: inherit; }
 /* The light look (data-theme="light", Settings → Appearance → App) for what has no token. */
 :root[data-theme="light"] .badge.waiting { color: #fff; }
 
-/* Navigation v5, part 2: the right panel's Details | Workers tabs, the Workers tab (the room's workers by owner, a
-   read-only log, "Ask <owner>") and the "<owner>'s workers" badge on the right of the Chat / Board bar. */
+/* Navigation v5, part 2: the "<owner>'s workers" badge on the right of the Chat / Board bar and its menu (the room's
+   workers by owner). A worker opens in the main area, read only, with "Ask <owner>" under it (Workers.tsx). */
 .board-switch-bar { position: relative; }
 .workers-badge-slot { position: absolute; right: 16px; top: 50%; transform: translateY(calc(-50% + 2px)); display: flex; }
 .workers-badge { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--soft-text); font-size: 12.5px; white-space: nowrap; cursor: pointer; -webkit-app-region: no-drag; }
@@ -755,14 +755,7 @@ button { font: inherit; color: inherit; }
 .workers-badge[data-tone="today"] b { color: var(--muted); }
 .workers-badge:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
-.panel-tabs { display: inline-flex; align-self: flex-start; background: var(--chip); border-radius: 8px; padding: 2px; gap: 2px; margin-top: -20px; }
-.panel-tabs button { padding: 3px 11px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
-.panel-tabs button.on { background: var(--hover-strong); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .06); }
-.panel-tabs button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-:root[data-theme="light"] .panel-tabs button.on { background: var(--bubble); }
 
-.detail-panel.workers-panel { width: 350px; padding: 36px 0 0; gap: 8px; overflow: hidden; }
-.workers-panel .panel-tabs { margin: -20px 12px 0; }
 .wk-list { display: flex; flex-direction: column; overflow-y: auto; scrollbar-width: none; flex: 1; min-height: 0; padding-bottom: 12px; }
 .wk-owner { display: flex; align-items: center; gap: 7px; padding: 10px 12px 4px; font-size: 12px; font-weight: 700; color: var(--text); border: 0; background: transparent; text-align: left; width: 100%; }
 button.wk-owner { cursor: pointer; border-radius: 8px; margin: 0 4px; width: calc(100% - 8px); padding: 8px 8px; }
@@ -801,44 +794,25 @@ button.wk-owner:hover { background: var(--hover); }
 .wk-e.codex { color: var(--codex); background: color-mix(in srgb, var(--codex) 16%, transparent); }
 .wk-e.agy { color: #3FB8A8; background: color-mix(in srgb, #3FB8A8 16%, transparent); }
 
-.wk-logpane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.wk-head { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
-.wk-back { border: 0; background: transparent; color: var(--muted); font-size: 12.5px; padding: 0; cursor: pointer; }
-.wk-back:hover { color: var(--text); }
 .wk-ro { font-size: 9.5px; color: var(--muted); border: 1px dashed var(--strong-line); border-radius: 4px; padding: 0 4px; line-height: 14px; white-space: nowrap; }
-.wk-log { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; font-size: 12.5px; line-height: 1.5; color: var(--soft-text); flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; }
-.wk-titleline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wk-log-title { font-size: 14px; color: var(--text); }
-.wk-own { font-size: 10.5px; font-weight: 600; color: var(--soft-text); background: var(--raised); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
-.wk-meta { font-size: 11px; color: var(--faint); }
-.wk-box { background: var(--card); border: 1px solid var(--card-line); border-radius: 10px; padding: 9px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.wk-box.wk-now { background: var(--accent-bg); border-color: var(--accent-line); }
-.wk-box.wk-now .wk-lab { color: var(--link); }
-.wk-box.wk-fail, .wk-box.wk-error { background: var(--stale-bg); border-color: color-mix(in srgb, var(--error) 35%, transparent); color: var(--error); }
-.wk-box.wk-error { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.wk-lab { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 4px; }
-.wk-fail .wk-lab { color: var(--error); }
 .wk-fc { font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wk-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
-.wk-steps li { display: flex; gap: 8px; padding: 3px 0; font-size: 12px; }
-.wk-steps li .wk-tm { width: 36px; flex-shrink: 0; }
-.wk-steps li.failed .wk-mu { color: var(--error); }
-.wk-steps b { color: var(--text); }
-.wk-skeleton { display: flex; flex-direction: column; gap: 10px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; }
-.wk-skeleton i { display: block; height: 12px; border-radius: 4px; background: var(--chip); }
-.wk-skeleton i:first-child { width: 40%; height: 10px; } .wk-skeleton i:nth-child(2) { width: 90%; } .wk-skeleton i:nth-child(3) { width: 80%; }
 .wk-lf { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .wk-hint { white-space: normal; line-height: 1.35; }
-.wk-ask, .wk-ask-send { margin-left: auto; border: 0; background: var(--blue); color: #fff; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-.wk-ask-send { margin-left: 0; }
-.wk-ask-send:disabled { opacity: .45; cursor: default; }
-.wk-btn2 { border: 0; background: transparent; color: var(--link); box-shadow: inset 0 0 0 1px var(--blue); border-radius: 8px; padding: 5px 11px; font-size: 12px; font-weight: 600; cursor: pointer; }
-.wk-ask-box { flex-direction: column; align-items: stretch; }
-.wk-ask-box textarea { resize: none; font: inherit; font-size: 12.5px; color: var(--text); background: var(--bubble); border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
-.wk-ask-box textarea:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
-.wk-ask-row { display: flex; align-items: center; gap: 8px; }
-.wk-ask-row .wk-tm { flex: 1; white-space: normal; }
 @media (max-width: 860px) { .workers-badge-slot { right: 8px; } }
+/* The badge's menu: the workers list under the badge (a row opens the worker in the main area). */
+.wk-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; width: 380px; max-width: calc(100vw - 32px); max-height: calc(100vh - 140px); display: flex; flex-direction: column; overflow: hidden; padding: 4px 0; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 14px 36px rgb(0 0 0 / calc(0.4 * var(--shade, 1))); animation: sbn-in 120ms ease-out; text-align: left; -webkit-app-region: no-drag; }
+.wk-menu .wk-list { padding-bottom: 4px; }
+/* Under a worker watched in the main area: read only, its files, "Ask <owner>". */
+.wk-askbar { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding: 8px 16px 10px; }
+.wk-askbar .wk-lf { border-top: 0; padding: 0; }
+.wk-ro { font-size: 9.5px; color: var(--muted); border: 1px dashed var(--strong-line); border-radius: 4px; padding: 0 4px; line-height: 14px; white-space: nowrap; }
+.wk-files { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.wk-lab { font-size: 11px; font-weight: 700; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.wk-askbar .wk-fc { max-width: 260px; border: 0; border-radius: 6px; padding: 2px 7px; background: var(--chip); color: var(--soft-text); cursor: default; }
+.wk-askbar button.wk-fc { color: var(--link); cursor: pointer; }
+.wk-askbar button.wk-fc:hover { background: var(--hover-strong); color: var(--text); }
+.wk-ask { margin-left: auto; border: 0; background: var(--blue); color: #fff; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.wk-ask:disabled { opacity: .45; cursor: default; }
 /* Navigation v5, sub bots (SubBotNav.tsx): "Sub bots · N ▾" left of Chat | Board, its menu, and inside a
    sub bot the breadcrumb "‹ botling / Release ▾". The switch stays in the middle; the workers' badge (.workers-badge-slot) sits at the right.
    With no sub bots the bar looks as before. Colours are the tokens (dark by default, data-theme="light"). */
@@ -967,11 +941,6 @@ button.wk-owner:hover { background: var(--hover); }
   .sbn-button, .sbn-button.flash { transition: none; }
 }
 @keyframes sbn-fade { from { opacity: 0; } to { opacity: 1; } }
-.panel-tabs button { position: relative; }
-.tab-dot { position: absolute; top: 2px; right: 3px; width: 6px; height: 6px; border-radius: 50%; }
-.tab-dot.waiting { background: var(--orange); }
-.tab-dot.failed { background: var(--error); }
-button.wk-fc { display: block; width: 100%; border: 0; background: transparent; color: var(--link); text-align: left; padding: 1px 0; cursor: pointer; }
 button.wk-fc:hover { text-decoration: underline; }
 .wk-ask:disabled { opacity: .45; cursor: default; }
 .workers-badge .cnt-short { display: none; font-weight: 600; font-variant-numeric: tabular-nums; }

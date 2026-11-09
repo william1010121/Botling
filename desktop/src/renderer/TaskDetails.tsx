@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { RightPanel, RightToggle, type RightPanelProps } from "./RightPanel";
 import { ShellOverlay } from "./ShellOverlay";
-import { workersTabOffered } from "./worker-panel";
 
 const narrowQuery = "(max-width: 860px)";
 
 /** A local drawer at narrow widths; the desktop's saved panel preference is never changed. */
-export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => void; /** Bumped to open the drawer at narrow widths (the workers badge, ⌘⇧W). */ openSignal?: number }) {
+export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => void }) {
   const [narrow, setNarrow] = useState(() => window.matchMedia?.(narrowQuery).matches ?? false);
   const [open, setOpen] = useState(false);
   const drawer = useRef<HTMLDivElement>(null);
@@ -20,7 +19,6 @@ export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => v
     return () => query.removeEventListener("change", change);
   }, []);
   useEffect(() => { setOpen(false); }, [props.bot.id, props.watching]);
-  useEffect(() => { if (props.openSignal) setOpen(true); }, [props.openSignal]);
   useEffect(() => {
     const panel = drawer.current;
     if (!narrow || !open || !panel) return;
@@ -66,9 +64,8 @@ export function TaskDetails(props: RightPanelProps & { onDrawerSettings: () => v
       <div ref={drawer} id="task-details-drawer" className="task-details-drawer" hidden={!open} role="dialog" aria-modal="true" aria-label="Details" tabIndex={-1}>
         <div className="task-details-backdrop" aria-hidden="true" onClick={close} />
         <div className="task-details-sheet">
-          <header className="task-details-header"><span>{props.panelTab === "workers" && workersTabOffered(props.bot, props.bots, Date.now()) ? "Workers" : "Details"}</span><button type="button" onClick={close} aria-label="Close Details">Close</button></header>
+          <header className="task-details-header"><span>Details</span><button type="button" onClick={close} aria-label="Close Details">Close</button></header>
           <RightPanel {...props} collapsed={false} onSettings={props.onDrawerSettings}
-            onAskOwner={props.onAskOwner ? (owner, worker) => { close(); props.onAskOwner!(owner, worker); } : undefined}
             onSelect={id => { close(); props.onSelect(id); }}
             onOpenSubagent={row => { close(); props.onOpenSubagent(row); }}
             onOpenResult={result => { close(); props.onOpenResult(result); }} />

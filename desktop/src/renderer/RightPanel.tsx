@@ -7,8 +7,8 @@
 // the face with its status dot (hover for the Now card), an icon per section with a count, each
 // opening that section beside the strip, and the bot's settings at the bottom. The bot's settings
 // live one level in (1.x's DetailPanel `showingSettings`): the slider button on the name row, or the
-// strip's bottom one, shows them in the overview's place, with Back. Navigation v5: when the room or its family
-// (parent, sibling sub bots) has workers, "Details | Workers" tabs sit on top; Workers is WorkersTab.tsx.
+// strip's bottom one, shows them in the overview's place, with Back. Workers open in the main area, not here
+// (navigation v5: the badge's menu, Workers.tsx).
 import { shortcutLabel } from "./shortcut-labels";
 import { useEffect, useState, type ReactNode } from "react";
 import { ShellOverlay } from "./ShellOverlay";
@@ -16,8 +16,6 @@ import { settledRows, type BotView, type ResultView, type SubagentRowView, type 
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
 import { AgentMenuButton, OwnerMark } from "./Rail";
-import { WorkersTab, type PanelTab, type WorkersTabProps } from "./WorkersTab";
-import { unseenFailures, workersTabOffered } from "./worker-panel";
 
 type Section = "waiting" | "results" | "settled";
 
@@ -52,16 +50,6 @@ export interface RightPanelProps {
   pluginSections?: ReactNode;
   onCloseSettings?: () => void;
   onExpand: () => void;
-  /** Navigation v5: the panel's tab (Details or Workers), when the room or its family has workers. */
-  panelTab?: PanelTab;
-  onPanelTab?: (tab: PanelTab) => void;
-  onLoadWorker?: WorkersTabProps["onLoadWorker"];
-  onAskOwner?: WorkersTabProps["onAskOwner"];
-  onSeenWorker?: (workerId: string) => void;
-  /** Failed workers whose log you opened (no red dot for them). */
-  seenWorkers?: ReadonlySet<string>;
-  onOpenFile?: WorkersTabProps["onOpenFile"];
-  focusWorker?: WorkersTabProps["focusWorker"];
 }
 
 /** `ArtifactLink.isArtifact`: a claude.ai Artifact's page. */
@@ -78,7 +66,6 @@ function SettingsPanel({ bot, settingsPage, onCloseSettings }: RightPanelProps) 
     <aside className="detail-panel" aria-label="Details">
       <div className="detail-head settings-panel-head">
         <button type="button" className="panel-back" aria-label="Back" onClick={onCloseSettings}><Icon name="chevronLeft" size={14} /></button>
-        {/* Whose: the Workers tab beside it lists other bots' workers too. */}
         <span className="detail-name">{bot.name} settings</span>
       </div>
       <div className="panel-settings">{settingsPage}</div>
@@ -88,42 +75,15 @@ function SettingsPanel({ bot, settingsPage, onCloseSettings }: RightPanelProps) 
 
 function OpenPanel(props: RightPanelProps) {
   if (props.showingSettings && props.settingsPage) return <SettingsPanel {...props} />;
-  const now = Date.now();
-  const offered = !!(props.onLoadWorker && props.onAskOwner && props.onPanelTab) && workersTabOffered(props.bot, props.bots, now);
-  // The other tab's dot: Details orange when something waits on you there; Workers red with a failure you have not opened.
-  const waits = panelWaiting(props.bot, props.waiting).length > 0 || props.bot.approvals > 0;
-  const failed = offered && unseenFailures(props.bot, props.bots, now, props.seenWorkers ?? new Set()) > 0;
-  if (offered && props.panelTab === "workers") {
-    return (
-      <aside className="detail-panel workers-panel" aria-label="Workers">
-        <PanelTabs tab="workers" onTab={props.onPanelTab!} waits={waits} failed={false} />
-        <WorkersTab key={props.bot.id} bot={props.bot} bots={props.bots} onLoadWorker={props.onLoadWorker!} onAskOwner={props.onAskOwner!} onSeen={props.onSeenWorker}
-          onOpenFile={props.onOpenFile} focusWorker={props.focusWorker} />
-      </aside>
-    );
-  }
-  return <Overview {...props} tabs={offered ? <PanelTabs tab="details" onTab={props.onPanelTab!} waits={false} failed={failed} /> : null} />;
+  return <Overview {...props} />;
 }
 
-/** Details | Workers, at the panel's top (only when there are workers to show), each with its dot when the other is shown. */
-function PanelTabs({ tab, onTab, waits, failed }: { tab: PanelTab; onTab: (tab: PanelTab) => void; waits: boolean; failed: boolean }) {
-  return (
-    <div className="panel-tabs" role="tablist" aria-label="Panel">
-      <button type="button" role="tab" aria-selected={tab === "details"} className={tab === "details" ? "on" : ""} onClick={() => onTab("details")}
-        aria-label={waits ? "Details, something waits on you" : undefined}>Details{waits && <span className="tab-dot waiting" aria-hidden="true" />}</button>
-      <button type="button" role="tab" aria-selected={tab === "workers"} className={tab === "workers" ? "on" : ""} onClick={() => onTab("workers")}
-        aria-label={failed ? "Workers, a worker failed" : undefined}>Workers{failed && <span className="tab-dot failed" aria-hidden="true" />}</button>
-    </div>
-  );
-}
-
-function Overview({ tabs, pluginSections, bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSettings }: RightPanelProps & { tabs?: ReactNode }) {
+function Overview({ pluginSections, bot, bots, waiting, look, status, results, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onAgentMenu, onSettings }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
   return (
     <aside className="detail-panel" aria-label="Details">
-      {tabs}
       <div className="detail-head">
         <img className="detail-avatar" src={faceURL(bot, look, { asleep: bot.phase === "asleep" && !bot.working, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className="detail-name">{bot.name}</span>

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
-// Navigation v5, part 2: the right panel's Workers tab (a room's app-managed workers grouped by owner, a read-only
-// log, "Ask <owner>" that writes to the owner bot and never to the worker) and the "<owner>'s workers" badge.
+// Navigation v5, part 2: the "<owner>'s workers" badge and its menu (a room's app-managed workers grouped by owner).
+// A worker opens in the main area, the chat's place, read only like a left-column click, with "Ask <owner>" under it
+// (your words go to the owner bot, never to the worker). The right panel keeps Details only.
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotView, SubagentRowView, SubagentView } from "../../src/contract";
 import {
-  askOwnerText, askReference, askState, filesChanged, ownerSummary, sectionedWorkers, workerFamily, workerRowsOf, workersBadge, workersTabOffered,
+  askOwnerText, askReference, askState, filesChanged, ownerSummary, sectionedWorkers, watchedWorker, workerFamily, workerRowsOf, workersBadge,
 } from "../../src/renderer/worker-panel";
 
 const NOW = new Date(2026, 10, 8, 16, 0).getTime();
@@ -65,10 +66,6 @@ describe("owners: the room expanded, its family folded", () => {
     expect(ownerSummary(rows, NOW)).toEqual([{ text: "1 running", tone: "running" }, { text: "1 failed", tone: "failed" }, { text: "2 today", tone: "today" }]);
     expect(ownerSummary([row({ id: "old", endedAt: NOW - 2 * DAY })], NOW)).toEqual([]);
   });
-  it("offers the tab only when the room or its family has a worker in the last 7 days", () => {
-    expect(workersTabOffered(root, [root, release], NOW)).toBe(false);
-    expect(workersTabOffered(root, [root, { ...release, subagentRows: [row({ id: "x" })] }], NOW)).toBe(true);
-  });
 });
 
 describe("the badge: hidden, running, today, failed", () => {
@@ -110,93 +107,98 @@ describe("Ask <owner>: the words go to the owner bot", () => {
   });
 });
 
-describe("the Workers tab in the right panel", () => {
-  const view = (over: Partial<SubagentView> = {}): SubagentView => ({
-    id: "w1", title: "context-baseline", owner: "botling", status: "completed", type: null, model: "sonnet-5-5", engine: "claude",
-    prompt: "Measure context use", result: "Main 1.8M, subagents 317k.", startedAt: new Date(NOW - 5 * MIN).toISOString(), endedAt: new Date(NOW - MIN).toISOString(),
-    outputTokens: 317_000,
-    steps: [{ id: "s1", kind: "tool", tool: "Write", title: "Write base.md", detail: "/w/perf/base.md", output: null, failed: false, done: true }], ...over,
-  });
+const view = (over: Partial<SubagentView> = {}): SubagentView => ({
+  id: "w1", title: "context-baseline", owner: "botling", status: "completed", type: null, model: "sonnet-5-5", engine: "claude",
+  prompt: "Measure context use", result: "Main 1.8M, subagents 317k.", startedAt: new Date(NOW - 5 * MIN).toISOString(), endedAt: new Date(NOW - MIN).toISOString(),
+  steps: [], ...over,
+});
 
-  async function mount(props: Record<string, unknown>) {
-    const { RightPanel } = await import("../../src/renderer/RightPanel");
-    const host = document.createElement("div"); document.body.append(host);
-    const root = createRoot(host);
-    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-    const base = {
-      waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, collapsed: false,
-      onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
-    };
-    const render = (more: Record<string, unknown>) => act(async () => root.render(createElement(RightPanel, { ...base, ...props, ...more } as never)));
-    await render({});
-    return { host, render, unmount: () => act(async () => root.unmount()) };
-  }
+async function mountEl(type: unknown, props: Record<string, unknown>) {
+  const host = document.createElement("div"); document.body.append(host);
+  const root = createRoot(host);
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const render = (more: Record<string, unknown> = {}) => act(async () => root.render(createElement(type as never, { ...props, ...more } as never)));
+  await render();
+  return { host, render, unmount: () => act(async () => root.unmount()) };
+}
 
-  it("groups by owner, opens a read-only log with no input or Stop, and Ask sends the question to the owner", async () => {
+const panelBase = {
+  waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, collapsed: false,
+  onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
+};
+
+describe("the right panel keeps Details only (workers open in the main area)", () => {
+  it("has no Details | Workers tabs and no worker list, even with workers around", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const { RightPanel } = await import("../../src/renderer/RightPanel");
+    const b = bot({ id: "botling", name: "botling", subagentRows: [row({ id: "w1" }), row({ id: "f", status: "failed" })] });
+    const { host, unmount } = await mountEl(RightPanel, { ...panelBase, bot: b, bots: [b] });
+    try {
+      expect(host.querySelector(".panel-tabs")).toBeNull();
+      expect(host.querySelector(".wk-list, .wk-log")).toBeNull();
+      expect(host.querySelector(".detail-head")).not.toBeNull();
+    } finally { await unmount(); vi.useRealTimers(); }
+  });
+});
+
+describe("the workers menu (the badge, ⌘⇧W): a row opens the worker in the main area", () => {
+  it("groups by owner (the room expanded, its family folded) and hands the picked row on, never showing a log itself", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
+    const { WorkersMenu } = await import("../../src/renderer/Workers");
     const botling = bot({ id: "botling", name: "botling", subagentRows: [
       row({ id: "w1", title: "context-baseline" }), row({ id: "w2", title: "fix-theme", status: "running", endedAt: null }),
     ] });
-    const release = bot({ id: "release", name: "Release", parent: "botling" as never, subagentRows: [row({ id: "n1", status: "running", endedAt: null })] });
-    const onLoadWorker = vi.fn(async () => view());
-    const onAskOwner = vi.fn(async () => {});
-    const onPanelTab = vi.fn();
-    const { host, unmount } = await mount({ bot: botling, bots: [botling, release], panelTab: "workers", onPanelTab, onLoadWorker, onAskOwner });
+    const release = bot({ id: "release", name: "Release", parent: "botling" as never, subagentRows: [row({ id: "n1", title: "notarize", status: "running", endedAt: null })] });
+    const onOpen = vi.fn();
+    const onClose = vi.fn();
+    const { host, unmount } = await mountEl(WorkersMenu, { bot: botling, bots: [botling, release], onOpen, onClose });
     try {
-      expect([...host.querySelectorAll(".panel-tabs button")].map((b) => b.textContent)).toEqual(["Details", "Workers"]);
-      expect(host.querySelector(".wk-owner")?.textContent).toContain("botling");
+      expect(host.querySelector(".wk-menu")?.getAttribute("aria-label")).toBe("botling’s workers");
       expect([...host.querySelectorAll(".wk-sec")].map((s) => s.textContent)).toEqual(["Running · 1", "Today · 1"]);
-      expect(host.querySelector(".wk-folded")?.textContent).toContain("Release");
       expect(host.querySelector(".wk-folded")?.textContent).toContain("1 running");
       await act(async () => host.querySelector<HTMLButtonElement>('.wk-row[data-worker="w1"]')!.click());
-      expect(onLoadWorker).toHaveBeenCalledWith("botling", "w1");
-      expect(host.querySelector(".wk-log-title")?.textContent).toBe("context-baseline");
-      expect(host.querySelector(".wk-own")?.textContent).toBe("botling’s worker");
-      expect(host.querySelector(".wk-result")?.textContent).toContain("Main 1.8M");
-      expect(host.querySelector(".wk-files")?.textContent).toContain("perf/base.md");
-      expect(host.querySelector(".wk-steps li")?.textContent).toContain("From botling:");
-      expect(host.querySelector(".wk-log textarea, .wk-log input")).toBeNull();
-      expect([...host.querySelectorAll(".wk-log button")].some((b) => /stop/i.test(b.textContent ?? ""))).toBe(false);
-      await act(async () => host.querySelector<HTMLButtonElement>(".wk-ask")!.click());
-      expect(onAskOwner).toHaveBeenCalledWith("botling", { id: "w1", title: "context-baseline" });
-      await act(async () => host.querySelector<HTMLButtonElement>(".wk-back")!.click());
+      expect(onOpen).toHaveBeenCalledWith("botling", expect.objectContaining({ id: "w1" }));
       expect(host.querySelector(".wk-log")).toBeNull();
-      await act(async () => host.querySelectorAll<HTMLButtonElement>(".panel-tabs button")[0]!.click());
-      expect(onPanelTab).toHaveBeenCalledWith("details");
-    } finally { await unmount(); vi.useRealTimers(); }
-  });
-
-  it("a folded owner opens in place, and its worker's Ask goes to that owner", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
-    const botling = bot({ id: "botling", name: "botling", subagentRows: [row({ id: "w1" })] });
-    const release = bot({ id: "release", name: "Release", parent: "botling" as never, subagentRows: [row({ id: "n1", title: "notarize", status: "running", endedAt: null })] });
-    const onLoadWorker = vi.fn(async () => view({ id: "n1", title: "notarize", owner: "release", status: "running", endedAt: null, result: null }));
-    const onAskOwner = vi.fn(async () => {});
-    const { host, unmount } = await mount({ bot: botling, bots: [botling, release], panelTab: "workers", onPanelTab() {}, onLoadWorker, onAskOwner });
-    try {
       await act(async () => host.querySelector<HTMLButtonElement>(".wk-folded")!.click());
       await act(async () => host.querySelector<HTMLButtonElement>('.wk-row[data-worker="n1"]')!.click());
-      expect(onLoadWorker).toHaveBeenCalledWith("release", "n1");
-      expect(host.querySelector(".wk-own")?.textContent).toBe("Release’s worker");
-      expect(host.querySelector(".wk-now")).not.toBeNull();
-      expect(host.querySelector(".wk-ask")?.textContent).toBe("Ask Release");
-      await act(async () => host.querySelector<HTMLButtonElement>(".wk-ask")!.click());
-      expect(onAskOwner).toHaveBeenCalledWith("release", { id: "n1", title: "notarize" });
+      expect(onOpen).toHaveBeenLastCalledWith("release", expect.objectContaining({ id: "n1" }));
+      await act(async () => host.querySelector(".wk-menu")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      expect(onClose).toHaveBeenCalled();
     } finally { await unmount(); vi.useRealTimers(); }
   });
+});
 
-  it("shows nothing new when no worker is around: no tabs, the panel as today", async () => {
-    const lonely = bot({ id: "solo" });
-    const { host, unmount } = await mount({ bot: lonely, bots: [lonely], panelTab: "details", onPanelTab() {}, onLoadWorker: vi.fn(), onAskOwner: vi.fn() });
-    try { expect(host.querySelector(".panel-tabs")).toBeNull(); expect(host.querySelector(".detail-head")).not.toBeNull(); }
-    finally { await unmount(); }
+describe("a worker watched in the main area: read only, with Ask <owner>", () => {
+  it("knows which watched subagent is a worker of the shown bot (not a sub bot row, not another bot's)", () => {
+    const b = bot({ id: "b", subagentRows: [row({ id: "w1" }), row({ id: "sb", subBot: "R" as never })] });
+    expect(watchedWorker(b, view({ id: "w1" }))?.id).toBe("w1");
+    expect(watchedWorker(b, view({ id: "sb" }))).toBeNull();
+    expect(watchedWorker(b, view({ id: "zz" }))).toBeNull();
+    expect(watchedWorker(b, null)).toBeNull();
+    expect(watchedWorker(null, view())).toBeNull();
+  });
+  it("the bar under the transcript says who takes instructions and Ask goes to the owner, never the worker", async () => {
+    const { WorkerAskBar } = await import("../../src/renderer/Workers");
+    const owner = bot({ id: "botling", name: "botling", working: true });
+    const onAsk = vi.fn();
+    const { host, render, unmount } = await mountEl(WorkerAskBar, { owner, worker: row({ id: "w1", title: "context-baseline", agentId: "ag-7" }), onAsk });
+    try {
+      expect(host.querySelector(".wk-hint")?.textContent).toBe("botling is mid-turn. It reads your note at its next step.");
+      expect(host.querySelector("textarea, input")).toBeNull();
+      const ask = host.querySelector<HTMLButtonElement>(".wk-ask")!;
+      expect(ask.textContent).toBe("Ask botling");
+      await act(async () => ask.click());
+      expect(onAsk).toHaveBeenCalledWith("botling", { id: "w1", title: "context-baseline", agentId: "ag-7" });
+      await render({ owner: null, ownerName: "Release" });
+      expect(host.querySelector<HTMLButtonElement>(".wk-ask")!.disabled).toBe(true);
+    } finally { await unmount(); }
   });
 });
 
 describe("the badge button", () => {
-  it("names the owner, shows the count, is blue while the panel shows Workers, and hides with nothing today", async () => {
+  it("names the owner, shows the count, is blue while its menu is open, and hides with nothing today", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
-    const { WorkersBadge } = await import("../../src/renderer/WorkersTab");
+    const { WorkersBadge } = await import("../../src/renderer/Workers");
     const host = document.createElement("div"); document.body.append(host);
     const root = createRoot(host);
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -227,67 +229,10 @@ describe("Ask <owner> prefills the owner's input box (the chat page's reference 
   });
 });
 
-describe("v5 extras in the panel", () => {
-  async function mount(props: Record<string, unknown>) {
-    const { RightPanel } = await import("../../src/renderer/RightPanel");
-    const host = document.createElement("div"); document.body.append(host);
-    const root = createRoot(host);
-    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-    const base = {
-      waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, collapsed: false,
-      onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
-      onPanelTab() {}, onLoadWorker: vi.fn(async () => ({ id: "f", title: "perf-trace", owner: "b", status: "failed", type: null, model: null, prompt: "trace", result: "Trace too large",
-        startedAt: new Date(NOW - 9 * MIN).toISOString(), endedAt: new Date(NOW - MIN).toISOString(),
-        steps: [{ id: "s", kind: "tool", tool: "Edit", title: "Edit a.ts", detail: "/w/src/a.ts", output: null, failed: false, done: true }] })), onAskOwner: vi.fn(),
-    };
-    const render = (more: Record<string, unknown>) => act(async () => root.render(createElement(RightPanel, { ...base, ...props, ...more } as never)));
-    await render({});
-    return { host, render, unmount: () => act(async () => root.unmount()) };
-  }
-
-  it("dots: Workers red with an unseen failure (on Details), Details orange when something waits (on Workers)", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
-    const b = bot({ id: "b", name: "botling", role: "main" as never, subagentRows: [row({ id: "f", status: "failed" })] });
-    const waiting = { items: [{ botId: "b", text: "Pick one?", messageId: null }], doing: {} };
-    const { host, render, unmount } = await mount({ bot: b, bots: [b], panelTab: "details", seenWorkers: new Set() });
-    try {
-      expect(host.querySelector('.panel-tabs button:nth-child(2) .tab-dot')?.className).toContain("failed");
-      await render({ seenWorkers: new Set(["f"]) });
-      expect(host.querySelector(".panel-tabs .tab-dot")).toBeNull();
-      await render({ panelTab: "workers", waiting });
-      expect(host.querySelector('.panel-tabs button:nth-child(1) .tab-dot')?.className).toContain("waiting");
-    } finally { await unmount(); vi.useRealTimers(); }
-  });
-
-  it("a focus request opens that worker's log directly; a changed file asks to open (the worker's id with it)", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
-    const b = bot({ id: "b", name: "botling", subagentRows: [row({ id: "f", status: "failed" })] });
-    const onOpenFile = vi.fn();
-    const { host, unmount } = await mount({ bot: b, bots: [b], panelTab: "workers", focusWorker: { ownerId: "b", workerId: "f", at: 1 }, onOpenFile });
-    try {
-      expect(host.querySelector(".wk-log-title")?.textContent).toBe("perf-trace");
-      const file = host.querySelector<HTMLButtonElement>(".wk-files button.wk-fc")!;
-      expect(file.textContent).toBe("/w/src/a.ts");
-      await act(async () => file.click());
-      expect(onOpenFile).toHaveBeenCalledWith("b", "/w/src/a.ts", "f");
-    } finally { await unmount(); vi.useRealTimers(); }
-  });
-
-  it("Ask is off, with why, when the owner is gone", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
-    const b = bot({ id: "b", name: "botling", working: true, subagentRows: [row({ id: "f", status: "failed" })] });
-    const { host, unmount } = await mount({ bot: b, bots: [b], panelTab: "workers", focusWorker: { ownerId: "b", workerId: "f", at: 1 } });
-    try {
-      expect(host.querySelector(".wk-hint")?.textContent).toBe("botling is mid-turn. It reads your note at its next step.");
-      expect(host.querySelector<HTMLButtonElement>(".wk-ask")!.disabled).toBe(false);
-    } finally { await unmount(); vi.useRealTimers(); }
-  });
-});
-
 describe("the badge at narrow widths", () => {
   it("carries a short count (icon + number) beside the long one, and the full words in its label", async () => {
     vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(NOW);
-    const { WorkersBadge } = await import("../../src/renderer/WorkersTab");
+    const { WorkersBadge } = await import("../../src/renderer/Workers");
     const host = document.createElement("div"); document.body.append(host);
     const root = createRoot(host);
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -297,27 +242,5 @@ describe("the badge at narrow widths", () => {
       expect(host.querySelector(".workers-badge .cnt-short")?.textContent).toBe("2");
       expect(host.querySelector(".workers-badge")?.getAttribute("aria-label")).toBe("botling’s workers: 2 running");
     } finally { await act(async () => root.unmount()); vi.useRealTimers(); }
-  });
-});
-
-describe("the narrow drawer opens on request", () => {
-  it("opens when asked (the badge or ⌘⇧W at narrow widths), as a sheet over the chat", async () => {
-    window.matchMedia = ((media: string) => ({ media, matches: true, addEventListener() {}, removeEventListener() {} })) as never;
-    const { TaskDetails } = await import("../../src/renderer/TaskDetails");
-    const host = document.createElement("div"); document.body.append(host);
-    const root = createRoot(host);
-    (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-    const b = bot({ id: "b" });
-    const props = {
-      bot: b, bots: [b], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], watching: null, collapsed: false,
-      onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {}, onDrawerSettings() {},
-    };
-    try {
-      await act(async () => root.render(createElement(TaskDetails, { ...props, openSignal: 0 } as never)));
-      expect(document.querySelector<HTMLElement>("#task-details-drawer")!.hidden).toBe(true);
-      await act(async () => root.render(createElement(TaskDetails, { ...props, openSignal: 1 } as never)));
-      expect(document.querySelector<HTMLElement>("#task-details-drawer")!.hidden).toBe(false);
-      expect(document.querySelector(".task-details-header span")?.textContent).toBe("Details");
-    } finally { await act(async () => root.unmount()); }
   });
 });

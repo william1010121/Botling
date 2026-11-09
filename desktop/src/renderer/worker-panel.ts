@@ -1,8 +1,8 @@
-// Navigation v5's Workers tab and badge, as pure functions: which rows are workers, Running → Today → Earlier,
+// Navigation v5's workers badge, its menu and a watched worker's "Ask <owner>", as pure functions: which rows are workers, Running → Today → Earlier,
 // the room's owner family (the room expanded, its parent and sibling sub bots folded), the badge's four looks,
 // the log's "Files changed" and the words "Ask <owner>" sends to the owner bot. All from the rows the bots
 // already carry (`subagentRows`: subagents.json, the worker ledger, Codex worker records); nothing is stored.
-import type { BotView, StepView, SubagentRowView } from "../contract";
+import type { BotView, StepView, SubagentRowView, SubagentView } from "../contract";
 
 export const EARLIER_DAYS = 7;
 const DAY_MS = 24 * 60 * 60_000;
@@ -55,13 +55,10 @@ export function ownerSummary(rows: Timed[], now: number): { text: string; tone: 
   ];
 }
 
-/** The tab shows only when the room or its family had a worker in the last 7 days: otherwise the panel is as it was. */
-export function workersTabOffered(bot: BotView, bots: BotView[], now: number): boolean {
-  const { room, others } = workerFamily(bot, bots);
-  return [room, ...others].some((owner) => {
-    const s = sectionedWorkers(workerRowsOf(owner), now);
-    return s.running.length + s.today.length + s.earlier.length > 0;
-  });
+/** The worker shown in the main area (the chat's place), when the watched subagent is one of the shown bot's workers. */
+export function watchedWorker(bot: Pick<BotView, "subagentRows"> | null, watched: Pick<SubagentView, "id"> | null): SubagentRowView | null {
+  if (!bot || !watched) return null;
+  return workerRowsOf(bot).find((row) => row.id === watched.id) ?? null;
 }
 
 export interface Badge { tone: Tone; count: string; extra: string | null; tip: string }
@@ -146,10 +143,4 @@ export function askState(owner: Pick<BotView, "name" | "working"> | null, name =
   if (!owner) return { ok: false, note: `${name} is gone, so nobody can pass this on.` };
   if (owner.working) return { ok: true, note: `${owner.name} is mid-turn. It reads your note at its next step.` };
   return { ok: true, note: `Workers take instructions only from ${owner.name}.` };
-}
-
-/** Today's failed workers in the room or its family that you have not opened (the Workers tab's red dot). */
-export function unseenFailures(bot: BotView, bots: BotView[], now: number, seen: ReadonlySet<string>): number {
-  const { room, others } = workerFamily(bot, bots);
-  return [room, ...others].reduce((sum, owner) => sum + sectionedWorkers(workerRowsOf(owner), now).today.filter((row) => row.status === "failed" && !seen.has(row.id)).length, 0);
 }
