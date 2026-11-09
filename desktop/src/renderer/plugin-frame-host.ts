@@ -14,6 +14,7 @@ import type { ApprovalAskView, BotView, Command, ComponentInfoView } from "../co
 import type { Client } from "./client";
 import type { ComponentInfo } from "../../../Web/src/types";
 import type { PluginFrameHost } from "./frame-broker";
+import { openReport } from "./report-opener";
 
 /** The most of a tile's data (as JSON) a frame may give: a whiteboard picture's limit. */
 export const TILE_DATA_MAX = 256_000;
@@ -72,6 +73,15 @@ export function pluginFrameHost({ client, components, bots, ask }: PluginFrameHo
       const width = Math.min(box.left + right, window.innerWidth) - x, height = Math.min(box.top + bottom, window.innerHeight) - y;
       if (!(width >= 1 && height >= 1)) throw new Error("That part of the frame is not on screen.");
       return client.request({ type: "plugins.noteSnapshot", name: plugin, botId, rect: { x, y, width, height } }).catch(failed);
+    },
+    async openLink(plugin, { botId, href }) {
+      // The core decides what the href names and main opens it as a chat link (plugin-link.ts); a Markdown file comes
+      // back as a report page this page shows, as the chat's own report links do.
+      const bot = bots().find((each) => each.id === botId || (botId === "main" && each.role === "main"));
+      if (!bot) throw new Error("No such bot.");
+      const result = await client.request({ type: "plugins.openLink", name: plugin, botId, href }).catch(failed);
+      if (result.previewURL && !openReport(bot.id, result.previewURL)) throw new Error("This page shows no report preview.");
+      return { opened: result.opened };
     },
     async requestApproval(plugin, { botId, command, folder, card, detail }) {
       const asked = await client.request({ type: "plugins.approvalAsk", name: plugin, botId, command, folder, ...(card ? { card } : {}), ...(detail ? { detail } : {}) }).catch(failed);

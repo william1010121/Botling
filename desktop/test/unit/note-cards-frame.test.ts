@@ -9,6 +9,7 @@ import { FrameBroker, registerPluginFrame } from "../../src/renderer/frame-broke
 import { pluginFrameHost, TILE_DATA_MAX } from "../../src/renderer/plugin-frame-host";
 import { panelPage } from "../../src/renderer/panel-page";
 import { parseFrameRequest } from "../../../Web/src/frame-protocol";
+import { setReportOpener } from "../../src/renderer/report-opener";
 import { until } from "../helpers";
 
 const BOT = "6A0B0000-0000-4000-8000-000000000020";
@@ -26,6 +27,7 @@ function fakeCore() {
       case "card.page": return { ok: true, result: { url: `botling-card://page/${"b".repeat(36)}` } };
       case "plugins.tileImages": return { ok: true, result: { images: JSON.parse(cmd.data)?.image ? { [JSON.parse(cmd.data).image]: "botling-card://image/abc" } : {} } };
       case "plugins.noteSnapshot": return { ok: true, result: { ref: "note-assets/0123.png", url: "botling-card://image/def" } };
+      case "plugins.openLink": return { ok: true, result: cmd.href.endsWith(".md") ? { opened: true, previewURL: `botling-card://page/${"c".repeat(36)}` } : { opened: true } };
       default: return { ok: false, error: { code: "not_found", message: cmd.type } };
     }
   };
@@ -117,5 +119,46 @@ describe("ccb.snapshot: freeze a card to a picture in the note", () => {
     const html = panelPage("botling.note", "botling.note.tab", "export function activate() {}", {});
     expect(html).toContain('card: (spec) => ask({ ccb: "card"');
     expect(html).toContain('snapshot: (spec) => ask({ ccb: "snapshot"');
+  });
+});
+
+describe("ccb.openLink: a link of the bot's note, opened as a chat link", () => {
+  it("is one request main answers; a Markdown file comes back as a report page the app page shows for that bot", async () => {
+    const { send, posted, sent } = setup();
+    const shown: Array<[string, string]> = [];
+    const stop = setReportOpener((botId, url) => shown.push([botId, url]));
+    try {
+      send({ ccb: "openLink", id: 7, botId: BOT, href: "https://example.com/" });
+      send({ ccb: "openLink", id: 8, botId: BOT, href: "plan.md" });
+      await until(() => posted.length === 2);
+      expect(sent).toEqual([
+        { type: "plugins.openLink", name: "botling.note", botId: BOT, href: "https://example.com/" },
+        { type: "plugins.openLink", name: "botling.note", botId: BOT, href: "plan.md" },
+      ]);
+      expect(posted).toEqual([{ ccb: "reply", id: 7, ok: true, value: { opened: true } }, { ccb: "reply", id: 8, ok: true, value: { opened: true } }]);
+      expect(shown).toEqual([[BOT, `botling-card://page/${"c".repeat(36)}`]]);
+    } finally { stop(); }
+  });
+
+  it("refuses an unknown bot without asking main, and a page with no report preview says so", async () => {
+    const { send, posted, sent } = setup();
+    send({ ccb: "openLink", id: 9, botId: "nobody", href: "https://example.com/" });
+    send({ ccb: "openLink", id: 10, botId: BOT, href: "plan.md" });
+    await until(() => posted.length === 2);
+    expect(posted.find((m) => m.id === 9)).toMatchObject({ ok: false, value: expect.stringMatching(/No such bot/) });
+    expect(posted.find((m) => m.id === 10)).toMatchObject({ ok: false, value: expect.stringMatching(/no report preview/) });
+    expect(sent.map((cmd) => cmd.href)).toEqual(["plan.md"]);
+  });
+
+  it("is a frame request of its own shape; main answers plugins.openLink, and no page can ask the core's plugins.linkTarget", () => {
+    expect(parseFrameRequest({ ccb: "openLink", id: 1, botId: BOT, href: "a.md" })).toEqual({ ccb: "openLink", id: 1, botId: BOT, href: "a.md" });
+    expect(parseFrameRequest({ ccb: "openLink", id: 1, botId: BOT, href: "" })).toBeNull();
+    expect(parseFrameRequest({ ccb: "openLink", id: 1, botId: BOT, href: "x".repeat(4_001) })).toBeNull();
+    expect(parseFrameRequest({ ccb: "openLink", id: 1, botId: BOT, href: "a.md", base: "/" })).toBeNull();
+    expect(RENDERER_COMMANDS.has("plugins.openLink")).toBe(true);
+    expect(MAIN_COMMANDS.has("plugins.openLink")).toBe(true);
+    expect(RENDERER_COMMANDS.has("plugins.linkTarget")).toBe(false);
+    expect(Command.safeParse({ type: "plugins.openLink", name: "botling.note", botId: BOT, href: "a.md" }).success).toBe(true);
+    expect(panelPage("botling.note", "note", "export function activate() {}", {})).toContain('ccb: "openLink"');
   });
 });

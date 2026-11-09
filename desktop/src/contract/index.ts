@@ -1047,6 +1047,14 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.noteSnapshot"), name: PluginName, botId: PluginBotId,
     rect: z.strictObject({ x: z.number(), y: z.number(), width: z.number().positive().max(10_000), height: z.number().positive().max(10_000) }),
     picture: z.strictObject({ base64: z.string().min(1).max(FILE_DATA_LIMIT), name: z.string().min(1).max(40) }).optional() }),
+  /**
+   * A plugin frame's `ccb.openLink` (the Note tab's links): main asks the core what `href` names (`plugins.linkTarget`) and opens it
+   * as a chat link: a web link in the default browser, a Markdown file in the app's report preview (`previewURL`, shown by the page),
+   * any other file with its app (a page, picture, video, document) or in Finder. No prompt; never run.
+   */
+  z.strictObject({ type: z.literal("plugins.openLink"), name: PluginName, botId: PluginBotId, href: z.string().min(1).max(4_000) }),
+  /** What `href` of a bot's note names for a plugin (core only, plugin-link.ts): asked by main for `plugins.openLink`. No page may send it. */
+  z.strictObject({ type: z.literal("plugins.linkTarget"), name: PluginName, botId: PluginBotId, href: z.string().min(1).max(4_000) }),
   /** The pictures a plugin frame's tile data names, as card-page URLs: the app page puts them into the tile's page (`ccb.tile`). */
   z.strictObject({ type: z.literal("plugins.tileImages"), name: PluginName, botId: PluginBotId, data: z.string().max(300_000) }),
   /** The app's settings (settings.json), with every default filled in. */
@@ -1123,14 +1131,14 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.history", "chat.send", "chat.choose", "chat.answer", "chat.ignoreQuestion", "chat.react", "task.output", "subagent.view", "chat.read", "chat.shown", "turn.stop", "turn.await",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "component.command", "component.approve", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "codex.models", "engine.models", "card.page",
-  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot",
+  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call", "plugins.approvalAsk", "plugins.approve", "plugins.tileImages", "plugins.noteSnapshot", "plugins.openLink",
   "project.files", "project.preview", "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "engineDefaults.applyAll", "agy.runtime.check", "agy.runtime.install", "bot.settings", "bot.configure", "bot.restart", "mobile.view", "mobile.pair", "mobile.revoke", "mobile.relay", "projects.pick", "waiting.list", "waiting.ignore",
   "subagent.settle", "agent.targets", "agent.move", "agent.message", "agent.stop", "agent.group", "subbot.close", "bots.create", "bots.remove", "results.list", "result.open", "link.open", "worker.file",
   "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view", "doctor.view", "doctor.run", "doctor.copy", "chat.reloadPage",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["card.page", "files.pick", "projects.pick", "result.open", "link.open", "worker.file", "component.report", "plugins.noteSnapshot", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["card.page", "files.pick", "projects.pick", "result.open", "link.open", "worker.file", "component.report", "plugins.noteSnapshot", "plugins.openLink", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "chat.reloadPage"]);
 
 /** A link handed over in a chat (`[label](url)`, 1.x's `Chip`). */
 export const ResultView = z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) });
@@ -1237,6 +1245,8 @@ export interface Results {
   "plugins.approve": { accepted: boolean };
   "plugins.tileImages": { images: Record<string, string> };
   "plugins.noteSnapshot": { ref: string; url: string | null };
+  "plugins.openLink": { opened: boolean; previewURL?: string };
+  "plugins.linkTarget": { kind: "web"; url: string } | { kind: "file"; path: string };
   "plugins.web": { specs: WebPluginSpecView[] };
   "settings.get": SettingsView;
   "agy.runtime.install": DoctorView;

@@ -128,4 +128,24 @@ describe("cards in a bot's note", () => {
     await expect(c.call({ type: "plugins.noteSnapshot", name: "nosy", botId: MAIN, rect, picture })).rejects.toThrow(/"files" permission/);
     await expect(c.call({ type: "plugins.noteSnapshot", name: "notetest", botId: MAIN, rect, picture: { base64: picture.base64, name: "card.html" } })).rejects.toThrow(/Only png/);
   });
+
+  it("openLink: the core says what a note's href names; a file needs \"files\" and must be the bot's or the note's, other schemes are refused", async () => {
+    const dir = tempDir("note-open-link");
+    notePlugin(dir, "notetest", ["files"]);
+    notePlugin(dir, "nosy", []);
+    const c = core(dir);
+    await until(async () => (await c.call({ type: "plugins.list" })).host.running, { timeout: 20_000 });
+    const note = (await c.call({ type: "plugins.call", name: "notetest", method: "go", params: { method: "read", args: [MAIN] }, from: "frame" })).result.path as string;
+    mkdirSync(join(dirname(note), "docs"), { recursive: true });
+    writeFileSync(join(dirname(note), "docs", "plan.md"), "# Plan");
+    const target = (href: string, name = "notetest") => c.call({ type: "plugins.linkTarget", name, botId: MAIN, href });
+    expect(await target("https://example.com/x")).toEqual({ kind: "web", url: "https://example.com/x" });
+    expect(await target("https://example.com/x", "nosy")).toEqual({ kind: "web", url: "https://example.com/x" });
+    const file = await target("docs/plan.md");
+    expect(file).toMatchObject({ kind: "file" });
+    expect((file as { path: string }).path.endsWith(join("docs", "plan.md"))).toBe(true);
+    await expect(target("docs/plan.md", "nosy")).rejects.toThrow(/"files" permission/);
+    await expect(target("javascript:alert(1)")).rejects.toThrow(/not opened/);
+    await expect(target("/etc/hosts")).rejects.toThrow(/outside/);
+  });
 });

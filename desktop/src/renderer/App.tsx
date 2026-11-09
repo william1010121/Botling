@@ -10,6 +10,7 @@ import { ownsCommand } from "../../../Web/src/frame-protocol";
 // commands. Only this page has the bridge to main.
 import { inputTrace } from "./input-trace";
 import { ReportViewer } from "./ReportViewer";
+import { setReportOpener } from "./report-opener";
 import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
@@ -962,6 +963,8 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
   const widthDragging = useRef(false);
   const view = useSyncExternalStore(store.subscribeChat, store.getChatView);
   useEffect(() => { setReport(null); }, [view.chat?.botId]);
+  // A plugin frame's `ccb.openLink` of a Markdown file (the Note tab): the same report preview, for the bot it names.
+  useEffect(() => setReportOpener((botId, url) => setReport({ botId, url })), []);
   // The line the next message answers (the page's Reply), per chat.
   const [replying, setReplying] = useState<{ botId: string; id: string } | null>(null);
   const replyingRef = useRef(replying);
