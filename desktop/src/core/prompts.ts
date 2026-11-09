@@ -541,6 +541,16 @@ const MAIN_RESULTS_ANCHOR = "- You are the single point of contact.";
 
 /** The main bot's 1.x line (kept byte for byte in the Swift goldens) that sent the user to the left column to remove a bot. */
 const MAIN_REMOVE_LINE = "To remove or rename a bot, tell the user to right-click it in the left column.";
+/** The legacy routines rule's last line (Claude and Codex; Antigravity's prompt has no routines rule). */
+const LEGACY_ROUTINES_LINE = /^  Claude may edit this legacy file[^\n]*$/m;
+/**
+ * A script or monitor the bot starts can wake it (desktop only; 2026-11-09, the user): the app rereads routines.cron every
+ * 30 s, so the script appends an every-minute line on an event; the bot removes it first and the script takes it out too.
+ */
+export function scriptWakeRule(routines: string, engine: Engine): string {
+  const remove = engine === "codex" ? "cancel that line first with app_routines cancel" : "delete that line first";
+  return `  A script or monitor you start can wake you: on an event it appends one line "* * * * * Alert: what happened" to ${routines}, and the app wakes you within about 2 minutes. When it does, ${remove}; have the script add the line only when it is not there and remove it itself after 3 minutes, so one event wakes you once.`;
+}
 /**
  * The instructions as 2.0 gives them: `botPrompts`, plus the prompt sections (`sections`: by default the whiteboard picture line, after
  * the <show> line, for every bot but the main bot; botling.report's report page line after the results rule, for every bot and
@@ -558,6 +568,11 @@ export function desktopPrompts(prompts: BotPrompts, profile: Pick<BotProfile, "r
   // progress.md in .bot/subagents/<id>/, and it is told how to move a running subagent or worker out into a sub bot (Claude, Codex
   // and Antigravity alike; Antigravity's own prompt has no such line to extend, so its text is appended whole).
   // The main bot removes a project or bot through the app (a card first) instead of sending the user to the left column.
+  const routines = /Legacy recurring routines live in (.+?), crontab format/.exec(system)?.[1];
+  if (routines && engine !== "agy") {
+    const file = profile.folder && !routines.startsWith("/") ? join(profile.folder, routines) : routines;
+    system = system.replace(LEGACY_ROUTINES_LINE, (line) => `${line}\n${scriptWakeRule(file, engine)}`);
+  }
   if (profile.role === "main") {
     system = system.replace(MAIN_REMOVE_LINE, "To rename a bot, tell the user to right-click it in the left column; to remove one, use <remove-bot> (below).");
     system = `${system}\n${REMOVE_BOT_RULE}`;

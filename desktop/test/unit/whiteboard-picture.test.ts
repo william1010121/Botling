@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseReply, saysNothing } from "../../src/core/reply";
-import { botPrompts, CORE_PROMPT_SECTIONS, desktopPrompts, REMOVE_BOT_RULE, WHITEBOARD_PICTURE_LINE } from "../../src/core/prompts";
+import { botPrompts, CORE_PROMPT_SECTIONS, desktopPrompts, REMOVE_BOT_RULE, scriptWakeRule, WHITEBOARD_PICTURE_LINE } from "../../src/core/prompts";
 import { tempDir, until } from "../helpers";
 import { CoreHarness } from "../core-harness";
 import { writeLibrary } from "../fixtures/components";
@@ -41,8 +41,9 @@ describe("the line bots are told", () => {
       expect(system).toContain(`</show> to your reply.\n${WHITEBOARD_PICTURE_LINE}\n`);
     }
     const main = botPrompts({ profile: profile("main") });
-    // The main bot gets no picture line; its only desktop change is removing bots through the app (<remove-bot>).
+    // The main bot gets no picture line; its desktop changes are removing bots through the app (<remove-bot>) and a script waking it.
     expect(desktopPrompts(main, profile("main"), "claude", false).system).toBe(`${main.system
+      .replace(/^(  Claude may edit this legacy file[^\n]*)$/m, (line) => `${line}\n${scriptWakeRule("/tmp/p/routines.cron", "claude")}`)
       .replace("To remove or rename a bot, tell the user to right-click it in the left column.", "To rename a bot, tell the user to right-click it in the left column; to remove one, use <remove-bot> (below).")}\n${REMOVE_BOT_RULE}`);
     expect(WHITEBOARD_PICTURE_LINE).toContain('<whiteboard name="component name" size="1x1">JSON</whiteboard>');
     // It is the core's prompt section that botling.whiteboard's first version repeats byte for byte.

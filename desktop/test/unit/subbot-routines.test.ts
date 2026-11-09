@@ -108,3 +108,22 @@ it("a job the bot writes into its routines.cron reaches its chat at the next rou
   sub.checkRoutines();
   expect(events.filter((event) => event.type === "routines.updated")).toHaveLength(0);
 });
+
+it("a script that appends an every-minute Alert line wakes the bot once; deleted, it never runs again", () => {
+  const { root, profiles } = workspace();
+  const eeg = make(root, profiles.eeg, []);
+  const file = join(profiles.eeg.folder, ".bot", "routines.cron");
+  const noon = new Date(); noon.setHours(12, 0, 10, 0);
+  const t0 = noon.getTime();
+  eeg.checkRoutines(t0);
+  appendFileSync(file, "* * * * * Alert: disk full on 4090-2\n");
+  const alerts = () => eeg.snapshot().messages.filter((message) => message.role === "divider" && message.text.startsWith("Alert")).length;
+  eeg.checkRoutines(t0 + 30_000); // first seen: starts from now
+  expect(alerts()).toBe(0);
+  eeg.checkRoutines(t0 + 60_000); // 12:01:10: the 12:01 run is due
+  expect(alerts()).toBe(1);
+  writeFileSync(file, `# Routines: one job per line, crontab format.\n`); // the bot deletes it first thing
+  eeg.checkRoutines(t0 + 120_000);
+  eeg.checkRoutines(t0 + 180_000);
+  expect(alerts()).toBe(1);
+});
