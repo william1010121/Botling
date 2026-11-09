@@ -213,6 +213,7 @@ export const zhHant: Dictionary = {
   "questions.pickAny": "可複選",
   "questions.other": "其他，自己寫…",
   "questions.otherLabel": "其他",
+  "questions.note": "註解",
   "questions.skip": "略過",
   "questions.unskip": "取消略過",
   "questions.skipped": "已略過",

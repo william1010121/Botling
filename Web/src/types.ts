@@ -45,11 +45,13 @@ export interface QuestionView {
   options: ChoiceView[];
 }
 
-/** What the user gave one question of a group: options ticked (indices), their own words, or a skip. */
+/** What the user gave one question of a group: options ticked (indices), their own words, a note per ticked option, or a skip. */
 export interface QuestionPickView {
   options: number[];
   other: string | null;
   skipped: boolean;
+  /** A note written on a ticked option, keyed by its index. */
+  notes?: Record<string, string> | null;
 }
 
 export interface MessageView {

@@ -377,9 +377,17 @@ export function resizeFrame(frame: HTMLIFrameElement, size: PinSize): void {
 export function answerPicks(value: unknown): NonNullable<ComponentAnswer["picks"]> | null {
   if (!Array.isArray(value) || !value.length || value.length > 5) return null;
   const picks = value.map((entry) => {
-    const pick = (entry ?? {}) as { options?: unknown; other?: unknown; skipped?: unknown };
+    const pick = (entry ?? {}) as { options?: unknown; other?: unknown; skipped?: unknown; notes?: unknown };
     const options = Array.isArray(pick.options) ? pick.options.filter((option): option is number => Number.isInteger(option) && (option as number) >= 0 && (option as number) <= 5).slice(0, 6) : [];
-    return { options, ...(typeof pick.other === "string" && pick.other.trim() ? { other: pick.other.trim().slice(0, 1_000) } : {}), ...(pick.skipped === true ? { skipped: true } : {}) };
+    // A note the template wrote on a ticked option (its speech bubble), keyed by that option's index.
+    const notes: Record<string, string> = {};
+    if (pick.notes && typeof pick.notes === "object" && !Array.isArray(pick.notes)) {
+      for (const index of options) {
+        const note = (pick.notes as Record<string, unknown>)[String(index)];
+        if (typeof note === "string" && note.trim()) notes[String(index)] = note.trim().slice(0, 1_000);
+      }
+    }
+    return { options, ...(typeof pick.other === "string" && pick.other.trim() ? { other: pick.other.trim().slice(0, 1_000) } : {}), ...(pick.skipped === true ? { skipped: true } : {}), ...(Object.keys(notes).length ? { notes } : {}) };
   });
   return picks;
 }
@@ -390,7 +398,7 @@ export function choicesDrawGroups(info: ComponentInfo | undefined): boolean {
 }
 
 /** The data a 「choices」 template that draws groups reads: every question, the picks once answered, and the 1.x keys. */
-export function questionGroupData(questions: { question: string; multiple: boolean; options: ChoiceView[] }[], picks: { options: number[]; other: string | null; skipped: boolean }[] | null, answer: string | null): string {
+export function questionGroupData(questions: { question: string; multiple: boolean; options: ChoiceView[] }[], picks: { options: number[]; other: string | null; skipped: boolean; notes?: Record<string, string> | null }[] | null, answer: string | null): string {
   return JSON.stringify({ questions, picks, options: questions[0]?.options ?? [], chosen: null, answer });
 }
 
@@ -411,7 +419,7 @@ export interface ComponentAnswer {
   text?: string;
   images?: AnswerImage[];
   /** A question group's answers, one per question in order (question-group.ts, or a 「choices」 template that draws groups). */
-  picks?: { options: number[]; other?: string; skipped?: boolean }[];
+  picks?: { options: number[]; other?: string; skipped?: boolean; notes?: Record<string, string> }[];
 }
 
 type AnswerHandler = (answer: ComponentAnswer) => void;

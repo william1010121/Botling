@@ -205,7 +205,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       answer: message.answer ?? null,
       ...(choices && message.questions?.length ? {
         questions: message.questions.map((question) => ({ question: question.question, multiple: question.multiple, options: question.options.map((choice) => ({ label: choice.label, detail: choice.detail, recommended: choice.recommended, action: choice.action })) })),
-        picks: message.picks?.map((pick) => ({ options: [...pick.options], other: pick.other, skipped: pick.skipped })) ?? null,
+        picks: message.picks?.map((pick) => ({ options: [...pick.options], other: pick.other, skipped: pick.skipped, ...(pick.notes ? { notes: { ...pick.notes } } : {}) })) ?? null,
       } : {}),
       ignoredAt: message.ignoredAt,
       canIgnoreQuestion: !message.approval,

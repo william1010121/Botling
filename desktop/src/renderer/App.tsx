@@ -1,4 +1,5 @@
 import { BottomPanels, TOGGLE_BOTTOM_PANEL } from "./BottomPanels";
+import { actionPicks } from "./answer-picks";
 import { ChatHeaderViews } from "./ChatHeaderViews";
 import { composerBarMessage, useComposerBar } from "./ComposerBar";
 import { ownsCommand } from "../../../Web/src/frame-protocol";
@@ -1298,14 +1299,7 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
             return typeof image?.name === "string" && typeof image.base64 === "string" && image.base64 ? [{ name: image.name.slice(0, 255) || "picture.png", base64: image.base64 }] : [];
           }).slice(0, 10) : [];
           // A question group's answers, one per question; the core writes the bot's message from them.
-          const picks = Array.isArray(action.picks) ? (action.picks as unknown[]).slice(0, 5).map((entry) => {
-            const pick = entry as { options?: unknown; other?: unknown; skipped?: unknown };
-            return {
-              options: Array.isArray(pick?.options) ? pick.options.filter((option): option is number => Number.isInteger(option) && (option as number) >= 0 && (option as number) <= 5).slice(0, 6) : [],
-              ...(typeof pick?.other === "string" && pick.other.trim() ? { other: pick.other.slice(0, 1_000) } : {}),
-              ...(pick?.skipped === true ? { skipped: true } : {}),
-            };
-          }) : null;
+          const picks = actionPicks(action.picks);
           if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string") return;
           if (picks?.length) {
             void client.request({ type: "chat.answer", botId: chat.botId, messageId: action.messageID, text: action.text, picks }).catch(onError);
