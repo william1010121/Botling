@@ -75,3 +75,29 @@ it('asleep, a move costs no restart: the next wake starts in the new folder',asy
  expect(fixture.heads[0].config.cwd).toBe('/w/site-fix');expect(fixture.heads[0].stops).toBe(0);
  expect(texts(b).join('\n')).not.toContain('Restarted');
 });
+
+it('after a move, the app\'s own messages (a report, a routine) wait for its own work too, never going to the old process (spec/models/turns, apphold)',async()=>{
+ const {b,where}=make();const first=await idleFirstTurn(b);const spy=busy(b);
+ try {
+  where.tree={cwd:'/w/site-fix',addDirs:[]};b.folderMoved(MOVED);
+  b.appMessage('(App: a worker report)');await settle();await settle();
+  expect(first.sent).toHaveLength(1);
+  expect((b as any).queue.map((t:any)=>t.words)).toEqual(['(App: a worker report)']);
+ } finally { spy.mockRestore(); }
+ (b as any).checkSettingsHold();
+ await until(()=>fixture.heads[1]?.sent.length);
+ expect(fixture.heads[1].config.cwd).toBe('/w/site-fix');
+ expect(fixture.heads[1].sent[0]).toContain('a worker report');
+});
+
+it('after a move, your line is not steered into the turn under way in the old process: it waits for that turn (steerold)',async()=>{
+ const {b,where}=make();
+ b.send('first');await until(()=>fixture.heads[0]?.sent.length);const first=fixture.heads[0];
+ where.tree={cwd:'/w/site-fix',addDirs:[]};b.folderMoved(MOVED);
+ b.send('second');await settle();
+ expect(first.sent).toHaveLength(1);
+ first.endTurn();
+ await until(()=>fixture.heads[1]?.sent.length);
+ expect(fixture.heads[1].config.cwd).toBe('/w/site-fix');
+ expect(fixture.heads[1].sent[0]).toContain('second');
+});

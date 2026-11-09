@@ -26,13 +26,13 @@ import {botPrompts} from '../../src/core/prompts';
 import {tempDir,until} from '../helpers';
 const bots:Bot[]=[];
 afterEach(async()=>{for(const b of bots.splice(0))await b.shutdown({tidy:false});fixture.heads.length=0;});
-function make(){
+function make(interruptGraceMs=10){
  const folder=tempDir('absorbed'),profile=mainProfile(folder);mkdirSync(profile.storeDir,{recursive:true});
  writeFileSync(join(profile.storeDir,'bot.json'),JSON.stringify({engine:'claude',model:'m',heads:{engines:['claude'],answerWith:'claude'}}));
  const events:any[]=[];
  const b=new Bot({profile,deferStartup:true,ledger:{record(){},forget(){}} as any,
  headConfig(_p,c){return {...c,command:'/never-spawn',cwd:folder,allowedTools:[]};},
- prompts:(engine,heads)=>botPrompts({profile,engine,heads}),emit(e){events.push(e);},log(){},idleMs:600000,approvalTimeoutMs:1000,interruptGraceMs:10});
+ prompts:(engine,heads)=>botPrompts({profile,engine,heads}),emit(e){events.push(e);},log(){},idleMs:600000,approvalTimeoutMs:1000,interruptGraceMs});
  bots.push(b);return {b,events};
 }
 const settle=()=>new Promise(r=>setImmediate(r));
@@ -108,4 +108,56 @@ it('a line steered into a turn and taken in there leaves nothing behind (no turn
  // A late "started" for it (it cannot come after its end, but if it did) makes no turn that waits forever.
  head.item({kind:'command',id:steeredId,state:'started'});await settle();
  expect((b as any).turn).toBeNull();
+});
+
+it('a steered line claude reads into the turn under way, saying "started" for it, is no turn of its own: that turn still ends (spec/models/turns, silentsteer)',async()=>{
+ const {b,events}=make();
+ const first=b.send('first').turnId;await until(()=>fixture.heads[0]?.sent.length===1);
+ const head=fixture.heads[0];
+ const id=(i:number)=>head.sent[i].id.toLowerCase();
+ head.item({kind:'command',id:id(0),state:'started'});
+ // Two lines of yours go into the turn under way.
+ b.send('second');await settle();b.send('third');await settle();
+ expect(head.sent).toHaveLength(3);
+ // claude reads the second into that turn and says "started" for it (3353d2d9), then ends the turn.
+ head.item({kind:'command',id:id(1),state:'started'});await settle();
+ head.item({kind:'command',id:id(1),state:'completed'});
+ head.item({kind:'result',ok:true,text:'Answer to first and second',subtype:'end_turn'});
+ head.item({kind:'command',id:id(0),state:'completed'});await settle();
+ expect(finished(events,first)).toMatchObject({status:'done'});
+ // The third, unread when that turn ended, gets a turn of its own, which ends with its result.
+ head.item({kind:'command',id:id(2),state:'started'});await settle();
+ expect((b as any).turn).not.toBeNull();
+ head.item({kind:'result',ok:true,text:'Answer to third',subtype:'end_turn'});
+ head.item({kind:'command',id:id(2),state:'completed'});await settle();
+ expect((b as any).turn).toBeNull();
+ expect((b as any).deferred).toBeNull();
+ // Nothing waits behind a turn that never ends: the next message goes at once.
+ b.appMessage('(App: a report)');await settle();
+ expect(head.sent.at(-1).text).toContain('a report');
+});
+
+it('while a stopped turn drains, nothing begins: the turn set aside does not come back to take the stopped turn\'s end (drainnext)',async()=>{
+ // claude ends the stopped turn in time however slow this run is (no tree kill).
+ const {b,events}=make(600000);
+ b.send('first');await until(()=>fixture.heads[0]?.sent.length===1);
+ const head=fixture.heads[0];
+ const id=(i:number)=>head.sent[i].id.toLowerCase();
+ head.item({kind:'command',id:id(0),state:'started'});
+ b.send('second');await settle();
+ head.item({kind:'result',ok:true,text:'Answer to first',subtype:'end_turn'});head.item({kind:'command',id:id(0),state:'completed'});await settle();
+ const appTurn=b.appMessage('(App: a report)')!;await settle();
+ b.holdForSwap(true);
+ // claude begins your second line: the app's turn is set aside, and you stop the second.
+ head.item({kind:'command',id:id(1),state:'started'});await settle();
+ const second=(b as any).turn.id;
+ void b.stop(second);await settle();
+ // The swap is called off while claude still ends the stopped turn: the app's turn stays aside.
+ b.holdForSwap(false);await settle();
+ expect((b as any).turn).toBeNull();
+ head.item({kind:'command',id:id(2),state:'completed'});
+ head.item({kind:'result',ok:false,text:'',subtype:'error_during_execution'});await settle();
+ expect(finished(events,appTurn)).toMatchObject({status:'done'});
+ expect((b as any).turn).toBeNull();
+ expect((b as any).draining).toBeNull();
 });
