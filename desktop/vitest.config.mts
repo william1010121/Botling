@@ -11,10 +11,14 @@ const macOnly = [
 // Reads the packaged helper, which only a macOS arm64 build whose clang output matches the reviewed pin produces.
 const needsHelper = existsSync("out/core/agy-file-helper.base64") ? [] : ["test/unit/agy-runtime-install.test.ts"];
 
+// Tests kept beside their code (most co-located tests are not run yet; add a file here once it passes, and to
+// package.json's test:unit, which CI runs).
+const colocated = ["src/mobile-bridge/pairing.test.ts", "mobile/pair.test.ts"];
+
 export default defineConfig({
   cacheDir: ".cache/vite",
   test: {
-    include: ["test/unit/**/*.test.ts", "test/live/**/*.test.ts", "../spec/tests/**/*.test.ts", "builtin-plugins/*/test/**/*.test.ts"],
+    include: ["test/unit/**/*.test.ts", ...colocated, "test/live/**/*.test.ts", "../spec/tests/**/*.test.ts", "builtin-plugins/*/test/**/*.test.ts"],
     exclude: [
       "**/node_modules/**",
       ...(process.platform === "darwin" ? [] : macOnly),

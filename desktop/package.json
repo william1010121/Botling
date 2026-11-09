@@ -24,7 +24,7 @@
     "test:spec": "node build.mjs && vitest run ../spec/tests",
     "link-deps": "sh scripts/link-deps.sh",
     "test": "npm run test:unit && npm run test:e2e",
-    "test:unit": "node build.mjs && vitest run test/unit",
+    "test:unit": "node build.mjs && vitest run test/unit src/mobile-bridge/pairing.test.ts mobile/pair.test.ts",
     "test:e2e": "node build.mjs && playwright test",
     "test:web-isolation": "node mobile/build.mjs && node mobile/isolation-check.mjs",
     "test:live": "node build.mjs && BOTLING_LIVE_CLAUDE=1 vitest run test/live",
