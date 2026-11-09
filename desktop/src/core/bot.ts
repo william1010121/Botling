@@ -494,6 +494,11 @@ export class Bot {
   private contextSent = new Set<string>();
   /** Your lines written to claude while its turn ran, by message uuid: one claude begins a turn of its own for is answered there. */
   private steered = new Map<string, Turn>();
+  /**
+   * claude has a turn under way: it said "started" for a line, or its turn said something, and no result came since.
+   * A "started" for a line then means claude read it into that turn (3353d2d9), never a turn of its own.
+   */
+  private claudeMidTurn = new WeakSet<AgentHead>();
   /** Your lines offered into an Antigravity turn (`offerInsert`), by id: in the queue ("Queued") until it reads them. */
   private inserting = new Map<string, Turn>();
   /** Our turn that claude has not begun yet, set aside while it answers the other head's words first. */
@@ -2604,14 +2609,15 @@ export class Bot {
     if (!current && this.switchReady) { this.queue.push(turn); void this.handOver(); return turn; }
     // A message already waits for this head's work before a model/effort restart: this one goes after it.
     if (this.settingsHold) { this.queue.push(turn); this.checkSettingsHold(); return turn; }
-    if (!current && !this.tidying && !this.switching && turn.origin === "user" && this.head?.running && this.ownWorkRunning
+    if (!current && !this.tidying && !this.switching && this.waitsForRestart(turn) && this.head?.running && this.ownWorkRunning
       && (this.folderPending || (this.modelSettingsPending && !this.canSwitchInPlace(this.head)))) {
       this.holdForSettings(turn);
       return turn;
     }
     if (!current && !this.tidying && !this.switching) { this.begin(turn); return turn; }
-    // A saved model/effort belongs to a new turn, never to steering the old configuration.
-    if (current && this.modelSettingsPending) { this.queue.push(turn); return turn; }
+    // A saved model/effort, or a new working folder, belongs to a new turn, never to steering the old process.
+    // While it tidies before sleep nothing joins a turn of claude's own (a report): its process is about to end.
+    if (current && (this.modelSettingsPending || this.folderPending || this.tidying)) { this.queue.push(turn); return turn; }
     if (current && this.canPause(current, turn)) return this.pause(current, turn);
     if (current && this.canSteer(current, turn) && this.steerInto(current, turn)) return current;
     if (current && this.offerInsert(current, turn)) {
@@ -2668,7 +2674,7 @@ export class Bot {
     turn.conducted = paused.conducted;
     turn.handoffId = paused.handoffId;
     this.log("carrying on with the work paused for your message");
-    this.begin(turn, this.head);
+    this.begin(turn);
     return true;
   }
 
@@ -2949,7 +2955,7 @@ export class Bot {
     }
     // Keep workers alive, but never send a user turn under a known stale model/effort: it waits for this
     // head's own work to finish (a partner head's work does not count), then the restart, then it goes.
-    if (!given && turn.origin === "user" && (this.modelSettingsPending || this.folderPending) && old?.running && this.ownWorkRunning) {
+    if (!given && this.waitsForRestart(turn) && (this.modelSettingsPending || this.folderPending) && old?.running && this.ownWorkRunning) {
       this.turn = null;
       turn.head = null;
       turn.sent = false;
@@ -3183,7 +3189,7 @@ export class Bot {
     if (this.engine === "agy") {
       if (!this.options.agyConfig) throw new Error("Antigravity is not available here.");
       const config = this.options.agyConfig(this.profile, { command: "agy", cwd: tree?.cwd ?? this.profile.folder, ...(tree ? { addDirs: tree.addDirs } : {}), sessionId: start.sessionId, resume: start.resume,
-        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && !this.queue.length && !this.draining && !this.shuttingDown, });
+        bypassPermissions: launch.agyBypassPermissions === true, ...(launch.specWriters ? { specWriters: launch.specWriters } : {}), model: this.settingsView().agyModel, effort: start.effort, workerChoice: () => { const choices = this.owner.choices(); return { model: choices.agyWorkerModel, effort: choices.agyWorkerEffort }; }, systemPrompt: prompts.system, workerInstructions: prompts.codexWorkerSystem, skillRoots: start.skillRoots ?? [], processStarted: pid => this.options.ledger.record(pid), canStartReport: () => !this.turn && (!this.queue.length || !!this.settingsHold) && !this.draining && !this.shuttingDown, });
       if (config.transport !== "acp") throw new ContractError("conflict", AGY_EXECUTION_BLOCKED);
       head = new AgyAcpHead(config, { onItem: item => this.onItem(head, item), onExit: exit => this.onExit(head, exit) }, undefined,
         { core: this.workerCore, sink: (item) => this.onWorkerOutput(item) });
@@ -3392,15 +3398,17 @@ export class Bot {
     if (item.kind === "rateLimits") { this.options.rateLimits?.(item.engine, item.limits); return; }
     if (item.kind === "command") {
       if (commandEnded(item.state)) { this.commandEnded(head, item.id, item.state); return; }
+      const mid = this.claudeMidTurn.has(head);
+      if (item.state === "started") this.claudeMidTurn.add(head);
       const steered = this.steered.get(item.id);
       if (steered) {
-        if (item.state === "started") { this.steered.delete(item.id); this.steeredStarted(head, steered); }
+        if (item.state === "started") { this.steered.delete(item.id); if (!mid) this.steeredStarted(head, steered); }
         return;
       }
       // The other head's words, read too late for the turn they were meant for: claude answers them
       // in a turn of its own, the app's (its words show; <no-reply/> shows nothing). A message of
       // ours sent after them but not begun yet waits for that turn to end.
-      if (item.state !== "started" || !this.contextSent.delete(item.id) || this.ignoreResults || this.draining) return;
+      if (item.state !== "started" || !this.contextSent.delete(item.id) || mid || this.ignoreResults || this.draining) return;
       const waiting = this.turn;
       if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record)) return;
       if (waiting) { this.turn = null; this.deferred = waiting; }
@@ -3451,6 +3459,8 @@ export class Bot {
     }
     // Subagents are followed whoever's turn it is; their own lines stop here.
     if (this.onSubagentItem(item)) return;
+    if (item.kind === "result") this.claudeMidTurn.delete(head);
+    else this.claudeMidTurn.add(head);
     // The tail of a turn that was cut off: it belongs to nobody.
     if (this.ignoreResults > 0) {
       if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: that turn has ended.");
@@ -3461,7 +3471,8 @@ export class Bot {
     if (!turn || !turn.open || turn.head !== head) {
       // The tail of a stopped turn: only its end matters, to know the head is free again.
       if (this.draining?.head === head) {
-        if (item.kind === "result") this.draining.resolve();
+        // Not while its tree is being ended (stop's grace ran out): what waits goes once the process is gone.
+        if (item.kind === "result" && !this.ending.has(head)) this.drained(head);
         if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: the user stopped this turn.");
         return;
       }
@@ -3854,7 +3865,8 @@ export class Bot {
 
   /** The next waiting message, if any; else the idle clock starts. */
   private next(): void {
-    if (this.turn || this.tidying || this.switching) return;
+    // While a stopped turn drains nothing begins (not even the turn set aside): stop() goes on here once it ended.
+    if (this.turn || this.tidying || this.switching || this.draining) return;
     const deferred = this.deferred;
     if (deferred) {
       // It was sent already: claude begins it now.
@@ -3889,7 +3901,7 @@ export class Bot {
       for (const subagent of ask) this.reportAsked.add(subagent.id);
       const turn = this.newTurn("app", reportNote(ask), null);
       turn.ended = ask.map((subagent) => subagent.id);
-      this.begin(turn, this.head);
+      this.begin(turn);
       return;
     }
     if (finished.length) {
@@ -3983,19 +3995,29 @@ export class Bot {
     this.draining = draining;
     head.interrupt();
     const ended = await Promise.race([promise.then(() => true), sleep(this.options.interruptGraceMs).then(() => false)]);
-    if (this.draining === draining) this.draining = null;
-    resolve();
     if (ended) {
+      if (this.draining === draining) this.draining = null;
       this.log(`turn ${turnId} stopped; claude ended it`);
       this.next();
       return { stopped: true, killed: [], forced: false };
     }
-    // It did not answer: end its whole tree. The next message starts the head again (--resume).
+    // It did not answer: end its whole tree. The next message starts the head again (--resume). What waits goes only
+    // once the process is gone (onExit), never to the process being ended.
     this.ending.add(head);
     const result = await head.terminate(1_500);
+    if (this.draining === draining) this.draining = null;
+    resolve();
     this.log(`turn ${turnId} stopped; claude did not end it in time, so its tree was ended: ${result.killed.join(",")} forced=${result.forced}`);
     this.next();
     return { stopped: true, killed: result.killed, forced: result.forced };
+  }
+
+  /** A stopped turn has drained (claude ended it, or its process is gone): the turn that waited is sent now. */
+  private drained(head: AgentHead) {
+    const draining = this.draining;
+    if (draining?.head !== head) return;
+    this.draining = null;
+    draining.resolve();
   }
 
   async await(turnId: string, signal: AbortSignal): Promise<ResultOf<"turn.await">> {
@@ -4017,7 +4039,7 @@ export class Bot {
 
   private onExit(head: AgentHead, exit: HeadExit) {
     if (head.pid > 0) this.options.ledger.forget(head.pid);
-    if (this.draining?.head === head) this.draining.resolve();
+    this.drained(head);
     if (head !== this.head) return;
     // Gone because of the network (or gone while waiting for it): its session and the subagents still
     // at work are picked up again when the network is back (1.x's `lostToNetwork`).
@@ -4296,7 +4318,8 @@ export class Bot {
    * whoever they report to), background tasks it started, or its wait for the network. Never a partner head's.
    */
   private get ownWorkRunning(): boolean {
-    return this.inHeadSubagents.length > 0 || this.managedPending || this.backgroundWorkRunning || !!this.outage;
+    // Your lines steered into a turn that claude has not read yet count: it still owes them an answer.
+    return this.inHeadSubagents.length > 0 || this.managedPending || this.backgroundWorkRunning || !!this.outage || this.steered.size > 0;
   }
 
   /** Its subagents at work inside its head's process (a Claude worker is a process of its own: a restart or sleep leaves it be). */
@@ -4323,7 +4346,7 @@ export class Bot {
       const settings = this.restartReason?.shown ?? "the new model or effort";
       const what = this.modelSettingsPending ? "Model or effort change" : "Moving to its new working folder";
       const after = this.modelSettingsPending ? `on ${settings}` : "there";
-      this.owner.add({ id, role: "notice", text: `${what} is waiting for active work to finish (${displayName(this.engine)}: ${this.ownWorkWords()}). Your message is queued and is sent ${after} as soon as that work finishes.`, date: toSwiftDate() });
+      this.owner.add({ id, role: "notice", text: `${what} is waiting for active work to finish (${displayName(this.engine)}: ${this.ownWorkWords()}). ${turn.origin === "user" ? "Your message is" : "Its next message is"} queued and is sent ${after} as soon as that work finishes.`, date: toSwiftDate() });
       // Work whose end the app hears of without an event (a background task too old to hold the bot) is seen here.
       const timer = setInterval(() => this.checkSettingsHold(), 15_000);
       timer.unref?.();
@@ -4333,11 +4356,19 @@ export class Bot {
     this.updated();
   }
 
+  /**
+   * Whether `turn` waits for this head's own work before the restart it owes. Yours always; after a move every turn but
+   * the tidy (a routine, a worker's report, a follow-up, the resume note): none may go to the process in the old folder.
+   */
+  private waitsForRestart(turn: Turn): boolean {
+    return turn.origin === "user" || (this.folderPending && turn.origin !== "tidy");
+  }
+
   /** Lets the held message go once this head's own work is done (or nothing waits any more). True: let go. */
   private releaseSettingsHold(): boolean {
     const hold = this.settingsHold;
     if (!hold) return true;
-    const waiting = this.queue.some((turn) => turn.open && turn.origin === "user");
+    const waiting = this.queue.some((turn) => turn.open && this.waitsForRestart(turn));
     if (waiting && (this.modelSettingsPending || this.folderPending) && this.head?.running && this.ownWorkRunning) return false;
     clearInterval(hold.timer);
     this.settingsHold = null;
@@ -4449,7 +4480,7 @@ export class Bot {
     // A subagent (or a Codex worker) at work in the background would end with the process: wait for it.
     // So would a command or Monitor it left running in the background (1.x's `hasBackgroundWorkRunning`).
     // Cut off by the network, it keeps its session for when the network is back.
-    if ((this.inHeadSubagents.length || this.managedPending || this.backgroundWorkRunning || this.outage) && !this.shuttingDown) { this.scheduleIdle(); return; }
+    if ((this.inHeadSubagents.length || this.managedPending || this.backgroundWorkRunning || this.outage || this.steered.size) && !this.shuttingDown) { this.scheduleIdle(); return; }
     this.clearIdle();
     this.tidying = true;
     this.updated();
