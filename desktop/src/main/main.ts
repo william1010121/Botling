@@ -828,7 +828,8 @@ function serveApp() {
       if (!file) return new Response("Not found", { status: 404 });
       try {
         // A Markdown result is drawn as the chat draws a reply (markdown-page.ts), never served as text.
-        if (/\.(md|markdown)$/i.test(file)) return markdownResponse(file, markdownPageStyles(), request.method);
+        // It takes the look result pages take (Settings → Appearance → Report pages).
+        if (/\.(md|markdown)$/i.test(file)) return markdownResponse(file, markdownPageStyles(), request.method, resolveReportTheme(reportTheme, appDark));
         // Settings → Appearance → Report pages: a look other than the app's is asked for with data-theme (report-theme.ts).
         const theme = resolveReportTheme(reportTheme, appDark);
         return await previewResponse(file, request, reportNeedsMark(theme, appDark()) ? { html: (text) => themeHtml(text, theme) } : {});
