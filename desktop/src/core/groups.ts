@@ -265,6 +265,18 @@ ${characterPrefix(o.news, 2000)}${choices}
 Carry on with the user's request using this: tell the user what it means or do what the user already asked. If it asks something, answer it with @ and its name when the user's own words already answer it; otherwise ask the user. If you have nothing to add, reply only <no-reply/>.)`;
 }
 
+/**
+ * `botFollowUpMissedNote`: a bot you called in with @ started a worker for it; that worker's run ended, but the bot's
+ * turn on its report ended without an answer (failed, stopped, or said nothing).
+ */
+export function botFollowUpMissedNote(o: { callee: string; question: string; why: string }): string {
+  return `(App: ${quoteName(o.callee)}, whom you called in with @, started a worker for your request; that worker's run ended, but ${quoteName(o.callee)} sent no answer on it (${o.why}).
+You asked: <<<
+${characterPrefix(o.question, 500) || "(only the name)"}
+>>>
+Tell the user, in one or two sentences in their language, that the result did not come back. Do not ask it again unless the user says so.)`;
+}
+
 /** `pickedNote` / `answeredNote`: what a guest is told of your pick or words on its line. */
 export const pickedNote = (label: string) => `The user picked: ${label}`;
 export const answeredNote = (shown: string) => `The user answered: ${shown}`;

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Bot, GuestAnswer } from "./bot";
 import { writeFileAtomic } from "./durable/atomic";
 import {
-  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botFollowUpNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
+  BOT_MENTIONS_PER_USER_LINE, GROUP_TIMING, botAnswerNote, botFollowUpNote, botFollowUpMissedNote, botCallInPrompt, botCallInWorkNote, callInWorkNote, botMentionCandidates, callInNote, callInPrompt, firstLineOf, heardSinceLastTurn,
   isPass, mentionBody, mentioned, quoteName, transcriptBefore, type Member,
 } from "./groups";
 import { parseReply, type BotRequest } from "./reply";
@@ -380,6 +380,19 @@ export class Conversations {
     chat.post(line);
     this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
     chat.appMessage(botFollowUpNote({ callee: member.name, question: asked, news: record.text, choices: record.choices?.map((choice) => choice.label) }));
+  }
+
+  /**
+   * `callee`'s turn on the report of a worker it started for `callerId`'s bot's @ ended without a reply (`why`):
+   * the chat says so and its bot is woken with it, so it never waits on news that is not coming.
+   */
+  callInFollowUpMissed(callerId: string, callee: Bot, asked: string, why: string) {
+    const chat = this.deps.bot(callerId);
+    if (!chat || chat === callee || !asked) return;
+    const name = this.speakerName(callee.id) ?? callee.profile.name;
+    chat.appNotice(`${name}'s worker for your @ ended, but ${name} sent no answer on it (${why}).`);
+    this.followUps.set(chat.id, { depth: 1, until: Date.now() + 30 * 60_000 });
+    chat.appMessage(botFollowUpMissedNote({ callee: name, question: asked, why }));
   }
 
   /** Who answers in `chatId` now (null: nobody); `guest`, the bot that starts or stops answering there, is drawn again too. */
