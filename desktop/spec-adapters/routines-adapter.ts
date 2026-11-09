@@ -1,8 +1,9 @@
 // spec/driver/routines-driver.ts against the real code: Bot objects of a project bot and its sub bots
 // (their heads never spawn), each action one call into Bot or ScheduledRoutineStore, and the observation
-// read back from the files the app keeps and the chat lines it emitted. Translation only, but for one piece of
+// read back from the files the app keeps and the chat lines it emitted. Translation only, but for two pieces of
 // environment: a script's append landing between an app rewrite's read of routines.cron and its rename is played
-// by holding the append back and writing it from inside node:fs renameSync, right before that rename.
+// by holding the append back and writing it from inside node:fs renameSync, right before that rename (into the file
+// the app read); a write through a handle on an already replaced file goes to a file that is not routines.cron.
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
@@ -139,6 +140,10 @@ export const routinesAdapter: RoutinesDriver = {
         const added = `${text && !text.endsWith("\n") ? "\n" : ""}${paused ? "#" : ""}${onceId(line)}\n`;
         appendFileSync(file, added);
         if (window?.bot === bot) window.appended.push(added);
+      },
+      appendToReplaced(line, bot) {
+        onceLines.set(line, bot);
+        appendFileSync(join(root, `replaced-${bot}.cron`), `${onceId(line)}\n`);
       },
       takeRead(bot, line) { window = { bot, line, text: readFileSync(cronFile(bot), "utf8"), appended: [] }; },
       editRead(bot) { window = { bot, line: null, text: readFileSync(cronFile(bot), "utf8"), appended: [] }; },

@@ -41,13 +41,18 @@ export interface RoutinesSession {
   /** A script appends the one-shot line "@once <line>: …" (or "#@once …", paused) to the bot's routines.cron, app up or not. */
   append(line: Line, bot: Bot, paused: boolean): void;
   /**
-   * A check's takeOnce of the line has read routines.cron for the last time before writing it. Until `rewrite`,
-   * the app does nothing else; appends land in the window between that read and the rename.
+   * A script's write through a handle it opened on routines.cron before an app rewrite renamed a new file over it,
+   * made after the app read the old file back: it lands in the replaced file, not in routines.cron.
+   */
+  appendToReplaced(line: Line, bot: Bot): void;
+  /**
+   * A check's takeOnce of the line has read routines.cron. Until `rewrite`, the app does nothing else; appends land
+   * in the window between that read and the rename.
    */
   takeRead(bot: Bot, line: Line): void;
   /** Another app rewrite of routines.cron has read it (the model abstracts its own change). */
   editRead(bot: Bot): void;
-  /** The rewrite started by `takeRead`/`editRead` renames its file over routines.cron (a taken line is then dispatched). */
+  /** The rewrite started by `takeRead`/`editRead` renames its file over routines.cron and appends back what was appended meanwhile (a taken line is then dispatched). */
   rewrite(bot: Bot): void;
   /** A check takes the one-shot line out of routines.cron, then the app dies before dispatching it. */
   takeThenCrash(bot: Bot, line: Line): void;

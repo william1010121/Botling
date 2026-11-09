@@ -53,6 +53,7 @@ function apply(session: RoutinesSession, a: Action) {
     case "Resume": return session.resume(a.job);
     case "Cancel": return session.cancel(a.job);
     case "Append": return session.append(a.line, a.bot, a.paused);
+    case "AppendToReplaced": return session.appendToReplaced(a.line, a.bot);
     case "TakeRead": return session.takeRead(a.bot, a.line);
     case "EditRead": return session.editRead(a.bot);
     case "Rewrite": return session.rewrite(a.bot);
@@ -118,7 +119,7 @@ describe("routines conformance", () => {
   it("random walks follow the model", async () => {
     const walks = [];
     // Without one-shot lines (as before they existed), then with them: each kind of run is seen often.
-    const scheduledOnly = new Set([...WINDOW, "Append", "TakeThenCrash"]);
+    const scheduledOnly = new Set([...WINDOW, "Append", "AppendToReplaced", "TakeThenCrash"]);
     for (let seed = 1; seed <= 60; seed++) walks.push(await walk(seed, 30, scheduledOnly));
     for (let seed = 101; seed <= 130; seed++) walks.push(await walk(seed, 30));
     const seen = coverage(walks);
@@ -152,7 +153,7 @@ function scripted(actions: Action[]): State {
 }
 
 describe("routines one-shot lines", () => {
-  it("a line appended inside a check's takeOnce window is lost: the allowed loss (LostOnlyInRewrite)", () => {
+  it("a line appended inside a check's takeOnce window is kept and runs at the next check; the taken line is not put back", () => {
     const end = scripted([
       { type: "Boot" },
       { type: "Append", line: "L1", bot: "p", paused: false },
@@ -162,11 +163,11 @@ describe("routines one-shot lines", () => {
       { type: "Rewrite", bot: "p" },
       { type: "Check", bot: "p" },
     ]);
-    expect(end.ln).toEqual({ L1: "run", L2: "paused", L3: "lost" });
-    expect(end.log.map((d) => d.job)).toEqual(["L1"]);
+    expect(end.ln).toEqual({ L1: "run", L2: "paused", L3: "run" });
+    expect(end.log.map((d) => d.job)).toEqual(["L1", "L3"]);
   });
 
-  it("any other app rewrite of routines.cron (app_routines pause) loses an append in its window too", () => {
+  it("any other app rewrite of routines.cron (app_routines pause) keeps an append in its window too", () => {
     const end = scripted([
       { type: "Boot" },
       { type: "Append", line: "L1", bot: "p", paused: true },
@@ -175,8 +176,20 @@ describe("routines one-shot lines", () => {
       { type: "Rewrite", bot: "p" },
       { type: "Check", bot: "p" },
     ]);
-    expect(end.ln).toEqual({ L1: "paused", L2: "lost", L3: "none" });
-    expect(end.log).toEqual([]);
+    expect(end.ln).toEqual({ L1: "paused", L2: "run", L3: "none" });
+    expect(end.log.map((d) => d.job)).toEqual(["L2"]);
+  });
+
+  it("what is left: a write through a handle on a file a rewrite already replaced never reaches routines.cron (LostOnlyToReplacedFile)", () => {
+    const end = scripted([
+      { type: "Boot" },
+      { type: "Append", line: "L1", bot: "p", paused: false },
+      { type: "Check", bot: "p" },
+      { type: "AppendToReplaced", line: "L2", bot: "p" },
+      { type: "Check", bot: "p" },
+    ]);
+    expect(end.ln).toEqual({ L1: "run", L2: "lost", L3: "none" });
+    expect(end.log.map((d) => d.job)).toEqual(["L1"]);
   });
 
   it("a line taken by a check that dies before dispatching never runs; the same words appended again run once", () => {

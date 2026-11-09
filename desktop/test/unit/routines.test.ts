@@ -1,6 +1,7 @@
 // Routines (core/routines.ts): CronSchedule, routines.cron and the app-owned schedules, checked with
 // the cases the Swift app's RoutineTests and ScheduledRoutineTests use (same inputs, same answers).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -255,6 +256,79 @@ describe("@once lines in routines.cron (a script waking its bot)", () => {
     expect(routines.takeOnce("@once Alert: one")).toBe(true);
     expect(readFileSync(file, "utf8")).toBe(`# header\n${DAILY_SUMMARY}\n\n# note\n@once Alert: two\n`);
     expect(routines.takeOnce("@once Alert: one")).toBe(false);
+  });
+});
+
+/**
+ * Runs `body` with a script's appends landing inside the app's rewrite of `file`: `before` right before the rename
+ * of the new file over it (into the file the app read), `after` right after it (into the new file).
+ */
+function racing(file: string, { before = [], after = [] }: { before?: string[]; after?: string[] }, body: () => void) {
+  const fs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
+  const original = fs.renameSync;
+  let renames = 0;
+  fs.renameSync = ((from: string, to: string) => {
+    if (String(to) !== file) return original(from, to);
+    renames++;
+    for (const line of before) appendFileSync(file, line);
+    original(from, to);
+    for (const line of after) appendFileSync(file, line);
+  }) as typeof fs.renameSync;
+  syncBuiltinESMExports();
+  try { body(); } finally {
+    fs.renameSync = original;
+    syncBuiltinESMExports();
+  }
+  expect(renames).toBe(1);
+}
+
+describe("an app rewrite of routines.cron keeps what a script appends meanwhile (the user, 2026-11-09)", () => {
+  const cron = (text: string) => {
+    const file = join(tempDir("routines-race"), "routines.cron");
+    if (text) writeFileSync(file, text);
+    return file;
+  };
+
+  it("takeOnce: lines appended before the rename come back, the taken line does not, the same words appended again do", () => {
+    const file = cron("# h\n@once A: one\n");
+    let taken = false;
+    racing(file, { before: ["@once A: two\n", "@once A: one\n"] }, () => { taken = new RoutineFile(file).takeOnce("@once A: one"); });
+    expect(taken).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe("# h\n@once A: two\n@once A: one\n");
+  });
+
+  it("takeOnce: a line appended after the rename is there once, not repeated", () => {
+    const file = cron("@once A: one\n# h\n");
+    racing(file, { before: ["@once B: x\n"], after: ["@once C: y\n"] }, () => new RoutineFile(file).takeOnce("@once A: one"));
+    expect(readFileSync(file, "utf8")).toBe("# h\n@once C: y\n@once B: x\n");
+  });
+
+  it("add (a plugin's addRoutine) keeps an appended line", () => {
+    const file = cron(`# h\n${DAILY_SUMMARY}\n`);
+    racing(file, { before: ["@once Alert: done\n"] }, () => new RoutineFile(file).add(parseRoutine("0 9 * * * Morning: hello")!));
+    expect(readFileSync(file, "utf8")).toBe(`# h\n${DAILY_SUMMARY}\n0 9 * * * Morning: hello\n@once Alert: done\n`);
+  });
+
+  it("update cancel/pause keep an appended line and never bring back the line they removed or changed", () => {
+    const file = cron(`${DAILY_SUMMARY}\n@once Alert: old\n`);
+    racing(file, { before: ["@once Alert: new\n"] }, () => new RoutineFile(file).update("@once Alert: old", "cancel"));
+    expect(readFileSync(file, "utf8")).toBe(`${DAILY_SUMMARY}\n@once Alert: new\n`);
+    racing(file, { before: ["30 7 * * * Wake: up\n"] }, () => new RoutineFile(file).update(parseRoutine(DAILY_SUMMARY)!.id, "pause"));
+    expect(readFileSync(file, "utf8")).toBe(`#${DAILY_SUMMARY}\n@once Alert: new\n30 7 * * * Wake: up\n`);
+  });
+
+  it("create keeps what a script wrote into the file it was about to make", () => {
+    const file = cron("");
+    racing(file, { before: ["@once Alert: early\n"] }, () => new RoutineFile(file).create([DAILY_SUMMARY]));
+    const text = readFileSync(file, "utf8");
+    expect(text.endsWith(`${DAILY_SUMMARY}\n@once Alert: early\n`)).toBe(true);
+    expect(text.split("\n").filter((line) => line === "@once Alert: early")).toHaveLength(1);
+  });
+
+  it("a line appended without a final newline is kept as its own line", () => {
+    const file = cron("@once A: one\n");
+    racing(file, { before: ["@once B: x"] }, () => new RoutineFile(file).takeOnce("@once A: one"));
+    expect(readFileSync(file, "utf8")).toBe("@once B: x\n");
   });
 });
 

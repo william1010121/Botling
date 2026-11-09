@@ -13,15 +13,19 @@
 (* One-shot lines, "@once Name: what to do" in routines.cron (a script the bot started appends one): *)
 (* the check takes the line out of the file (RoutineFile.takeOnce) and only then dispatches it, so a *)
 (* line runs at most once; a line appended again is a new line and runs again. A "#@once" line is    *)
-(* paused and never runs. Each app rewrite of routines.cron (takeOnce, add, pause/resume/cancel)    *)
-(* reads the file and later renames a new one over it: a line another process writes in between is *)
-(* lost. takeOnce rereads and compares right before writing, which narrows that window to the temp  *)
-(* file's write+fsync+rename, but does not close it. The model lets it happen (TakeRead/EditRead,   *)
-(* then Rewrite) and checks that it is the only way a line disappears unrun.                         *)
+(* paused and never runs. Each app rewrite of routines.cron (takeOnce, create, add, pause/resume/     *)
+(* cancel) reads the file through a handle it keeps, renames a new file over it, then reads the old *)
+(* file again through the handle and appends back what other programs wrote into it meanwhile; the  *)
+(* lines it read are never put back, so the line it took or changed stays taken or changed          *)
+(* (TakeRead/EditRead, Append in between, then Rewrite). What is left: a write through a handle a   *)
+(* script opened on the old file and wrote after the app's second read lands in a file that is no   *)
+(* longer routines.cron (AppendToReplaced), the only way a line is lost.                            *)
 EXTENDS Integers, FiniteSets
 
 CONSTANTS Jobs, Bots, Requests, MaxTime, Cron, Bug  \* Cron: the minutes a recurring/legacy job runs at
-CONSTANTS Lines, OnceBug  \* Lines: one-shot line instances (each appended at most once); OnceBug: dispatch before removal
+CONSTANTS Lines, OnceBug  \* Lines: one-shot line instances (each appended at most once)
+\* OnceBug: "none"; "dispatch-first" (a line dispatched before it is taken out); "resurrect" (the repair appends back
+\* what the old file has and the new one lacks, the taken line too).
 
 None == -1
 Time == 0..MaxTime
@@ -45,12 +49,10 @@ VARIABLES
   looked,             \* the clock has looked at this bot's file while broken since it last saw it ok
   ln, lowner,         \* each one-shot line: its state and the bot whose routines.cron holds it
   lfires,             \* how often each one-shot line was dispatched (capped at 2)
-  tk,                 \* an app rewrite of a bot's routines.cron in flight: the line it takes, "edit", or "none"
-  snap,               \* the lines (one-shot and legacy) that rewrite read, and so writes back
-  dropped             \* legacy jobs whose line such a rewrite lost
+  tk                  \* an app rewrite of a bot's routines.cron in flight: the line it takes, "edit", or "none"
 
-lineVars == <<ln, lowner, lfires, tk, snap, dropped>>
-vars == <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires, tk, snap, dropped>>
+lineVars == <<ln, lowner, lfires, tk>>
+vars == <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires, tk>>
 
 Max(a, b) == IF a > b THEN a ELSE b
 Min(a, b) == IF a < b THEN a ELSE b
@@ -70,7 +72,6 @@ Mark(j) == IF kind[j] = "legacy" THEN now ELSE Occ(j)
 \* The core runs one thing at a time: nothing else of it happens while it rewrites a routines.cron.
 Idle == \A b \in Bots : tk[b] = "none"
 InFile(o) == ln[o] \in {"in", "paused"}
-LegacyIn(j) == kind[j] = "legacy" /\ st[j] \in {"pending", "paused"}
 
 TypeOK ==
   /\ now \in Time /\ up \in BOOLEAN
@@ -79,7 +80,7 @@ TypeOK ==
   /\ req \in [Jobs -> Requests \cup {"none"}] /\ fires \in [Jobs \X Time -> 0..2]
   /\ file \in [Bots -> {"ok", "broken"}] /\ told \in [Bots -> BOOLEAN] /\ said \in [Bots -> BOOLEAN] /\ looked \in [Bots -> BOOLEAN]
   /\ ln \in [Lines -> LineStates] /\ lowner \in [Lines -> Bots \cup {"none"}] /\ lfires \in [Lines -> 0..2]
-  /\ tk \in [Bots -> Lines \cup {"none", "edit"}] /\ snap \in [Bots -> SUBSET (Lines \cup Jobs)] /\ dropped \subseteq Jobs
+  /\ tk \in [Bots -> Lines \cup {"none", "edit"}]
 
 Init ==
   /\ now = 0 /\ up = FALSE
@@ -88,7 +89,7 @@ Init ==
   /\ req = [j \in Jobs |-> "none"] /\ fires = [p \in Jobs \X Time |-> 0]
   /\ file = [b \in Bots |-> "ok"] /\ told = [b \in Bots |-> FALSE] /\ said = [b \in Bots |-> FALSE] /\ looked = [b \in Bots |-> FALSE]
   /\ ln = [o \in Lines |-> "none"] /\ lowner = [o \in Lines |-> "none"] /\ lfires = [o \in Lines |-> 0]
-  /\ tk = [b \in Bots |-> "none"] /\ snap = [b \in Bots |-> {}] /\ dropped = {}
+  /\ tk = [b \in Bots |-> "none"]
 
 -----------------------------------------------------------------------------
 \* The environment: time passes, the app stops and starts, a file breaks or is mended.
@@ -97,8 +98,8 @@ Tick == now < MaxTime /\ now' = now + 1 /\ UNCHANGED <<up, st, kind, owner, at, 
 
 \* A rewrite in flight dies with the app: the file keeps what it held.
 Crash ==
-  /\ up /\ up' = FALSE /\ tk' = [b \in Bots |-> "none"] /\ snap' = [b \in Bots |-> {}]
-  /\ UNCHANGED <<now, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires, dropped>>
+  /\ up /\ up' = FALSE /\ tk' = [b \in Bots |-> "none"]
+  /\ UNCHANGED <<now, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires>>
 
 \* Startup reads each bot's routines; that read is not a notice (c0154c79: with Bug it counted as one).
 Boot ==
@@ -134,7 +135,7 @@ Check(b) ==
         /\ LET taken == {o \in Lines : lowner[o] = b /\ ln[o] = "in"}
            IN /\ ln' = [o \in Lines |-> IF o \in taken THEN "run" ELSE ln[o]]
               /\ lfires' = [o \in Lines |-> IF o \in taken THEN Min(lfires[o] + 1, 2) ELSE lfires[o]]
-  /\ UNCHANGED <<now, up, kind, owner, at, req, file, lowner, tk, snap, dropped>>
+  /\ UNCHANGED <<now, up, kind, owner, at, req, file, lowner, tk>>
 
 \* The claim is written, then the app dies before dispatching: the job stays claimed.
 ClaimThenCrash(j) ==
@@ -189,46 +190,47 @@ Cancel(j) ==
 Append(o, b, s) ==
   /\ ln[o] = "none"
   /\ ln' = [ln EXCEPT ![o] = s] /\ lowner' = [lowner EXCEPT ![o] = b]
-  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, lfires, tk, snap, dropped>>
+  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, lfires, tk>>
 
-\* What an app rewrite of b's routines.cron reads (and will write back).
-Read(b) == {o \in Lines : lowner[o] = b /\ InFile(o)} \cup {j \in Jobs : owner[j] = b /\ LegacyIn(j)}
+\* A write through a handle a script opened on routines.cron before an app rewrite renamed a new file
+\* over it, made after the app read the old file back: it lands in the replaced file and is lost.
+AppendToReplaced(o, b) ==
+  /\ ln[o] = "none"
+  /\ ln' = [ln EXCEPT ![o] = "lost"] /\ lowner' = [lowner EXCEPT ![o] = b]
+  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, lfires, tk>>
 
-\* A check's takeOnce of line o has read the file the last time before writing it (its compare matched).
+\* A check's takeOnce of line o has read the file (through the handle it keeps).
 TakeRead(b, o) ==
   /\ up /\ Idle /\ lowner[o] = b /\ ln[o] = "in"
-  /\ tk' = [tk EXCEPT ![b] = o] /\ snap' = [snap EXCEPT ![b] = Read(b)]
-  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires, dropped>>
+  /\ tk' = [tk EXCEPT ![b] = o]
+  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires>>
 
-\* Any other app rewrite of routines.cron (add, pause, resume, cancel) has read it; its own change is
+\* Any other app rewrite of routines.cron (create, add, pause, resume, cancel) has read it; its own change is
 \* the atomic action of that name, this is only the window it leaves.
 EditRead(b) ==
   /\ up /\ Idle
-  /\ tk' = [tk EXCEPT ![b] = "edit"] /\ snap' = [snap EXCEPT ![b] = Read(b)]
-  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires, dropped>>
+  /\ tk' = [tk EXCEPT ![b] = "edit"]
+  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, ln, lowner, lfires>>
 
-\* The new file is renamed over the old one: what was read comes back (less the taken line), whatever
-\* was written since is lost; a taken line is then dispatched.
+\* The new file is renamed over the old one, the old one is read again and what was written into it since
+\* the first read is appended back: every line in the file stays (one-shot or legacy) but the taken one,
+\* which is then dispatched. With "resurrect" the taken line is appended back too.
 Rewrite(b) ==
   /\ tk[b] # "none"
   /\ LET o == tk[b]
-         lostL == {i \in Lines : lowner[i] = b /\ InFile(i) /\ i \notin snap[b]}
-         lostJ == {j \in Jobs : owner[j] = b /\ LegacyIn(j) /\ j \notin snap[b]}
-     IN /\ ln' = [i \in Lines |-> IF i = o THEN "run" ELSE IF i \in lostL THEN "lost" ELSE ln[i]]
+     IN /\ ln' = [i \in Lines |-> IF i = o /\ OnceBug # "resurrect" THEN "run" ELSE ln[i]]
         /\ lfires' = [i \in Lines |-> IF i = o THEN Min(lfires[i] + 1, 2) ELSE lfires[i]]
-        /\ st' = [j \in Jobs |-> IF j \in lostJ THEN "cancelled" ELSE st[j]]
-        /\ dropped' = dropped \cup lostJ
-  /\ tk' = [tk EXCEPT ![b] = "none"] /\ snap' = [snap EXCEPT ![b] = {}]
-  /\ UNCHANGED <<now, up, kind, owner, at, since, last, req, fires, file, told, said, looked, lowner>>
+  /\ tk' = [tk EXCEPT ![b] = "none"]
+  /\ UNCHANGED <<now, up, st, kind, owner, at, since, last, req, fires, file, told, said, looked, lowner>>
 
 \* A check takes line o and the app dies before dispatching it: the line is gone, never run (at most
-\* once). With OnceBug the order is reversed: dispatched, then the app dies before taking it out.
+\* once). With "dispatch-first" the order is reversed: dispatched, then the app dies before taking it out.
 TakeThenCrash(b, o) ==
   /\ up /\ Idle /\ lowner[o] = b /\ ln[o] = "in" /\ up' = FALSE
-  /\ IF OnceBug
+  /\ IF OnceBug = "dispatch-first"
      THEN lfires' = [lfires EXCEPT ![o] = Min(@ + 1, 2)] /\ UNCHANGED ln
      ELSE ln' = [ln EXCEPT ![o] = "taken"] /\ UNCHANGED lfires
-  /\ UNCHANGED <<now, st, kind, owner, at, since, last, req, fires, file, told, said, looked, lowner, tk, snap, dropped>>
+  /\ UNCHANGED <<now, st, kind, owner, at, since, last, req, fires, file, told, said, looked, lowner, tk>>
 
 -----------------------------------------------------------------------------
 
@@ -240,7 +242,8 @@ Next ==
        \/ Create(j, r, "recurring", b, None)
        \/ \E a \in (now + 1)..MaxTime : Create(j, r, "once", b, a)
   \/ \E b \in Bots : EditRead(b) \/ Rewrite(b)
-  \/ \E o \in Lines, b \in Bots : Append(o, b, "in") \/ Append(o, b, "paused") \/ TakeRead(b, o) \/ TakeThenCrash(b, o)
+  \/ \E o \in Lines, b \in Bots : Append(o, b, "in") \/ Append(o, b, "paused") \/ AppendToReplaced(o, b)
+       \/ TakeRead(b, o) \/ TakeThenCrash(b, o)
 
 \* While the app runs, the clock keeps looking at every bot (it gets its turn between the app's other
 \* rewrites of routines.cron, so strong fairness), and a rewrite the app started finishes.
@@ -263,7 +266,7 @@ OneSchedulePerRequest == \A i, k \in Jobs : i # k /\ Made(i) /\ Made(k) /\ Sched
 \* A one-shot line is dispatched at most once, and only after it is out of the file.
 OnceLineRunsOnce == \A o \in Lines : lfires[o] <= 1
 RemovedBeforeRun == \A o \in Lines : lfires[o] > 0 => ln[o] = "run"
-\* A line out of the file unrun was taken by a check that died, or lost to a rewrite (LostOnlyInRewrite).
+\* A line out of the file unrun was taken by a check that died (NoLineInFileIsLost).
 RunMeansDispatched == \A o \in Lines : ln[o] = "run" => lfires[o] = 1
 
 \* Once the clock has looked at a broken file, the chat says so.
@@ -275,12 +278,10 @@ InactiveNeverFires ==
   [][/\ \A j \in Jobs : st[j] \in {"none", "paused", "cancelled", "claimed", "fired"} => \A t \in Time : fires'[<<j, t>>] = fires[<<j, t>>]
      /\ \A o \in Lines : ln[o] # "in" => lfires'[o] = lfires[o]]_vars
 
-\* The allowed loss, and the only one: a line (one-shot or legacy) disappears unrun only when it was
-\* written into the file after an app rewrite in flight had read it.
-LostOnlyInRewrite ==
-  [][/\ \A o \in Lines : ln'[o] = "lost" /\ ln[o] # "lost" => tk[lowner[o]] # "none" /\ o \notin snap[lowner[o]]
-     /\ \A j \in Jobs : j \in dropped' \ dropped => tk[owner[j]] # "none" /\ j \notin snap[owner[j]]
-     /\ \A o \in Lines : InFile(o) /\ ~InFile(o)' => ln'[o] \in {"run", "taken", "lost"}]_vars
+\* No line in routines.cron is lost: it leaves the file only taken by a check (run, or the app died before
+\* dispatching it), however a script's append and an app rewrite interleave. A lost line never reached it.
+NoLineInFileIsLost == [][\A o \in Lines : InFile(o) /\ ~InFile(o)' => ln'[o] \in {"run", "taken"}]_vars
+LostOnlyToReplacedFile == [][\A o \in Lines : ln'[o] = "lost" /\ ln[o] # "lost" => ln[o] = "none"]_vars
 
 \* A broken file's jobs are kept as they were: never changed, dispatched or read as empty.
 BrokenKeepsJobs == [][\A j \in Jobs : Scheduled(j) /\ file[owner[j]] = "broken" => UNCHANGED <<st[j], since[j], last[j], req[j]>> /\ \A t \in Time : fires'[<<j, t>>] = fires[<<j, t>>]]_vars

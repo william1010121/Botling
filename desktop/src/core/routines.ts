@@ -17,7 +17,7 @@
 // The file format is 1.x's (Swift JSONEncoder: dates as seconds since 2001-01-01, nil keys left
 // out), so either app can read the other's file. 2.0 locks with its own lock file
 // (`scheduled-routines.json.botling2.lock`, not 1.x's flock).
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { withFileLock, writeFileAtomic } from "./durable/atomic";
@@ -281,7 +281,42 @@ export const ROUTINE_TICK_MS = 15_000;
 
 export class RoutineError extends Error {}
 
-/** A bot's routines.cron (`RoutineFile`): comments and blank lines are kept as they are. */
+/** The whole of an open file, from its start (whatever was written to it since it was opened, too). */
+function readAll(fd: number): string {
+  const size = fstatSync(fd).size;
+  const buffer = Buffer.alloc(size);
+  let read = 0;
+  while (read < size) {
+    const n = readSync(fd, buffer, read, size - read, read);
+    if (n === 0) break;
+    read += n;
+  }
+  return buffer.toString("utf8", 0, read);
+}
+
+/** The lines of `after` beyond those of `before`, counted as a multiset and kept in order: what another program wrote meanwhile. */
+export function addedLines(before: string, after: string): string[] {
+  const left = new Map<string, number>();
+  for (const line of before.split("\n")) left.set(line, (left.get(line) ?? 0) + 1);
+  const added: string[] = [];
+  for (const line of after.split("\n")) {
+    const n = left.get(line) ?? 0;
+    if (n > 0) left.set(line, n - 1);
+    else if (line.trim()) added.push(line);
+  }
+  return added;
+}
+
+/**
+ * A bot's routines.cron (`RoutineFile`): comments and blank lines are kept as they are.
+ *
+ * Scripts the bot starts append lines to it (`echo "@once …" >> routines.cron`) without any lock, at any moment, so
+ * every change the app makes (`rewrite`) keeps them: it reads the file through a handle it keeps open, writes the new
+ * file and renames it over the old one, then reads the old file again through that handle. A line that reached the old
+ * file after the app read it (an append landing between the read and the rename) is in that second read and is
+ * appended back to the new file. The lines the app read are never put back, so a line it removed (a taken @once line,
+ * a cancelled job) or changed stays removed or changed.
+ */
 export class RoutineFile {
   constructor(readonly file: string) {}
 
@@ -297,60 +332,108 @@ export class RoutineFile {
     return lines;
   }
 
-  private write(lines: string[]) {
-    writeFileAtomic(this.file, `${lines.join("\n")}\n`);
-  }
-
   load(): Routine[] {
     return this.lines().map(parseRoutine).filter((job): job is Routine => job !== null);
+  }
+
+  /**
+   * One change: `change` gets the file's text and returns the new text (or only a result: nothing to write). "r" needs
+   * the file (ENOENT is thrown); "a+" makes an empty one first. A file another program replaced as a whole while the
+   * change was made (an editor's save) is read again, up to 5 times.
+   */
+  private rewrite<T>(mode: "r" | "a+", change: (text: string) => { text: string; result: T } | { result: T }): T {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (mode === "a+") mkdirSync(dirname(this.file), { recursive: true });
+      const fd = openSync(this.file, mode);
+      try {
+        const before = readAll(fd);
+        const next = change(before);
+        if (!("text" in next)) return next.result;
+        if (!this.holds(fd)) continue;
+        writeFileAtomic(this.file, next.text);
+        const added = addedLines(before, readAll(fd));
+        if (added.length) this.appendBack(added);
+        return next.result;
+      } finally {
+        closeSync(fd);
+      }
+    }
+    throw new RoutineError("routines.cron kept being replaced while the app changed it; nothing was changed.");
+  }
+
+  /** The open file is still the one at the path (not replaced as a whole since it was opened). */
+  private holds(fd: number): boolean {
+    try {
+      const open = fstatSync(fd);
+      const now = statSync(this.file);
+      return open.ino === now.ino && open.dev === now.dev;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Appends lines another program wrote into the file the app replaced; a job line the new file already has is not repeated (an @once line always is its own run). */
+  private appendBack(lines: string[]) {
+    let text = "";
+    try { text = readFileSync(this.file, "utf8"); } catch { /* gone: append makes it */ }
+    const have = new Set(text.split("\n"));
+    const missing = lines.filter((line) => parseRoutine(line)?.once || !have.has(line));
+    if (!missing.length) return;
+    appendFileSync(this.file, `${text && !text.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`);
   }
 
   /** Writes the file with its header and `jobs` when it is not there yet. */
   create(jobs: string[]) {
     if (this.exists) return;
-    this.write([...ROUTINE_HEADER, ...jobs]);
+    this.rewrite("a+", (text) => (text ? { result: undefined } : { text: `${[...ROUTINE_HEADER, ...jobs].join("\n")}\n`, result: undefined }));
   }
 
   add(job: Routine) {
-    this.write([...this.lines(), routineLine(job)]);
+    this.rewrite("a+", (text) => {
+      const lines = text ? text.split("\n") : [];
+      if (lines.at(-1) === "") lines.pop();
+      return { text: `${[...lines, routineLine(job)].join("\n")}\n`, result: undefined };
+    });
   }
 
   /**
    * Takes a one-shot line out before it runs (true: it was there, so run it once; false: gone, run nothing). Other
-   * lines and comments stay; the file is read again right before the atomic write, so a line a script appended in
-   * between is kept (retried, not overwritten).
+   * lines and comments stay, and so does anything appended meanwhile (`rewrite`); the taken line is never put back.
    */
   takeOnce(id: string): boolean {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      let text: string;
-      try { text = readFileSync(this.file, "utf8"); } catch { return false; }
-      const lines = text.split("\n");
-      const index = lines.findIndex((line) => { const job = parseRoutine(line); return !!job?.once && job.enabled && job.id === id; });
-      if (index < 0) return false;
-      lines.splice(index, 1);
-      let now: string;
-      try { now = readFileSync(this.file, "utf8"); } catch { return false; }
-      if (now !== text) continue;
-      writeFileAtomic(this.file, lines.join("\n"));
-      return true;
+    try {
+      return this.rewrite("r", (text) => {
+        const lines = text.split("\n");
+        const index = lines.findIndex((line) => { const job = parseRoutine(line); return !!job?.once && job.enabled && job.id === id; });
+        if (index < 0) return { result: false };
+        lines.splice(index, 1);
+        return { text: lines.join("\n"), result: true };
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
     }
-    throw new RoutineError("routines.cron kept changing; the one-shot line was left for the next check.");
   }
 
   /** Checked change for the app's tools (`update(id:operation:)`): cancel removes the line, pause/resume set its #. */
   update(id: string, operation: string) {
-    let text: string;
-    try { text = readFileSync(this.file, "utf8"); } catch (error) { throw new RoutineError(`Cannot read routines.cron: ${(error as Error).message}`); }
-    let found = false;
-    const changed = text.split("\n").flatMap((line) => {
-      const job = parseRoutine(line);
-      if (!job || job.id !== id) return [line];
-      found = true;
-      if (operation === "cancel") return [];
-      return [routineLine({ ...job, enabled: operation === "resume" })];
-    });
-    if (!found) throw new RoutineError("Unknown legacy routine id. Call list to refresh IDs after cron edits.");
-    writeFileAtomic(this.file, changed.join("\n"));
+    try {
+      this.rewrite("r", (text) => {
+        let found = false;
+        const changed = text.split("\n").flatMap((line) => {
+          const job = parseRoutine(line);
+          if (!job || job.id !== id) return [line];
+          found = true;
+          if (operation === "cancel") return [];
+          return [routineLine({ ...job, enabled: operation === "resume" })];
+        });
+        if (!found) throw new RoutineError("Unknown legacy routine id. Call list to refresh IDs after cron edits.");
+        return { text: changed.join("\n"), result: undefined };
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      throw new RoutineError(`Cannot read routines.cron: ${(error as Error).message}`);
+    }
   }
 }
 
