@@ -42,23 +42,31 @@ interface RestartIntent { v: 1; id: string; phase: "preparing" | "ready"; entrie
 
 /**
  * The chat notice for an entry that was not continued. Its queued messages never reached the provider, and nothing sends
- * them now (the entry is blocked as a whole), so the notice names them: the user's words and workers' reports are not
- * lost without a word.
+ * them by itself (the entry is blocked as a whole), so the notice names them: the user's words and workers' reports are
+ * not lost without a word. `own` gives a message of the user's as they wrote it (its chat line): the words queued for the
+ * provider may start with the app's notes (2026-11-09: "(App: In this chat, after your last reply, …" hid the user's
+ * line). `offered`: the chat offers to send them now as they were.
  */
-export function restartPausedNotice(entry: RestartEntry, reason: string): string {
+export function restartPausedNotice(entry: RestartEntry, reason: string, own?: (userId: string) => string | null, offered = false): string {
   const head = `Restart continuation paused (${entry.engine}, ${entry.botId}): ${reason}`;
   const waiting = entry.queued ?? [];
   if (!waiting.length) return head;
+  const clip = (text: string, limit: number) => text.length > limit ? `${text.slice(0, limit)}…` : text;
   const shown = waiting.slice(0, 5).map((q) => {
     const words = q.words.replace(/\s+/g, " ").trim();
     const task = /^<app_task_result\b[^>]*\btask_id="([^"]+)"/.exec(words)?.[1];
-    const what = /^<app_task_result\b/.test(words) ? `a worker's report${task ? ` (task ${task})` : ""}`
-      : `${q.origin === "user" ? "your message" : "an app message"} "${words.length > 80 ? `${words.slice(0, 80)}…` : words}"`;
-    return `- ${what}`;
+    if (/^<app_task_result\b/.test(words)) return `- a worker's report${task ? ` (task ${task})` : ""}`;
+    const yours = q.origin === "user" && q.userId ? own?.(q.userId)?.replace(/\s+/g, " ").trim() : undefined;
+    if (yours) return `- your message "${clip(yours, 300)}"`;
+    return `- ${q.origin === "user" ? "your message" : "an app message"} "${clip(words, 80)}"`;
   });
   if (waiting.length > shown.length) shown.push(`- and ${waiting.length - shown.length} more`);
-  return `${head}\n${waiting.length === 1 ? "This message was" : `These ${waiting.length} messages were`} waiting and were not sent; send again what is still needed:\n${shown.join("\n")}`;
+  const ask = offered ? "pick “Send them now” to send them as they were, or send again what is still needed" : "send again what is still needed";
+  return `${head}\n${waiting.length === 1 ? "This message was" : `These ${waiting.length} messages were`} waiting and were not sent; ${ask}:\n${shown.join("\n")}`;
 }
+
+/** The notice's offer for the messages that waited behind a paused entry. */
+export const RESEND_WAITING = "Send them now";
 
 function validEntry(e: RestartEntry): boolean {
   return !!e && typeof e.botId === "string" && ["claude", "codex", "agy"].includes(e.engine)

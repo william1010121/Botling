@@ -591,7 +591,7 @@ export class Core {
     }, (entry,reason) => {
       const bot=this.bots.get(entry.botId);
       try { bot?.retainRestartIdentity(entry); } catch(error) { this.log(`restart identity: ${String(error)}`); }
-      (bot ?? this.bots.get(MAIN_BOT_ID))?.appNotice(restartPausedNotice(entry, reason));
+      if (bot) bot.restartPaused(entry, reason); else this.bots.get(MAIN_BOT_ID)?.appNotice(restartPausedNotice(entry, reason));
       this.log(`restart ${entry.botId}: ${reason}`);
     }); } catch(error){
       this.log(String(error));

@@ -1,7 +1,7 @@
 import { readImagePaths, readImages } from "./read-images";
 import {nativeRestartContext} from './claude-restart';
 import {claudeConfigFolder} from './claude-files';
-import { RESTART_NOTE, type RestartEntry } from './restart-continuation';
+import { RESEND_WAITING, RESTART_NOTE, restartPausedNotice, type RestartEntry } from './restart-continuation';
 import { monitorTask, type CommandMonitor } from "./agent/monitors";
 import { AgyAcpHead, verifyAcpRuntime } from "./agent/agy-acp";
 import { AGY_EXECUTION_BLOCKED, type AgyConfig } from "./agent/agy";
@@ -178,6 +178,8 @@ export interface BotOptions {
   engine?: Engine;
   /** How long the other head waits for the lead's first words before it gets a message to both anyway (1.x: 20 s). */
   claimWaitMs?: number;
+  /** How long a turn set aside (deferred) and back as the turn under way may wait for claude to begin it (default 90 s). */
+  deferredStartMs?: number;
   ledger: ProcessLedger;
   emit: (event: Event) => void;
   log: (line: string) => void;
@@ -501,6 +503,11 @@ export class Bot {
   private inserting = new Map<string, Turn>();
   /** Our turn that claude has not begun yet, set aside while it answers the other head's words first. */
   private deferred: Turn | null = null;
+  /**
+   * The deferred turn back as the turn under way that claude has not begun yet (no "started", no output), and the clock
+   * that ends it if claude never does: its words were taken into the turn that just ended, so nothing more comes for it.
+   */
+  private unbegun: { turn: Turn; head: AgentHead; timer: ReturnType<typeof setTimeout> } | null = null;
   /** Its routines (the primary's): routines.cron, the app-owned schedules, when each cron job last ran. */
   private routineFile: RoutineFile | null = null;
   private scheduledStore: ScheduledRoutineStore | null = null;
@@ -2817,8 +2824,17 @@ export class Bot {
     // Words steered into a turn, or the other head's words: read in there, nothing more comes for them.
     this.steered.delete(id);
     this.contextSent.delete(id);
+    // The turn set aside and back as the turn under way, not begun: its end after the result means claude took its words
+    // into the turn that just ended (2026-11-09: it waited for a turn that never came, hours of "Thinking").
+    const unbegun = this.unbegun;
+    if (unbegun && unbegun.head === head && this.turn === unbegun.turn && turnCommandId(unbegun.turn) === id) {
+      this.clearUnbegun();
+      this.finishTurn(unbegun.turn, state === "completed" ? "done" : "stopped");
+      this.log(`claude was done with a message set aside for its own turn (${state}) without beginning it: that turn ended`);
+      return;
+    }
     const deferred = this.deferred;
-    if (!deferred || deferred.head !== head || (deferred.userId ?? deferred.messageId).toLowerCase() !== id) return;
+    if (!deferred || deferred.head !== head || turnCommandId(deferred) !== id) return;
     this.deferred = null;
     // Stopped by you meanwhile: closed already, and claude has nothing of it left to interrupt.
     if (!deferred.open) return;
@@ -3400,6 +3416,8 @@ export class Bot {
       if (commandEnded(item.state)) { this.commandEnded(head, item.id, item.state); return; }
       const mid = this.claudeMidTurn.has(head);
       if (item.state === "started") this.claudeMidTurn.add(head);
+      // claude begins a turn: the one set aside is under way after all (or another first, whose result tells).
+      if (item.state === "started" && this.unbegun?.head === head) this.clearUnbegun();
       const steered = this.steered.get(item.id);
       if (steered) {
         if (item.state === "started") { this.steered.delete(item.id); if (!mid) this.steeredStarted(head, steered); }
@@ -3461,6 +3479,8 @@ export class Bot {
     if (this.onSubagentItem(item)) return;
     if (item.kind === "result") this.claudeMidTurn.delete(head);
     else this.claudeMidTurn.add(head);
+    // Output of a turn: claude began the one set aside after all.
+    if (item.kind !== "result" && this.unbegun?.head === head) this.clearUnbegun();
     // The tail of a turn that was cut off: it belongs to nobody.
     if (this.ignoreResults > 0) {
       if (item.kind === "permission") head.answer(item.requestId, false, item.input, "Not now: that turn has ended.");
@@ -3729,6 +3749,7 @@ export class Bot {
   }
 
   private finishTurn(turn: Turn, status: Status, error?: string) {
+    if (this.unbegun?.turn === turn) this.clearUnbegun();
     if (!turn.open) return;
     turn.open = false;
     if (this.turn === turn) this.turn = null;
@@ -3864,6 +3885,33 @@ export class Bot {
     this.updated();
   }
 
+  /**
+   * `turn`, set aside while claude answered a line first, is the turn under way again: claude begins it now, as a rule at
+   * once (it was sent already and waits in claude's queue). Should claude never begin it (its words went into the turn
+   * that just ended, and its end was lost or never said), it ends after `deferredStartMs` and what waits behind it goes:
+   * never a "Thinking" that lasts until the app is restarted.
+   */
+  private awaitBegin(turn: Turn, head: AgentHead) {
+    this.clearUnbegun();
+    const timer = setTimeout(() => {
+      if (this.unbegun?.timer !== timer) return;
+      this.unbegun = null;
+      if (this.turn !== turn || !turn.open || turn.reply.text || turn.steps.length || turn.record) return;
+      this.log(`claude did not begin a message set aside for its own turn within ${Math.round(this.deferredStartMs / 1000)} s: that turn ended, and what waits goes on`);
+      this.finishTurn(turn, "stopped");
+    }, this.deferredStartMs);
+    timer.unref?.();
+    this.unbegun = { turn, head, timer };
+  }
+
+  private get deferredStartMs(): number { return this.options.deferredStartMs ?? 90_000; }
+
+  private clearUnbegun() {
+    if (!this.unbegun) return;
+    clearTimeout(this.unbegun.timer);
+    this.unbegun = null;
+  }
+
   /** The next waiting message, if any; else the idle clock starts. */
   private next(): void {
     // While a stopped turn drains nothing begins (not even the turn set aside): stop() goes on here once it ended.
@@ -3872,7 +3920,7 @@ export class Bot {
     if (deferred) {
       // It was sent already: claude begins it now.
       this.deferred = null;
-      if (deferred.open && deferred.head === this.head && this.head?.running) { this.turn = deferred; return; }
+      if (deferred.open && deferred.head === this.head && this.head?.running) { this.turn = deferred; this.awaitBegin(deferred, this.head); return; }
       // Stopped meanwhile: what claude does with it belongs to nobody.
       if (!deferred.open && deferred.head === this.head && this.head?.running) { this.ignoreResults += 1; this.head.interrupt(); }
     }
@@ -5644,6 +5692,35 @@ export class Bot {
     return [...this.workerViews.values()].filter((r) => r.status === "interrupted" && r.interruptedBy === "restart" && (r.endedAt ?? 0) >= entry.restartedAt!);
   }
 
+  /**
+   * An entry the restart did not continue (`reason`): said in this chat, with the messages that waited behind it. They never
+   * reached the provider, so sending them cannot repeat anything: the notice offers to send them now as they were (your own
+   * lines shown as you wrote them), so your words are never left behind with only a note (2026-11-09).
+   */
+  restartPaused(entry: RestartEntry, reason: string): string {
+    const waiting = (entry.queued ?? []).filter((saved) => ["user", "app", "background"].includes(saved.origin));
+    const own = (userId: string) => this.owner.records.find((record) => record.id === userId && record.role === "user")?.text ?? null;
+    const offered = waiting.length > 0 && !this.owner.readOnly && !!this.botFor(entry.engine);
+    const text = restartPausedNotice(entry, reason, own, offered);
+    if (!offered) return this.appNotice(text);
+    let sent = false;
+    return this.appNotice(text, [{ label: RESEND_WAITING, recommended: true }], (index) => {
+      if (index !== 0 || sent) return;
+      sent = true;
+      const bot = this.botFor(entry.engine);
+      if (!bot) return;
+      // As a continued restart sends them (`adoptRestart`): in their order, each a turn of its own, after any under way.
+      for (const saved of waiting) {
+        const userId = saved.userId && this.owner.records.some((record) => record.id === saved.userId) ? saved.userId : null;
+        const turn = bot.newTurn(userId ? saved.origin as Origin : saved.origin === "user" ? "app" : saved.origin as Origin, saved.words, userId);
+        turn.id = saved.turnId; turn.messageId = saved.messageId; turn.handoffId = saved.handoffId; turn.conducted = saved.conducted;
+        bot.queue.push(turn);
+      }
+      if (!bot.turn) bot.next();
+      this.log(`restart ${entry.botId}: the ${waiting.length} message(s) that waited were sent at the user's pick`);
+    });
+  }
+
   adoptRestart(entry: RestartEntry) {
     const bot=this.retainRestartIdentity(entry);
     const restarted=bot.restartedWorkers(entry);
@@ -5763,6 +5840,8 @@ function union(a: string[] | undefined, b: string[] | undefined): string[] | und
 const firstLine = (text: string) => text.split(/\r?\n/).find((part) => part.length) ?? text;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** The id claude's command_lifecycle names a turn's message by (the one it was sent with), lowercased. */
+const turnCommandId = (turn: Turn) => (turn.userId ?? turn.messageId).toLowerCase();
 
 /** `Bot.preview(of:)`: a line's first line, ≤ 60 characters (what a reply to it quotes). */
 export function preview(record: ChatRecord): string {
