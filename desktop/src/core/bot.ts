@@ -4938,7 +4938,7 @@ export class Bot {
   cardChanged(card: string) {
     if (this.options.primary) return;
     // A pin's card belongs to botling.board (the server tells it: `cardChanged`).
-    if (card.startsWith("pin/")) return;
+    if (card.startsWith("pin/") || card.startsWith("note/")) return;
     const messageId = card.split("/")[0];
     const record = this.records.find((candidate) => candidate.id === messageId);
     if (record) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
@@ -5179,6 +5179,83 @@ export class Bot {
   legacyPins(): unknown[] | null {
     if (this.options.primary) return this.options.primary.legacyPins();
     try { return this.store.loadList("pins.json"); } catch { return null; }
+  }
+
+  // Cards in the bot's note (the Note tab, `notes.cards` / `notes.runCard`): `<show>` lines, drawn live as the chat's are. Their
+  // commands are allowed exactly as any card's (approved-commands.json for the bot's folder, on the app page's ApprovalSheet) and run
+  // by the same runner, each under the run key `note/<bot id>/<card key's tail>`, so two bots' notes never share a run.
+
+  /** The run key of a note card of this bot's (`note/<16 hex>-<n>`). */
+  private noteRunKey(key: string): string {
+    return `note/${this.id}/${key.slice("note/".length)}`;
+  }
+
+  /** The newest data the chat drew each component with (a `<show>` with JSON), for a preview before its command ran. */
+  private chatData(): Map<string, string> {
+    const found = new Map<string, string>();
+    for (const shown of this.cardsShown()) if (shown.data !== "null" && !found.has(shown.name)) found.set(shown.name, shown.data);
+    return found;
+  }
+
+  /** The bot's components as a note's insert menu lists them (its own list first, then the rest of the library). null: no component context. */
+  noteComponents(): { folder: string; readOnly: boolean; components: { name: string; title: string | null; summary: string; offered: boolean; command: string | null; every: number | null; sizes: string[]; icon: string | null; chatData: string | null }[] } | null {
+    if (this.options.primary) return this.options.primary.noteComponents();
+    const context = this.context;
+    if (!context) return null;
+    const library = context.library;
+    const offered = (this.componentList ?? library.names).filter((name) => library.names.includes(name));
+    const chat = this.chatData();
+    const order = [...offered, ...library.names.filter((name) => !offered.includes(name))];
+    return {
+      folder: this.commandFolder, readOnly: this.readOnly,
+      components: order.map((name) => ({
+        name, title: library.shortTitle(name), summary: (library.about(name).trim().split("\n")[0] ?? "").slice(0, 300), offered: offered.includes(name),
+        command: library.command(name), every: library.refreshInterval(name), sizes: library.sizes(name), icon: library.icon(name), chatData: chat.get(name) ?? null,
+      })),
+    };
+  }
+
+  /** Each note card as it draws now: whether its component is there, the command it runs (its own, or its component's when it has no JSON) and that run. */
+  noteCardStates(cards: { key: string; name: string; command: string | null; data: string; refresh: number | null }[]): {
+    key: string; name: string; exists: boolean; command: string | null; folder: string; every: number | null;
+    status: CommandStatus | "static"; data: string; error: string | null; ranAt: number | null; images: Record<string, string>; chatData: string | null;
+  }[] | null {
+    if (this.options.primary) return this.options.primary.noteCardStates(cards);
+    const context = this.context;
+    if (!context) return null;
+    const folder = this.commandFolder;
+    const chat = this.chatData();
+    return cards.map((card) => {
+      const exists = context.library.names.includes(card.name);
+      const command = exists ? displayCommand({ name: card.name, data: card.data, ...(card.command ? { command: card.command } : {}) }, "bot", context.library) : null;
+      const every = command ? card.refresh ?? context.library.refreshInterval(card.name) : null;
+      // A note card has no Detail command of its own (its page cannot run one): only its command is allowed.
+      const state = command ? context.commands.state(this.noteRunKey(card.key), command, null, folder) : null;
+      const data = state?.data ?? card.data;
+      return {
+        key: card.key, name: card.name, exists, command, folder, every,
+        status: state ? state.status : "static", data, error: state?.error ?? null, ranAt: state?.ranAt ?? null,
+        images: data !== "null" ? context.images.urls(data) : {}, chatData: chat.get(card.name) ?? null,
+      };
+    });
+  }
+
+  /** Runs a note card's command when the user allowed it in this folder; `force` runs a finished one again, at most every 2 s. */
+  noteCardRun(key: string, command: string, force: boolean): { folder: string; approved: boolean; started: boolean } | null {
+    if (this.options.primary) return this.options.primary.noteCardRun(key, command, force);
+    const context = this.context;
+    if (!context) return null;
+    const folder = this.commandFolder;
+    const approved = context.commands.isApproved(command, folder);
+    if (!approved || this.readOnly) return { folder, approved, started: false };
+    const run = this.noteRunKey(key);
+    const previous = context.commands.runOf(run, command, folder);
+    if (previous?.status === "running") return { folder, approved, started: false };
+    if (previous && !force) return { folder, approved, started: false };
+    const last = context.commands.lastRan(run);
+    if (previous && last !== null && Date.now() - last < 2_000) return { folder, approved, started: false };
+    void context.commands.run(run, command, folder, true);
+    return { folder, approved, started: true };
   }
 
   // ------------------------------------------------------------------------------------------

@@ -11,6 +11,14 @@
 //                                                         a component of the library drawn as a tile: the reply is
 //                                                         the URL of a card page (botling-card://page/<token>) it may
 //                                                         frame, read only (plugin-extraction.md W4, `ccb.tile`)
+//                  { ccb: "card", id, component, data, botId }
+//                                                         a component of the library drawn as in a chat reply (its width
+//                                                         follows its frame, its height its content): the reply is the URL of
+//                                                         its card page, which posts { ccb: "size", height } to the frame
+//                                                         holding it and takes { ccbData } (`ccb.card`, the Note tab's cards)
+//                  { ccb: "snapshot", id, botId, rect }   a picture of a part of this frame (x, y, width, height in its own
+//                                                         CSS px), kept in the bot's note-assets; the reply is { ref, url }
+//                                                         (`ccb.snapshot`, the Note tab's "freeze to image"; needs "files")
 //                  { ccb: "approval", id, botId, command, folder, card?, detail? }
 //                                                         asks the user to allow a bot's command: the page around it
 //                                                         shows its own ApprovalSheet; the reply is { allowed }. A
@@ -33,7 +41,12 @@ export type FrameRequest =
   | { ccb: "panel"; visible: boolean }
   | { ccb: "key"; key: string; code: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean }
   | { ccb: "tile"; id: number; component: string; data: unknown; size: TileSize; botId: string }
+  | { ccb: "card"; id: number; component: string; data: unknown; botId: string }
+  | { ccb: "snapshot"; id: number; botId: string; rect: FrameRect }
   | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string; detail?: string };
+
+/** A part of a frame, in its own CSS px. */
+export interface FrameRect { x: number; y: number; width: number; height: number }
 
 /** The sizes a frame's tile may have (a whiteboard card's picture: 1×1 or 2×1; its report shows it 2×2). */
 export const TILE_SIZES = ["1x1", "2x1", "2x2"] as const;
@@ -66,6 +79,8 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   key: ["ccb", "key", "code", "metaKey", "ctrlKey", "altKey", "shiftKey"],
   tile: ["ccb", "id", "component", "data", "size", "botId"],
   approval: ["ccb", "id", "botId", "command", "folder", "card", "detail"],
+  card: ["ccb", "id", "component", "data", "botId"],
+  snapshot: ["ccb", "id", "botId", "rect"],
 };
 const text = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
@@ -91,6 +106,18 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
     case "tile":
       if (!Number.isSafeInteger(message.id) || !text(message.component, 200) || !text(message.botId, 64) || !(TILE_SIZES as readonly unknown[]).includes(message.size)) return null;
       return { ccb: "tile", id: message.id as number, component: message.component, data: message.data ?? null, size: message.size as TileSize, botId: message.botId };
+    case "card":
+      if (!Number.isSafeInteger(message.id) || !text(message.component, 200) || !text(message.botId, 64)) return null;
+      return { ccb: "card", id: message.id as number, component: message.component, data: message.data ?? null, botId: message.botId };
+    case "snapshot": {
+      const rect = message.rect as Record<string, unknown> | null;
+      if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !rect || typeof rect !== "object" || Array.isArray(rect)) return null;
+      const keys = Object.keys(rect);
+      if (keys.length !== 4 || !["x", "y", "width", "height"].every((key) => typeof rect[key] === "number" && Number.isFinite(rect[key]))) return null;
+      const { x, y, width, height } = rect as unknown as FrameRect;
+      if (width <= 0 || height <= 0 || width > 10_000 || height > 10_000) return null;
+      return { ccb: "snapshot", id: message.id as number, botId: message.botId, rect: { x, y, width, height } };
+    }
     case "approval":
       if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.command, 20_000) || !text(message.folder, 4_000)) return null;
       if (message.card !== undefined && !text(message.card, 200)) return null;

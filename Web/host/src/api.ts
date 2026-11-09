@@ -46,11 +46,13 @@ export interface PluginEvents {
   maintainerReplied: { role: string; text: string; running: boolean };
   /** A bot's note (`notes.read`) changed on disk by someone else (a bot, another editor) since this plugin read or saved it; `mtime` null: it was removed. Read it again with `notes.read`. */
   noteChanged: { botId: string; mtime: number | null };
+  /** A card in a bot's note ran (started or finished): read `notes.cards` again for its state. `key` is the card's (`NoteCard.key`). */
+  noteCardChanged: { botId: string; key: string };
 }
 export type PluginEventName = keyof PluginEvents;
 /** A tag this plugin declared (`contributes.replyTags`) in a bot's reply, as the bot wrote it; the chat never shows it. */
 export interface ReplyTag { bot: BotInfo; tag: string; attributes: Record<string, string>; body: string }
-export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged"];
+export const EVENT_NAMES: readonly PluginEventName[] = ["messagePosted", "turnStarted", "turnFinished", "workerDone", "chatRead", "developerChanged", "botRemoved", "cardChanged", "componentsChanged", "libraryChanged", "maintainerReplied", "noteChanged", "noteCardChanged"];
 
 /** A line of a chat as Botling keeps it (chat.json's record: its id, role, words, Swift date and the rest). */
 export interface ChatLine { id: string; role: string; text: string; date: number; [field: string]: unknown }
@@ -376,6 +378,53 @@ export type NoteLocalized =
   | { saved: true; text: string; mtime: number; copied: Array<{ from: string; ref: string }>; missing: string[]; failed: Array<{ from: string; error: string }> }
   | { saved: false; text: string; mtime: number; copied: []; missing: []; failed: [] };
 
+/** A fork in a note: `<!-- branch: name -->`, then its routes (format: note-format.ts). Lines are 0-based. */
+export interface NoteFork { key: string; name: string; line: number; end: number | null; routes: NoteRoute[] }
+/** A route of a fork: `<!-- route: name -->` and the lines up to `end` (exclusive). */
+export interface NoteRoute { key: string; name: string; line: number; end: number; forks: NoteFork[] }
+/** A `<show name="…">…</show>` in a note, as the chat reads one. */
+export interface NoteCard {
+  /** `note/<16 hex>-<n>`: from its name and command, the nth such card; kept while the note changes around it. */
+  key: string; line: number; endLine: number; name: string; command: string | null;
+  /** refresh="10m" in seconds; null: none (or past an hour). */
+  refresh: number | null;
+  /** Its JSON ("null" when empty). */
+  data: string; attributes: Record<string, string>; source: string;
+  /** The innermost route it is in (its key); null: shared. */
+  route: string | null;
+}
+/** One way through a note's forks: each fork's key to a route's name. */
+export type NoteRoutePicks = Record<string, string>;
+export interface NoteParsed {
+  forks: NoteFork[]; cards: NoteCard[];
+  /** Every way through, first routes first. */
+  routes: NoteRoutePicks[];
+  /** Marker lines that could not be placed and cards that could not be read (kept as text). */
+  problems: { line: number; message: string }[];
+  /** With `picks`: the note as that way reads it, without markers, and where each line came from. */
+  view?: { text: string; lines: number[] };
+}
+/** A component for a note's insert menu. */
+export interface NoteComponent {
+  name: string; title: string | null; summary: string;
+  /** In the bot's own list (else elsewhere in the library). */
+  offered: boolean;
+  /** Its Command: an empty `<show name="…"></show>` runs it. */
+  command: string | null; every: number | null; sizes: string[]; icon: string | null;
+  /** The newest JSON the bot's chat drew it with (a preview); null: none. */
+  chatData: string | null;
+}
+/** A note card as it draws now. */
+export interface NoteCardState {
+  key: string; name: string; exists: boolean;
+  /** What it runs: its command="…", or its component's Command when it has no JSON; null: it shows its JSON. */
+  command: string | null; folder: string; every: number | null;
+  status: "static" | "approve" | "idle" | "running" | "done" | "failed";
+  /** JSON to draw: the last run's output, else its own JSON. */
+  data: string; error: string | null; ranAt: number | null;
+  images: Record<string, string>; chatData: string | null;
+}
+
 export interface BotlingApi {
   /** `appDataDir`: Botling's data folder, given to a built-in plugin only (to take over files the core used to keep). */
   readonly plugin: { name: string; version: string; dir: string; storageDir: string; appDataDir?: string };
@@ -436,6 +485,18 @@ export interface BotlingApi {
     assetUrls(botId: string, refs: string[]): Promise<Record<string, string | null>>;
     /** Copies every picture the note links by absolute path, ~/… or file: URL into note-assets and links the copies instead. */
     localizeImages(botId: string, opts?: { base?: number }): Promise<NoteLocalized>;
+    /** A note's branches and cards as the core reads them (what bots are told), from `text`; with `picks`, also the view of that way through. */
+    parse(text: string, picks?: NoteRoutePicks): Promise<NoteParsed>;
+    /** The bot's components for the insert menu: its own list first, then the rest of the library. */
+    components(botId: string): Promise<{ folder: string; readOnly: boolean; components: NoteComponent[] }>;
+    /** Each card in the note (or in `text`, the editor's words not yet saved) with what it draws now. */
+    cards(botId: string, opts?: { text?: string }): Promise<NoteCardState[]>;
+    /**
+     * Runs card `key`'s command in the bot's folder, only if the user allowed it there (else `needsApproval`: hand it to the
+     * frame's `ccb.requestApproval({ botId, ...needsApproval })`, then call again). A finished card runs again only with `force`
+     * (↻, its refresh timer), at most every 2 s. `noteCardChanged` says when its state changes.
+     */
+    runCard(botId: string, key: string, opts?: { force?: boolean; text?: string }): Promise<{ started: boolean; needsApproval: { command: string; folder: string; card: string } | null }>;
   };
   keybindings: {
     /** Every key in effect ("Mod+Shift+L"): Botling's (default or the user's) and plugins' commands'. */
@@ -703,6 +764,10 @@ export function createApi(host: HostSide, plugin: Loaded): BotlingApi {
       importAsset: async (botId, source) => (await ask("notes.importAsset", { bot: botId, ...("path" in source ? { path: source.path } : { data: source.data, name: source.name }) })) as NoteAsset & { url: string },
       assetUrls: async (botId, refs) => (await ask("notes.assetUrls", { bot: botId, refs })) as Record<string, string | null>,
       localizeImages: async (botId, opts = {}) => (await ask("notes.localizeImages", { bot: botId, ...(opts.base === undefined ? {} : { base: opts.base }) })) as NoteLocalized,
+      parse: async (text, picks) => (await ask("notes.parse", { text, ...(picks ? { picks } : {}) })) as NoteParsed,
+      components: async (botId) => (await ask("notes.components", { bot: botId })) as { folder: string; readOnly: boolean; components: NoteComponent[] },
+      cards: async (botId, opts = {}) => (await ask("notes.cards", { bot: botId, ...(opts.text === undefined ? {} : { text: opts.text }) })) as NoteCardState[],
+      runCard: async (botId, key, opts = {}) => (await ask("notes.runCard", { bot: botId, key, ...(opts.force ? { force: true } : {}), ...(opts.text === undefined ? {} : { text: opts.text }) })) as { started: boolean; needsApproval: { command: string; folder: string; card: string } | null },
     },
     sessions: {
       setFolder: async (botId, folder, reason) => { await ask("sessions.folder", { bot: botId, folder, ...(reason ? { reason } : {}) }); },

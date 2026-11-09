@@ -99,6 +99,10 @@ export interface PluginFrameHost {
   builtin?(plugin: string, command: BuiltinCommand): void;
   /** A tile's card page for `plugin`'s frame: its URL (a page without these refuses). */
   tile?(plugin: string, spec: Omit<Extract<FrameRequest, { ccb: "tile" }>, "ccb" | "id">): Promise<string>;
+  /** A component's card page drawn as in a chat reply, for `plugin`'s frame: its URL (`ccb.card`). */
+  card?(plugin: string, spec: Omit<Extract<FrameRequest, { ccb: "card" }>, "ccb" | "id">): Promise<string>;
+  /** A picture of `rect` of `frame` (its own CSS px), kept in the bot's note (`ccb.snapshot`). */
+  snapshot?(plugin: string, frame: HTMLIFrameElement, spec: Omit<Extract<FrameRequest, { ccb: "snapshot" }>, "ccb" | "id">): Promise<unknown>;
   /** The page's own ApprovalSheet for what `plugin`'s frame asks: whether the user allowed it. */
   requestApproval?(plugin: string, ask: Omit<Extract<FrameRequest, { ccb: "approval" }>, "ccb" | "id">): Promise<{ allowed: boolean }>;
 }
@@ -159,11 +163,16 @@ export function registerPluginFrame(broker: FrameBroker, host: PluginFrameHost, 
           return;
         }
         case "tile":
+        case "card":
+        case "snapshot":
         case "approval": {
           if (!broker.allow(target)) { reply(message.id, false, "Too many calls; wait a moment."); return; }
           const { ccb: kind, id, ...ask } = message;
-          const answer = kind === "tile" ? host.tile?.(plugin, ask as never) : host.requestApproval?.(plugin, ask as never);
-          if (!answer) { reply(id, false, `This page does not answer ${kind === "tile" ? "ccb.tile" : "ccb.requestApproval"}.`); return; }
+          const answer = kind === "tile" ? host.tile?.(plugin, ask as never)
+            : kind === "card" ? host.card?.(plugin, ask as never)
+            : kind === "snapshot" ? host.snapshot?.(plugin, frame, ask as never)
+            : host.requestApproval?.(plugin, ask as never);
+          if (!answer) { reply(id, false, `This page does not answer ccb.${kind === "approval" ? "requestApproval" : kind}.`); return; }
           answer.then((value) => reply(id, true, value), (failure) => reply(id, false, why(failure)));
           return;
         }
