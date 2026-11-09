@@ -4,6 +4,8 @@
 \* delivered once as a call-in, covered by the same one still pending, or dropped with a notice.
 \* Call-ins of one chat run one at a time (startCallIn/runCallIn): the callee waits until it is free
 \* (or gives up: busy), then answers or fails (timeout). The pending list is what the chat shows.
+\* A bot that asked with @ below the depth limit is handed a turn when the call-in ends, answered or not:
+\* the answer, or word that it was not answered (appMessage), so it is never left waiting on it.
 EXTENDS Naturals, Sequences, FiniteSets
 
 CONSTANTS Top,       \* bots with a chat others can be called into (members)
@@ -14,7 +16,7 @@ CONSTANTS Top,       \* bots with a chat others can be called into (members)
           Cap,       \* BOT_MENTIONS_PER_USER_LINE
           MaxAts,    \* bound: @s in one behaviour
           MaxOwn,    \* bound: user lines waiting in one bot
-          BUG        \* "none"; "silent": before 78bf1640; "sub": before 9d7c0bda
+          BUG        \* "none"; "silent": before 78bf1640; "sub": before 9d7c0bda; "nowake": a failed bot @ handed nothing back
 
 None == "none"
 Bots == Top \cup Sub
@@ -22,10 +24,10 @@ Open == {"queued", "answering"}
 Done == {"answered", "unheard"}
 Delivered == Open \cup Done
 \* Before 78bf1640 the app dropped some @s without a word.
-Silent == BUG # "none"
+Silent == BUG \in {"silent", "sub"}
 
 VARIABLES
-  ev,        \* every @ routed, in order: [chat, to, by, body, depth, msg, st, told]
+  ev,        \* every @ routed, in order: [chat, to, by, body, depth, msg, st, told, woke]
   pending,   \* [Top -> Seq([ev, st])]: the call-ins a chat lists (Conversations.pending)
   cur,       \* [Top -> event being answered there, 0 = none]
   phase,     \* [Top -> {"idle", "wait", "turn"}]: its callee waiting to be free, or answering
@@ -43,12 +45,20 @@ Callable(c) ==
   ELSE {}
 
 Settle(c, k) == pending' = [pending EXCEPT ![c] = SelectSeq(@, LAMBDA p : p.ev # k)]
-Mark(k, st, told) == ev' = [ev EXCEPT ![k].st = st, ![k].told = told]
+\* Call-in k ends as st; `wake`: the bot that asked is handed a turn on it (woke counts the hand-backs).
+Mark(k, st, told, wake) == ev' = [ev EXCEPT ![k].st = st, ![k].told = told, ![k].woke = @ + (IF wake THEN 1 ELSE 0)]
+\* A bot asked it, below the depth limit: its end is handed back to the chat's bot.
+Asks(k) == ev[k].by = "bot" /\ ev[k].depth < MaxDepth
+\* ... also when it was not answered (before: only an answer was).
+FailWakes(k) == Asks(k) /\ BUG # "nowake"
+HandBack(c, k, wake) ==
+  IF wake THEN followUp' = [followUp EXCEPT ![c] = ev[k].depth] /\ own' = [own EXCEPT ![c] = @ + 1]
+  ELSE UNCHANGED <<followUp, own>>
 
 TypeOK ==
   /\ \A k \in DOMAIN ev : ev[k].chat \in Top /\ ev[k].to \in Bots /\ ev[k].by \in {"user", "bot"}
        /\ ev[k].body \in Bodies \cup {0} /\ ev[k].depth \in 0..MaxDepth /\ ev[k].msg \in 0..MaxAts
-       /\ ev[k].st \in Delivered \cup {"unreachable", "dropped", "merged", "seen"} /\ ev[k].told \in BOOLEAN
+       /\ ev[k].st \in Delivered \cup {"unreachable", "dropped", "merged", "seen"} /\ ev[k].told \in BOOLEAN /\ ev[k].woke \in Nat
   /\ pending \in [Top -> Seq([ev : 1..MaxAts, st : Open])]
   /\ cur \in [Top -> 0..MaxAts] /\ phase \in [Top -> {"idle", "wait", "turn"}]
   /\ followUp \in [Top -> 0..MaxDepth] /\ recent \in [Top -> SUBSET (Bots \X Bodies)]
@@ -65,14 +75,14 @@ UserLine(c, t) ==
   /\ own' = [own EXCEPT ![c] = @ + 1]
   /\ recent' = [d \in Top |-> IF d = c THEN {} ELSE recent[d]]
   /\ IF t = None THEN UNCHANGED <<ev, pending>>
-     ELSE /\ ev' = Append(ev, [chat |-> c, to |-> t, by |-> "user", body |-> 0, depth |-> 0, msg |-> 0, st |-> "queued", told |-> FALSE])
+     ELSE /\ ev' = Append(ev, [chat |-> c, to |-> t, by |-> "user", body |-> 0, depth |-> 0, msg |-> 0, st |-> "queued", told |-> FALSE, woke |-> 0])
           /\ pending' = [pending EXCEPT ![c] = Append(@, [ev |-> Len(ev) + 1, st |-> "queued"])]
   /\ UNCHANGED <<cur, phase, followUp, guest, gone>>
 
 \* The chat bot's reply `m` names t with body b (receiveBotMention); its follow-up depth is used up.
 Route(c, t, b, m) ==
   LET d == followUp[c]
-      new(st, told, depth) == [chat |-> c, to |-> t, by |-> "bot", body |-> b, depth |-> depth, msg |-> m, st |-> st, told |-> told]
+      new(st, told, depth) == [chat |-> c, to |-> t, by |-> "bot", body |-> b, depth |-> depth, msg |-> m, st |-> st, told |-> told, woke |-> 0]
       Drop(told) == ev' = Append(ev, new("dropped", told, d)) /\ UNCHANGED <<pending, recent>>
   IN /\ followUp' = [followUp EXCEPT ![c] = 0]
      /\ CASE t \notin Callable(c) -> ev' = Append(ev, new("unreachable", ~Silent, d)) /\ UNCHANGED <<pending, recent>>
@@ -113,18 +123,19 @@ Remove(s) ==
   /\ s \notin gone /\ own[s] = 0 /\ ~guest[s] /\ gone' = gone \cup {s}
   /\ UNCHANGED <<ev, pending, cur, phase, followUp, recent, own, guest>>
 
-\* c's next call-in has its turn (runCallIn); a callee that can no longer be called is told of.
+\* c's next call-in has its turn (runCallIn); a callee that can no longer be called is told of (and a bot that asked woken).
 Start(c) ==
   /\ cur[c] = 0
   /\ \E k \in DOMAIN ev :
        /\ ev[k].chat = c /\ ev[k].st = "queued"
        /\ \A j \in DOMAIN ev : (ev[j].chat = c /\ ev[j].st = "queued") => k <= j
        /\ IF ev[k].to \in Callable(c)
-          THEN /\ Mark(k, "answering", FALSE)
+          THEN /\ Mark(k, "answering", FALSE, FALSE)
                /\ pending' = [pending EXCEPT ![c] = [i \in DOMAIN @ |-> IF @[i].ev = k THEN [ev |-> k, st |-> "answering"] ELSE @[i]]]
                /\ cur' = [cur EXCEPT ![c] = k] /\ phase' = [phase EXCEPT ![c] = "wait"]
-          ELSE Mark(k, "unheard", ~Silent) /\ Settle(c, k) /\ UNCHANGED <<cur, phase>>
-  /\ UNCHANGED <<followUp, recent, own, guest, gone>>
+               /\ UNCHANGED <<followUp, own>>
+          ELSE Mark(k, "unheard", ~Silent, FailWakes(k)) /\ Settle(c, k) /\ HandBack(c, k, FailWakes(k)) /\ UNCHANGED <<cur, phase>>
+  /\ UNCHANGED <<recent, guest, gone>>
 
 Callee(c) == ev[cur[c]].to
 
@@ -134,31 +145,29 @@ Take(c) ==
   /\ guest' = [guest EXCEPT ![Callee(c)] = TRUE] /\ phase' = [phase EXCEPT ![c] = "turn"]
   /\ UNCHANGED <<ev, pending, cur, followUp, recent, own, gone>>
 
-Finish(c, st, told) ==
-  /\ Mark(cur[c], st, told) /\ Settle(c, cur[c])
+\* The call-in being answered in c ends as st; `wake`: its asking bot is handed a turn on it.
+Finish(c, st, told, wake) ==
+  /\ Mark(cur[c], st, told, wake) /\ Settle(c, cur[c]) /\ HandBack(c, cur[c], wake)
   /\ cur' = [cur EXCEPT ![c] = 0] /\ phase' = [phase EXCEPT ![c] = "idle"]
 
-\* bot.groupTurn: still busy (or gone) after waitForMs.
+\* bot.groupTurn: still busy (or gone) after waitForMs; a bot that asked is told so with a turn.
 GiveUp(c) ==
   /\ phase[c] = "wait" /\ (own[Callee(c)] > 0 \/ guest[Callee(c)] \/ Callee(c) \in gone)
-  /\ Finish(c, "unheard", TRUE)
-  /\ UNCHANGED <<followUp, recent, own, guest, gone>>
+  /\ Finish(c, "unheard", TRUE, FailWakes(cur[c]))
+  /\ UNCHANGED <<recent, guest, gone>>
 
 \* Its reply is posted; a bot that asked is handed the answer once, below MaxDepth (appMessage).
 Answer(c) ==
   LET k == cur[c] IN
-  /\ phase[c] = "turn" /\ Finish(c, "answered", FALSE)
+  /\ phase[c] = "turn" /\ Finish(c, "answered", FALSE, Asks(k))
   /\ guest' = [guest EXCEPT ![Callee(c)] = FALSE]
-  /\ IF ev[k].by = "bot" /\ ev[k].depth < MaxDepth
-     THEN followUp' = [followUp EXCEPT ![c] = ev[k].depth] /\ own' = [own EXCEPT ![c] = @ + 1]
-     ELSE UNCHANGED <<followUp, own>>
   /\ UNCHANGED <<recent, gone>>
 
-\* No answer within answerWithinMs, or its turn failed.
+\* No answer within answerWithinMs, its turn failed, or (asked by a bot) it answered nothing; a bot that asked is told so with a turn.
 NoAnswer(c) ==
-  /\ phase[c] = "turn" /\ Finish(c, "unheard", TRUE)
+  /\ phase[c] = "turn" /\ Finish(c, "unheard", TRUE, FailWakes(cur[c]))
   /\ guest' = [guest EXCEPT ![Callee(c)] = FALSE]
-  /\ UNCHANGED <<followUp, recent, own, gone>>
+  /\ UNCHANGED <<recent, gone>>
 
 Next ==
   \/ \E c \in Bots, t \in Bots \cup {None} : UserLine(c, t)
@@ -187,6 +196,10 @@ DeliveredOnce ==
     /\ (ev[k].st = "merged") => \E i \in 1..(k - 1) : ev[i].st \in Delivered /\ ev[i].by = "bot"
          /\ ev[i].chat = ev[k].chat /\ ev[i].to = ev[k].to /\ ev[i].body = ev[k].body
 HopBound == \A k \in DOMAIN ev : ev[k].depth <= MaxDepth
+\* No wake loop: a call-in hands back at most one turn, only once it ended, only to a bot that asked below the depth
+\* limit; the reply to that turn routes its @s one level deeper (Route), so a chain of wakes stops at MaxDepth.
+WakeOnce == \A k \in DOMAIN ev : ev[k].woke <= 1
+WakeBelowDepth == \A k \in DOMAIN ev : ev[k].woke > 0 => Asks(k) /\ ev[k].st \in Done
 \* A sub bot is reachable in its parent's chat, and only there.
 SubReachable == \A k \in DOMAIN ev : ev[k].st = "unreachable" => ~(ev[k].to \in Sub /\ Parent[ev[k].to] = ev[k].chat)
 SubOnlyInParent == \A k \in DOMAIN ev : (ev[k].st \in Delivered /\ ev[k].to \in Sub) => Parent[ev[k].to] = ev[k].chat
@@ -202,6 +215,8 @@ PendingExact ==
 \* Every call-in is eventually answered, or not, with a notice.
 CallInEnds == \A k \in 1..MaxAts : (k \in DOMAIN ev /\ ev[k].st \in Open) ~> (k \in DOMAIN ev /\ ev[k].st \in Done)
 PendingEmpties == \A c \in Top : pending[c] # <<>> ~> pending[c] = <<>>
+\* A bot's @ below the depth limit, delivered, always ends with that bot handed a turn: answered or not.
+CallerHearsBack == \A k \in 1..MaxAts : (k \in DOMAIN ev /\ ev[k].st \in Delivered /\ Asks(k)) ~> (k \in DOMAIN ev /\ ev[k].woke > 0)
 
 \* For the cfgs: the sub bot S is C's.
 ParentMC == [s \in Sub |-> "C"]
