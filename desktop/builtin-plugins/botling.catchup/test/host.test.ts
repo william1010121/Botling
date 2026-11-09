@@ -118,4 +118,27 @@ describe("botling.catchup's program part", () => {
     expect(await fake.exposed.get("retry")!({ botId: "main" })).toEqual({ started: false });
     expect(fake.execs()).toBe(1);
   });
+
+  it("leaves an unanswered question out of the fold, and \"Show original messages\" removes the card for good", async () => {
+    const dir = tempDir("catchup-host");
+    const question = { ...line(4, "bot"), choices: [{ label: "A" }, { label: "B" }] };
+    const messages = [line(1, "user"), line(2, "bot"), line(3, "bot"), question, line(5, "bot"), line(6, "bot")];
+    const fake = fakeApi(dir, { messages, unread: 5 });
+    await activate(fake.api);
+    fake.emit("chatRead", { botId: "main", unread: 5, through: id(6) });
+    await until(() => (fake.last()[0]?.data as { state?: string } | undefined)?.state === "ready");
+    const [summary] = fake.last();
+    expect(summary!.fold).toEqual([id(2), id(3), id(5), id(6)]);
+    const key = (summary!.data as { key: string }).key;
+    expect(await fake.exposed.get("expand")!({ botId: "main", key: "nope" })).toEqual({ expanded: false });
+    expect(await fake.exposed.get("expand")!({ botId: "main", key })).toEqual({ expanded: true });
+    await until(() => fake.last().length === 0);
+    // Botling restarts the plugin: the same storage, the same unread lines, no card.
+    const again = fakeApi(dir, { messages, unread: 5 });
+    Object.assign(again.storage, fake.storage);
+    await activate(again.api);
+    again.emit("chatRead", { botId: "main", unread: 5, through: id(6) });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(again.drawn).toEqual([]);
+  });
 });
