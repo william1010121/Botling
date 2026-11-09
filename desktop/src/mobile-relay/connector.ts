@@ -44,7 +44,12 @@ export interface ConnectorOptions {
   socket?: (url: string) => SocketLike;
   now?: () => number;
   waits?: number[];
+  /** Spec conformance only (spec/models/relaypair): called before each modelled step of a phone's peer, which waits
+   * for it. Unset in the app. */
+  onStep?: (step: RelayStep, peer: string) => Promise<void> | void;
 }
+/** The connector's steps as spec/models/relaypair/RelayPair.tla names them. */
+export type RelayStep = 'HsCheck' | 'HsKeys' | 'Confirm' | 'Grant' | 'ReqCheck' | 'ReqSend';
 
 /** `claim`: the peer whose handshake took this offer; another phone is told nope while that peer is open. */
 interface Offer { id: string; secret: Uint8Array; tokenHash: string; botIds: string[]; expiresAt: number; used: boolean; claim?: Peer }
@@ -220,6 +225,7 @@ export class RelayConnector {
     if (peer.stage === 'closed') return;
     if (peer.stage === 'new') return this.handshake(peer, d);
     const msg = PhoneMessage.parse(await peer.channel!.open(d));
+    if (this.options.onStep) await this.options.onStep(peer.stage === 'keys' ? 'Confirm' : 'ReqCheck', peer.id);
     // Closed while the frame was opened (the phone left, a revoke): nothing more for it, and no code spent on it.
     if (gone(peer)) return;
     if (peer.stage === 'keys') return this.confirm(peer, msg);
@@ -227,6 +233,7 @@ export class RelayConnector {
     const device = this.options.store.device(peer.deviceId!);
     if (!device || device.tokenHash !== peer.tokenHash && peer.mode === 'session') return void this.end(peer, true);
     const response = await this.request(device, msg.id, msg.cmd);
+    if (this.options.onStep) await this.options.onStep('ReqSend', peer.id);
     let frame = await peer.channel!.seal({ t: 'res', env: response });
     if (frame.length > MAX_FRAME_CHARS) frame = await peer.channel!.seal({ t: 'res', env: errorResponse(msg.id, { code: 'internal', message: 'This answer is too large for the relay. Open it on the desktop.' }) });
     this.toPeer(peer, frame);
@@ -238,6 +245,7 @@ export class RelayConnector {
     const room = this.room!;
     const identity = await this.options.store.keyPair();
     const ephemeral = await generateKeyPair();
+    if (this.options.onStep) await this.options.onStep('HsCheck', peer.id);
     if (gone(peer)) return;
     let deviceId: string, phoneStatic: Uint8Array, pairSecret: Uint8Array | undefined;
     if (hello.h === 'pair') {
@@ -260,6 +268,7 @@ export class RelayConnector {
     }
     peer.channel = await deriveChannel('desk', { static: identity, ephemeral }, { mode: hello.h === 'pair' ? 'pair' : 'session', room, deviceId,
       deskStatic: identity.publicKey, phoneStatic, phoneEphemeral: b64u.decode(hello.eph), deskEphemeral: ephemeral.publicKey, pairSecret });
+    if (this.options.onStep) await this.options.onStep('HsKeys', peer.id);
     if (gone(peer)) return;
     peer.mode = hello.h === 'pair' ? 'pair' : 'session';
     peer.deviceId = deviceId;
@@ -280,6 +289,7 @@ export class RelayConnector {
         pairedAt: now, expiresAt: now + PAIRED_TTL_MS, ...(label(msg.name) ? { label: label(msg.name) } : {}) };
       this.options.store.add(device);
       peer.stage = 'ready'; clearTimeout(peer.timer);
+      if (this.options.onStep) await this.options.onStep('Grant', peer.id);
       this.toPeer(peer, await peer.channel!.seal({ t: 'paired', deviceId: device.id, token, coreId, botIds: device.botIds, expiresAt: device.expiresAt }));
       this.pushAllow();
       return;
@@ -288,6 +298,7 @@ export class RelayConnector {
     const device = this.options.store.device(peer.deviceId!);
     if (!device) return this.end(peer, true);
     peer.stage = 'ready'; clearTimeout(peer.timer);
+    if (this.options.onStep) await this.options.onStep('Grant', peer.id);
     this.toPeer(peer, await peer.channel!.seal({ t: 'ready', coreId, botIds: device.botIds, expiresAt: device.expiresAt }));
   }
 
