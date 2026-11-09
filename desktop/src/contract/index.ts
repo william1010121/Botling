@@ -1200,7 +1200,7 @@ export interface Results {
   "bots.create": { botId: string; created: boolean };
   "bots.remove": { removed: boolean };
   "results.list": { results: ResultView[] };
-  "result.open": { opened: boolean };
+  "result.open": { opened: boolean; previewURL?: string };
   "link.open": { opened: boolean; previewURL?: string };
   "worker.cwd": { cwd: string | null };
   "worker.file": { route: "preview" | "reveal" | "open" };
