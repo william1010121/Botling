@@ -1,15 +1,18 @@
 // Routines scheduling against spec/models/routines: (a) seeded random walks of the model's actions drive the
 // real code through the adapter and compare it with spec/reference after every step; (b) the app's own
-// trace (BOTLING_SPEC_TRACE) of those walks replays through the reference, every line an allowed step.
+// trace (BOTLING_SPEC_TRACE) of those walks replays through the reference, every line an allowed step;
+// (c) scripted runs of what a walk cannot reach: a script's append inside an app rewrite of routines.cron.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { routinesAdapter } from "../../desktop/spec-adapters/routines-adapter";
 import type { RoutinesSession } from "../driver/routines-driver";
-import { actions, init, NONE, step, stepViolations, view, violations, type Action, type Bot, type Config, type JobState, type State } from "../reference/routines";
+import { actions, init, logView, NONE, step, stepViolations, view, violations, type Action, type Bot, type Config, type JobState, type State } from "../reference/routines";
 
-const CFG: Config = { jobs: ["J1", "J2"], bots: ["p", "s"], requests: ["r1", "r2"], maxTime: 5, cron: [1, 2, 4] };
+const CFG: Config = { jobs: ["J1", "J2"], bots: ["p", "s"], requests: ["r1", "r2"], maxTime: 5, cron: [1, 2, 4], lines: ["L1", "L2", "L3"] };
+/** An app rewrite of routines.cron cannot be held open mid-walk (the real one is one synchronous call): scripted below. */
+const WINDOW = new Set(["TakeRead", "EditRead", "Rewrite"]);
 
 function random(seed: number) {
   let a = seed >>> 0;
@@ -23,7 +26,7 @@ function random(seed: number) {
 }
 
 /** The clock looks often and time passes; every other action is as likely as the next. */
-const WEIGHT: Record<string, number> = { Check: 4, Tick: 3, Create: 3 };
+const WEIGHT: Record<string, number> = { Check: 4, Tick: 3, Create: 3, Append: 2 };
 
 /** An action type by weight, then one of its enabled variants; `skip` leaves some types out. */
 function pick(s: State, rnd: () => number, skip: Set<string>): Action {
@@ -49,11 +52,16 @@ function apply(session: RoutinesSession, a: Action) {
     case "Pause": return session.pause(a.job);
     case "Resume": return session.resume(a.job);
     case "Cancel": return session.cancel(a.job);
+    case "Append": return session.append(a.line, a.bot, a.paused);
+    case "TakeRead": return session.takeRead(a.bot, a.line);
+    case "EditRead": return session.editRead(a.bot);
+    case "Rewrite": return session.rewrite(a.bot);
+    case "TakeThenCrash": return session.takeThenCrash(a.bot, a.line);
   }
 }
 
 /** Many walks, each step real file I/O: seconds alone, longer beside other test files. */
-const WALKS_TIMEOUT = 120_000;
+const WALKS_TIMEOUT = 180_000;
 
 const sessions: RoutinesSession[] = [];
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); });
@@ -63,13 +71,13 @@ afterEach(async () => {
 });
 
 function open(): RoutinesSession {
-  const session = routinesAdapter.open({ bots: CFG.bots, cron: CFG.cron, setClock: (ms) => vi.setSystemTime(ms) });
+  const session = routinesAdapter.open({ bots: CFG.bots, cron: CFG.cron, lines: CFG.lines, setClock: (ms) => vi.setSystemTime(ms) });
   sessions.push(session);
   return session;
 }
 
 /** One walk: each step the app and the reference must show the same, and the reference keeps the model's properties. */
-async function walk(seed: number, steps: number, skip = new Set<string>()): Promise<{ session: RoutinesSession; done: Action[]; end: State }> {
+async function walk(seed: number, steps: number, skip = WINDOW): Promise<{ session: RoutinesSession; done: Action[]; end: State }> {
   const rnd = random(seed);
   const session = open();
   let s = init(CFG);
@@ -89,8 +97,12 @@ async function walk(seed: number, steps: number, skip = new Set<string>()): Prom
 /** How much of the protocol a set of walks went through. */
 function coverage(walks: { done: Action[]; end: State }[]) {
   const count = (type: string) => walks.reduce((sum, w) => sum + w.done.filter((a) => a.type === type).length, 0);
-  const runs = walks.flatMap((w) => w.end.log.map((d) => ({ ...d, kind: w.end.jobs[d.job]!.kind, owner: w.end.jobs[d.job]!.owner })));
+  const runs = walks.flatMap((w) => w.end.log.filter((d) => d.job in w.end.jobs).map((d) => ({ ...d, kind: w.end.jobs[d.job]!.kind, owner: w.end.jobs[d.job]!.owner })));
+  const lines = (st: string) => walks.reduce((sum, w) => sum + Object.values(w.end.ln).filter((v) => v === st).length, 0);
   return {
+    oneShot: lines("run"),
+    oneShotPaused: lines("paused"),
+    oneShotTakenUnrun: lines("taken"),
     once: runs.filter((d) => d.kind === "once").length,
     recurring: runs.filter((d) => d.kind === "recurring").length,
     legacy: runs.filter((d) => d.kind === "legacy").length,
@@ -105,7 +117,10 @@ function coverage(walks: { done: Action[]; end: State }[]) {
 describe("routines conformance", () => {
   it("random walks follow the model", async () => {
     const walks = [];
-    for (let seed = 1; seed <= 60; seed++) walks.push(await walk(seed, 30));
+    // Without one-shot lines (as before they existed), then with them: each kind of run is seen often.
+    const scheduledOnly = new Set([...WINDOW, "Append", "TakeThenCrash"]);
+    for (let seed = 1; seed <= 60; seed++) walks.push(await walk(seed, 30, scheduledOnly));
+    for (let seed = 101; seed <= 130; seed++) walks.push(await walk(seed, 30));
     const seen = coverage(walks);
     for (const [what, n] of Object.entries(seen)) expect(n, `${what} in ${JSON.stringify(seen)}`).toBeGreaterThan(2);
   }, WALKS_TIMEOUT);
@@ -121,6 +136,75 @@ describe("routines conformance", () => {
 });
 
 // ------------------------------------------------------------------------------------------------
+// One-shot lines inside an app rewrite of routines.cron: the app and the reference step by step.
+
+function scripted(actions: Action[]): State {
+  const session = open();
+  let s = init(CFG);
+  for (const [i, a] of actions.entries()) {
+    const n = step(s, CFG, a);
+    apply(session, a);
+    expect([...violations(n, CFG), ...stepViolations(s, n, CFG)]).toEqual([]);
+    expect(session.observe(), `after ${JSON.stringify(actions.slice(0, i + 1))}`).toEqual(view(n));
+    s = n;
+  }
+  return s;
+}
+
+describe("routines one-shot lines", () => {
+  it("a line appended inside a check's takeOnce window is lost: the allowed loss (LostOnlyInRewrite)", () => {
+    const end = scripted([
+      { type: "Boot" },
+      { type: "Append", line: "L1", bot: "p", paused: false },
+      { type: "Append", line: "L2", bot: "p", paused: true },
+      { type: "TakeRead", bot: "p", line: "L1" },
+      { type: "Append", line: "L3", bot: "p", paused: false },
+      { type: "Rewrite", bot: "p" },
+      { type: "Check", bot: "p" },
+    ]);
+    expect(end.ln).toEqual({ L1: "run", L2: "paused", L3: "lost" });
+    expect(end.log.map((d) => d.job)).toEqual(["L1"]);
+  });
+
+  it("any other app rewrite of routines.cron (app_routines pause) loses an append in its window too", () => {
+    const end = scripted([
+      { type: "Boot" },
+      { type: "Append", line: "L1", bot: "p", paused: true },
+      { type: "EditRead", bot: "p" },
+      { type: "Append", line: "L2", bot: "p", paused: false },
+      { type: "Rewrite", bot: "p" },
+      { type: "Check", bot: "p" },
+    ]);
+    expect(end.ln).toEqual({ L1: "paused", L2: "lost", L3: "none" });
+    expect(end.log).toEqual([]);
+  });
+
+  it("a line taken by a check that dies before dispatching never runs; the same words appended again run once", () => {
+    const end = scripted([
+      { type: "Boot" },
+      { type: "Append", line: "L1", bot: "s", paused: false },
+      { type: "TakeThenCrash", bot: "s", line: "L1" },
+      { type: "Boot" },
+      { type: "Check", bot: "s" },
+      { type: "Append", line: "L2", bot: "s", paused: false },
+      { type: "Check", bot: "s" },
+      { type: "Check", bot: "s" },
+    ]);
+    expect(end.ln).toEqual({ L1: "taken", L2: "run", L3: "none" });
+    expect(end.log.map((d) => `${d.job}:${d.chat}`)).toEqual(["L2:s"]);
+  });
+
+  it("checks every 15 s (four a minute) run a five-field job once per matching minute", () => {
+    const four: Action[] = Array(4).fill({ type: "Check", bot: "p" });
+    const end = scripted([
+      { type: "Boot" }, { type: "AddLegacy", job: "J1", bot: "p" }, ...four,
+      { type: "Tick" }, ...four, { type: "Tick" }, ...four, { type: "Tick" }, ...four,
+    ]);
+    expect(logView(end.log)).toEqual(["J1@1:p", "J1@2:p"]);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------
 // Trace check: the app's own lines (bot.ts setUpRoutines/checkRoutines/changeRoutine/addRoutine).
 
 interface SpecJobs {
@@ -130,6 +214,8 @@ interface SpecJobs {
 interface TraceLine { at: number; action: string; state: { bot: string; now?: number; noticed?: boolean; args?: Record<string, any>; cron?: string; task?: string; before?: SpecJobs; after: SpecJobs } }
 
 const SWIFT_EPOCH = Date.UTC(2001, 0, 1);
+/** A one-shot "@once" line of routines.cron (written by scripts: untraced). */
+const isOnce = (job: { id: string }) => job.id.startsWith("@once ");
 const slot = (task: string) => task.split(":")[0]!;
 
 /** The reference state one bot's files stand for (the other bots' jobs left out). */
@@ -140,7 +226,8 @@ function botState(session: RoutinesSession, bot: Bot, jobs: SpecJobs, now: numbe
   s.now = now;
   s.told[bot] = told;
   s.file[bot] = jobs.scheduled === null ? "broken" : "ok";
-  for (const job of jobs.legacy) s.jobs[slot(job.task)] = { st: job.enabled ? "pending" : "paused", kind: "legacy", owner: bot, at: NONE, since: job.run === null ? NONE : minute(job.run), last: NONE, req: "none" };
+  for (const job of jobs.legacy.filter(isOnce)) { s.ln[slot(job.task)] = job.enabled ? "in" : "paused"; s.lowner[slot(job.task)] = bot; }
+  for (const job of jobs.legacy.filter((job) => !isOnce(job))) s.jobs[slot(job.task)] = { st: job.enabled ? "pending" : "paused", kind: "legacy", owner: bot, at: NONE, since: job.run === null ? NONE : minute(job.run), last: NONE, req: "none" };
   for (const job of jobs.scheduled ?? []) {
     s.jobs[slot(job.task)] = { st: job.state, kind: job.kind, owner: bot, at: job.at === undefined ? NONE : minute(job.at), since: minute(job.baseline), last: job.lastClaim === undefined ? NONE : minute(job.lastClaim), req: job.requestID };
   }
@@ -160,12 +247,16 @@ function traced(session: RoutinesSession, line: TraceLine, bot: Bot): Action {
 
 /** routines.cron cancels a job by removing its line: a cancelled legacy job is not in the file. */
 const kept = (jobs: ReturnType<typeof view>["jobs"]) => Object.fromEntries(Object.entries(jobs).filter(([, v]) => !(v.kind === "legacy" && v.st === "cancelled")));
+/** The one-shot lines a file holds (one out of it is not in the next line's file either). */
+const inFile = (lines: ReturnType<typeof view>["lines"]) => Object.fromEntries(Object.entries(lines).filter(([, v]) => v.st !== "out"));
 
 /** Every line must be an allowed step of the reference from the state the line before it left. */
 function replay(session: RoutinesSession, lines: TraceLine[]) {
   const told: Record<Bot, boolean> = {};
   const last: Record<Bot, SpecJobs | null> = {};
-  const same = (a: SpecJobs, b: SpecJobs) => JSON.stringify(a.legacy) === JSON.stringify(b.legacy) && (a.scheduled === null || b.scheduled === null || JSON.stringify(a.scheduled) === JSON.stringify(b.scheduled));
+  // Scripts append one-shot lines and TakeThenCrash takes one outside any trace line: those are left out here.
+  const legacy = (jobs: SpecJobs) => JSON.stringify(jobs.legacy.filter((job) => !isOnce(job)));
+  const same = (a: SpecJobs, b: SpecJobs) => legacy(a) === legacy(b) && (a.scheduled === null || b.scheduled === null || JSON.stringify(a.scheduled) === JSON.stringify(b.scheduled));
   for (const [i, line] of lines.entries()) {
     const where = `trace line ${i + 1}: ${JSON.stringify(line)}`;
     const bot = botOf(session, line.state.bot);
@@ -184,6 +275,7 @@ function replay(session: RoutinesSession, lines: TraceLine[]) {
     const n = step(s, CFG, traced(session, line, bot));
     const after = botState(session, bot, line.state.after, now, n.told[bot]!);
     expect(kept(view(after).jobs), where).toEqual(kept(view(n).jobs));
+    expect(inFile(view(after).lines), where).toEqual(inFile(view(n).lines));
     if (line.action === "Check") expect(line.state.noticed, where).toBe(n.notices[bot]! > s.notices[bot]!);
     told[bot] = n.told[bot]!;
     last[bot] = line.state.after;

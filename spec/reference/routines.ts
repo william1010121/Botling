@@ -2,12 +2,16 @@
 // variables and actions, plus two observation logs the TLA+ model leaves out (each dispatch with the time
 // it ran and the chat it ran in, and how many broken-file notices each chat has).
 // SPEC_BUG=routines turns on c0154c79: the startup read counts as having told a broken file.
+// SPEC_BUG=routines-once dispatches a one-shot line before taking it out of routines.cron.
 
 export type Bot = string;
 export type Job = string;
 export type JobState = "none" | "pending" | "paused" | "claimed" | "fired" | "cancelled";
 export type Kind = "once" | "recurring" | "legacy";
 export type FileState = "ok" | "broken";
+export type Line = string;
+/** A one-shot "@once" line: not written, in routines.cron, in it paused (#), run, taken unrun (a crash), lost to a rewrite. */
+export type LineState = "none" | "in" | "paused" | "run" | "taken" | "lost";
 
 export const NONE = -1;
 
@@ -18,7 +22,10 @@ export interface Config {
   maxTime: number;
   /** The minutes recurring and legacy jobs run at. */
   cron: number[];
+  /** One-shot line instances (each appended at most once). */
+  lines?: Line[];
   bug?: boolean;
+  onceBug?: boolean;
 }
 
 export interface JobVars {
@@ -43,6 +50,15 @@ export interface State {
   told: Record<Bot, boolean>;
   said: Record<Bot, boolean>;
   looked: Record<Bot, boolean>;
+  ln: Record<Line, LineState>;
+  lowner: Record<Line, Bot | "none">;
+  lfires: Record<Line, number>;
+  /** An app rewrite of a bot's routines.cron in flight: the line it takes, "edit", or "none". */
+  tk: Record<Bot, Line | "edit" | "none">;
+  /** The lines (one-shot and legacy job slots) that rewrite read. */
+  snap: Record<Bot, string[]>;
+  /** Legacy jobs whose line a rewrite lost. */
+  dropped: Job[];
   /** Observation only. */
   log: Dispatch[];
   notices: Record<Bot, number>;
@@ -54,11 +70,17 @@ export type Action =
   | { type: "ClaimThenCrash"; job: Job }
   | { type: "Create"; job: Job; req: string; kind: "once" | "recurring"; bot: Bot; at: number }
   | { type: "AddLegacy"; job: Job; bot: Bot }
-  | { type: "Pause"; job: Job } | { type: "Resume"; job: Job } | { type: "Cancel"; job: Job };
+  | { type: "Pause"; job: Job } | { type: "Resume"; job: Job } | { type: "Cancel"; job: Job }
+  | { type: "Append"; line: Line; bot: Bot; paused: boolean }
+  | { type: "TakeRead"; bot: Bot; line: Line } | { type: "EditRead"; bot: Bot } | { type: "Rewrite"; bot: Bot }
+  | { type: "TakeThenCrash"; bot: Bot; line: Line };
 
 export const bugFromEnv = (): boolean => typeof process !== "undefined" && process.env.SPEC_BUG === "routines";
+export const onceBugFromEnv = (): boolean => typeof process !== "undefined" && process.env.SPEC_BUG === "routines-once";
 
 const perBot = <T>(cfg: Config, value: T): Record<Bot, T> => Object.fromEntries(cfg.bots.map((b) => [b, value]));
+
+const perLine = <T>(cfg: Config, value: T): Record<Line, T> => Object.fromEntries((cfg.lines ?? []).map((o) => [o, value]));
 
 export function init(cfg: Config): State {
   const fires: Record<string, number> = {};
@@ -67,6 +89,8 @@ export function init(cfg: Config): State {
     now: 0, up: false,
     jobs: Object.fromEntries(cfg.jobs.map((j) => [j, { st: "none", kind: "none", owner: "none", at: NONE, since: NONE, last: NONE, req: "none" } as JobVars])),
     fires, file: perBot(cfg, "ok" as FileState), told: perBot(cfg, false), said: perBot(cfg, false), looked: perBot(cfg, false),
+    ln: perLine(cfg, "none" as LineState), lowner: perLine(cfg, "none" as Bot | "none"), lfires: perLine(cfg, 0),
+    tk: perBot(cfg, "none" as Line | "edit" | "none"), snap: perBot(cfg, [] as string[]), dropped: [],
     log: [], notices: perBot(cfg, 0),
   };
 }
@@ -85,7 +109,16 @@ export function due(s: State, cfg: Config, j: Job): boolean {
   return v.st === "pending" && readable(s, v) && o !== NONE && (v.kind === "once" || (v.since !== NONE && o > Math.max(v.since, v.last)));
 }
 const mark = (s: State, cfg: Config, j: Job) => (s.jobs[j]!.kind === "legacy" ? s.now : occ(s, cfg, j));
-const changeable = (s: State, j: Job) => s.up && s.jobs[j]!.st !== "none" && s.file[s.jobs[j]!.owner] === "ok";
+/** The core runs one thing at a time: nothing else of it happens while it rewrites a routines.cron. */
+const idle = (s: State) => Object.values(s.tk).every((t) => t === "none");
+const inFile = (st: LineState) => st === "in" || st === "paused";
+const legacyIn = (v: JobVars) => v.kind === "legacy" && (v.st === "pending" || v.st === "paused");
+const changeable = (s: State, j: Job) => s.up && idle(s) && s.jobs[j]!.st !== "none" && s.file[s.jobs[j]!.owner] === "ok";
+/** What an app rewrite of b's routines.cron reads (and will write back). */
+const read = (s: State, b: Bot) => [
+  ...Object.keys(s.ln).filter((o) => s.lowner[o] === b && inFile(s.ln[o]!)),
+  ...Object.keys(s.jobs).filter((j) => s.jobs[j]!.owner === b && legacyIn(s.jobs[j]!)),
+];
 
 export function enabled(s: State, cfg: Config, a: Action): boolean {
   switch (a.type) {
@@ -94,15 +127,19 @@ export function enabled(s: State, cfg: Config, a: Action): boolean {
     case "Boot": return !s.up;
     case "Break": return s.file[a.bot] === "ok";
     case "Mend": return s.file[a.bot] === "broken";
-    case "View": case "Check": return s.up;
-    case "ClaimThenCrash": return s.up && scheduled(s.jobs[a.job]!) && due(s, cfg, a.job);
+    case "View": case "Check": return s.up && idle(s);
+    case "ClaimThenCrash": return s.up && idle(s) && scheduled(s.jobs[a.job]!) && due(s, cfg, a.job);
     case "Create": {
-      if (!s.up || s.file[a.bot] !== "ok") return false;
+      if (!s.up || !idle(s) || s.file[a.bot] !== "ok") return false;
       if (requestTaken(s, a.bot, a.req)) return true;
       return s.jobs[a.job]!.st === "none" && (a.kind === "once" ? a.at > s.now && a.at <= cfg.maxTime : a.at === NONE);
     }
     case "AddLegacy": return s.up && s.jobs[a.job]!.st === "none";
     case "Pause": case "Resume": case "Cancel": return changeable(s, a.job);
+    case "Append": return s.ln[a.line] === "none";
+    case "TakeRead": case "TakeThenCrash": return s.up && idle(s) && s.lowner[a.line] === a.bot && s.ln[a.line] === "in";
+    case "EditRead": return s.up && idle(s);
+    case "Rewrite": return s.tk[a.bot] !== "none";
   }
 }
 
@@ -116,7 +153,10 @@ export function step(s: State, cfg: Config, a: Action): State {
   const n = clone(s);
   switch (a.type) {
     case "Tick": n.now++; break;
-    case "Crash": n.up = false; break;
+    case "Crash":
+      n.up = false;
+      for (const b of cfg.bots) { n.tk[b] = "none"; n.snap[b] = []; }
+      break;
     case "Boot":
       n.up = true;
       for (const b of cfg.bots) n.told[b] = (cfg.bug ?? bugFromEnv()) && s.file[b] === "broken";
@@ -141,6 +181,12 @@ export function step(s: State, cfg: Config, a: Action): State {
         if (v.kind === "once") n.jobs[j]!.st = "fired";
         n.fires[`${j}@${o}`] = Math.min(s.fires[`${j}@${o}`]! + 1, 2);
         n.log.push({ job: j, at: s.now, chat: b });
+      }
+      for (const o of Object.keys(s.ln)) {
+        if (s.lowner[o] !== b || s.ln[o] !== "in") continue;
+        n.ln[o] = "run";
+        n.lfires[o] = Math.min(s.lfires[o]! + 1, 2);
+        n.log.push({ job: o, at: s.now, chat: b });
       }
       break;
     }
@@ -174,6 +220,36 @@ export function step(s: State, cfg: Config, a: Action): State {
       if (v.st === "pending" || v.st === "paused") v.st = "cancelled";
       break;
     }
+    case "Append": n.ln[a.line] = a.paused ? "paused" : "in"; n.lowner[a.line] = a.bot; break;
+    case "TakeRead": n.tk[a.bot] = a.line; n.snap[a.bot] = read(s, a.bot); break;
+    case "EditRead": n.tk[a.bot] = "edit"; n.snap[a.bot] = read(s, a.bot); break;
+    case "Rewrite": {
+      const b = a.bot;
+      const o = s.tk[b]!;
+      for (const i of Object.keys(s.ln)) {
+        if (i === o) {
+          n.ln[i] = "run";
+          n.lfires[i] = Math.min(s.lfires[i]! + 1, 2);
+          n.log.push({ job: i, at: s.now, chat: b });
+        } else if (s.lowner[i] === b && inFile(s.ln[i]!) && !s.snap[b]!.includes(i)) n.ln[i] = "lost";
+      }
+      for (const j of cfg.jobs) {
+        if (s.jobs[j]!.owner === b && legacyIn(s.jobs[j]!) && !s.snap[b]!.includes(j)) {
+          n.jobs[j]!.st = "cancelled";
+          if (!n.dropped.includes(j)) n.dropped.push(j);
+        }
+      }
+      n.tk[b] = "none";
+      n.snap[b] = [];
+      break;
+    }
+    case "TakeThenCrash":
+      n.up = false;
+      if (cfg.onceBug ?? onceBugFromEnv()) {
+        n.lfires[a.line] = Math.min(s.lfires[a.line]! + 1, 2);
+        n.log.push({ job: a.line, at: s.now, chat: a.bot });
+      } else n.ln[a.line] = "taken";
+      break;
   }
   return n;
 }
@@ -181,7 +257,12 @@ export function step(s: State, cfg: Config, a: Action): State {
 /** Every action enabled in `s` (the model's Next). */
 export function actions(s: State, cfg: Config): Action[] {
   const all: Action[] = [{ type: "Tick" }, { type: "Crash" }, { type: "Boot" }];
-  for (const bot of cfg.bots) all.push({ type: "Break", bot }, { type: "Mend", bot }, { type: "View", bot }, { type: "Check", bot });
+  for (const bot of cfg.bots) all.push({ type: "Break", bot }, { type: "Mend", bot }, { type: "View", bot }, { type: "Check", bot }, { type: "EditRead", bot }, { type: "Rewrite", bot });
+  for (const line of cfg.lines ?? []) {
+    for (const bot of cfg.bots) {
+      all.push({ type: "Append", line, bot, paused: false }, { type: "Append", line, bot, paused: true }, { type: "TakeRead", bot, line }, { type: "TakeThenCrash", bot, line });
+    }
+  }
   for (const job of cfg.jobs) {
     all.push({ type: "ClaimThenCrash", job }, { type: "Pause", job }, { type: "Resume", job }, { type: "Cancel", job });
     for (const bot of cfg.bots) {
@@ -206,6 +287,11 @@ export function violations(s: State, cfg: Config): string[] {
   const made = cfg.jobs.map((j) => s.jobs[j]!).filter((v) => v.st !== "none" && scheduled(v));
   if (new Set(made.map((v) => `${v.owner}/${v.req}`)).size !== made.length) out.push("OneSchedulePerRequest");
   if (cfg.bots.some((b) => s.looked[b] && !s.said[b])) out.push("BrokenIsTold");
+  for (const o of cfg.lines ?? []) {
+    if (s.lfires[o]! > 1) out.push("OnceLineRunsOnce");
+    if (s.lfires[o]! > 0 && s.ln[o] !== "run") out.push("RemovedBeforeRun");
+    if (s.ln[o] === "run" && s.lfires[o] !== 1) out.push("RunMeansDispatched");
+  }
   return out;
 }
 
@@ -221,6 +307,13 @@ export function stepViolations(s: State, n: State, cfg: Config): string[] {
       const w = n.jobs[j]!;
       if (w.st !== v.st || w.since !== v.since || w.last !== v.last || w.req !== v.req || !keptFires) out.push("BrokenKeepsJobs");
     }
+    if (n.dropped.includes(j) && !s.dropped.includes(j) && (s.tk[v.owner] === "none" || s.snap[v.owner]!.includes(j))) out.push("LostOnlyInRewrite");
+  }
+  for (const o of cfg.lines ?? []) {
+    if (s.ln[o] !== "in" && n.lfires[o] !== s.lfires[o]) out.push("InactiveNeverFires");
+    const owner = s.lowner[o]!;
+    if (n.ln[o] === "lost" && s.ln[o] !== "lost" && (s.tk[owner] === "none" || s.snap[owner]!.includes(o))) out.push("LostOnlyInRewrite");
+    if (inFile(s.ln[o]!) && !inFile(n.ln[o]!) && !["run", "taken", "lost"].includes(n.ln[o]!)) out.push("LostOnlyInRewrite");
   }
   return out;
 }
@@ -235,6 +328,8 @@ export interface View {
   file: Record<Bot, FileState>;
   /** The jobs each bot's files hold; a broken scheduled-routines.json shows none of its jobs. */
   jobs: Record<Job, JobView>;
+  /** Each one-shot line written so far: in routines.cron, in it paused, or out of it (run, taken unrun or lost: the log tells a run). */
+  lines: Record<Line, { st: "in" | "paused" | "out"; owner: Bot }>;
   /** Dispatches as (job, minute it ran, chat), sorted. */
   log: string[];
   notices: Record<Bot, number>;
@@ -253,7 +348,12 @@ export function view(s: State): View {
       ? { st: v.st, kind: v.kind, owner: v.owner, at: NONE, since: Math.max(v.since, v.last), last: NONE, req: "none" }
       : { st: v.st, kind: v.kind, owner: v.owner, at: v.at, since: v.since, last: v.last, req: v.req };
   }
-  return { now: s.now, up: s.up, file: { ...s.file }, jobs, log: logView(s.log), notices: { ...s.notices } };
+  const lines: View["lines"] = {};
+  for (const [o, st] of Object.entries(s.ln)) {
+    if (st === "none") continue;
+    lines[o] = { st: st === "in" || st === "paused" ? st : "out", owner: s.lowner[o] as Bot };
+  }
+  return { now: s.now, up: s.up, file: { ...s.file }, jobs, lines, log: logView(s.log), notices: { ...s.notices } };
 }
 
 export const logView = (log: Dispatch[]) => log.map((d) => `${d.job}@${d.at}:${d.chat}`).sort();

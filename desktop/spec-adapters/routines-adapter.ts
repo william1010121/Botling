@@ -1,17 +1,20 @@
 // spec/driver/routines-driver.ts against the real code: Bot objects of a project bot and its sub bots
 // (their heads never spawn), each action one call into Bot or ScheduledRoutineStore, and the observation
-// read back from the files the app keeps and the chat lines it emitted. Translation only.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// read back from the files the app keeps and the chat lines it emitted. Translation only, but for one piece of
+// environment: a script's append landing between an app rewrite's read of routines.cron and its rename is played
+// by holding the append back and writing it from inside node:fs renameSync, right before that rename.
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Bot } from "../src/core/bot";
 import { CodexThreads } from "../src/core/agent/codex";
 import { botPrompts, profilePaths } from "../src/core/prompts";
-import { parseRoutine, ScheduledRoutineStore } from "../src/core/routines";
+import { parseRoutine, RoutineFile, ScheduledRoutineStore } from "../src/core/routines";
 import { fromSwiftDate } from "../src/core/store/records";
 import { projectProfile, type BotProfile } from "../src/core/store/workspace";
 import type { RoutinesDriver, RoutinesSession, RoutinesWorld } from "../../spec/driver/routines-driver";
-import type { Bot as BotId, FileState, Job, JobState, JobView, View } from "../../spec/reference/routines";
+import type { Bot as BotId, FileState, Job, JobState, JobView, Line, View } from "../../spec/reference/routines";
 
 const MINUTE = 60_000;
 const NONE = -1;
@@ -21,6 +24,24 @@ const UNREADABLE = "{not json: a broken scheduled-routines.json";
 const task = (job: Job) => `${job}: run ${job}`;
 const slotOf = (text: string) => text.split(":")[0]!;
 const minute = (ms: number) => Math.round((ms - BASE) / MINUTE);
+const onceId = (line: Line) => `@once ${task(line)}`;
+
+/** Runs `write` with every rename onto `file` preceded by `before()` (once): the app's atomic writes import renameSync from node:fs. */
+function withRenameHook(file: string, before: () => void, write: () => void) {
+  const fs = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
+  const original = fs.renameSync;
+  let fired = false;
+  fs.renameSync = ((from: string, to: string) => {
+    if (!fired && String(to) === file) { fired = true; before(); }
+    return original(from, to);
+  }) as typeof fs.renameSync;
+  syncBuiltinESMExports();
+  try { write(); } finally {
+    fs.renameSync = original;
+    syncBuiltinESMExports();
+  }
+  if (!fired) throw new Error(`routines adapter: the rewrite never renamed ${file}`);
+}
 
 export const routinesAdapter: RoutinesDriver = {
   open(world: RoutinesWorld): RoutinesSession {
@@ -41,6 +62,9 @@ export const routinesAdapter: RoutinesDriver = {
     const everyBot: Bot[] = [];
     const kept: Record<BotId, string | null> = {};
     const legacy = new Map<Job, BotId>();
+    const onceLines = new Map<Line, BotId>();
+    /** A rewrite in flight: what it read, and the appends that landed after (held back until its rename). */
+    let window: { bot: BotId; line: Line | null; text: string; appended: string[] } | null = null;
     const emitted: { botId: string; role: string; text: string; time: string }[] = [];
     const botOf = (id: string) => world.bots.find((bot) => ids[bot] === id)!;
     world.setClock(BASE);
@@ -71,7 +95,7 @@ export const routinesAdapter: RoutinesDriver = {
 
     const session: RoutinesSession = {
       tick() { now++; world.setClock(BASE + now * MINUTE); },
-      crash() { bots = null; },
+      crash() { bots = null; window = null; },
       boot() {
         const next: Record<BotId, Bot> = {};
         for (const bot of world.bots) {
@@ -107,8 +131,42 @@ export const routinesAdapter: RoutinesDriver = {
       pause(job) { change(job, { operation: "pause" }); },
       resume(job) { change(job, { operation: "resume" }); },
       cancel(job) { change(job, { operation: "cancel" }); },
+      append(line, bot, paused) {
+        onceLines.set(line, bot);
+        const file = cronFile(bot);
+        mkdirSync(dirname(file), { recursive: true });
+        const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+        const added = `${text && !text.endsWith("\n") ? "\n" : ""}${paused ? "#" : ""}${onceId(line)}\n`;
+        appendFileSync(file, added);
+        if (window?.bot === bot) window.appended.push(added);
+      },
+      takeRead(bot, line) { window = { bot, line, text: readFileSync(cronFile(bot), "utf8"), appended: [] }; },
+      editRead(bot) { window = { bot, line: null, text: readFileSync(cronFile(bot), "utf8"), appended: [] }; },
+      rewrite(bot) {
+        const open = window!;
+        window = null;
+        const file = cronFile(bot);
+        // The file as the rewrite read it; what was appended since lands right before the rename.
+        writeFileSync(file, open.text);
+        const land = () => { for (const added of open.appended) appendFileSync(file, added); };
+        if (open.line !== null) {
+          // The check that took the line (tests call it only when that check has nothing else to do).
+          withRenameHook(file, land, () => live(bot).checkRoutines(BASE + now * MINUTE));
+          return;
+        }
+        // app_routines pause/resume of a line, as it is: a rewrite that changes nothing of its own.
+        const first = open.text.split("\n").map(parseRoutine).find((job) => job !== null);
+        if (!first) throw new Error("routines adapter: editRead needs a line in routines.cron to rewrite");
+        withRenameHook(file, land, () => new RoutineFile(file).update(first.id, first.enabled ? "resume" : "pause"));
+      },
+      takeThenCrash(bot, line) {
+        new RoutineFile(cronFile(bot)).takeOnce(onceId(line));
+        bots = null;
+        window = null;
+      },
       observe(): View {
         const file: Record<BotId, FileState> = {};
+        const onceView: View["lines"] = {};
         const jobs: Record<Job, JobView> = {};
         for (const bot of world.bots) {
           const saved = scheduled(bot);
@@ -122,6 +180,11 @@ export const routinesAdapter: RoutinesDriver = {
           const settings = join(profiles[bot]!.storeDir, "bot.json");
           const runs: Record<string, number> = existsSync(settings) ? JSON.parse(readFileSync(settings, "utf8")).routineRuns ?? {} : {};
           const lines = existsSync(cronFile(bot)) ? readFileSync(cronFile(bot), "utf8").split("\n") : [];
+          for (const [line, owner] of onceLines) {
+            if (owner !== bot) continue;
+            const job = lines.map(parseRoutine).find((routine) => routine?.once && routine.task === task(line));
+            onceView[line] = { st: job ? (job.enabled ? "in" : "paused") : "out", owner: bot };
+          }
           for (const [job, owner] of legacy) {
             if (owner !== bot) continue;
             const line = lines.map(parseRoutine).find((routine) => routine?.task === task(job));
@@ -131,7 +194,7 @@ export const routinesAdapter: RoutinesDriver = {
         }
         const log = emitted.filter((m) => m.role === "divider").map((m) => `${slotOf(m.text.split(" · ")[0]!)}@${minute(Date.parse(m.time))}:${botOf(m.botId)}`).sort();
         const notices = Object.fromEntries(world.bots.map((bot) => [bot, emitted.filter((m) => m.role === "notice" && m.botId === ids[bot] && m.text.startsWith("Routines:")).length]));
-        return { now, up: bots !== null, file, jobs, log, notices };
+        return { now, up: bots !== null, file, jobs, lines: onceView, log, notices };
       },
       minute,
       async close() {
