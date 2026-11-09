@@ -19,6 +19,10 @@
 //                  { ccb: "snapshot", id, botId, rect }   a picture of a part of this frame (x, y, width, height in its own
 //                                                         CSS px), kept in the bot's note-assets; the reply is { ref, url }
 //                                                         (`ccb.snapshot`, the Note tab's "freeze to image"; needs "files")
+//                  { ccb: "openLink", id, botId, href }   opens a link of the bot's note as the chat opens one: a web link in
+//                                                         the default browser, a Markdown file in the app's report preview,
+//                                                         another file with its app (or in Finder); a relative href against the
+//                                                         note's folder. The reply is { opened } (`ccb.openLink`; a file needs "files")
 //                  { ccb: "approval", id, botId, command, folder, card?, detail? }
 //                                                         asks the user to allow a bot's command: the page around it
 //                                                         shows its own ApprovalSheet; the reply is { allowed }. A
@@ -43,6 +47,7 @@ export type FrameRequest =
   | { ccb: "tile"; id: number; component: string; data: unknown; size: TileSize; botId: string }
   | { ccb: "card"; id: number; component: string; data: unknown; botId: string }
   | { ccb: "snapshot"; id: number; botId: string; rect: FrameRect }
+  | { ccb: "openLink"; id: number; botId: string; href: string }
   | { ccb: "approval"; id: number; botId: string; command: string; folder: string; card?: string; detail?: string };
 
 /** A part of a frame, in its own CSS px. */
@@ -81,6 +86,7 @@ const KEYS: Record<FrameRequest["ccb"], string[]> = {
   approval: ["ccb", "id", "botId", "command", "folder", "card", "detail"],
   card: ["ccb", "id", "component", "data", "botId"],
   snapshot: ["ccb", "id", "botId", "rect"],
+  openLink: ["ccb", "id", "botId", "href"],
 };
 const text = (value: unknown, max: number): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
@@ -118,6 +124,9 @@ export function parseFrameRequest(data: unknown): FrameRequest | null {
       if (width <= 0 || height <= 0 || width > 10_000 || height > 10_000) return null;
       return { ccb: "snapshot", id: message.id as number, botId: message.botId, rect: { x, y, width, height } };
     }
+    case "openLink":
+      if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.href, 4_000)) return null;
+      return { ccb: "openLink", id: message.id as number, botId: message.botId, href: message.href };
     case "approval":
       if (!Number.isSafeInteger(message.id) || !text(message.botId, 64) || !text(message.command, 20_000) || !text(message.folder, 4_000)) return null;
       if (message.card !== undefined && !text(message.card, 200)) return null;

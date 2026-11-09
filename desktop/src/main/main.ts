@@ -18,7 +18,8 @@ import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer
 import { autoUpdater } from "electron-updater";
 import { CHECK_EVERY_MS, Updater } from "./updates";
 import { reportPreviewURL, shellReportNavigation } from "./report-preview";
-import { markdownResponse, markdownStyles } from "./markdown-page";
+import { MARKDOWN_CSP, markdownPage, markdownResponse, markdownStyles } from "./markdown-page";
+import { pluginLinkRoute } from "../core/plugin-link";
 import { previewResponse } from "./preview-response";
 import { reportNeedsMark, resolveReportTheme, themeHtml, type ReportTheme } from "./report-theme";
 import { themeSourceFor, windowBackground, type AppTheme } from "./app-theme";
@@ -443,12 +444,13 @@ ipcMain.on("botling:post", (event, raw: unknown) => {
  * data, the `ccb` runtime), served once from botling-card://page/<token> under COMPONENT_CSP. The
  * frame is still sandboxed (opaque origin) and reaches nothing; only the app page can add one.
  */
-const pages = new Map<string, { html: string; panel: boolean }>();
+const pages = new Map<string, { html: string; panel: boolean; markdown?: boolean }>();
 const PAGE_LIMIT = 400;
-function addPage(html: string, panel = false): string {
+/** `markdown`: a Markdown file drawn as a report page (markdown-page.ts), served under MARKDOWN_CSP (no scripts at all). */
+function addPage(html: string, panel = false, markdown = false): string {
   const token = randomBytes(18).toString("hex");
   // A component shot measures every component page: the probe goes first in its head.
-  pages.set(token, { html: shotMode && !panel ? withProbe(html) : html, panel });
+  pages.set(token, { html: shotMode && !panel && !markdown ? withProbe(html) : html, panel, ...(markdown ? { markdown } : {}) });
   while (pages.size > PAGE_LIMIT) pages.delete(pages.keys().next().value!);
   return `${PAGE_PREFIX}${token}`;
 }
@@ -527,6 +529,27 @@ async function openOrdinaryLink(botId: string, url: string, source: "user" | "co
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
   if (preview && source === "component" && !reveal) return { opened: true, previewURL: reportPreviewURL(url) };
   return openLink(url, reveal);
+}
+/**
+ * A plugin frame's `ccb.openLink` (the Note tab's links): the core says what the href names (plugin-link.ts), and it opens
+ * as a chat link does. A web link in the default browser; a Markdown file in the app's report preview (an artifacts one
+ * from the preview origin like a chat report, any other drawn once as a page; the page shows `previewURL`); any other file
+ * with its app when it is a page, picture, video or document, else in Finder (never run). No prompt.
+ */
+async function openPluginLink(cmd: Extract<Command, { type: "plugins.openLink" }>): Promise<{ opened: boolean; previewURL?: string }> {
+  const target = await core.call({ type: "plugins.linkTarget", name: cmd.name, botId: cmd.botId, href: cmd.href });
+  const route = pluginLinkRoute(target);
+  if (target.kind === "web") return openLink(target.url);
+  if (route === "markdown") {
+    if (!existsSync(target.path)) throw Object.assign(new Error("That file is not there."), { code: "not_found" });
+    openedResults.push(target.path);
+    try { return { opened: true, previewURL: reportPreviewURL(target.path) }; } catch { /* not in an artifacts folder */ }
+    let text: string;
+    try { text = readFileSync(target.path, "utf8"); } catch { throw Object.assign(new Error("That file could not be read."), { code: "not_found" }); }
+    const page = markdownPage(text, target.path, markdownPageStyles(), resolveReportTheme(reportTheme, appDark));
+    return { opened: true, previewURL: addPage(page, false, true) };
+  }
+  return openLink(target.path);
 }
 /** `reveal`: the lightbox's "Show in Finder" (a local file only, shown in Finder rather than opened). */
 async function openLink(url: string, reveal = false): Promise<{opened:boolean}> {
@@ -658,6 +681,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     }
     case "component.report": return reportComponent(cmd, sender);
     case "plugins.noteSnapshot": return noteSnapshot(cmd, sender);
+    case "plugins.openLink": return openPluginLink(cmd);
     case "chat.feedback": return withScreenshot(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
@@ -840,7 +864,7 @@ function serveApp() {
     if (url.host === "page") {
       const page = pages.get(url.pathname.slice(1));
       if (page === undefined) return new Response("Not found", { status: 404 });
-      return new Response(page.html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": page.panel ? PANEL_CSP : COMPONENT_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
+      return new Response(page.html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": page.markdown ? MARKDOWN_CSP : page.panel ? PANEL_CSP : COMPONENT_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
     }
     if (url.host === "image") {
       // Only a picture some component's data named (the core keeps which, by token).

@@ -2608,6 +2608,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.approve": return this.plugins.approve(cmd.name, cmd.botId, cmd.command, cmd.folder, cmd.component, cmd.detail);
       case "plugins.tileImages": return this.plugins.tileImages(cmd.name, cmd.botId, cmd.data);
       case "plugins.noteSnapshot": return this.plugins.noteSnapshot(cmd.name, cmd.botId, cmd.picture);
+      case "plugins.linkTarget": return this.plugins.linkTarget(cmd.name, cmd.botId, cmd.href);
       case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
       case "agy.runtime.install": {

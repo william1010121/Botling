@@ -16,7 +16,8 @@
 // chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
 // web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). Since step M11 ccb-latex
 // is a built-in plugin (registry.ts `builtIns`) and reaches the chat page by the same path.
-import { join, resolve as resolvePath } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { z } from "zod";
 import { ContractError, type ApprovalAskView, type PluginsView, type ResultOf, type WebPluginSpecView } from "../../contract";
 import { ContractId } from "../../contract/editor-card";
@@ -38,6 +39,7 @@ import { isStudioMethod, StudioParams, studioAnswer, type StudioWorld } from "./
 import { agyUsageInProfiles, agyWorkerUsage } from "../agy-usage-db";
 import { refreshAntigravityQuota } from "../antigravity-quota";
 import { NOTE_MAX, NoteWatcher, readNote, writeNote } from "../bot-note";
+import { pluginLinkTarget, type PluginLinkTarget } from "../plugin-link";
 import { noteBranches, noteCards, noteRoutes, noteView } from "../note-format";
 import { ASSET_BYTES_MAX, assetFile, importAssetBytes, importAssetFile, linkedFile, linkedPictures, localizeImages } from "../note-assets";
 
@@ -880,6 +882,24 @@ export class Plugins {
     const file = this.noteFile(botId);
     const ref = importAssetBytes(file, Buffer.from(picture.base64, "base64"), picture.name);
     return { ref, url: this.noteAssetUrl(file, ref) };
+  }
+
+  /**
+   * What a plugin frame's `ccb.openLink` opens (plugin-link.ts): a web link, or a local file inside the bot's folder or its
+   * note's folder (relative links against the note's folder) or one the saved note links. Main opens it as a chat link.
+   * A local file needs "files" (as `notes.*`); a web link needs nothing.
+   */
+  linkTarget(name: string, botId: string, href: string): PluginLinkTarget {
+    const plugin = this.asking(name);
+    if (!/^\s*(https?|mailto):/i.test(href)) this.needs(plugin, "files", "Opening a file a bot's note links");
+    const file = this.noteFile(botId);
+    let noteText = "";
+    try { noteText = readNote(file).text; } catch { noteText = ""; }
+    try {
+      return pluginLinkTarget(href, { noteDir: dirname(file), botFolder: this.options.world.botFolder?.(botId) ?? null, home: homedir(), noteText });
+    } catch (error) {
+      throw new ContractError("forbidden", (error as Error).message);
+    }
   }
 
   tileImages(name: string, botId: string, data: string): { images: Record<string, string> } {
