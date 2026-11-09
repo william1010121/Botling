@@ -8,12 +8,19 @@
 //   desk → phone  {h:'ack', v:1, eph}                                  then only encrypted frames follow
 //                 {h:'nope', v:1, reason}                              unknown/expired offer, unknown/revoked phone
 // Encrypted (e2e.ts Channel frames), the first message each way confirms the keys:
-//   phone → desk  {t:'pair', name} | {t:'hello'}; then {t:'req', id, cmd}
+//   phone → desk  {t:'pair', name, v?:2} | {t:'hello'}; after `paired` (v 2) {t:'ack'}; then {t:'req', id, cmd}
 //   desk → phone  {t:'paired', deviceId, token, coreId, botIds, expiresAt} | {t:'ready', coreId, botIds, expiresAt};
 //                 then {t:'res', env} (a ResponseEnvelope), {t:'changed', n} (something changed: read again), {t:'revoked'}
+// Pairing v2: a desktop that takes the phone's ack puts v=2 in the QR link; a phone app that sends it says v:2 in
+// {t:'pair'}. The desktop then stores the device and spends the code only when {t:'ack'} arrives, and gives the
+// code back if the connection ends first or the ack does not come in time. Either side older: no v, no ack, the
+// pairing is final when `paired` is sent (the schemas are strict, so neither side sends the other a field it
+// does not know).
 import { z } from 'zod';
 
 export const RELAY_PROTOCOL = 1;
+/** The pairing version that acknowledges `paired` (see above). */
+export const RELAY_PAIR_ACK = 2;
 const B64U = /^[A-Za-z0-9_-]+$/;
 const key = z.string().length(43).regex(B64U);
 
@@ -33,8 +40,9 @@ export const RELAY_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'ch
 export const READ_COMMANDS: ReadonlySet<string> = new Set(['chat.snapshot', 'chat.history']);
 
 export const PhoneMessage = z.discriminatedUnion('t', [
-  z.strictObject({ t: z.literal('pair'), name: z.string().max(40).optional() }),
+  z.strictObject({ t: z.literal('pair'), name: z.string().max(40).optional(), v: z.literal(RELAY_PAIR_ACK).optional() }),
   z.strictObject({ t: z.literal('hello') }),
+  z.strictObject({ t: z.literal('ack') }),
   z.strictObject({ t: z.literal('req'), id: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), cmd: z.unknown() }),
 ]);
 export type PhoneMessage = z.infer<typeof PhoneMessage>;
@@ -49,18 +57,20 @@ export const DeskMessage = z.discriminatedUnion('t', [
 export type DeskMessage = z.infer<typeof DeskMessage>;
 
 /** The QR code's link: the relay's page plus, in the fragment (never sent to any server), the room, the desktop's
- * public key and the one-time pairing secret. `w` is the relay's WebSocket when it is not this page's own /ws. */
-export interface RelayLink { room: string; deskKey: string; secret: string; ws?: string }
+ * public key and the one-time pairing secret. `w` is the relay's WebSocket when it is not this page's own /ws; `v`
+ * the pairing version the desktop speaks (absent: 1). */
+export interface RelayLink { room: string; deskKey: string; secret: string; ws?: string; v?: number }
 export const relayPairingURL = (page: string, link: RelayLink) =>
-  `${page}#relay=${link.room}&k=${link.deskKey}&s=${link.secret}${link.ws ? `&w=${encodeURIComponent(link.ws)}` : ''}`;
+  `${page}#relay=${link.room}&k=${link.deskKey}&s=${link.secret}${link.ws ? `&w=${encodeURIComponent(link.ws)}` : ''}${link.v && link.v > 1 ? `&v=${link.v}` : ''}`;
 export function parseRelayFragment(hash: string): RelayLink | null {
   const params = new URLSearchParams(hash.replace(/^#/, ''));
   const room = params.get('relay') ?? '', deskKey = params.get('k') ?? '', secret = params.get('s') ?? '', ws = params.get('w') ?? undefined;
+  const v = /^[1-9]$/.test(params.get('v') ?? '') ? Number(params.get('v')) : undefined;
   const ok = [room, deskKey, secret].every(v => v.length === 43 && B64U.test(v));
   if (!ok) return null;
   if (ws !== undefined) {
     try { const url = new URL(ws); if (url.protocol !== 'wss:' && !(url.protocol === 'ws:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) return null; }
     catch { return null; }
   }
-  return { room, deskKey, secret, ...(ws ? { ws } : {}) };
+  return { room, deskKey, secret, ...(ws ? { ws } : {}), ...(v && v > 1 ? { v } : {}) };
 }

@@ -50,19 +50,36 @@ function randomId() {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-/** Returns the bearer token. Errors never include the secret. */
+/** Returns the bearer token. Errors never include the secret. The page asks to acknowledge the token (`ack`): a
+ * desktop that takes acks answers `ack: true` and keeps the pairing only once ackPairing reaches it (a desktop
+ * from before ignores the field and the pairing is final at once, as it was). */
 export async function redeemPairing(link: PairingLink, device: string, origin: string, fetcher: typeof fetch = fetch): Promise<string> {
   const init = { cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' } as const;
   const info = await fetcher(endpointURL('/api/mobile/core', origin), { ...init, headers: mobileGeneration() }).then(r => r.ok ? r.json() : null).catch(() => null);
   if (!info || info.app !== 'botling') throw new MobileError('Could not reach Botling. Check the connection and scan the code again.');
   if (info.coreId !== link.coreId) throw new MobileError('This code is for a different Botling. Open the link on the Botling that showed it.', true);
   const response = await fetcher(endpointURL('/api/mobile/pair', origin), { ...init, method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...mobileGeneration() }, body: JSON.stringify({ secret: link.secret, deviceId: device, name: deviceName() }) }).catch(() => null);
+    headers: { 'Content-Type': 'application/json', ...mobileGeneration() }, body: JSON.stringify({ secret: link.secret, deviceId: device, name: deviceName(), ack: true }) }).catch(() => null);
   if (!response) throw new MobileError('Could not reach Botling. Check the connection and try again.');
   if (response.status === 429) throw new MobileError('Too many attempts. Wait a minute, then show a new code.', true);
   if (response.status === 401) throw new MobileError('This code has expired or already been used. Show a new code on your computer.', true);
   if (!response.ok) throw new MobileError('Pairing is unavailable. Try again, or paste the access token instead.', true);
   const body = await response.json().catch(() => null);
   if (!body || typeof body.token !== 'string' || body.coreId !== link.coreId) throw new MobileError('Pairing failed. Show a new code on your computer.', true);
+  if (body.ack === true) await ackPairing(body.token, origin, fetcher);
   return body.token;
+}
+
+/** Tells the desktop this phone holds its token, asking again if no answer comes (asking twice is fine). Too late
+ * (the desktop undid the pairing): the same code works again while it lasts. */
+export async function ackPairing(token: string, origin: string, fetcher: typeof fetch = fetch, tries = 3, waitMs = 500): Promise<void> {
+  const init = { cache: 'no-store', credentials: 'omit', redirect: 'error', referrerPolicy: 'no-referrer' } as const;
+  for (let i = 0; i < tries; i++) {
+    if (i) await new Promise(resolve => setTimeout(resolve, waitMs * i));
+    const response = await fetcher(endpointURL('/api/mobile/pair/ack', origin), { ...init, method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, ...mobileGeneration() } }).catch(() => null);
+    if (response?.ok) return;
+    if (response?.status === 401) break;
+  }
+  throw new MobileError('Pairing did not finish. Scan the code on your computer again.', true);
 }
