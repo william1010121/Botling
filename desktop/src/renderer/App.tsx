@@ -10,7 +10,7 @@ import { ownsCommand } from "../../../Web/src/frame-protocol";
 // commands. Only this page has the bridge to main.
 import { inputTrace } from "./input-trace";
 import { ReportViewer } from "./ReportViewer";
-import { setReportOpener } from "./report-opener";
+import { openReport, setReportOpener } from "./report-opener";
 import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
@@ -436,11 +436,14 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
     const botId = namedBot(store.getView().bots, command.botId);
     if (!botId) { setError(`No bot "${command.botId.slice(0, 80)}".`); return; }
     if (command.id === "botling.openResult") {
-      void client.request({ type: "result.open", botId, url: command.url }).catch(fail);
+      void client.request({ type: "result.open", botId, url: command.url })
+        .then((result) => { if (result.previewURL) openReport(botId, result.previewURL); }).catch(fail);
       return;
     }
     if (command.id === "botling.openLink") {
-      void client.request({ type: "link.open", source: "user", botId, url: command.url }).catch(fail);
+      // A Markdown file comes back as a report page (main never hands .md to the system's app): shown like the chat's.
+      void client.request({ type: "link.open", source: "user", botId, url: command.url })
+        .then((result) => { if (result.previewURL) openReport(botId, result.previewURL); }).catch(fail);
       return;
     }
     if (command.id === "botling.openTab") {
@@ -460,11 +463,14 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   // A plugin's view at the right end of the row above the input box (`composerBar`), drawn in the chat page.
   useComposerBar({ client, view: bot && !web ? composerBarFor(view.plugins, bot) : null, botId: bot?.id ?? null, onBuiltin: runBuiltin, components: view.components, bots: view.bots, ask: approval.ask });
 
-  // A result opens in the browser or with its own app; main checks it is one of this chat's links.
+  // A result opens in the browser, the app's Markdown preview or with its own app; main checks it is one of this chat's links.
   const openResult = useCallback((result: ResultView) => {
     if (!chat) return;
     setError(null);
-    void client.request({ type: "result.open", botId: chat.botId, url: result.url }).catch(fail);
+    // A Markdown result comes back as a report page (main never hands .md to the system's app).
+    const botId = chat.botId;
+    void client.request({ type: "result.open", botId, url: result.url })
+      .then((opened) => { if (opened.previewURL) openReport(botId, opened.previewURL); }).catch(fail);
   }, [client, chat, fail]);
 
   // The bot's settings, one level in in the right panel (1.x's DetailPanel `showingSettings`); a new bot shows its overview.

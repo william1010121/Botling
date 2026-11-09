@@ -17,7 +17,7 @@ import {bindingsFor} from "../contract/shortcuts";
 import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { autoUpdater } from "electron-updater";
 import { CHECK_EVERY_MS, Updater } from "./updates";
-import { reportPreviewURL, shellReportNavigation } from "./report-preview";
+import { linkOpenWay, markdownLinkPath, reportPreviewURL, shellReportNavigation } from "./report-preview";
 import { MARKDOWN_CSP, markdownPage, markdownResponse, markdownStyles } from "./markdown-page";
 import { pluginLinkRoute } from "../core/plugin-link";
 import { previewResponse } from "./preview-response";
@@ -516,10 +516,11 @@ const openedResults: string[] = [];
  * opens in the browser; a local file opens with its app when it is a page, a picture, a video or a
  * document, and is shown in Finder otherwise (never run).
  */
-async function openResult(botId: string, url: string): Promise<{ opened: boolean }> {
+async function openResult(botId: string, url: string): Promise<{ opened: boolean; previewURL?: string }> {
   const access = await core.call({type:"link.authorize",botId,url});
   if (!access.result) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
-  return openLink(url);
+  const markdown = markdownLinkPath(url);
+  return markdown ? markdownPreview(markdown, url) : openLink(url);
 }
 async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string,reveal=false,preview=false,cardImage?:string): Promise<{opened:boolean;previewURL?:string}> {
   // A file attached in this chat, as the chat page shows it (served by the chat origin): the file it
@@ -527,8 +528,23 @@ async function openOrdinaryLink(botId: string, url: string, source: "user" | "co
   url = attachmentFile(url, botId) ?? url;
   const access = await core.call({type:"link.authorize",source,botId,url,...(messageId?{messageId}:{}),...(pinId?{pinId}:{}),...(cardImage?{cardImage}:{})});
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
-  if (preview && source === "component" && !reveal) return { opened: true, previewURL: reportPreviewURL(url) };
+  const way = linkOpenWay({ url, source, preview, reveal });
+  if (way === "markdown") return markdownPreview(markdownLinkPath(url)!, url);
+  if (way === "preview") return { opened: true, previewURL: reportPreviewURL(url) };
   return openLink(url, reveal);
+}
+/**
+ * A local Markdown file in the app's report preview (chat links, plugin links): an artifacts one from the preview origin
+ * like a chat report, any other drawn once as a page. Never the system's app for .md.
+ */
+function markdownPreview(path: string, link = path): { opened: boolean; previewURL: string } {
+  if (!existsSync(path)) throw Object.assign(new Error("That file is not there."), { code: "not_found" });
+  openedResults.push(link);
+  try { return { opened: true, previewURL: reportPreviewURL(path) }; } catch { /* not in an artifacts folder */ }
+  let text: string;
+  try { text = readFileSync(path, "utf8"); } catch { throw Object.assign(new Error("That file could not be read."), { code: "not_found" }); }
+  const page = markdownPage(text, path, markdownPageStyles(), resolveReportTheme(reportTheme, appDark));
+  return { opened: true, previewURL: addPage(page, false, true) };
 }
 /**
  * A plugin frame's `ccb.openLink` (the Note tab's links): the core says what the href names (plugin-link.ts), and it opens
@@ -540,15 +556,7 @@ async function openPluginLink(cmd: Extract<Command, { type: "plugins.openLink" }
   const target = await core.call({ type: "plugins.linkTarget", name: cmd.name, botId: cmd.botId, href: cmd.href });
   const route = pluginLinkRoute(target);
   if (target.kind === "web") return openLink(target.url);
-  if (route === "markdown") {
-    if (!existsSync(target.path)) throw Object.assign(new Error("That file is not there."), { code: "not_found" });
-    openedResults.push(target.path);
-    try { return { opened: true, previewURL: reportPreviewURL(target.path) }; } catch { /* not in an artifacts folder */ }
-    let text: string;
-    try { text = readFileSync(target.path, "utf8"); } catch { throw Object.assign(new Error("That file could not be read."), { code: "not_found" }); }
-    const page = markdownPage(text, target.path, markdownPageStyles(), resolveReportTheme(reportTheme, appDark));
-    return { opened: true, previewURL: addPage(page, false, true) };
-  }
+  if (route === "markdown") return markdownPreview(target.path);
   return openLink(target.path);
 }
 /** `reveal`: the lightbox's "Show in Finder" (a local file only, shown in Finder rather than opened). */
