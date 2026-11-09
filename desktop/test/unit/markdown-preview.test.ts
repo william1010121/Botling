@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { cardData, isArtifactMarkdown, isArtifactPage, isArtifactResult, linkedCards, markdownTitle, previewFile, previewURL } from "../../src/core/page-preview";
-import { inlineKatexFonts, MARKDOWN_CSP, markdownMediaSource, markdownPage, markdownResponse, renderMarkdownBody } from "../../src/main/markdown-page";
+import { inlineKatexFonts, MARKDOWN_CSP, PAGE_CSS, markdownMediaSource, markdownPage, markdownResponse, renderMarkdownBody } from "../../src/main/markdown-page";
 import { reportPreviewURL } from "../../src/main/report-preview";
 
 const dir = mkdtempSync(join(tmpdir(), "md-preview-"));
@@ -116,9 +116,25 @@ describe("rendering it as the chat does", () => {
     expect(markdownPage("no heading", "/p/artifacts/plain-notes.md", styles)).toContain("<title>plain-notes</title>");
     const plain = markdownPage("# A <b> title\n\nwords", "/p/artifacts/x.md", styles);
     expect(plain).toContain("<title>A &lt;b&gt; title</title>");
-    expect(plain).toContain('<main class="markdown">');
+    expect(plain).toContain('<main class="markdown page">');
     expect(plain).not.toContain("/*katex*/");
     expect(markdownPage("$x$", "/p/artifacts/x.md", styles)).toContain("/*katex*/");
+  });
+
+  it("is drawn in the report pages' look, dark unless asked for light", async () => {
+    expect(markdownPage("words", "/p/artifacts/x.md")).toContain('<html data-theme="dark">');
+    expect(markdownPage("words", "/p/artifacts/x.md", {}, "light")).toContain('<html data-theme="light">');
+    const file = join(artifacts, "themed.md");
+    writeFileSync(file, "# Themed");
+    expect(await markdownResponse(file, {}, "GET", "light").text()).toContain('<html data-theme="light">');
+  });
+
+  it("fills the window as a document: no narrow column, a CJK font stack, code that scrolls instead of wrapping", () => {
+    expect(PAGE_CSS).not.toMatch(/max-width:\s*\d+px/);
+    expect(PAGE_CSS).toMatch(/"PingFang TC"/);
+    expect(PAGE_CSS).toMatch(/ui-monospace/);
+    expect(PAGE_CSS).toMatch(/\.page\.markdown pre \{[^}]*white-space: pre;[^}]*overflow-x: auto/);
+    expect(markdownPage("words", "/p/artifacts/x.md")).toContain(PAGE_CSS);
   });
 
   it("inlines KaTeX's woff2 fonts so the page loads nothing else", () => {
