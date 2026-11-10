@@ -906,7 +906,7 @@ const PEEK_GRACE_MS = 200;
 
 /**
  * The left column folded (1.x's RailStrip): faces only, the rows the open column keeps above its Idle group (railSplit;
- * the idle bots are left out), the pinned ones first, with no unread dot (no room beside a face); hover (or focus) a face for a peek
+ * the idle bots are left out), the pinned ones first, a blue dot on a face with unread messages; hover (or focus) a face for a peek
  * (StripPeek) with its name and status and, for a bot with sub bots, those sub bots, each opening its chat.
  * The chat is a native view above the shell, so an open peek covers it as one shell overlay across faces.
  */
@@ -954,6 +954,7 @@ export function RailStrip({ bots, pinned, idle = [], look, shown, waiting, onSel
                 onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
                 <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
                 {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
+                {unread && <span className="strip-unread" aria-hidden="true" />}
               </button>
               {open && tip && (
                 <StripPeek bot={bot} subs={subs} detail={parts.join(" · ")} look={look} top={tip.top} shown={shown}
