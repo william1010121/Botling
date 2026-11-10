@@ -290,6 +290,12 @@ ${characterPrefix(o.question, 500) || "(only the name)"}
 Tell the user, in one or two sentences in their language, that the result did not come back. Do not ask it again unless the user says so.)`;
 }
 
+/**
+ * `relayedAnswerNote`: with your answer on a card `callee` (called in by this chat's bot with @) asked and the app
+ * relayed into this chat: the answer is yours to this bot; the callee's own card shows it, but it is not woken.
+ */
+export const relayedAnswerNote = (callee: string) => `(App: The user's message below answers the card ${quoteName(callee)} posted in this chat on your @ request. ${quoteName(callee)}'s own card shows the same answer, but it was not handed it as a turn: carry on with the user's request yourself, and tell it with @ and its name only if it has to act on the answer.)`;
+
 /** `pickedNote` / `answeredNote`: what a guest is told of your pick or words on its line. */
 export const pickedNote = (label: string) => `The user picked: ${label}`;
 export const answeredNote = (shown: string) => `The user answered: ${shown}`;

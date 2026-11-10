@@ -56,14 +56,15 @@ async function relayedQuestion(h: ReturnType<typeof fixture>) {
 }
 
 describe("a called-in bot's relayed question is one card: answered on either side, both show it", () => {
-  it("a pick on the copy in the caller's chat goes to the bot that asked and settles its own card", async () => {
+  it("a pick on the copy in the caller's chat goes to the caller (where it was given) and settles the card it copies", async () => {
     const h = fixture();
     try {
       const { copy, original } = await relayedQuestion(h);
       expect((h.core as any).calledInPick(BOTLING, copy.id, 0)).toEqual({ accepted: true });
       expect(h.caller.line(copy.id)!.chosen).toBe(0);
-      // The bot that asked hears the pick (a call-in with it), and its own card shows it answered.
-      await vi.waitFor(() => expect((h.design as any).turn?.callIn).toBe(BOTLING));
+      // The caller hears the pick as your message (relayed-card-answer.test.ts); the bot that asked is not called in again.
+      expect(h.caller.lines().some((line) => line.role === "user" && line.text === "形狀臉" && line.replyTo === copy.id)).toBe(true);
+      expect((h.design as any).turn?.callIn).toBeUndefined();
       expect(h.design.line(original.id)!.chosen).toBe(0);
       expect(isOpenQuestion(h.design.line(original.id)!)).toBe(false);
     } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
