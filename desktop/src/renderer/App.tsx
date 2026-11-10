@@ -35,7 +35,7 @@ import { BotSettings, SettingsSheet, type SettingsSection } from "./Settings";
 import { SidebarSettings } from "./SidebarSettings";
 import { TaskDetails } from "./TaskDetails";
 import { botCounts, canIdle, idleCounts, idleList, railOrder, railSplit } from "./rail-idle";
-import { markViewed, railWords, railWorkers, readRailFold, readRailSince, readViewedWorkers, toggleRailFold, type RailFold, type RailMarks } from "./rail-workers";
+import { markViewed, railWords, railWorkers, readOpenJobs, readRailFold, readRailSince, readViewedWorkers, seenInChat, toggleOpenJob, toggleRailFold, type RailFold, type RailMarks } from "./rail-workers";
 import { RailWorkerList, type RailWorkerActions } from "./RailWorkers";
 import { SubBotFace, SubBotNav } from "./SubBotNav";
 import { flashMs, headerNav, leaveMark, movePinned, newSinceMark, newSubBotAsk, NEW_SINCE_PREFIX, pinnedTarget, rememberRoom, roomStep, subBotRow, togglePinned, withNewSince, type LastRooms, type LeaveMarks } from "./sub-bot-nav";
@@ -169,6 +169,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   const [railSince] = useState(() => readRailSince(Date.now()));
   const [railFold, setRailFold] = useState<RailFold>(() => readRailFold());
   const [railAll, setRailAll] = useState<ReadonlySet<string>>(() => new Set());
+  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => readOpenJobs());
   // Navigation v5: the Sub bots menu left of Chat | Board (⌘⇧S), and ⌘[ / ⌘] between a project bot and the
   // sub bot last shown under it (kept for this window only, never in a bot's context).
   const [subBotsOpen, setSubBotsOpen] = useState(false);
@@ -358,6 +359,9 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
   useEffect(() => { if (shownWorker?.status === "failed") seeWorker(shownWorker.id); }, [shownWorker?.id, shownWorker?.status, seeWorker]);
   // A finished worker opened in the main area is viewed: its blue dot goes, and it leaves the list once you move on.
   useEffect(() => { if (shownWorker && shownWorker.status !== "running") setViewedWorkers(markViewed(shownWorker.id)); }, [shownWorker?.id, shownWorker?.status]);
+  // A bot's chat open counts its finished workers' reports as seen: they leave the list (a sub bot's, in its own chat).
+  const seenNow = !watching && bot ? seenInChat(bot, viewedWorkers) : [];
+  useEffect(() => { if (seenNow.length) setViewedWorkers(markViewed(...seenNow)); }, [seenNow.join(",")]);
   useEffect(() => {
     setWorkersMenu(workersMenuAfterMove(workersMenuPending.current, chat?.botId));
     workersMenuPending.current = null;
@@ -601,11 +605,12 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
                 const lang = view.settings?.effectiveLanguage ?? null;
                 const words = railWords(lang);
                 const workerMarks: RailMarks = { viewed: viewedWorkers, since: railSince, watching: watching && chat?.botId ? { botId: chat.botId, id: watching } : null,
-                  folded: new Set(railFold.folded), all: railAll };
+                  folded: new Set(railFold.folded), all: railAll, jobsOpen: openJobs };
                 const workerActions: RailWorkerActions = {
                   onOpen: openSubagent,
                   onSettle: (ownerId, workerRow) => settleSubagent(ownerId, workerRow, true),
-                  onAll: (botId) => setRailAll((current) => { const next = new Set(current); if (!next.delete(botId)) next.add(botId); return next; }),
+                  onAll: (key) => setRailAll((current) => { const next = new Set(current); if (!next.delete(key)) next.add(key); return next; }),
+                  onToggleJob: (key) => setOpenJobs(toggleOpenJob(key)),
                 };
                 const row = (candidate: BotView, away: boolean) => {
                   const counts = botCounts(candidate, view.bots, view.waiting, candidate.id === shownId);

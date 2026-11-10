@@ -1129,12 +1129,20 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .rail-wk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .rail-wk-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rail-wk-meta { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail-wk-row.unread .rail-wk-name { font-weight: 600; }
 .rail-wk-row.viewed .rail-wk-open { color: var(--muted); }
 .rail-wk-row.running .rail-wk-state { color: var(--link); }
-.rail-wk-row.done.unread .rail-wk-state { color: var(--green); }
+.rail-wk-row.done:not(.viewed) .rail-wk-state { color: var(--green); }
 .rail-wk-row.failed .rail-wk-state { color: var(--error); }
-.rail-wk-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); flex-shrink: 0; }
+/* One job's workers as one item: a dot per worker, its workers indented under it once opened (no blue dot). */
+.rail-wk-job .rail-wk-state { color: var(--faint); }
+.rail-wk-job.failed .rail-wk-state.failed { color: var(--error); }
+.rail-wk-job .rail-wk-chevron { color: var(--faint); margin-right: 4px; }
+.rail-wk-pips { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+.rail-wk-pip { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.rail-wk-pip.running { background: var(--blue); }
+.rail-wk-pip.done { background: var(--green); }
+.rail-wk-pip.failed { background: var(--error); }
+.rail-wk-members { display: flex; flex-direction: column; padding-left: 14px; }
 .rail-wk-mark { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 800; color: #fff; line-height: 1; }
 .rail-wk-mark.running { border: 2px solid var(--blue); border-right-color: var(--accent-line); animation: wk-spin 1s linear infinite; }
 .rail-wk-mark.done { background: var(--green); }

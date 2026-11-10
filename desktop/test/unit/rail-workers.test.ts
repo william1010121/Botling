@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { BotView, SubagentRowView } from "../../src/contract";
 import {
   RAIL_WORKERS_AT_MOST, markViewed, railWorkerItems, railWorkers, railWorkerTime, readRailFold, readRailSince, readViewedWorkers,
-  toggleRailFold, type RailMarks,
+  railJobMeta, toggleRailFold, type RailEntry, type RailMarks, type RailWorkerItem,
 } from "../../src/renderer/rail-workers";
 
 const NOW = new Date(2026, 10, 10, 16, 0).getTime();
@@ -27,6 +27,8 @@ const marks = (over: Partial<RailMarks> = {}): RailMarks => ({
 });
 
 afterEach(() => localStorage.clear());
+// The workers among a list's items (these have no jobs).
+const only = (list: { items: RailEntry[] }) => list.items.filter((entry): entry is RailWorkerItem => entry.kind === "worker");
 
 describe("a bot's worker items", () => {
   it("lists running and finished-but-unviewed workers, never sub bot rows or settled ones; needs-you first", () => {
@@ -76,7 +78,7 @@ describe("the list under a bot row", () => {
     const list = railWorkers(many, [many], NOW, marks());
     expect(list.total).toBe(6);
     expect(list.unread).toBe(2);
-    expect(list.items.map((item) => item.row.id)).toEqual(["f1", "d1", "r1"]);
+    expect(only(list).map((item) => item.row.id)).toEqual(["f1", "d1", "r1"]);
     expect(list.more).toBe(3);
     const all = railWorkers(many, [many], NOW, marks({ all: new Set(["cv"]) }));
     expect(all.items).toHaveLength(6);
@@ -107,7 +109,7 @@ describe("sub bots' workers in the list", () => {
     const list = railWorkers(root, bots, NOW, marks({ all: new Set(["botling"]) }));
     expect(list.total).toBe(7);
     expect(list.unread).toBe(2);
-    expect(list.items.map((item) => [item.row.id, item.subBot?.name ?? null, item.ownerId])).toEqual([
+    expect(only(list).map((item) => [item.row.id, item.subBot?.name ?? null, item.ownerId])).toEqual([
       ["pack", "Release", "rel"], ["readme", "Docs", "docs"],
       ["own1", null, "botling"], ["d1", "Deep", "deep"], ["proof", "Docs", "docs"], ["notes", "Release", "rel"], ["own2", null, "botling"],
     ]);
@@ -115,7 +117,7 @@ describe("sub bots' workers in the list", () => {
 
   it("count toward the same cap of 3", () => {
     const list = railWorkers(root, bots, NOW, marks());
-    expect(list.items.map((item) => item.row.id)).toEqual(["pack", "readme", "own1"]);
+    expect(only(list).map((item) => item.row.id)).toEqual(["pack", "readme", "own1"]);
     expect(list.more).toBe(4);
   });
 
@@ -125,13 +127,13 @@ describe("sub bots' workers in the list", () => {
     expect(railWorkers(parent, [parent, child], NOW, marks()).items.map((item) => item.subBot?.id)).toEqual(["c"]);
   });
 
-  it("each item has a grouping key (its own row id today) for merging one job's workers later", () => {
-    expect(railWorkers(root, bots, NOW, marks()).items.map((item) => item.groupKey)).toEqual(["pack", "readme", "own1"]);
+  it("a worker opened for no job is keyed by its own row id", () => {
+    expect(only(railWorkers(root, bots, NOW, marks())).map((item) => item.groupKey)).toEqual(["pack", "readme", "own1"]);
   });
 
   it("the viewed worker of a sub bot shows while open in that sub bot", () => {
     const viewed = marks({ viewed: new Set(["readme"]), watching: { botId: "docs", id: "readme" }, all: new Set(["botling"]) });
-    expect(railWorkers(root, bots, NOW, viewed).items.find((item) => item.row.id === "readme")).toMatchObject({ viewed: true, selected: true, unread: false });
+    expect(only(railWorkers(root, bots, NOW, viewed)).find((item) => item.row.id === "readme")).toMatchObject({ viewed: true, selected: true, unread: false });
   });
 });
 
@@ -162,5 +164,52 @@ describe("what is kept", () => {
     const first = readRailSince(NOW);
     expect(first).toBe(NOW);
     expect(readRailSince(NOW + 10 * MIN)).toBe(NOW);
+  });
+});
+
+// Workers opened for the same job (the bot named it with app_handoff's `group`, or handed them off in one turn) are
+// one item, not expanded until clicked: never across bots (a sub bot's job is its own item beside the bot's).
+describe("one job's workers as one item", () => {
+  const turn = (id: string) => ({ id: `t:${id}`, title: "比較三家 GPU 雲的價格" });
+  const named = (title: string) => ({ id: `g:${title.toLowerCase()}`, title });
+  it("workers handed off in the same turn are one job item (they were listed flat)", () => {
+    const b = bot({ id: "b", subagentRows: [
+      row({ id: "aws", group: turn("1") }), row({ id: "gcp", group: turn("1") }), done("lambda", { group: turn("1") }),
+      row({ id: "alone", group: turn("2") }),
+    ] });
+    const list = railWorkers(b, [b], NOW, marks());
+    expect(list.items).toHaveLength(2);
+    const job = list.items.find((entry) => entry.kind === "job");
+    expect(job).toMatchObject({ kind: "job", title: "比較三家 GPU 雲的價格", open: false, shown: [] });
+    expect(job?.kind === "job" && job.members.map((item) => item.row.id).sort()).toEqual(["aws", "gcp", "lambda"]);
+    expect(list.items.find((entry) => entry.kind === "worker")).toMatchObject({ row: { id: "alone" } });
+    expect(list.total).toBe(4);
+  });
+  it("a job the bot named merges across turns; opened, it lists its workers", () => {
+    const b = bot({ id: "b", subagentRows: [row({ id: "a", group: named("Release") }), row({ id: "c", group: named("Release") })] });
+    const list = railWorkers(b, [b], NOW, marks({ jobsOpen: new Set(["b|g:release"]) }));
+    expect(list.items).toHaveLength(1);
+    expect(list.items[0]).toMatchObject({ kind: "job", key: "b|g:release", title: "Release", open: true });
+    expect(list.items[0]!.kind === "job" && list.items[0]!.shown.map((item) => item.row.id)).toHaveLength(2);
+  });
+  it("never merges a bot's workers with its sub bot's, even under the same name: each its own item, side by side", () => {
+    const root = bot({ id: "b", subagentRows: [row({ id: "a", group: named("Docs") }), row({ id: "c", group: named("Docs") })] });
+    const sub = bot({ id: "s", name: "Release", parent: "b" as never, subagentRows: [row({ id: "d", group: named("Docs") }), row({ id: "e", group: named("Docs") })] });
+    const list = railWorkers(root, [root, sub], NOW, marks());
+    expect(list.items.map((entry) => entry.kind === "job" ? [entry.key, entry.subBot?.name ?? null] : null)).toEqual([["b|g:docs", null], ["s|g:docs", "Release"]]);
+  });
+  it("a job leaves only once every worker in it is done and seen; one still running keeps it", () => {
+    const rows = [done("a", { group: turn("1") }), done("c", { group: turn("1") })];
+    const b = bot({ id: "b", subagentRows: rows });
+    expect(railWorkers(b, [b], NOW, marks({ viewed: new Set(["a"]) })).items).toHaveLength(1);
+    expect(railWorkers(b, [b], NOW, marks({ viewed: new Set(["a", "c"]) })).items).toHaveLength(0);
+    const running = bot({ id: "b", subagentRows: [done("a", { group: turn("1") }), row({ id: "c", group: turn("1") })] });
+    expect(railWorkers(running, [running], NOW, marks({ viewed: new Set(["a"]) })).items).toHaveLength(1);
+  });
+  it("its second line: failures, how many, how long", () => {
+    const b = bot({ id: "b", subagentRows: [row({ id: "a", group: turn("1"), startedAt: NOW - 12 * MIN }), row({ id: "c", status: "failed", endedAt: NOW - MIN, group: turn("1") })] });
+    const job = railWorkers(b, [b], NOW, marks()).items[0]!;
+    expect(job.kind === "job" && railJobMeta(job, NOW, "zh-Hant")).toBe("1 失敗・2 個・12 分");
+    expect(job.kind === "job" && railJobMeta(job, NOW, null)).toBe("1 failed · 2 workers · 12m");
   });
 });

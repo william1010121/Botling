@@ -1,12 +1,13 @@
 // The left column's worker list, as pure functions: a bot's app-managed workers indented under its row, each one
 // item named by its worker name (status and time on a second line). Its sub bots' workers are in the same list,
-// each labelled with its sub bot. At most 3, the rest "N more". A finished worker stays, marked unread, until you
-// open it; once viewed it is gone the next time the list draws (it shows, greyed, only while it is the one open),
-// and "Settle down" moves it to the right column's Settled at once. A failed one stays the same way. The bot's count
-// folds the whole list. What is viewed, the first start (older workers count as viewed) and the fold are kept in
-// this window's storage.
-// The list is collected, sorted, then capped; items carry `groupKey` (one per worker today) so several workers
-// started for the same job can later be merged into one item between the sort and the cap.
+// each labelled with its sub bot. Workers opened for the same job (the name the bot gave with app_handoff's `group`,
+// else the turn that handed them off) are one job item, its workers listed only once it is clicked open; never across
+// bots (a sub bot's job is its own item, beside the bot's). At most 3 items (a job counts 1), the rest "N more".
+// A finished worker stays until it is seen: its bot's chat was open after it ended, or it was opened itself; then it is
+// gone the next time the list draws (it shows, greyed, only while it is the one open). A job goes once every worker
+// in it is done and seen. No blue dot on a worker or a job: the bot row's count is where news shows. "Settle down"
+// moves a finished worker to the right column's Settled at once. The bot's count folds the whole list. What is seen,
+// the first start (older workers count as seen), the fold and the opened jobs are kept in this window's storage.
 import { LISTED_AFTER_ENDING_MS, type BotView, type SubagentRowView } from "../contract";
 import { workerRowsOf } from "./worker-panel";
 
@@ -26,17 +27,20 @@ export interface RailMarks {
   folded: ReadonlySet<string>;
   /** Bots whose "N more" was clicked (every item shows). */
   all: ReadonlySet<string>;
+  /** Jobs clicked open (`RailJob.key`). */
+  jobsOpen?: ReadonlySet<string>;
 }
 
 export interface RailWorkerItem {
+  kind: "worker";
   row: SubagentRowView;
   ownerId: string;
   /** The sub bot it belongs to (its label), null for the bot's own. */
   subBot: { id: string; name: string } | null;
-  /** What merges items into one later (several workers for one job); its row id today. */
+  /** Its owner and job (`<owner>|<group id>`), or its row id when it was opened for no job. */
   groupKey: string;
   state: RailWorkerState;
-  /** Ended and not opened yet: the blue dot. */
+  /** Ended and not seen yet. */
   unread: boolean;
   /** Ended and opened: greyed (it shows only while open). */
   viewed: boolean;
@@ -44,13 +48,35 @@ export interface RailWorkerItem {
   selected: boolean;
 }
 
+/** Several workers of one bot opened for one job: one item, its workers shown once it is clicked open. */
+export interface RailJob {
+  kind: "job";
+  /** `<owner>|<group id>` (what keeps it open). */
+  key: string;
+  title: string;
+  ownerId: string;
+  subBot: RailWorkerItem["subBot"];
+  /** Its workers, in the list's order. */
+  members: RailWorkerItem[];
+  open: boolean;
+  /** The workers shown under it: none until opened, then at most 3 unless "all". */
+  shown: RailWorkerItem[];
+  more: number;
+  /** Its "N more" was clicked and it has more than 3. */
+  showingAll: boolean;
+  /** One of its workers is open in the main area. */
+  selected: boolean;
+}
+
+export type RailEntry = RailWorkerItem | RailJob;
+
 export interface RailWorkerList {
   /** Every listed worker, its sub bots' included (the count on the bot row). */
   total: number;
   unread: number;
   folded: boolean;
   /** The items shown: none when folded, at most 3 unless "all". */
-  items: RailWorkerItem[];
+  items: RailEntry[];
   /** How many "N more" hides. */
   more: number;
   /** "N more" was clicked and there were more than 3. */
@@ -61,21 +87,50 @@ const ended = (row: Pick<SubagentRowView, "startedAt" | "endedAt">) => row.ended
 const stateOf = (status: SubagentRowView["status"]): RailWorkerState => (status === "completed" ? "done" : status);
 const RANK: Record<string, number> = { unreadFailed: 0, unread: 1, running: 2, rest: 3 };
 
-/** A bot's own items (labelled `subBot` when it is a sub bot under the listed one), unsorted. */
-function collect(bot: Pick<BotView, "id" | "name" | "subagentRows">, now: number, marks: RailMarks, subBot: RailWorkerItem["subBot"]): RailWorkerItem[] {
+/** A bot's own items (labelled `subBot` when it is a sub bot under the listed one), unsorted; `all`: the gone ones too. */
+function collect(bot: Pick<BotView, "id" | "name" | "subagentRows">, now: number, marks: RailMarks, subBot: RailWorkerItem["subBot"], all = false): RailWorkerItem[] {
   const items: RailWorkerItem[] = [];
   for (const row of workerRowsOf(bot)) {
     if (row.settled) continue;
     const state = stateOf(row.status);
     const selected = marks.watching?.botId === bot.id && marks.watching.id === row.id;
-    const base = { row, ownerId: bot.id, subBot, groupKey: row.id, state, selected };
+    const base = { kind: "worker" as const, row, ownerId: bot.id, subBot, groupKey: row.group ? `${bot.id}|${row.group.id}` : row.id, state, selected };
     if (state === "running") { items.push({ ...base, unread: false, viewed: false }); continue; }
     const unread = !marks.viewed.has(row.id) && ended(row) >= marks.since;
     const back = row.unsettledAt !== null && now - row.unsettledAt < LISTED_AFTER_ENDING_MS;
-    if (!unread && !selected && !back) continue;
+    if (!all && !unread && !selected && !back) continue;
     items.push({ ...base, unread: unread && !selected, viewed: !unread || selected });
   }
   return items;
+}
+
+/** Whether a worker is listed on its own (running, not seen yet, open, or brought back). */
+const listed = (item: RailWorkerItem, now: number) =>
+  item.state === "running" || item.unread || item.selected || (item.row.unsettledAt !== null && now - item.row.unsettledAt < LISTED_AFTER_ENDING_MS);
+
+/**
+ * Sorted items with one job's workers merged into one item where it first comes (two or more of them; one alone stays
+ * a worker). A job is listed while any of its workers is, and then holds all its workers that are not settled.
+ */
+function merged(everyone: RailWorkerItem[], now: number, marks: RailMarks): RailEntry[] {
+  const byKey = new Map<string, RailWorkerItem[]>();
+  for (const item of everyone) byKey.set(item.groupKey, [...(byKey.get(item.groupKey) ?? []), item]);
+  const out: RailEntry[] = [];
+  const done = new Set<string>();
+  for (const item of everyone) {
+    if (!listed(item, now) || done.has(item.groupKey)) continue;
+    const members = byKey.get(item.groupKey)!;
+    if (!item.row.group || members.length < 2) { out.push(item); continue; }
+    done.add(item.groupKey);
+    const open = marks.jobsOpen?.has(item.groupKey) ?? false;
+    const all = marks.all.has(item.groupKey);
+    const shown = !open ? [] : all ? members : members.slice(0, RAIL_WORKERS_AT_MOST);
+    out.push({
+      kind: "job", key: item.groupKey, title: item.row.group.title || item.row.title, ownerId: item.ownerId, subBot: item.subBot,
+      members, open, shown, more: open ? members.length - shown.length : 0, showingAll: open && all && members.length > RAIL_WORKERS_AT_MOST, selected: members.some((member) => member.selected),
+    });
+  }
+  return out;
 }
 
 /** Items in order: unread failures, other unread, running (newest first), then the open or brought-back ones. */
@@ -85,9 +140,14 @@ function sorted(items: RailWorkerItem[]): RailWorkerItem[] {
   return items.sort((a, b) => rank(a) - rank(b) || time(b) - time(a));
 }
 
-/** A bot's own items, in order. */
+/** A bot's own workers listed on their own, in order (jobs not merged). */
 export function railWorkerItems(bot: Pick<BotView, "id" | "name" | "subagentRows">, now: number, marks: RailMarks): RailWorkerItem[] {
   return sorted(collect(bot, now, marks, null));
+}
+
+/** A bot's own finished workers its chat being open counts as seen (not its sub bots': theirs are seen in their chats). */
+export function seenInChat(bot: Pick<BotView, "subagentRows">, viewed: ReadonlySet<string>): string[] {
+  return workerRowsOf(bot).filter((row) => row.status !== "running" && !viewed.has(row.id)).map((row) => row.id);
 }
 
 /** Its sub bots, theirs under each (depth-first, as the bots list orders them). */
@@ -96,18 +156,19 @@ function subBotsUnder(bot: BotView, bots: BotView[], depth = 0): BotView[] {
   return bots.filter((candidate) => candidate.parent === bot.id && candidate.id !== bot.id).flatMap((sub) => [sub, ...subBotsUnder(sub, bots, depth + 1)]);
 }
 
-/** The list under a bot row: its own workers and its sub bots' (labelled), sorted together, then capped. */
+/** The list under a bot row: its own workers and its sub bots' (labelled), sorted together, one job's merged, then capped. */
 export function railWorkers(bot: BotView, bots: BotView[], now: number, marks: RailMarks): RailWorkerList {
-  const items = sorted([
-    ...collect(bot, now, marks, null),
-    ...subBotsUnder(bot, bots).flatMap((sub) => collect(sub, now, marks, { id: sub.id, name: sub.name })),
-  ]);
-  const total = items.length, unread = items.filter((item) => item.unread).length;
+  const items = merged(sorted([
+    ...collect(bot, now, marks, null, true),
+    ...subBotsUnder(bot, bots).flatMap((sub) => collect(sub, now, marks, { id: sub.id, name: sub.name }, true)),
+  ]), now, marks);
+  const workers = items.flatMap((entry) => (entry.kind === "job" ? entry.members : [entry]));
+  const total = workers.length, unread = workers.filter((item) => item.unread).length;
   const folded = marks.folded.has(bot.id);
   if (folded) return { total, unread, folded, items: [], more: 0, showingAll: false };
   const all = marks.all.has(bot.id);
   const shown = all ? items : items.slice(0, RAIL_WORKERS_AT_MOST);
-  return { total, unread, folded, items: shown, more: total - shown.length, showingAll: all && total > RAIL_WORKERS_AT_MOST };
+  return { total, unread, folded, items: shown, more: items.length - shown.length, showingAll: all && items.length > RAIL_WORKERS_AT_MOST };
 }
 
 // Words (the shell's language; English for anything else).
@@ -117,14 +178,16 @@ const WORDS = {
     more: (n: number) => `${n} more`, fewer: "Show fewer", settle: "Settle down", settleHint: "Settle down: move to Settled in the right column",
     ran: (t: string) => `ran ${t}`, minutes: (m: number) => `${m}m`, hours: (h: number, m: number) => `${h}h ${m}m`,
     fold: (name: string) => `Fold ${name}’s workers`, unfold: (name: string, n: number) => `Show ${name}’s ${n} worker${n === 1 ? "" : "s"}`,
-    unread: (n: number) => `${n} finished, not viewed yet`, ofSubBot: (name: string) => `of the sub bot ${name}`, moreLabel: (name: string, n: number) => `Show ${n} more of ${name}’s workers`,
+    unread: (n: number) => `${n} finished, not viewed yet`, failedCount: (n: number) => `${n} failed`, workers: (n: number) => `${n} worker${n === 1 ? "" : "s"}`, sep: " · ",
+    openJob: (title: string, n: number) => `Show the ${n} workers of ${title}`, closeJob: (title: string) => `Fold ${title}`, ofSubBot: (name: string) => `of the sub bot ${name}`, moreLabel: (name: string, n: number) => `Show ${n} more of ${name}’s workers`,
   },
   "zh-Hant": {
     running: "進行中", done: "做完", failed: "失敗", stopped: "已停止", viewed: "已看過",
     more: (n: number) => `還有 ${n} 個`, fewer: "收合", settle: "收起", settleHint: "收起：移到右側欄的「已收起」",
     ran: (t: string) => `跑了 ${t}`, minutes: (m: number) => `${m} 分`, hours: (h: number, m: number) => `${h} 小時 ${m} 分`,
     fold: (name: string) => `折起 ${name} 的 worker`, unfold: (name: string, n: number) => `展開 ${name} 的 ${n} 個 worker`,
-    unread: (n: number) => `${n} 個做完還沒看`, ofSubBot: (name: string) => `sub bot ${name} 的`, moreLabel: (name: string, n: number) => `顯示 ${name} 其餘 ${n} 個 worker`,
+    unread: (n: number) => `${n} 個做完還沒看`, failedCount: (n: number) => `${n} 失敗`, workers: (n: number) => `${n} 個`, sep: "・",
+    openJob: (title: string, n: number) => `展開 ${title} 的 ${n} 個 worker`, closeJob: (title: string) => `收合 ${title}`, ofSubBot: (name: string) => `sub bot ${name} 的`, moreLabel: (name: string, n: number) => `顯示 ${name} 其餘 ${n} 個 worker`,
   },
 } as const;
 
@@ -144,6 +207,21 @@ export function railWorkerTime(item: RailWorkerItem, now: number, lang: string |
   return railWords(lang).ran(duration(ended(item.row) - item.row.startedAt, lang));
 }
 
+/** A job's second line: how many failed (if any), how many workers, how long since the first started (to its last end). */
+export function railJobMeta(job: RailJob, now: number, lang: string | null | undefined): string {
+  const w = railWords(lang);
+  const failed = job.members.filter((item) => item.state === "failed").length;
+  const start = Math.min(...job.members.map((item) => item.row.startedAt));
+  const end = job.members.some((item) => item.state === "running") ? now : Math.max(...job.members.map((item) => ended(item.row)));
+  return [failed ? w.failedCount(failed) : "", w.workers(job.members.length), duration(end - start, lang)].filter(Boolean).join(w.sep);
+}
+
+/** A job's state: failed if one failed, running while one runs, else done. */
+export function railJobState(job: RailJob): RailWorkerState {
+  if (job.members.some((item) => item.state === "failed")) return "failed";
+  return job.members.some((item) => item.state === "running") ? "running" : "done";
+}
+
 /** An item's state word ("Done", or "Viewed" once opened). */
 export function railStateWord(item: RailWorkerItem, lang: string | null | undefined): string {
   const w = railWords(lang);
@@ -155,6 +233,7 @@ export function railStateWord(item: RailWorkerItem, lang: string | null | undefi
 const VIEWED_KEY = "botling.railWorkers.viewed";
 const SINCE_KEY = "botling.railWorkers.since";
 const FOLD_KEY = "botling.railWorkers.fold";
+const JOBS_KEY = "botling.railWorkers.jobsOpen";
 
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []);
 function readJSON(key: string): unknown {
@@ -168,12 +247,26 @@ export function readViewedWorkers(): Set<string> {
   return new Set(strings(readJSON(VIEWED_KEY)));
 }
 
-/** Marks a worker viewed; the kept set, newest last (at most 500). */
-export function markViewed(id: string): Set<string> {
+/** Marks workers viewed; the kept set, newest last (at most 500). */
+export function markViewed(...ids: string[]): Set<string> {
   const viewed = readViewedWorkers();
-  if (viewed.has(id)) return viewed;
-  const next = [...viewed, id].slice(-500);
+  const fresh = ids.filter((id) => !viewed.has(id));
+  if (!fresh.length) return viewed;
+  const next = [...viewed, ...new Set(fresh)].slice(-500);
   writeJSON(VIEWED_KEY, next);
+  return new Set(next);
+}
+
+/** The jobs clicked open (kept). */
+export function readOpenJobs(): Set<string> {
+  return new Set(strings(readJSON(JOBS_KEY)));
+}
+
+/** Opens or folds a job; the kept set (at most 200). */
+export function toggleOpenJob(key: string): Set<string> {
+  const list = [...readOpenJobs()];
+  const next = list.includes(key) ? list.filter((id) => id !== key) : [...list, key].slice(-200);
+  writeJSON(JOBS_KEY, next);
   return new Set(next);
 }
 

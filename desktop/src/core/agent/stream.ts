@@ -33,7 +33,7 @@ export type StreamItem =
   /** Words put into a worker's run under way (a steer): `from` is "owner" or "coordinator". */
   | { kind: "subagentUser"; parent: string; text: string; from: string }
   /** claude started a subagent (`task_started`, local_agent): it may run on in the background. */
-  | { kind: "subagentStarted"; id: string; description: string; type: string | null; prompt: string; background: boolean; agentID?: string; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }
+  | { kind: "subagentStarted"; id: string; description: string; type: string | null; prompt: string; background: boolean; agentID?: string; group?: string; execution?: SubagentExecution; previousRunEnd?: PreviousRunEnd }
   | { kind: "subagentExecution"; id: string; execution: SubagentExecution }
   | { kind: "subagentRuntime"; id: string; runtime: SubagentRuntime; model?: string }
   | { kind: "subagentOutput"; id: string; counter: string; tokens: number }

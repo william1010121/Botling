@@ -100,6 +100,16 @@ describe("a run: handoff → events → end → report", () => {
     expect(core.listWorkers()).toEqual([]);
   });
 
+  it("the job its coordinator named (app_handoff's group) goes on the record and on the run's opening item", async () => {
+    const { core, store, items } = setup();
+    const { task_id } = await core.handoff("claude-process", { instructions: "Price AWS.", name: "AWS", group: "  Compare GPU clouds " });
+    expect(store.get(task_id).group).toBe("Compare GPU clouds");
+    expect(items[1]).toMatchObject({ kind: "subagentStarted", id: task_id, group: "Compare GPU clouds" });
+    const { task_id: none } = await core.handoff("claude-process", { instructions: "Alone." });
+    expect(store.get(none).group).toBeUndefined();
+    expect(items.find((item) => item.kind === "subagentStarted" && item.id === none)).not.toHaveProperty("group");
+  });
+
   it("prepare's engine data and engine go on the record", async () => {
     const adapter = new FakeAdapter("agy-acp", "agy", false);
     adapter.prepare = (request) => ({ engine: request.engine === "codex" ? "codex" : undefined, engineData: { model: request.model } });

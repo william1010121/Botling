@@ -244,3 +244,20 @@ it("never trims a subagent another bot owns now (A1), and its steps file survive
     expect((JSON.parse(readFileSync(join(store, "subagents.json"), "utf8")).subagents as { id: string }[]).map((s) => s.id)).toContain("task-0");
   } finally { await core.shutdown(); }
 });
+
+it("a worker's job: the name its bot gave, else the turn that handed it off; rows carry it, the book keeps it", () => {
+  const book = new SubagentBook([]);
+  const base = { description: "w", type: "claude-worker", prompt: "p", background: true };
+  book.started({ ...base, id: "named", group: "Compare GPU clouds" }, 1, { turnId: "turn-1", title: "比較雲" });
+  book.started({ ...base, id: "a" }, 1, { turnId: "turn-1", title: "比較三家 GPU 雲的價格" });
+  book.started({ ...base, id: "b" }, 1, { turnId: "turn-1", title: "比較三家 GPU 雲的價格" });
+  book.started({ ...base, id: "loose" }, 1);
+  // A run started again keeps the job it had.
+  book.started({ ...base, id: "a" }, 2, { turnId: "turn-9", title: "other" });
+  expect(book.rows("claude").map((row) => [row.id, row.group ?? null])).toEqual([
+    ["named", { id: "g:compare gpu clouds", title: "Compare GPU clouds" }],
+    ["a", { id: "t:turn-1", title: "比較三家 GPU 雲的價格" }],
+    ["b", { id: "t:turn-1", title: "比較三家 GPU 雲的價格" }],
+    ["loose", null],
+  ]);
+});

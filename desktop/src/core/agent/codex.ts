@@ -2013,7 +2013,7 @@ export class CodexSession implements CoordinatorPort {
         : `Effort "${wantedEffort}" ignored: Codex takes ${EFFORTS_BY_ENGINE.codex.join(", ")}. The worker runs at ${this.config.workerEffort ?? this.config.effort ?? "the model's default"} effort.`) : null;
       // The core makes the worker and starts its run now (its adapters are synchronous); the receipt goes first.
       this.nextTask = task;
-      void this.core.handoff(editor ? "component-editor" : "codex-thread", { instructions, name, ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}), ...(model ? { model } : {}) }).catch(() => undefined);
+      void this.core.handoff(editor ? "component-editor" : "codex-thread", { instructions, name, ...(typeof args.group === "string" ? { group: args.group } : {}), ...(isolatedGit ? { isolatedGit } : {}), ...(effort ? { effort } : {}), ...(model ? { model } : {}) }).catch(() => undefined);
       this.nextTask = null;
       out.push(...this.take());
       const effective = editor ? null : effort ?? this.config.workerEffort ?? this.config.effort ?? null;
