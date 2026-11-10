@@ -580,6 +580,44 @@ test('figure: runs the matplotlib script, inlines a theme-aware SVG or two PNGs,
   await rm(scripts, { recursive: true, force: true });
 });
 
+/** Selector specificity [ids, classes/attributes/pseudo-classes, types]; :not() counts its argument, as browsers do. */
+const specificity = sel => {
+  const attrs = (sel.match(/\[[^\]]*\]/g) ?? []).length;
+  const s = sel.replace(/\[[^\]]*\]/g, ' ').replace(/:not\(/g, '(');
+  return [(s.match(/#[\w-]+/g) ?? []).length, attrs + (s.match(/\.[\w-]+/g) ?? []).length + (s.match(/:[\w-]+/g) ?? []).length,
+    (s.replace(/[.#:][\w-]+/g, ' ').match(/(^|[\s>+~(])[a-z][\w-]*/gi) ?? []).length];
+};
+const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+
+test('figure: the PNG pair shows exactly one image in every theme (the light/dark swap wins the cascade)', async () => {
+  const css = await readFile(join(root, 'reports/v2/theme/blocks.css'), 'utf8');
+  const sheet = new JSDOM(`<style>${css}</style>`).window.document.styleSheets[0];
+  const rules = [];
+  for (const r of sheet.cssRules) {
+    if (r.selectorText) rules.push({ r, dark: false });
+    else if (r.media) for (const c of r.cssRules) if (c.selectorText) rules.push({ r: c, dark: /prefers-color-scheme:\s*dark/.test(r.media.mediaText) ? true : null });
+  }
+  // A cascade over blocks.css for `display` only: specificity first, then source order.
+  const display = (el, schemeDark) => {
+    let best = null;
+    rules.forEach(({ r, dark }, order) => {
+      if (dark === null || (dark && !schemeDark) || !r.style.getPropertyValue('display')) return;
+      for (const sel of r.selectorText.split(',').map(x => x.trim())) {
+        if (!el.matches(sel)) continue;
+        const spec = specificity(sel);
+        if (!best || cmp(spec, best.spec) > 0 || (cmp(spec, best.spec) === 0 && order >= best.order)) best = { spec, order, value: r.style.getPropertyValue('display') };
+      }
+    });
+    return best?.value ?? 'inline';
+  };
+  for (const [schemeDark, theme, shown] of [[false, null, 'l'], [true, null, 'd'], [true, 'light', 'l'], [false, 'dark', 'd'], [true, 'dark', 'd'], [false, 'light', 'l']]) {
+    const d = dom(`<body><div class="fg"><img class="fg-l"><img class="fg-d"></div></body>`);
+    if (theme) d.documentElement.setAttribute('data-theme', theme);
+    const visible = [...d.querySelectorAll('img')].filter(img => display(img, schemeDark) !== 'none').map(img => img.className.slice(3));
+    assert.deepEqual(visible, [shown], `scheme ${schemeDark ? 'dark' : 'light'}, data-theme ${theme}`);
+  }
+});
+
 test('figure: the CLI resolves scripts next to the spec', { skip: !hasMatplotlib && 'matplotlib not installed' }, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'figure-cli-'));
   await mkdir(join(dir, 'artifacts'));
