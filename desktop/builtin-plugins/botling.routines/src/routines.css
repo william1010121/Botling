@@ -6,6 +6,8 @@
 .routines li[data-status="delivery_uncertain"] .routine-when { color: var(--orange); }
 .routine-title { font-weight: 600; font-size: 13px; }
 .routine-when { color: var(--muted); margin-top: 2px; }
+.routine-watch { color: var(--muted); margin-top: 2px; font-size: 12px; overflow-wrap: anywhere; }
+.routine-watch[data-watch="failing"] { color: var(--error); }
 .routine-buttons { display: flex; gap: 6px; margin-top: 6px; }
 .routine-buttons button { background: var(--chip); border: 0; border-radius: 8px; padding: 2px 10px; font-size: 12px; cursor: pointer; color: inherit; font-family: inherit; }
 .routine-buttons button:hover { background: var(--selected); }

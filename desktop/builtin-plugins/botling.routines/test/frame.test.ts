@@ -89,3 +89,13 @@ it("an empty list says so, and the core's own problem is shown above it", async 
   await vi.waitFor(() => expect(root.querySelector(".routines-empty")?.textContent).toBe("No routines yet. Ask the bot to schedule one."));
   expect(root.querySelector(".routines-problem")?.textContent).toBe("routines.cron is unreadable");
 });
+
+it("a watch shows its command and how its last run went", async () => {
+  const { watchLine } = await import("../src/routines-text");
+  const base = { id: "W", kind: "legacy" as const, task: "Disk: !./check.sh", title: "Disk", schedule: "*/10 * * * *", cron: "*/10 * * * *", timezone: "system_local", status: "enabled", next: null };
+  expect(watchLine(base)).toBeNull();
+  expect(watchLine({ ...base, watch: { command: "./check.sh", state: "never", lastRun: null, exit: null, timedOut: false } })).toBe("Watch: ./check.sh · not run yet");
+  const ran = "2026-11-11T02:20:00.000Z";
+  expect(watchLine({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: 3, timedOut: false } })).toBe(`Watch: ./check.sh · failing (exit 3) · last run ${new Date(ran).toLocaleString()}`);
+  expect(watchLine({ ...base, watch: { command: "./check.sh", state: "failing", lastRun: ran, exit: null, timedOut: true } })).toContain("failing (timed out)");
+});

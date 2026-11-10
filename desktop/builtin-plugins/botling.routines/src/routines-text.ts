@@ -10,6 +10,14 @@ export function whenLine(routine: RoutineRow): string {
     + `${routine.next ? ` · next ${new Date(routine.next).toLocaleString()}` : ""}`;
 }
 
+/** A watch's line: its command and how its last run went ("Watch: ./check.sh · failing (exit 3) · last run 11/11/2026, 10:20:00 AM"); null for a prompt routine. */
+export function watchLine(routine: RoutineRow): string | null {
+  const watch = routine.watch;
+  if (!watch) return null;
+  const how = watch.state === "never" ? "not run yet" : watch.state === "ok" ? "ok" : `failing (${watch.timedOut ? "timed out" : watch.exit === null ? "did not finish" : watch.exit === 0 ? "ALERT" : `exit ${watch.exit}`})`;
+  return `Watch: ${watch.command} · ${how}${watch.lastRun ? ` · last run ${new Date(watch.lastRun).toLocaleString()}` : ""}`;
+}
+
 /** The buttons a routine in this state has. */
 export function operationsFor(status: string): Operation[] {
   const out: Operation[] = [];

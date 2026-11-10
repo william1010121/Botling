@@ -56,7 +56,7 @@ const PARAMS = {
   dependency_task_id: () => text,
   action: () => ({ type: "string", enum: ["acknowledge", "retry"] }),
   operation: () => ({ type: "string", enum: ["list", "create", "pause", "resume", "cancel"] }),
-  kind: () => ({ type: "string", enum: ["once", "recurring"] }),
+  kind: () => ({ type: "string", enum: ["once", "recurring", "watch"] }),
   task: () => text,
   request_id: () => text,
   at: () => text,
@@ -124,8 +124,8 @@ const APP_TOOLS: readonly AppToolDef[] = [
       params: ["task_id", "run", "action"], required: ["task_id", "run", "action"] },
   } },
   { name: "app_routines", forms: {
-    codex: { description: "Manage this bot's persistent routines directly. Operations: list; create kind=once with at (ISO-8601 seconds and explicit offset/Z), or kind=recurring with cron (5 fields). create requires task and unique request_id (reuse on retries), optional timezone (IANA, defaults to local at creation). Returns saved id/status; use id for pause/resume/cancel. List includes legacy cron IDs. Reschedule by cancel then create with a new request_id. Once jobs overdue while closed run on next app check; recurring catches up only today in its saved timezone. fired means the trigger reached the app router, not proof of agent startup or task completion. delivery_uncertain means a crash may have interrupted dispatch: never auto retry. Cancel stops future dispatch, not active work. App must be running; no OS wakeup. Do not edit app-owned schedule JSON or use shell/cron for this tool.",
-      params: ["operation", "kind", "task", "request_id", "at", "cron", "timezone", "id"], required: ["operation"] },
+    codex: { description: "Manage this bot's persistent routines directly. Operations: list; create kind=once with at (ISO-8601 seconds and explicit offset/Z), or kind=recurring with cron (5 fields), or kind=watch with cron and command (the app runs that shell command in this bot's folder on the schedule without waking you, and wakes you only when it exits non-zero, times out or prints a line starting with ALERT; task is its name). create requires task and unique request_id (reuse on retries), optional timezone (IANA, defaults to local at creation). Returns saved id/status; use id for pause/resume/cancel. List includes legacy cron IDs. Reschedule by cancel then create with a new request_id. Once jobs overdue while closed run on next app check; recurring catches up only today in its saved timezone. fired means the trigger reached the app router, not proof of agent startup or task completion. delivery_uncertain means a crash may have interrupted dispatch: never auto retry. Cancel stops future dispatch, not active work. App must be running; no OS wakeup. Do not edit app-owned schedule JSON or use shell/cron for this tool.",
+      params: ["operation", "kind", "task", "request_id", "at", "cron", "timezone", "id", "command"], required: ["operation"] },
   } },
   { name: "app_monitor_start", forms: {
     codex: { description: "Coordinator only; workers must return command intent in their task report. Start one already authorized command in this bot workspace after an explicit Allow once card, including in auto mode. Supply command as shell text. This is a completion monitor, not a polling/line-event monitor. Returns monitor_id and awaitingApproval immediately; finish the turn without polling. The app queues app_monitor_result on success or nonzero failure with monitor_id, owner_session_id, exit_code and bounded output. No network or permission escalation. Never use to expand scope, bypass a denial or rerun interrupted work. Stop/cancel suppresses callbacks. Commands are not replayed on restart; unconfirmed executions become interrupted. Callback dispatch interrupted before acknowledgement is uncertain and never automatically duplicated; inspect status/owner thread.",

@@ -2,7 +2,7 @@
 // the chat header's Routines button. It reads and changes them through the program part (host.ts).
 import { useEffect, useState } from "react";
 import type { RoutinesList } from "../../../../Web/host/src/api";
-import { LABEL, operationsFor, whenLine, type Operation } from "./routines-text";
+import { LABEL, operationsFor, watchLine, whenLine, type Operation } from "./routines-text";
 
 export interface RoutinesSource {
   list(): Promise<RoutinesList>;
@@ -29,6 +29,7 @@ export function RoutinesPanel({ source }: { source: RoutinesSource }) {
           <li key={routine.id} data-status={routine.status}>
             <div className="routine-title">{routine.title}</div>
             <div className="routine-when">{whenLine(routine)}</div>
+            {routine.watch && <div className="routine-watch" data-watch={routine.watch.state}>{watchLine(routine)}</div>}
             <div className="routine-buttons">
               {operationsFor(routine.status).map((operation) => <button key={operation} type="button" onClick={() => change(operation, routine.id)}>{LABEL[operation]}</button>)}
             </div>

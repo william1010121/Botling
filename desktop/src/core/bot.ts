@@ -99,6 +99,7 @@ import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, routinesSpecState, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
+import { fromRoutineWatches, nextWatchState, runWatch, watchCommand, watchPrompt, type WatchState } from "./routine-watch";
 import { specTrace } from "./spec-trace";
 import { CallInWorkBook, type CallInRelay } from "./call-in-work";
 import { codexWorkerDefaults, codexWorkersJSON } from "./settings";
@@ -516,6 +517,9 @@ export class Bot {
   private routineFile: RoutineFile | null = null;
   private scheduledStore: ScheduledRoutineStore | null = null;
   private routineRuns: Record<string, number> = {};
+  /** Its watch routines' last runs (bot.json `routineWatches`, by routine id as the view gives it), and those running now. */
+  private routineWatches: Record<string, WatchState> = {};
+  private watchesRunning = new Set<string>();
   private routineError: string | null = null;
   /** The error the clock last told in the chat: any read of the routines sets `routineError`, so it cannot be what says the notice was given. */
   private routineTold: string | null = null;
@@ -4634,6 +4638,7 @@ export class Bot {
     this.scheduledStore = new ScheduledRoutineStore(join(dirname(file), "scheduled-routines.json"));
     const settings = this.store.loadSettings();
     this.routineRuns = fromRoutineRuns(settings.routineRuns);
+    this.routineWatches = fromRoutineWatches(settings.routineWatches);
     if (!this.readOnly && !this.profile.problem) {
       try {
         this.routineFile.create(legacyRoutineLines(settings.routines) ?? (this.profile.role === "main" ? [DAILY_SUMMARY] : []));
@@ -4688,16 +4693,24 @@ export class Bot {
         if (job.kind === "once") next = fromSwiftDateMs(job.at ?? 0);
         else next = dueTime(job, now) ?? CronSchedule.parse(job.cron ?? "")?.nextTime(now, job.timezone) ?? null;
       }
-      return { id: job.id, kind: job.kind, task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "", schedule: clip(schedule, 400) ?? "", cron: job.kind === "once" ? null : clip(job.cron ?? "", 400) ?? null, timezone: job.timezone.slice(0, 100), status, next: iso(next) };
+      return { id: job.id, kind: job.kind, task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "", schedule: clip(schedule, 400) ?? "", cron: job.kind === "once" ? null : clip(job.cron ?? "", 400) ?? null, timezone: job.timezone.slice(0, 100), status, next: iso(next), ...this.watchView(job.id, job.task) };
     });
     for (const job of jobs.slice(0, 50)) {
       views.push({
         id: `cron:${job.id}`.slice(0, 2_200), kind: "legacy", task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "",
         schedule: job.once ? "Once, at the next check" : clip(job.schedule.description, 400) ?? "", cron: job.once ? "@once" : clip(job.schedule.text, 400) ?? null, timezone: "system_local", status: job.enabled ? "enabled" : "paused",
-        next: job.enabled ? iso(job.once ? now : job.schedule.nextTime(now, null)) : null,
+        next: job.enabled ? iso(job.once ? now : job.schedule.nextTime(now, null)) : null, ...this.watchView(`cron:${job.id}`.slice(0, 2_200), job.task),
       });
     }
     return { routines: views, error: this.routineError?.slice(0, 2_000) ?? null };
+  }
+
+  /** A watch routine's command and last run, for its row; nothing for a prompt routine. */
+  private watchView(key: string, task: string): Pick<RoutineView, "watch"> {
+    const command = watchCommand(task);
+    if (!command) return {};
+    const state = this.routineWatches[key];
+    return { watch: { command: clip(command, 2_000) ?? "", state: !state ? "never" : state.ok ? "ok" : "failing", lastRun: state ? new Date(state.lastRun).toISOString() : null, exit: state?.exit ?? null, timedOut: state?.timedOut ?? false } };
   }
 
   private routinesChanged(view = this.routinesView()) {
@@ -4763,13 +4776,13 @@ export class Bot {
         let taken = false;
         try { taken = this.routineFile.takeOnce(job.id); } catch (error) { this.log(`routine ${job.id}: ${(error as Error).message}`); }
         if (!taken) continue;
-        this.dispatchRoutine(job, now);
+        this.runRoutine(`cron:${job.id}`.slice(0, 2_200), job, now);
         ran = true;
         continue;
       }
       this.routineRuns[job.id] = toSwiftDate(now);
       this.saveRoutineRuns();
-      this.dispatchRoutine(job, now);
+      this.runRoutine(`cron:${job.id}`.slice(0, 2_200), job, now);
       ran = true;
     }
     for (const job of scheduled) {
@@ -4777,7 +4790,7 @@ export class Bot {
       try {
         const claimed = this.scheduledStore!.claim(job.id, now);
         if (!claimed) continue;
-        this.dispatchRoutine(scheduledRoutine(claimed), now);
+        this.runRoutine(job.id, scheduledRoutine(claimed), now);
         this.scheduledStore!.didDispatch(job.id, now);
       } catch (error) {
         this.routineError = (error as Error).message;
@@ -4785,12 +4798,57 @@ export class Bot {
       }
       ran = true;
     }
+    this.forgetWatches(jobs, scheduled);
     if (this.routineError && this.routineError !== this.routineTold) { this.notice(`Routines: ${this.routineError}`); noticed = true; }
     this.routineTold = this.routineError;
     if (specBefore) specTrace("routines", "Check", { bot: this.id, now, noticed, before: specBefore, after: this.routinesSpec() });
     // A job the bot wrote into routines.cron (or Codex's app_routines) shows in its chat without waiting for it to run.
     const view = this.routinesView(now);
     if (ran || this.routineError !== before || routinesKey(view) !== this.routinesShown) this.routinesChanged(view);
+  }
+
+  /** A routine whose time came: a watch's command runs in the app (the bot is woken only when it fails); any other is dispatched. */
+  private runRoutine(key: string, job: Routine, now: number) {
+    const command = watchCommand(job.task);
+    if (command) this.startWatch(key, job, command);
+    else this.dispatchRoutine(job, now);
+  }
+
+  /**
+   * Runs a watch's command in the bot's folder, without waking it (routine-watch.ts). A failure wakes it once per
+   * failing streak (`nextWatchState`); a run still going when its next time comes is not started twice.
+   */
+  private startWatch(key: string, job: Routine, command: string) {
+    if (this.watchesRunning.has(key)) return;
+    this.watchesRunning.add(key);
+    const title = routineTitle(job.task);
+    this.log(`watch "${title}" runs`);
+    void runWatch(command, this.profile.folder).then((result) => {
+      this.watchesRunning.delete(key);
+      if (this.shuttingDown || this.readOnly) return;
+      const { state, wake } = nextWatchState(this.routineWatches[key], result);
+      this.routineWatches[key] = state;
+      this.store.saveSetting("routineWatches", this.routineWatches);
+      if (wake) {
+        this.log(`watch "${title}" failed: the bot is woken`);
+        this.add({ id: newId(), role: "divider", text: routineDivider(job, result.ranAt), date: toSwiftDate(result.ranAt) });
+        this.deliverTo(this.engine, watchPrompt(title, command, result, state.failingSince), null, { origin: "app" });
+      }
+      this.routinesChanged();
+    }, (error) => {
+      this.watchesRunning.delete(key);
+      this.log(`watch "${title}": ${(error as Error).message}`);
+    });
+  }
+
+  /** Drops what it kept of watches that are gone (not while the schedules cannot be read). */
+  private forgetWatches(jobs: Routine[], scheduled: ScheduledRoutine[]) {
+    if (this.routineError) return;
+    const live = new Set([...jobs.map((job) => `cron:${job.id}`.slice(0, 2_200)), ...scheduled.map((job) => job.id)]);
+    const gone = Object.keys(this.routineWatches).filter((key) => !live.has(key) && !this.watchesRunning.has(key));
+    if (!gone.length) return;
+    for (const key of gone) delete this.routineWatches[key];
+    if (!this.readOnly) this.store.saveSetting("routineWatches", this.routineWatches);
   }
 
   /** A divider with its time, then its prompt as a message nobody typed, to this bot's (first) head (`Bot.run`). */
