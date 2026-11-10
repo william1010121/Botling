@@ -51,6 +51,7 @@ import { WorkerAskBar, WorkersBadge, WorkersMenu } from "./Workers";
 import { askOwnerText, askReference, filesChanged, readSeenFailed, watchedWorker, workersMenuAfterMove, writeSeenFailed, type AskWorker } from "./worker-panel";
 import { asksUser, cardApprove, cardRun } from "./card-approval";
 import { BrowserPane } from "./BrowserPane";
+import { ColumnDivider } from "./ColumnDivider";
 import { browserStore, useBrowser } from "./browser-state";
 
 /** What Botling Web (desktop/mobile/) puts in the same chrome: a control at the start of the chat's
@@ -647,6 +648,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         </>}
       </aside>
       )}
+      {!railCollapsed && <ColumnDivider column="rail" />}
       <section className="chat-pane">
         <div className={`chat-column${tab ? " main-tab-on" : ""}`}>
         <header className="chat-header drag">
@@ -718,6 +720,7 @@ export function App({ client, store, web }: { client: Client; store: WorkspaceSt
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
+      {paneOpen && bot && !browserFull && <ColumnDivider column="browser" />}
       {paneOpen && bot && (
         <BrowserPane bot={bot} state={browserState ?? { botId: bot.id, tabs: [], active: null }} full={browserFull} look={view.settings?.botLook ?? "original"}
           miniChat={miniChat} onMiniChat={setMiniChat} layoutKey={`${railCollapsed}/${rightFolded}/${!!takeover}`}
