@@ -11,7 +11,7 @@ describe('shortcut registry', () => {
     const defaults = Object.fromEntries(SHORTCUTS.map(s => [s.id, s.default]));
     expect(defaults).toEqual({ search: 'Mod+K', settings: 'Mod+,', subBots: 'Mod+Shift+S', roomBack: 'Mod+[', roomForward: 'Mod+]',
       pinnedSubBot1: 'Mod+Alt+1', pinnedSubBot2: 'Mod+Alt+2', pinnedSubBot3: 'Mod+Alt+3', pinnedSubBot4: 'Mod+Alt+4', pinnedSubBot5: 'Mod+Alt+5',
-      pinnedSubBot6: 'Mod+Alt+6', pinnedSubBot7: 'Mod+Alt+7', pinnedSubBot8: 'Mod+Alt+8', pinnedSubBot9: 'Mod+Alt+9', toggleSidebar: 'Ctrl+Cmd+S', toggleRightPanel: 'Ctrl+Cmd+I', toggleWorkers: 'Mod+Shift+W',
+      pinnedSubBot6: 'Mod+Alt+6', pinnedSubBot7: 'Mod+Alt+7', pinnedSubBot8: 'Mod+Alt+8', pinnedSubBot9: 'Mod+Alt+9', toggleSidebar: 'Ctrl+Cmd+S', toggleRightPanel: 'Ctrl+Cmd+I', toggleWorkers: 'Mod+Shift+W', toggleBrowser: 'Mod+Shift+B',
       reload: 'Mod+R', forceReload: 'Mod+Shift+R', reloadChat: 'Mod+Alt+R' });
     expect(new Set(SHORTCUTS.map(s => s.default)).size).toBe(SHORTCUTS.length);
     expect(FIXED_SHORTCUTS.length).toBeGreaterThan(5);

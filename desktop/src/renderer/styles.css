@@ -1010,6 +1010,7 @@ button.wk-fc:hover { text-decoration: underline; }
 .bp-body { flex: 1; min-height: 0; display: flex; }
 .bp-page { position: relative; flex: 1; min-width: 0; background: var(--ground); display: flex; align-items: center; justify-content: center; }
 .bp-page-hint { color: var(--faint); font-size: 12.5px; }
+.bp-page-empty { max-width: 320px; padding: 0 16px; text-align: center; line-height: 1.5; }
 .bp-sheet { width: 272px; flex-shrink: 0; background: var(--side); border-left: 1px solid var(--line); padding: 14px; display: flex; flex-direction: column; gap: 14px; font-size: 13px; }
 .bp-sheet-head { display: flex; align-items: center; gap: 8px; }
 .bp-sheet-head span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }

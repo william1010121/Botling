@@ -275,3 +275,20 @@ describe("the floating toolbar", () => {
     expect(bar.visible).toBe(false);
   });
 });
+
+describe("the Browser button and ⌘⇧B", () => {
+  it("opens the pane for a bot with no tabs and closes it on the second press", async () => {
+    const { browserStore } = await import("../../src/renderer/browser-state");
+    expect(browserStore.get().open["b1"]).toBeUndefined();
+    browserStore.toggle("b1");
+    expect(browserStore.get().open["b1"]).toBe(true);
+    expect(browserStore.get().states["b1"]).toBeUndefined();
+    browserStore.toggle("b1");
+    expect(browserStore.get().open["b1"]).toBeUndefined();
+  });
+  it("is an app shortcut, ⌘⇧B by default, taken by nothing else", async () => {
+    const { DEFAULT_BINDINGS, findConflict } = await import("../../src/contract/shortcuts");
+    expect(DEFAULT_BINDINGS.toggleBrowser).toBe("Mod+Shift+B");
+    expect(findConflict("toggleBrowser", "Mod+Shift+B", {})).toBeNull();
+  });
+});
