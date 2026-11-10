@@ -5,7 +5,7 @@
 // is where news shows. Then "N more".
 import type { SubagentRowView } from "../contract";
 import { Icon } from "./icons";
-import { railJobMeta, railJobState, railStateWord, railWords, railWorkerTime, type RailEntry, type RailJob, type RailWorkerItem, type RailWorkerList as List } from "./rail-workers";
+import { railJobMeta, railJobParts, railJobState, railStateWord, railWords, railWorkerTime, type RailEntry, type RailJob, type RailWorkerItem, type RailWorkerList as List } from "./rail-workers";
 
 export interface RailWorkerActions {
   onOpen: (ownerId: string, row: SubagentRowView) => void;
@@ -73,17 +73,23 @@ function JobItem({ job, now, lang, actions }: { job: RailJob; now: number; lang:
   const w = railWords(lang);
   const state = railJobState(job);
   const meta = railJobMeta(job, now, lang);
-  const classes = ["rail-wk-row", "rail-wk-job", state, job.open ? "open" : "", job.selected ? "selected" : ""].filter(Boolean).join(" ");
+  const parts = railJobParts(job, now, lang);
+  // Its state is not a class: the worker rows' state colours (green "Done", red "Failed") are not its second line's.
+  const classes = ["rail-wk-row", "rail-wk-job", job.open ? "open" : "", job.selected ? "selected" : ""].filter(Boolean).join(" ");
   return (
     <div className="rail-wk-jobwrap" data-job={job.key}>
-      <div className={classes}>
+      <div className={classes} data-state={state}>
         <button type="button" className="rail-wk-open" aria-expanded={job.open} onClick={() => actions.onToggleJob(job.key)}
           aria-label={[job.open ? w.closeJob(job.title) : w.openJob(job.title, job.members.length), job.subBot ? w.ofSubBot(job.subBot.name) : "", meta].filter(Boolean).join(", ")}>
           <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
           <StateMark state={state} viewed={false} />
           <span className="rail-wk-text">
-            <span className="rail-wk-name">{job.title}<span className="rail-wk-pips" aria-hidden="true">{job.members.map((item) => <span key={item.row.id} className={`rail-wk-pip ${item.state}`} />)}</span></span>
-            <span className="rail-wk-meta"><SubBotTag subBot={job.subBot} /><span className={`rail-wk-state${state === "failed" ? " failed" : ""}`}>{meta}</span></span>
+            {/* The dots beside the name, outside its ellipsis: a long name is cut, never the dots. */}
+            <span className="rail-wk-jobline">
+              <span className="rail-wk-name">{job.title}</span>
+              <span className="rail-wk-pips" aria-hidden="true">{job.members.map((item) => <span key={item.row.id} className={`rail-wk-pip ${item.state}`} />)}</span>
+            </span>
+            <span className="rail-wk-meta"><SubBotTag subBot={job.subBot} /><span className="rail-wk-state">{parts.failed && <><span className="rail-wk-failed">{parts.failed}</span>{w.sep}</>}{parts.rest}</span></span>
           </span>
           <span className={`rail-wk-chevron${job.open ? " open" : ""}`} aria-hidden="true"><Icon name="chevronLeft" size={9} /></span>
         </button>

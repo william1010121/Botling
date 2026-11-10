@@ -1099,7 +1099,7 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 @media (prefers-reduced-motion: reduce) { .col-handle::after { transition: none; } }
 
 /* The worker list under a bot row (RailWorkers.tsx): each worker a 2-line item, 26 pt in,
-   its name over its state and time; a blue dot until a finished one is opened; the settle clock on a
+   its name over its state and time (no blue dot: the bot row's count is where news shows); the settle clock on a
    finished one; a sub bot's worker has its sub bot's tag before its state. The bot row's count (a pill at its end)
    folds the list. Marks as the workers menu's (.wk-s). */
 .bot-row-wrap.has-workers .bot-row { padding-right: 64px; }
@@ -1135,9 +1135,10 @@ html.col-resizing, html.col-resizing * { cursor: col-resize !important; user-sel
 .rail-wk-row.failed .rail-wk-state { color: var(--error); }
 /* One job's workers as one item: a dot per worker, its workers indented under it once opened (no blue dot). */
 .rail-wk-job .rail-wk-state { color: var(--faint); }
-.rail-wk-job.failed .rail-wk-state.failed { color: var(--error); }
+.rail-wk-job .rail-wk-failed { color: var(--error); }
+.rail-wk-jobline { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .rail-wk-job .rail-wk-chevron { color: var(--faint); margin-right: 4px; }
-.rail-wk-pips { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
+.rail-wk-pips { display: inline-flex; gap: 2px; flex-shrink: 0; }
 .rail-wk-pip { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
 .rail-wk-pip.running { background: var(--blue); }
 .rail-wk-pip.done { background: var(--green); }
