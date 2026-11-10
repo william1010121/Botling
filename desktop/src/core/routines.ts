@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { withFileLock, writeFileAtomic } from "./durable/atomic";
 import { fromSwiftDate, toSwiftDate } from "./store/records";
+import { watchCommand } from "./routine-watch";
 
 // ------------------------------------------------------------------------------------------------
 // Time in a zone
@@ -489,6 +490,9 @@ export function routinePayload(job: ScheduledRoutine, now: number): Record<strin
   if (job.at !== undefined) result.at = iso(fromSwiftDate(job.at));
   if (job.cron !== undefined) result.cron = job.cron;
   if (job.dispatchedAt !== undefined) result.dispatched_at = iso(fromSwiftDate(job.dispatchedAt));
+  // A watch is saved as a recurring schedule whose task is "Name: !command" (so 1.x still reads the file).
+  const command = job.kind === "recurring" ? watchCommand(job.task) : null;
+  if (command) { result.kind = "watch"; result.command = command; }
   return result;
 }
 
@@ -584,18 +588,29 @@ export class ScheduledRoutineStore {
     const operation = typeof args.operation === "string" ? args.operation : "";
     if (operation === "list") {
       const jobs = this.load().map((job) => routinePayload(job, now));
-      const legacy = this.cronFile.load().map((job) => ({ id: `cron:${job.id}`, kind: job.once ? "legacy_once" : "legacy_recurring", task: job.task, cron: job.once ? ONCE : job.schedule.text, timezone: "system_local", status: job.enabled ? "enabled" : "paused" }));
+      const legacy = this.cronFile.load().map((job) => {
+        const command = job.once ? null : watchCommand(job.task);
+        return { id: `cron:${job.id}`, kind: job.once ? "legacy_once" : command ? "legacy_watch" : "legacy_recurring", task: job.task, ...(command ? { command } : {}), cron: job.once ? ONCE : job.schedule.text, timezone: "system_local", status: job.enabled ? "enabled" : "paused" };
+      });
       return { routines: [...jobs, ...legacy], checked_at: iso(now) };
     }
     if (operation === "create") {
-      const task = (typeof args.task === "string" ? args.task : "").trim();
+      let task = (typeof args.task === "string" ? args.task : "").trim();
       if (!task || task.includes("\n") || task.includes("\r")) throw new RoutineError("task must be a nonempty one-line instruction, optionally 'Name: instruction' or 'Name: @file'.");
+      if (args.kind === "watch") {
+        // A watch: the app runs `command` on the cron schedule and wakes the bot only when it fails. Saved as recurring "Name: !command".
+        const command = typeof args.command === "string" ? args.command.trim() : "";
+        if (!watchCommand(task) && (!command || command.includes("\n") || command.includes("\r"))) throw new RoutineError("watch requires command, a one-line shell command the app runs in this bot's folder; task is the watch's name.");
+        if (args.cron === undefined || args.at !== undefined) throw new RoutineError("watch requires cron with five valid fields (minute hour day month weekday) and no at.");
+        if (!watchCommand(task)) task = `${task.replace(/[:：]\s*$/, "")}: !${command}`;
+        args = { ...args, kind: "recurring" };
+      }
       const request = typeof args.request_id === "string" ? args.request_id : "";
       if (!request) throw new RoutineError("create requires a unique request_id; reuse it on retries to avoid duplicate schedules.");
       const zone = typeof args.timezone === "string" ? args.timezone : localZone();
       if (!isTimeZone(zone)) throw new RoutineError("Unknown timezone. Supply an IANA name such as Asia/Taipei.");
       const kind = args.kind === "once" || args.kind === "recurring" ? args.kind : null;
-      if (!kind) throw new RoutineError("create requires kind='once' with at, or kind='recurring' with cron.");
+      if (!kind) throw new RoutineError("create requires kind='once' with at, kind='recurring' with cron, or kind='watch' with cron and command.");
       const at = parseAt(args.at, kind === "once");
       const cron = typeof args.cron === "string" ? args.cron : args.cron === undefined ? undefined : null;
       if (cron === null) throw new RoutineError("recurring requires cron with five valid fields: minute hour day month weekday.");

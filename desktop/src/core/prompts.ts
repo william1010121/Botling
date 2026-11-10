@@ -548,7 +548,8 @@ const MAIN_REMOVE_LINE = "To remove or rename a bot, tell the user to right-clic
 const LEGACY_ROUTINES_LINE = /^  Claude may edit this legacy file[^\n]*$/m;
 /** A script or monitor the bot starts can wake it with a one-shot routines.cron line (desktop only; 2026-11-09, the user). */
 export function scriptWakeRule(routines: string): string {
-  return `  A script or monitor you start can wake you by appending the line "@once Alert: what happened" to ${routines}; the app runs it once at its next check and removes the line.`;
+  return `  A script or monitor you start can wake you by appending the line "@once Alert: what happened" to ${routines}; the app runs it once at its next check and removes the line.\n`
+    + `  A watch checks something without waking you: a line "*/10 * * * * Name: !shell command" (on Codex, app_routines kind=watch with cron and command) makes the app run that command in your folder on the schedule; only a non-zero exit, a timeout or an output line starting with ALERT wakes you, with its output, to decide what to do (once per failing streak, again after 6 hours or after it passed).`;
 }
 /**
  * The instructions as 2.0 gives them: `botPrompts`, plus the prompt sections (`sections`: by default the whiteboard picture line, after

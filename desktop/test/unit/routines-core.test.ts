@@ -96,6 +96,33 @@ describe("routines", () => {
     await expect(again.call({ type: "routines.change", botId: MAIN, operation: "cancel", id: "claimed-1" })).rejects.toThrow(/already claimed/);
   });
 
+  it("a watch line runs its command in the app: a passing one wakes nobody, a failing one wakes the bot once with its output", async () => {
+    const dir = tempDir("routines");
+    const c = core(dir, { BOTLING_PLAIN_SHELL: "1" });
+    const file = join(dir, "main", "routines.cron");
+    await until(() => existsSync(file));
+    await c.kill();
+    const ok = "* * * * * Fine: !echo all good";
+    const bad = "* * * * * Disk: !echo disk 97% full; exit 3";
+    writeFileSync(file, `${ok}\n${bad}\n`);
+    const bot = JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8"));
+    bot.routineRuns = { [ok]: swiftNow(-86_400_000), [bad]: swiftNow(-86_400_000) };
+    writeFileSync(join(dir, "main", "bot.json"), JSON.stringify(bot));
+    const again = core(dir, { BOTLING_PLAIN_SHELL: "1" });
+    const prompt = await until(() => claudeInputs(dir).find((text) => text.includes('Your watch "Disk" found a problem')), { timeout: 8_000 });
+    expect(prompt).toContain("exit code 3");
+    expect(prompt).toContain("echo disk 97% full; exit 3");
+    expect(prompt).toContain("disk 97% full");
+    const list = await until(async () => { const r = await again.call({ type: "routines.list", botId: MAIN }); return r.routines.every((x: any) => x.watch?.state !== "never") && r; });
+    expect(list.routines.find((r: any) => r.title === "Fine").watch).toMatchObject({ command: "echo all good", state: "ok", exit: 0 });
+    expect(list.routines.find((r: any) => r.title === "Disk").watch).toMatchObject({ state: "failing", exit: 3 });
+    await sleep(600);
+    expect(claudeInputs(dir).filter((text) => text.includes("Your watch"))).toHaveLength(1);
+    expect(claudeInputs(dir).some((text) => text.includes("Fine"))).toBe(false);
+    const saved = JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineWatches;
+    expect(saved[`cron:${bad}`]).toMatchObject({ ok: false, exit: 3, wokeAt: expect.any(Number) });
+  });
+
   it("a broken schedule file is said in the chat and nothing is dispatched or written over", async () => {
     const dir = tempDir("routines");
     mkdirSync(join(dir, "main"), { recursive: true });

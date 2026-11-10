@@ -93,13 +93,13 @@ export function detailValues(value: unknown): Record<string, string> | null {
 }
 
 /** The shell a command runs in: the user's login shell setup as 1.x (zsh -lc on macOS). */
-function shell(command: string): [string, string[]] {
+export function commandProgram(command: string): [string, string[]] {
   // Tests: a plain shell, so the user's own login files are never read.
   if (process.env.BOTLING_PLAIN_SHELL === "1" && process.platform !== "win32") return ["/bin/sh", ["-c", command]];
   return commandShell(command);
 }
 
-function environment(): NodeJS.ProcessEnv {
+export function commandEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const key of ["CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "ELECTRON_RUN_AS_NODE"]) delete env[key];
   if (process.platform !== "win32") {
@@ -117,8 +117,8 @@ export function execute(command: string, folder: string, timeoutMs = COMMAND_TIM
     let isFolder = false;
     try { isFolder = statSync(folder).isDirectory(); } catch { /* not there */ }
     if (!isFolder) return done({ error: `The project folder ${folder} is not there.`, ranAt: Date.now() });
-    const [file, args] = shell(command);
-    const child = spawn(file, args, { cwd: folder, env: environment(), stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+    const [file, args] = commandProgram(command);
+    const child = spawn(file, args, { cwd: folder, env: commandEnvironment(), stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
     if (child.pid) onPid?.(child.pid, true);
     let stdout: Buffer[] = [];
     let size = 0;

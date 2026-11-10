@@ -550,6 +550,15 @@ export const RoutineView = z.strictObject({
   status: z.string().max(40),
   /** When it next runs (ISO-8601), if it will. */
   next: z.string().nullable(),
+  /** A watch ("Name: !command"): the app runs the command and wakes the bot only when it fails; its last run, if any. */
+  watch: z.strictObject({
+    command: z.string().max(2_000),
+    /** never (not run yet), ok, failing. */
+    state: z.enum(["never", "ok", "failing"]),
+    lastRun: z.string().nullable(),
+    exit: z.number().int().nullable(),
+    timedOut: z.boolean(),
+  }).optional(),
 });
 export type RoutineView = z.infer<typeof RoutineView>;
 
@@ -969,8 +978,10 @@ export const Command = z.discriminatedUnion("type", [
   /** Creates (once with `at`, recurring with `cron` in `timezone`), pauses, resumes or cancels one (`app_routines`' operations). */
   z.strictObject({
     type: z.literal("routines.change"), botId, operation: z.enum(["create", "pause", "resume", "cancel"]),
-    id: z.string().min(1).max(2_200).optional(), kind: z.enum(["once", "recurring"]).optional(), task: z.string().min(1).max(2_000).optional(),
+    id: z.string().min(1).max(2_200).optional(), kind: z.enum(["once", "recurring", "watch"]).optional(), task: z.string().min(1).max(2_000).optional(),
     at: z.string().max(64).optional(), cron: z.string().max(200).optional(), timezone: z.string().max(100).optional(), requestId: id.optional(),
+    /** kind "watch": the shell command the app runs on the schedule (the bot is woken only when it fails). */
+    command: z.string().min(1).max(2_000).optional(),
   }),
   /**
    * A component card's command: run (with the command and folder it showed), again (↻), or by its own timer (`live`).
