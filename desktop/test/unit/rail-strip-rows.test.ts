@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The folded left column (RailStrip) lists the rows the open column keeps above its Idle group (the main bot,
-// Maintainer, pinned and the rest), never the idle bots, and draws no unread dot beside a face (no room there).
+// Maintainer, pinned and the rest), never the idle bots, with a blue dot on a face that has unread messages.
 // jsdom only: no window, no focus taken.
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -45,8 +45,8 @@ describe("folded column rows", () => {
     expect(faces()).toEqual(["m", MAINTAINER_BOT_ID, "pin", "busy"]);
   });
 
-  it("draws no unread dot beside a face, but still says the unread count to a screen reader", () => {
-    expect(host.querySelector(".strip-unread")).toBeNull();
+  it("draws the unread dot on a face with unread messages and says the count to a screen reader", () => {
+    expect(host.querySelector('.strip-bot[data-bot="busy"] .strip-unread')).not.toBeNull();
     expect(host.querySelector('.strip-bot[data-bot="busy"]')?.getAttribute("aria-label")).toContain("3 unread");
   });
 });
