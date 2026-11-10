@@ -269,7 +269,8 @@
 /* figure: a matplotlib chart; SVG inline (theme colours via CSS variables), PNG in a light and a dark copy */
 .fg{cursor:zoom-in;margin:0 auto}
 .fg svg,.fg img,.lb-fig svg{display:block;width:100%;height:auto;max-width:100%}
-.fg-d{display:none}
+/* .fg .fg-d, not .fg-d: it must outrank .fg img above ([0,1,1]) or the dark copy shows under the light one */
+.fg .fg-d{display:none}
 /* Charts only: their orange (--orange-chart, one step darker in dark mode) keeps blue/orange inside the validated lightness band */
 .fg,.lb-fig{--orange:var(--orange-chart)}
 /* Lightbox of a figure: the enlarged copy is the figure's own box, sized to the window; the SVG (or PNG) inside
