@@ -738,16 +738,19 @@ img.media[role="button"]:focus-visible { outline: 2px solid var(--blue); outline
 }
 .lightbox-bar button:hover, .lightbox-bar button:focus-visible { background: var(--strong-line); color: var(--text); outline: none; }
 .lightbox-bar .lightbox-close { width: 30px; height: 30px; padding: 0; font-size: 14px; margin-left: 4px; }
+/* The stage clips; the picture sits at its natural size and lightbox.ts places it with one transform (zoom and pan). */
 .lightbox-stage {
-  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
-  padding: 12px 24px; overflow: hidden;
+  flex: 1; min-height: 0; position: relative; overflow: hidden; margin: 12px 24px;
+  touch-action: none; overscroll-behavior: contain;
 }
 .lightbox-image {
-  max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px;
-  box-shadow: 0 10px 40px rgb(0 0 0 / calc(0.5 * var(--shade, 1))); cursor: zoom-in; background: #fff1;
+  position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0;
+  border-radius: 6px; box-shadow: 0 10px 40px rgb(0 0 0 / calc(0.5 * var(--shade, 1))); cursor: zoom-in; background: #fff1;
+  user-select: none; -webkit-user-drag: none;
 }
-.lightbox.actual .lightbox-stage { overflow: auto; align-items: flex-start; justify-content: flex-start; }
-.lightbox.actual .lightbox-image { max-width: none; max-height: none; margin: auto; cursor: zoom-out; }
+.lightbox.zoomed .lightbox-image { cursor: grab; }
+.lightbox.dragging .lightbox-image { cursor: grabbing; }
+.lightbox-zoom { margin-right: auto; padding-left: 4px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .lightbox-caption { padding: 0 24px 16px; text-align: center; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 
 /* A claude.ai Artifact a reply links to: title, host, Open (in the browser, where the user is signed in). */
