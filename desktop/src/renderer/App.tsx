@@ -77,7 +77,7 @@ function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
 export function App({ client, store, web }: { client: Client; store: WorkspaceStore; web?: WebChrome }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   // Bots whose colours clash get the least clashing one (avatars.ts); before any face below is drawn.
-  setBotColors(view.bots);
+  setBotColors(view.bots, view.settings?.pinnedBots ?? []);
   const [error, setError] = useState<string | null>(null);
   const [bottomControls, setBottomControls] = useState<HTMLSpanElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
