@@ -7,7 +7,6 @@ export interface ChatPacket {
   extras: FrameExtras;
   libraryVersion: number;
   resyncs: number;
-  messageColumnWidth: number | null;
   traceId?: string;
 }
 
@@ -33,12 +32,12 @@ export class ChatStateChannel {
     this.timer = undefined;
     const packet = this.build();
     if (!packet) return;
-    const { state, extras, messageColumnWidth, traceId } = packet;
+    const { state, extras, traceId } = packet;
     const previous = this.last;
     const next = new Map(state.messages.map(message => [message.id, JSON.stringify(message)]));
     const revision = this.revision + 1;
     if (full || !previous || previous.state.botID !== state.botID || previous.resyncs !== packet.resyncs) {
-      this.send({ botling: "state", state, extras, messageColumnWidth, traceId, revision });
+      this.send({ botling: "state", state, extras, traceId, revision });
     } else {
       const { messages: _messages, components: _components, ...base } = state;
       const { messages: _oldMessages, components: _oldComponents, ...oldBase } = previous.state;
@@ -48,9 +47,9 @@ export class ChatStateChannel {
       if (packet.libraryVersion !== previous.libraryVersion) patch.components = state.components;
       if (!patch.changed.length && !patch.base && !patch.components
         && JSON.stringify(patch.order) === JSON.stringify(previous.state.messages.map(message => message.id))
-        && JSON.stringify(extras) === JSON.stringify(previous.extras) && messageColumnWidth === previous.messageColumnWidth) return;
+        && JSON.stringify(extras) === JSON.stringify(previous.extras)) return;
       this.send({ botling: "stateDelta", botID: state.botID, baseRevision: this.revision, revision,
-        patch, extras, messageColumnWidth, traceId });
+        patch, extras, traceId });
     }
     this.revision = revision;
     this.last = packet;

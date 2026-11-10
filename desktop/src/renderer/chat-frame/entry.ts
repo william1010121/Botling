@@ -11,7 +11,6 @@ import "./component-frames";
 import "./composer-bar";
 import { installInputRecovery } from "./input-focus";
 import "../../../../Web/src/main";
-import { installMessageWidth } from "./message-width";
 import { installEscapeStop } from "./escape-stop";
 import { t } from "../../../../Web/src/i18n";
 import { EditorView } from "@codemirror/view";
@@ -50,7 +49,6 @@ if (nativeChat) {
     if (chat && view && !view.composing) keepDraft(store, chat, { text: view.state.doc.toString(), cursor: view.state.selection.main.head });
   });
 }
-const column = installMessageWidth((value) => toShell({ botling: "messageWidth", value }), (active) => toShell({ botling: "messageWidthDrag", active }));
 
 let lastExtras: FrameExtras | null = null;
 let decorateQueued = false;
@@ -106,7 +104,6 @@ fromShell(message => {
       previousChat: document.documentElement.dataset.chat, ...inputTrace()!.snapshot() }));
     const early = !nativeChat && document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
     inputTrace()?.mark("frame.early.snapshot", () => ({ early, ...inputTrace()!.snapshot() }));
-    column.set(packet.messageColumnWidth ?? null, state.botID);
     // The chat the page draws, before it draws it (its local pictures are asked for as this bot's).
     shownChat = state.botID;
     window.ccb.setState(state);
@@ -122,16 +119,10 @@ fromShell(message => {
       if (stateRevision === 0) window.ccb.focus();
       toShell({ botling: "hostObservation", chatId: state.botID, intentEpoch: 0, revision: ++stateRevision });
     }
-  } else if (message.botling === "widthRejected") {
-    column.rejected(message.value, message.actual);
   } else if (message.botling === "shortcuts") {
     setShortcutBindings(message.bindings, message.commands);
   } else if (message.botling === "runCommand") {
     window.ccb.runCommand(message.id);
-  } else if (message.botling === "widthPreview") {
-    column.preview(message.value);
-  } else if (message.botling === "messageWidthPointer") {
-    column.pointer(message.kind, message.pointerId, message.x);
   } else if (message.botling === "answerWithSaved") {
     window.ccb.answerWithSaved({ botID: message.botID, requestID: message.requestID, chosen: message.chosen });
   } else if (message.botling === "plugins") {

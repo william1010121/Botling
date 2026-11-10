@@ -26,7 +26,7 @@ it("renders deltas, keeps untouched rows, rejects a missing base, and recovers w
   let text = "first", deleted = false;
   const build = (): ChatPacket => ({ ...chatState(bot, { botId: bot.id, running: null, live: [],
     messages: [...(deleted ? [] : [{ id: "history", role: "user" as const, text: "Keep this row", time: "2026-10-27T08:00:00Z" }]),
-      { id: "live", role: "bot", text, time: "2026-10-27T08:01:00Z", state: "streaming" }] }), libraryVersion: 1, resyncs: 1, messageColumnWidth: null });
+      { id: "live", role: "bot", text, time: "2026-10-27T08:01:00Z", state: "streaming" }] }), libraryVersion: 1, resyncs: 1 });
   const sent: ShellMessage[] = [];
   const channel = new ChatStateChannel(build, message => { sent.push(message); receive(message); });
   channel.flush();
@@ -56,7 +56,7 @@ it("preserves the loaded history boundary, frames and draft through desktop delt
   const historyBot = { ...bot, id: "long-history" };
   let messages = Array.from({ length: 160 }, (_, i) => ({ id: `m${i}`, role: "bot" as const, text: `Reply ${i}`, time: "2026-10-27T08:00:00Z" }));
   const build = (): ChatPacket => {
-    const packet = { ...chatState(historyBot, { botId: historyBot.id, running: null, live: [], messages }), libraryVersion: 1, resyncs: 1, messageColumnWidth: null };
+    const packet = { ...chatState(historyBot, { botId: historyBot.id, running: null, live: [], messages }), libraryVersion: 1, resyncs: 1 };
     packet.state.components = { card: { template: "<p>kept card</p>", version: 1, working: false, updated: false, hasPrevious: false } };
     packet.state.messages = packet.state.messages.map(message => message.id === "m125" ? { ...message, displays: [{ name: "card", data: "{}", at: null }] } : message);
     return packet;
@@ -112,7 +112,7 @@ it("cancels queued history loading on a same-bot subagent delta and resets the w
     const receive = (message: ShellMessage) => window.dispatchEvent(new MessageEvent("message", { source: window.parent, origin: APP_ORIGIN, data: message }));
     const lifecycleBot = { ...bot, id: "history-lifecycle" };
     const packet: ChatPacket = { ...chatState(lifecycleBot, { botId: lifecycleBot.id, running: null, live: [],
-      messages: Array.from({ length: 150 }, (_, i) => ({ id: `life${i}`, role: "bot", text: `Reply ${i}`, time: "2026-10-27T08:00:00Z" })) }), libraryVersion: 1, resyncs: 1, messageColumnWidth: null };
+      messages: Array.from({ length: 150 }, (_, i) => ({ id: `life${i}`, role: "bot", text: `Reply ${i}`, time: "2026-10-27T08:00:00Z" })) }), libraryVersion: 1, resyncs: 1 };
     let current = packet;
     const sent: ShellMessage[] = [];
     const channel = new ChatStateChannel(() => current, message => { sent.push(message); receive(message); });

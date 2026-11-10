@@ -27,7 +27,7 @@ function server() {
     if ((init.headers as Record<string, string>).Authorization !== `Bearer ${TOKEN}`) return new Response('{"error":{"code":"auth_required"}}', { status: 401 });
     if (commandStatus !== 200) return new Response(commandStatus === 401 ? '{"error":{"code":"auth_required"}}' : '<html>edge denied</html>', { status: commandStatus });
     return new Response(JSON.stringify({ v: 10, id: request.id, ok: true, result: { epoch: 'e', seq: 1, imported: null, components: {}, waiting: { items: [], doing: {} },
-      settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: [] },
+      settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: [] },
       bots: [bot(MAIN, 'Main bot', 'main'), bot('DEC0DE00-0000-4000-8000-00000000DEC0', 'Maintainer', 'bot'), bot('p1', 'botling', 'manager'), bot('p2', 'hotel', 'manager')],
       chat: { botId: request.cmd.botId ?? MAIN, messages: [], running: null, live: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] } } }));
   });

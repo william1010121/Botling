@@ -32,7 +32,7 @@ it('a scanned relay code pairs and opens the bots with no token prompt', async (
   const requests: any[] = [];
   const client = new (await import('./relay-client')).RelayClient() as any;
   client.request = async (cmd: any) => { requests.push(cmd); return { epoch: 'e', seq: 1, imported: null, components: {}, waiting: { items: [], doing: {} },
-    settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: ['p2'], idleBots: ['p3'] },
+    settings: { language: null, effectiveLanguage: 'en', botLook: 'original', chatAvatarSize: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: ['p2'], idleBots: ['p3'] },
     bots: [bot(MAIN, 'Main bot', 'main'), bot('DEC0DE00-0000-4000-8000-00000000DEC0', 'Maintainer', 'bot'), bot('p1', 'botling', 'manager'), bot('p2', 'hotel', 'manager'), bot('p3', 'garden', 'manager')],
     chat: { botId: cmd.botId ?? MAIN, messages: [], running: null, live: [], runs: [], heads: null, pins: [], floating: [], pinChoices: [], pendingFiles: [] } }; };
   client.closed = false;

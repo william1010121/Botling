@@ -31,9 +31,6 @@ export type FrameMessage =
   | { botling: "action"; reportPreview?: boolean; linkSource?: "user" | "component"; linkExternal?: boolean; linkMessageId?:string; linkPinId?:string; action: { type: string; [key: string]: unknown } }
   /** The Stop button the desktop adds to the input box. */
   | { botling: "stop" }
-  /** Global message column setting, committed after a drag or reset. */
-  | { botling: "messageWidth"; value: number | null }
-  | { botling: "messageWidthDrag"; active: boolean }
   /** Launch focus recovery belongs only to the composer until the user chooses another control. */
   | { botling: "composerIntent"; value: boolean; recoveryUntil: number; startedAt: number; traceId?: string }
   /** The native editor has applied state without replacing its EditorView. */
@@ -60,8 +57,6 @@ export type ShellMessage =
   | { botling: "projectFilesResult"; requestID: number; value?: unknown; error?: string }
   | { botling: "composerResult"; requestID: string; ok: boolean; error?: string }
   | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }
-  | { botling: "widthRejected"; value: number | null; actual: number | null }
-  | { botling: "widthPreview"; value: number | null | undefined }
   /**
    * The keys the chat page relays to the shell (Settings > Shortcuts): app shortcuts' (id to binding) and plugin
    * commands' in effect (command to binding).
@@ -69,9 +64,9 @@ export type ShellMessage =
   | { botling: "shortcuts"; bindings: Record<string, string>; commands?: Record<string, string> }
   /** Run a plugin command a web part registered in the page (a key or menu in the app page asked for it). */
   | { botling: "runCommand"; id: string }
-  | { botling: "state"; avatarSources?: string[]; state: ChatState; revision?: number; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  | { botling: "state"; avatarSources?: string[]; state: ChatState; revision?: number; extras: FrameExtras; traceId?: string }
   /** Sequenced delta against the last full snapshot or delta in this page. */
-  | { botling: "stateDelta"; avatarSources?: string[]; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }
+  | { botling: "stateDelta"; avatarSources?: string[]; botID: string; baseRevision: number; revision: number; patch: StatePatch; extras: FrameExtras; traceId?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }
   /** Where a component frame's page is served (null: refused). */
@@ -90,5 +85,3 @@ export type ShellMessage =
   | { botling: "focus" }
   /** Ask the frame to recover only its own still-intended, recently lost composer. */
   | { botling: "recoverFocus"; traceId?: string }
-  /** Pointer events over the shell after a width drag leaves the chat iframe. */
-  | { botling: "messageWidthPointer"; kind: "move" | "up" | "cancel"; pointerId: number; x: number }

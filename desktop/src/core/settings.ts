@@ -8,7 +8,6 @@
 import { readFileSync } from "node:fs";
 import { writeFileAtomic } from "./durable/atomic";
 import type { SettingsChange, SettingsView } from "../contract";
-import { messageWidth } from "../contract/message-width";
 import { normalizeOverrides } from "../contract/shortcuts";
 import { savedLanguage } from "./prompts";
 import { changeEngineDefaults, EFFORTS_BY_ENGINE, engineDefaultsFor, seedBotChoices } from "./engine-defaults";
@@ -56,7 +55,6 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     effectiveLanguage: savedLanguage(raw.languageChoice) ?? systemLanguage,
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
-    messageColumnWidth: messageWidth(raw.messageColumnWidth),
     appTheme: oneOf(["dark", "light", "system"] as const, raw.appTheme) ?? "dark",
     // Report pages follow the app's look unless one is chosen (an old "dark" chosen before this was left out: it follows the app, dark by default).
     reportTheme: oneOf(["dark", "light", "system"] as const, raw.reportTheme) ?? "system",
@@ -161,7 +159,6 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "language": set("languageChoice", change.value); break;
     case "botLook": set("botLookChoice", change.value); break;
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
-    case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
     case "appTheme": set("appTheme", change.value === "dark" ? null : change.value); break;
     case "reportTheme": set("reportTheme", change.value === "system" ? null : change.value); break;
     case "subagentModel": set("subagentModelDefault", change.value); break;

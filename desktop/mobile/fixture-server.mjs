@@ -59,7 +59,7 @@ chats.get('proj-botling').messages.push(
       processes: [{ name: 'BTLEServer', cpu: 87, note: 'Bluetooth reconnecting', flag: 'warn' }, { name: 'WindowServer', cpu: 24 }], nextStep: 'Turn Bluetooth off and watch BTLEServer.' }),
     at: null, command: 'python3 ~/.claudecodebot/plugins/ccb-components/scripts/cpu-load.py', folder: null, detail: null, card: 'cpu/0', status: 'done', error: null,
     ranAt: minutes(2), images: null, pinned: false, every: null }] }));
-const settings = { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, messageColumnWidth: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: ['proj-jenytsian', 'proj-csit'] };
+const settings = { language: null, effectiveLanguage: 'en', botLook: 'cute', chatAvatarSize: null, rightPanelCollapsed: false, railCollapsed: false, pinnedBots: ['proj-jenytsian', 'proj-csit'] };
 const waiting = { items: [{ botId: 'proj-rl', text: 'Approve the training run budget', messageId: null }], doing: { 'proj-botling': 'Task 與報告重新設計' } };
 let seq = 0, authenticated = true, denied = false;
 const TOKEN = 'f'.repeat(43);

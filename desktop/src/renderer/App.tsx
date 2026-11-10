@@ -1034,7 +1034,6 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
     if (bridge && placeholder.current) return observeEditorLayout(placeholder.current, bridge, () => true);
   }, []);
   const ready = useRef(false);
-  const widthDragging = useRef(false);
   const view = useSyncExternalStore(store.subscribeChat, store.getChatView);
   useEffect(() => { setReport(null); }, [view.chat?.botId]);
   // A plugin frame's `ccb.openLink` of a Markdown file (the Note tab): the same report preview, for the bot it names.
@@ -1075,35 +1074,11 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
     }
     const traceId = inputTrace()?.mark("shell.state.send", () => ({ chat: state.botID, ...inputTrace()!.snapshot() }));
     return { state, extras, libraryVersion: current.libraryVersion, resyncs: current.resyncs,
-      messageColumnWidth: current.settings?.messageColumnWidth ?? null, ...(traceId ? { traceId } : {}) };
+      ...(traceId ? { traceId } : {}) };
   }, postToChat), [store]);
   const push = useCallback(() => channel.flush(true), [channel]);
   useEffect(() => { channel.schedule(); }, [channel, view, replying, askAbout]);
   useEffect(() => channel.reset, [channel]);
-
-  useEffect(() => {
-    // Chromium can deliver pointerup to the shell after a captured pointer leaves its iframe.
-    // Forward shell-side events in frame coordinates until the drag finishes or is cancelled.
-    const widthPointer = (kind: "move" | "up" | "cancel", event?: PointerEvent) => {
-      if (!widthDragging.current) return;
-      const box = (placeholder.current ?? frame.current)?.getBoundingClientRect();
-      const message: ShellMessage = { botling: "messageWidthPointer", kind, pointerId: event?.pointerId ?? 0, x: (event?.clientX ?? 0) - (box?.left ?? 0) };
-      postToChat(message);
-      if (kind !== "move") widthDragging.current = false;
-    };
-    const widthMove = (event: PointerEvent) => widthPointer("move", event);
-    const widthUp = (event: PointerEvent) => widthPointer("up", event);
-    const widthCancel = () => widthPointer("cancel");
-    window.addEventListener("pointermove", widthMove);
-    window.addEventListener("pointerup", widthUp);
-    window.addEventListener("pointercancel", widthCancel);
-    return () => {
-      widthCancel();
-      window.removeEventListener("pointermove", widthMove);
-      window.removeEventListener("pointerup", widthUp);
-      window.removeEventListener("pointercancel", widthCancel);
-    };
-  }, []);
 
   // Plugins' web parts, asked for again whenever the library changes (only what changed reloads in the page).
   const plugins = useSyncExternalStore(store.subscribe, () => store.getView().plugins);
@@ -1237,19 +1212,6 @@ function ChatFrame({ client, store, onError, onSent, onAsk, askAbout = null, onA
     const receive = (message: FrameMessage | null) => {
       if (!message || typeof message !== "object") return;
       const chat = store.getView().chat;
-      if (message.botling === "messageWidthDrag") {
-        widthDragging.current = message.active === true;
-        return;
-      }
-      if (message.botling === "messageWidth") {
-        // The contract validates the number again in main and core; a card cannot impersonate this frame.
-        void client.request({ type: "settings.set", change: { key: "messageColumnWidth", value: message.value } }).catch((failure) => {
-          onError(failure);
-          postToChat({botling:"widthRejected",value:message.value,actual:store.getView().settings?.messageColumnWidth ?? null});
-          push();
-        });
-        return;
-      }
       if (message.botling === "stop") {
         // Every turn under way (with two heads, both may work).
         const runs = chat?.runs?.length ? chat.runs : chat?.running ? [chat.running] : [];

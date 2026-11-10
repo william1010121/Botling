@@ -613,8 +613,6 @@ export type PluginView = z.infer<typeof PluginView>;
 // ---------------------------------------------------------------------------------------------
 // Settings (settings.json, 1.x's AppSettings keys; per-bot choices in bot.json)
 
-import { MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX } from "./message-width";
-
 const BotModel = z.enum(["haiku", "sonnet", "opus"]);
 const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 const ModelId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\/-]+$/);
@@ -625,8 +623,6 @@ export const SettingsView = z.strictObject({
   effectiveLanguage: z.enum(["en", "zh-Hant"]),
   botLook: z.enum(["original", "cute"]),
   chatAvatarSize: z.number().int().min(32).max(96).nullable(),
-  /** Botling 2 only: null uses the default 640px column. */
-  messageColumnWidth: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable().default(null),
   /** The whole app's look (Settings → Appearance → App): dark (1.x's look, the default), light, or the system's appearance. */
   appTheme: z.enum(["dark", "light", "system"]).default("dark"),
   /** How report pages (result previews) are drawn: dark, light, or "system": the app's look (appTheme). */
@@ -690,7 +686,6 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("language"), value: z.enum(["en", "zh-Hant"]).nullable() }),
   z.strictObject({ key: z.literal("botLook"), value: z.enum(["original", "cute"]) }),
   z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
-  z.strictObject({ key: z.literal("messageColumnWidth"), value: z.number().int().min(MESSAGE_WIDTH_MIN).max(MESSAGE_WIDTH_MAX).nullable() }),
   z.strictObject({ key: z.literal("appTheme"), value: z.enum(["dark", "light", "system"]) }),
   z.strictObject({ key: z.literal("reportTheme"), value: z.enum(["dark", "light", "system"]) }),
   z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
