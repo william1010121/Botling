@@ -1774,8 +1774,13 @@ First write a test that shows this, then fix it.`;
       const key = `${chat.id}:${record.id}`;
       if (seen.has(key) || !isOpenQuestion(record)) return { accepted: false };
       seen.add(key);
-      chat = this.bot(record.sourceID);
-      record = chat.line(record.sourceMessageID);
+      const source = this.bots.get(record.sourceID);
+      const original = source?.line(record.sourceMessageID);
+      // The bot it copies was removed (a sub bot's card relayed into its parent's chat), or its line is gone: the copy
+      // is ignored where it is, never left open with nothing to settle it (spec/models/callin/RelayedCard.tla).
+      if (!source || !original) break;
+      chat = source;
+      record = original;
     }
     if (!record) return { accepted: false };
     const result = chat.ignoreQuestion(record.id);
