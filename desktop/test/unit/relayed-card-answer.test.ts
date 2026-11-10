@@ -104,15 +104,24 @@ describe("a sub bot's card answered in the parent's chat reaches the parent bot"
 });
 
 describe("a relayed card whose bot was removed (spec/models/callin/RelayedCard.tla)", () => {
-  it("can still be ignored in the parent's chat", async () => {
+  it("is no longer needed in the parent's chat once the bot is removed", async () => {
     const h = fixture();
     try {
       const { copy } = await relayedCard(h, "要哪一種？\n<choices>\n- 形狀臉\n- 色塊\n</choices>");
       await h.core.removeBot(DESIGN, { quiet: true });
-      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(true);
+      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(false);
+      expect(h.caller.line(copy.id)!.answer).toBe("No longer needed");
+      expect(h.delivered).toEqual([]);
+    } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
+  });
+
+  it("a copy whose original line is gone can still be ignored where it is", async () => {
+    const h = fixture();
+    try {
+      const { copy, original } = await relayedCard(h, "要哪一種？\n<choices>\n- 形狀臉\n- 色塊\n</choices>");
+      vi.spyOn(h.design, "line").mockImplementation(((id: string) => (id === original.id ? null : undefined)) as any);
       expect(await (h.core as any).handle({ type: "chat.ignoreQuestion", botId: BOTLING, messageId: copy.id }, new AbortController().signal))
         .toEqual({ accepted: true });
-      expect(isOpenQuestion(h.caller.line(copy.id)!)).toBe(false);
       expect(h.caller.line(copy.id)!.ignoredAt).toBeTruthy();
     } finally { vi.restoreAllMocks(); await h.core.shutdown(); }
   });

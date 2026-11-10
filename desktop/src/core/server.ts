@@ -1731,6 +1731,15 @@ First write a test that shows this, then fix it.`;
       main.settleAppQuestion(copy, { answer: "No longer needed" });
     }
     for (const copy of main.openCopies(id)) main.settleAppQuestion(copy.id, { answer: "No longer needed" });
+    // Its cards relayed into the chat that called it in (`callInFollowUp`: a copy naming its original) go the same way:
+    // their original is gone with it (spec/models/callin/RelayedCard.tla, NoCopyOfGone).
+    for (const chat of this.bots.values()) {
+      for (const copy of chat.lines()) {
+        if (copy.role === "bot" && copy.sourceID === id && typeof copy.sourceMessageID === "string" && isOpenQuestion(copy)) {
+          chat.settleAppQuestion(copy.id, { answer: "No longer needed" });
+        }
+      }
+    }
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
     this.plugins.event("botRemoved", { botId: id });
     this.briefAwakeMainBot();
